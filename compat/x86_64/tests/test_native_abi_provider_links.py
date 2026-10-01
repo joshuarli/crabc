@@ -468,17 +468,18 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             private.mkdir()
             names = ['domain_body', 'domain_caller', 'domain_scalar']
             (work / 'providers.c').write_text(links.source(names, object_names=['domain_scalar']))
-            (work / 'provider.S').write_text(
-                '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
-                '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
-                '.section .data.domain_scalar,"aw",@progbits\n.balign 4\n'
-                '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
-                'domain_scalar: .zero 128\n.size domain_scalar,.-domain_scalar\n'
-                '.section .note.GNU-stack,"",@progbits\n')
-            for read in ('lea domain_scalar+4(%rip),%rax', 'lea domain_scalar+127(%rip),%r9',
+            for storage, read in ((storage, read) for storage in ('data', 'bss') for read in ('lea domain_scalar+4(%rip),%rax', 'lea domain_scalar+127(%rip),%r9',
                          'lea domain_scalar+128(%rip),%rax', 'lea domain_scalar-1(%rip),%rax',
-                         'add domain_scalar+4(%rip),%rax'):
-                with self.subTest(read=read):
+                         'add domain_scalar+4(%rip),%rax', 'addr32 lea domain_scalar+4(%eip),%rax')):
+                with self.subTest(storage=storage, read=read):
+                    (work / 'provider.S').write_text(
+                        '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
+                        '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
+                        f'.section .{storage}.domain_scalar,"aw",@{"nobits" if storage == "bss" else "progbits"}\n.balign 4\n'
+                        '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
+                        'domain_scalar: .zero 128\n.size domain_scalar,.-domain_scalar\n'
+                        '.section .note.GNU-stack,"",@progbits\n')
+
                     (work / 'caller.S').write_text(
                         '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
                         '.hidden domain_body\n.hidden domain_scalar\n.type domain_caller,@function\n'
@@ -531,7 +532,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                           if row['role'] == 'definition' and row['row']['name'] == 'domain_scalar')
                         caller = (work / 'caller.o').read_bytes()
                         references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
-                                                              'domain_scalar', image=caller)
+                                                              'domain_scalar', image=caller, disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
                         sections = links.calls._ordinary_source_sections(caller, {row['section'] for row in references})
                         source_object = (work / 'provider.o').read_bytes()
                         for mode, elf_type in [('static', 2), ('static-pie', 3)]:
@@ -546,6 +547,13 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             expected_offset = 4 if '%rax' in read else 127
                             self.assertEqual(bound['resolved_calls'][0]['provider_offset'], expected_offset)
                             self.assertEqual(bound['resolved_calls'][0]['target_address'], address + expected_offset)
+                            missing_spans = [{key: value for key, value in reference.items()
+                                              if key not in {'instruction_start', 'instruction_end'}}
+                                             for reference in references]
+                            for reference_set in [missing_spans,
+                                    [{**references[0], 'instruction_start': references[0]['instruction_start'] - 1}]]:
+                                with self.assertRaisesRegex(ValueError, 'instruction span differs'):
+                                    links.final_member_references(image, **{**reference_arguments, 'source_calls': reference_set})
                             wrong = copy.deepcopy(definition)
                             wrong['row']['size_bytes'] = 4
                             wrong_references = copy.deepcopy(references)
@@ -560,7 +568,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             source_symbol = original.symbol('domain_scalar', dynamic=False)
                             section_table, section_width = struct.unpack_from('<Q', source_object, 40)[0], struct.unpack_from('<H', source_object, 58)[0]
                             source_header = section_table + section_width * source_symbol['section']
-                            for field, value, encoding in [(4, 8, '<I'), (8, 2, '<Q'), (32, 127, '<Q')]:
+                            for field, value, encoding in [(4, 1 if storage == 'bss' else 8, '<I'), (8, 2, '<Q'), (32, 127, '<Q')]:
                                 changed_source = bytearray(source_object)
                                 struct.pack_into(encoding, changed_source, source_header + field, value)
                                 with self.assertRaisesRegex(ValueError, 'source extent differs'):
@@ -571,11 +579,31 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 for index in range(count)
                                 for program in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
                                 if program[0] == 1 and program[3] <= address < program[3] + program[6])
-                            for flags, file_size in [(4, load[5]), (7, load[5]), (6, address + 127 - load[3])]:
+                            for flags, file_size in [(4, load[6] if storage == 'bss' else load[5]), (7, load[6] if storage == 'bss' else load[5]), (6, address + 127 - load[3])]:
                                 changed = bytearray(image)
                                 struct.pack_into('<I', changed, load_location + 4, flags)
-                                struct.pack_into('<Q', changed, load_location + 32, file_size)
+                                struct.pack_into('<Q', changed, load_location + (40 if storage == 'bss' else 32), file_size)
                                 with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                            readonly_location = next(program_table + width * index for index in range(count)
+                                if struct.unpack_from('<II', image, program_table + width * index) == (1, 4))
+                            changed = bytearray(image)
+                            struct.pack_into('<Q', changed, readonly_location + 16, address)
+                            with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                links.final_member_references(bytes(changed), **reference_arguments)
+                            if storage == 'data':
+                                changed = bytearray(image)
+                                struct.pack_into('<Q', changed, load_location + 8, load[2] + 1)
+                                with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                            code = bound['resolved_calls'][0]['call_address']
+                            executable = next(program for index in range(count)
+                                for program in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
+                                if program[0] == 1 and program[1] == 5 and program[3] <= code < program[3] + program[5])
+                            for opcode_byte in range(3):
+                                changed = bytearray(image)
+                                changed[executable[2] + code - executable[3] + opcode_byte] ^= 1
+                                with self.assertRaisesRegex(ValueError, 'opcode differs'):
                                     links.final_member_references(bytes(changed), **reference_arguments)
                     else:
                         self.assertEqual(set(admitted), {'domain_body', 'domain_caller'})

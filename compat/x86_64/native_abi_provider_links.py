@@ -743,6 +743,9 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             if 'address_addend' in reference or pooled_string and address_load:
                 require(address_load and provider_object is not None,
                         f'provider {name} interior address lacks its source object')
+                require(instruction_span is not None
+                        and instruction_span == (offset - 3, offset + 4),
+                        f'provider {name} interior address instruction span differs')
                 source_image, definition = provider_object
                 original = static_authority.elf_bytes(source_image)
                 symbol = original.symbol(name, dynamic=False)
@@ -757,8 +760,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                         and 0 < symbol['section'] < len(original.sections),
                         f'provider {name} interior source symbol differs')
                 header = original.sections[symbol['section']]
-                merged = header[2] == 50
-                require(header[1] == 1 and observed['type'] == 'PROGBITS'
+                merged = header[1] == 1 and header[2] == 50
+                require(header[1] in {1, 8} and observed['type'] == ('PROGBITS' if header[1] == 1 else 'NOBITS')
                         and (header[2], observed['flags']) == ((50, 'AMS') if merged else (3, 'WA'))
                         and header[3] == int(observed['address'], 16)
                         and header[4] == int(observed['offset'], 16)
@@ -766,7 +769,7 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                         and header[6] == observed['link'] and header[7] == observed['info']
                         and header[8] == observed['alignment'] and header[8] > 0
                         and header[9] == int(observed['entry_size'], 16) == (1 if merged else 0)
-                        and header[4] + header[5] <= len(source_image)
+                        and (header[1] == 8 or header[4] + header[5] <= len(source_image))
                         and symbol['value'] + symbol['size'] <= header[5]
                         and static_authority.section_name(original, header) == observed['name'],
                         f'provider {name} interior source extent differs')
@@ -787,20 +790,31 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                         and 0 < final_symbol['section'] < len(final.sections),
                         f'provider {name} interior final symbol differs')
                 output = final.sections[final_symbol['section']]
-                require(output[1] == 1 and (output[2] in {2, 18, 50} if merged else output[2] == 3)
+                require(output[1] == header[1] and (output[2] in {2, 18, 50} if merged else output[2] == 3)
                         and output[3] <= provider_address
-                        and provider_address + symbol['size'] <= output[3] + output[5],
+                        and provider_address + symbol['size'] <= output[3] + output[5]
+                        and (output[1] == 8 or output[4] + output[5] <= len(image)),
                         f'provider {name} interior final extent differs')
                 if merged:
                     immutable_object_payload(image, source_image, symbol=symbol, header=header,
                                              output=output, address=provider_address, name=name)
                 if not merged:
                     table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
-                    require(sum(program[0] == 1 and program[1] == 6
-                            and program[3] <= provider_address
-                            and provider_address + symbol['size'] <= program[3] + program[5]
-                            for program in (struct.unpack_from('<IIQQQQQQ', image, table + width * index)
-                                            for index in range(count))) == 1,
+                    # NOBITS owns memory extent, never a file payload. Forming
+                    # an interior address proves the whole writable object's
+                    # placement without granting a read or one-past extent.
+                    programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index)
+                                for index in range(count)]
+                    mappings = [program for program in programs if program[0] == 1
+                                and program[3] < provider_address + symbol['size']
+                                and provider_address < program[3] + program[6]]
+                    require(len(mappings) == 1 and mappings[0][1] == 6
+                            and mappings[0][3] <= provider_address
+                            and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][6]
+                            and (output[1] == 8 or
+                                 (provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
+                                  and mappings[0][2] + provider_address - mappings[0][3]
+                                  == output[4] + provider_address - output[3])),
                             f'provider {name} interior object lacks a writable load extent')
                 record['provider_offset'] = provider_offset
                 record['target_address'] = provider_address + provider_offset
