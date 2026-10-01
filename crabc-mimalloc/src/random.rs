@@ -55,6 +55,58 @@ pub(crate) struct RandomReinitialization {
 // context's source counter stream.
 const WEAK_EXPANSION_BLOCK: u64 = 0x6372_6162_635f_776b;
 
+/// Normal entropy acquired without borrowing the address-stable random image.
+/// Failed or partial fills retain a warning requirement and erase their key;
+/// no weak observation or expansion occurs during preparation.
+pub(crate) struct PreparedRandomInitialization {
+    key: [u8; 32],
+    weak: bool,
+}
+
+impl Drop for PreparedRandomInitialization {
+    fn drop(&mut self) { self.key.zeroize(); }
+}
+
+impl PreparedRandomInitialization {
+    #[inline]
+    pub(crate) fn prepare_normal() -> Self {
+        let mut prepared = Self { key: [0; 32], weak: false };
+        let result = os::entropy_fill(&mut prepared.key);
+        prepared.retain_entropy_result(result);
+        prepared
+    }
+
+    #[inline]
+    fn retain_entropy_result(&mut self, result: crabc_core::Result<bool>) {
+        self.weak = TheapRandomImage::normal_entropy_is_weak(result);
+        if self.weak { self.key.zeroize(); }
+    }
+
+    #[inline]
+    pub(crate) const fn requires_warning(&self) -> bool { self.weak }
+
+    // Only the random-state owner can complete this transition. Entropy
+    // refusal must cross its admitted diagnostic route before material is
+    // available to an enclosing allocator initializer.
+    #[inline]
+    fn after_warning(mut self) -> RandomInitializationMaterial {
+        let mut material = RandomInitializationMaterial { key: [0; 32], weak: self.weak };
+        core::mem::swap(&mut material.key, &mut self.key);
+        material
+    }
+}
+
+/// One linear key owner for callback-free initialization of the original image.
+/// Its constructor stays private to the random-state diagnostic transition.
+pub(crate) struct RandomInitializationMaterial {
+    key: [u8; 32],
+    weak: bool,
+}
+
+impl Drop for RandomInitializationMaterial {
+    fn drop(&mut self) { self.key.zeroize(); }
+}
+
 /// Caller-owned entropy material for a deterministic `TheapRandomImage` test.
 ///
 /// `src/random.c:mi_random_init_ex` obtains exactly 32 key bytes before
@@ -308,6 +360,18 @@ impl TheapRandomImage {
         self.output.zeroize();
         self.output_available.zeroize();
         self.weak = false;
+    }
+
+    /// Installs retained entropy after its diagnostic transition has ended.
+    /// Weak observations are taken here, after warning reentry, and the nonce
+    /// comes from this image's original address. No callback or entropy call
+    /// occurs while the image is projected.
+    #[inline]
+    pub(crate) fn initialize_prepared(&mut self, mut material: RandomInitializationMaterial) {
+        if material.weak {
+            WeakObservations::current(self.identity(), 0).expand_into(&mut material.key);
+        }
+        self.chacha_init(&material.key, self.identity(), material.weak);
     }
 
     #[inline]
@@ -1040,4 +1104,96 @@ mod tests {
         assert!(!weak.reinitialize_if_weak());
         assert_eq!(weak.m1_state_fingerprint(), strong_fingerprint);
     }
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn prepared_entropy_refusal_warns_before_weak_observations_and_allows_reentry() {
+        use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
+        std::thread_local! {
+            static CONTEXT: core::cell::Cell<*const TheapRandomImage> = const { core::cell::Cell::new(core::ptr::null()) };
+            static FAULT: core::cell::Cell<*const os::fault::Guard> = const { core::cell::Cell::new(core::ptr::null()) };
+            static OBSERVED: core::cell::Cell<(usize, bool, bool, bool)> = const { core::cell::Cell::new((0, false, false, false)) };
+        }
+        unsafe extern "C" fn observe(message: *const core::ffi::c_char) {
+            // SAFETY: the admitted test route supplies a live terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"unable to use secure randomness\n".len())
+                .any(|window| window == b"unable to use secure randomness\n") { return; }
+            // SAFETY: both stack owners remain live; neither has a mutable
+            // projection during this synchronous warning delivery.
+            let inert = CONTEXT.with(|slot| !unsafe { &*slot.get() }.is_initialized());
+            let before_clock = FAULT.with(|slot| unsafe { &*slot.get() }.secondary_observed() == 0);
+            let mut nested = TheapRandomImage::empty_weak();
+            nested.initialize_weak();
+            let reentered = nested.is_initialized() && nested.is_weak() && nested.next() != 0;
+            OBSERVED.with(|slot| slot.set((slot.get().0 + 1, inert, before_clock, reentered)));
+        }
+        let output = OutputOwner::new(observe);
+        // SAFETY: this isolated owner is installed once, retained through
+        // delivery, and has no concurrent registration or borrowed projection.
+        unsafe {
+            output.initialize_source_options(|| core::ptr::null());
+            output.option_set(crate::config::SourceOption::ShowErrors, 1).unwrap();
+            output.post_init();
+        }
+        let fault = os::fault::install(os::fault::Plan::at_pair(
+            os::fault::Point::Entropy, 1, os::fault::Point::Clock, 1, crabc_core::Errno::NOMEM,
+        ));
+        let mut context = TheapRandomImage::empty_weak();
+        let identity = context.identity();
+        CONTEXT.with(|slot| slot.set(core::ptr::from_ref(&context)));
+        FAULT.with(|slot| slot.set(core::ptr::from_ref(&fault)));
+        let prepared = PreparedRandomInitialization::prepare_normal();
+        assert!(prepared.requires_warning());
+        assert_eq!(prepared.key, [0; 32]);
+        // SAFETY: all random projections ended and the actual isolated output
+        // owner remains admitted throughout this callback and its reentry.
+        unsafe { output.warning_from_source_options(SourceFormattedMessage::from_source_formatted(
+            c"unable to use secure randomness\n",
+        )) };
+        OBSERVED.with(|slot| assert_eq!(slot.get(), (1, true, true, true)));
+        context.initialize_prepared(prepared.after_warning());
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(fault.secondary_observed(), 2);
+        assert!(context.is_initialized() && context.is_weak());
+        assert_eq!(context.nonce(), identity);
+        assert_ne!(context.next() as usize | 1, 0);
+        CONTEXT.with(|slot| slot.set(core::ptr::null()));
+        FAULT.with(|slot| slot.set(core::ptr::null()));
+    }
+
+    #[test]
+    fn prepared_strong_entropy_finishes_without_reacquisition_or_weak_observations() {
+        let fault = os::fault::install(os::fault::Plan::at(
+            os::fault::Point::Entropy, 2, crabc_core::Errno::NOMEM,
+        ));
+        let mut context = TheapRandomImage::empty_weak();
+        let identity = context.identity();
+        let prepared = PreparedRandomInitialization::prepare_normal();
+        assert!(!prepared.requires_warning());
+        assert!(!context.is_initialized());
+        let expected_key = prepared.key;
+        context.initialize_prepared(prepared.after_warning());
+        assert_eq!(fault.observed(), 1);
+        assert!(!context.is_weak());
+        assert_eq!(context.nonce(), identity);
+        for (word, bytes) in context.input[4..12].iter().zip(expected_key.chunks_exact(4)) {
+            assert_eq!(*word, u32::from_le_bytes(bytes.try_into().unwrap()));
+        }
+        assert_eq!(context.output_available, 0);
+        assert_eq!(context.input[12..14], [0, 0]);
+        assert_ne!(context.next(), 0);
+    }
+
+    #[test]
+    fn prepared_short_or_failed_entropy_erases_partial_material_and_requires_warning() {
+        for result in [Ok(false), Err(crabc_core::Errno::NOMEM)] {
+            let mut prepared = PreparedRandomInitialization { key: [0xa5; 32], weak: false };
+            prepared.retain_entropy_result(result);
+            assert!(prepared.requires_warning());
+            assert_eq!(prepared.key, [0; 32]);
+        }
+        assert!(needs_drop::<PreparedRandomInitialization>());
+        assert!(needs_drop::<RandomInitializationMaterial>());
+    }
+
 }
