@@ -2541,17 +2541,22 @@ mod tests {
         let foreign = backing();
         let process = purge_process(0, true);
         let id = install(issuer, process, MapAccess::Reserved);
-        let foreign_id = install(foreign, self::process(), MapAccess::Reserved);
+        let foreign_process = self::process();
+        let foreign_id = install(foreign, foreign_process, MapAccess::Reserved);
         let claim = unsafe { issuer.try_find_free(search(id), 2, ARENA_SLICE_SIZE, false) }.unwrap();
         let index = claim.slice_index();
         // SAFETY: both actual issuers and VM pairs remain pinned until their
         // final quiescent teardown; no token escapes this retained scope.
         let custody = unsafe { claim.into_source_initialization_custody() }
             .unwrap_or_else(|_| panic!("original process claim"));
+        assert!(custody.belongs_to_subprocess(process.subprocess()));
+        assert!(!custody.belongs_to_subprocess(foreign_process.subprocess()));
         let custody = match foreign.prepare_source_initialization_release(custody) {
             Err((CustodyError::WrongBacking, custody)) => custody,
             _ => panic!("foreign preparation must preserve original custody"),
         };
+        assert!(custody.belongs_to_subprocess(process.subprocess()));
+        assert!(!custody.belongs_to_subprocess(foreign_process.subprocess()));
         let prepared = issuer.prepare_source_initialization_release(custody)
             .unwrap_or_else(|_| panic!("original issuer remains valid"));
         // SAFETY: short issuer projection ended; actual issuer is retained.

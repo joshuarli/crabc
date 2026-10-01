@@ -1600,6 +1600,13 @@ pub(crate) enum SourceInitializationClaimCustodyError {
 }
 
 impl SourceInitializationClaimCustody {
+    /// Observes the original source identity without consuming custody or
+    /// projecting the arena. A match grants no issuer admission or lifetime;
+    /// restoration still requires the independently retained original backing.
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &Subprocess) -> bool {
+        self.subprocess == NonNull::from(subprocess)
+    }
+
     /// Transfers the original release obligation to a source-published Theap.
     /// This returns the stored observation, never a new release capability.
     ///
