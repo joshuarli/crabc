@@ -59,11 +59,14 @@ SOURCE_TRACE = {
 }
 
 
-def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False) -> None:
+def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False, profile: str = "release") -> None:
     selected_stages = {"base", "other", "reject", "direct_before", "switch", "guarded", "restore", "done"}
     expected = ({key: value for key, value in SOURCE_TRACE.items()
                  if key.rsplit(".", 1)[-1] in selected_stages or key.startswith("main.after_")}
                 if guarded_only else SOURCE_TRACE)
+    if profile in m4.GUARDED_API_PROFILE_BASES:
+        expected = {**expected, **{f"{context}.guarded_actual": "1,1,1,1,1,1,1,1,1,1"
+                                  for context in ("main", "worker", "child", "fork")}}
     if set(trace) != set(expected):
         raise harness.HarnessError(
             f"{side} public Theap keys differ: "
@@ -78,7 +81,7 @@ def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False) 
 
 
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
-AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2", "secure-3", "debug-2", "debug-3")
+AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2", "secure-3", "debug-2", "debug-3", *m4.GUARDED_API_PROFILE_BASES)
 RUNNER = "allocator-public-theap"
 DIRECT_TEST = "public_theap_selection_allocation_collection_and_lifetime"
 UNIT_TESTS = (
@@ -95,7 +98,10 @@ SECURE_THREE_UNIT_TESTS = (
 
 
 def native_control_tests(profile):
-    return (DIRECT_TEST, *UNIT_TESTS, *(SECURE_THREE_UNIT_TESTS if profile == "secure-3" else ()))
+    return (DIRECT_TEST, *UNIT_TESTS, *(SECURE_THREE_UNIT_TESTS if profile == "secure-3" else ()),
+        *(("source_api::tests::cold_public_aligned_allocation_samples_only_after_thread_initialization",
+           "source_api::tests::sampled_guarded_aligned_refusal_precedes_ordinary_size_validation")
+          if profile in m4.GUARDED_API_PROFILE_BASES else ()))
 
 
 def command(output, label, argv, cwd, *, runtime=False, timeout=900):
@@ -122,7 +128,7 @@ def observe(drivers, output, profile, guarded_only, cases):
                               str(record["stderr"]), re.MULTILINE) != ["1"]:
                     raise harness.HarnessError(f"pinned C {context} force collection leaves live Theap pages")
         traces[side] = m7.parse_options_trace(str(record["stdout"]), side, BEGIN, END)
-        require_trace(traces[side], side, guarded_only)
+        require_trace(traces[side], side, guarded_only, profile)
         cases.append((f"{profile}-{side}-run", 0, logs))
     m7.compare_options_traces(traces["c"], traces["rust"])
     return len(traces["c"])
@@ -142,7 +148,7 @@ def native_controls(output, profile, cases):
         record, logs = command(output, label,
             [harness.require_tool("cargo"), "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
              "-p", "crabc-mimalloc", "--no-default-features", "--message-format=json",
-             *(("--features", f"mi-{profile}") if profile != "release" else ()),
+             *(("--features", ",".join(m4.api_profile_features(profile))) if m4.api_profile_features(profile) else ()),
              *(("--test", "native_theap_contract") if index == 0 else ("--lib",)),
              test, "--", "--exact", "--nocapture", "--test-threads=1"], harness.ROOT)
         require_one_native_test(record, label)
@@ -300,6 +306,12 @@ def cli(argv=None):
                 raise harness.HarnessError(f"{profile} public Theap {label} raw path differs")
             records[label] = harness.read_json(logs / expected)
             harness.require_success(records[label], f"retained {profile} {label}")
+        retained_traces = {}
+        for side in ("c", "rust"):
+            retained_traces[side] = m7.parse_options_trace(
+                str(records[f"{side}-run"]["stdout"]), side, BEGIN, END)
+            require_trace(retained_traces[side], side, args.guarded_only, profile)
+        m7.compare_options_traces(retained_traces["c"], retained_traces["rust"])
         # The source extraction was temporary. Authenticate its declared
         # include/static input structure against the pinned archive and
         # original builder, without asserting those removed paths are live.
@@ -331,7 +343,7 @@ def cli(argv=None):
                 label = "native_theap_contract" if index == 0 else test.rsplit("::", 1)[-1]
                 expected_commands[label] = [cargo, "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
                     "-p", "crabc-mimalloc", "--no-default-features", "--message-format=json",
-                    *(("--features", f"mi-{profile}") if profile != "release" else ()),
+                    *(("--features", ",".join(m4.api_profile_features(profile))) if m4.api_profile_features(profile) else ()),
                     *(("--test", "native_theap_contract") if index == 0 else ("--lib",)),
                     test, "--", "--exact", "--nocapture", "--test-threads=1"]
                 require_one_native_test(records[label], f"retained {profile} {label}")
@@ -346,7 +358,7 @@ def cli(argv=None):
         harness.require_success(adapter, f"retained {profile} native adapter build")
         expected_adapter = [cargo, "build", "--locked", "--release", "--message-format=json",
             "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(output / "cargo-target"),
-            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())]
+            *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in m4.api_profile_features(profile))) if m4.api_profile_features(profile) else ())]
         artifact = adapter.get("artifact", {})
         retained_adapter = products / f"{profile}-adapter.a"
         if (adapter.get("command") != expected_adapter

@@ -22,8 +22,11 @@ class TheapProducerTests(unittest.TestCase):
         self.output = Path(temporary.name)
         self.drivers = {side: self.output / side for side in ('c', 'rust')}
 
-    def observation(self, *, visitor=None):
+    def observation(self, *, visitor=None, profile='release'):
         trace = dict(theap.SOURCE_TRACE)
+        if profile in theap.m4.GUARDED_API_PROFILE_BASES:
+            trace.update({f'{context}.guarded_actual':'1,1,1,1,1,1,1,1,1,1'
+                          for context in ('main','worker','child','fork')})
         if visitor is not None:
             trace['main.visitor'] = visitor
         return {'status': 0, 'stdout': '\n'.join([theap.BEGIN,
@@ -60,15 +63,15 @@ class TheapProducerTests(unittest.TestCase):
             'c-build':[*common,'-DCRABC_M6_SOURCE_INTERNAL=1','-I',str(source/'src'),str(retained_driver),str(source/'src/static.c'),'-pthread','-o',str(output/'public-theap-c')],
             'rust-link':[*common,str(retained_driver),str(library),'-pthread','-o',str(output/'public-theap-rust')],
             'c':[str(output/'public-theap-c')],'rust':[str(output/'public-theap-rust')],
-            'adapter-build':[cargo,'build','--locked','--release','--message-format=json','--target',theap.m4.RUST_TARGET,'-p',theap.m4.ADAPTER_PACKAGE,'--target-dir',str(output/'cargo-target'),'--features',f'crabc-mimalloc/mi-{profile}']}
+            'adapter-build':[cargo,'build','--locked','--release','--message-format=json','--target',theap.m4.RUST_TARGET,'-p',theap.m4.ADAPTER_PACKAGE,'--target-dir',str(output/'cargo-target'),'--features',','.join(f'crabc-mimalloc/{feature}' for feature in theap.m4.api_profile_features(profile))]}
         ids=[];cases=[]
         labels=['c-build','rust-link','c-run','rust-run','native_theap_contract',*(test.rsplit('::',1)[-1] for test in theap.native_control_tests(profile)[1:])]
         for index,test in enumerate(theap.native_control_tests(profile)):
             label=labels[4+index]
-            commands[label]=[cargo,'test','--locked','--offline','--target',theap.m4.RUST_TARGET,'-p','crabc-mimalloc','--no-default-features','--message-format=json','--features',f'mi-{profile}',*(('--test','native_theap_contract') if index==0 else ('--lib',)),test,'--','--exact','--nocapture','--test-threads=1']
+            commands[label]=[cargo,'test','--locked','--offline','--target',theap.m4.RUST_TARGET,'-p','crabc-mimalloc','--no-default-features','--message-format=json','--features',','.join(theap.m4.api_profile_features(profile)),*(('--test','native_theap_contract') if index==0 else ('--lib',)),test,'--','--exact','--nocapture','--test-threads=1']
         for label in labels:
             stem={'c-run':'c','rust-run':'rust'}.get(label,label)
-            record=self.observation() if label.endswith('-run') else {'status':0,'stdout':'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 100 filtered out;\n','stderr':''}
+            record=self.observation(profile=profile) if label.endswith('-run') else {'status':0,'stdout':'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 100 filtered out;\n','stderr':''}
             record['command']=commands[stem]
             filename=profile+'/'+stem+'.json';(logs/profile).mkdir(exist_ok=True)
             (logs/filename).write_text(json.dumps(record))
@@ -130,6 +133,32 @@ class TheapProducerTests(unittest.TestCase):
              mock.patch.object(theap.harness,'load_pin',return_value=pin), \
              mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
             self.assertEqual(theap.cli(['--profiles','secure-2','--read']),0)
+
+    def test_actual_guarded_reader_requires_both_compilers_and_protected_clients(self):
+        receipt,pin,_=self.receipt_fixture('guarded-secure-3')
+        with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
+             mock.patch.object(theap.harness,'load_pin',return_value=pin), \
+             mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
+            self.assertEqual(theap.cli(['--profiles','guarded-secure-3','--read']),0)
+            for label,original,replacement in (
+                    ('c-build','-DMI_GUARDED=1','-DMI_GUARDED=0'),
+                    ('adapter-build','crabc-mimalloc/mi-guarded,crabc-mimalloc/mi-secure-3','crabc-mimalloc/mi-secure-3'),
+                    ('native_theap_contract','mi-guarded,mi-secure-3','mi-guarded')):
+                path=receipt.path.parent/'logs/guarded-secure-3'/f'{label}.json'
+                saved=path.read_text();data=json.loads(saved)
+                data['command'][data['command'].index(original)]=replacement
+                path.write_text(json.dumps(data))
+                with self.subTest(label=label),self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--profiles','guarded-secure-3','--read'])
+                path.write_text(saved)
+            for side in ('c','rust'):
+                path=receipt.path.parent/'logs/guarded-secure-3'/f'{side}.json'
+                saved=path.read_text();data=json.loads(saved)
+                data['stdout']=data['stdout'].replace('main.guarded_actual=1,1,1', 'main.guarded_actual=1,0,1')
+                path.write_text(json.dumps(data))
+                with self.subTest(side=side),self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--profiles','guarded-secure-3','--read'])
+                path.write_text(saved)
 
     def test_numeric_debug_reader_rejects_lower_c_or_native_selector(self):
         receipt,pin,_=self.receipt_fixture('debug-3')
@@ -223,7 +252,7 @@ class TheapProducerTests(unittest.TestCase):
         executable=self.output/'unit-executable';executable.write_bytes(b'unit test artifact')
         extras=('config::tests::secure_three_uses_encoded_padding_without_debug_or_statistics',
                 'free_list::tests::encoded_links_use_both_source_keys_and_page_null_sentinel')
-        for profile in (*theap.PROFILES, 'secure-1', 'secure-2', 'debug-2', 'debug-3', 'secure-3'):
+        for profile in (*theap.PROFILES, 'secure-1', 'secure-2', 'debug-2', 'debug-3', 'secure-3', *theap.m4.GUARDED_API_PROFILE_BASES):
             executed=[]
             def run(output,label,argv,cwd):
                 executed.append(argv)
@@ -240,7 +269,7 @@ class TheapProducerTests(unittest.TestCase):
                     self.assertEqual(extra in tests,profile=='secure-3')
                 for argv in executed:
                     if profile=='release':self.assertNotIn('--features',argv)
-                    else:self.assertEqual(argv[argv.index('--features')+1],f'mi-{profile}')
+                    else:self.assertEqual(argv[argv.index('--features')+1],','.join(theap.m4.api_profile_features(profile)))
 
 
 class TheapProfileSelectionTests(unittest.TestCase):

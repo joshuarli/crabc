@@ -68,7 +68,7 @@ static bool theap_visitor(const mi_heap_t* heap, const mi_heap_area_t* area,
   return !trace->stop;
 }
 
-/* Without guarded sampling, configuring a live Theap leaves its client
+/* Configuring a live Theap leaves its existing client
    blocks, default selection, and allocation accounting unchanged. Retain
    clients across each setter call so the check covers existing allocations
    as well as requests made after configuration. */
@@ -129,6 +129,82 @@ static bool guarded_configuration(const char* name, mi_theap_t* base,
   return roots && content && usable && stats && allocations && zero && aligned && unchanged_errno && defaults;
 }
 
+#if MI_GUARDED
+/* Read kernel mapping permissions while each original allocation keeps its
+   page live. Guard protection and its discharge are observable without
+   accessing bytes outside the public usable extent. */
+static bool mapping_permission(uintptr_t address, bool protected) {
+  FILE* maps = fopen("/proc/self/maps", "r");
+  if (maps == NULL) return false;
+  char line[512], permission[5];
+  unsigned long start, end;
+  bool matched = false;
+  while (fgets(line, sizeof(line), maps) != NULL) {
+    if (sscanf(line, "%lx-%lx %4s", &start, &end, permission) == 3 &&
+        start <= address && address < end) {
+      matched = protected ? strncmp(permission, "---", 3) == 0
+                          : strncmp(permission, "rw", 2) == 0;
+      break;
+    }
+  }
+  fclose(maps);
+  return matched;
+}
+
+static bool guarded_actual(const char* name, mi_theap_t* base,
+                           mi_theap_t* selected, mi_heap_t* main_heap, mi_heap_t* heap) {
+  mi_theap_guarded_set_size_bound(base, 0, SIZE_MAX);
+  mi_theap_guarded_set_size_bound(selected, 0, SIZE_MAX);
+  mi_theap_guarded_set_sample_rate(base, 1, 0);
+  mi_theap_guarded_set_sample_rate(selected, 1, 0);
+  unsigned char* direct = mi_theap_zalloc(selected, 81);
+  unsigned char* ordinary = mi_zalloc(81);
+  unsigned char* fixed = mi_theap_zalloc_aligned(base, 79, 128);
+  if (direct == NULL || ordinary == NULL || fixed == NULL) return false;
+  const size_t usable = mi_usable_size(direct);
+  const size_t expected = mi_option_get(mi_option_guarded_precise) != 0 ? 81 : 96;
+  uintptr_t old_tail = (uintptr_t)direct + usable;
+  bool geometry = usable == expected && mi_usable_size(ordinary) == expected &&
+                  mi_usable_size(fixed) == 128 && (uintptr_t)fixed % 128 == 0;
+  bool protection = mapping_permission(old_tail, true) &&
+                    mapping_permission((uintptr_t)ordinary + mi_usable_size(ordinary), true) &&
+                    mapping_permission((uintptr_t)fixed + mi_usable_size(fixed), true);
+  bool zero = all_zero(direct, usable) && all_zero(ordinary, mi_usable_size(ordinary)) &&
+              all_zero(fixed, mi_usable_size(fixed));
+  bool ownership = mi_heap_of(direct) == heap && mi_heap_of(ordinary) == heap &&
+                   mi_heap_of(fixed) == main_heap && mi_theap_get_default() == selected;
+  memset(direct, 0x6b, usable);
+  errno = 0;
+  void* refused = mi_theap_realloc(selected, direct, SIZE_MAX);
+  bool refusal = refused == NULL && errno == ENOMEM && mi_usable_size(direct) == usable &&
+                 mapping_permission(old_tail, true);
+  errno = 91;
+  refused = mi_theap_realloc_aligned(selected, direct, SIZE_MAX, 64);
+  refusal &= refused == NULL && errno == 91 && mi_heap_of(direct) == heap;
+  bool retained = true;
+  for (size_t i = 0; i < usable; i++) retained &= direct[i] == 0x6b;
+  unsigned char* grown = mi_theap_rezalloc(selected, direct, usable + 4097);
+  if (grown == NULL) return false;
+  bool growth = grown != direct && mi_heap_of(grown) == heap &&
+                mi_usable_size(grown) >= usable + 4097;
+  for (size_t i = 0; i < usable; i++) growth &= grown[i] == 0x6b;
+  bool growth_zero = all_zero(grown + usable, mi_usable_size(grown) - usable);
+  bool consumed = mapping_permission(old_tail, false) &&
+                  mapping_permission((uintptr_t)grown + mi_usable_size(grown), true);
+  uintptr_t grown_tail = (uintptr_t)grown + mi_usable_size(grown);
+  mi_free(grown);
+  bool discharged = mapping_permission(grown_tail, false);
+  mi_free(ordinary); mi_free(fixed);
+  mi_theap_guarded_set_sample_rate(base, 0, 0);
+  mi_theap_guarded_set_sample_rate(selected, 0, 0);
+  printf("%s.guarded_actual=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n", name,
+         geometry, protection, zero, ownership, refusal, retained, growth,
+         growth_zero, consumed, discharged);
+  return geometry && protection && zero && ownership && refusal && retained &&
+         growth && growth_zero && consumed && discharged;
+}
+#endif
+
 static bool run_case(const char* name, mi_theap_t* parent_default) {
   mi_heap_t* main_heap = mi_heap_main();
   mi_theap_t* base = mi_theap_get_default();
@@ -165,6 +241,9 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
 
 #ifdef CRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY
   bool guarded = guarded_configuration(name, base, other, main_heap, heap);
+#if MI_GUARDED
+  guarded &= guarded_actual(name, base, other, main_heap, heap);
+#endif
   previous = mi_theap_set_default(base);
   printf("%s.restore=%d,%d\n", name, previous == other, mi_theap_get_default() == base);
   mi_free(direct_before);
@@ -280,6 +359,9 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
          mi_heap_of(null_zero) == heap, all_zero(null_zero, 49));
 
   if (!guarded_configuration(name, base, other, main_heap, heap)) return false;
+#if MI_GUARDED
+  if (!guarded_actual(name, base, other, main_heap, heap)) return false;
+#endif
   mi_stats_t statistics;
   mi_stats_init(&statistics);
   bool stats_ok = mi_theap_stats_get(other, &statistics);
