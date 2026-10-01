@@ -280,6 +280,7 @@ unsafe fn new_child_with<'heap>(
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildSubprocessDestroyError {
     /// A scoped callback still retains the actual child owner.
+    #[cfg(target_arch = "x86_64")]
     CallbackActive,
     /// The owner is not a created child or is terminally retained.
     InvalidState,
@@ -731,6 +732,7 @@ pub(crate) struct NativeChildSubprocess {
     /// last of them finishes, so that each finds the child gone.
     orphans: core::cell::UnsafeCell<usize>,
     /// Admission retained across callbacks after owner projections and locks end.
+    #[cfg(target_arch = "x86_64")]
     callback_leases: core::sync::atomic::AtomicUsize,
 }
 
@@ -802,8 +804,10 @@ impl NativeSubprocessId {
 /// One actual child-record admission retained while no owner projection or
 /// private lock spans user callbacks. The record's count is the final release
 /// target, after every callback-derived process view has ended.
+#[cfg(target_arch = "x86_64")]
 struct NativeChildCallbackLease(core::ptr::NonNull<NativeChildSubprocess>);
 
+#[cfg(target_arch = "x86_64")]
 impl Drop for NativeChildCallbackLease {
     fn drop(&mut self) {
         // SAFETY: acquisition retained the record independently of a child
@@ -828,6 +832,7 @@ impl Drop for NativeChildCallbackLease {
 /// The callback must not delete that selected Heap, finish its selected member,
 /// or free its in-flight client. All exclusive page-engine, child and member
 /// projections ended before this call. Other ordinary allocation may reenter.
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn with_native_child_callback_owner<R>(
     heap: core::ptr::NonNull<crate::types::Heap>,
     callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
@@ -935,6 +940,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             parent_metadata,
             registry,
             orphans: core::cell::UnsafeCell::new(0),
+            #[cfg(target_arch = "x86_64")]
             callback_leases: core::sync::atomic::AtomicUsize::new(0),
         });
     }
@@ -1906,6 +1912,7 @@ unsafe fn destroy_record(
         id.with_owner(|owner| {
             // Check before taking any owner or changing a source list. The
             // callback holds no child lock, so nested allocation can proceed.
+            #[cfg(target_arch = "x86_64")]
             if record.callback_leases.load(core::sync::atomic::Ordering::Acquire) != 0 {
                 return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
             }
