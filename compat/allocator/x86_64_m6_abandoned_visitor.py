@@ -115,6 +115,8 @@ def run_profiles(profiles, driver, artifacts, runner, compare, source_internal=F
     inputs = output / "inputs.json"
     inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
         "profiles": profiles, "boundary": "public native-mi-adapter over pinned musl threads",
+        "profile_flags": {profile: list(m4.api_profile_flags(profile)) for profile in profiles},
+        "profile_features": {profile: list(m4.api_profile_features(profile)) for profile in profiles},
         "fixture": driver.name}, indent=2) + "\n")
     products[inputs.name] = inputs
     compiler = harness.require_tool("musl-gcc")
@@ -132,9 +134,10 @@ def run_profiles(profiles, driver, artifacts, runner, compare, source_internal=F
         oracle = directory / "oracle.o"
         passed("oracle-build", [compiler, "-std=c11", *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
         target = directory / "cargo-target"
+        features = m4.api_profile_features(profile)
         passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
             "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
-            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], harness.ROOT)
+            *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in features)) if features else ())], harness.ROOT)
         library = target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
         retained_library = directory / "native-mi-adapter.a"
         shutil.copy2(library, retained_library)
@@ -170,6 +173,9 @@ def run_profiles(profiles, driver, artifacts, runner, compare, source_internal=F
         else:
             cases.append((f"{profile}-comparison", 0, comparison_logs))
         print(f"{runner} {profile}: actual C/native compared; failures={len(failures)}", flush=True)
+        # The retained static archive and callers own every execution input;
+        # completed profile build caches are no longer needed by the reader.
+        shutil.rmtree(target)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during abandoned visitor execution")
     path = receipts.write_receipt(harness.ROOT, runner, output, products, cases,
@@ -184,12 +190,13 @@ def run_profiles(profiles, driver, artifacts, runner, compare, source_internal=F
 
 
 
-def read_and_replay(profiles, runner, compare, replay=False, *, fixture=DRIVER.name):
+def read_and_replay(profiles, runner, compare, replay=False, *, fixture=DRIVER.name,
+                    available_profiles=PROFILES, validate_inputs=False, source_internal=False):
     receipt = receipts.read_receipt(harness.ROOT, runner)
     covered = tuple(receipt.parameters["profiles"].split(","))
     if any(profile not in covered for profile in profiles):
         raise harness.HarnessError("retained visitor receipt does not cover selected profiles")
-    if covered != tuple(profile for profile in PROFILES if profile in covered):
+    if covered != tuple(profile for profile in available_profiles if profile in covered):
         raise harness.HarnessError("retained visitor profiles are not an ordered selected profile set")
     expected_cases = []
     expected_products = {fixture, "mimalloc.h", "LICENSE", "mimalloc-3.5.0.tar.gz", "inputs.json"}
@@ -205,6 +212,35 @@ def read_and_replay(profiles, runner, compare, replay=False, *, fixture=DRIVER.n
         raise harness.HarnessError("retained visitor build, caller and comparison phases differ")
     if set(receipt.products) != expected_products:
         raise harness.HarnessError("retained visitor inputs and profile products differ")
+    if validate_inputs:
+        products = receipt.path.parent / "products"
+        inputs = json.loads((products / "inputs.json").read_text())
+        pin = harness.load_pin()
+        if (inputs.get("upstream") != pin or inputs.get("profiles") != list(covered)
+                or harness.sha256_file(products / "mimalloc-3.5.0.tar.gz") != pin["sha256"]
+                or (products / fixture).read_bytes() != (harness.ALLOCATOR_ROOT / fixture).read_bytes()
+                or inputs.get("profile_flags") != {p: list(m4.api_profile_flags(p)) for p in covered}
+                or inputs.get("profile_features") != {p: list(m4.api_profile_features(p)) for p in covered}):
+            raise harness.HarnessError("retained visitor source or compiler configuration differs")
+        for profile in covered:
+            flags = ["-DMI_LIBC_MUSL=1", *[flag for flag in m4.api_profile_flags(profile)
+                if flag.startswith(("-DMI_", "-UMI_"))]]
+            for phase in ("oracle-build", "c-compile", "native-compile", "native-build"):
+                case = next(case for case in receipt.cases if case["id"] == f"{profile}-{phase}")
+                log = next(path for path in case["logs"] if path.endswith(".json"))
+                argv = json.loads((receipt.path.parent / "logs" / log).read_text()).get("command", [])
+                if phase == "native-build":
+                    features = m4.api_profile_features(profile)
+                    selected = ",".join(f"crabc-mimalloc/{feature}" for feature in features)
+                    if ((features and ("--features" not in argv or argv[argv.index("--features") + 1:] != [selected]))
+                            or (not features and "--features" in argv)):
+                        raise harness.HarnessError("retained visitor native feature arguments differ")
+                elif [arg for arg in argv if arg.startswith(("-DMI_", "-UMI_"))] != flags:
+                    raise harness.HarnessError("retained visitor C compiler configuration differs")
+                if phase in ("c-compile", "native-compile"):
+                    internal = "-DCRABC_M6_SOURCE_INTERNAL=1" in argv
+                    if internal != (source_internal and phase == "c-compile"):
+                        raise harness.HarnessError("retained visitor source ownership assertions differ")
     print(f"{runner} exact-source physical receipt: PASS")
     if not replay:
         return
@@ -239,17 +275,22 @@ def read_and_replay(profiles, runner, compare, replay=False, *, fixture=DRIVER.n
         print(f"{runner} retained {profile} full C/native workload replay PASS")
 
 
-def visitor_main(driver, artifacts, runner, compare, source_internal=False):
+def visitor_main(driver, artifacts, runner, compare, source_internal=False, *, available_profiles=PROFILES):
     parser = argparse.ArgumentParser(description="Compare full abandoned-page visitor workloads with pinned C")
-    parser.add_argument("--matrix", action="store_true")
-    parser.add_argument("--profile", choices=PROFILES, default="release")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--matrix", action="store_true")
+    selection.add_argument("--profile", choices=available_profiles, default="release")
+    selection.add_argument("--profiles", nargs="+", choices=available_profiles)
     parser.add_argument("--read", action="store_true")
     parser.add_argument("--replay", action="store_true")
     args = parser.parse_args()
-    profiles = PROFILES if args.matrix else (args.profile,)
+    profiles = tuple(args.profiles) if args.profiles else PROFILES if args.matrix else (args.profile,)
+    if len(set(profiles)) != len(profiles) or profiles != tuple(p for p in available_profiles if p in profiles):
+        parser.error("profiles must be an ordered selection without duplicates")
     try:
         if args.read or args.replay:
-            read_and_replay(profiles, runner, compare, args.replay, fixture=driver.name)
+            read_and_replay(profiles, runner, compare, args.replay, fixture=driver.name,
+                available_profiles=available_profiles, validate_inputs=True, source_internal=source_internal)
         else:
             run_profiles(profiles, driver, artifacts, runner, compare, source_internal)
     except (harness.HarnessError, stress.EvidenceError, receipts.ReceiptError) as error:

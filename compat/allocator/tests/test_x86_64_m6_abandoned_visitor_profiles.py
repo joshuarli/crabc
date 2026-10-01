@@ -27,6 +27,38 @@ def changed(trace, key, field, value):
 
 
 class AbandonedVisitorProfilesTests(unittest.TestCase):
+    def guarded_os_trace(self, profile="guarded"):
+        trace = dict(os_visitor.SOURCE_OS_SINGLETON)
+        full, usable, page = 1114112, 1048592, 4096
+        padding = 8 if profile.startswith("guarded-debug-") or profile == "guarded-secure-3" else 0
+        geometry = f"1,{usable},{full},{full-usable-page},{full-padding},{page}"
+        trace.update({f"os.{stage}.guard": geometry for stage in os_visitor.STAGES})
+        trace["os.protected"] = "1,1"
+        return trace
+
+    def test_guarded_os_canonical_slot_retains_usable_prefix_after_owner_exit(self):
+        for profile in os_visitor.GUARDED_PROFILES:
+            trace = self.guarded_os_trace(profile)
+            output = stdout(os_visitor, trace)
+            os_visitor.compare_runs(output, "source.os=1,1\nsource.transfer=1,1,1\n", output, "", profile)
+
+    def test_guarded_os_slot_cannot_include_the_protected_tail_in_client_usable_size(self):
+        trace = changed(self.guarded_os_trace(), "os.blocks.guard", 1, 1052688)
+        with self.assertRaises(regular.harness.HarnessError):
+            os_visitor.require_trace(trace, "native", "guarded")
+
+    def test_guarded_os_slot_tag_and_both_protection_observations_are_required(self):
+        for key, field, value in (("os.stop_area.guard", 0, 0), ("os.protected", 1, 0)):
+            with self.subTest(key=key):
+                trace = changed(self.guarded_os_trace(), key, field, value)
+                with self.assertRaises(regular.harness.HarnessError):
+                    os_visitor.require_trace(trace, "native", "guarded")
+
+    def test_guarded_os_stopped_visits_must_keep_the_same_canonical_geometry(self):
+        trace = changed(self.guarded_os_trace(), "os.stop_block.guard", 3, 4096)
+        with self.assertRaises(regular.harness.HarnessError):
+            os_visitor.require_trace(trace, "c", "guarded")
+
     def test_regular_profile_geometry_preserves_payload_order_and_used_counts(self):
         trace = dict(regular.SOURCE_REGULAR_PAGE)
         for key in trace:
