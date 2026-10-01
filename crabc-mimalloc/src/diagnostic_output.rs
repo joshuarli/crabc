@@ -639,6 +639,21 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// Formats the unconditional source assertion body before terminal output.
+    fn assertion_failure(assertion: &CStr, file: &CStr, line: u32, function: Option<&CStr>) -> Self {
+        let mut message = Self::empty();
+        message.append(b"mimalloc: assertion failed: at \"");
+        message.append(file.to_bytes());
+        message.append(b"\":");
+        append_mbind_unsigned_decimal(&mut message.bytes, &mut message.length, u64::from(line));
+        message.append(b", ");
+        if let Some(function) = function { message.append(function.to_bytes()); }
+        message.append(b"\n  assertion: \"");
+        message.append(assertion.to_bytes());
+        message.append(b"\"\n");
+        message
+    }
+
     /// Formats the one pinned huge-page `mbind` warning body.
     ///
     /// Pinned mimalloc v3.5.0 `src/prim/unix/prim.c:630-645` calls
@@ -1145,6 +1160,33 @@ pub(crate) type OutputCallback = unsafe extern "C" fn(*const c_char, *mut c_void
 /// like [`OutputCallback`]. It receives the source error code, not errno.
 pub(crate) type ErrorCallback = unsafe extern "C" fn(core::ffi::c_int, *mut c_void);
 
+/// Prints the source assertion without descriptor gating, then terminates.
+///
+/// # Safety
+///
+/// `output` must be the actual process output owner and remain live through
+/// delivery. The caller must satisfy `OutputOwner::raw_message`'s callback
+/// registration and argument lifetime obligations, and end every allocator
+/// metadata projection before a callback can reenter allocation. The supplied
+/// C strings must describe the failing source assertion and its location.
+#[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+pub(crate) unsafe fn source_assert_fail(
+    output: &OutputOwner,
+    assertion: &'static CStr,
+    file: &'static CStr,
+    line: u32,
+    function: Option<&'static CStr>,
+) -> ! {
+    let message = SourceFormattedMessage::assertion_failure(assertion, file, line, function);
+    // SAFETY: the caller retains the actual owner and serializes its callback
+    // registration; the message remains on this stack throughout delivery.
+    unsafe { output.raw_message(message) };
+    unsafe extern "C" { fn abort() -> !; }
+    // SAFETY: the embedding libc owns this process-terminal operation; all
+    // callback delivery has returned and no allocator projection remains live.
+    unsafe { abort() }
+}
+
 /// What remains after `_mi_error_message` has shown its message.
 ///
 /// The engine reports the source error code; errno belongs to libc.
@@ -1160,12 +1202,12 @@ pub(crate) enum SourceErrorDisposition {
 }
 
 /// `mi_error_default` runs only after the registered-handler branch and
-/// after every allocator projection has ended. The optional allocation-error
-/// profile delegates process termination to the embedding libc's own ABI.
+/// after every allocator projection has ended. Selected terminal source
+/// error policies delegate to the embedding libc's own abort ABI.
 pub(crate) fn source_default_error_disposition(error: Errno) -> SourceErrorDisposition {
-    #[cfg(all(target_arch = "x86_64", any(feature = "mi-xmalloc", feature = "mi-secure-1")))]
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-xmalloc", feature = "mi-secure-1", feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
     if (crate::config::XMALLOC && matches!(error, Errno::NOMEM | Errno::OVERFLOW | Errno::INVAL))
-        || (crate::config::SECURE_LEVEL > 0 && error == Errno::FAULT)
+        || ((crate::config::SECURE_LEVEL > 0 || crate::config::DEBUG_LEVEL > 0) && error == Errno::FAULT)
     {
         unsafe extern "C" {
             fn abort() -> !;
@@ -3979,6 +4021,45 @@ mod tests {
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), b"retained output\n");
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+    #[test]
+    fn source_assertion_delivers_raw_output_then_aborts_without_error_handler() {
+        const CHILD: &str = "CRABC_MI_ASSERT_CHILD";
+        assert_eq!(SourceFormattedMessage::assertion_failure(c"false", c"source.c", u32::MAX, None)
+            .as_c_str().to_bytes(), b"mimalloc: assertion failed: at \"source.c\":4294967295, \n  assertion: \"false\"\n");
+        if std::env::var_os(CHILD).is_some() {
+            let entries = environment_entries(&[b"mimalloc_show_errors=0"]);
+            install_option_trace_environment(&entries);
+            let capture = Capture::new();
+            let owner = initialized_option_owner(&capture);
+            unsafe extern "C" fn write(message: *const c_char, _: *mut c_void) {
+                use std::io::Write;
+                // SAFETY: the synchronous output invocation supplies a live
+                // NUL-terminated message until this callback returns.
+                let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+                let _ = std::io::stderr().write_all(bytes);
+            }
+            unsafe extern "C" fn error(_: core::ffi::c_int, _: *mut c_void) {
+                use std::io::Write;
+                let _ = std::io::stderr().write_all(b"unexpected error handler\n");
+            }
+            // SAFETY: this child serializes registrations and retains the
+            // owner, callbacks, and every argument through terminal delivery.
+            unsafe {
+                owner.register_output(Some(write), core::ptr::null_mut());
+                owner.register_error(Some(error), core::ptr::null_mut());
+                super::source_assert_fail(&owner, c"page != NULL", c"src/page.c", 43, Some(c"mi_page_list_count"));
+            }
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "diagnostic_output::tests::source_assertion_delivers_raw_output_then_aborts_without_error_handler",
+                   "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1").output().unwrap();
+        assert_eq!(result.status.signal(), Some(6));
+        assert_eq!(result.stderr, b"mimalloc: assertion failed: at \"src/page.c\":43, mi_page_list_count\n  assertion: \"page != NULL\"\n");
+    }
+
     #[test]
     fn secure_guard_failure_preserves_level_pointer_size_and_error() {
         use super::SourceErrorReport;
@@ -4004,10 +4085,10 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-debug-1")))]
     #[test]
-    fn secure_default_fault_aborts_after_registered_handler_priority() {
-        const CHILD: &str = "CRABC_MI_SECURE_FAULT_CHILD";
+    fn source_default_fault_aborts_after_registered_handler_priority() {
+        const CHILD: &str = "CRABC_MI_SOURCE_FAULT_CHILD";
         if std::env::var_os(CHILD).is_some() {
             let entries = environment_entries(&[b"mimalloc_show_errors=0"]);
             install_option_trace_environment(&entries);
@@ -4028,8 +4109,8 @@ mod tests {
                 assert_eq!(code.load(Ordering::Relaxed), Errno::FAULT.raw() as usize);
                 owner.register_error(None, core::ptr::null_mut());
             }
-            std::println!("secure.error.handled={}", code.load(Ordering::Relaxed));
-            std::println!("secure.error.default.entered");
+            std::println!("source.error.handled={}", code.load(Ordering::Relaxed));
+            std::println!("source.error.default.entered");
             // SAFETY: the owner is private to this child and has no live
             // callback registration or allocator projection.
             unsafe { owner.error_message(Errno::FAULT, source_message(b"default\n\0")) };
@@ -4037,12 +4118,12 @@ mod tests {
         }
         use std::os::unix::process::ExitStatusExt;
         let result = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "diagnostic_output::tests::secure_default_fault_aborts_after_registered_handler_priority",
+            .args(["--exact", "diagnostic_output::tests::source_default_fault_aborts_after_registered_handler_priority",
                    "--nocapture", "--test-threads=1"])
             .env(CHILD, "1").output().unwrap();
         let stdout = std::string::String::from_utf8_lossy(&result.stdout);
-        assert!(stdout.contains("secure.error.handled=14"), "{stdout}");
-        assert!(stdout.contains("secure.error.default.entered"), "{stdout}");
+        assert!(stdout.contains("source.error.handled=14"), "{stdout}");
+        assert!(stdout.contains("source.error.default.entered"), "{stdout}");
         assert_eq!(result.status.signal(), Some(6), "{stdout}");
     }
 
