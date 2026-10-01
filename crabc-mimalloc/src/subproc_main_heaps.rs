@@ -2141,9 +2141,21 @@ pub(crate) mod tests {
                     drop(allocation);
                 }
                 assert_eq!(crate::compiler_tls::default_theap(), default);
-                assert_eq!(cached_theap(), cached);
+                // Fresh canonical page metadata is allocated through the
+                // fixed main Heap, updating the source Heap API cache while
+                // retaining the caller's default and selected page owner.
+                assert_eq!(cached_theap(), fixed_main_theap().unwrap());
                 for block in [first, second] {
-                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    let _admission = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+                        .expect("the selected owner remains admitted for canonical cleanup");
+                    let allocation = unsafe { binding().unwrap().page_map().lookup_live_allocation(block) }
+                        .unwrap().unwrap();
+                    let page = allocation.page();
+                    let used = unsafe { page.as_ref() }.used();
+                    assert_eq!(unsafe { native_theap_free_guarded_canonical_progress(selected, allocation) },
+                        Some(crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))));
+                    assert_eq!(unsafe { page.as_ref() }.used(), used - 1,
+                        "canonical cleanup consumes exactly one original client");
                 }
                 assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
                 assert_eq!(unsafe { native_heap_release(other_heap, false) }, Ok(HeapReleaseOutcome::Released));
