@@ -1460,6 +1460,19 @@ impl NativeChildGenericFrequencyCapture {
     }
 }
 
+/// Source request selected before entering an exact child Theap engine.
+/// Canonical guarded requests enter the counted generic path directly.
+enum NativeChildAllocationRequest {
+    Ordinary { size: usize, aligned: Option<(usize, usize)>, zero: bool },
+    #[cfg(target_arch = "x86_64")]
+    GuardedCanonical { source_size: usize },
+}
+
+enum NativeChildAllocationRefusal {
+    Unavailable,
+    Retained,
+}
+
 /// Direct ordinary or aligned allocation on a retained non-main child
 /// Theap. The default and cached roots keep their existing selection.
 ///
@@ -1475,28 +1488,79 @@ pub(crate) unsafe fn native_child_theap_allocate_variant(
     aligned: Option<(usize, usize)>,
     zero: bool,
 ) -> Option<Option<core::ptr::NonNull<u8>>> {
-    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     if !current_thread_is_child_member() { return None; }
-    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
-        return Some(None);
-    };
+    // SAFETY: forwarded exact issuer retention and source geometry obligations.
+    match unsafe { native_child_theap_allocate_request(theap,
+        NativeChildAllocationRequest::Ordinary { size, aligned, zero }) }
+    {
+        Ok(block) => Some(block),
+        Err(NativeChildAllocationRefusal::Unavailable) => None,
+        Err(NativeChildAllocationRefusal::Retained) => Some(None),
+    }
+}
+
+/// Allocates the exact padded, OS-page-rounded canonical guarded extent on
+/// the current child's already selected main or non-main Theap. Admission or
+/// continuation refusal is distinct from a completed source allocation miss.
+///
+/// # Safety
+/// The original native allocation owner was admitted before this attempt.
+/// The caller retains that exact child member, Heap, TLD, and Theap through
+/// every getter/callback and continuation; none may be retired or replaced.
+/// `source_size` passed the source guarded geometry checks. This returns no
+/// diagnostic authority and manufactures no allocation-owner admission.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn native_child_theap_allocate_guarded_canonical(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    source_size: usize,
+) -> crate::runtime_lifecycle::NativeGuardedCanonicalAllocationProgress {
+    use crate::runtime_lifecycle::NativeGuardedCanonicalAllocationProgress as Progress;
+    if !current_thread_is_child_member() { return Progress::OtherDomain; }
+    if !crate::config::GUARDED { return Progress::Refused; }
+    // SAFETY: forwarded original admission and exact selected issuer custody.
+    match unsafe { native_child_theap_allocate_request(theap,
+        NativeChildAllocationRequest::GuardedCanonical { source_size }) }
+    {
+        Ok(block) => Progress::Complete(block),
+        Err(_) => Progress::Refused,
+    }
+}
+
+/// Runs one source request without projecting an owner or engine across a
+/// callback. Each resume uses the same member's exact selected source engine.
+///
+/// # Safety
+/// The caller retains the exact selected member, Heap, TLD, and Theap for
+/// the whole operation, including getters/callbacks and resumed allocation.
+unsafe fn native_child_theap_allocate_request(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    request: NativeChildAllocationRequest,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativeChildAllocationRefusal> {
+    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeChildAllocationRefusal::Retained)?;
     // SAFETY: forwarded exact current-thread Theap lifetime. Each engine
     // projection ends before a deferred-free callback can reenter allocation.
-    let mut phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| match aligned {
-        None => engine.begin_deferred_free_allocation(size, zero),
-        Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
-    }) }?;
+    let mut phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| match request {
+        NativeChildAllocationRequest::Ordinary { size, aligned, zero } => match aligned {
+            None => engine.begin_deferred_free_allocation(size, zero),
+            Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
+        },
+        #[cfg(target_arch = "x86_64")]
+        NativeChildAllocationRequest::GuardedCanonical { source_size } =>
+            engine.begin_deferred_free_guarded_canonical(source_size),
+    }) }.ok_or(NativeChildAllocationRefusal::Unavailable)?;
     loop {
         match phase {
-            DeferredFreeAllocationPhase::Complete(block) => return Some(block),
+            DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // SAFETY: the originating engine projection ended above. The
                 // public call retains the exact selected Heap, Theap and member.
-                let capture = unsafe { NativeChildGenericFrequencyCapture::begin(theap, &request) }?;
+                let capture = unsafe { NativeChildGenericFrequencyCapture::begin(theap, &request) }.ok_or(NativeChildAllocationRefusal::Unavailable)?;
                 // SAFETY: that actual retained issuer keeps its immutable Heap
                 // publication live; pointer equality is only an admission check.
-                let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(capture.theap) })?;
+                let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(capture.theap) }).ok_or(NativeChildAllocationRefusal::Unavailable)?;
                 let frequency = loop {
                     // SAFETY: no member/engine projection or allocator lock
                     // spans this getter. The counted record lease retains the
@@ -1506,7 +1570,7 @@ pub(crate) unsafe fn native_child_theap_allocate_variant(
                     }) } {
                         Ok(frequency) => break frequency,
                         Err(NativeChildCallbackAdmissionError::Busy) => core::hint::spin_loop(),
-                        Err(NativeChildCallbackAdmissionError::Invalid) => return Some(None),
+                        Err(NativeChildCallbackAdmissionError::Invalid) => return Err(NativeChildAllocationRefusal::Retained),
                     }
                 };
                 // SAFETY: the capture retained the same actual member and the
@@ -1514,29 +1578,29 @@ pub(crate) unsafe fn native_child_theap_allocate_variant(
                 // A fresh short engine resumes the originating request only.
                 let Some(resumed) = (unsafe { with_native_child_heap_theap_engine(capture.theap, |engine| {
                     unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) }
-                }) }) else { return Some(None); };
+                }) }) else { return Err(NativeChildAllocationRefusal::Retained); };
                 // SAFETY: the getter and fresh engine projection both ended;
                 // the request was consumed by that exact admitted issuer.
-                if !unsafe { capture.complete() } { return Some(None); }
+                if !unsafe { capture.complete() } { return Err(NativeChildAllocationRefusal::Retained); }
                 phase = resumed;
             }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 // SAFETY: the caller retains this Theap and its attached TLD
                 // throughout the synchronous callback and resumed operation.
-                let tld = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) })?;
+                let tld = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) }).ok_or(NativeChildAllocationRefusal::Unavailable)?;
                 let force = matches!(collection, GenericAllocationCollection::Force);
                 if let Ok(invocation) = crate::deferred_free::begin_process(theap, tld, force) {
                     let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
                 }
                 phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
                     engine.resume_deferred_free_allocation(collection, continuation)
-                }) }?;
+                }) }.ok_or(NativeChildAllocationRefusal::Unavailable)?;
             }
         }
     }
 }
 
-/// Borrow only the current member's exact non-main Theap engine for one
+/// Borrow only the current member's exact selected child Theap engine for one
 /// operation; no child-record or engine projection escapes this call.
 ///
 /// # Safety
@@ -1565,8 +1629,12 @@ unsafe fn with_native_child_heap_theap_engine<R>(
                 let same_child = child.identity_pointer().is_some_and(|identity| {
                     heap.as_ref().subprocess_pointer() == identity
                 });
-                if !same_child || child.main_heap_pointer() == Some(heap) {
-                    return None;
+                if !same_child { return None; }
+                if child.main_heap_pointer() == Some(heap) {
+                    if theap != main_theap { return None; }
+                    // SAFETY: the actual current member retains this fixed
+                    // main Theap; no callback crosses the short projection.
+                    return (*owner).with_page_engine(binding, |_image, engine| operation(engine)).ok();
                 }
                 crate::meta::ChildThreadOwner::with_heap_theap_page_engine(
                     owner, child, binding, theap, operation,
@@ -1577,6 +1645,39 @@ unsafe fn with_native_child_heap_theap_engine<R>(
         })
     };
     result.ok().flatten()
+}
+
+/// Returns one captured canonical client through its original child issuer.
+/// `None` identifies a non-child current domain. Inner consumption is settled
+/// before a later engine-finish failure can erase the operation's outcome.
+///
+/// # Safety
+/// The original allocation owner predates the canonical attempt and retains
+/// the exact selected member, Heap, TLD, Theap, and live captured allocation
+/// through this callback-free cleanup. A consumed client is never retried or
+/// returned as live, even when the final lifecycle result is an error.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn native_child_theap_free_captured_with_progress(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    allocation: crate::process_page_map::LiveAllocationPointer,
+) -> Option<crate::single_thread::LocalClientFreeProgress> {
+    use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+    if !current_thread_is_child_member() { return None; }
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(Progress::RefusedBeforeConsumption(FreeError::Lifecycle));
+    };
+    let mut progress = None;
+    // SAFETY: the original owner retains the captured canonical client and
+    // exact selected issuer; the engine borrows no payload across callbacks.
+    let finished = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
+        progress = Some(unsafe { engine.free_captured_live_allocation_with_progress(allocation) });
+    }) }.is_some();
+    Some(match progress {
+        Some(Progress::Consumed(Ok(()))) if !finished =>
+            Progress::Consumed(Err(FreeError::Lifecycle)),
+        Some(progress) => progress,
+        None => Progress::RefusedBeforeConsumption(FreeError::Lifecycle),
+    })
 }
 
 /// Resolve the current child thread's Theap for a live Heap. The child main
@@ -3093,6 +3194,60 @@ pub(crate) mod tests {
                 worker.join().expect("actual retained member completes terminal finish");
                 assert_eq!(metadata.test_allocation_audit().live_capability_count + 1, after,
                     "the last real TLS member returns the record capability exactly once");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn child_guarded_canonical_transport_uses_original_main_and_auxiliary_issuers() {
+        use crate::runtime_lifecycle::{finish_current_thread_native_after_user_destructors,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            with_native_allocation_owner, NativeGuardedCanonicalAllocationProgress, ThreadFinishResult};
+        use crate::single_thread::LocalClientFreeProgress;
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::child_guarded_canonical_transport_uses_original_main_and_auxiliary_issuers",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("a live child");
+                std::thread::spawn(move || {
+                    assert!(unsafe {
+                        crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                            crate::runtime_lifecycle::current_native_allocator_thread_descriptor())
+                    });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let main = current_child_main_heap().expect("actual child main Heap");
+                    let auxiliary = native_child_heap_new().unwrap().unwrap().unwrap();
+                    for heap in [main, auxiliary] {
+                        // SAFETY: this worker retains both actual child Heaps
+                        // and its own member through each selection and scope.
+                        let theap = unsafe { native_child_heap_theap(heap) }.expect("actual selected issuer");
+                        // SAFETY: original owner admission precedes every
+                        // canonical candidate and remains held through cleanup.
+                        assert_eq!(unsafe { with_native_allocation_owner(theap, |owner| {
+                            assert_eq!(owner.selected_theap(), theap);
+                            let result = unsafe { native_child_theap_allocate_guarded_canonical(theap, 8192) };
+                            let NativeGuardedCanonicalAllocationProgress::Complete(Some(block)) = result
+                                else { panic!("healthy selected child source attempt completes"); };
+                            // SAFETY: the original admitted owner retains the
+                            // canonical client and its exact PageMap metadata.
+                            let captured = unsafe { owner.page_map().unwrap().lookup_live_allocation(block) }
+                                .unwrap().expect("original canonical source client");
+                            assert_eq!(unsafe { native_child_theap_free_captured_with_progress(theap, captured) },
+                                Some(LocalClientFreeProgress::Consumed(Ok(()))));
+                            // The consumed client is never accessed or freed again.
+                        }) }, Ok(()));
+                    }
+                    // SAFETY: the auxiliary canonical client was consumed and
+                    // every original allocation scope ended before Heap release.
+                    assert!(unsafe { native_child_heap_release(auxiliary, false) }.unwrap().unwrap().is_ok());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("both actual selected child issuers complete");
+                // SAFETY: all actual member tokens and clients ended before destruction.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
     }
