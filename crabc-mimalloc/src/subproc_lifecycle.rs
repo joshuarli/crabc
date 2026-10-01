@@ -729,16 +729,17 @@ pub(crate) struct NativeChildSubprocess {
     storage: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
     parent_metadata: ChildParentMetadata,
     registry: &'static SourceSubprocessRegistry,
-    /// Threads that still belonged to the child when `mi_subproc_destroy`
-    /// destroyed it under them. The record outlives the child until the
-    /// last of them finishes, so that each finds the child gone.
-    orphans: core::cell::UnsafeCell<usize>,
+    /// Actual compiler-TLS member tokens, including a failed finish whose
+    /// source thread registration already ended. The record survives child
+    /// destruction until the last retained token completes terminal finish.
+    members: core::cell::UnsafeCell<usize>,
     /// Admission retained across callbacks after owner projections and locks end.
     #[cfg(target_arch = "x86_64")]
     callback_leases: core::sync::atomic::AtomicUsize,
 }
 
-// SAFETY: every access to the owner and storage cells happens with `lock` held, except the
+// SAFETY: every access to the owner, storage, and member-count cells happens
+// with `lock` held, except the
 // creator's initialization before the id is returned and the destroyer's
 // final teardown after the owner is gone; the id contract excludes any other
 // operation on the record in both windows.
@@ -998,7 +999,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             storage: core::cell::UnsafeCell::new(Some(storage)),
             parent_metadata,
             registry,
-            orphans: core::cell::UnsafeCell::new(0),
+            members: core::cell::UnsafeCell::new(0),
             #[cfg(target_arch = "x86_64")]
             callback_leases: core::sync::atomic::AtomicUsize::new(0),
         });
@@ -1012,12 +1013,43 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     Ok(NativeSubprocessId(record))
 }
 
+/// One actual compiler-TLS member's retention of its original record.
+/// Source thread registration may end before metadata teardown succeeds;
+/// this token ends only when the real TLS member completes finish. Dropping
+/// it does not release the count or infer that terminal finish happened.
+#[must_use = "the actual child TLS member retains its record until explicit finish"]
+struct NativeChildRecordMember {
+    id: Option<NativeSubprocessId>,
+}
+
+impl NativeChildRecordMember {
+    fn id(&self) -> NativeSubprocessId {
+        self.id.expect("a published child TLS member retains its record")
+    }
+
+    /// Consumes this actual member's record retention once.
+    ///
+    /// # Safety
+    /// The exact record lock is held. The member has completed ordinary
+    /// teardown or the child is gone and no child image is touched again.
+    unsafe fn finish_locked(&mut self) -> Result<bool, NativeSubprocessError> {
+        let id = self.id.ok_or(NativeSubprocessError::Gone)?;
+        // SAFETY: the actual token retains this original record and its
+        // held lock excludes admission, destruction, and another finish.
+        let members = unsafe { &mut *id.record().members.get() };
+        let remaining = members.checked_sub(1).ok_or(NativeSubprocessError::Retained)?;
+        *members = remaining;
+        self.id = None;
+        Ok(remaining == 0)
+    }
+}
+
 /// The child membership of the current thread, set by
 /// [`native_subproc_add_current_thread`] and cleared by
 /// [`native_child_thread_done`]. The native runtime allocation entry points
 /// route an admitted thread's allocations and local frees through `member`.
 struct CurrentChildMember {
-    id: NativeSubprocessId,
+    record_member: NativeChildRecordMember,
     binding: ProcessMainBackingBinding,
     member: ChildThreadMember,
     #[cfg(target_arch = "x86_64")]
@@ -1060,7 +1092,7 @@ pub(crate) fn current_thread_is_child_member() -> bool {
 /// member), or `None` for a thread of the process main subprocess.
 pub(crate) fn current_child_id() -> Option<NativeSubprocessId> {
     // SAFETY: a short read of the current thread's own slot.
-    unsafe { (*CURRENT_CHILD_MEMBER.get()).as_ref().map(|member| member.id) }
+    unsafe { (*CURRENT_CHILD_MEMBER.get()).as_ref().map(|member| member.record_member.id()) }
 }
 
 /// The main Heap of the current thread's child (`mi_heap_main` for a
@@ -1124,9 +1156,20 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
         .ok_or(NativeSubprocessError::NotReady)?;
     // SAFETY: forwarded id and current-thread obligations; the record lock
     // excludes every other operation on the child context.
-    let outcome = unsafe {
+    let (outcome, record_member) = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
-            Some(child) => Ok(add_current_thread(child, binding)),
+            Some(child) => {
+                // Reserve a representable count before source admission can
+                // mutate lists. Only an actual added member issues a token.
+                let members = &mut *id.record().members.get();
+                let next = members.checked_add(1).ok_or(NativeSubprocessError::Retained)?;
+                let outcome = add_current_thread(child, binding);
+                let token = if matches!(outcome, Ok(ChildThreadAddOutcome::Added(_))) {
+                    *members = next;
+                    Some(NativeChildRecordMember { id: Some(id) })
+                } else { None };
+                Ok((outcome, token))
+            }
             None => Err(NativeSubprocessError::Gone),
         })
     }??;
@@ -1137,7 +1180,8 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
             // local fast-path publication no longer applies.
             #[cfg(target_arch = "x86_64")]
             crate::local_fast_path::withdraw();
-            *unsafe { current_child_member() } = Some(CurrentChildMember { id, binding, member,
+            *unsafe { current_child_member() } = Some(CurrentChildMember {
+                record_member: record_member.expect("actual admission issued its record token"), binding, member,
                 #[cfg(target_arch = "x86_64")]
                 generic_frequency_captures: 0,
             });
@@ -1166,27 +1210,31 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Closed)));
     };
-    let id = current.id;
+    let id = current.record_member.id();
     let binding = current.binding;
     let member = &mut current.member;
+    let record_member = &mut current.record_member;
     // SAFETY: this is the admitted thread; its caller has ended every use of
     // its allocations (thread exit), and the record lock excludes every
     // other context operation.
     let mut orphaned_last = None;
     let done = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
-            Some(child) => unsafe { member.thread_done(child, binding) }
-                .map_err(NativeChildThreadDoneError::Done),
+            Some(child) => {
+                unsafe { member.thread_done(child, binding) }
+                    .map_err(NativeChildThreadDoneError::Done)?;
+                // SAFETY: actual teardown succeeded under this exact record
+                // lock; a failed teardown leaves the token and count intact.
+                unsafe { record_member.finish_locked() }
+                    .map_err(NativeChildThreadDoneError::Subprocess)?;
+                Ok(())
+            }
             None => {
                 // The child was destroyed under this thread. Its member,
                 // TLD, Theaps, and roots name released child memory.
-                // SAFETY: the held record lock serializes the count.
-                let orphans = unsafe { &mut *id.record().orphans.get() };
-                if *orphans == 0 {
-                    return Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Gone));
-                }
-                *orphans -= 1;
-                orphaned_last = Some(*orphans == 0);
+                // SAFETY: only the retained record is touched under its lock.
+                orphaned_last = Some(unsafe { record_member.finish_locked() }
+                    .map_err(NativeChildThreadDoneError::Subprocess)?);
                 Ok(())
             }
         })
@@ -1265,7 +1313,7 @@ pub(crate) unsafe fn native_child_thread_free_local(
     use crate::runtime_lifecycle::NativePageFreeResult;
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     // SAFETY: the live block keeps its page.
     let owner_theap = unsafe { binding.page_map().lookup_live_allocation(block) }
         .ok()
@@ -1343,7 +1391,7 @@ pub(crate) unsafe fn native_child_heap_allocate_variant(
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(None);
     };
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     let member = &mut current.member;
     // SAFETY: forwarded; the record lock excludes every other context operation.
     let allocated = unsafe {
@@ -1396,7 +1444,7 @@ impl NativeChildGenericFrequencyCapture {
         // projection. The count prevents its slot from being finished or replaced.
         let current = unsafe { current_child_member() }.as_mut()?;
         current.generic_frequency_captures = current.generic_frequency_captures.checked_add(1)?;
-        Some(Self { id: current.id, theap })
+        Some(Self { id: current.record_member.id(), theap })
     }
 
     /// # Safety
@@ -1406,7 +1454,7 @@ impl NativeChildGenericFrequencyCapture {
         // SAFETY: the retained capture excludes thread finish; no callback
         // or engine projection is live during this field-only settlement.
         let Some(current) = unsafe { current_child_member() }.as_mut() else { return false; };
-        if current.id != self.id || current.generic_frequency_captures == 0 { return false; }
+        if current.record_member.id() != self.id || current.generic_frequency_captures == 0 { return false; }
         current.generic_frequency_captures -= 1;
         true
     }
@@ -1503,7 +1551,7 @@ unsafe fn with_native_child_heap_theap_engine<R>(
 ) -> Option<R> {
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     let main_theap = current.member.theap_pointer()?;
     let owner = current.member.owner_mut() as *mut crate::meta::ChildThreadOwner;
     // SAFETY: the caller retains this Theap; the current owner retains its TLD.
@@ -1544,7 +1592,7 @@ pub(crate) unsafe fn native_child_heap_theap(
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     let member = &mut current.member;
     // SAFETY: the child record lock excludes another context operation,
     // and the current thread owns its Theap and dynamic local slot.
@@ -1603,7 +1651,7 @@ pub(crate) unsafe fn native_child_theap_collect(
     }
     // SAFETY: only the current thread accesses its member slot.
     let Some(current) = (unsafe { current_child_member() }).as_mut() else { return };
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     let Some(main) = current.member.theap_pointer() else { return };
     if unsafe { crate::types::Theap::tld_at(main) } != tld.as_ptr() { return; }
     let collection = if force {
@@ -1705,7 +1753,7 @@ pub(crate) fn native_child_heap_new_in_arena(arena: crate::arena::ArenaId) -> Op
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(Err(NativeSubprocessError::Closed));
     };
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     let member = &mut current.member;
     let keys = crate::types::heap_registry::lifecycle::HeapKeySource::global();
     // SAFETY: this is the admitted thread; the record lock excludes every
@@ -1751,7 +1799,7 @@ pub(crate) fn native_child_reserve_os_memory(
         // SAFETY: the record lock retains the child context and excludes
         // teardown while the exact child arena backing publishes its owner.
         unsafe {
-            current.id.with_owner(|owner| {
+            current.record_member.id().with_owner(|owner| {
                 owner.as_mut().and_then(|child| child.with_child_image(|image| {
                     let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
                     Some(image.identity().arena_backing().reserve_os_memory_reporting_failure(
@@ -1792,7 +1840,7 @@ pub(crate) unsafe fn native_child_manage_os_memory_ex(
     // pinned image while the external arena is published in that image's
     // exact registry. The caller retains the external mapping separately.
     unsafe {
-        current.id.with_owner(|owner| owner.as_mut().and_then(|child| {
+        current.record_member.id().with_owner(|owner| owner.as_mut().and_then(|child| {
             child.with_child_image(|image| {
                 let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
                 image.identity().arena_backing().install_owned_external_os_arena_for_child(
@@ -1827,7 +1875,7 @@ pub(crate) unsafe fn native_child_manage_memory(
     // publication and the image's arena backing retires this callback lease
     // before child destruction. No terminal unmap right enters the record.
     unsafe {
-        current.id.with_owner(|owner| owner.as_mut().and_then(|child| {
+        current.record_member.id().with_owner(|owner| owner.as_mut().and_then(|child| {
             child.with_child_image(|image| {
                 let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
                 let result = image.identity().arena_backing()
@@ -1870,7 +1918,7 @@ pub(crate) unsafe fn native_child_heap_release(
 > {
     // Read only the caller's identity before any selector can borrow its
     // member slot again. No member projection crosses the target record lock.
-    let current_id = unsafe { current_child_member() }.as_ref().map(|member| member.id);
+    let current_id = unsafe { current_child_member() }.as_ref().map(|member| member.record_member.id());
     // Source permits a caller outside the Heap's subprocess to release it.
     // The Heap's identity selects its child record; the current thread's
     // membership cannot stand in for a different child's owner.
@@ -1922,7 +1970,7 @@ pub(crate) unsafe fn native_child_heap_release(
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(Err(NativeSubprocessError::Closed));
     };
-    let (id, binding) = (current.id, current.binding);
+    let (id, binding) = (current.record_member.id(), current.binding);
     let member = &mut current.member;
     // SAFETY: forwarded obligations; the record lock serializes the list.
     Some(unsafe {
@@ -2061,21 +2109,24 @@ unsafe fn destroy_record(
                 return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
             }
             let mut child = owner.take().ok_or(NativeSubprocessError::Gone)?;
-            // Source destroys a child under the threads that still belong
-            // to it (`subproc.c:201-257`); they keep the record alive.
-            let live = child
+            // Source destroys a child under its permanently quiescent
+            // threads. Rust TLS can still retain a member after the source
+            // registration ended, so actual tokens retain this control record.
+            let source_live = child
                 .with_child_image(|image| image.get_ref().identity().live_thread_count())
                 .unwrap_or(0);
+            // SAFETY: the held record lock serializes actual token custody.
+            let members = unsafe { *record.members.get() };
             // SAFETY: the record lock excludes thread admission and finish.
             // The caller has permanently quiesced every member and ended all
             // child-block use before the terminal path releases their images.
             match destroy_child_with(
-                child, record.registry, binding, &mut [], metadata, config, release, live != 0,
+                child, record.registry, binding, &mut [], metadata, config, release, source_live != 0 || members != 0,
             ) {
                 Ok(()) => {
-                    // SAFETY: the held record lock serializes the count.
-                    unsafe { *record.orphans.get() = live };
-                    Ok(live)
+                    // Destruction consumes no actual TLS token; each member
+                    // later completes its own terminal finish against this record.
+                    Ok(members)
                 }
                 Err(ChildSubprocessDestroyFailure::Retained { owner: child, error }) => {
                     let refused = child.stage() == ChildMainHeapStage::HeapReady;
