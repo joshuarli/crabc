@@ -88,6 +88,14 @@ UNIT_TESTS = (
     "runtime_lifecycle::tests::worker_fixed_theap_collection_preserves_auxiliary_default",
     "runtime_lifecycle::tests::runtime_loader_tail_releases_once_before_delayed_output",
 )
+SECURE_THREE_UNIT_TESTS = (
+    "config::tests::secure_three_uses_encoded_padding_without_debug_or_statistics",
+    "free_list::tests::encoded_links_use_both_source_keys_and_page_null_sentinel",
+)
+
+
+def native_control_tests(profile):
+    return (DIRECT_TEST, *UNIT_TESTS, *(SECURE_THREE_UNIT_TESTS if profile == "secure-3" else ()))
 
 
 def command(output, label, argv, cwd, *, runtime=False, timeout=900):
@@ -128,7 +136,7 @@ def require_one_native_test(record, label):
 
 def native_controls(output, profile, cases):
     products = {}
-    for index, test in enumerate((DIRECT_TEST, *UNIT_TESTS)):
+    for index, test in enumerate(native_control_tests(profile)):
         label = "native_theap_contract" if index == 0 else test.rsplit("::", 1)[-1]
         target = "native_theap_contract" if index == 0 else "crabc_mimalloc"
         record, logs = command(output, label,
@@ -254,10 +262,11 @@ def cli(argv=None):
     receipt = receipts.read_receipt(harness.ROOT, RUNNER)
     if dict(receipt.parameters) != parameters(profiles, args.guarded_only):
         raise harness.HarnessError("public Theap receipt profile or workload parameters differ")
-    labels = ["c-build", "rust-link", "c-run", "rust-run"]
-    if not args.guarded_only:
-        labels += ["native_theap_contract", *(test.rsplit("::", 1)[-1] for test in UNIT_TESTS)]
-    if receipt.case_ids() != [f"{profile}-{label}" for profile in profiles for label in labels]:
+    profile_labels = {profile: ["c-build", "rust-link", "c-run", "rust-run",
+        *([] if args.guarded_only else ["native_theap_contract",
+            *(test.rsplit("::", 1)[-1] for test in native_control_tests(profile)[1:])])]
+        for profile in profiles}
+    if receipt.case_ids() != [f"{profile}-{label}" for profile in profiles for label in profile_labels[profile]]:
         raise harness.HarnessError("public Theap receipt lacks the exact ordered executed cohort")
     products = receipt.path.parent / "products"
     logs = receipt.path.parent / "logs"
@@ -268,6 +277,7 @@ def cli(argv=None):
     work = harness.ROOT / work_relative
     pin = harness.load_pin()
     for profile in profiles:
+        labels = profile_labels[profile]
         output = work if profile == "release" else work / profile
         if args.guarded_only:
             output = output / "guarded-configuration"
@@ -317,7 +327,7 @@ def cli(argv=None):
             "rust-run": [str(output / "public-theap-rust")],
         }
         if not args.guarded_only:
-            for index, test in enumerate((DIRECT_TEST, *UNIT_TESTS)):
+            for index, test in enumerate(native_control_tests(profile)):
                 label = "native_theap_contract" if index == 0 else test.rsplit("::", 1)[-1]
                 expected_commands[label] = [cargo, "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
                     "-p", "crabc-mimalloc", "--no-default-features", "--message-format=json",
@@ -364,7 +374,7 @@ def cli(argv=None):
                 drivers[target] = binary
             observe(drivers, output, profile, args.guarded_only, [])
             if not args.guarded_only:
-                for index, test in enumerate((DIRECT_TEST, *UNIT_TESTS)):
+                for index, test in enumerate(native_control_tests(profile)):
                     target = "native_theap_contract" if index == 0 else "crabc_mimalloc"
                     label = target if index == 0 else test.rsplit("::", 1)[-1]
                     record, _ = command(output, label,

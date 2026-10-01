@@ -62,8 +62,8 @@ class TheapProducerTests(unittest.TestCase):
             'c':[str(output/'public-theap-c')],'rust':[str(output/'public-theap-rust')],
             'adapter-build':[cargo,'build','--locked','--release','--message-format=json','--target',theap.m4.RUST_TARGET,'-p',theap.m4.ADAPTER_PACKAGE,'--target-dir',str(output/'cargo-target'),'--features',f'crabc-mimalloc/mi-{profile}']}
         ids=[];cases=[]
-        labels=['c-build','rust-link','c-run','rust-run','native_theap_contract',*(test.rsplit('::',1)[-1] for test in theap.UNIT_TESTS)]
-        for index,test in enumerate((theap.DIRECT_TEST,*theap.UNIT_TESTS)):
+        labels=['c-build','rust-link','c-run','rust-run','native_theap_contract',*(test.rsplit('::',1)[-1] for test in theap.native_control_tests(profile)[1:])]
+        for index,test in enumerate(theap.native_control_tests(profile)):
             label=labels[4+index]
             commands[label]=[cargo,'test','--locked','--offline','--target',theap.m4.RUST_TARGET,'-p','crabc-mimalloc','--no-default-features','--message-format=json','--features',f'mi-{profile}',*(('--test','native_theap_contract') if index==0 else ('--lib',)),test,'--','--exact','--nocapture','--test-threads=1']
         for label in labels:
@@ -149,6 +149,29 @@ class TheapProducerTests(unittest.TestCase):
                     theap.cli(['--profiles','debug-3','--read'])
                 path.write_text(saved)
 
+    def test_secure_three_reader_requires_executed_configuration_and_null_controls(self):
+        receipt,pin,_=self.receipt_fixture('secure-3')
+        ids=receipt.case_ids()
+        with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
+             mock.patch.object(theap.harness,'load_pin',return_value=pin), \
+             mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
+            self.assertEqual(theap.cli(['--profiles','secure-3','--read']),0)
+            for test in theap.SECURE_THREE_UNIT_TESTS:
+                label=test.rsplit('::',1)[-1]
+                omitted='secure-3-'+label
+                receipt.case_ids=lambda prefix='': [name for name in ids
+                    if name!=omitted and name.startswith(prefix)]
+                with self.subTest(omitted=label),self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--profiles','secure-3','--read'])
+                receipt.case_ids=lambda prefix='': [name for name in ids if name.startswith(prefix)]
+                path=receipt.path.parent/'logs/secure-3'/f'{label}.json'
+                saved=path.read_text();data=json.loads(saved)
+                data['stdout']='test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 100 filtered out;\n'
+                path.write_text(json.dumps(data))
+                with self.subTest(unexecuted=label),self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--profiles','secure-3','--read'])
+                path.write_text(saved)
+
     def test_successful_process_with_wrong_visitor_geometry_is_retained_and_rejected(self):
         changed = self.observation(visitor='0,0,1,1,1,1,1,1')
         with mock.patch.object(theap.harness, 'command_record',
@@ -195,6 +218,29 @@ class TheapProducerTests(unittest.TestCase):
                 theap.native_controls(self.output, 'stat-2', [])
         self.assertEqual(execute.call_count, 1)
         self.assertEqual(json.loads((self.output / 'native_theap_contract.json').read_text()), record)
+
+    def test_secure_three_executes_configuration_and_encoded_null_controls(self):
+        executable=self.output/'unit-executable';executable.write_bytes(b'unit test artifact')
+        extras=('config::tests::secure_three_uses_encoded_padding_without_debug_or_statistics',
+                'free_list::tests::encoded_links_use_both_source_keys_and_page_null_sentinel')
+        for profile in (*theap.PROFILES, 'secure-1', 'secure-2', 'debug-2', 'debug-3', 'secure-3'):
+            executed=[]
+            def run(output,label,argv,cwd):
+                executed.append(argv)
+                target='native_theap_contract' if '--test' in argv else 'crabc_mimalloc'
+                stdout=json.dumps({'reason':'compiler-artifact','target':{'name':target},
+                    'executable':str(executable)})+'\n'
+                stdout+='test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 100 filtered out;\n'
+                return {'status':0,'stdout':stdout,'stderr':''},[]
+            with self.subTest(profile=profile),mock.patch.object(theap,'command',side_effect=run), \
+                 mock.patch.object(theap.harness,'require_tool',return_value='cargo'):
+                theap.native_controls(self.output,profile,[])
+                tests=[argv[argv.index('--')-1] for argv in executed]
+                for extra in extras:
+                    self.assertEqual(extra in tests,profile=='secure-3')
+                for argv in executed:
+                    if profile=='release':self.assertNotIn('--features',argv)
+                    else:self.assertEqual(argv[argv.index('--features')+1],f'mi-{profile}')
 
 
 class TheapProfileSelectionTests(unittest.TestCase):
