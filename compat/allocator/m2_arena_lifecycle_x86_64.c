@@ -812,6 +812,12 @@ static retention_root_t retention_roots[4096];
 static size_t retention_root_count;
 static bool retention_enabled;
 static size_t retention_cycle;
+/* Zero selects direct OS fallback for child metadata, whose pages survive
+   main-Heap destruction for the process lifetime. A nonzero selected source
+   reservation lets eligible metadata use child-owned automatic arenas;
+   destruction releases those complete parents after all workers have joined.
+   PageMap submaps remain process-owned for every newly covered address range. */
+static long retention_arena_reserve_kib;
 
 static void retention_add_root(const char* category, const void* base, size_t size) {
   const uintptr_t start = (uintptr_t)base;
@@ -944,7 +950,7 @@ static void cross_thread_abandoned_lifecycle(void) {
   emit_marker(27);
   for (size_t kind = 0; kind < 3; kind++)
   for (int blocked = 0; blocked < 2; blocked++) {
-    configure(true, 0, 1, false);
+    configure(true, retention_enabled ? retention_arena_reserve_kib : 0, 1, false);
     cross_abandoned_t state = {.request=requests[kind], .blocked=blocked};
     const size_t raw_size = MI_ARENA_MIN_SIZE + MI_ARENA_ALIGNMENT;
     state.raw = __real_mmap(NULL, raw_size, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
@@ -997,6 +1003,27 @@ int main(int argc, char** argv) {
   const bool repeated = argc == 2 && strcmp(argv[1], "--repeat-retention") == 0;
   const bool source_bound = argc == 3 && strcmp(argv[1], "--source-root-bound") == 0;
   if (repeated || source_bound) {
+    const char* selected_reserve = getenv("CRABC_MI_RETENTION_ARENA_RESERVE_KIB");
+    if (selected_reserve != NULL) {
+      char* end = NULL;
+      require(selected_reserve[0] >= '0' && selected_reserve[0] <= '9');
+      const unsigned long requested = strtoul(selected_reserve, &end, 10);
+      require(end != selected_reserve && *end == '\0' && requested <= 1024 * 1024);
+      retention_arena_reserve_kib = (long)requested;
+#if !MI_PAGE_MAP_FLAT
+      mi_page_map_t* pmap = _mi_page_map();
+      require(pmap != NULL && pmap != &mi_page_map_empty && mi_memid_is_os(pmap->memid));
+      const size_t slots = mi_page_map_count_of_size(pmap->reserved_size);
+      const size_t root_bytes = pmap->memid.mem.os.size;
+      require(slots > 0 && slots - 1 <= (SIZE_MAX - root_bytes) / MI_PAGE_MAP_SUB_SIZE);
+      /* The zero-address submap is embedded in the root; each other slot can
+         publish one process-lived submap. This bounds PageMap storage, while
+         direct OS pages have their separate main-Heap destruction lifetime. */
+      fprintf(stderr, "source_root_bound arena_reserve_kib=%ld pagemap_reserved_bytes=%zu pagemap_slots=%zu submap_bytes=%zu maximum_pagemap_bytes=%zu\n",
+        retention_arena_reserve_kib, pmap->reserved_size, slots, (size_t)MI_PAGE_MAP_SUB_SIZE,
+        root_bytes + (slots - 1) * MI_PAGE_MAP_SUB_SIZE);
+#endif
+    }
     size_t last_cycle = 32;
     if (source_bound) {
       char* end = NULL;
