@@ -46,6 +46,7 @@ use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
 use crate::size_class;
 use crate::single_thread::{
     DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
+    DeferredFreeAlignedAdmission, DeferredFreeAlignedPlainAllocation,
     GenericAllocationCollection, FreeError, PageAllocatorEngine,
     RemoteFreePreparationError, RemoteFreeProducer,
 };
@@ -97,6 +98,14 @@ pub(crate) enum MainStaticDeferredFreeAllocationPhase {
         collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation,
     },
+}
+
+/// An initial-owner aligned request before its ordinary base allocator
+/// runs. Plain continuations retain no engine projection across sampling.
+#[must_use = "an initial aligned admission must complete or resume its plain allocation"]
+pub(crate) enum MainStaticDeferredFreeAlignedAdmission {
+    Engine(MainStaticDeferredFreeAllocationPhase),
+    Plain(DeferredFreeAlignedPlainAllocation),
 }
 
 /// A pre-publication refusal while opening the bounded static page allocator.
@@ -2228,6 +2237,55 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         source: engine.deferred_free_source()?,
                         collection,
                         continuation,
+                    })
+                }
+            }
+        })
+    }
+
+    /// Selects an aligned cached head before the caller can disable guarded
+    /// sampling for an ordinary base request. An empty permanent session
+    /// returns its plain continuation before creating an arena or engine.
+    pub(crate) fn begin_deferred_free_aligned_admission_current_initial_thread_local(
+        &mut self, size: usize, alignment: usize, offset: usize, zero: bool,
+    ) -> Option<MainStaticDeferredFreeAlignedAdmission> {
+        let empty_page_map = match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { reservation, .. } => Some(reservation.page_map()),
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { page_map, .. } => Some(*page_map),
+            _ => None,
+        };
+        if let Some(page_map) = empty_page_map {
+            let page_size = page_map.memory_config().ok()?.page_size().bytes();
+            if let Some(plain) = DeferredFreeAlignedPlainAllocation::for_empty_cache(size, alignment, offset, zero, page_size) {
+                return Some(MainStaticDeferredFreeAlignedAdmission::Plain(plain));
+            }
+        }
+        self.allocate_with(size, |engine| {
+            match engine.begin_deferred_free_aligned_admission(size, alignment, offset, zero) {
+                DeferredFreeAlignedAdmission::Plain(plain) => Some(MainStaticDeferredFreeAlignedAdmission::Plain(plain)),
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(block)) => {
+                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Complete(block)))
+                }
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Collect { collection, continuation }) => {
+                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Collect {
+                        source: engine.deferred_free_source()?, collection, continuation,
+                    }))
+                }
+            }
+        })
+    }
+
+    /// Resumes the selected ordinary base after sampling has completed with
+    /// the permanent source owner retained and every prior projection ended.
+    pub(crate) fn begin_deferred_free_aligned_plain_current_initial_thread_local(
+        &mut self, plain: DeferredFreeAlignedPlainAllocation,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        self.allocate_with(plain.requested_size(), |engine| {
+            match engine.begin_deferred_free_aligned_plain(plain) {
+                DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                        source: engine.deferred_free_source()?, collection, continuation,
                     })
                 }
             }

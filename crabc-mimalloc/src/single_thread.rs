@@ -499,6 +499,50 @@ pub(crate) enum DeferredFreeAllocationPhase {
     },
 }
 
+/// Source aligned selection before the ordinary base allocator is entered.
+/// A plain fallback can temporarily disable guarded sampling only after the
+/// engine projection has ended; cached and huge-alignment paths stay inside
+/// the existing allocation phases without that rate transition.
+#[must_use = "an aligned admission must complete or resume its plain allocation"]
+pub(crate) enum DeferredFreeAlignedAdmission {
+    Engine(DeferredFreeAllocationPhase),
+    Plain(DeferredFreeAlignedPlainAllocation),
+}
+
+/// Value-owned alignment completion for exactly one selected plain fallback.
+/// It carries no allocation pointer, metadata projection or owner reference.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DeferredFreeAlignedPlainAllocation {
+    request: usize,
+    zero: bool,
+    completion: DeferredFreeAlignedCompletion,
+}
+
+impl DeferredFreeAlignedPlainAllocation {
+    /// Selects a plain base only when the caller has already proved that no
+    /// cached aligned head can satisfy this request. No page is allocated.
+    pub(crate) fn for_empty_cache(size: usize, alignment: usize, offset: usize,
+        zero: bool, os_page_size: usize) -> Option<Self> {
+        if !size_class::alignment_is_valid(alignment) { return None; }
+        match aligned::allocation_plan(size, alignment, offset, os_page_size)? {
+            aligned::AlignedAllocationPlan::Natural => Some(Self {
+                request: size, zero, completion: DeferredFreeAlignedCompletion::Natural { alignment },
+            }),
+            aligned::AlignedAllocationPlan::Overallocate { request } => Some(Self {
+                request, zero, completion: DeferredFreeAlignedCompletion::Overallocate { alignment, offset },
+            }),
+            aligned::AlignedAllocationPlan::HugeSingleton { .. } => None,
+        }
+    }
+
+    pub(crate) fn requested_size(self) -> usize { self.request }
+
+    /// Guarded small malloc normalizes zero to one word before sampling.
+    pub(crate) fn sampling_size(self) -> usize {
+        if self.request == 0 { WORD_SIZE } else { self.request }
+    }
+}
+
 /// Result of the selected static-main mapped-regular claim placed immediately
 /// before the ordinary fresh-page branch.
 ///
@@ -38037,11 +38081,27 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         offset: usize,
         zero: bool,
     ) -> DeferredFreeAllocationPhase {
+        match self.begin_deferred_free_aligned_admission(size, alignment, offset, zero) {
+            DeferredFreeAlignedAdmission::Engine(phase) => phase,
+            DeferredFreeAlignedAdmission::Plain(plain) => self.begin_deferred_free_aligned_plain(plain),
+        }
+    }
+
+    /// Selects the source cached, plain-base or huge-alignment branch before
+    /// a plain allocation can observe guarded sampling. Callers may retain
+    /// only the returned values while releasing this engine projection.
+    pub(crate) fn begin_deferred_free_aligned_admission(
+        &mut self,
+        size: usize,
+        alignment: usize,
+        offset: usize,
+        zero: bool,
+    ) -> DeferredFreeAlignedAdmission {
         if self.is_collection_poisoned() || !size_class::alignment_is_valid(alignment) {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(None));
         }
         if let Some(block) = self.allocate_aligned_small_head(size, alignment, offset, zero) {
-            return DeferredFreeAllocationPhase::Complete(Some(block));
+            return DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(Some(block)));
         }
 
         let os_page_size = self.page_map.memory_config().page_size().bytes();
@@ -38050,27 +38110,30 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // `_mi_theap_malloc_zero`, so a base request within
             // `MI_SMALL_SIZE_MAX` first pops its direct page, exactly like an
             // ordinary small allocation, before any generic search.
-            Some(aligned::AlignedAllocationPlan::Natural) => self.begin_deferred_free_aligned_base(
-                size,
-                zero,
-                DeferredFreeAlignedCompletion::Natural { alignment },
+            Some(aligned::AlignedAllocationPlan::Natural) => DeferredFreeAlignedAdmission::Plain(
+                DeferredFreeAlignedPlainAllocation {
+                    request: size,
+                    zero,
+                    completion: DeferredFreeAlignedCompletion::Natural { alignment },
+                },
             ),
-            Some(aligned::AlignedAllocationPlan::Overallocate { request }) => self
-                .begin_deferred_free_aligned_base(
+            Some(aligned::AlignedAllocationPlan::Overallocate { request }) => DeferredFreeAlignedAdmission::Plain(
+                DeferredFreeAlignedPlainAllocation {
                     request,
                     zero,
-                    DeferredFreeAlignedCompletion::Overallocate { alignment, offset },
-                ),
+                    completion: DeferredFreeAlignedCompletion::Overallocate { alignment, offset },
+                },
+            ),
             Some(aligned::AlignedAllocationPlan::HugeSingleton { request, alignment }) => {
                 // A huge alignment skips the `_mi_malloc_generic` search.
-                self.begin_deferred_free_generic_allocation(
+                DeferredFreeAlignedAdmission::Engine(self.begin_deferred_free_generic_allocation(
                     DeferredFreeAllocationContinuation::AlignedHuge {
                         request,
                         alignment,
                         zero,
                     },
                     false,
-                )
+                ))
             }
             // An oversized request or a huge alignment with an offset fails
             // in `alloc-aligned.c` before any allocation. The remaining
@@ -38078,7 +38141,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // OS-aligned singleton the arena refuses for its alignment) are
             // generic allocations whose page lookup fails.
             None if size > MAX_ALLOC_SIZE || (alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0) => {
-                DeferredFreeAllocationPhase::Complete(None)
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(None))
             }
             None => {
                 // The over-allocated base exceeds `MI_MAX_ALLOC_SIZE`, or an
@@ -38090,12 +38153,25 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 };
                 // Neither shape searches first: the base is oversized, or a
                 // nonzero `huge_alignment` skips `_mi_malloc_generic`'s search.
-                self.begin_deferred_free_generic_allocation(
+                DeferredFreeAlignedAdmission::Engine(self.begin_deferred_free_generic_allocation(
                     DeferredFreeAllocationContinuation::Refused { request, size_refused },
                     false,
-                )
+                ))
             }
         }
+    }
+
+    /// Enters the ordinary allocator for the plain branch selected above.
+    /// The caller has already completed the source sampler/rate transition
+    /// and revalidated the retained selected owner before this projection.
+    pub(crate) fn begin_deferred_free_aligned_plain(
+        &mut self,
+        plain: DeferredFreeAlignedPlainAllocation,
+    ) -> DeferredFreeAllocationPhase {
+        if self.is_collection_poisoned() {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        self.begin_deferred_free_aligned_base(plain.request, plain.zero, plain.completion)
     }
 
     /// Starts pinned `mi_theap_collect(theap, force)` (`theap.c:123-148`) as
@@ -38168,7 +38244,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         zero: bool,
         completion: DeferredFreeAlignedCompletion,
     ) -> DeferredFreeAllocationPhase {
-        let request = if request == 0 && PADDING_SIZE != 0 { WORD_SIZE } else { request };
+        let request = if request == 0 && (PADDING_SIZE != 0 || crate::config::GUARDED) { WORD_SIZE } else { request };
         if request <= SMALL_SIZE_MAX {
             return match self.begin_deferred_free_small_allocation_with(request, zero, Some(completion)) {
                 DeferredFreeAllocationPhase::Complete(Some(base)) => {
@@ -44584,6 +44660,57 @@ mod tests {
                 // No protection was installed by this geometry fixture. The
                 // current canonical allocation is returned exactly once.
                 unsafe { allocator.free(base).unwrap(); }
+            }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_aligned_admission_parks_only_the_plain_allocation_fallback() {
+        with_allocator(|allocator| {
+            let plain = match allocator.begin_deferred_free_aligned_admission(16, 16, 0, false) {
+                DeferredFreeAlignedAdmission::Plain(plain) => plain,
+                _ => panic!("an empty direct cache must enter the plain fallback"),
+            };
+            assert_eq!(plain.sampling_size(), 16);
+            assert_eq!(allocator.test_page_count(), 0);
+            let mut phase = allocator.begin_deferred_free_aligned_plain(plain);
+            let first = loop {
+                match phase {
+                    DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
+                    DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                        phase = allocator.resume_deferred_free_allocation(collection, continuation);
+                    }
+                }
+            };
+            let fast = match allocator.begin_deferred_free_aligned_admission(16, 16, 0, false) {
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(Some(block))) => block,
+                _ => panic!("an aligned cached head must not enter the plain fallback"),
+            };
+            let plain = match allocator.begin_deferred_free_aligned_admission(33, 64, 1, false) {
+                DeferredFreeAlignedAdmission::Plain(plain) => plain,
+                _ => panic!("offset over-allocation must enter the plain fallback"),
+            };
+            assert_eq!(plain.sampling_size(), 96);
+            let mut phase = allocator.begin_deferred_free_aligned_plain(plain);
+            let adjusted = loop {
+                match phase {
+                    DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
+                    DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                        phase = allocator.resume_deferred_free_allocation(collection, continuation);
+                    }
+                }
+            };
+            assert_eq!(adjusted.as_ptr().addr().wrapping_add(1) % 64, 0);
+            assert!(unsafe { allocator.usable_size(adjusted) }.unwrap() >= 33);
+            assert!(matches!(allocator.begin_deferred_free_aligned_admission(33, 128 * KIB, 0, false),
+                DeferredFreeAlignedAdmission::Engine(_)));
+            assert!(matches!(allocator.begin_deferred_free_aligned_admission(33, 3, 0, false),
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(None))));
+            unsafe {
+                allocator.free(first).unwrap();
+                allocator.free(fast).unwrap();
+                allocator.free(adjusted).unwrap();
             }
         });
     }
