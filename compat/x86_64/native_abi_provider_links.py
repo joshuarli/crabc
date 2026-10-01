@@ -295,8 +295,9 @@ def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict
     """Retain the complete executable relocation roster for a symbol import.
 
     A function reference may load its address without calling it at that site.
-    Only the exact PC-relative instruction forms decoded below are accepted;
-    non-executable relocations and unsupported addends remain outside this proof.
+    Only the exact PC-relative instruction forms decoded below are accepted.
+    Non-executable relocations remain outside this proof. Interior LEA addends
+    require a separately authenticated object extent during final projection.
     """
     sections = calls._ordinary_relocation_sections(image)
     section, references = None, []
@@ -315,13 +316,17 @@ def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict
             continue
         addend = int(row.group(5), 16) * (-1 if row.group(4) == '-' else 1)
         offset, kind = int(row.group(1), 16), row.group(2)
-        scalar = (section is not None and kind == 'R_X86_64_PC32'
-                  and scalar_read_prefix(calls._ordinary_source_sections(image, {section})[section], offset))
+        source = calls._ordinary_source_sections(image, {section})[section] if section is not None else b''
+        scalar = section is not None and kind == 'R_X86_64_PC32' and scalar_read_prefix(source, offset)
+        prefix = source[offset - 3:offset] if offset >= 3 else b''
+        address = (kind == 'R_X86_64_PC32' and len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
+                   and prefix[1] == 0x8d and prefix[2] & 0xc7 == 0x05)
         require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
-                and (addend == -4 or scalar),
+                and (addend == -4 or scalar or address),
                 f'provider import {name} relocation is not a supported reference')
         references.append({'section': section, 'offset': offset, 'kind': kind,
-                           **({'addend': addend} if scalar else {})})
+                           **({'addend': addend} if scalar else {}),
+                           **({'address_addend': addend} if address and addend != -4 else {})})
     require(len({(row['section'], row['offset']) for row in references}) == len(references),
             f'provider import {name} relocation roster differs')
     return references
@@ -513,7 +518,64 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     f'provider {name} GOT resolves to a foreign provider')
             record.update(got_slot=slot, branch_kind='got-address-compare' if address_compare else 'got-address-load')
         else:
-            require(target == provider_address, f'provider {name} reference resolves to a foreign provider')
+            provider_offset = 0
+            if 'address_addend' in reference:
+                require(address_load and provider_object is not None,
+                        f'provider {name} interior address lacks its source object')
+                source_image, definition = provider_object
+                original = static_authority.elf_bytes(source_image)
+                symbol = original.symbol(name, dynamic=False)
+                row, observed = definition['row'], definition['definition_section']
+                require(original.elf_type == 1 and symbol is not None
+                        and symbol['type'] == row['type'] == 'OBJECT'
+                        and symbol['binding'] == row['binding'] == 'GLOBAL'
+                        and symbol['visibility'] == row['visibility'] == 'HIDDEN'
+                        and symbol['section'] == int(row['section_index']) == observed['index']
+                        and symbol['value'] == int(row['value'], 16)
+                        and symbol['size'] == row['size_bytes'] > 0
+                        and 0 < symbol['section'] < len(original.sections),
+                        f'provider {name} interior source symbol differs')
+                header = original.sections[symbol['section']]
+                require(header[1] == 1 and observed['type'] == 'PROGBITS'
+                        and header[2] == 3 and observed['flags'] == 'WA'
+                        and header[3] == int(observed['address'], 16)
+                        and header[4] == int(observed['offset'], 16)
+                        and header[5] == int(observed['size'], 16)
+                        and header[6] == observed['link'] and header[7] == observed['info']
+                        and header[8] == observed['alignment'] and header[8] > 0
+                        and header[9] == int(observed['entry_size'], 16) == 0
+                        and header[4] + header[5] <= len(source_image)
+                        and symbol['value'] + symbol['size'] <= header[5]
+                        and static_authority.section_name(original, header) == observed['name'],
+                        f'provider {name} interior source extent differs')
+                # PC32 is S + A - P; RIP is four bytes beyond P. LEA forms
+                # an address inside the selected object without reading it.
+                provider_offset = reference['address_addend'] + 4
+                require(0 <= provider_offset < symbol['size'],
+                        f'provider {name} interior address leaves provider object')
+                final = static_authority.elf_bytes(image)
+                final_symbol = final.symbol(name, dynamic=False)
+                require(final_symbol is not None and final_symbol['type'] == 'OBJECT'
+                        and final_symbol['binding'] == 'LOCAL' and final_symbol['visibility'] == 'HIDDEN'
+                        and final_symbol['value'] == provider_address and final_symbol['size'] == symbol['size']
+                        and 0 < final_symbol['section'] < len(final.sections),
+                        f'provider {name} interior final symbol differs')
+                output = final.sections[final_symbol['section']]
+                require(output[1] == 1 and output[2] == 3
+                        and output[3] <= provider_address
+                        and provider_address + symbol['size'] <= output[3] + output[5],
+                        f'provider {name} interior final extent differs')
+                table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+                require(sum(program[0] == 1 and program[1] == 6
+                            and program[3] <= provider_address
+                            and provider_address + symbol['size'] <= program[3] + program[5]
+                            for program in (struct.unpack_from('<IIQQQQQQ', image, table + width * index)
+                                            for index in range(count))) == 1,
+                        f'provider {name} interior object lacks a writable load extent')
+                record['provider_offset'] = provider_offset
+                record['target_address'] = provider_address + provider_offset
+            require(target == provider_address + provider_offset,
+                    f'provider {name} reference resolves to a foreign provider')
             record['branch_kind'] = 'rip-relative-address' if address_load else 'conditional-jump'
         resolved.append(record)
     return {'resolved_calls': resolved, 'discarded_calls': discarded}
@@ -752,6 +814,8 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
             atomic_object = any(locked_cmpxchg_prefix(sections[reference['section']], reference['offset'])
                                 for _, references, sections in source_imports for reference in references
                                 if reference['kind'] == 'R_X86_64_PC32')
+            interior_object = any('address_addend' in reference
+                                  for _, references, _ in source_imports for reference in references)
             if any('addend' in reference for _, references, _ in source_imports for reference in references):
                 section = definition['definition_section']
                 require(definition['row']['type'] == 'OBJECT' and section['type'] == 'PROGBITS'
@@ -768,7 +832,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 selected = mapped_archive + '(' + definition['member_name'] + ')'
                 source_image = None
                 if (definition['row']['type'] in {'FUNC', 'OBJECT'}
-                        and (atomic_object or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
+                        and (atomic_object or interior_object or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
                     member = definition['member_name']
                     require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
                     if member not in definition_images:
@@ -786,7 +850,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
                         provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data,
-                        provider_object=(source_image, definition) if atomic_object else None)
+                        provider_object=(source_image, definition) if atomic_object or interior_object else None)
                     require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':
