@@ -540,11 +540,12 @@ def compare_source_client_control(profile: str, case: str, original: Mapping[str
 def api_profile_flags(profile: str) -> tuple[str, ...]:
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))
-                  and not (profile in ("secure-1", "secure-2") and flag.startswith("-DMI_SECURE=")))
+                  and not (profile in ("secure-1", "secure-2", "secure-3") and flag.startswith("-DMI_SECURE=")))
     return (*flags, *{
         "release": ("-DMI_DEBUG=0", "-DMI_STAT=0"),
         "secure-1": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=1"),
         "secure-2": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=2"),
+        "secure-3": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=3"),
         "stat-1": ("-DMI_DEBUG=0", "-DMI_STAT=1"),
         "stat-2": ("-DMI_DEBUG=0", "-DMI_STAT=2"),
         "debug-1": ("-DMI_DEBUG=1", "-DMI_STAT=2", "-DMI_PADDING=1"),

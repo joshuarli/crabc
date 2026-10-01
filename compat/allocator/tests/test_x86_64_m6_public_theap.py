@@ -205,8 +205,8 @@ class TheapProfileSelectionTests(unittest.TestCase):
 
     def test_secure_selection_is_explicit_and_ordered(self):
         with mock.patch.object(theap, 'run_cohort') as run:
-            self.assertEqual(theap.cli(['--profiles', 'secure-1', 'secure-2']), 0)
-            run.assert_called_once_with(('secure-1', 'secure-2'), False)
+            self.assertEqual(theap.cli(['--profiles', 'secure-3', 'secure-1', 'secure-2']), 0)
+            run.assert_called_once_with(('secure-3', 'secure-1', 'secure-2'), False)
 
     def test_default_and_matrix_remain_release_and_four_profiles(self):
         for arguments, profiles in (([], ('release',)), (['--matrix'], theap.PROFILES)):
@@ -215,7 +215,7 @@ class TheapProfileSelectionTests(unittest.TestCase):
                 run.assert_called_once_with(profiles, False)
 
     def test_empty_unknown_or_duplicate_cohort_stops_before_source_or_execution(self):
-        for profiles in ((), ('secure-3',), ('release', 'release')):
+        for profiles in ((), ('secure-4',), ('release', 'release')):
             with mock.patch.object(theap.receipts, 'source_seal', return_value={}) as source, \
                  mock.patch.object(theap, 'run_profile', return_value=(1, {})) as run, \
                  mock.patch.object(theap.receipts, 'write_receipt'), \
@@ -226,7 +226,7 @@ class TheapProfileSelectionTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_unknown_duplicate_or_conflicting_cli_selection_stops_before_work(self):
-        for arguments in (['--profiles'], ['--profiles', 'secure-3'],
+        for arguments in (['--profiles'], ['--profiles', 'secure-4'],
                           ['--profiles', 'secure-1', 'secure-1'],
                           ['--profiles', 'secure-1', '--matrix']):
             with mock.patch.object(theap, 'run_cohort') as run, mock.patch('sys.stderr'):

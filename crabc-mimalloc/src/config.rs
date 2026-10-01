@@ -47,7 +47,9 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
-pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
+pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
+    3
+} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
     2
 } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-1")) {
     1
@@ -78,12 +80,12 @@ pub(crate) const FREE_IS_CHECKED: bool = false;
 pub(crate) const FREE_USE_PAGEMAP: bool = false;
 pub(crate) const OPT_FREE_SMALL: bool = false;
 pub(crate) const ENABLE_LARGE_PAGES: bool = true;
-pub(crate) const ENCODE_FREELIST: bool = DEBUG_LEVEL >= 1;
+pub(crate) const ENCODE_FREELIST: bool = SECURE_LEVEL >= 3 || DEBUG_LEVEL >= 1;
 pub(crate) const GUARDED: bool = cfg!(all(target_arch = "x86_64", feature = "mi-guarded"));
 pub(crate) const OPT_SIMD: bool = false;
-pub(crate) const PADDING_SIZE: usize = if DEBUG_LEVEL >= 1 { 8 } else { 0 };
+pub(crate) const PADDING_SIZE: usize = if SECURE_LEVEL >= 3 || DEBUG_LEVEL >= 1 { 8 } else { 0 };
 pub(crate) const PADDING_WSIZE: usize = PADDING_SIZE / WORD_SIZE;
-pub(crate) const PAGE_KEY_COUNT: usize = if DEBUG_LEVEL >= 1 { 2 } else { 1 };
+pub(crate) const PAGE_KEY_COUNT: usize = if PADDING_SIZE != 0 { 2 } else { 1 };
 
 pub(crate) const ARENA_SLICE_SHIFT: usize = 13 + 3;
 pub(crate) const BCHUNK_BITS_SHIFT: usize = 6 + 3;
@@ -1086,9 +1088,9 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 
 const _: [(); 8] = [(); WORD_SIZE];
 const _: [(); 1] = [(); ENABLE_LARGE_PAGES as usize];
-#[cfg(not(feature = "mi-debug-1"))]
+#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
 const _: [(); 1] = [(); (!ENCODE_FREELIST) as usize];
-#[cfg(feature = "mi-debug-1")]
+#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
 const _: [(); 1] = [(); ENCODE_FREELIST as usize];
 #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
 const _: [(); 1] = [(); (!GUARDED) as usize];
@@ -1105,11 +1107,23 @@ const _: [(); 16 * GIB] = [(); ARENA_MAX_SIZE];
 mod tests {
     use super::*;
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3",
+        not(feature = "mi-debug-1"), not(feature = "mi-stat-1"), not(feature = "mi-guarded")))]
+    #[test]
+    fn secure_three_uses_encoded_padding_without_debug_or_statistics() {
+        assert_eq!((SECURE_LEVEL, DEBUG_LEVEL, STAT_LEVEL), (3, 0, 0));
+        assert!(ENCODE_FREELIST);
+        assert_eq!((PADDING_SIZE, PADDING_WSIZE, PAGE_KEY_COUNT, PAGES_DIRECT), (8, 1, 2, 130));
+        assert!(!GUARDED);
+    }
+
     #[test]
     fn selected_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
-        assert_eq!(SECURE_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
+        assert_eq!(SECURE_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
+            3
+        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
             2
         } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-1")) {
             1
@@ -1134,12 +1148,13 @@ mod tests {
         assert!(!FREE_IS_CHECKED);
         assert!(!FREE_USE_PAGEMAP);
         assert!(!OPT_FREE_SMALL);
-        assert_eq!(ENCODE_FREELIST, cfg!(feature = "mi-debug-1"));
+        let padded = cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")));
+        assert_eq!(ENCODE_FREELIST, padded);
         assert_eq!(GUARDED, cfg!(all(target_arch = "x86_64", feature = "mi-guarded")));
         assert!(!OPT_SIMD);
-        assert_eq!(PADDING_SIZE, if cfg!(feature = "mi-debug-1") { 8 } else { 0 });
-        assert_eq!(PADDING_WSIZE, usize::from(cfg!(feature = "mi-debug-1")));
-        assert_eq!(PAGE_KEY_COUNT, if cfg!(feature = "mi-debug-1") { 2 } else { 1 });
+        assert_eq!(PADDING_SIZE, if padded { 8 } else { 0 });
+        assert_eq!(PADDING_WSIZE, usize::from(padded));
+        assert_eq!(PAGE_KEY_COUNT, if padded { 2 } else { 1 });
         assert!(ENABLE_LARGE_PAGES);
         assert!(PAGE_META_IS_SEPARATED);
         assert!(PAGE_META_IS_ALIGNED);
@@ -1160,7 +1175,7 @@ mod tests {
         assert_eq!(BIN_HUGE, 73);
         assert_eq!(BIN_FULL, 74);
         assert_eq!(BIN_COUNT, 75);
-        assert_eq!(PAGES_DIRECT, if cfg!(feature = "mi-debug-1") { 130 } else { 129 });
+        assert_eq!(PAGES_DIRECT, if padded { 130 } else { 129 });
         assert_eq!(MAX_SINGLETON_BIN, 60);
         assert_eq!(MAX_ALLOC_SIZE, isize::MAX as usize);
         assert!(!PAGE_MAP_FLAT);

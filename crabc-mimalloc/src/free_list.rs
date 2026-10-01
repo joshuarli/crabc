@@ -946,6 +946,17 @@ fn raw_list_tail(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[test]
+    fn encoded_links_use_both_source_keys_and_page_null_sentinel() {
+        let page = 0x1000;
+        let keys = [3, 0x1234];
+        assert_eq!(super::encode_page_link(page, keys, 0), 0x11a3);
+        assert_eq!(super::encode_page_link(page, keys, 0x1010), 0x1123);
+        assert_eq!(super::decode_page_link(page, keys, 0x11a3), 0);
+        assert_eq!(super::decode_page_link(page, keys, 0x1123), 0x1010);
+        assert_ne!(super::decode_page_link(page, [3, 0x1235], 0x1123), 0x1010);
+    }
     use super::*;
 
     #[repr(align(16))]

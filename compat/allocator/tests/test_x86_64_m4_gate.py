@@ -40,7 +40,7 @@ class M4GateContractTests(unittest.TestCase):
                 self.assertEqual(gate.API_PROFILES, ("release", "debug-1", "stat-1", "stat-2"))
 
     def test_secure_c_build_selects_one_exact_source_level(self) -> None:
-        for profile, level in (("secure-1", 1), ("secure-2", 2)):
+        for profile, level in (("secure-1", 1), ("secure-2", 2), ("secure-3", 3)):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
                 output = Path(directory)
                 with mock.patch.object(harness, "require_tool", return_value="/musl-gcc"), \

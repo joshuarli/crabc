@@ -263,6 +263,9 @@ mi-xmalloc = []
 # additionally randomizes page extension; feature ancestry selects the highest level.
 mi-secure-1 = []
 mi-secure-2 = ["mi-secure-1"]
+# Level three adds encoded free lists and canary records without enabling
+# debug byte filling or statistics.
+mi-secure-3 = ["mi-secure-2"]
 # Private x86 guarded object configuration keeps debug, secure, and statistics
 # selection independent. Default builds leave guarded sampling disabled.
 mi-guarded = []
