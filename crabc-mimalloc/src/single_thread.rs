@@ -40265,16 +40265,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 .checked_sub(self.page_map.memory_config().page_size().bytes())?
                 .checked_sub(adjustment);
         }
-        #[cfg(not(feature = "mi-debug-1"))]
+        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
         let canonical_usable = page.block_size();
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         let canonical_usable = {
             let page_pointer = NonNull::from(page);
             // SAFETY: the exact live local block retains its page and key.
-            let key = unsafe { Page::debug_padding_keys_at(page_pointer) };
+            let key = unsafe { Page::source_page_keys_at(page_pointer) };
             // SAFETY: the caller retains the full block and its trailing
             // record while this source-local usable-size observation runs.
-            unsafe { alloc::debug_padding_usable_size(
+            unsafe { alloc::source_padding_usable_size(
                 base, page.block_size(), page_pointer.as_ptr().addr(), key,
             ) }
         };
@@ -41519,7 +41519,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         request: usize,
         zero: bool,
     ) -> Result<(), FreeListError> {
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         {
             // SAFETY: the free-list projection has ended. This owner retains
             // the selected page and the popped block exclusively until return.
@@ -41532,14 +41532,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 (block_size, huge)
             };
             // SAFETY: the page's source key is immutable while the block lives.
-            let key = unsafe { Page::debug_padding_keys_at(page) };
+            let key = unsafe { Page::source_page_keys_at(page) };
             // SAFETY: the block was just popped for this checked request; its
             // complete writable span includes the reserved trailing record.
-            unsafe { alloc::initialize_debug_padding(
-                block, block_size, request, page.as_ptr().addr(), key, zero, huge,
+            let policy = if crate::config::DEBUG_LEVEL >= 1 {
+                alloc::SourcePaddingPolicy::Debug
+            } else {
+                alloc::SourcePaddingPolicy::RecordOnly
+            };
+            unsafe { alloc::initialize_source_padding(
+                block, block_size, request, page.as_ptr().addr(), key, zero, huge, policy,
             ) }.ok_or(FreeListError::InvalidBlock)?;
         }
-        #[cfg(not(feature = "mi-debug-1"))]
+        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
         let _ = (page, block, request, zero);
         Ok(())
     }
@@ -44568,6 +44573,30 @@ mod tests {
         // SAFETY: force collection removed every page-map entry and all local
         // users before the explicit page-map destruction boundary.
         unsafe { page_map.destroy() }.unwrap();
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[test]
+    fn secure_record_only_allocation_preserves_client_bytes_and_logical_usable_size() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(19, false).unwrap();
+            // SAFETY: the fixture owns this current allocation and its page;
+            // the trailing source record remains readable until its free.
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let block_size = unsafe { (*page.as_ptr()).block_size() };
+            let keys = unsafe { Page::source_page_keys_at(page) };
+            assert_eq!(unsafe { alloc::source_padding_usable_size(
+                block, block_size, page.as_ptr().addr(), keys,
+            ) }, 19);
+            assert_eq!(unsafe { allocator.usable_size(block) }, Some(19));
+            // The arena starts zeroed; free-list encoding occupies only its
+            // first word. Record-only padding must not debug-fill clients.
+            for offset in WORD_SIZE..19 {
+                assert_eq!(unsafe { block.as_ptr().add(offset).read() }, 0);
+            }
+            unsafe { core::ptr::write_bytes(block.as_ptr(), 0x71, 19); }
+            unsafe { allocator.free(block).unwrap(); }
+        });
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-2"))]
