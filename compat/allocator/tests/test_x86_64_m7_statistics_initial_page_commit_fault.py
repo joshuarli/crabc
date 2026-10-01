@@ -20,7 +20,9 @@ class InitialPageCommitProducts(unittest.TestCase):
         self._produce(escaped=True)
 
     def _produce(self, *, escaped=False):
-        with tempfile.TemporaryDirectory() as name, ExitStack() as stack:
+        scratch = producer.harness.WORK_ROOT / 'tmp/initial-page-commit-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as name, ExitStack() as stack:
             root = Path(name)
             report = root / 'report.json'
             manifest = producer.harness.ROOT / 'crabc-mimalloc/Cargo.toml'
