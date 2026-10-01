@@ -3110,6 +3110,8 @@ impl ThreadLocalData {
     /// The caller retains the original TLD and incoming Theap capabilities,
     /// excludes list retirement, and owns all ordinary incoming-image fields.
     /// Existing list members remain live through the locked random snapshot.
+    /// The owner also excludes mutation of the selected head's random fields;
+    /// the list mutex alone protects membership, not arbitrary random draws.
     #[cfg(target_arch = "x86_64")]
     unsafe fn attach_one_theap_at(
         tld: NonNull<Self>, theap: NonNull<Theap>,
@@ -6469,6 +6471,25 @@ pub(crate) struct PreparedTheapInitialization {
     owner: TheapOwner,
 }
 
+/// Attachment failure with its exact list disposition. Only a failed lock
+/// acquisition preserves the unattached phase; an unlock failure occurs after
+/// the incoming image has been linked and must retain its storage terminally.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct TheapAttachmentFailure {
+    error: TheapMainStaticInitError,
+    unattached: Option<PreparedTheapInitialization>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl TheapAttachmentFailure {
+    pub(crate) fn error(&self) -> TheapMainStaticInitError { self.error }
+
+    pub(crate) fn into_unattached(self) -> Result<PreparedTheapInitialization, TheapMainStaticInitError> {
+        self.unattached.ok_or(self.error)
+    }
+}
+
 /// The original source list-head decision awaiting its random branch.
 /// No new head lookup or list splice occurs after a warning callback.
 #[cfg(target_arch = "x86_64")]
@@ -6510,11 +6531,27 @@ impl PreparedTheapInitialization {
     /// # Safety
     /// The original image owner still retains the exact pointers' allocation
     /// provenance and lifetimes. No owner projection, list mutator, or image
-    /// retirement overlaps this call. Any error retains the partial image;
+    /// retirement overlaps this call. The retained owner excludes mutation of
+    /// an existing head's random fields during its locked snapshot. Any error retains the partial image;
     /// it must not free storage that this operation may already have linked.
     pub(crate) unsafe fn apply_source_options_and_attach(
         self, options: SourceTheapOptions,
     ) -> Result<TheapRandomInitialization, TheapMainStaticInitError> {
+        unsafe { self.apply_source_options_and_attach_with_failure_owner(options) }
+            .map_err(|failure| failure.error())
+    }
+
+    /// Retains the unattached phase when the TLD mutex cannot be acquired.
+    /// A linked-image unlock failure never returns a resettable phase.
+    ///
+    /// # Safety
+    /// The original storage owner excludes image mutation and retirement as
+    /// for attachment, including existing-head random mutation during the
+    /// locked snapshot. A returned phase proves list disposition only, never
+    /// allocation lifetime or permission to release the owner's storage.
+    pub(crate) unsafe fn apply_source_options_and_attach_with_failure_owner(
+        self, options: SourceTheapOptions,
+    ) -> Result<TheapRandomInitialization, TheapAttachmentFailure> {
         let pointer = self.theap.as_ptr();
         // SAFETY: the caller retains exclusive ordinary-field authority;
         // these projections end before any callback-producing option read.
@@ -6535,8 +6572,13 @@ impl PreparedTheapInitialization {
         }
         // The option callback may have added another valid member. Snapshot
         // the actual head now, without rechecking a pre-callback empty list.
-        let head_random = unsafe { ThreadLocalData::attach_one_theap_at(self.tld, self.theap) }
-            .map_err(TheapMainStaticInitError::ThreadList)?;
+        let head_random = match unsafe { ThreadLocalData::attach_one_theap_at(self.tld, self.theap) } {
+            Ok(random) => random,
+            Err(error) => return Err(TheapAttachmentFailure {
+                error: TheapMainStaticInitError::ThreadList(error),
+                unattached: if matches!(error, ThreadLocalTheapListError::Busy) { Some(self) } else { None },
+            }),
+        };
         let Some(mut head_random) = head_random else {
             return Ok(TheapRandomInitialization::FirstHead(FirstHeadTheapInitialization(self)));
         };
@@ -6550,7 +6592,22 @@ impl PreparedTheapInitialization {
         Ok(TheapRandomInitialization::SplitComplete(LinkedTheapInitialization(self)))
     }
 
-
+    /// Restores the incoming prefix before any list attachment, preserving
+    /// the producer's allocation ID and ownership administration.
+    ///
+    /// # Safety
+    /// The real allocation owner still retains exclusive authority over this
+    /// original image and excludes every projection and retirement. The
+    /// returned pointer does not grant allocation or release authority.
+    pub(crate) unsafe fn reset_unattached(self) -> NonNull<Theap> {
+        let image = unsafe { &mut *self.theap.as_ptr() };
+        let memory_id = image.memid;
+        let lifecycle = image.main_heap_lifecycle;
+        *image = Theap::empty();
+        image.memid = memory_id;
+        image.main_heap_lifecycle = lifecycle;
+        self.theap
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -9239,6 +9296,183 @@ mod tests {
             assert!(!(*image.as_ptr()).allow_page_reclaim);
             (*tld.as_ptr()).detach_one_theap_from_heap(&mut *heap.as_ptr(), image.as_ptr()).unwrap();
             (*tld.as_ptr()).detach_one_theap_from_tld(image.as_ptr()).unwrap();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn staged_live_owner_kinds_preserve_source_options_random_and_publication_order() {
+        use crate::config::SourceOption;
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        for (kind, static_image, regular_heap, non_abandoning) in [
+            (TheapInitializationKind::ProcessStatic, true, false, false),
+            (TheapInitializationKind::Dynamic { page_mode: TheapPageMode::OrdinaryAbandoning, tld_may_have_theaps: false }, false, true, false),
+            (TheapInitializationKind::Dynamic { page_mode: TheapPageMode::NonAbandoningPageSession, tld_may_have_theaps: false }, false, true, true),
+            (TheapInitializationKind::SharedMain { page_mode: TheapPageMode::OrdinaryAbandoning }, false, false, false),
+            (TheapInitializationKind::SharedMain { page_mode: TheapPageMode::NonAbandoningPageSession }, false, false, true),
+        ] {
+            let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+            if regular_heap { assert!(unsafe { heap.initialize_dynamic_binding(&PARENT, 2) }); }
+            else { heap.initialize_main_static(&PARENT, MemoryId::static_empty()); }
+            let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+            let mut tld = std::boxed::Box::new(ThreadLocalData::normal_tld_init_preimage());
+            let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+            tld.memid = MemoryId::malloc(tld_pointer.as_ptr().cast(), size_of::<ThreadLocalData>(), true);
+            assert!(tld.initialize_normal_tld_field_prefix_after_direct_preimage(
+                LiveThreadId::new(12).unwrap(), ThreadSequence::from_previous_total_count(0), 0, PARENT.identity()));
+            let mut image = std::boxed::Box::new(Theap::empty());
+            let pointer = NonNull::new(core::ptr::addr_of_mut!(*image)).unwrap();
+            if !static_image { assert!(image.set_dynamic_metadata_memid(MemoryId::malloc(pointer.as_ptr().cast(), size_of::<Theap>(), true))); }
+            // Each case owns its original live storage. Option callbacks
+            // observe an unpublished prefix before list attachment, and the
+            // completed image is detached before either allocation is dropped.
+            unsafe {
+                let phase = Theap::prepare_initialization_at(pointer, heap_pointer, tld_pointer, kind).unwrap();
+                let mut reads = std::vec::Vec::new();
+                let options = SourceTheapOptions::capture_with(|option| {
+                    assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                    assert!((*tld_pointer.as_ptr()).theaps.is_null());
+                    reads.push(option);
+                    match option { SourceOption::PageReclaimOnFree => -1, SourceOption::PageFullRetain => 32, _ => panic!("unexpected option") }
+                });
+                assert_eq!(reads, [SourceOption::PageReclaimOnFree, SourceOption::PageFullRetain, SourceOption::PageFullRetain]);
+                let linked = finish_unfaulted_test_random(phase.apply_source_options_and_attach(options).unwrap());
+                assert_eq!((*tld_pointer.as_ptr()).theaps, pointer.as_ptr());
+                assert!((*pointer.as_ptr()).random.is_initialized());
+                assert_eq!((*pointer.as_ptr()).cookie & 1, 1);
+                assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                #[cfg(feature = "mi-guarded")]
+                let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 3, sample_seed: 1 })
+                    .apply_guarded_size_options(GuardedSizeOptions { size_min: 80, size_max: 96 });
+                #[cfg(not(feature = "mi-guarded"))]
+                let ready = linked.finish_without_guarded_options();
+                ready.publish_heap().unwrap();
+                assert_eq!((*pointer.as_ptr()).heap.load(Ordering::Acquire), heap_pointer.as_ptr());
+                assert!(!(*pointer.as_ptr()).is_detached);
+                assert!(!(*pointer.as_ptr()).allow_page_reclaim);
+                assert_eq!((*pointer.as_ptr()).allow_page_abandon, !non_abandoning);
+                assert_eq!((*pointer.as_ptr()).page_full_retain, if non_abandoning { -1 } else { 32 });
+                (*tld_pointer.as_ptr()).detach_one_theap_from_heap(&mut *heap_pointer.as_ptr(), pointer.as_ptr()).unwrap();
+                (*tld_pointer.as_ptr()).detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
+                if !static_image { assert!((*pointer.as_ptr()).clear_dynamic_metadata_after_detach()); }
+                if regular_heap { assert!((*heap_pointer.as_ptr()).retire_dynamic_binding_after_detach()); }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn staged_child_metadata_preserves_parent_tld_random_order_and_child_options() {
+        use crate::subproc::ChildSubprocessImage;
+        use crate::subproc::registry::SourceSubprocessRegistry;
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        static REGISTRY: SourceSubprocessRegistry = SourceSubprocessRegistry::new();
+        let mut child = std::boxed::Box::new(ChildSubprocessImage::new());
+        let child_pointer = NonNull::new(core::ptr::addr_of_mut!(*child)).unwrap();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let mut tld = std::boxed::Box::new(ThreadLocalData::detached());
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        let mut image = std::boxed::Box::new(Theap::empty());
+        let pointer = NonNull::new(core::ptr::addr_of_mut!(*image)).unwrap();
+        assert!(image.set_dynamic_metadata_memid(MemoryId::malloc(pointer.as_ptr().cast(), size_of::<Theap>(), true)));
+        // Exact parent and child images remain retained until both registry
+        // and Theap edges have been removed in the source destruction order.
+        unsafe {
+            REGISTRY.initialize_main(&PARENT).unwrap();
+            REGISTRY.initialize_child(&*child_pointer.as_ptr(), PARENT.identity(),
+                MemoryId::malloc(child_pointer.as_ptr().cast(), size_of::<ChildSubprocessImage>(), true)).unwrap();
+            core::pin::Pin::new_unchecked(&mut *heap_pointer.as_ptr()).initialize_child_main(
+                core::pin::Pin::new_unchecked(&*child_pointer.as_ptr()),
+                MemoryId::malloc(heap_pointer.as_ptr().cast(), size_of::<Heap>(), true)).unwrap();
+            let phase = Theap::prepare_initialization_at(pointer, heap_pointer, tld_pointer,
+                TheapInitializationKind::ChildMetadata).unwrap();
+            assert_eq!((*pointer.as_ptr()).subproc.load(Ordering::Acquire), (*heap_pointer.as_ptr()).subprocess);
+            assert_ne!((*pointer.as_ptr()).subproc.load(Ordering::Acquire), (*tld_pointer.as_ptr()).subprocess);
+            let linked = finish_unfaulted_test_random(phase.apply_source_options_and_attach(SourceTheapOptions {
+                allow_page_reclaim: false, allow_page_abandon: true, page_full_retain: 32,
+            }).unwrap());
+            assert_eq!((*tld_pointer.as_ptr()).theaps, pointer.as_ptr());
+            assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+            assert!((*pointer.as_ptr()).random.is_initialized());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 3, sample_seed: 1 })
+                .apply_guarded_size_options(GuardedSizeOptions { size_min: 80, size_max: 96 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            assert!((*pointer.as_ptr()).is_detached);
+            assert!((*pointer.as_ptr()).allow_page_abandon);
+            assert_eq!((*pointer.as_ptr()).page_full_retain, 32);
+            assert!(!(*pointer.as_ptr()).allow_page_reclaim);
+            (*tld_pointer.as_ptr()).detach_one_theap_from_heap(&mut *heap_pointer.as_ptr(), pointer.as_ptr()).unwrap();
+            (*tld_pointer.as_ptr()).detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
+            assert!((*pointer.as_ptr()).clear_dynamic_metadata_after_detach());
+            REGISTRY.unlink_child_terminal(&*child_pointer.as_ptr()).unwrap();
+            (*child_pointer.as_ptr()).identity().heap_list().free_child_main(&mut *heap_pointer.as_ptr(),
+                (*child_pointer.as_ptr()).identity()).unwrap();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn staged_initializer_contention_distinguishes_unattached_reset_from_published_retention() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let mut tld = std::boxed::Box::new(ThreadLocalData::detached());
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        let mut image = std::boxed::Box::new(Theap::empty());
+        assert!(image.set_detached_main_metadata_static_memid());
+        let pointer = NonNull::new(core::ptr::addr_of_mut!(*image)).unwrap();
+        // The actual fixture owns every allocation throughout both failures;
+        // only an unlinked phase may restore its prefix. Publication failure
+        // retains the linked image until the fixture completes and unlinks it.
+        unsafe {
+            let prepared = Theap::prepare_initialization_at(pointer, heap_pointer, tld_pointer,
+                TheapInitializationKind::MetadataStatic).unwrap();
+            let guard = (&*core::ptr::addr_of!((*tld_pointer.as_ptr()).theaps_lock)).try_lock().unwrap();
+            let failure = match prepared.apply_source_options_and_attach_with_failure_owner(
+                SourceTheapOptions::release_defaults_for_test()) {
+                Err(failure) => failure,
+                Ok(_) => panic!("attachment acquired an already held mutex"),
+            };
+            assert_eq!(failure.error(), TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy));
+            guard.unlock().unwrap();
+            assert!((*tld_pointer.as_ptr()).theaps.is_null());
+            assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+            assert_eq!(failure.into_unattached().unwrap().reset_unattached(), pointer);
+            assert!((*pointer.as_ptr()).subproc.load(Ordering::Acquire).is_null());
+            assert_eq!((*pointer.as_ptr()).tld, detached_thread_local_ptr());
+            assert_eq!((*pointer.as_ptr()).memid.kind(), MemoryKind::Static);
+            let prepared = Theap::prepare_initialization_at(pointer, heap_pointer, tld_pointer,
+                TheapInitializationKind::MetadataStatic).unwrap();
+            let linked = finish_unfaulted_test_random(prepared.apply_source_options_and_attach(SourceTheapOptions {
+                allow_page_reclaim: true, allow_page_abandon: true, page_full_retain: 32,
+            }).unwrap());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 0, sample_seed: 0 })
+                .apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            let guard = (&*core::ptr::addr_of!((*heap_pointer.as_ptr()).theaps_lock)).try_lock().unwrap();
+            assert_eq!(ready.publish_heap(), Err(TheapMainStaticInitError::HeapList(HeapTheapListError::Busy)));
+            guard.unlock().unwrap();
+            assert_eq!((*pointer.as_ptr()).heap.load(Ordering::Acquire), heap_pointer.as_ptr());
+            assert_eq!((*tld_pointer.as_ptr()).theaps, pointer.as_ptr());
+            assert!((*heap_pointer.as_ptr()).theaps.is_null());
+            assert!((*pointer.as_ptr()).allow_page_abandon);
+            assert_eq!((*pointer.as_ptr()).page_full_retain, 32);
+            // This retained fixture finishes the omitted list insertion for
+            // teardown; the failed phase itself supplies no recovery token.
+            Heap::attach_theap_after_heap_publication_at(heap_pointer, pointer, false).unwrap();
+            (*tld_pointer.as_ptr()).detach_one_theap_from_heap(&mut *heap_pointer.as_ptr(), pointer.as_ptr()).unwrap();
+            (*tld_pointer.as_ptr()).detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
         }
     }
 
