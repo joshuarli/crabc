@@ -290,6 +290,11 @@ def integer_memory_operand(source: bytes, offset: int, *,
         start, end = instruction_span
         require(0 <= start < offset and offset + 4 <= end <= len(source),
                 'integer operand instruction span differs')
+        # A byte immediate follows the displacement and changes its PC bias.
+        # Its complete span owns that immediate; neighboring bytes cannot
+        # supply it or turn a wider store into this one-byte operation.
+        if (end == offset + 5 and source[start:offset] == b'\xc6\x05'):
+            return b'\xc6\x05', 1, source[offset + 4:end], 'integer-immediate-store'
         prefix = source[start:offset] if end == offset + 4 else b''
         operation = prefix[1:] if len(prefix) == 4 and prefix[0] == 0x44 else prefix
         if (len(operation) == 3 and operation[:2] == b'\x0f\xb6' and operation[2] & 0xc7 == 0x05):
@@ -310,6 +315,15 @@ def integer_memory_operand(source: bytes, offset: int, *,
         # LOCK is explicit for compare/exchange and increments; memory XCHG
         # supplies its own lock. Only these observed widths and REX bits belong
         # to the admitted forms; segment/address/operand-size prefixes do not.
+        # Byte CMPXCHG admits only the observed low-byte register encodings.
+        # REX 40 selects SIL/DIL instead of high-byte registers; REX 44
+        # extends the register field. Neither changes the memory width.
+        byte_atomic = prefix[1:] if prefix.startswith(b'\xf0') else b''
+        if byte_atomic[:1] in {b'\x40', b'\x44'}:
+            byte_atomic = byte_atomic[1:]
+        if (len(byte_atomic) == 3 and byte_atomic[:2] == b'\x0f\xb0'
+                and byte_atomic[2] & 0xc7 == 0x05):
+            return prefix, 1, b'', 'locked-cmpxchg'
         atomic = prefix
         locked = atomic.startswith(b'\xf0')
         if locked:

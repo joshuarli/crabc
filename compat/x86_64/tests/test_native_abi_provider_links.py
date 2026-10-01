@@ -871,7 +871,21 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 ('bss', 8, 'cmpxchg %rcx,domain_scalar(%rip)', None),
                 ('bss', 4, 'cmpxchg %ecx,domain_scalar(%rip)', None),
                 ('bss', 2, 'lock cmpxchg %cx,domain_scalar(%rip)', None),
-                ('bss', 1, 'lock cmpxchg %cl,domain_scalar(%rip)', None),
+                ('bss', 1, 'lock cmpxchg %cl,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('data', 1, 'lock cmpxchg %dl,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 1, 'lock cmpxchg %sil,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('data', 1, 'lock cmpxchg %r8b,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 1, 'mov $0x40000000,%eax; lock cmpxchg %cl,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 1, 'movb $0,domain_scalar(%rip)', 'integer-immediate-store'),
+                ('data', 1, 'movb $1,domain_scalar(%rip)', 'integer-immediate-store'),
+                ('bss', 1, 'mov $0x66000000,%eax; movb $0xff,domain_scalar(%rip)', 'integer-immediate-store'),
+                ('bss', 1, 'cmpxchg %cl,domain_scalar(%rip)', None),
+                ('bss', 1, 'lock cmpxchg %cl,domain_scalar+8(%rip)', None),
+                ('rodata', 1, 'lock cmpxchg %cl,domain_scalar(%rip)', None),
+                ('rodata', 1, 'movb $0,domain_scalar(%rip)', None),
+                ('bss', 1, 'movb $0,domain_scalar+8(%rip)', None),
+                ('bss', 1, 'movb $0,%fs:domain_scalar(%rip)', None),
+                ('bss', 1, 'lock cmpxchg %sil,%fs:domain_scalar(%rip)', None),
                 ('bss', 4, 'lock cmpxchg %ecx,%fs:domain_scalar(%rip)', None),
                 ('bss', 4, 'addr32 lock cmpxchg %ecx,domain_scalar(%eip)', None),
                 ('bss', 2, 'xchg %cx,domain_scalar(%rip)', None),
@@ -899,7 +913,8 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         + '.section .' + storage + '.domain_scalar,"' + ('a' if storage == 'rodata' else 'aw')
                         + '",@' + ('nobits' if storage == 'bss' else 'progbits') + '\n.balign 8\n'
                         '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
-                        'domain_scalar: .zero 8\n.size domain_scalar,.-domain_scalar\n'
+                        + 'domain_scalar: .zero ' + str(1 if operand_size == 1 else 8)
+                        + '\n.size domain_scalar,.-domain_scalar\n'
                         '.section .note.GNU-stack,"",@progbits\n')
                     (work / 'caller.S').write_text(
                         '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
@@ -957,7 +972,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                                               disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
                         disassembly = links.read_tool('objdump', '-dw', work / 'caller.o')
                         corrupted = '\n'.join(line for line in disassembly.splitlines()
-                                              if not any(word in line for word in ('cmpxchg', 'xchg', ' incl ', ' decl ')))
+                                              if not any(word in line for word in ('cmpxchg', 'xchg', ' incl ', ' decl ', 'movb')))
                         with self.assertRaisesRegex(ValueError, 'instruction span is absent'):
                             links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
                                                      'domain_scalar', image=caller, disassembly=corrupted)
@@ -1026,7 +1041,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             struct.pack_into('<Q', changed, readonly_location + 16, address)
                             with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
                                 links.final_member_references(bytes(changed), **reference_arguments)
-                            if operand_size < 8:
+                            if operand_size < definition['row']['size_bytes']:
                                 changed = bytearray(image)
                                 struct.pack_into('<Q', changed, load_location + 40, address + operand_size - load[3])
                                 with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
@@ -1041,6 +1056,11 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 for segment in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
                                 if segment[0] == 1 and segment[3] <= code < segment[3] + segment[5])
                             prefix_size = references[0]['offset'] - references[0]['instruction_start']
+                            if operation == 'integer-immediate-store':
+                                changed = bytearray(image)
+                                changed[executable[2] + code - executable[3] + prefix_size + 4] ^= 1
+                                with self.assertRaisesRegex(ValueError, 'opcode differs'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
                             for byte in range(prefix_size):
                                 changed = bytearray(image)
                                 changed[executable[2] + code - executable[3] + byte] ^= 1
