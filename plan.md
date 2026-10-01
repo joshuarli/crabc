@@ -29,15 +29,15 @@ reports remain unqualified and cannot supply correctness evidence.
 Update this section in place when the frontier changes. A retained report qualifies
 only its exact source, configuration, image, products, and execution context.
 
-- **Winddown (2026-10-01):** paused at the user's request. No successor lanes,
-  builds or new implementation were started during settlement. Qualified changes
-  are integrated through `b499caaeb`; unfinished source is committed on the
-  parked branches below. Resume only after a new user instruction. All 21 remaining
-  lane worktrees are retired; branch/source/raw-input custody is preserved.
-  Detached exact-source evidence checkouts remain registered. Winddown custody
-  and cleanup records are under `.work/x86_64/reports/integrated-lanes/`
+- **Resumed (2026-10-01):** active after the user's resume instruction.
+  Sixteen isolated `gpt-6.1-sol` medium lanes are restoring the parked source
+  contracts and their native proofs; the parent integrates to `main`. Winddown
+  refs and raw inputs remain retained. Disk exhaustion interrupted initial lane
+  edits/builds; source was restored from Git and disposable Cargo incremental
+  caches were reclaimed without removing retained products or reports.
+  Historical custody remains under `.work/x86_64/reports/integrated-lanes/`
   in `cleanup-winddown-current70`, `cleanup-winddown-historical70` and
-  `cleanup-winddown-admin70`. Resume worktrees must be recreated from parked refs.
+  `cleanup-winddown-admin70`. Parked refs below remain unqualified drafts.
 - **Campaign:** 9/26 frozen families are `foundation-verified`; 17 remain
   planned. All 223 capabilities are accounted for: 180 implemented and 43
   selected-private. Completion requires 25 active families and seven ordered
@@ -105,17 +105,17 @@ only its exact source, configuration, image, products, and execution context.
   repair or complete secure-profile pass is claimed. Original failures, products
   and the small control remain under
   `.work/allocator-x86_64/reports/allocator/x86_64/secureprofilefidelity59-bd6f847d0/source`.
-- **Callable providers:** the complete diagnostic projection of frozen runtime
-  `e9de501dd` admits 2,875/2,958 applicable references; 83 remain refused.
-  Exact locked BSS atomics, bounded interior data addresses and common 4/8-byte
-  integer operand proofs are integrated. Latest receiver tests pass fifteen
-  real-ELF controls, pinned controls and independent whole read-only replay,
-  including root replay 69. Exact receiver source and raw inputs remain under
-  `.work/x86_64/reports/runtimeclosure59/source`. Byte-load/instruction-boundary
-  source is parked separately: latest host fifteen controls pass, but pinned
-  checks and whole source-bound replay are unrun. Diagnostic replay cannot
-  qualify a newer runtime source; public source-identity admission still rejects
-  the wrong source. Whole closure remains open.
+- **Callable providers:** byte-load instruction-boundary admission is integrated
+  at `32b40e346`. Fifteen real-ELF host and pinned controls and all nine compiler
+  profiles pass on its lane source. The frozen `e9de501dd` diagnostic projection
+  and independent read-only replay admit 2,881/2,958 references; 77 remain
+  refused, with six added and none lost. Public source-identity admission still
+  rejects the wrong source. Exact receiver source and raw inputs are retained
+  under `.work/x86_64/reports/runtimeclosure71/source`; relocated custody replay
+  passes and the settled lane worktree is retired. Exact locked BSS atomics, bounded
+  interior data addresses and common 4/8-byte integer proofs remain integrated.
+  Diagnostic replay cannot qualify newer runtime source. Whole closure remains
+  open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Keep this requirement unmet.
