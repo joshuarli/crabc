@@ -96,13 +96,12 @@ only its exact source, configuration, image, products, and execution context.
   first independent physical replay passes all seventeen strict tests, then
   rejects a cold/cached compiler-record comparison. The authenticated physical
   product comparison is repaired, and omitted original queue inputs are now
-  independently retained. A complete native-first diagnostic replay passes
-  all retained native
-  boundaries without running Miri. The corrected full read-only replay is
-  running against the unchanged producer, including all seventeen strict
-  tests; the whole gate remains unmet pending M1/M2. Prior full-roster failures
-  remain unqualified
-  and retained.
+  independently retained. The corrected complete read-only replay passes
+  at receiver `bd207c0b0` against unchanged producer `1c22908bf`: all seventeen
+  strict interpreter tests, all 69 foundation commands and five original
+  queue-helper commands pass. Exact producer and receiver identities remain
+  separate. The whole gate remains unmet pending M1/M2. Prior full-roster,
+  receiver and disk-exhaustion failures remain unqualified and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
   statistics, remote ownership and failure evidence remain retained by exact
   source. M6 now requests the supported full-profile producer commands and
