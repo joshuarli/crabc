@@ -126,6 +126,8 @@ int main(void) {
     filled_capacity = page->capacity;
     filled_extensions++;
   }
+  for (size_t i = 0; i < filled_capacity; i++) memset(blocks[i], (unsigned char)(i + 1), 64);
+  const uint16_t committed_prefix = page->slice_pcommitted;
 #else
   const size_t initial_capacity = 128;
   const size_t filled_capacity = initial_capacity;
@@ -138,6 +140,8 @@ int main(void) {
   printf("profile.level=%d\n", CRABC_STAT_LEVEL);
 #ifdef CRABC_STATISTICS_MATRIX
   printf("profile.debug=%d\n", MI_DEBUG);
+  printf("profile.guarded=%d\n", MI_GUARDED);
+  printf("profile.guarded_sample_rate=%ld\n", mi_option_get(mi_option_guarded_sample_rate));
   printf("profile.faulted=%d\n", CRABC_FAULTED);
   printf("geometry.initial_capacity=%zu\n", initial_capacity);
   printf("geometry.filled_capacity=%zu\n", filled_capacity);
@@ -155,6 +159,13 @@ int main(void) {
   show("filled");
   fail_next_commit = CRABC_FAULTED;
   blocks[filled_capacity] = mi_malloc(64);
+#ifdef CRABC_STATISTICS_MATRIX
+  printf("failed_allocation.original_prefix=%d\n", page->capacity == filled_capacity && page->slice_pcommitted == committed_prefix && page->used == filled_capacity);
+  int intact = 1;
+  for (size_t i = 0; i < filled_capacity; i++) for (size_t j = 0; j < 64; j++)
+    if (((unsigned char*)blocks[i])[j] != (unsigned char)(i + 1)) intact = 0;
+  printf("failed_allocation.client_bytes=%d\n", intact);
+#endif
   printf("failed_allocation.same_page=%d\n", blocks[filled_capacity] != NULL && ((uintptr_t)blocks[filled_capacity] >> 16) == ((uintptr_t)blocks[0] >> 16));
   printf("failed_allocation.nonnull=%d\n", blocks[filled_capacity] != NULL);
   show("failed_allocation");
@@ -162,6 +173,12 @@ int main(void) {
   blocks[filled_capacity] = NULL;
   mi_collect(true);
   blocks[filled_capacity + 1] = mi_malloc(64);
+#ifdef CRABC_STATISTICS_MATRIX
+  intact = 1;
+  for (size_t i = 0; i < filled_capacity; i++) for (size_t j = 0; j < 64; j++)
+    if (((unsigned char*)blocks[i])[j] != (unsigned char)(i + 1)) intact = 0;
+  printf("retry.client_bytes=%d\n", intact);
+#endif
   printf("retry.same_page=%d\n", blocks[filled_capacity + 1] != NULL && ((uintptr_t)blocks[filled_capacity + 1] >> 16) == ((uintptr_t)blocks[0] >> 16));
   printf("retry.nonnull=%d\n", blocks[filled_capacity + 1] != NULL);
   show("retry");

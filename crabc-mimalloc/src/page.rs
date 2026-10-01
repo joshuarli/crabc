@@ -818,10 +818,17 @@ use crate::os::PageSize;
                     }.unwrap().capacity);
                     filled_extensions += 1;
                 };
+                for (index, block) in blocks[..filled_capacity].iter().enumerate() {
+                    // SAFETY: these distinct live allocations each own their
+                    // requested 64-byte client span until the final frees.
+                    unsafe { block.unwrap().as_ptr().write_bytes((index + 1) as u8, 64) };
+                }
                 std::println!("CRABC_MI_M7_STATISTICS_PAGE_EXTENSION_FAULT_TRACE_BEGIN");
                 std::println!("profile.level={}", crate::config::STAT_LEVEL);
                 if matrix {
                     std::println!("profile.debug={}", crate::config::DEBUG_LEVEL);
+                    std::println!("profile.guarded={}", usize::from(crate::config::GUARDED));
+                    std::println!("profile.guarded_sample_rate={}", crate::source_options_api::option_get(SourceOption::GuardedSampleRate as c_int));
                     std::println!("profile.faulted={}", usize::from(faulted));
                     std::println!("geometry.initial_capacity={initial_capacity}");
                     std::println!("geometry.filled_capacity={filled_capacity}");
@@ -846,6 +853,19 @@ use crate::os::PageSize;
                     NativePageAllocationResult::Allocated(pointer) => Some(pointer),
                     _ => panic!("fallback allocation after one failed page commit failed"),
                 };
+                // SAFETY: the original live clients remain owned by this
+                // thread across the fault and fallback allocation.
+                let after = unsafe { runtime_lifecycle::native_runtime_live_client_page_geometry_test_audit(blocks[0].unwrap()) }.unwrap();
+                if matrix {
+                    std::println!("failed_allocation.original_prefix={}", usize::from(after.capacity == filled.capacity && after.slice_pcommitted == filled.slice_pcommitted && after.used == filled.used));
+                }
+                let intact = blocks[..filled_capacity].iter().enumerate().all(|(index, block)| {
+                    // SAFETY: this live requested span is readable and no
+                    // allocator operation is allowed to overwrite client bytes.
+                    unsafe { core::slice::from_raw_parts(block.unwrap().as_ptr(), 64) }.iter().all(|byte| *byte == (index + 1) as u8)
+                });
+                assert!(intact);
+                if matrix { std::println!("failed_allocation.client_bytes={}", usize::from(intact)); }
                 let first = blocks[0].unwrap().as_ptr().addr() >> 16;
                 std::println!("failed_allocation.same_page={}", usize::from(blocks[filled_capacity].unwrap().as_ptr().addr() >> 16 == first));
                 std::println!("failed_allocation.nonnull=1");
@@ -860,6 +880,13 @@ use crate::os::PageSize;
                     NativePageAllocationResult::Allocated(pointer) => Some(pointer),
                     _ => panic!("same-page retry allocation failed"),
                 };
+                let intact = blocks[..filled_capacity].iter().enumerate().all(|(index, block)| {
+                    // SAFETY: every original client remains live through the
+                    // same-page retry and still owns these requested bytes.
+                    unsafe { core::slice::from_raw_parts(block.unwrap().as_ptr(), 64) }.iter().all(|byte| *byte == (index + 1) as u8)
+                });
+                assert!(intact);
+                if matrix { std::println!("retry.client_bytes={}", usize::from(intact)); }
                 std::println!("retry.same_page={}", usize::from(blocks[filled_capacity + 1].unwrap().as_ptr().addr() >> 16 == first));
                 std::println!("retry.nonnull=1");
                 show("retry", before, WARNINGS.load(Ordering::Relaxed), usize::from(faulted));

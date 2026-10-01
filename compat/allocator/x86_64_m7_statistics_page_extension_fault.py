@@ -12,6 +12,7 @@ from pathlib import Path
 
 import run as harness
 import x86_64_m7_gate as m7
+import x86_64_foundation_gate_receipts as receipts
 
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_page_extension_fault_driver.c"
@@ -23,7 +24,7 @@ TARGET = "x86_64-unknown-linux-musl"
 
 
 PROFILES = {"stat-0": (0, False), "stat-1": (1, False),
-            "stat-2": (2, False), "debug-1": (2, True)}
+            "stat-2": (2, False), "debug-1": (2, True), "guarded-debug-1": (2, True)}
 
 
 def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
@@ -33,7 +34,10 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
     harness.require_native_x86_64()
     root = retained if retained is not None else report_path.with_suffix("") / "matrix"
     root.mkdir(parents=True, exist_ok=True)
-    profiles = {selected: PROFILES[selected]} if selected else PROFILES
+    profiles = {selected: PROFILES[selected]} if selected else {
+        key: value for key, value in PROFILES.items() if key != "guarded-debug-1"}
+    if release and selected == "guarded-debug-1":
+        raise harness.HarnessError("guarded-debug-1 selects the regular-page extension controls")
     image = os.environ.get("CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID", "")
     if not image.startswith("sha256:") or len(image) != 71:
         raise harness.HarnessError("regular-page fault evidence requires the immutable execution image")
@@ -42,10 +46,17 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
     with harness.temporary_directory("crabc-statistics-page-fault-matrix-") as name:
         source = harness.safe_extract(harness.fetch_archive(pin, True), Path(name) / "source", pin["archive_root"]) if retained is None else None
         for profile, (level, debug) in profiles.items():
+            guarded = profile == "guarded-debug-1"
             profile_root = root / profile
             profile_root.mkdir(exist_ok=True)
             if retained is None:
+                compiled_input = profile_root / "compiled-input.c"
+                shutil.copy2(driver, compiled_input)
+                retained_archive = profile_root / "upstream.tar.gz"
+                shutil.copy2(harness.fetch_archive(pin, True), retained_archive)
                 features = []
+                if guarded:
+                    features.append("mi-guarded")
                 if debug:
                     features.append("mi-debug-1")
                 elif level:
@@ -70,6 +81,15 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                     raise harness.HarnessError(f"{profile} did not produce one native allocator test binary")
                 rust_binary = profile_root / "page-fault-rust"
                 shutil.copy2(artifacts[0], rust_binary)
+                unit_program = {"build": build, "build_command": build["command"],
+                                "cargo_target": str(m7.ARTIFACTS / "statistics-page-extension-fault/matrix" / profile / "cargo-target"),
+                                "artifact": harness.artifact_record(artifacts[0])}
+                receipts.authenticate_unit_program(unit_program, features=[
+                    *(["mi-guarded"] if guarded else []),
+                    *(["mi-debug-1"] if debug else []),
+                    *(["mi-stat-1"] if level else []),
+                    *(["mi-stat-2"] if level == 2 else []),
+                ])
             for control in ("fault", "success"):
                 case = profile_root / control
                 case.mkdir(exist_ok=True)
@@ -77,6 +97,7 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                 faulted = control == "fault"
                 if retained is None:
                     flags = [f"-DMI_STAT={level}" if flag == "-DMI_STAT=0" else
+                             "-DMI_GUARDED=1" if guarded and flag == "-DMI_GUARDED=0" else
                              "-DMI_DEBUG=1" if debug and flag == "-DMI_DEBUG=0" else flag
                              for flag in harness.CONFIGURATION_PROFILES["release"]
                              if not (debug and flag == "-DNDEBUG")]
@@ -85,7 +106,7 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                         harness.require_tool("musl-gcc"), "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
                         *flags, "-DCRABC_STATISTICS_MATRIX=1", f"-DCRABC_STAT_LEVEL={level}", f"-DCRABC_FAULTED={int(faulted)}",
                         "-Dmunmap=crabc_fault_munmap" if release else "-Dmprotect=crabc_fault_mprotect",
-                        "-I", str(source / "include"), str(driver), str(source / "src/static.c"), "-pthread", "-o", str(c_binary),
+                        "-I", str(source / "include"), str(compiled_input), str(source / "src/static.c"), "-pthread", "-o", str(c_binary),
                     ], cwd=source)
                     report = {"status": "failed", "profile": profile, "level": level, "debug": debug,
                               "faulted": faulted, "c_build": c_build, "rust_build": build,
@@ -97,6 +118,9 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                     harness.write_json(path, report)
                     harness.require_success(c_build, f"{profile}/{control} source page-fault build")
                     report["products"] = {"c": m7.engine.file_record(c_binary), "rust": m7.engine.file_record(rust_binary)}
+                    report["physical_inputs"] = {"unit_program": unit_program,
+                                                  "fixture": harness.artifact_record(compiled_input),
+                                                  "archive": harness.artifact_record(retained_archive)}
                 else:
                     report = json.loads(path.read_text())
                     if (report.get("status") != "passed" or report.get("profile") != profile
@@ -114,6 +138,18 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                         actual = m7.engine.file_record(binary)
                         if any(actual[key] != report["products"][side][key] for key in ("sha256", "bytes")):
                             raise harness.HarnessError(f"retained {profile}/{control} changed {side} product")
+                    if "physical_inputs" in report:
+                        receipts.authenticate_artifacts(report["physical_inputs"], harness.ROOT)
+                        unit_program = report["physical_inputs"]["unit_program"]
+                        receipts.authenticate_unit_program(unit_program, features=[
+                            *(["mi-guarded"] if guarded else []),
+                            *(["mi-debug-1"] if debug else []),
+                            *(["mi-stat-1"] if level else []),
+                            *(["mi-stat-2"] if level == 2 else []),
+                        ])
+                        rust_binary = harness.ROOT / unit_program["artifact"]["path"]
+                    elif guarded:
+                        raise harness.HarnessError("guarded extension lacks original compiler product authority")
                 executions = {
                     "c": harness.command_record([str(c_binary.resolve())], cwd=case, env={}, timeout_seconds=60),
                     "rust": harness.command_record([str(rust_binary.resolve()), test, "--exact", "--nocapture", "--test-threads=1"],
@@ -144,6 +180,13 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                         if not release and level < 2 and trace.get(f"{stage}.requested") != "0,0,0":
                             raise harness.HarnessError(f"{side} enabled level-two requested statistics")
                     if not release:
+                        if guarded and (trace.get("profile.guarded") != "1"
+                                        or trace.get("profile.guarded_sample_rate") != "0"):
+                            raise harness.HarnessError(f"{side} lost its actual guarded debug regular-page mode")
+                        if any(trace.get(f"{stage}.client_bytes") != "1" for stage in ("failed_allocation", "retry")):
+                            raise harness.HarnessError(f"{side} lost live regular client contents")
+                        if faulted and trace.get("failed_allocation.original_prefix") != "1":
+                            raise harness.HarnessError(f"{side} changed the exhausted prefix after refused commit")
                         if (int(trace.get("geometry.initial_capacity", "0")) <= 0
                                 or trace.get("failed_allocation.nonnull") != "1" or trace.get("retry.nonnull") != "1"
                                 or trace.get("failed_allocation.same_page") != str(int(not faulted)) or trace.get("retry.same_page") != "1"):
@@ -163,7 +206,8 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                 else:
                     compared = traces
                     if level == 2 and not debug and faulted:
-                        metadata = {"profile.debug", "profile.faulted"} | {key for key in trace if key.startswith("geometry.")}
+                        metadata = {"profile.debug", "profile.faulted", "profile.guarded", "profile.guarded_sample_rate",
+                                    "failed_allocation.original_prefix", "failed_allocation.client_bytes", "retry.client_bytes"} | {key for key in trace if key.startswith("geometry.")}
                         for side, trace in traces.items():
                             m7.require_statistics_page_extend({key: value for key, value in trace.items() if key not in metadata}, side, faulted=True)
                 mismatch = {key: {side: compared[side].get(key) for side in compared} for key in set(compared["c"]) | set(compared["rust"])
