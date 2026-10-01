@@ -113,7 +113,7 @@ impl Heap {
     pub(crate) unsafe fn terminal_tracking_len(&self) -> Result<usize, MainHeapDestroyError> {
         if !self.is_main_static() { return Err(MainHeapDestroyError::NotMainHeap); }
         let mut count = 0usize;
-        let mut current = self.theaps;
+        let mut current = unsafe { self.theaps.get().read() };
         while let Some(theap) = NonNull::new(current) {
             count = count.checked_add(1).ok_or(MainHeapDestroyError::InvalidOwnership)?;
             current = unsafe { *(*theap.as_ptr()).hnext.get() };
@@ -127,7 +127,7 @@ impl Heap {
         let mut dynamic = 0;
         let mut attached = 0;
         let mut total = 0;
-        let mut current = self.theaps;
+        let mut current = unsafe { self.theaps.get().read() };
         while let Some(pointer) = NonNull::new(current) {
             // The held source lock protects each valid intrusive-list member.
             let theap = unsafe { pointer.as_ref() };
@@ -173,7 +173,7 @@ impl Heap {
             return Err(MainHeapDestroyError::TrackingOccupied);
         }
         let mut count = 0usize;
-        let mut current = self.theaps;
+        let mut current = unsafe { self.theaps.get().read() };
         // SAFETY: the caller owns the complete valid, quiescent source list.
         while let Some(theap) = NonNull::new(current) {
             count = count.checked_add(1).ok_or(MainHeapDestroyError::InvalidOwnership)?;
@@ -182,7 +182,7 @@ impl Heap {
         if tracking.len() < count {
             return Err(MainHeapDestroyError::TrackingCapacity { required: count });
         }
-        current = self.theaps;
+        current = unsafe { self.theaps.get().read() };
         for index in 0..count {
             let pointer = NonNull::new(current).ok_or(MainHeapDestroyError::InvalidOwnership)?;
             let theap = unsafe { pointer.as_ref() };
@@ -239,7 +239,7 @@ impl Heap {
         }
         heap_guard.unlock().map_err(MainHeapDestroyError::Lock)?;
         let heap_guard = self.theaps_lock.try_lock().ok_or(MainHeapDestroyError::Busy)?;
-        self.theaps = core::ptr::null_mut();
+        *self.theaps.get_mut() = core::ptr::null_mut();
         let mut first_error = None;
         for slot in &mut tracking[..count] {
             let mut pointer = slot.pointer.expect("recovered list member");

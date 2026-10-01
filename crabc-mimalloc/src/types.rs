@@ -181,7 +181,12 @@ pub(crate) struct Heap {
     theap_slot: usize,
     exclusive_arena: *mut Arena,
     numa_node: UnsafeCell<i32>,
-    theaps: *mut Theap,
+    // The source list mutex protects this head independently of ordinary
+    // Heap projections. Reads and writes require that lock, exclusive image
+    // initialization, or permanent terminal quiescence. Interior mutability
+    // permits locked list retirement through a shared Heap view without
+    // changing its C pointer layout.
+    theaps: UnsafeCell<*mut Theap>,
     theaps_lock: PrivateLock,
     abandoned_count: [AtomicUsize; BIN_COUNT],
     os_abandoned_pages: *mut Page,
@@ -390,7 +395,7 @@ impl Heap {
             theap_slot: 0,
             exclusive_arena: null_mut(),
             numa_node: UnsafeCell::new(0),
-            theaps: null_mut(),
+            theaps: UnsafeCell::new(null_mut()),
             theaps_lock: PrivateLock::new(),
             abandoned_count: [const { AtomicUsize::new(0) }; BIN_COUNT],
             os_abandoned_pages: null_mut(),
@@ -551,7 +556,7 @@ impl Heap {
         memid: MemoryId,
     ) {
         debug_assert!(self.subprocess.is_null());
-        debug_assert!(self.theaps.is_null());
+        debug_assert!((unsafe { self.theaps.get().read() }).is_null());
         self.memid = memid;
         self.initialize_main_static_fields(subprocess, false);
     }
@@ -625,7 +630,7 @@ impl Heap {
         self.theap_slot = 1;
         self.exclusive_arena = null_mut();
         *self.numa_node.get_mut() = -1;
-        self.theaps = null_mut();
+        *self.theaps.get_mut() = null_mut();
         self.theaps_lock = PrivateLock::new();
         self.abandoned_count = [const { AtomicUsize::new(0) }; BIN_COUNT];
         self.os_abandoned_pages = null_mut();
@@ -643,7 +648,7 @@ impl Heap {
             && self.theap_slot == 0
             && self.exclusive_arena.is_null()
             && unsafe { *self.numa_node.get() } == 0
-            && self.theaps.is_null()
+            && (unsafe { self.theaps.get().read() }).is_null()
             && self
                 .abandoned_count
                 .iter()
@@ -739,7 +744,7 @@ impl Heap {
         if regular_theap_key == 0
             || regular_theap_key == 1
             || !self.subprocess.is_null()
-            || !self.theaps.is_null()
+            || !(unsafe { self.theaps.get().read() }).is_null()
             || self.memid.kind() != MemoryKind::None
         {
             return false;
@@ -760,7 +765,7 @@ impl Heap {
         self.theap_slot = regular_theap_key;
         self.exclusive_arena = selected_arena;
         *self.numa_node.get_mut() = -1;
-        self.theaps = null_mut();
+        *self.theaps.get_mut() = null_mut();
         self.theaps_lock = PrivateLock::new();
         self.abandoned_count = [const { AtomicUsize::new(0) }; BIN_COUNT];
         self.os_abandoned_pages = null_mut();
@@ -982,7 +987,7 @@ impl Heap {
     /// address-stable authority for this caller image.
     #[inline]
     pub(crate) unsafe fn retire_dynamic_binding_after_detach(&mut self) -> bool {
-        if !self.theaps.is_null()
+        if !(unsafe { self.theaps.get().read() }).is_null()
             || self
                 .arena_pages
                 .iter()
@@ -1060,13 +1065,13 @@ impl Heap {
         // invokes this only after its Release heap publication. The lock
         // serializes the source intrusive heap-list update.
         unsafe {
-            let head = self.theaps;
+            let head = self.theaps.get().read();
             (*(*theap).hprev.get()) = null_mut();
             (*(*theap).hnext.get()) = head;
             if !head.is_null() {
                 (*(*head).hprev.get()) = theap;
             }
-            self.theaps = theap;
+            self.theaps.get().write(theap);
         }
         guard.unlock().map_err(HeapTheapListError::Lock)
     }
@@ -1087,11 +1092,11 @@ impl Heap {
         let guard = if blocking { lock.lock().map_err(HeapTheapListError::Lock)? }
             else { lock.try_lock().ok_or(HeapTheapListError::Busy)? };
         unsafe {
-            let head = (*heap).theaps;
+            let head = (*heap).theaps.get().read();
             *(*theap).hprev.get() = null_mut();
             *(*theap).hnext.get() = head;
             if !head.is_null() { *(*head).hprev.get() = theap; }
-            (*heap).theaps = theap;
+            (*heap).theaps.get().write(theap);
         }
         guard.unlock().map_err(HeapTheapListError::Lock)
     }
@@ -1108,7 +1113,7 @@ impl Heap {
         // SAFETY: forwarded from the caller; the raw image is live and its
         // list links are serialized for this exact observation.
         unsafe {
-            self.theaps == theap
+            self.theaps.get().read() == theap
                 && !theap.is_null()
                 && (*(*theap).hprev.get()).is_null()
                 && (*(*theap).hnext.get()).is_null()
@@ -1142,7 +1147,7 @@ impl Heap {
             ) {
                 false
             } else if (*(*theap).hprev.get()).is_null() {
-                self.theaps == theap
+                self.theaps.get().read() == theap
             } else {
                 let previous = *(*theap).hprev.get();
                 let next = *(*theap).hnext.get();
@@ -1181,7 +1186,7 @@ impl Heap {
             return false;
         };
         let self_pointer = core::ptr::from_ref(self).cast_mut();
-        let mut current = self.theaps;
+        let mut current = unsafe { self.theaps.get().read() };
         let mut found = false;
         let mut valid = true;
         for _ in 0..member_count {
@@ -1246,7 +1251,7 @@ impl Heap {
         // detachment discipline before this method clears the Release heap
         // publication.
         unsafe {
-            if (*(*theap).hprev.get()).is_null() && self.theaps != theap {
+            if (*(*theap).hprev.get()).is_null() && self.theaps.get().read() != theap {
                 let _ = guard.unlock();
                 return Err(HeapTheapListError::Membership);
             }
@@ -1258,7 +1263,7 @@ impl Heap {
             if !previous.is_null() {
                 *(*previous).hnext.get() = next;
             } else {
-                self.theaps = next;
+                self.theaps.get().write(next);
             }
             (*(*theap).hnext.get()) = null_mut();
             (*(*theap).hprev.get()) = null_mut();
@@ -1275,7 +1280,7 @@ impl Heap {
             theap_slot: self.theap_slot,
             numa_node: unsafe { *self.numa_node.get() },
             has_exclusive_arena: !self.exclusive_arena.is_null(),
-            theaps_empty: self.theaps.is_null(),
+            theaps_empty: (unsafe { self.theaps.get().read() }).is_null(),
             memid: self.memid,
         }
     }
@@ -1283,7 +1288,7 @@ impl Heap {
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_theap_head_is(&self, theap: *mut Theap) -> bool {
-        self.theaps == theap
+        (unsafe { self.theaps.get().read() }) == theap
     }
 
     #[cfg(test)]
@@ -3313,7 +3318,7 @@ impl ThreadLocalData {
                 && ((*theap).tnext.is_null()
                     || core::ptr::eq((*(*theap).tnext).tprev, theap))
                 && if hprev.is_null() {
-                    heap.theaps == theap
+                    heap.theaps.get().read() == theap
                 } else {
                     core::ptr::eq(*(*hprev).hnext.get(), theap)
                 }
@@ -3368,7 +3373,7 @@ impl ThreadLocalData {
             (*theap).tld.is_null()
                 && core::ptr::eq((*theap).heap.load(Ordering::Acquire), heap_pointer)
                 && if hprev.is_null() {
-                    heap.theaps == theap
+                    heap.theaps.get().read() == theap
                 } else {
                     core::ptr::eq(*(*hprev).hnext.get(), theap)
                 }
@@ -3389,7 +3394,7 @@ impl ThreadLocalData {
             if !hprev.is_null() {
                 *(*hprev).hnext.get() = hnext;
             } else {
-                heap.theaps = hnext;
+                heap.theaps.get().write(hnext);
             }
             *(*theap).hnext.get() = null_mut();
             *(*theap).hprev.get() = null_mut();
@@ -3453,7 +3458,7 @@ impl ThreadLocalData {
                 && (*main_default).tprev == theap
                 && (*main_default).tnext.is_null()
                 && core::ptr::eq((*main_default).tld, self_pointer)
-                && heap.theaps == theap
+                && heap.theaps.get().read() == theap
                 && (*(*theap).hprev.get()).is_null()
                 && (*(*theap).hnext.get()).is_null()
                 && core::ptr::eq((*theap).heap.load(Ordering::Acquire), heap_pointer)
@@ -3482,7 +3487,7 @@ impl ThreadLocalData {
         // this is the only Heap-list member. The Release clear is the
         // explicit Rust typed-prefix retirement noted above.
         unsafe {
-            heap.theaps = null_mut();
+            heap.theaps.get().write(null_mut());
             (*(*theap).hnext.get()) = null_mut();
             (*(*theap).hprev.get()) = null_mut();
             (*theap).heap.store(null_mut(), Ordering::Release);
@@ -9752,7 +9757,7 @@ mod tests {
             guard.unlock().unwrap();
             assert_eq!((*pointer.as_ptr()).heap.load(Ordering::Acquire), heap_pointer.as_ptr());
             assert_eq!((*tld_pointer.as_ptr()).theaps, pointer.as_ptr());
-            assert!((*heap_pointer.as_ptr()).theaps.is_null());
+            assert!((*heap_pointer.as_ptr()).theaps.get().read().is_null());
             assert!((*pointer.as_ptr()).allow_page_abandon);
             assert_eq!((*pointer.as_ptr()).page_full_retain, 32);
             // This retained fixture finishes the omitted list insertion for
@@ -9926,7 +9931,7 @@ mod tests {
                 tld.detach_one_theap_from_heap(&mut heap, pointer.as_ptr()).unwrap();
                 tld.detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
             }
-            assert!(heap.theaps.is_null());
+            assert!(heap.theaps.get().read().is_null());
             assert!(tld.theaps.is_null());
         }
     }
@@ -10028,7 +10033,7 @@ mod tests {
         }
         ACTIVE.with(|slot| slot.set(core::ptr::null()));
         assert!(tld.theaps.is_null());
-        assert!(heap.theaps.is_null());
+        assert!((unsafe { heap.theaps.get().read() }).is_null());
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -10116,7 +10121,7 @@ mod tests {
             tld.detach_one_theap_from_heap(&mut heap, pointer.as_ptr()).unwrap();
             tld.detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
         }
-        assert!(heap.theaps.is_null());
+        assert!((unsafe { heap.theaps.get().read() }).is_null());
         assert!(tld.theaps.is_null());
     }
 
@@ -12199,6 +12204,14 @@ mod tests {
 
     #[test]
     fn metadata_layout_matches_the_default_release_c_contract() {
+        // The independently locked list head retains the source pointer ABI.
+        assert_eq!(offset_of!(Heap, theaps), 56);
+        assert_eq!(offset_of!(Heap, theaps_lock), 64);
+        assert_eq!(size_of::<UnsafeCell<*mut Theap>>(), 8);
+        assert_eq!(align_of::<UnsafeCell<*mut Theap>>(), 8);
+        std::println!("native_heap_layout size={} alignment={} head={} lock={}",
+            size_of::<Heap>(), align_of::<Heap>(), offset_of!(Heap, theaps),
+            offset_of!(Heap, theaps_lock));
         assert_eq!(size_of::<MemoryKind>(), 4);
         assert_eq!(align_of::<MemoryKind>(), 4);
         assert_eq!(size_of::<MemoryInfo>(), 16);

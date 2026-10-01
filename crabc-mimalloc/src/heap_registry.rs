@@ -129,7 +129,7 @@ impl SubprocessHeapList {
         // Preflight only: actual source merge/decrement precedes unlink lock.
         let guard = self.lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
         let valid = unsafe { *self.head.get() == core::ptr::from_mut(heap) }
-            && heap.next.is_null() && heap.prev.is_null() && heap.theaps.is_null()
+            && heap.next.is_null() && heap.prev.is_null() && (unsafe { heap.theaps.get().read() }).is_null()
             && self.live.load(Ordering::Relaxed) == 1;
         guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
         if !valid { return Err(SourceHeapRegistryError::InvalidImage); }
@@ -243,7 +243,7 @@ impl SubprocessHeapList {
         heap: &mut Heap,
         subprocess: &SubprocessIdentity,
     ) -> Result<(), SourceHeapRegistryError> {
-        if !core::ptr::eq(heap.subprocess, subprocess.as_ptr()) || !heap.theaps.is_null() {
+        if !core::ptr::eq(heap.subprocess, subprocess.as_ptr()) || !(unsafe { heap.theaps.get().read() }).is_null() {
             return Err(SourceHeapRegistryError::InvalidImage);
         }
         self.live.fetch_sub(1, Ordering::Relaxed);
@@ -304,7 +304,7 @@ impl Heap {
     /// which `mi_heap_free_theaps`, `_mi_heap_move_pages`, and
     /// `_mi_heap_destroy_pages` have nothing to do.
     pub(crate) fn is_without_theaps_or_pages(&self) -> bool {
-        self.theaps.is_null()
+        (unsafe { self.theaps.get().read() }).is_null()
             && self.os_abandoned_pages.is_null()
             && self.abandoned_count.iter().all(|count| count.load(Ordering::Relaxed) == 0)
             && self.arena_pages.iter().all(|pages| pages.load(Ordering::Relaxed).is_null())
@@ -422,7 +422,7 @@ impl Heap {
         &self,
         except: Option<core::ptr::NonNull<super::Theap>>,
     ) -> Option<(core::ptr::NonNull<super::Theap>, *mut super::ThreadLocalData)> {
-        let mut current = self.theaps;
+        let mut current = unsafe { self.theaps.get().read() };
         while let Some(theap) = core::ptr::NonNull::new(current) {
             if Some(theap) != except {
                 // SAFETY: a listed Theap is allocated (caller contract).
@@ -443,7 +443,7 @@ impl Heap {
         &self,
         mut visit: impl FnMut(core::ptr::NonNull<super::Theap>, *mut super::ThreadLocalData) -> bool,
     ) -> bool {
-        let mut current = self.theaps;
+        let mut current = unsafe { self.theaps.get().read() };
         while let Some(theap) = core::ptr::NonNull::new(current) {
             // SAFETY: a listed Theap is allocated (caller contract).
             let (tld, next) = unsafe { ((*theap.as_ptr()).tld, *(*theap.as_ptr()).hnext.get()) };
@@ -463,7 +463,7 @@ impl Heap {
         // SAFETY: this fixture observes a retained image without a concurrent setter.
         let numa_node = unsafe { *self.numa_node.get() };
         (self.heap_seq, self.subprocess, self.exclusive_arena.is_null(), numa_node,
-            self.theaps.is_null(), self.theap_slot as u64)
+            (unsafe { self.theaps.get().read() }).is_null(), self.theap_slot as u64)
     }
 
     /// This Heap's list neighbours, for the pinned-C list-order checks.
@@ -679,7 +679,7 @@ impl super::ThreadLocalData {
                     let (next, prev) = (*(*current).hnext.get(), *(*current).hprev.get());
                     if !next.is_null() { *(*next).hprev.get() = prev; }
                     if !prev.is_null() { *(*prev).hnext.get() = next; }
-                    else { core::ptr::addr_of_mut!((*heap).theaps).write(next); }
+                    else { (*heap).theaps.get().write(next); }
                     *(*current).hnext.get() = core::ptr::null_mut();
                     *(*current).hprev.get() = core::ptr::null_mut();
                     (*current).heap.store(core::ptr::null_mut(), Ordering::Release);
@@ -739,7 +739,7 @@ impl super::ThreadLocalData {
                         if !hprev.is_null() {
                             *(*hprev).hnext.get() = hnext;
                         } else {
-                            core::ptr::addr_of!(heap.theaps).cast_mut().write(hnext);
+                            heap.theaps.get().write(hnext);
                         }
                         *(*theap).hnext.get() = core::ptr::null_mut();
                         *(*theap).hprev.get() = core::ptr::null_mut();
@@ -800,7 +800,7 @@ impl Heap {
         loop {
             let guard = self.theaps_lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
             let mut all_detached = true;
-            let mut current = self.theaps;
+            let mut current = unsafe { self.theaps.get().read() };
             while let Some(theap) = core::ptr::NonNull::new(current) {
                 // SAFETY: the held Heap lock keeps the list and its members.
                 let theap = theap.as_ptr();
@@ -837,8 +837,8 @@ impl Heap {
         // SAFETY: the held lock serializes the Heap list; no TLD names these
         // Theaps any longer.
         let mut current = unsafe {
-            let head = self.theaps;
-            core::ptr::addr_of!(self.theaps).cast_mut().write(core::ptr::null_mut());
+            let head = self.theaps.get().read();
+            self.theaps.get().write(core::ptr::null_mut());
             head
         };
         while let Some(theap) = core::ptr::NonNull::new(current) {
@@ -1310,7 +1310,7 @@ impl super::Page {
 #[cfg(test)]
 impl Heap {
     /// The head of this Heap's Theap list.
-    pub(crate) fn test_theaps_head(&self) -> *mut super::Theap { self.theaps }
+    pub(crate) fn test_theaps_head(&self) -> *mut super::Theap { unsafe { self.theaps.get().read() } }
 
     /// How many per-arena page records this Heap has.
     pub(crate) fn test_arena_page_record_count(&self) -> usize {
@@ -1355,7 +1355,7 @@ impl Heap {
             ChildMainHeapImageFacts {
                 heap_sequence: self.heap_seq,
                 subprocess: self.subprocess,
-                metadata_theap_is_only_member: self.theaps == theap
+                metadata_theap_is_only_member: (unsafe { self.theaps.get().read() }) == theap
                     && (*(*theap).hnext.get()).is_null()
                     && (*(*theap).hprev.get()).is_null()
                     && core::ptr::eq((*theap).heap.load(Ordering::Acquire), self),
@@ -1411,7 +1411,7 @@ mod tests {
                 visited.push(theap);
             }).unwrap();
             assert_eq!(visited, [second, first]);
-            assert!((*heap.as_ptr()).theaps.is_null());
+            assert!(heap.as_ref().test_theaps_head().is_null());
             assert!((*tld.as_ptr()).theaps.is_null());
             heap.as_ref().detach_and_take_theaps(subprocess.identity(), |_| {
                 panic!("an empty retired list cannot revisit a member");
