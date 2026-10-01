@@ -4292,11 +4292,11 @@ mod tests {
     /// Numeric observations carry no mapping or release capability. The bound
     /// fails explicitly rather than omitting an otherwise live source root.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    struct RetentionRoots { entries: [Option<RetentionRoot>; 1024], len: usize, failed: bool }
+    struct RetentionRoots { entries: [Option<RetentionRoot>; 4096], len: usize, failed: bool }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     impl RetentionRoots {
-        fn new() -> Self { Self { entries: [None; 1024], len: 0, failed: false } }
+        fn new() -> Self { Self { entries: [None; 4096], len: 0, failed: false } }
 
         fn add(&mut self, category: RetentionRootCategory, start: usize, end: usize) {
             if start == 0 || end <= start { self.failed = true; return; }
@@ -4365,7 +4365,7 @@ mod tests {
         fn report_after_destroy(&self, cycle: usize, child: usize) {
             // Read immediately after this child's destroy and caller-region
             // drop, before a later child can reuse any of these addresses.
-            let mut covered = [0usize; 1024];
+            let mut covered = [0usize; 4096];
             visit_retention_mappings(|start, end| {
                 for (index, root) in self.entries[..self.len].iter().flatten().enumerate() {
                     covered[index] = covered[index].checked_add(
@@ -4437,6 +4437,88 @@ mod tests {
             previous_end = end;
             visit(start, end);
         });
+    }
+
+    /// Private mallocng reads are enabled only after the launcher authenticates
+    /// the linked self-contained musl 1.2.5 archive. Current active-list roots
+    /// identify retaining owners independently of allocation call stacks.
+    #[cfg(all(target_arch = "x86_64", target_env = "musl", not(miri)))]
+    fn report_ambient_retention_pool(cycle: usize) {
+        unsafe extern "C" {
+            static mut __malloc_context: [u8; 928];
+            fn __malloc_atfork(who: core::ffi::c_int);
+        }
+        #[derive(Clone, Copy)]
+        struct Group { class: usize, meta: usize, prev: usize, next: usize,
+            start: usize, end: usize, avail: u32, freed: u32, last: usize,
+            freeable: usize, bounces: u8, usage: usize }
+        struct Lock;
+        impl Drop for Lock {
+            fn drop(&mut self) {
+                // SAFETY: this guard owns the ambient allocator lock.
+                unsafe { __malloc_atfork(0) };
+            }
+        }
+        let mut groups = [None::<Group>; 1024];
+        let mut count = 0usize;
+        let mut valid = true;
+        // SAFETY: the authenticated allocator supplies its own lock callback.
+        // Workers have joined. No allocation, formatting, or callback occurs
+        // while holding the lock. Scalar raw reads avoid aliasing promises
+        // over concurrently accessible runtime metadata.
+        unsafe {
+            __malloc_atfork(-1);
+            let lock = Lock;
+            let ctx = core::ptr::addr_of!(__malloc_context).cast::<u8>();
+            let secret = ctx.cast::<u64>().read();
+            for class in 0..48usize {
+                let head = ctx.add(80 + 8 * class).cast::<usize>().read();
+                let mut meta = head;
+                while meta != 0 {
+                    if count == groups.len() || meta % 8 != 0 { valid = false; break; }
+                    let p = core::ptr::with_exposed_provenance::<u8>(meta);
+                    if core::ptr::with_exposed_provenance::<u64>(meta & !4095).read() != secret {
+                        valid = false; break;
+                    }
+                    let prev = p.cast::<usize>().read();
+                    let next = p.add(8).cast::<usize>().read();
+                    let start = p.add(16).cast::<usize>().read();
+                    let avail = p.add(24).cast::<u32>().read();
+                    // Remote frees publish this mask atomically even while
+                    // the global allocator lock is held.
+                    let freed = (&*p.add(28).cast::<core::sync::atomic::AtomicU32>())
+                        .load(core::sync::atomic::Ordering::Relaxed);
+                    let bits = p.add(32).cast::<usize>().read();
+                    let last = bits & 31;
+                    let freeable = (bits >> 5) & 1;
+                    let maplen = bits >> 12;
+                    let end = maplen.checked_mul(4096).and_then(|length| start.checked_add(length));
+                    let all = (2u64 << last) - 1;
+                    if (bits >> 6) & 63 != class || prev == 0 || next == 0 || start == 0
+                        || end.is_none() || (avail as u64 | freed as u64) & !all != 0
+                        || avail & freed != 0
+                        || core::ptr::with_exposed_provenance::<usize>(start).read() != meta {
+                        valid = false; break;
+                    }
+                    groups[count] = Some(Group { class, meta, prev, next, start, end: end.unwrap(),
+                        avail, freed, last, freeable,
+                        bounces: if (7..39).contains(&class) { ctx.add(880 + class - 7).read() } else { 0 },
+                        usage: ctx.add(464 + 8 * class).cast::<usize>().read() });
+                    count += 1;
+                    meta = next;
+                    if meta == head { break; }
+                }
+                if !valid { break; }
+            }
+            drop(lock);
+        }
+        assert!(valid, "ambient allocator pool observation invalid or exceeded its bound");
+        for (index, group) in groups[..count].iter().flatten().enumerate() {
+            std::println!("m2.arena.ambient.group.{cycle}.{index}={},{},{},{},{},{},{},{},{},{},{},{}",
+                group.class, group.meta, group.prev, group.next, group.start, group.end,
+                group.avail, group.freed, group.last, group.freeable, group.bounces, group.usage);
+        }
+        std::println!("m2.arena.ambient.groups.{cycle}={count}");
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -4571,8 +4653,19 @@ mod tests {
         let control = CrossThreadAbandonedControl::new();
         // A thread scope allocates shared bookkeeping. Keep that observer
         // allocation alive for both the baseline and every later snapshot.
+        let observe_ambient = std::env::var_os("CRABC_MI_AUTHENTICATED_AMBIENT_POOL").is_some();
+        let last_cycle = std::env::var("CRABC_MI_RETENTION_LAST_CYCLE")
+            .map(|value| value.parse::<usize>().expect("retention last cycle is an integer"))
+            .unwrap_or(32);
+        assert!((32..=128).contains(&last_cycle), "retention last cycle must be between 32 and 128");
         thread::scope(|scope| {
-            for cycle in 0..=32 { retention_attribution_cycle(scope, &control, cycle); }
+            for cycle in 0..=last_cycle {
+                retention_attribution_cycle(scope, &control, cycle);
+                #[cfg(target_env = "musl")]
+                if observe_ambient { report_ambient_retention_pool(cycle); }
+                #[cfg(not(target_env = "musl"))]
+                assert!(!observe_ambient, "ambient observation requires the authenticated musl target");
+            }
         });
     }
 
