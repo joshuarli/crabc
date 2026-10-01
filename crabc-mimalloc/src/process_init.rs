@@ -745,6 +745,7 @@ impl ProcessMainInitializationStorage {
                     ProcessStartEntry::RuntimeStartup,
                 ),
                 VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(inputs, entry) => {
+                    let source_errno_store = inputs.source_errno_store();
                     let (environment_reader, default_stderr_output) = inputs.into_parts();
                     let output = OutputOwner::new(default_stderr_output);
                     unsafe { (*self.diagnostic_output.get()).write(output) };
@@ -758,7 +759,8 @@ impl ProcessMainInitializationStorage {
                     // SAFETY: `_mi_options_init` just installed this process
                     // table, and the owner lives in this process-static slot.
                     // Every VM read point is a source `mi_option_get`.
-                    let policy = unsafe { VmPolicy::from_process_options(output) };
+                    let policy = unsafe { VmPolicy::from_process_options(output) }
+                        .with_source_errno_store(source_errno_store);
                     (Some(policy), true, ProcessStartupDiagnostics::Selected(output), entry)
                 }
             }
@@ -1802,8 +1804,10 @@ impl SourceErrnoStore {
 /// Nothing here is owned. The environment reader borrows the embedding
 /// runtime's current environment on each call, including later lazy option
 /// retries after a coordinated environment mutation, and the output
-/// primitive borrows its FILE provider. `AT_RANDOM` and the remaining
-/// auxiliary vector are intentionally absent: pinned v3.5.0 draws
+/// primitive borrows its FILE provider. An optional errno writer lets guarded
+/// protection failures publish their captured error before warning delivery;
+/// embeddings without C errno leave that capability absent. `AT_RANDOM` and
+/// the remaining auxiliary vector are intentionally absent: pinned v3.5.0 draws
 /// `_mi_prim_random_buf` from `getrandom` directly and reads no other auxv
 /// entry, so copying the startup key would add an unused, lifetime-sensitive
 /// secret rather than a source input.
@@ -2670,6 +2674,45 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_startup_errno_capability_resolves_calling_thread_tls() {
+        unsafe extern "C" { fn __errno_location() -> *mut core::ffi::c_int; }
+        unsafe fn store_errno(value: core::ffi::c_int) {
+            // SAFETY: the pinned native test runtime installed musl TLS;
+            // this immediate store never retains its resolved pointer.
+            unsafe { *__errno_location() = value };
+        }
+        unsafe fn environment() -> *const *const core::ffi::c_char {
+            core::ptr::null()
+        }
+        unsafe extern "C" fn stderr(_: *const core::ffi::c_char) {}
+        // SAFETY: permanent, nonallocating providers; a null environment is
+        // valid and the output provider ignores its borrowed fragment.
+        let facts = unsafe { NativeProcessStartupFacts::new(
+            4096, environment, crate::diagnostic_output::RuntimeStderrOutput::new(stderr),
+        ) }.unwrap();
+        assert!(facts.source_errno_store().is_none());
+        // SAFETY: this process-lifetime writer accesses only calling-thread
+        // TLS and cannot allocate, retain its pointer, or unwind.
+        let facts = facts.with_source_errno_store(unsafe { SourceErrnoStore::new(store_errno) });
+        let cell = std::sync::Arc::new(ProcessStartupFactsCell::new());
+        assert!(cell.publish(facts));
+        assert!(!cell.publish(facts));
+        // SAFETY: the native test thread has installed, exclusively owned TLS.
+        unsafe { *__errno_location() = 34 };
+        let other = cell.clone();
+        std::thread::spawn(move || {
+            // SAFETY: this worker's runtime installed its distinct TLS slot.
+            unsafe { *__errno_location() = 4 };
+            other.published().unwrap().source_errno_store().unwrap().store(crabc_core::Errno::PERM);
+            assert_eq!(unsafe { *__errno_location() }, 1);
+        }).join().unwrap();
+        assert_eq!(unsafe { *__errno_location() }, 34);
+        cell.published().unwrap().source_errno_store().unwrap().store(crabc_core::Errno::INTR);
+        assert_eq!(unsafe { *__errno_location() }, 4);
+    }
 
     // Linux's process-local THP query/set selectors used only by child-isolated
     // ProcessMain policy witnesses.

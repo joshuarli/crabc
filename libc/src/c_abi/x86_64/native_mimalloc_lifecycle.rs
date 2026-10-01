@@ -13,7 +13,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crabc_mimalloc::__crabc_runtime::{
-    NativeProcessStartupFacts, RuntimeStderrOutput, NativeProcessDestroyError, NativeProcessDoneAction,
+    NativeProcessStartupFacts, SourceErrnoStore, RuntimeStderrOutput, NativeProcessDestroyError, NativeProcessDoneAction,
     NativeProcessDoneInvocation, SelectedProcessDoneResult, ThreadAttachResult,
     ThreadFinalProcessExitOwnerResult, ThreadFinishResult,
     attach_current_thread, capture_native_process_destroy_request,
@@ -97,6 +97,13 @@ unsafe fn runtime_source_environment() -> *const *const c_char {
     unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
+/// Writes libc's own current-thread errno without retaining a TLS borrow.
+unsafe fn runtime_source_errno_store(value: c_int) {
+    // SAFETY: selected startup installed this thread's libc TLS, and policy
+    // invokes this writer on the same thread as the failing syscall.
+    unsafe { super::errno::set_errno(value) };
+}
+
 /// Start the selected native process owner after x86 startup has installed
 /// validated `environ`, `AT_PAGESZ`, initial TLS, and permanent `stderr`.
 ///
@@ -118,6 +125,9 @@ pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
     }) else {
         return false;
     };
+    // SAFETY: this permanent libc writer touches only calling-thread TLS,
+    // allocates nothing, and cannot unwind.
+    let facts = facts.with_source_errno_store(unsafe { SourceErrnoStore::new(runtime_source_errno_store) });
     let ready = publish_native_process_startup_facts(facts)
         && initialize_process()
         && prepare_native_initial_thread_owner();

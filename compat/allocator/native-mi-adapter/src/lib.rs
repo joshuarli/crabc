@@ -32,7 +32,7 @@ use crabc_mimalloc::__crabc_runtime::source_api::{
     self as api, Block, FreeOutcome, ReallocarrStore, SourceCRuntime, SourceErrno, Sourced,
 };
 use crabc_mimalloc::__crabc_runtime::{
-    NativeProcessStartupFacts, RuntimeStderrOutput, ThreadAttachResult,
+    NativeProcessStartupFacts, SourceErrnoStore, RuntimeStderrOutput, ThreadAttachResult,
     attach_current_thread, current_native_allocator_thread_descriptor,
     finish_current_thread_native_after_user_destructors, initialize_process,
     prepare_native_initial_thread_owner, publish_native_process_startup_facts,
@@ -107,6 +107,13 @@ unsafe fn host_environment() -> *const *const c_char {
     unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
+/// Publishes to musl's calling-thread errno slot without retaining its pointer.
+unsafe fn host_source_errno_store(value: c_int) {
+    // SAFETY: the host installed TLS before constructors, and musl resolves
+    // the calling thread's slot for this immediate, nonallocating write.
+    unsafe { *__errno_location() = value };
+}
+
 /// Pinned `mi_process_load`: publish the host facts, start the process, and
 /// install the initial thread owner. With default options, an arena is
 /// reserved later when allocation needs one. Runs before `main`.
@@ -130,6 +137,9 @@ extern "C" fn process_load() {
     };
     let ready = match facts {
         Some(facts) => {
+            // SAFETY: this permanent provider writes only current-thread TLS
+            // without allocation, unwinding, or a retained TLS pointer.
+            let facts = facts.with_source_errno_store(unsafe { SourceErrnoStore::new(host_source_errno_store) });
             publish_native_process_startup_facts(facts) && initialize_process()
                 && prepare_native_initial_thread_owner()
         }
