@@ -4596,14 +4596,20 @@ impl Page {
     /// supplied, so its provenance is the caller's: a session that projects
     /// its pinned Theap from one raw capability passes that capability rather
     /// than a fresh `&mut Theap` whose tag a later projection would retire.
+    /// Its current TLD remains live during this short owner observation;
+    /// detached or post-exit scalar identities alone do not admit association.
     unsafe fn associate_exclusive_owner_with_heap_pointer(
         &mut self,
         theap: NonNull<Theap>,
         heap: NonNull<Heap>,
         owner: TheapOwner,
     ) {
-        // SAFETY: the caller supplies a live, address-stable Theap.
-        debug_assert!(unsafe { theap.as_ref() }.matches_owner(owner));
+        // SAFETY: the admitted owner retains the current TLD. Observe only
+        // its immutable thread identity, without borrowing either whole image.
+        let tld = unsafe { core::ptr::addr_of!((*theap.as_ptr()).tld).read() };
+        debug_assert!(!tld.is_null() && unsafe {
+            core::ptr::addr_of!((*tld).thread_id).read() == owner.thread_id()
+        });
         self.theap = theap.as_ptr();
         // A fresh page records this address but does not mutate its Heap.
         // Heap-list and arena-pages changes retain their own synchronized
@@ -4689,12 +4695,35 @@ impl Page {
         }
     }
 
+    /// Legacy combined fresh-page fixture initialization. Source allocation
+    /// paths publish primary metadata before PageMap registration and draw
+    /// keys separately after registration and statistics have completed.
+    ///
+    /// # Safety
+    /// The caller retains the exact pinned Heap and Theap images and owns
+    /// the fresh Page and selected Theap random fields exclusively.
+    unsafe fn publish_fresh_exclusive_owner_with_heap_pointer(
+        &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>, owner: TheapOwner,
+        block_size: usize, page_offset: usize, reserved: u16,
+        slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> bool {
+        let metadata = NonNull::from(&mut *self);
+        // Reborrow through the retained pointer so the helper's mutable
+        // projection descends from it instead of invalidating a sibling tag.
+        if !unsafe { (&mut *metadata.as_ptr()).publish_fresh_primary_owner_with_heap_pointer(
+            metadata, theap, heap, owner, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid,
+        ) } { return false; }
+        unsafe { Self::initialize_fresh_page_keys_at(metadata, theap) }
+    }
+
     /// # Safety
     /// `heap` is the exact address-stable Heap retained for this page's full
     /// lifecycle; callers must not use this identity pointer to form an
     /// overlapping Rust reference.
-    unsafe fn publish_fresh_exclusive_owner_with_heap_pointer(
+    unsafe fn publish_fresh_primary_owner_with_heap_pointer(
         &mut self,
+        metadata: NonNull<Self>,
         theap: NonNull<Theap>,
         heap: NonNull<Heap>,
         owner: TheapOwner,
@@ -4722,23 +4751,14 @@ impl Page {
         self.prev = null_mut();
         self.memid = memid;
         #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
-        {
-            // SAFETY: fresh-page publication holds the source Theap's random
-            // field exclusively and consumes the next value before the page
-            // or any of its free-list nodes can be observed.
-            self.keys[0] = unsafe { (*theap.as_ptr()).random.next() as usize };
-            self.keys[1] = unsafe { (*theap.as_ptr()).random.next() as usize };
-            debug_assert_ne!(self.keys[0], 0);
-            debug_assert_ne!(self.keys[1], 0);
-        }
+        { self.keys = [0; crate::config::PAGE_KEY_COUNT]; }
         // SAFETY: forwarded exact Heap identity/lifetime contract.
         unsafe { self.associate_exclusive_owner_with_heap_pointer(theap, heap, owner) };
         // `MI_PAGE_META_IS_ALIGNED` is enabled in the frozen profile. As in
         // `arena.c`, publish the self map only after every ordinary page field
         // and exclusive owner record is ready.
-        let self_pointer = core::ptr::from_mut(self);
         self.self_
-            .store(self_pointer, core::sync::atomic::Ordering::Release);
+            .store(metadata.as_ptr(), core::sync::atomic::Ordering::Release);
         true
     }
 
@@ -4786,8 +4806,10 @@ impl Page {
         }
     }
 
-    /// Raw publication whose Page owner record keeps the caller's exact
-    /// Theap and Heap pointers, provenance included.
+    /// Legacy combined publication whose Page owner record keeps the
+    /// caller's exact Theap and Heap pointers, provenance included. Source
+    /// allocation paths use separate primary publication and key steps so
+    /// PageMap failure cannot consume page-key randomness.
     ///
     /// # Safety
     /// All obligations of [`Self::publish_fresh_exclusive_owner_at_with_heap_pointer`]
@@ -4795,7 +4817,7 @@ impl Page {
     /// this page, exclusively controlled by the caller for this call, and it
     /// must stay address-stable through page retirement.
     pub(crate) unsafe fn publish_fresh_exclusive_owner_at_with_pointers(
-        mut metadata: NonNull<Self>,
+        metadata: NonNull<Self>,
         theap: NonNull<Theap>,
         heap: NonNull<Heap>,
         owner: TheapOwner,
@@ -4806,21 +4828,90 @@ impl Page {
         free_is_zero: bool,
         memid: MemoryId,
     ) -> Option<NonNull<Self>> {
-        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
-            return None;
-        }
-        // SAFETY: caller grants the unique writable metadata capability.
-        unsafe { metadata.as_ptr().write(Self::empty()) };
-        // SAFETY: the preceding raw write initialized a valid Page value.
-        let page = unsafe { metadata.as_mut() };
-        // SAFETY: forwarded raw Heap identity and retention obligations.
-        if !unsafe { page.publish_fresh_exclusive_owner_with_heap_pointer(
-            theap, heap, owner, block_size, page_offset, reserved,
+        let page = unsafe { Self::publish_fresh_primary_owner_at_with_pointers(
+            metadata, theap, heap, owner, block_size, page_offset, reserved,
             slice_pcommitted, free_is_zero, memid,
-        ) } {
-            return None;
+        ) }?;
+        if !unsafe { Self::initialize_fresh_page_keys_at(page, theap) } { return None; }
+        Some(page)
+    }
+
+    /// Publishes the arena allocator's primary metadata and owner record
+    /// without consuming random values. Secondary aliases, arena membership,
+    /// PageMap registration and statistics precede the separate key step.
+    /// The self map stores the caller's original metadata capability.
+    ///
+    /// # Safety
+    /// The caller owns aligned writable storage for a fresh Page and its
+    /// complete source block area, and retains the exact original Page,
+    /// Theap, TLD and Heap allocation capabilities through page retirement.
+    /// Geometry and memory provenance describe that actual mapping. No
+    /// observer reaches this image during initialization, and no allocation
+    /// may use its free lists or keys before key initialization completes.
+    /// The owner excludes overlapping Page mutation and image retirement.
+    pub(crate) unsafe fn publish_fresh_primary_owner_at_with_pointers(
+        mut metadata: NonNull<Self>,
+        theap: NonNull<Theap>, heap: NonNull<Heap>, owner: TheapOwner,
+        block_size: usize, page_offset: usize, reserved: u16,
+        slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Self>> {
+        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) { return None; }
+        // SAFETY: the actual mapping owner grants fresh writable metadata;
+        // the complete empty image precedes every typed field projection.
+        unsafe { metadata.as_ptr().write(Self::empty()); }
+        let original = metadata;
+        let page = unsafe { metadata.as_mut() };
+        if !unsafe { page.publish_fresh_primary_owner_with_heap_pointer(
+            original, theap, heap, owner, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid,
+        ) } { return None; }
+        Some(original)
+    }
+
+    /// Performs the source page initializer's key draws after successful
+    /// PageMap registration and statistics, before zero queries or free-list
+    /// extension. Refusal consumes no randomness; keys are never redrawn.
+    ///
+    /// # Safety
+    /// The actual source session retains the original primary Page and its
+    /// selected live Theap, excludes their retirement and owns the writable
+    /// key and random fields exclusively for this callback-free operation.
+    /// All registration callbacks and owner projections have ended. No live
+    /// allocation or free-list consumer can observe this unfinished page.
+    /// Pointer comparisons below reject mismatches; they grant no lifetime
+    /// or field authority. The caller invokes this step once per fresh page.
+    pub(crate) unsafe fn initialize_fresh_page_keys_at(
+        page: NonNull<Self>, theap: NonNull<Theap>,
+    ) -> bool {
+        let raw = page.as_ptr();
+        // SAFETY: these bounded scalar projections use the retained original
+        // capabilities; no whole Page, Heap or Theap reference is created.
+        unsafe {
+            if (&*core::ptr::addr_of!((*raw).self_)).load(Ordering::Acquire) != raw
+                || core::ptr::addr_of!((*raw).theap).read() != theap.as_ptr()
+                || core::ptr::addr_of!((*raw).heap).read().is_null()
+                || core::ptr::addr_of!((*raw).heap).read()
+                    != (&*core::ptr::addr_of!((*theap.as_ptr()).heap)).load(Ordering::Acquire)
+                || core::ptr::addr_of!((*raw).capacity).read() != 0
+                || core::ptr::addr_of!((*raw).used).read() != 0
+                || core::ptr::addr_of!((*raw).reserved).read() == 0
+                || !core::ptr::addr_of!((*raw).free).read().is_null()
+                || !core::ptr::addr_of!((*raw).local_free).read().is_null()
+                || !core::ptr::addr_of!((*raw).next).read().is_null()
+                || !core::ptr::addr_of!((*raw).prev).read().is_null()
+                || (&*core::ptr::addr_of!((*raw).xthread_free)).load(Ordering::Acquire) != 1 {
+                return false;
+            }
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            {
+                if core::ptr::addr_of!((*raw).keys).read() != [0; crate::config::PAGE_KEY_COUNT] { return false; }
+                let random = &mut *core::ptr::addr_of_mut!((*theap.as_ptr()).random);
+                if !random.is_initialized() { return false; }
+                let keys = [random.next() as usize, random.next() as usize];
+                core::ptr::addr_of_mut!((*raw).keys).write(keys);
+            }
         }
-        Some(metadata)
+        true
     }
 
     #[inline]
@@ -4831,8 +4922,8 @@ impl Page {
     /// Initializes potentially nonzero raw metadata and publishes a fresh
     /// page into the exclusive local lifecycle.
     ///
-    /// This is the only fresh-page entry point for newly committed arena
-    /// metadata. It writes [`Self::empty`] before creating a Rust reference,
+    /// This legacy combined entry point writes [`Self::empty`] before
+    /// creating a Rust reference,
     /// matching `arena.c`'s explicit metadata zeroing rather than assuming the
     /// OS mapping happened to contain a valid `Page` value.
     ///
@@ -4878,7 +4969,7 @@ impl Page {
     /// theap and ordinary live theaps. See
     /// [`Self::publish_fresh_exclusive_at`] for the storage obligations.
     pub(crate) unsafe fn publish_fresh_exclusive_owner_at(
-        mut metadata: NonNull<Self>,
+        metadata: NonNull<Self>,
         theap: &mut Theap,
         heap: &Heap,
         owner: TheapOwner,
@@ -4889,33 +4980,10 @@ impl Page {
         free_is_zero: bool,
         memid: MemoryId,
     ) -> Option<NonNull<Self>> {
-        if !Self::fresh_parameters_are_valid(block_size, page_offset, reserved) {
-            return None;
-        }
-        // SAFETY: the caller proves that this aligned writable metadata does
-        // not contain a live `Page`, so initialization by raw write is valid.
-        unsafe { metadata.as_ptr().write(Self::empty()) };
-        // SAFETY: the preceding raw write initialized a valid Page value at
-        // `metadata`; exclusive caller ownership permits this mutable borrow.
-        let page = unsafe { metadata.as_mut() };
-        // This publication mutates every fresh-page field and is therefore a
-        // required release transition, not a debug-only invariant check.
-        // Keeping its boolean result explicit also preserves the raw entry
-        // point's checked failure boundary in every optimization profile.
-        if !page.publish_fresh_exclusive_owner(
-            theap,
-            heap,
-            owner,
-            block_size,
-            page_offset,
-            reserved,
-            slice_pcommitted,
-            free_is_zero,
-            memid,
-        ) {
-            return None;
-        }
-        Some(metadata)
+        unsafe { Self::publish_fresh_exclusive_owner_at_with_pointers(
+            metadata, NonNull::from(theap), NonNull::from(heap), owner,
+            block_size, page_offset, reserved, slice_pcommitted, free_is_zero, memid,
+        ) }
     }
 
     /// Removes an exclusive-theap association before the page metadata is
@@ -12799,7 +12867,7 @@ mod tests {
             ready.publish_heap().unwrap();
             (*theap.as_ptr()).random.test_stage_buffered_nexts(13, 17);
             let available_before = (*theap.as_ptr()).random.test_output_available();
-            let page = Page::publish_fresh_exclusive_owner_at_with_pointers(metadata, theap, heap,
+            let page = Page::publish_fresh_primary_owner_at_with_pointers(metadata, theap, heap,
                 TheapOwner::Live(LiveThreadId::new(12).unwrap()), layout.block_size(), layout.page_offset(),
                 layout.reserved(), 0, memory.initially_zero(), memory).unwrap();
             assert!(claim.publish_secondary_metadata(page));
@@ -12818,6 +12886,88 @@ mod tests {
             assert!(observed > 0, "registration reached the armed lazy mapping failure");
             assert_eq!(available_after, available_before,
                 "a failed arena PageMap registration returns before page initialization draws keys");
+        }
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    fn source_page_keys_follow_registered_primary_and_intervening_original_random_draw() {
+        use crate::os::{MemoryConfig, PageSize, fault};
+        use crate::os_page::OsAlignedPageClaim;
+        use crate::page_map::PageMap;
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 8 * 1024 * 1024, false, false);
+        let _fault = fault::install(fault::Plan::disabled());
+        let mut page_map = PageMap::initialize_for_subprocess(config, crate::config::MAX_VABITS, false,
+            PARENT.identity()).unwrap();
+        let claim = OsAlignedPageClaim::allocate(config, 4096, 2 * crate::config::ARENA_SLICE_SIZE)
+            .map_err(|failure| failure.error()).unwrap();
+        let layout = claim.layout();
+        let slice_start = claim.slice_start().unwrap();
+        let metadata = claim.metadata().unwrap();
+        let memory = claim.memory_id().unwrap();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let heap = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let mut tld = std::boxed::Box::new(ThreadLocalData::normal_tld_init_preimage());
+        let tld = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        let mut theap = std::boxed::Box::new(Theap::empty());
+        let theap = NonNull::new(core::ptr::addr_of_mut!(*theap)).unwrap();
+        // Actual owners retain every original allocation through primary
+        // registration, a separate source random operation, key publication,
+        // and ordered retirement. No projection spans a registration callback.
+        unsafe {
+            (*tld.as_ptr()).memid = MemoryId::malloc(tld.as_ptr().cast(), size_of::<ThreadLocalData>(), true);
+            assert!((*tld.as_ptr()).initialize_normal_tld_field_prefix_after_direct_preimage(
+                LiveThreadId::new(12).unwrap(), ThreadSequence::from_previous_total_count(0), 0, PARENT.identity()));
+            let prepared = Theap::prepare_initialization_at(theap, heap, tld,
+                TheapInitializationKind::ProcessStatic).unwrap();
+            let linked = finish_unfaulted_test_random(prepared.apply_source_options_and_attach(
+                SourceTheapOptions::release_defaults_for_test()).unwrap());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 0, sample_seed: 0 })
+                .apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            (*theap.as_ptr()).random.test_stage_buffered_nexts(13, 17);
+            let available = (*theap.as_ptr()).random.test_output_available();
+            let page = Page::publish_fresh_primary_owner_at_with_pointers(metadata, theap, heap,
+                TheapOwner::Live(LiveThreadId::new(12).unwrap()), layout.block_size(), layout.page_offset(),
+                layout.reserved(), 0, memory.initially_zero(), memory).unwrap();
+            assert_eq!((*theap.as_ptr()).random.test_output_available(), available);
+            assert_eq!((*page.as_ptr()).keys, [0, 0]);
+            assert!(claim.publish_secondary_metadata(page));
+            page_map.register_range(slice_start.as_ptr(), layout.page_map_size(), page).unwrap();
+            assert_eq!(page_map.checked_lookup(slice_start.as_ptr()), page.as_ptr());
+            let bin = crate::size_class::bin_for_regular_page_block_size(layout.block_size());
+            assert!((&*core::ptr::addr_of!((*theap.as_ptr()).statistics)).page_registered(bin));
+            // A separate admitted source operation consumes the first value
+            // between primary registration and the later page initializer.
+            assert_eq!(Theap::next_os_reservation_random_at(theap), Some(13));
+            let available = (*theap.as_ptr()).random.test_output_available();
+            let mut unrelated = std::boxed::Box::new(Theap::empty());
+            let unrelated = NonNull::new(core::ptr::addr_of_mut!(*unrelated)).unwrap();
+            assert!(!Page::initialize_fresh_page_keys_at(page, unrelated));
+            assert_eq!((*theap.as_ptr()).random.test_output_available(), available);
+            assert!(Page::initialize_fresh_page_keys_at(page, theap));
+            assert_eq!((*page.as_ptr()).keys[0], 17);
+            assert_ne!((*page.as_ptr()).keys[1], 0);
+            let available = (*theap.as_ptr()).random.test_output_available();
+            assert!(!Page::initialize_fresh_page_keys_at(page, theap));
+            assert_eq!((*theap.as_ptr()).random.test_output_available(), available);
+            // Loading and dereferencing the stored original self capability
+            // after key writes must remain valid under strict provenance.
+            let primary = (*page.as_ptr()).self_.load(Ordering::Acquire);
+            assert_eq!((*primary).block_size, layout.block_size());
+            page_map.unregister_range(slice_start.as_ptr(), layout.page_map_size()).unwrap();
+            assert!((&*core::ptr::addr_of!((*theap.as_ptr()).statistics)).page_released(bin));
+            assert!(claim.clear_secondary_metadata(page));
+            assert!((*page.as_ptr()).retire_exclusive().is_some());
+            claim.release().map_err(|failure| failure.error()).unwrap();
+            page_map.destroy().unwrap();
+            (*tld.as_ptr()).detach_one_theap_from_heap(&mut *heap.as_ptr(), theap.as_ptr()).unwrap();
+            (*tld.as_ptr()).detach_one_theap_from_tld(theap.as_ptr()).unwrap();
         }
     }
 
