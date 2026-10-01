@@ -501,10 +501,9 @@ pub enum FreeOutcome {
     /// The native runtime could not complete a legal free and has retained
     /// its owner; the embedding boundary must not continue as if it freed.
     Retained,
-    /// Debug pointer or padding validation rejected this free and left the
-    /// block owned. This is the source continuation after an invalid free, not a runtime
-    /// ownership failure.
-    #[cfg(feature = "mi-debug-1")]
+    /// Pointer or source padding validation rejected this free and left the
+    /// block owned. The caller retains the live allocation after the diagnostic.
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     RejectedCorruption,
 }
 
@@ -565,7 +564,7 @@ pub unsafe fn free_sourced(block: *mut u8) -> Sourced<FreeOutcome> {
 /// `block` is null, unmapped by this allocator, or an exact live native
 /// allocation that no other thread accesses during the call. For an unmapped
 /// pointer, its containing slice must not be registered during the call. A `Freed`
-/// result consumes it; a debug validation refusal leaves the block live.
+/// result consumes it; a validation refusal leaves the block live.
 pub unsafe fn free(block: *mut u8) -> FreeOutcome {
     // SAFETY: forwarded exact live-client contract.
     unsafe { free_sourced(block) }.value
@@ -580,7 +579,7 @@ unsafe fn free_validated(block: *mut u8) -> FreeOutcome {
         NativePageFreeResult::Freed => FreeOutcome::Freed,
         NativePageFreeResult::InvalidPointer => FreeOutcome::Unmapped,
         NativePageFreeResult::Unavailable | NativePageFreeResult::Retained => FreeOutcome::Retained,
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         NativePageFreeResult::RejectedCorruption => FreeOutcome::RejectedCorruption,
     }
 }
