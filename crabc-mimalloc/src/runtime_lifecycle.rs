@@ -12616,11 +12616,11 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             return NativePageFreeResult::Retained;
         }
     }
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     {
         // SAFETY: forwarded exact live-client requirement. The check has no
         // owner projection and ends before error callbacks may reenter.
-        match unsafe { debug_check_native_free(block) } {
+        match unsafe { check_source_native_free_padding(block) } {
             Ok(()) => {}
             Err(Some(report)) => {
                 let _ = crate::process_init::process_error_message(report);
@@ -12665,8 +12665,8 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
 ///
 /// `block` must be an exact live native allocation whose PageMap registration
 /// and page key remain stable through this operation.
-#[cfg(feature = "mi-debug-1")]
-unsafe fn debug_check_native_free(
+#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+unsafe fn check_source_native_free_padding(
     block: core::ptr::NonNull<u8>,
 ) -> Result<(), Option<SourceErrorReport>> {
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().ok_or(None)?;
@@ -12683,7 +12683,7 @@ unsafe fn debug_check_native_free(
     let canonical = allocation.canonical_block();
     let block_size = allocation.block_size();
     // SAFETY: the allocation keeps its page and immutable key live.
-    let key = unsafe { crate::types::Page::debug_padding_keys_at(page) };
+    let key = unsafe { crate::types::Page::source_page_keys_at(page) };
     // SAFETY: the exact live allocation retains initialized page geometry
     // and mapping provenance. This copies immutable fields without borrowing
     // a page whose owner may concurrently update its queues or free lists.
@@ -12696,13 +12696,20 @@ unsafe fn debug_check_native_free(
                 .is_some_and(|memory| memory.base.addr() < page.as_ptr().addr()));
     // SAFETY: the caller owns the exact live allocation; no other operation
     // may change the trailing record before this source free check finishes.
-    let result = unsafe { crate::alloc::check_debug_padding_on_free(
-        canonical, block_size, page.as_ptr().addr(), key, huge,
+    let policy = if crate::config::DEBUG_LEVEL >= 1 {
+        crate::alloc::SourcePaddingPolicy::Debug
+    } else {
+        crate::alloc::SourcePaddingPolicy::RecordOnly
+    };
+    let result = unsafe { crate::alloc::check_source_padding_on_free(
+        canonical, block_size, page.as_ptr().addr(), key, huge, policy,
     ) };
     if let Ok(usable_size) = result {
-        // SAFETY: the caller still owns this live block. Source debug free
-        // fills at most one MiB before its free-list link replaces word zero.
-        unsafe { core::ptr::write_bytes(canonical.as_ptr(), 0xDF, usable_size.min(crate::config::MIB)) };
+        if policy == crate::alloc::SourcePaddingPolicy::Debug {
+            // SAFETY: the caller still owns this live block. Source debug free
+            // fills at most one MiB before its free-list link replaces word zero.
+            unsafe { core::ptr::write_bytes(canonical.as_ptr(), 0xDF, usable_size.min(crate::config::MIB)) };
+        }
     }
     drop(allocation);
     match result {
@@ -20574,6 +20581,77 @@ mod tests {
     static NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    unsafe extern "C" fn capture_secure_three_padding_error(
+        error: core::ffi::c_int, argument: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: this fixture retains both atomic scalars until the handler
+        // is unregistered; the callback neither allocates nor retains them.
+        let observed = unsafe { &*argument.cast::<[AtomicUsize; 2]>() };
+        observed[0].fetch_add(1, Ordering::AcqRel);
+        observed[1].store(error as usize, Ordering::Release);
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[test]
+    fn secure_three_native_free_checks_the_source_record_without_debug_padding_bytes() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::secure_three_native_free_checks_the_source_record_without_debug_padding_bytes",
+            || {
+                assert_eq!(crate::config::SECURE_LEVEL, 3);
+                assert_eq!(crate::config::DEBUG_LEVEL, 0);
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(block) = native_allocate(81, false) else {
+                    panic!("source padding fixture requires a real native allocation");
+                };
+                let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                // SAFETY: the fixture exclusively owns this live canonical client.
+                let allocation = unsafe { map.lookup_live_allocation(block) }.unwrap().unwrap();
+                let canonical = allocation.canonical_block();
+                let stride = allocation.block_size();
+                let page = allocation.page();
+                // SAFETY: the live client retains the initialized immutable keys.
+                let keys = unsafe { crate::types::Page::source_page_keys_at(page) };
+                drop(allocation);
+                // SAFETY: this allocator fixture owns the complete canonical
+                // block. Initialize its selected source record independently
+                // of the allocation initializer to isolate the free boundary.
+                let canary = unsafe {
+                    core::ptr::write_bytes(canonical.as_ptr(), 0xA5, stride);
+                    assert_eq!(crate::alloc::initialize_source_padding(canonical, stride,
+                        81, page.as_ptr().addr(), keys, false, false,
+                        crate::alloc::SourcePaddingPolicy::RecordOnly), Some(81));
+                    let record = canonical.as_ptr().add(stride - crate::config::PADDING_SIZE).cast::<u32>();
+                    let canary = record.read_unaligned();
+                    record.write_unaligned(canary ^ 1);
+                    canary
+                };
+                let errors = [AtomicUsize::new(0), AtomicUsize::new(0)];
+                let output = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: this fresh process retains the handler argument and
+                // excludes concurrent registration for its complete use.
+                unsafe { output.register_error(Some(capture_secure_three_padding_error),
+                    core::ptr::addr_of!(errors).cast_mut().cast()); }
+                // SAFETY: exactly this live client is consumed; rejected
+                // corruption must leave it owned for repair and later free.
+                assert_ne!(unsafe { native_free(block) }, NativePageFreeResult::Freed,
+                    "secure level three must check its record without debug mode");
+                assert_eq!(errors[0].load(Ordering::Acquire), 1);
+                assert_eq!(errors[1].load(Ordering::Acquire), crabc_core::Errno::FAULT.raw() as usize);
+                // SAFETY: rejection retained this block. Restore only its
+                // original record; the non-DE padding bytes remain unchanged.
+                unsafe { canonical.as_ptr().add(stride - crate::config::PADDING_SIZE)
+                    .cast::<u32>().write_unaligned(canary); }
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed,
+                    "record-only hardening must not demand debug padding bytes");
+                assert_eq!(errors[0].load(Ordering::Acquire), 1);
+                // SAFETY: callback delivery ended before its argument leaves scope.
+                unsafe { output.register_error(None, core::ptr::null_mut()); }
+            },
+        );
+    }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
     std::thread_local! {
