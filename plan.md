@@ -153,23 +153,43 @@ only its exact source, configuration, image, products, and execution context.
   retains one thread scope across the baseline and all later observations;
   its focused development run passes all 33 cycles with zero unexplained bytes,
   and all 184,330 C/native values match, including six 21-row cross-thread traces.
-  Fresh four-profile qualification remains pending; the original disk-exhaustion
-  failure is retained. Bounded-memory qualification stays open, including the
-  retained source-root growth.
+  Fresh complete four-profile production and its owning independent read-only
+  replay pass at `365090643`, but every native original and replay leaves
+  4,096 unexplained bytes from cycle sixteen. A same-executable syscall trace
+  identifies the fixture's origin-ready channel allocation. Replacing that
+  observer state and retaining a panic-safe origin join remain open; the
+  earlier disk-exhaustion failure is retained. Bounded-memory qualification
+  stays open, including approximately 245 MB of retained source-root growth.
   Secure-3 padding, canonical prefixes, encoded visitation and diagnostic
-  repairs are integrated with exact-source focused read-only evidence;
-  complete secure-3 production remains pending. The pinned C controls prove
+  repairs are integrated with exact-source focused read-only evidence.
+  Complete secure-3 production at `365090643` passes the C trace, then exposes
+  native aligned zero-growth corruption and an ordinary valid-client abort;
+  the eight native controls are not reached and its owning reader rejects the
+  absent receipt. The integrated secure padding decoder repair passes both
+  genuine public-growth regressions and four nearby PageMap controls at their
+  exact repaired source, including independent read-only replay. The unchanged
+  complete 111-comparison/eight-control producer remains pending on merged
+  source. The pinned C controls prove
   keyed Page geometry; corrected exact layout tests pass all nineteen focused
   secure-3 cases, five nearby cases and independent read-only replay. The
   unchanged caller-locked arena fixture requires a 64-MiB memlock budget;
   original C/native refusals under 8 MiB remain retained. Selected allocation
   admission now retains the actual main or child owner before candidate creation;
   exact main, child and foreign-owner controls and owning replay pass.
-  All nine merged compiler profiles pass at `3a2d09895`. Indexed source ELF
-  sections authenticate all 32 previously refused callable definitions in the
-  retained runtime cohort; 309 merged read-only objects still lack complete
-  selected-member proof. ISA correctness passes separately from deferred
-  throughput. Complete M2/M3/M4 and merged-source qualification remain open.
+  All nine merged compiler profiles pass at `bd6f847d0`. Actual fixed and
+  auxiliary child callback allocation regressions pass after the integrated
+  admission repair; broader initializer and guarded custody transport remain
+  open. Winning-once-owner and buffered warning suppliers are qualified, but
+  their first-allocation metadata caller hookup remains unfinished. Indexed
+  source ELF sections authenticate all 32 previously refused callable
+  definitions; merged read-only object bindings also replay successfully.
+  A complete diagnostic projection of the unchanged retained runtime cohort
+  admits 2,838 of 2,958 applicable references, with 120 still refused. Its first
+  remaining form is an atomic RIP-relative binding to owned BSS storage.
+  Diagnostic replay does not qualify a newer source: public source-identity
+  admission remains strict, and whole callable-provider closure remains open.
+  ISA correctness passes separately from deferred throughput. Complete
+  M2/M3/M4 and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Continue independent
