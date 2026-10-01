@@ -3392,8 +3392,12 @@ pub(crate) mod tests {
 
     #[test]
     fn metadata_sizing_reserves_exact_source_slices_and_bitmap_headers() {
-        assert_eq!(size_of::<Page>(), 128);
-        assert_eq!(page_metadata_slice_count(), Some(8));
+        // Encoded free lists and padding retain the two source Page keys;
+        // their larger image reserves one additional metadata slice.
+        let keyed = crate::config::PAGE_KEY_COUNT == 2;
+        assert_eq!(size_of::<Page>(), if keyed { 144 } else { 128 });
+        assert_eq!(size_of::<Arena>(), 648);
+        assert_eq!(page_metadata_slice_count(), Some(if keyed { 9 } else { 8 }));
 
         let pages = ArenaPagesLayout::for_slice_count(BCHUNK_BITS).unwrap();
         assert_eq!(pages.slice_count(), BCHUNK_BITS);
@@ -3402,20 +3406,38 @@ pub(crate) mod tests {
         assert_eq!(pages.byte_size(), 12_416);
 
         let info = ArenaInfoLayout::for_slice_count(BCHUNK_BITS, 4096).unwrap();
-        assert_eq!(info.arena_offset(), 8 * ARENA_SLICE_SIZE);
-        assert_eq!(info.bitmap_base(), 524_992);
+        assert_eq!(info.arena_offset(), if keyed { 589_824 } else { 524_288 });
+        assert_eq!(info.bitmap_base(), if keyed { 590_528 } else { 524_992 });
         assert_eq!(info.free_bitmap().byte_size(), 512);
         assert_eq!(info.ordinary_bitmap().byte_size(), 192);
-        assert_eq!(info.bitmaps_end(), 537_984);
-        assert_eq!(info.info_slices(), 9);
-        assert_eq!(info.info_size(), 9 * ARENA_SLICE_SIZE);
+        assert_eq!(info.bitmaps_end(), if keyed { 603_520 } else { 537_984 });
+        assert_eq!(info.guard_size(), if crate::config::SECURE_LEVEL > 0 { 4096 } else { 0 });
+        assert_eq!(info.info_slices(), if keyed { 10 } else { 9 });
+        assert_eq!(info.info_size(), if keyed { 655_360 } else { 589_824 });
     }
 
     #[test]
     fn secure_info_layout_reserves_the_os_guard_at_the_bitmap_slice_boundary() {
         let layout = ArenaInfoLayout::for_slice_count(13 * BCHUNK_BITS, 4096).unwrap();
-        assert_eq!(layout.info_slices(), if crate::config::SECURE_LEVEL > 0 { 10 } else { 9 });
-        assert!(layout.bitmaps_end() <= layout.info_size());
+        let keyed = crate::config::PAGE_KEY_COUNT == 2;
+        let secure = crate::config::SECURE_LEVEL > 0;
+        // The source aligns the complete bitmap image to an OS page before
+        // adding its guard. Page keys shift that image by a metadata slice,
+        // so the same guard crosses the next slice boundary in both layouts.
+        assert_eq!(size_of::<Page>(), if keyed { 144 } else { 128 });
+        assert_eq!(page_metadata_slice_count(), Some(if keyed { 9 } else { 8 }));
+        assert_eq!(layout.bitmap_base(), if keyed { 590_528 } else { 524_992 });
+        assert_eq!(layout.ordinary_bitmap().byte_size(), 960);
+        assert_eq!(layout.free_bitmap().byte_size(), 1280);
+        assert_eq!(layout.bitmaps_end(), if keyed { 654_208 } else { 588_672 });
+        assert_eq!(layout.guard_size(), if secure { 4096 } else { 0 });
+        assert_eq!(layout.info_slices(), match (keyed, secure) {
+            (false, false) => 9, (false, true) | (true, false) => 10, (true, true) => 11,
+        });
+        assert_eq!(layout.info_size(), match (keyed, secure) {
+            (false, false) => 589_824, (false, true) | (true, false) => 655_360,
+            (true, true) => 720_896,
+        });
     }
 
     #[test]
