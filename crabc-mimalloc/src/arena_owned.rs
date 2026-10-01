@@ -1,6 +1,6 @@
 // Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source: pinned mimalloc v3.5.0 src/arena.c:1216-1283,1573-1611,1676-1912,
+// Source: pinned mimalloc v3.5.0 src/arena.c:911-1074,1216-1283,1573-1611,1676-1912,
 // 2167-2191 (huge reservation manage boundary), and src/page.c:630-705
 // (page-area commitment before capacity publication).
 
@@ -25,7 +25,7 @@ use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSlic
 use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS};
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, PublishedMappingView, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
-use crate::types::{Arena, MemoryId, MemoryKind};
+use crate::types::{Arena, MemoryId, MemoryKind, Page};
 
 #[path = "arena_purge.rs"]
 mod purge;
@@ -526,6 +526,155 @@ impl OwnedArenaAllocation {
     }
 }
 
+/// The original fresh arena claim through metadata/prefix commitment and
+/// Page publication. These copied observations retain no image borrow and
+/// grant no independent free; the actual admitted issuer must stay pinned.
+#[must_use]
+pub(crate) struct PreparedSourceArenaPage {
+    custody: super::SourceInitializationClaimCustody,
+    metadata: NonNull<Page>,
+    committed_prefix: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceArenaPageInitializationError {
+    Custody(super::SourceInitializationClaimCustodyError),
+    MetadataGeometry,
+    BitmapInvariant,
+    InvalidPrefix,
+}
+
+#[must_use]
+pub(crate) enum SourceArenaPagePreparation {
+    Ready(PreparedSourceArenaPage),
+    Commit(SourceArenaPageCommitTask),
+}
+
+enum SourceArenaPageCommitKind {
+    Metadata { slice_index: usize, slice_count: usize },
+    Prefix,
+}
+
+/// One of the two source fresh-page commit sites. The unique original claim
+/// travels with the task; no callback can be replayed from its completion.
+#[must_use]
+pub(crate) struct SourceArenaPageCommitTask {
+    page: PreparedSourceArenaPage,
+    owner: OwnedArenaAllocation,
+    kind: SourceArenaPageCommitKind,
+    start: NonNull<u8>,
+    size: usize,
+}
+
+/// A callback response and exact successful prefix progress. A refused finish
+/// returns this same completion, never another VM task or inferred claim.
+#[must_use]
+pub(crate) struct CompletedSourceArenaPageCommit {
+    page: PreparedSourceArenaPage,
+    kind: SourceArenaPageCommitKind,
+    committed: bool,
+}
+
+#[must_use]
+pub(crate) enum SourceArenaPageCommitOutcome {
+    Ready(PreparedSourceArenaPage),
+    Refused(SourceArenaPageCleanup),
+}
+
+/// Original claim cleanup carries the actual successful prefix and latches
+/// its source accounting before optional purge/release policy is read.
+#[must_use]
+pub(crate) struct SourceArenaPageCleanup {
+    custody: super::SourceInitializationClaimCustody,
+    committed_prefix: usize,
+    prefix_accounted: bool,
+}
+
+#[must_use]
+pub(crate) enum SourceArenaPageCleanupStep {
+    Release(PreparedSourceInitializationRelease),
+    RetainedAfterProgress(SourceArenaPageInitializationError),
+}
+
+impl PreparedSourceArenaPage {
+    pub(crate) fn start(&self) -> *mut u8 { self.custody.start.as_ptr() }
+    pub(crate) fn memory_id(&self) -> MemoryId { self.custody.memory }
+    pub(crate) fn metadata(&self) -> NonNull<Page> { self.metadata }
+    pub(crate) fn committed_prefix_size(&self) -> usize { self.committed_prefix }
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.custody.belongs_to_subprocess(subprocess)
+    }
+
+    /// Transfers the original span to the published Page's source lifecycle.
+    ///
+    /// # Safety
+    /// The actual issuer remains pinned. The exact selected Page contains this
+    /// original memory identity and successful prefix count, its primary and
+    /// secondary metadata and required arena/PageMap registrations are complete,
+    /// and the source graph now owns every later release. No failed assertion,
+    /// pending rollback or independent claim cleanup may survive this transfer.
+    pub(crate) unsafe fn into_published_page_memory(self) -> MemoryId { self.custody.memory }
+
+    /// Carries only completed commitment into prepublication cleanup.
+    ///
+    /// # Safety
+    /// The actual original owner remains retained. No Page, block, alias or
+    /// PageMap observer may access this span; completed registrations must have
+    /// been reversed and any initialized primary Page retired before release.
+    pub(crate) unsafe fn into_cleanup(self) -> SourceArenaPageCleanup {
+        self.cleanup()
+    }
+
+    fn cleanup(self) -> SourceArenaPageCleanup {
+        SourceArenaPageCleanup { custody: self.custody, committed_prefix: self.committed_prefix,
+            prefix_accounted: false }
+    }
+
+    pub(crate) fn retain_terminal(self) { self.custody.retain_terminal(); }
+}
+
+impl CompletedSourceArenaPageCommit {
+    pub(crate) fn committed_prefix_size(&self) -> usize { self.page.committed_prefix }
+    pub(crate) fn retain_terminal(self) { self.page.retain_terminal(); }
+}
+
+impl SourceArenaPageCleanup {
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.custody.belongs_to_subprocess(subprocess)
+    }
+    pub(crate) fn retain_terminal(self) { self.custody.retain_terminal(); }
+}
+
+impl SourceArenaPageCommitTask {
+    /// Invokes the exact metadata or initial-prefix commitment outside shared
+    /// arena projections. Metadata uses a null zero output; prefix commitment
+    /// uses a writable one, whose value source initialization deliberately ignores.
+    ///
+    /// # Safety
+    /// The actual original issuer, published mapping and callback lease remain
+    /// independently pinned throughout delivery and every later finish/cleanup.
+    /// No arena, bitmap, Theap, Heap or child-image projection or allocator lock
+    /// survives entry. Callbacks may allocate beside the still-claimed span.
+    pub(crate) unsafe fn run(mut self) -> CompletedSourceArenaPageCommit {
+        let committed = if let Some(lease) = self.owner.allocation.external() {
+            let mut is_zero = false;
+            let zero = match self.kind {
+                SourceArenaPageCommitKind::Metadata { .. } => core::ptr::null_mut(),
+                SourceArenaPageCommitKind::Prefix => &mut is_zero,
+            };
+            // SAFETY: preparation selected a contained original source area,
+            // and the actual external lease is retained by the caller above.
+            unsafe { lease.callback.invoke(true, self.start.as_ptr(), self.size, zero) }
+        } else {
+            self.owner.commit(self.start.as_ptr(), self.size, 0)
+        };
+        if committed && matches!(self.kind, SourceArenaPageCommitKind::Prefix) {
+            self.page.committed_prefix = self.size;
+        }
+        CompletedSourceArenaPageCommit { page: self.page, kind: self.kind, committed }
+    }
+}
+
 /// Source `arenas`, `arena_count`, and `arena_reserve_lock` ownership.
 ///
 /// Installation needs `&'static self`: callbacks and registry entries never
@@ -890,6 +1039,133 @@ impl ProcessArenaBacking {
             .and_then(|free| free.is_clear_range(index, count));
         if outstanding != Some(true) { return Err(Error::ClaimNoLongerOutstanding); }
         Ok(())
+    }
+
+    /// Prepares the exact aligned metadata slot from original issued custody.
+    /// Every refusal precedes VM policy and returns the unchanged claim. A
+    /// source-lazy metadata commit instead leaves this short issuer projection.
+    pub(crate) fn prepare_source_arena_page(
+        &self, custody: super::SourceInitializationClaimCustody,
+    ) -> Result<SourceArenaPagePreparation,
+        (SourceArenaPageInitializationError, super::SourceInitializationClaimCustody)> {
+        use SourceArenaPageInitializationError as Error;
+        if let Err(error) = self.validate_source_initialization_custody(&custody) {
+            return Err((Error::Custody(error), custody));
+        }
+        // SAFETY: exact issuing publication and owner were freshly checked;
+        // the caller's independent admission excludes teardown/address reuse.
+        let arena = unsafe { custody.arena.as_ref() };
+        let Some(projection) = super::arena_page_metadata_projection(arena, custody.memory) else {
+            return Err((Error::MetadataGeometry, custody));
+        };
+        let owner = if projection.needs_commit {
+            // SAFETY: this is the same retained issuing arena just validated.
+            match unsafe { self.allocation_for_arena(arena) } {
+                Some(owner) => {
+                    if owner.allocation.external().is_some_and(|lease|
+                        !lease.contains(projection.start.as_ptr(), projection.size)) {
+                        return Err((Error::MetadataGeometry, custody));
+                    }
+                    Some(owner)
+                }
+                None => return Err((Error::Custody(super::SourceInitializationClaimCustodyError::MissingBackingOwner), custody)),
+            }
+        } else { None };
+        let page = PreparedSourceArenaPage { custody, metadata: projection.metadata, committed_prefix: 0 };
+        Ok(match owner {
+            None => SourceArenaPagePreparation::Ready(page),
+            Some(owner) => SourceArenaPagePreparation::Commit(SourceArenaPageCommitTask {
+                page, owner, kind: SourceArenaPageCommitKind::Metadata {
+                    slice_index: projection.slice_index, slice_count: projection.slice_count },
+                start: projection.start, size: projection.size,
+            }),
+        })
+    }
+
+    /// Prepares only the source's first partial page commitment. A successful
+    /// prefix already carried by this same token cannot be replayed, and its
+    /// original MemoryId/whole-slice commitment observation is never rewritten.
+    pub(crate) fn prepare_source_arena_page_prefix(
+        &self, page: PreparedSourceArenaPage, size: usize,
+    ) -> Result<SourceArenaPagePreparation, (SourceArenaPageInitializationError, PreparedSourceArenaPage)> {
+        use SourceArenaPageInitializationError as Error;
+        if let Err(error) = self.validate_source_initialization_custody(&page.custody) {
+            return Err((Error::Custody(error), page));
+        }
+        // SAFETY: the original issuing arena is live under exact validation.
+        let Some(owner) = (unsafe { self.allocation_for_arena(page.custody.arena.as_ref()) }) else {
+            return Err((Error::Custody(super::SourceInitializationClaimCustodyError::MissingBackingOwner), page));
+        };
+        let span = (page.custody.memory.arena_memory().unwrap().slice_count as usize)
+            .checked_mul(crate::config::ARENA_SLICE_SIZE);
+        if page.custody.memory.initially_committed() || page.committed_prefix != 0
+            || size == 0 || span.is_none_or(|span| size > span)
+            || !size.is_multiple_of(owner.config.page_size().bytes())
+            || size / owner.config.page_size().bytes() > usize::from(u16::MAX)
+            || owner.allocation.external().is_some_and(|lease| !lease.contains(page.start(), size)) {
+            return Err((Error::InvalidPrefix, page));
+        }
+        let start = page.custody.start;
+        Ok(SourceArenaPagePreparation::Commit(SourceArenaPageCommitTask {
+            page, owner, kind: SourceArenaPageCommitKind::Prefix, start, size,
+        }))
+    }
+
+    /// Finishes a consumed VM task without invoking policy again. Refusal
+    /// returns the original completed progress, so another issuer cannot erase
+    /// it or manufacture another callback. Only metadata commitment marks the
+    /// whole source bitmap; partial prefixes remain Page-local progress.
+    pub(crate) fn finish_source_arena_page_commit(
+        &self, completed: CompletedSourceArenaPageCommit,
+    ) -> Result<SourceArenaPageCommitOutcome,
+        (SourceArenaPageInitializationError, CompletedSourceArenaPageCommit)> {
+        use SourceArenaPageInitializationError as Error;
+        if let Err(error) = self.validate_source_initialization_custody(&completed.page.custody) {
+            return Err((Error::Custody(error), completed));
+        }
+        if !completed.committed {
+            return Ok(SourceArenaPageCommitOutcome::Refused(completed.page.cleanup()));
+        }
+        if let SourceArenaPageCommitKind::Metadata { slice_index, slice_count } = completed.kind {
+            // SAFETY: exact original issuer membership precedes this fresh
+            // bitmap projection, after every synchronous callback has returned.
+            let Some(view) = (unsafe { super::ArenaView::from_ptr(completed.page.custody.arena.as_ptr()) }) else {
+                return Err((Error::BitmapInvariant, completed));
+            };
+            if unsafe { view.slices_committed() }.and_then(|bits| bits.set_range(slice_index, slice_count)).is_none() {
+                return Err((Error::BitmapInvariant, completed));
+            }
+        }
+        Ok(SourceArenaPageCommitOutcome::Ready(completed.page))
+    }
+
+    /// Reconciles only the exact successfully committed initial prefix, then
+    /// prepares original claim release. A refused issuer has no mutation;
+    /// once accounting progresses its latch prevents any statistics replay.
+    pub(crate) fn prepare_source_arena_page_cleanup(
+        &self, mut cleanup: SourceArenaPageCleanup,
+    ) -> Result<SourceArenaPageCleanupStep, (SourceArenaPageInitializationError, SourceArenaPageCleanup)> {
+        use SourceArenaPageInitializationError as Error;
+        if let Err(error) = self.validate_source_initialization_custody(&cleanup.custody) {
+            return Err((Error::Custody(error), cleanup));
+        }
+        if cleanup.committed_prefix > 0 && !cleanup.prefix_accounted {
+            cleanup.prefix_accounted = true;
+            // SAFETY: cleanup retains the unique original claim after all
+            // primary/alias/registration observers have become quiescent.
+            if !unsafe { self.account_page_commit_before_release(cleanup.custody.memory, cleanup.committed_prefix) } {
+                cleanup.custody.retain_terminal();
+                return Ok(SourceArenaPageCleanupStep::RetainedAfterProgress(Error::BitmapInvariant));
+            }
+        }
+        let committed_prefix = cleanup.committed_prefix;
+        let prefix_accounted = cleanup.prefix_accounted;
+        match self.prepare_source_initialization_release(cleanup.custody) {
+            Ok(release) => Ok(SourceArenaPageCleanupStep::Release(release)),
+            Err((error, custody)) => Err((Error::Custody(error), SourceArenaPageCleanup {
+                custody, committed_prefix, prefix_accounted,
+            })),
+        }
     }
 
     /// Publishes one source-sized OS arena and retains its exact mapping.
@@ -1508,9 +1784,17 @@ impl ProcessArenaBacking {
     ) -> bool {
         // SAFETY: the caller holds a live claim from this published arena;
         // the owner lookup checks its process-bound published ownership token.
-        let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false };
-        if !matches!(owner.allocation, ArenaBacking::ExternalOs(_) | ArenaBacking::PublishedRegular(_)) { return false; }
+        let Some(owner) = self.prepare_external_os_page_area(arena) else { return false };
         owner.commit(start, size, 0)
+    }
+
+    /// Copies only the exact published null-callback VM capability. Callers
+    /// end their arena projection before invoking this non-owning snapshot.
+    pub(super) fn prepare_external_os_page_area(&self, arena: &Arena) -> Option<OwnedArenaAllocation> {
+        // SAFETY: callers retain the issuing claim/arena for this short
+        // projection; registry membership proves the stored source owner.
+        let owner = unsafe { self.allocation_for_arena(arena) }?;
+        matches!(owner.allocation, ArenaBacking::ExternalOs(_) | ArenaBacking::PublishedRegular(_)).then_some(owner)
     }
 
     /// Source `mi_arenas_try_alloc`: search, serialize one fresh reservation
@@ -2531,6 +2815,295 @@ mod tests {
             assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
         }
         AVAILABLE.store(false, Ordering::Release);
+    }
+
+    #[test]
+    fn fresh_arena_metadata_and_prefix_callbacks_reenter_without_releasing_original_claim() {
+        use core::sync::atomic::{AtomicPtr, AtomicUsize};
+        struct Capture {
+            issuer: &'static ProcessArenaBacking,
+            arena: AtomicPtr<Arena>, original_index: AtomicUsize,
+            armed: AtomicBool, refuse_metadata: AtomicBool, refuse_prefix: AtomicBool,
+            metadata_calls: AtomicUsize, prefix_calls: AtomicUsize,
+            nested: std::sync::Mutex<std::vec::Vec<super::super::SourceInitializationClaimCustody>>,
+        }
+        unsafe extern "C" fn commit_callback(
+            commit: bool, start: *mut u8, size: usize, zero: *mut bool, argument: *mut c_void,
+        ) -> bool {
+            // SAFETY: the source lease retains this exact pinned capture and
+            // issuer through installation and all synchronous callback phases.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            assert!(commit, "negative source purge delay does not invoke purge");
+            if !capture.armed.load(Ordering::Acquire) { return true; }
+            let arena = capture.arena.load(Ordering::Acquire);
+            let index = capture.original_index.load(Ordering::Acquire);
+            {
+                // Only a short bitmap observation occurs before the callback's
+                // nested allocation. The original pending claim stays excluded.
+                let view = unsafe { ArenaView::from_ptr(arena) }.unwrap();
+                assert_eq!(unsafe { view.slices_free() }.unwrap().is_clear_range(index, 1), Some(true));
+                if zero.is_null() {
+                    assert_eq!(start, view.arena().start);
+                    assert_eq!(size, super::super::page_metadata_slice_count().unwrap() * ARENA_SLICE_SIZE);
+                } else {
+                    assert_eq!(start, view.slice_start(index).unwrap());
+                    assert_eq!(size, 4096);
+                }
+            }
+            let id = unsafe { ArenaId::from_arena(arena) }.unwrap();
+            let nested = unsafe { capture.issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
+            assert_ne!(nested.slice_index(), index);
+            // SAFETY: the actual fixture retains the original source owner and
+            // nested span until every outer callback and cleanup has finished.
+            let nested = unsafe { nested.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("nested original claim custody"));
+            capture.nested.lock().unwrap().push(nested);
+            if zero.is_null() {
+                capture.metadata_calls.fetch_add(1, Ordering::AcqRel);
+                !capture.refuse_metadata.load(Ordering::Acquire)
+            } else {
+                capture.prefix_calls.fetch_add(1, Ordering::AcqRel);
+                unsafe { zero.write(true) };
+                !capture.refuse_prefix.load(Ordering::Acquire)
+            }
+        }
+        let _fault = fault::install(fault::Plan::disabled());
+        for (refuse_metadata, refuse_prefix) in [(true, false), (false, true), (false, false)] {
+            let issuer = backing();
+            let foreign = backing();
+            let process = purge_process(-1, false);
+            let capture = Box::leak(Box::new(Capture {
+                issuer, arena: AtomicPtr::new(core::ptr::null_mut()), original_index: AtomicUsize::new(0),
+                armed: AtomicBool::new(false), refuse_metadata: AtomicBool::new(refuse_metadata),
+                refuse_prefix: AtomicBool::new(refuse_prefix), metadata_calls: AtomicUsize::new(0),
+                prefix_calls: AtomicUsize::new(0), nested: std::sync::Mutex::new(std::vec::Vec::new()),
+            }));
+            let base = external_storage(process, ARENA_MIN_SIZE);
+            // SAFETY: caller-owned real writable mapping and capture remain
+            // process-lived; the arena receives no independent unmap authority.
+            let lease = unsafe { ProcessExternalArenaLease::new(base, ARENA_MIN_SIZE,
+                false, false, false, CommitHook::new(commit_callback,
+                    core::ptr::from_ref(capture).cast_mut().cast())) }.unwrap();
+            let id = install_external(issuer, process, ARENA_MIN_SIZE, lease).arena_id();
+            let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
+            let index = claim.slice_index();
+            let start = claim.start();
+            capture.arena.store(id.as_ptr(), Ordering::Release);
+            capture.original_index.store(index, Ordering::Release);
+            capture.armed.store(true, Ordering::Release);
+            let custody = unsafe { claim.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("original external claim custody"));
+            let task = match issuer.prepare_source_arena_page(custody).unwrap_or_else(|_| panic!("original metadata preparation")) {
+                SourceArenaPagePreparation::Commit(task) => task,
+                _ => panic!("source-lazy metadata needs its callback"),
+            };
+            let completed = unsafe { task.run() };
+            assert_eq!(capture.metadata_calls.load(Ordering::Acquire), 1);
+            let completed = match foreign.finish_source_arena_page_commit(completed) {
+                Err((SourceArenaPageInitializationError::Custody(super::super::SourceInitializationClaimCustodyError::WrongBacking), done)) => done,
+                _ => panic!("foreign finish keeps original callback completion"),
+            };
+            let outcome = issuer.finish_source_arena_page_commit(completed).unwrap_or_else(|_| panic!("same issuer finishes metadata"));
+            let cleanup = if refuse_metadata {
+                match outcome {
+                    SourceArenaPageCommitOutcome::Refused(cleanup) => cleanup,
+                    _ => panic!("metadata refusal enters only original cleanup"),
+                }
+            } else {
+                let page = match outcome {
+                    SourceArenaPageCommitOutcome::Ready(page) => page,
+                    _ => panic!("successful metadata commitment"),
+                };
+                assert_eq!(page.start(), start);
+                let task = match issuer.prepare_source_arena_page_prefix(page, 4096)
+                    .unwrap_or_else(|_| panic!("first original prefix")) {
+                    SourceArenaPagePreparation::Commit(task) => task,
+                    _ => panic!("on-demand prefix commitment"),
+                };
+                let completed = unsafe { task.run() };
+                let outcome = issuer.finish_source_arena_page_commit(completed)
+                    .unwrap_or_else(|_| panic!("same issuer finishes prefix"));
+                assert_eq!(capture.prefix_calls.load(Ordering::Acquire), 1);
+                match outcome {
+                    SourceArenaPageCommitOutcome::Refused(cleanup) if refuse_prefix => cleanup,
+                    SourceArenaPageCommitOutcome::Ready(page) if !refuse_prefix => {
+                        assert_eq!(page.committed_prefix_size(), 4096);
+                        unsafe { page.into_cleanup() }
+                    }
+                    _ => panic!("only the actual callback response selects cleanup progress"),
+                }
+            };
+            let release = match issuer.prepare_source_arena_page_cleanup(cleanup).unwrap_or_else(|_| panic!("same original cleanup issuer")) {
+                SourceArenaPageCleanupStep::Release(release) => release,
+                _ => panic!("valid source claim cleanup"),
+            };
+            let decision = unsafe { release.read_purge_delay() };
+            assert!(matches!(issuer.prepare_purge_or_return(decision),
+                Ok(SourceInitializationReleaseStep::Complete(SourceInitializationReleaseOutcome::Released))));
+            assert_eq!(capture.metadata_calls.load(Ordering::Acquire), 1);
+            assert_eq!(capture.prefix_calls.load(Ordering::Acquire), usize::from(!refuse_metadata));
+            capture.armed.store(false, Ordering::Release);
+            for custody in capture.nested.lock().unwrap().drain(..) {
+                let claim = issuer.restore_source_initialization_claim(custody)
+                    .unwrap_or_else(|_| panic!("nested original claim returns to same issuer"));
+                assert!(claim.release());
+            }
+            let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
+            assert_eq!(claim.start(), start);
+            assert!(claim.release());
+            assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+        }
+    }
+
+    #[test]
+    fn fresh_arena_custody_transfers_only_after_actual_page_registration() {
+        use crate::bootstrap::{ExclusiveTheapBootstrap, TheapPageSession};
+        use crate::page_map::PageMap;
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let process = purge_process(-1, false);
+        let id = install(issuer, process, MapAccess::Committed);
+        let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        let index = claim.slice_index();
+        let original = claim.memory_id().arena_memory().unwrap();
+        // SAFETY: the real pinned issuer and mapped span outlive this complete
+        // bootstrap/PageMap lifecycle; no Page exists when custody is acquired.
+        let custody = unsafe { claim.into_source_initialization_custody() }
+            .unwrap_or_else(|_| panic!("original mapped arena claim"));
+        let pending = match issuer.prepare_source_arena_page(custody).unwrap_or_else(|_| panic!("committed metadata preparation")) {
+            SourceArenaPagePreparation::Ready(page) => page,
+            _ => panic!("fully committed arena metadata needs no callback"),
+        };
+        let start = pending.start();
+        let memory = pending.memory_id();
+        let mut bootstrap = Box::pin(ExclusiveTheapBootstrap::new());
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().unwrap()).unwrap();
+        let mut map = PageMap::initialize(config(), 0, true).unwrap();
+        {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            assert!(session.ensure_arena_pages(&view, config()));
+        }
+        let usable_offset = crate::page::page_usable_start_offset(32).unwrap();
+        let offset = start.addr().checked_sub(pending.metadata().as_ptr().addr()).unwrap() + usable_offset;
+        let reserved = crate::page::reserved_object_count(ARENA_SLICE_SIZE, usable_offset, 32).unwrap();
+        // SAFETY: the original pending claim exclusively owns this exact
+        // writable metadata slot and source-shaped block area, and the pinned
+        // session retains the actual selected Theap/Heap through retirement.
+        let page = unsafe { session.publish_fresh_page(pending.metadata(), 32, offset,
+            reserved, 0, memory.initially_zero(), memory) }.unwrap();
+        {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            assert!(session.set_arena_page(&view, memory));
+        }
+        unsafe { map.register_range(start, ARENA_SLICE_SIZE, page) }.unwrap();
+        assert_eq!(unsafe { map.checked_lookup(start) }, page.as_ptr());
+        let snapshot = unsafe { Page::validity_snapshot_at(page) };
+        // SAFETY: the original Page's complete source area is committed and
+        // remains exclusively owned under the exact live map registration.
+        assert_eq!(unsafe { crate::page_validity::source_initial_page_is_zero(&snapshot, 4096) }, Ok(()));
+        // SAFETY: primary metadata and exact arena/PageMap registration now
+        // retain this original span under its selected source owner; no failed
+        // initialization or independent custody cleanup remains outstanding.
+        let transferred = unsafe { pending.into_published_page_memory() };
+        assert_eq!(transferred.arena_memory().unwrap().arena, original.arena);
+        assert_eq!(transferred.arena_memory().unwrap().slice_index, original.slice_index);
+        assert_eq!(transferred.arena_memory().unwrap().slice_count, original.slice_count);
+        unsafe { map.unregister_range(start, ARENA_SLICE_SIZE) }.unwrap();
+        {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            assert!(session.clear_arena_page(&view, transferred));
+        }
+        // SAFETY: no client/list/alias exists in this empty registered Page;
+        // its exact PageMap and arena roots were removed before retirement.
+        let retired = session.retire_page(unsafe { &mut *page.as_ptr() }).unwrap();
+        assert_eq!(retired.arena_memory().unwrap().slice_index, index as u32);
+        assert!(unsafe { issuer.release_slices(retired) });
+        drop(session);
+        unsafe { map.destroy() }.unwrap();
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+    }
+
+    #[test]
+    fn fresh_arena_initialization_keeps_successful_prefix_with_original_custody() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let foreign = backing();
+        let process = purge_process(-1, false);
+        let id = install(issuer, process, MapAccess::Reserved);
+        let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
+        let original_start = claim.start();
+        let original_memory = claim.memory_id();
+        let identity = |memory: MemoryId| {
+            let arena = memory.arena_memory().unwrap();
+            (memory.kind(), memory.is_pinned(), memory.initially_committed(), memory.initially_zero(),
+                arena.arena, arena.slice_index, arena.slice_count)
+        };
+        let index = claim.slice_index();
+        // SAFETY: this fixture retains the actual issuer, original mapping and
+        // source process through every callback, refusal and final cleanup.
+        let custody = unsafe { claim.into_source_initialization_custody() }
+            .unwrap_or_else(|_| panic!("original process-backed claim"));
+        let custody = match foreign.prepare_source_arena_page(custody) {
+            Err((SourceArenaPageInitializationError::Custody(super::super::SourceInitializationClaimCustodyError::WrongBacking), custody)) => custody,
+            _ => panic!("a scalar identity match cannot admit another issuer"),
+        };
+        let prepared = match issuer.prepare_source_arena_page(custody).unwrap_or_else(|_| panic!("original issuer prepares metadata")) {
+            SourceArenaPagePreparation::Ready(page) => page,
+            SourceArenaPagePreparation::Commit(task) => {
+                let done = unsafe { task.run() };
+                match issuer.finish_source_arena_page_commit(done).unwrap_or_else(|_| panic!("metadata finish")) {
+                    SourceArenaPageCommitOutcome::Ready(page) => page,
+                    _ => panic!("reserved metadata commitment succeeds"),
+                }
+            }
+        };
+        assert_eq!(prepared.start(), original_start);
+        assert_eq!(identity(prepared.memory_id()), identity(original_memory));
+        let before = process.subprocess().vm_statistics().snapshot();
+        let task = match issuer.prepare_source_arena_page_prefix(prepared, 4096)
+            .unwrap_or_else(|_| panic!("one source-aligned initial prefix")) {
+            SourceArenaPagePreparation::Commit(task) => task,
+            _ => panic!("an uncommitted source claim needs its prefix task"),
+        };
+        let completed = unsafe { task.run() };
+        assert_eq!(completed.committed_prefix_size(), 4096);
+        let after_commit = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_commit.committed_current - before.committed_current, 4096);
+        let completed = match foreign.finish_source_arena_page_commit(completed) {
+            Err((SourceArenaPageInitializationError::Custody(super::super::SourceInitializationClaimCustodyError::WrongBacking), done)) => done,
+            _ => panic!("foreign finish returns the same consumed VM progress"),
+        };
+        assert_eq!(completed.committed_prefix_size(), 4096);
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_commit);
+        let page = match issuer.finish_source_arena_page_commit(completed).unwrap_or_else(|_| panic!("original issuer finishes without repeating VM work")) {
+            SourceArenaPageCommitOutcome::Ready(page) => page,
+            _ => panic!("successful initial prefix"),
+        };
+        assert_eq!(page.start(), original_start);
+        assert_eq!(identity(page.memory_id()), identity(original_memory));
+        assert_eq!(page.committed_prefix_size(), 4096);
+        let page = match issuer.prepare_source_arena_page_prefix(page, 4096) {
+            Err((SourceArenaPageInitializationError::InvalidPrefix, page)) => page,
+            _ => panic!("successful prefix cannot be committed a second time"),
+        };
+        let cleanup = unsafe { page.into_cleanup() };
+        let cleanup = match foreign.prepare_source_arena_page_cleanup(cleanup) {
+            Err((SourceArenaPageInitializationError::Custody(super::super::SourceInitializationClaimCustodyError::WrongBacking), cleanup)) => cleanup,
+            _ => panic!("foreign cleanup cannot change prefix accounting"),
+        };
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_commit);
+        let release = match issuer.prepare_source_arena_page_cleanup(cleanup).unwrap_or_else(|_| panic!("original issuer reconciles prefix once")) {
+            SourceArenaPageCleanupStep::Release(release) => release,
+            _ => panic!("valid cleanup retains original release authority"),
+        };
+        assert_eq!(process.subprocess().vm_statistics().snapshot().committed_current, before.committed_current);
+        let decision = unsafe { release.read_purge_delay() };
+        assert!(matches!(issuer.prepare_purge_or_return(decision),
+            Ok(SourceInitializationReleaseStep::Complete(SourceInitializationReleaseOutcome::Released))));
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(index, 1), Some(true));
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
     }
 
     #[test]

@@ -69,7 +69,9 @@ pub(crate) use selection::{ArenaCandidates, ArenaReservationPlan, ArenaSearch, a
 
 #[path = "arena_owned.rs"]
 mod owned;
-pub(crate) use owned::{PreparedSourceInitializationRelease, SourceInitializationReleaseDecision,
+pub(crate) use owned::{PreparedSourceArenaPage, SourceArenaPageInitializationError, SourceArenaPagePreparation,
+    SourceArenaPageCommitTask, CompletedSourceArenaPageCommit, SourceArenaPageCommitOutcome,
+    SourceArenaPageCleanup, SourceArenaPageCleanupStep, PreparedSourceInitializationRelease, SourceInitializationReleaseDecision,
     SourceInitializationReleaseError, SourceInitializationReleaseOutcome, SourceInitializationReleaseStep,
     SourceInitializationPurgeTask, CompletedSourceInitializationPurge, SourceInitializationPurgeResult,
     arena_purge_delay, ReserveOsMemoryFailure, ArenaDestroyError, DestroyedArenas, ArenaPageCommitError, FirstRegularStartupArenaSelection,
@@ -1624,6 +1626,39 @@ impl SourceInitializationClaimCustody {
     pub(crate) fn retain_terminal(self) {}
 }
 
+/// Value-only geometry for the source aligned Page metadata commit. The
+/// bitmap observation ends before a commit callback can reenter the arena.
+struct ArenaPageMetadataProjection {
+    metadata: NonNull<Page>,
+    start: NonNull<u8>,
+    slice_index: usize,
+    slice_count: usize,
+    size: usize,
+    needs_commit: bool,
+}
+
+fn arena_page_metadata_projection(arena: &Arena, memory: MemoryId) -> Option<ArenaPageMetadataProjection> {
+    let memory = memory.arena_memory()?;
+    if memory.arena != core::ptr::from_ref(arena).cast_mut() { return None; }
+    let slice_index = memory.slice_index as usize;
+    let metadata_index = invariants::align_down(slice_index, PAGE_META_ALIGNED_COUNT)?;
+    let metadata_count = page_metadata_slice_count()?;
+    if metadata_index.checked_add(metadata_count)? > arena.slice_count { return None; }
+    let layout = BitmapLayout::for_bit_count(arena.slice_count)?;
+    // SAFETY: the issuing claim retains this published arena and bitmap for
+    // this short observation; no callback occurs within this projection.
+    let committed = unsafe { BitmapView::attach(arena.slices_committed, layout.byte_size(), layout) }?;
+    let start = NonNull::new(arena_slice_start(arena, metadata_index)?)?;
+    let offset = slice_index.checked_sub(metadata_index)?.checked_mul(size_of::<Page>())?;
+    let size = invariants::size_of_slices(metadata_count)?;
+    if offset.checked_add(size_of::<Page>())? > size { return None; }
+    // SAFETY: the checked offset selects exactly the original claimed
+    // slice's aligned metadata slot inside the retained source metadata area.
+    let metadata = NonNull::new(unsafe { start.as_ptr().add(offset).cast::<Page>() })?;
+    Some(ArenaPageMetadataProjection { metadata, start, slice_index: metadata_index,
+        slice_count: metadata_count, size, needs_commit: committed.is_clear_range(metadata_index, 1)? })
+}
+
 impl ArenaSliceClaim<'_> {
     /// Consumes the original process-backed claim before ending its short
     /// issuing projection. An unbacked or foreign claim is returned unchanged.
@@ -1684,92 +1719,65 @@ impl ArenaSliceClaim<'_> {
     /// Returns the aligned metadata slot for this fresh arena-page claim.
     ///
     /// This is only the `mi_arena_page_meta` selection-and-commit boundary.
-    /// The future fresh-page path owns the subsequent zero initialization and
+    /// The fresh-page path owns the subsequent zero initialization and
     /// field publication from `mi_arenas_page_alloc_fresh`; it must not expose
     /// the returned `Page` to page-map or queue users beforehand.
     pub(crate) fn page_metadata(&self) -> Option<NonNull<Page>> {
-        let arena = unsafe { self.arena.as_ref() };
-        let arena_memory = self.memory.arena_memory()?;
-        if arena_memory.arena != self.arena.as_ptr() {
-            return None;
-        }
-        let slice_index = arena_memory.slice_index as usize;
-        let metadata_slice_index =
-            invariants::align_down(slice_index, PAGE_META_ALIGNED_COUNT)?;
-        let metadata_slice_count = page_metadata_slice_count()?;
-        let metadata_end = metadata_slice_index.checked_add(metadata_slice_count)?;
-        if metadata_end > arena.slice_count {
-            return None;
-        }
-
-        let layout = BitmapLayout::for_bit_count(arena.slice_count)?;
-        let committed = unsafe {
-            BitmapView::attach(arena.slices_committed, layout.byte_size(), layout)
-        }?;
-        if committed.is_clear_range(metadata_slice_index, 1)? {
-            let metadata_start = arena_slice_start(arena, metadata_slice_index)?;
-            let metadata_size = invariants::size_of_slices(metadata_slice_count)?;
-            let committed_now = if let Some(commit) = arena.commit_function {
-                unsafe {
-                    commit(
-                        true,
-                        metadata_start,
-                        metadata_size,
-                        null_mut(),
-                        arena.commit_function_argument,
-                    )
-                }
+        let (projection, callback, owner) = {
+            // SAFETY: the original claim retains the source arena. Only raw
+            // geometry, callback facts and a non-owning VM snapshot escape.
+            let arena = unsafe { self.arena.as_ref() };
+            let projection = arena_page_metadata_projection(arena, self.memory)?;
+            let callback = arena.commit_function.map(|function|
+                CommitHook::new(function, arena.commit_function_argument));
+            let owner = if projection.needs_commit && callback.is_none() {
+                Some(self.backing?.prepare_external_os_page_area(arena)?)
+            } else { None };
+            (projection, callback, owner)
+        };
+        if projection.needs_commit {
+            let committed = if let Some(callback) = callback {
+                // SAFETY: the original claim and callback lease retain this
+                // exact metadata span; no arena or bitmap projection survives.
+                unsafe { callback.invoke(true, projection.start.as_ptr(), projection.size, null_mut()) }
             } else {
-                self.backing?.commit_external_os_page_area(arena, metadata_start, metadata_size)
+                owner?.commit(projection.start.as_ptr(), projection.size, 0)
             };
-            if !committed_now {
-                return None;
-            }
-            committed.set_range(metadata_slice_index, metadata_slice_count)?;
+            if !committed { return None; }
+            // SAFETY: the original claim still retains the issuing arena;
+            // the callback has returned before this fresh bitmap projection.
+            let view = unsafe { ArenaView::from_ptr(self.arena.as_ptr()) }?;
+            unsafe { view.slices_committed() }?.set_range(projection.slice_index, projection.slice_count)?;
         }
-
-        let metadata_start = arena_slice_start(arena, metadata_slice_index)?;
-        let page_offset = slice_index
-            .checked_sub(metadata_slice_index)?
-            .checked_mul(size_of::<Page>())?;
-        NonNull::new(unsafe { metadata_start.add(page_offset).cast::<Page>() })
+        Some(projection.metadata)
     }
 
-    /// Commits the initial prefix of one freshly claimed on-demand page.
-    ///
-    /// This is the `mi_arenas_page_alloc_fresh` `mi_arena_commit` call after
-    /// the claim has deliberately observed `initially_committed == false`.
-    /// It intentionally does not mutate `slices_committed`: a partial page
-    /// prefix is tracked by `Page::slice_pcommitted`, while that bitmap records
-    /// complete source arena slices. A caller-owned OS arena uses the source
-    /// null-callback branch and keeps its mapping release right with the caller.
+    /// Commits the source's first on-demand page prefix without keeping an
+    /// arena projection across a custom commit or VM warning callback. The
+    /// successful prefix is tracked by `Page::slice_pcommitted`; complete
+    /// source slices enter the committed bitmap only during page release.
     #[inline]
     pub(crate) fn commit_initial_page_prefix(&self, size: usize) -> bool {
-        let Some(span_size) = self.slice_count().checked_mul(ARENA_SLICE_SIZE) else {
-            return false;
+        let Some(span_size) = self.slice_count().checked_mul(ARENA_SLICE_SIZE) else { return false; };
+        if size == 0 || size > span_size { return false; }
+        let (callback, owner) = {
+            // SAFETY: the issuing claim retains this arena for the short
+            // immutable callback/owner projection, which ends before delivery.
+            let arena = unsafe { self.arena.as_ref() };
+            let callback = arena.commit_function.map(|function|
+                CommitHook::new(function, arena.commit_function_argument));
+            let owner = if callback.is_none() {
+                self.backing.and_then(|backing| backing.prepare_external_os_page_area(arena))
+            } else { None };
+            (callback, owner)
         };
-        if size == 0 || size > span_size {
-            return false;
-        }
-        let arena = unsafe { self.arena.as_ref() };
-        if let Some(commit) = arena.commit_function {
+        if let Some(callback) = callback {
             let mut is_zero = false;
-            // SAFETY: `self` owns the exact live slice span, the validated
-            // prefix begins at its leading slice, and the arena callback is
-            // stable while the registered arena remains live.
-            unsafe {
-                commit(
-                    true,
-                    self.start.as_ptr(),
-                    size,
-                    &mut is_zero,
-                    arena.commit_function_argument,
-                )
-            }
+            // SAFETY: the exact original span and its callback lease remain
+            // retained; the source prefix call uses one writable zero output.
+            unsafe { callback.invoke(true, self.start.as_ptr(), size, &mut is_zero) }
         } else {
-            self.backing.is_some_and(|backing| backing.commit_external_os_page_area(
-                arena, self.start.as_ptr(), size,
-            ))
+            owner.is_some_and(|owner| owner.commit(self.start.as_ptr(), size, 0))
         }
     }
 
