@@ -634,6 +634,11 @@ impl PreparedSourceArenaPage {
 }
 
 impl CompletedSourceArenaPageCommit {
+    /// Observes original custody for continuation dispatch without projecting
+    /// the issuer. A match grants no admission, lifetime or callback replay.
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.page.belongs_to_subprocess(subprocess)
+    }
     pub(crate) fn committed_prefix_size(&self) -> usize { self.page.committed_prefix }
     pub(crate) fn retain_terminal(self) { self.page.retain_terminal(); }
 }
@@ -646,6 +651,13 @@ impl SourceArenaPageCleanup {
 }
 
 impl SourceArenaPageCommitTask {
+    /// Observes original custody before selecting a retained callback owner.
+    /// A match grants no admission or lifetime; running still requires the
+    /// independently pinned original issuer and its actual callback lease.
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.page.belongs_to_subprocess(subprocess)
+    }
+
     /// Invokes the exact metadata or initial-prefix commitment outside shared
     /// arena projections. Metadata uses a null zero output; prefix commitment
     /// uses a writable one, whose value source initialization deliberately ignores.
@@ -3205,6 +3217,7 @@ mod tests {
         let issuer = backing();
         let foreign = backing();
         let process = purge_process(-1, false);
+        let foreign_process = self::process();
         let id = install(issuer, process, MapAccess::Reserved);
         let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
         let original_start = claim.start();
@@ -3241,7 +3254,12 @@ mod tests {
             SourceArenaPagePreparation::Commit(task) => task,
             _ => panic!("an uncommitted source claim needs its prefix task"),
         };
+        assert!(task.belongs_to_subprocess(process.subprocess()));
+        assert!(!task.belongs_to_subprocess(foreign_process.subprocess()));
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
         let completed = unsafe { task.run() };
+        assert!(completed.belongs_to_subprocess(process.subprocess()));
+        assert!(!completed.belongs_to_subprocess(foreign_process.subprocess()));
         assert_eq!(completed.committed_prefix_size(), 4096);
         let after_commit = process.subprocess().vm_statistics().snapshot();
         assert_eq!(after_commit.committed_current - before.committed_current, 4096);
@@ -3251,6 +3269,8 @@ mod tests {
         };
         assert_eq!(completed.committed_prefix_size(), 4096);
         assert_eq!(process.subprocess().vm_statistics().snapshot(), after_commit);
+        assert!(completed.belongs_to_subprocess(process.subprocess()));
+        assert!(!completed.belongs_to_subprocess(foreign_process.subprocess()));
         let page = match issuer.finish_source_arena_page_commit(completed).unwrap_or_else(|_| panic!("original issuer finishes without repeating VM work")) {
             SourceArenaPageCommitOutcome::Ready(page) => page,
             _ => panic!("successful initial prefix"),
