@@ -1860,6 +1860,83 @@ mod tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[test]
+    fn secure_selected_default_aligned_rezalloc_preserves_zero_client_extent() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::secure_selected_default_aligned_rezalloc_preserves_zero_client_extent",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                assert!(!heap.is_null());
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let base = crate::source_heap_api::theap_get_default();
+                // SAFETY: this fresh-process thread retains the actual Heap,
+                // selected member and every exact client through restoration.
+                unsafe {
+                    crate::source_heap_api::theap_set_default(selected);
+                    let old = super::zalloc_aligned(81, 4096).value.expect("selected zero aligned client");
+                    assert!(core::slice::from_raw_parts(old.as_ptr(), 81).iter().all(|byte| *byte == 0));
+                    let grown = super::rezalloc_aligned(old.as_ptr(), 8192, 4096)
+                        .value.expect("selected aligned growth");
+                    assert_eq!(crate::source_heap_api::heap_of(grown.as_ptr()), heap);
+                    assert_eq!(grown.as_ptr().addr() % 4096, 0);
+                    assert!(core::slice::from_raw_parts(grown.as_ptr(), 8192).iter().all(|byte| *byte == 0),
+                        "old zero client plus expanded client must remain zero");
+                    assert_eq!(crate::source_heap_api::theap_get_default(), selected);
+                    assert_eq!(super::free(grown.as_ptr()), super::FreeOutcome::Freed);
+                    crate::source_heap_api::theap_set_default(base);
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
+    #[test]
+    fn secure_selected_theap_rezalloc_preserves_full_reported_usable_client() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::secure_selected_theap_rezalloc_preserves_full_reported_usable_client",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                assert!(!heap.is_null());
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                // SAFETY: this fresh-process thread retains the actual Heap
+                // and selected member, and exclusively owns each exact client.
+                unsafe {
+                    // The small C entry forwards this same Theap allocation.
+                    let old = crate::source_heap_api::theap_malloc(selected, 128, false)
+                        .value.expect("selected small client");
+                    old.as_ptr().write_bytes(0x6b, 128);
+                    let reused = super::theap_realloc(selected, old.as_ptr(), 96, false)
+                        .value.expect("source reuse");
+                    assert_eq!(reused, old);
+                    let old_usable = super::usable_size(reused.as_ptr());
+                    // Bound every subsequent write and slice by the actual
+                    // public extent, and exclude subtraction underflow.
+                    assert!((128..=512).contains(&old_usable));
+                    std::println!("secure.selected.old_usable={old_usable}");
+                    reused.as_ptr().write_bytes(0x6b, old_usable);
+                    let grown = super::theap_realloc(selected, reused.as_ptr(), 512, true)
+                        .value.expect("selected zero growth after full usable write");
+                    assert_eq!(crate::source_heap_api::heap_of(grown.as_ptr()), heap);
+                    assert!(core::slice::from_raw_parts(grown.as_ptr(), old_usable).iter().all(|byte| *byte == 0x6b));
+                    assert!(core::slice::from_raw_parts(grown.as_ptr().add(old_usable), 512 - old_usable)
+                        .iter().all(|byte| *byte == 0));
+                    assert_eq!(super::free(grown.as_ptr()), super::FreeOutcome::Freed);
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                }
+            },
+        );
+    }
+
     #[test]
     fn direct_theap_variants_preserve_roots_and_reallocation_lifetime() {
         crate::test_process::run_in_fresh_process(
