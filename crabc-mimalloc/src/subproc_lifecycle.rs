@@ -279,6 +279,8 @@ unsafe fn new_child_with<'heap>(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildSubprocessDestroyError {
+    /// A scoped callback still retains the actual child owner.
+    CallbackActive,
     /// The owner is not a created child or is terminally retained.
     InvalidState,
     Attachment(MainHeapThreadAttachmentError),
@@ -728,9 +730,11 @@ pub(crate) struct NativeChildSubprocess {
     /// destroyed it under them. The record outlives the child until the
     /// last of them finishes, so that each finds the child gone.
     orphans: core::cell::UnsafeCell<usize>,
+    /// Admission retained across callbacks after owner projections and locks end.
+    callback_leases: core::sync::atomic::AtomicUsize,
 }
 
-// SAFETY: every access to the two cells happens with `lock` held, except the
+// SAFETY: every access to the owner and storage cells happens with `lock` held, except the
 // creator's initialization before the id is returned and the destroyer's
 // final teardown after the owner is gone; the id contract excludes any other
 // operation on the record in both windows.
@@ -793,6 +797,76 @@ impl NativeSubprocessId {
         guard.unlock().map_err(NativeSubprocessError::Lock)?;
         Ok(value)
     }
+}
+
+/// One actual child-record admission retained while no owner projection or
+/// private lock spans user callbacks. The record's count is the final release
+/// target, after every callback-derived process view has ended.
+struct NativeChildCallbackLease(core::ptr::NonNull<NativeChildSubprocess>);
+
+impl Drop for NativeChildCallbackLease {
+    fn drop(&mut self) {
+        // SAFETY: acquisition retained the record independently of a child
+        // projection. Destruction cannot take its owner while this count is
+        // nonzero. This field-only decrement is the final record access.
+        unsafe { &*core::ptr::addr_of!((*self.0.as_ptr()).callback_leases) }
+            .fetch_sub(1, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Retains the actual child owner across a synchronous callback, after the
+/// caller's page-engine and metadata projections have ended. Nested ordinary
+/// allocation is allowed: neither a private lock nor a TLS/member reference
+/// survives into the callback. A process view is scoped to this admission and
+/// cannot replace or extend the owner lease.
+///
+/// # Safety
+/// `heap` is a live Heap of the calling thread's admitted child, retained
+/// while admission is acquired. A foreign child's owner is unavailable here.
+/// The caller retains its selected Heap, Theap, member, and exact live client for
+/// the complete operation, as required by the source allocation contract.
+/// The callback must not delete that selected Heap, finish its selected member,
+/// or free its in-flight client. All exclusive page-engine, child and member
+/// projections ended before this call. Other ordinary allocation may reenter.
+pub(crate) unsafe fn with_native_child_callback_owner<R>(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
+) -> Option<R> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs()?;
+    // SAFETY: the caller retains this Heap during acquisition. Its immutable
+    // published identity is copied without borrowing its mutable list fields.
+    let identity = unsafe { crate::types::Heap::subprocess_pointer_at(heap) };
+    if identity.is_null() || identity == crate::subproc::MainSubprocess::global().identity_ptr() {
+        return None;
+    }
+    // SAFETY: the calling thread owns this membership slot. Copy its actual
+    // retained record capability, ending the member projection before locking
+    // or invoking any callback. An identity-only pointer cannot supply an
+    // enclosing child record, and a foreign child's owner is not substituted.
+    let id = unsafe { current_child_member() }.as_ref()?.id;
+    let record = id.0;
+    // SAFETY: acquisition runs under the published child's real record lock.
+    let retained = unsafe { id.with_owner(|owner| {
+        let child = owner.as_mut()?;
+        if child.stage() != ChildMainHeapStage::HeapReady || child.identity_pointer() != Some(identity) {
+            return None;
+        }
+        let count = &*core::ptr::addr_of!((*record.as_ptr()).callback_leases);
+        count.fetch_update(core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1)).ok()?;
+        Some(NativeChildCallbackLease(record))
+    }) };
+    // An unlock failure drops the already-acquired admission without invoking
+    // user code; no stack node or unfinished ownership transfer remains.
+    let lease = retained.ok().flatten()?;
+    // SAFETY: the actual admission now prevents child reclamation. The narrow
+    // identity view is valid only for this higher-ranked callback invocation.
+    let process = crate::os::VmProcess::new(binding.process().policy(), unsafe { &*identity });
+    let result = callback(process);
+    drop(lease);
+    Some(result)
 }
 
 /// Production pinned `mi_subproc_new` (`subproc.c:158-194`) for a root
@@ -861,6 +935,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             parent_metadata,
             registry,
             orphans: core::cell::UnsafeCell::new(0),
+            callback_leases: core::sync::atomic::AtomicUsize::new(0),
         });
     }
     // SAFETY: the record was written whole above and nothing else can reach
@@ -1829,6 +1904,11 @@ unsafe fn destroy_record(
     let record = unsafe { id.record() };
     let destroyed = unsafe {
         id.with_owner(|owner| {
+            // Check before taking any owner or changing a source list. The
+            // callback holds no child lock, so nested allocation can proceed.
+            if record.callback_leases.load(core::sync::atomic::Ordering::Acquire) != 0 {
+                return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
+            }
             let mut child = owner.take().ok_or(NativeSubprocessError::Gone)?;
             // Source destroys a child under the threads that still belong
             // to it (`subproc.c:201-257`); they keep the record alive.
@@ -2523,6 +2603,61 @@ pub(crate) mod tests {
                 assert_eq!((after.theaps.total - before.theaps.total, after.theaps.current - before.theaps.current), (2, 1));
                 stop_send.send(()).unwrap();
                 worker.join().expect("the orphaned member finishes");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_callback_owner_parks_projections_and_releases_nested_leases() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            NativePageFreeResult, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_callback_owner_parks_projections_and_releases_nested_leases",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().unwrap();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this fresh worker owns its descriptor and roots.
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let heap = native_child_heap_new().unwrap().unwrap().unwrap();
+                    let block = unsafe { native_child_heap_allocate(heap, 80) }.unwrap().unwrap();
+                    // SAFETY: this worker retains its selected Heap and exact
+                    // client; the callback performs no selected-owner teardown.
+                    assert_eq!(unsafe { with_native_child_callback_owner(heap, |process| {
+                        let record = id.record();
+                        assert!(record.lock.try_lock().is_some(), "no child lock crosses the callback");
+                        assert_eq!(process.subprocess() as *const _, crate::types::Heap::subprocess_pointer_at(heap).cast_const());
+                        assert_eq!(record.callback_leases.load(core::sync::atomic::Ordering::Acquire), 1);
+                        with_native_child_callback_owner(heap, |_| {
+                            assert_eq!(record.callback_leases.load(core::sync::atomic::Ordering::Acquire), 2);
+                            // This probes internal admission, not a public
+                            // concurrent-destruction contract or source qualification.
+                            assert_eq!(destroy_record(id, ChildHeapRelease::Native),
+                                Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive)));
+                            let nested = native_child_heap_allocate(heap, 33).unwrap()
+                                .expect("same-Heap allocation reenters after its engine parked");
+                            assert_eq!(crate::runtime_lifecycle::native_free(nested), NativePageFreeResult::Freed);
+                            7
+                        }).unwrap()
+                    }) }, Some(7));
+                    // SAFETY: both scopes ended; this member still owns the child.
+                    assert_eq!(unsafe { id.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
+                    assert_eq!(unsafe { crate::runtime_lifecycle::native_free(block) }, NativePageFreeResult::Freed);
+                    assert!(unsafe { native_child_heap_release(heap, false) }.unwrap().unwrap().is_ok());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                worker.join().unwrap();
+                // SAFETY: all clients and members ended before destruction.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
     }
