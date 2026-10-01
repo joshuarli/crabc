@@ -78,6 +78,49 @@ use crate::types::StaticFirstTldCreateTrace;
 #[cfg(test)]
 use crate::thread_local::{ThreadLocalBackingError, ThreadLocalBackingOwner};
 
+#[cfg(all(test, target_arch = "x86_64"))]
+#[derive(Clone, Copy)]
+struct StaticTheapPublicationTestObserver {
+    observe: unsafe fn(NonNull<Theap>, NonNull<Heap>, NonNull<ThreadLocalData>,
+        &MainSubprocess, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+std::thread_local! {
+    static STATIC_THEAP_PUBLICATION_TEST_OBSERVER:
+        core::cell::Cell<Option<StaticTheapPublicationTestObserver>> = const { core::cell::Cell::new(None) };
+}
+
+/// Observes the actual selected static initializer before Heap publication.
+/// The prior observer is restored on return or unwind; no image, allocation,
+/// admission or release authority is created by installing this observation.
+///
+/// # Safety
+/// The argument and all observed allocations remain valid through the bounded
+/// operation. The callback reads only the original retained Theap, Heap, TLD
+/// and subprocess after list/random/guarded setup and statistics accounting.
+/// It must not allocate, emit output, reenter, mutate images or lists, or let
+/// references escape. The operation cannot transfer the observer to a thread.
+#[cfg(all(test, target_arch = "x86_64"))]
+pub(crate) unsafe fn with_static_theap_publication_observer_for_test<R>(
+    observe: unsafe fn(NonNull<Theap>, NonNull<Heap>, NonNull<ThreadLocalData>,
+        &MainSubprocess, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+    operation: impl FnOnce() -> R,
+) -> R {
+    struct RestoreObserver(Option<StaticTheapPublicationTestObserver>);
+    impl Drop for RestoreObserver {
+        fn drop(&mut self) {
+            STATIC_THEAP_PUBLICATION_TEST_OBSERVER.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = RestoreObserver(STATIC_THEAP_PUBLICATION_TEST_OBSERVER.with(|slot| {
+        slot.replace(Some(StaticTheapPublicationTestObserver { observe, argument }))
+    }));
+    operation()
+}
+
 const COLD: u8 = 0;
 const HEAP_INITIALIZING: u8 = 1;
 const HEAP_READY: u8 = 2;
@@ -1212,6 +1255,15 @@ impl MainStaticTheapAttachment {
                 // Source accounting precedes the initialized predicate;
                 // a later list failure retains this already counted image.
                 subprocess.identity().record_statistics_theap_linked();
+                #[cfg(test)]
+                STATIC_THEAP_PUBLICATION_TEST_OBSERVER.with(|slot| {
+                    if let Some(observer) = slot.get() {
+                        // SAFETY: the actual static owner retains these original
+                        // images; all field projections and list guards ended.
+                        // The scoped observer performs only bounded reads.
+                        unsafe { (observer.observe)(theap, heap, tld_pointer, subprocess, observer.argument); }
+                    }
+                });
                 unsafe { ready.publish_heap() }.map_err(MainStaticTheapError::TheapInit)?;
                 Ok(())
             })();
