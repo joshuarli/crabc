@@ -122,6 +122,15 @@ enum ProcessStartupDiagnostics<'owner> {
     Selected(&'owner OutputOwner),
 }
 
+/// Separates explicit configuration fixtures from selected source startup.
+/// A selected route always retains its winning output capability; it cannot
+/// fall back to a configuration-only initializer after admission fails.
+#[cfg(target_arch = "x86_64")]
+enum ProcessBootstrapOutput<'startup> {
+    LegacyExplicitConfiguration,
+    Selected(ScopedBootstrapOutput<'startup>),
+}
+
 /// Failure to admit or retain the actual source startup diagnostic owner.
 #[cfg(target_arch = "x86_64")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,6 +169,13 @@ impl ScopedBootstrapOutput<'_> {
             return Err(BootstrapOutputAdmissionError::Invalid);
         }
         Ok(())
+    }
+
+    /// Reborrows this admitted coordinator's initialized source option table.
+    /// The reference cannot outlive the actual startup capability.
+    pub(crate) fn output(&self) -> Result<&OutputOwner, BootstrapOutputAdmissionError> {
+        self.validate()?;
+        Ok(self.output)
     }
 
     pub(crate) fn matches_subprocess(&self, subprocess: &MainSubprocess) -> bool {
@@ -928,6 +944,26 @@ impl ProcessMainInitializationStorage {
             None
         };
 
+        #[cfg(target_arch = "x86_64")]
+        let bootstrap_output = match &diagnostics {
+            ProcessStartupDiagnostics::Unconnected => ProcessBootstrapOutput::LegacyExplicitConfiguration,
+            ProcessStartupDiagnostics::Selected(_) => {
+                let Some(process) = vm_process.as_ref() else {
+                    self.publish_terminal_state_and_release(completion, RETAINED);
+                    return Err(ProcessMainInitError::BootstrapOutput(
+                        BootstrapOutputAdmissionError::Invalid,
+                    ));
+                };
+                match self.scoped_bootstrap_output(&completion, &diagnostics, process, subprocess) {
+                    Ok(output) => ProcessBootstrapOutput::Selected(output),
+                    Err(error) => {
+                        self.publish_terminal_state_and_release(completion, RETAINED);
+                        return Err(ProcessMainInitError::BootstrapOutput(error));
+                    }
+                }
+            }
+        };
+
         if vm_process.is_some() {
             // SAFETY: the source once gate exclusively owns both final static
             // images. Canonical main joins the source subprocess list before
@@ -960,6 +996,28 @@ impl ProcessMainInitializationStorage {
         // The production policy-bound process uses the canonical source
         // Heap. Historical explicit-config fixtures keep their visibly
         // separate private metadata backing and bootstrap ownership.
+        #[cfg(target_arch = "x86_64")]
+        let metadata_prepared = match &bootstrap_output {
+            ProcessBootstrapOutput::Selected(output) => {
+                // SAFETY: the winning startup completion and its actual
+                // output/VM pair remain borrowed through this entry. Static
+                // foundation setup has ended its projections; no Heap, TLD,
+                // Theap, engine projection or metadata guard crosses the
+                // source getters and warning windows inside this entry.
+                unsafe {
+                    metadata.prepare_for_main_heap_with_bootstrap_output(
+                        config, subprocess, foundation, output,
+                    )
+                }
+            }
+            ProcessBootstrapOutput::LegacyExplicitConfiguration if vm_process.is_some() => {
+                metadata.prepare_for_main_heap(config, subprocess, foundation)
+            }
+            ProcessBootstrapOutput::LegacyExplicitConfiguration => {
+                metadata.prepare_for_main_subprocess(config, subprocess)
+            }
+        };
+        #[cfg(target_arch = "aarch64")]
         let metadata_prepared = if vm_process.is_some() {
             metadata.prepare_for_main_heap(config, subprocess, foundation)
         } else {
@@ -4303,6 +4361,88 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn first_allocation_metadata_entropy_refusal_buffers_normal_warning_until_runtime_tail() {
+        crate::test_process::run_in_fresh_process(
+            "process_init::tests::first_allocation_metadata_entropy_refusal_buffers_normal_warning_until_runtime_tail",
+            || {
+                std::thread_local! {
+                    static WARNINGS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+                    static FLUSH_SAW_WEAK_METADATA: core::cell::Cell<bool> =
+                        const { core::cell::Cell::new(false) };
+                }
+                unsafe extern "C" fn stderr_output(message: *const core::ffi::c_char) {
+                    unsafe extern "C" {
+                        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void)
+                            -> core::ffi::c_int;
+                        static mut stderr: *mut core::ffi::c_void;
+                    }
+                    // SAFETY: the source FILE route supplies a live terminated
+                    // fragment; its observation neither allocates nor registers
+                    // an early callback or changes the output phase.
+                    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if bytes.windows(b"unable to use secure randomness\n".len())
+                        .any(|window| window == b"unable to use secure randomness\n") {
+                        WARNINGS.with(|slot| slot.set(slot.get() + 1));
+                        FLUSH_SAW_WEAK_METADATA.with(|slot| slot.set(
+                            MetaAllocator::global().test_detached_metadata_random_is_weak(
+                                MainSubprocess::global(),
+                            ) == Some(true),
+                        ));
+                    }
+                    // SAFETY: the pinned native test runtime retains its actual
+                    // musl stderr FILE for the source process's lifetime.
+                    unsafe { let _ = fputs(message, stderr); }
+                }
+                // SAFETY: the newly exec'd process has not started its source
+                // initialization or exposed an environment reader. This actual
+                // source option selects warning output before table capture.
+                unsafe { std::env::set_var("mimalloc_show_errors", "1") };
+                // SAFETY: the host environment and FILE provider stay valid for
+                // this fresh process; no selected or ready process is fabricated.
+                let facts = unsafe { NativeProcessStartupFacts::new(
+                    4096, crate::runtime_lifecycle::test_host_process_environment,
+                    crate::diagnostic_output::RuntimeStderrOutput::new(stderr_output),
+                ) }.unwrap();
+                assert!(crate::runtime_lifecycle::publish_native_process_startup_facts(facts));
+                let injection = fault::install(fault::Plan::at(
+                    fault::Point::Entropy, 1, crabc_core::Errno::AGAIN,
+                ));
+                let crate::runtime_lifecycle::NativePageAllocationResult::Allocated(client) =
+                    crate::runtime_lifecycle::native_allocate(48, false)
+                    else { panic!("normal entropy refusal must not fail first allocation"); };
+                assert_eq!(injection.observed(), 2,
+                    "the metadata and ordinary main source images each draw entropy once");
+                assert_eq!(MetaAllocator::global().test_detached_metadata_random_is_weak(
+                    MainSubprocess::global(),
+                ), Some(true));
+                // SAFETY: the source initial thread retains this initialized
+                // default owner and ends its field projection immediately.
+                assert_eq!(unsafe { Theap::test_random_is_weak_at(default_theap()) }, Some(false));
+                WARNINGS.with(|slot| assert_eq!(slot.get(), 0,
+                    "first allocation keeps source output delayed before its loader tail"));
+                injection.set(fault::Plan::disabled());
+                assert!(crate::runtime_lifecycle::initialize_process());
+                WARNINGS.with(|slot| assert_eq!(slot.get(), 1,
+                    "the normal first metadata warning must already be queued before reseeding"));
+                FLUSH_SAW_WEAK_METADATA.with(|slot| assert!(slot.get(),
+                    "post-init flush precedes the separate weak metadata retry"));
+                assert_eq!(MetaAllocator::global().test_detached_metadata_random_is_weak(
+                    MainSubprocess::global(),
+                ), Some(false));
+                assert!(crate::runtime_lifecycle::initialize_process());
+                WARNINGS.with(|slot| assert_eq!(slot.get(), 1,
+                    "the runtime tail and normal warning are not repeated"));
+                drop(injection);
+                // SAFETY: this fixture exclusively retains the exact client
+                // across both startup entries and releases it only afterwards.
+                assert_eq!(unsafe { crate::runtime_lifecycle::native_free(client) },
+                    crate::runtime_lifecycle::NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn bootstrap_entropy_warning_is_buffered_before_weak_expansion() {
         std::thread_local! {
             static WARNINGS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
@@ -4491,8 +4631,10 @@ mod tests {
             storage.diagnostic_output_ptr.store(pointer, Ordering::Release);
             let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
             assert!(scope.matches_subprocess(subprocess));
+            assert!(core::ptr::eq(scope.output().unwrap(), pointer));
             storage.state.store(RETAINED, Ordering::Release);
             assert!(!scope.matches_subprocess(subprocess));
+            assert!(matches!(scope.output(), Err(BootstrapOutputAdmissionError::Invalid)));
             storage.publish_terminal_state_and_release(completion, RETAINED);
         }).join().unwrap();
     }
