@@ -14,11 +14,17 @@ import x86_64_foundation_gate_receipts as reader
 
 class InitialPageCommitProducts(unittest.TestCase):
     def test_success_retains_both_executed_compiler_products(self):
+        self._produce()
+
+    def test_compiler_program_outside_owned_target_preserves_failure_inputs(self):
+        self._produce(escaped=True)
+
+    def _produce(self, *, escaped=False):
         with tempfile.TemporaryDirectory() as name, ExitStack() as stack:
             root = Path(name)
             report = root / 'report.json'
             manifest = producer.harness.ROOT / 'crabc-mimalloc/Cargo.toml'
-            emitted = root / 'target/cargo-emitted-program'
+            emitted = root / ('other-target' if escaped else 'target') / 'cargo-emitted-program'
             emitted.parent.mkdir()
             emitted.write_bytes(b'native compiler product')
             (root / 'archive').write_bytes(b'pinned source archive')
@@ -55,6 +61,14 @@ class InitialPageCommitProducts(unittest.TestCase):
                 (producer, 'require_commit_failure_shape', lambda *args: None)]
             for owner, name, value in replacements:
                 stack.enter_context(mock.patch.object(owner, name, value))
+            if escaped:
+                with self.assertRaisesRegex(producer.harness.HarnessError, 'escapes its owned Cargo target'):
+                    producer.main()
+                self.assertFalse(report.exists())
+                self.assertEqual(json.loads((report.with_suffix('') / 'c-build.json').read_text())['status'], 0)
+                self.assertEqual(json.loads((report.with_suffix('') / 'c-execute.json').read_text())['status'], 0)
+                self.assertTrue((report.with_suffix('') / 'rust-build.json').is_file())
+                return
             self.assertEqual(producer.main(), 0)
             receipt = json.loads(report.read_text())
             c_program = Path(receipt['c_run']['command'][0])

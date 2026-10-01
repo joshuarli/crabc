@@ -12,6 +12,7 @@ from pathlib import Path
 import run as harness
 import x86_64_m7_gate as m7
 import m2_arena_lifecycle_x86_64 as lifecycle
+import x86_64_foundation_gate_receipts as receipts
 
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_initial_page_commit_fault_driver.c"
@@ -67,6 +68,8 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
     execution_before = harness.require_native_x86_64(require_image_identity=True)
+    source_before = m7.integrated.source_seal()
+    git_before = m7.engine.git_provenance()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, args.offline)
     artifacts = REPORT.with_suffix("")
@@ -105,6 +108,7 @@ def main() -> int:
                         "cargo_target": str(harness.WORK_ROOT / "target"),
                         "execution": program["execution"],
                         "artifact": harness.artifact_record(program["path"])}
+        receipts.authenticate_unit_program(unit_program, features=["mi-stat-1", "mi-stat-2"])
         rust_run = harness.command_record(harness._x86_64_program_check_command(
             program, TEST, nocapture=True, gate_name="initial-page commit fault"),
             cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=m7.EVIDENCE_TIMEOUT_SECONDS)
@@ -127,8 +131,8 @@ def main() -> int:
                 execution_before, harness.require_native_x86_64(require_image_identity=True)),
             "provenance": {
                 "pin": {key: pin[key] for key in ("tag", "revision", "sha256")},
-                "git": m7.engine.git_provenance(),
-                "source_seal": m7.integrated.source_seal(),
+                "git": git_before,
+                "source_seal": source_before,
                 "files": {name: m7.engine.file_record(path) for name, path in (
                     ("c_driver", DRIVER), ("rust_page", harness.ROOT / "crabc-mimalloc/src/page.rs"),
                     ("reader", Path(__file__)),
@@ -137,6 +141,8 @@ def main() -> int:
         }
         REPORT.parent.mkdir(parents=True, exist_ok=True)
         harness.write_json(REPORT, report)
+        if m7.integrated.source_seal() != source_before or m7.engine.git_provenance() != git_before:
+            raise harness.HarnessError("initial-page commit source changed during collection")
         harness.require_success(rust_run, "native initial-page commit fault test")
         if harness.parse_rust_test_count(str(rust_run["stdout"]) + str(rust_run["stderr"])) != 1:
             raise harness.HarnessError("initial-page commit selection did not execute one passing test")
