@@ -90,6 +90,7 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                     *(["mi-stat-1"] if level else []),
                     *(["mi-stat-2"] if level == 2 else []),
                 ])
+                rust_execution_binary = artifacts[0]
             for control in ("fault", "success"):
                 case = profile_root / control
                 case.mkdir(exist_ok=True)
@@ -150,9 +151,10 @@ def run_statistics_fault_matrix(driver: Path, test: str, begin: str, end: str,
                         rust_binary = harness.ROOT / unit_program["artifact"]["path"]
                     elif guarded:
                         raise harness.HarnessError("guarded extension lacks original compiler product authority")
+                    rust_execution_binary = rust_binary
                 executions = {
                     "c": harness.command_record([str(c_binary.resolve())], cwd=case, env={}, timeout_seconds=60),
-                    "rust": harness.command_record([str(rust_binary.resolve()), test, "--exact", "--nocapture", "--test-threads=1"],
+                    "rust": harness.command_record([str(rust_execution_binary.resolve()), test, "--exact", "--nocapture", "--test-threads=1"],
                                                    cwd=case, env={"CRABC_MI_STATISTICS_MATRIX": "1", "CRABC_MI_STATISTICS_FAULT_CONTROL": control},
                                                    timeout_seconds=m7.EVIDENCE_TIMEOUT_SECONDS),
                 }
