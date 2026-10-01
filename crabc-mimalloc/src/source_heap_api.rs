@@ -890,6 +890,75 @@ mod heap_membership_tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[test]
+    fn secure_page_visitation_decodes_free_chain_and_null_before_live_bitmap() {
+        unsafe extern "C" fn collect_live(
+            _: *const c_void, _: *const HeapArea, block: *mut c_void,
+            _: usize, argument: *mut c_void,
+        ) -> bool {
+            if !block.is_null() {
+                // SAFETY: the caller owns this vector throughout the synchronous visit.
+                unsafe { &mut *argument.cast::<Vec<usize>>() }.push(block.addr());
+            }
+            true
+        }
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::secure_page_visitation_decodes_free_chain_and_null_before_live_bitmap",
+            || {
+                initialize_test_owner();
+                let heap = native_heap_new().expect("a live Heap");
+                // SAFETY: this thread owns the Heap and retains both clients and their page.
+                let (first, survivor) = unsafe {
+                    (native_heap_allocate(heap, 64, None, false).unwrap(),
+                     native_heap_allocate(heap, 64, None, false).unwrap())
+                };
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                // SAFETY: both allocations retain their registered page, with no concurrent owner.
+                let page = unsafe { binding.page_map().lookup_registered_page(survivor.as_ptr()) }
+                    .unwrap().unwrap();
+                assert_eq!(unsafe { binding.page_map().lookup_registered_page(first.as_ptr()) }.unwrap(), Some(page));
+                // SAFETY: the live page and its immutable source keys remain retained.
+                let keys = unsafe { Page::source_page_keys_at(page) };
+                let metadata = unsafe { page.as_ref() };
+                let blocks = unsafe { metadata.start() };
+                let size = metadata.block_size();
+                let capacity = metadata.capacity() as usize;
+                let mut cursor = metadata.free_list_head();
+                let mut count = 0;
+                let mut expected = std::vec![0usize; capacity.div_ceil(usize::BITS as usize)];
+                while !cursor.is_null() {
+                    let index = (cursor.addr() - blocks.addr()) / size;
+                    assert!(index < capacity && count < capacity);
+                    expected[index / usize::BITS as usize] |= 1usize << (index % usize::BITS as usize);
+                    // SAFETY: the quiescent production free chain owns this initialized next word.
+                    let encoded = unsafe { cursor.cast::<usize>().read() };
+                    let next = crate::free_list::decode_page_link(page.as_ptr().addr(), keys, encoded);
+                    if next == 0 { assert_ne!(encoded, 0, "source NULL is encoded"); }
+                    cursor = if next == 0 { null_mut() } else { cursor.map_addr(|_| next) };
+                    count += 1;
+                }
+                assert!(count > 1, "a production chain ends in encoded NULL");
+                let mut bitmap = std::vec![0usize; expected.len()];
+                // SAFETY: the actual production page/free chain is stable for this bounded read.
+                assert_eq!(unsafe { super::heap_visit_free_map(page, metadata.free_list_head(),
+                    blocks, capacity * size, size, capacity, &mut bitmap) }, Some(count));
+                assert_eq!(bitmap, expected);
+                // SAFETY: first is returned once; survivor retains the page through collection.
+                assert_eq!(unsafe { native_free(first) }, NativePageFreeResult::Freed);
+                let mut live = Vec::new();
+                // SAFETY: no callback moves pages or mutates the Heap, and the vector is retained.
+                assert!(unsafe { heap_visit_blocks(heap.as_ptr().cast(), true, Some(collect_live),
+                    (&mut live as *mut Vec<usize>).cast()) });
+                assert_eq!(live, std::vec![survivor.as_ptr().addr()]);
+                // SAFETY: the sole live client is returned once before releasing its owner.
+                assert_eq!(unsafe { native_free(survivor) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
+
     struct UtilizationPages {
         blocks: Vec<usize>,
         pairs: Vec<(usize, usize)>,
