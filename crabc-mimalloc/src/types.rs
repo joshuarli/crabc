@@ -3893,11 +3893,11 @@ pub(super) struct PageFreeListState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_key: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_key2: usize,
     pub(super) capacity: NonNull<u16>,
     pub(super) reserved: u16,
@@ -3922,9 +3922,9 @@ pub(super) struct PageFreeListState {
 pub(super) struct PageRemoteFreeProducerState {
     pub(super) xthread_id: NonNull<AtomicUsize>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) keys: [usize; 2],
 }
 
@@ -3950,9 +3950,9 @@ unsafe impl Send for PageRemoteFreeProducerState {}
 #[derive(Clone, Copy)]
 pub(super) struct PageRemoteFreeOwnerState {
     pub(super) xthread_free: NonNull<AtomicUsize>,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) keys: [usize; 2],
     pub(super) free: NonNull<*mut Block>,
     pub(super) local_free: NonNull<*mut Block>,
@@ -3973,11 +3973,11 @@ pub(super) struct PageLocalCollectState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_address: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_key: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_key2: usize,
     pub(super) capacity: u16,
     pub(super) reserved: u16,
@@ -4127,7 +4127,7 @@ pub(crate) struct Page {
     next: *mut Page,
     prev: *mut Page,
     memid: MemoryId,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     keys: [usize; crate::config::PAGE_KEY_COUNT],
 }
 
@@ -4262,7 +4262,7 @@ impl Page {
             next: null_mut(),
             prev: null_mut(),
             memid: MemoryId::static_empty(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             keys: [0; crate::config::PAGE_KEY_COUNT],
         }
     }
@@ -4299,7 +4299,7 @@ impl Page {
             next: null_mut(),
             prev: null_mut(),
             memid: MemoryId::none(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             keys: [0; crate::config::PAGE_KEY_COUNT],
         }
     }
@@ -4541,7 +4541,7 @@ impl Page {
         self.next = null_mut();
         self.prev = null_mut();
         self.memid = memid;
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         {
             // SAFETY: fresh-page publication holds the source Theap's random
             // field exclusively and consumes the next value before the page
@@ -4856,9 +4856,9 @@ impl Page {
             let owner = unsafe {
                 PageRemoteFreeOwnerState {
                     xthread_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).xthread_free)),
-                    #[cfg(feature = "mi-debug-1")]
+                    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
                     page_address: page.addr().get(),
-                    #[cfg(feature = "mi-debug-1")]
+                    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
                     keys: (*raw).keys,
                     free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).free)),
                     local_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).local_free)),
@@ -5250,9 +5250,9 @@ impl Page {
         PageRemoteFreeProducerState {
             xthread_id,
             xthread_free,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             keys: unsafe { (*page).keys },
         }
     }
@@ -5311,9 +5311,9 @@ impl Page {
         let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
             xthread_free,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             keys: unsafe { (*page).keys },
             free,
             local_free,
@@ -5500,11 +5500,11 @@ impl Page {
             area,
             area_bytes,
             block_size,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_key: unsafe { (*page).keys[0] },
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_key2: unsafe { (*page).keys[1] },
             capacity,
             reserved,
@@ -5581,11 +5581,11 @@ impl Page {
             area,
             area_bytes,
             block_size,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_key: unsafe { (*page).keys[0] },
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_key2: unsafe { (*page).keys[1] },
             capacity,
             reserved,
@@ -5691,9 +5691,9 @@ impl Page {
         let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
             xthread_free,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             keys: unsafe { (*page).keys },
             free,
             local_free,
@@ -5753,11 +5753,11 @@ impl Page {
             area,
             area_bytes,
             block_size,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_key: unsafe { (*page).keys[0] },
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_key2: unsafe { (*page).keys[1] },
             // SAFETY: these raw pointers name only the caller-owned ordinary
             // subobjects and manufacture no whole-page reference.
@@ -5776,19 +5776,31 @@ impl Page {
         }
     }
 
-    /// Reads the two independent immutable keys installed before a debug
+    /// Reads the two independent immutable keys installed before an encoded
     /// page's first free-list extension. Live allocations retain both until free.
     ///
     /// # Safety
     ///
     /// `page` must name initialized live page metadata kept stable through
     /// this scalar read. The caller must not permit page retirement or reuse.
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     #[inline]
-    pub(crate) unsafe fn debug_padding_keys_at(page: NonNull<Self>) -> [usize; 2] {
+    pub(crate) unsafe fn source_page_keys_at(page: NonNull<Self>) -> [usize; 2] {
         // SAFETY: the caller retains the initialized source page through the
         // short immutable field observation.
         unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).keys)) }
+    }
+
+    /// Reads the source keys used by the historical debug padding callers.
+    ///
+    /// # Safety
+    ///
+    /// The caller must retain initialized page metadata without retirement or
+    /// reuse through the immutable key read.
+    #[cfg(feature = "mi-debug-1")]
+    #[inline]
+    pub(crate) unsafe fn debug_padding_keys_at(page: NonNull<Self>) -> [usize; 2] {
+        unsafe { Self::source_page_keys_at(page) }
     }
 
     #[cfg(test)]
@@ -5889,13 +5901,25 @@ impl Page {
     }
 
     #[cfg(test)]
+    unsafe fn remote_free_test_next(&self, block: *mut u8) -> *mut u8 {
+        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
+        { unsafe { core::ptr::read(block.cast::<*mut u8>()) } }
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        {
+            let encoded = unsafe { core::ptr::read(block.cast::<usize>()) };
+            let address = crate::free_list::decode_page_link(core::ptr::from_ref(self).addr(), self.keys, encoded);
+            core::ptr::with_exposed_provenance_mut(address)
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn remote_free_test_local_chain(&self) -> [*mut u8; 3] {
-        // SAFETY: the remote-free test fixture writes these exact three
-        // unencoded links before inspecting them under sole ownership.
+        // SAFETY: the joined remote-free fixture retains all three initialized
+        // nodes and this original page, including its selected null sentinel.
         unsafe {
             let first = self.local_free.cast::<u8>();
-            let second = core::ptr::read(first.cast::<*mut u8>());
-            let third = core::ptr::read(second.cast::<*mut u8>());
+            let second = self.remote_free_test_next(first);
+            let third = self.remote_free_test_next(second);
             [first, second, third]
         }
     }
@@ -5906,9 +5930,9 @@ impl Page {
         let mut current = self.local_free.cast::<u8>();
         while !current.is_null() && count < maximum {
             count += 1;
-            // SAFETY: callers use this only after a successful collection of
-            // test-owned unencoded blocks, each of which initialized its link.
-            current = unsafe { core::ptr::read(current.cast::<*mut u8>()) };
+            // SAFETY: the joined fixture retains each initialized node and
+            // the original metadata whose keys decode its selected links.
+            current = unsafe { self.remote_free_test_next(current) };
         }
         count
     }
@@ -8029,9 +8053,9 @@ const _: [(); 648] = [(); size_of::<Arena>()];
 const _: [(); 8] = [(); align_of::<Arena>()];
 const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
-#[cfg(not(feature = "mi-debug-1"))]
+#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
 const _: [(); 128] = [(); size_of::<Page>()];
-#[cfg(feature = "mi-debug-1")]
+#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
 const _: [(); 144] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
 // `Heap` stops at the source `memid` field and uses allocator-private futex
@@ -8039,14 +8063,14 @@ const _: [(); 8] = [(); align_of::<Page>()];
 // layout assertion.
 const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
 const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
-#[cfg(not(feature = "mi-debug-1"))]
+#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
 const _: [(); 8104] = [(); size_of::<Theap>()];
-#[cfg(feature = "mi-debug-1")]
+#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
 const _: [(); 8112] = [(); size_of::<Theap>()];
 const _: [(); 8] = [(); align_of::<Theap>()];
-#[cfg(not(feature = "mi-debug-1"))]
+#[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
 const _: [(); 129] = [(); PAGES_DIRECT];
-#[cfg(feature = "mi-debug-1")]
+#[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
 const _: [(); 130] = [(); PAGES_DIRECT];
 const _: [(); 74] = [(); BIN_FULL];
 
@@ -10146,7 +10170,7 @@ mod tests {
         assert_eq!(offset_of!(PageQueue, last), 8);
         assert_eq!(offset_of!(PageQueue, count), 16);
         assert_eq!(offset_of!(PageQueue, block_size), 24);
-        assert_eq!(size_of::<Page>(), if cfg!(feature = "mi-debug-1") { 144 } else { 128 });
+        assert_eq!(size_of::<Page>(), if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 144 } else { 128 });
         assert_eq!(align_of::<Page>(), 8);
         assert_eq!(offset_of!(Page, self_), 0);
         assert_eq!(offset_of!(Page, xthread_id), 8);
@@ -10166,7 +10190,7 @@ mod tests {
         assert_eq!(offset_of!(Page, next), 88);
         assert_eq!(offset_of!(Page, prev), 96);
         assert_eq!(offset_of!(Page, memid), 104);
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         {
             assert_eq!(crate::config::PAGE_KEY_COUNT, 2);
             assert_eq!(offset_of!(Page, keys), 128);
@@ -10181,7 +10205,7 @@ mod tests {
         const STORAGE_WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
         const LIVE_THREAD_ID: usize = 12;
 
-        assert_eq!(PAGE_OFFSET, if cfg!(feature = "mi-debug-1") { 144 } else { 128 });
+        assert_eq!(PAGE_OFFSET, if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 144 } else { 128 });
         assert_eq!(STORAGE_WORDS * size_of::<usize>(), PAGE_OFFSET + 2 * BLOCK_SIZE);
 
         // This address-stable backing contains one source-stride `Page`
@@ -10191,6 +10215,10 @@ mod tests {
         let mut storage = [core::mem::MaybeUninit::<usize>::uninit(); STORAGE_WORDS];
         let page_pointer = storage.as_mut_ptr().cast::<Page>();
         let mut initial = Page::remote_free_test_page(2, 1);
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        {
+            initial.keys = [17, usize::MAX - 31];
+        }
         initial.block_size = BLOCK_SIZE;
         initial.page_offset = PAGE_OFFSET;
         initial.xthread_id.store(
@@ -10284,6 +10312,13 @@ mod tests {
                 // valid. This worker retains only raw atomic subobject
                 // pointers plus the source-permitted immutable geometry.
                 let producer = unsafe { Page::remote_free_producer_state_at(page) };
+                #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+                {
+                    // SAFETY: the live client retains the initialized page;
+                    // keys remain immutable while owner-local counts change.
+                    assert_eq!(unsafe { Page::source_page_keys_at(page) }, [17, usize::MAX - 31]);
+                    assert_eq!(producer.keys, [17, usize::MAX - 31]);
+                }
                 producer_ready.wait();
                 // SAFETY: the live interior client keeps the page and its
                 // fixed `block_size`/`page_offset` geometry alive and
@@ -10470,7 +10505,7 @@ mod tests {
         assert_eq!(size_of::<TheapRandomImage>(), 136);
         assert_eq!(offset_of!(Theap, pages_free_direct), 0);
         assert_eq!(offset_of!(Theap, tld), PAGES_DIRECT * size_of::<*mut Page>());
-        let direct_offset = if cfg!(feature = "mi-debug-1") { 8 } else { 0 };
+        let direct_offset = if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 8 } else { 0 };
         assert_eq!(offset_of!(Theap, heap), 1_040 + direct_offset);
         assert_eq!(offset_of!(Theap, random), 1_080 + direct_offset);
         assert_eq!(offset_of!(Theap, pages), 1_312 + direct_offset);

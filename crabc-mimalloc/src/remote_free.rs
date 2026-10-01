@@ -1599,25 +1599,25 @@ fn thread_free_create_address(
     Ok(address | usize::from(owned))
 }
 
-// A debug page's two source keys are initialized before its first block is
+// An encoded page's two source keys are initialized before its first block is
 // published and stay immutable while any counted client can free remotely.
 // Copying them with the atomic projection leaves no whole-page reference in
 // a producer or owner collection loop.
 #[derive(Clone, Copy)]
 struct PageLinks {
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     page_address: usize,
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     keys: [usize; 2],
 }
 
 #[inline]
 fn producer_links(state: PageRemoteFreeProducerState) -> PageLinks {
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     {
         PageLinks { page_address: state.page_address, keys: state.keys }
     }
-    #[cfg(not(feature = "mi-debug-1"))]
+    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
     {
         let _ = state;
         PageLinks {}
@@ -1626,11 +1626,11 @@ fn producer_links(state: PageRemoteFreeProducerState) -> PageLinks {
 
 #[inline]
 fn owner_links(state: PageRemoteFreeOwnerState) -> PageLinks {
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     {
         PageLinks { page_address: state.page_address, keys: state.keys }
     }
-    #[cfg(not(feature = "mi-debug-1"))]
+    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
     {
         let _ = state;
         PageLinks {}
@@ -1639,7 +1639,7 @@ fn owner_links(state: PageRemoteFreeOwnerState) -> PageLinks {
 
 #[inline]
 unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut Block {
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     {
         // SAFETY: a published source block has an initialized encoded first
         // word; the page key and null sentinel were copied before collection.
@@ -1647,7 +1647,7 @@ unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut B
         let address = crate::free_list::decode_page_link(links.page_address, links.keys, encoded);
         core::ptr::with_exposed_provenance_mut(address)
     }
-    #[cfg(not(feature = "mi-debug-1"))]
+    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
     {
         let _ = links;
         unsafe { block_next(block) }
@@ -1656,7 +1656,7 @@ unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut B
 
 #[inline]
 unsafe fn block_set_next_for_page(links: PageLinks, block: NonNull<Block>, next: *mut Block) {
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     {
         // SAFETY: the producer owns this current block until its release CAS;
         // the owner has exclusive access to detached list nodes afterward.
@@ -1664,7 +1664,7 @@ unsafe fn block_set_next_for_page(links: PageLinks, block: NonNull<Block>, next:
         let encoded = crate::free_list::encode_page_link(links.page_address, links.keys, address);
         unsafe { ptr::write(block.as_ptr().cast::<usize>(), encoded) };
     }
-    #[cfg(not(feature = "mi-debug-1"))]
+    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
     {
         let _ = links;
         unsafe { block_set_next(block, next) }
@@ -1706,6 +1706,13 @@ mod tests {
         fn pointer(&mut self) -> NonNull<u8> {
             NonNull::from(&mut self.0).cast()
         }
+    }
+
+    unsafe fn test_block_next(page: NonNull<Page>, block: NonNull<Block>) -> *mut Block {
+        // SAFETY: joined fixture observations retain the original initialized
+        // page and the exact published node through the selected link read.
+        let state = unsafe { Page::remote_free_producer_state_at(page) };
+        unsafe { block_next_for_page(producer_links(state), block) }
     }
 
     struct OneSpuriousPublicationCas {
@@ -1767,6 +1774,11 @@ mod tests {
         let first_pointer = first.pointer();
         let second_pointer = second.pointer();
         page.remote_free_test_set_local_free(local_pointer.cast().as_ptr());
+        // SAFETY: this single deferred node belongs to the live fixture and
+        // must use its source page's selected encoded null representation.
+        let state = unsafe { Page::remote_free_producer_state_at(page_raw) };
+        unsafe { block_set_next_for_page(producer_links(state), local_pointer.cast(), ptr::null_mut()) };
+
 
         // SAFETY: this fixture remains live and owner-associated for both
         // remote publications, and each test block is freed exactly once.
@@ -2263,7 +2275,7 @@ mod tests {
         ));
         assert_eq!(unsafe { test_page_snapshot(page) }.remote_free_test_head(), newer.as_ptr().addr() | 1);
         assert_eq!(
-            unsafe { block_next(newer.cast()) }.cast::<u8>(),
+            unsafe { test_block_next(page, newer.cast()) }.cast::<u8>(),
             old.as_ptr(),
             "the newer source publication keeps the claimed old block reachable"
         );
@@ -2292,7 +2304,7 @@ mod tests {
             "the later publication stays first in the collected source LIFO list"
         );
         assert_eq!(
-            unsafe { block_next(newer.cast()) }.cast::<u8>(),
+            unsafe { test_block_next(page, newer.cast()) }.cast::<u8>(),
             old.as_ptr(),
             "collection preserves each distinct consumed block once"
         );
@@ -2518,11 +2530,11 @@ mod tests {
             .expect("both worker publications leave a nonempty remote head");
         // SAFETY: the two joined worker publications initialized this exact
         // source-format list before their release CAS operations.
-        let published_predecessor = unsafe { block_next(published_head_block) };
+        let published_predecessor = unsafe { test_block_next(page, published_head_block) };
         let published_first_link = NonNull::new(published_predecessor)
             .expect("the newest publication links to the first publication");
         // SAFETY: the first worker block is the terminal source-format node.
-        let published_tail_is_empty = unsafe { block_next(published_first_link) }.is_null();
+        let published_tail_is_empty = unsafe { test_block_next(page, published_first_link) }.is_null();
         let published_remote_count = 1 + usize::from(!published_predecessor.is_null());
         let published_head_is_latest = published_head_block.as_ptr().cast::<u8>() == second.as_ptr();
         let published_latest_predecessor_is_first = published_predecessor.cast::<u8>() == first.as_ptr();
@@ -2553,11 +2565,11 @@ mod tests {
         let collected_local = NonNull::new(unsafe { test_page_snapshot(page) }.remote_free_test_local_free())
             .expect("the collected two-block list becomes local_free");
         // SAFETY: collection made this bounded local list owner-only.
-        let collected_predecessor = unsafe { block_next(collected_local) };
+        let collected_predecessor = unsafe { test_block_next(page, collected_local) };
         let collected_first_link = NonNull::new(collected_predecessor)
             .expect("the collected local list retains both publications");
         // SAFETY: the first publication remains the terminal local node.
-        let collected_tail_is_empty = unsafe { block_next(collected_first_link) }.is_null();
+        let collected_tail_is_empty = unsafe { test_block_next(page, collected_first_link) }.is_null();
         let collected_local_count = 1 + usize::from(!collected_predecessor.is_null());
         let collected_lifo = collected_local.as_ptr().cast::<u8>() == second.as_ptr()
             && collected_predecessor.cast::<u8>() == first.as_ptr()
