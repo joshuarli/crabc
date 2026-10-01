@@ -1020,6 +1020,8 @@ struct CurrentChildMember {
     id: NativeSubprocessId,
     binding: ProcessMainBackingBinding,
     member: ChildThreadMember,
+    #[cfg(target_arch = "x86_64")]
+    generic_frequency_captures: usize,
 }
 
 #[thread_local]
@@ -1135,7 +1137,10 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
             // local fast-path publication no longer applies.
             #[cfg(target_arch = "x86_64")]
             crate::local_fast_path::withdraw();
-            *unsafe { current_child_member() } = Some(CurrentChildMember { id, binding, member });
+            *unsafe { current_child_member() } = Some(CurrentChildMember { id, binding, member,
+                #[cfg(target_arch = "x86_64")]
+                generic_frequency_captures: 0,
+            });
             NativeChildThreadAdd::Added
         }
         Ok(ChildThreadAddOutcome::AlreadyInitialized { in_other_subprocess }) => {
@@ -1154,6 +1159,10 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
     // SAFETY: current-thread slot, no other reference live.
     let slot = unsafe { current_child_member() };
     let current = slot.as_mut()?;
+    #[cfg(target_arch = "x86_64")]
+    if current.generic_frequency_captures != 0 {
+        return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
+    }
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Closed)));
     };
@@ -1363,12 +1372,55 @@ pub(crate) unsafe fn native_child_theap_allocate(
     unsafe { native_child_theap_allocate_variant(theap, size, None, zero) }
 }
 
+/// A counted option capture on the actual current child member. It owns no
+/// payload projection, and failed admission or resume leaves that member
+/// retained rather than making its allocator state available for retirement.
+#[must_use = "resume the originating child issuer or retain its member"]
+#[cfg(target_arch = "x86_64")]
+struct NativeChildGenericFrequencyCapture {
+    id: NativeSubprocessId,
+    theap: core::ptr::NonNull<crate::types::Theap>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildGenericFrequencyCapture {
+    /// # Safety
+    /// The request came from this exact Theap's engine. Its actual child,
+    /// member, TLD, selected Heap, and Theap remain retained for the complete
+    /// synchronous allocation. No projection or lock spans the getter.
+    unsafe fn begin(theap: core::ptr::NonNull<crate::types::Theap>,
+        request: &crate::types::GenericAllocationFrequencyRequest) -> Option<Self>
+    {
+        if !request.matches_theap(theap) { return None; }
+        // SAFETY: the caller is this thread and ended every engine/member
+        // projection. The count prevents its slot from being finished or replaced.
+        let current = unsafe { current_child_member() }.as_mut()?;
+        current.generic_frequency_captures = current.generic_frequency_captures.checked_add(1)?;
+        Some(Self { id: current.id, theap })
+    }
+
+    /// # Safety
+    /// The source getter ended and the originating engine completed its
+    /// short resume with this request. The actual member was not replaced.
+    unsafe fn complete(self) -> bool {
+        // SAFETY: the retained capture excludes thread finish; no callback
+        // or engine projection is live during this field-only settlement.
+        let Some(current) = unsafe { current_child_member() }.as_mut() else { return false; };
+        if current.id != self.id || current.generic_frequency_captures == 0 { return false; }
+        current.generic_frequency_captures -= 1;
+        true
+    }
+}
+
 /// Direct ordinary or aligned allocation on a retained non-main child
 /// Theap. The default and cached roots keep their existing selection.
 ///
 /// # Safety
 /// `theap` is linked to a live Heap of the calling child's attached TLD;
-/// alignment, when present, has passed the source precheck.
+/// alignment, when present, has passed the source precheck. The caller
+/// retains that exact member, Heap, TLD, and Theap throughout any synchronous
+/// getter or allocation callback and the resumed allocation; nested callbacks
+/// cannot retire or replace those selected issuers.
 pub(crate) unsafe fn native_child_theap_allocate_variant(
     theap: core::ptr::NonNull<crate::types::Theap>,
     size: usize,
@@ -1389,6 +1441,37 @@ pub(crate) unsafe fn native_child_theap_allocate_variant(
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return Some(block),
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                // SAFETY: the originating engine projection ended above. The
+                // public call retains the exact selected Heap, Theap and member.
+                let capture = unsafe { NativeChildGenericFrequencyCapture::begin(theap, &request) }?;
+                // SAFETY: that actual retained issuer keeps its immutable Heap
+                // publication live; pointer equality is only an admission check.
+                let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(capture.theap) })?;
+                let frequency = loop {
+                    // SAFETY: no member/engine projection or allocator lock
+                    // spans this getter. The counted record lease retains the
+                    // actual child owner, and the member count excludes finish.
+                    match unsafe { try_with_native_child_callback_owner(heap, |process| {
+                        process.policy().generic_collect_frequency()
+                    }) } {
+                        Ok(frequency) => break frequency,
+                        Err(NativeChildCallbackAdmissionError::Busy) => core::hint::spin_loop(),
+                        Err(NativeChildCallbackAdmissionError::Invalid) => return Some(None),
+                    }
+                };
+                // SAFETY: the capture retained the same actual member and the
+                // caller retained its selected Heap/Theap throughout the getter.
+                // A fresh short engine resumes the originating request only.
+                let Some(resumed) = (unsafe { with_native_child_heap_theap_engine(capture.theap, |engine| {
+                    unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) }
+                }) }) else { return Some(None); };
+                // SAFETY: the getter and fresh engine projection both ended;
+                // the request was consumed by that exact admitted issuer.
+                if !unsafe { capture.complete() } { return Some(None); }
+                phase = resumed;
+            }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 // SAFETY: the caller retains this Theap and its attached TLD
                 // throughout the synchronous callback and resumed operation.

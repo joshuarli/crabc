@@ -1957,6 +1957,22 @@ pub(crate) struct MainHeapThreadPageSession<'attachment, 'main> {
 }
 
 impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
+    #[cfg(target_arch = "x86_64")]
+    fn permits_generic_counter_administration(&self) -> bool {
+        if self.attachment.terminal_os_release.is_some() { return false; }
+        let admitted = self.attachment.ensure_attached_current().is_ok() || {
+            let generation = self.attachment.deferred_free_callback_active.load(Ordering::Acquire);
+            generation != 0
+                && generation == self.attachment.deferred_free_callback_generation
+                && self.attachment.ensure_draining_current().is_ok()
+                && fast_slot_peek().is_none()
+                && self.attachment.local_theap_pointer().is_ok_and(|owner| {
+                    self.attachment.default_root_matches_local_owner(owner, false)
+                })
+        };
+        admitted && self.attachment.local_theap_pointer().is_ok_and(|owner| owner == self.theap)
+    }
+
     fn begin(
         attachment: &'attachment mut MainHeapThreadAttachment<'main>,
     ) -> Result<Self, MainHeapThreadPageSessionError> {
@@ -2507,6 +2523,37 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
     #[inline]
     fn thread_id(&self) -> Option<crate::types::LiveThreadId> {
         Some(self.attachment.thread)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn begin_generic_allocation_administration(
+        &mut self,
+    ) -> crate::bootstrap::GenericAllocationAdministrationStart {
+        if !self.permits_generic_counter_administration() {
+            return crate::bootstrap::GenericAllocationAdministrationStart::Denied;
+        }
+        // SAFETY: this admitted owner retains the selected image and owns
+        // only its generic counters during this callback-free projection.
+        match unsafe { Theap::begin_generic_allocation_administration_at(self.local_theap_pointer()) } {
+            None => crate::bootstrap::GenericAllocationAdministrationStart::NotDue,
+            Some(request) => crate::bootstrap::GenericAllocationAdministrationStart::Frequency(request),
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn finish_generic_allocation_administration(
+        &mut self, request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
+    ) -> Option<crate::types::GenericAllocationAdministration> {
+        if !self.permits_generic_counter_administration()
+            || !request.matches_theap(self.local_theap_pointer())
+            || !(1..=1_000_000).contains(&frequency)
+        { return None; }
+        // SAFETY: the caller retained this request's actual owner and selected
+        // image across the completed getter callback, with no owner replacement.
+        // This session restores exclusive counter authority on the same issuer.
+        Some(unsafe { Theap::finish_generic_allocation_administration_at(
+            self.local_theap_pointer(), request, frequency,
+        ) })
     }
 
     #[inline]
