@@ -1755,6 +1755,122 @@ pub(crate) unsafe fn visit_heap_page(
 
 #[cfg(test)]
 mod heap_visit_tests {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    struct GuardedVisitCapture {
+        heap: *mut core::ffi::c_void,
+        clients: [Option<core::ptr::NonNull<u8>>; 4],
+        usable: [usize; 4],
+        seen: [bool; 4],
+        valid: bool,
+        calls: usize,
+        blocks: usize,
+        stop: usize,
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    unsafe extern "C" fn capture_guarded_visit(
+        heap: *const core::ffi::c_void, area: *const super::HeapArea,
+        block: *mut core::ffi::c_void, block_size: usize, argument: *mut core::ffi::c_void,
+    ) -> bool {
+        // SAFETY: the synchronous caller retains this exclusive capture and
+        // the visitor's stack area image for the complete callback.
+        let capture = unsafe { &mut *argument.cast::<GuardedVisitCapture>() };
+        let area = unsafe { &*area };
+        capture.calls += 1;
+        capture.valid &= heap == capture.heap.cast_const()
+            && area.full_block_size == area.block_size + crate::config::PADDING_SIZE
+            && block_size == area.block_size;
+        if !block.is_null() {
+            capture.blocks += 1;
+            let canonical = block.addr();
+            // Source visitors expose canonical slots, including a guarded
+            // client's tag word and guard page in the full slot geometry.
+            capture.valid &= unsafe { block.cast::<usize>().read() } == usize::MAX;
+            let mut matches = 0;
+            for index in 0..capture.clients.len() {
+                let Some(client) = capture.clients[index] else { continue };
+                let offset = client.as_ptr().addr().wrapping_sub(canonical);
+                if offset >= area.full_block_size { continue; }
+                matches += 1;
+                capture.valid &= !capture.seen[index] && offset >= core::mem::size_of::<usize>()
+                    && area.full_block_size.checked_sub(offset).and_then(|size| size.checked_sub(4096))
+                        == Some(capture.usable[index]);
+                capture.seen[index] = true;
+                // SAFETY: this exact retained client has its initialized
+                // first object byte before the protected tail page.
+                capture.valid &= unsafe { client.as_ptr().read() } == (index + 1) as u8;
+            }
+            capture.valid &= matches == 1;
+        }
+        capture.stop == 0 || capture.calls < capture.stop
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn guarded_heap_visitation_reports_canonical_slots_and_retained_usable_prefixes() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_visit_tests::guarded_heap_visitation_reports_canonical_slots_and_retained_usable_prefixes",
+            || {
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let heap = super::heap_new();
+                assert!(!heap.is_null());
+                // SAFETY: this thread retains the Heap, selected Theap and
+                // all clients through quiescent traversal and final cleanup.
+                unsafe {
+                    let theap = super::heap_theap(heap);
+                    super::theap_guarded_set_size_bound(theap, 0, usize::MAX);
+                    super::theap_guarded_set_sample_rate(theap, 1, 1);
+                    let mut clients = [None; 4];
+                    let mut usable = [0; 4];
+                    for (index, size) in [81, 97, 5000, 81].into_iter().enumerate() {
+                        let result = if index == 3 {
+                            super::heap_malloc_aligned_at(heap, size, 64, 0, false)
+                        } else { super::heap_malloc(heap, size) };
+                        let client = result.value.expect("a public sampled client");
+                        client.as_ptr().write_bytes((index + 1) as u8, size);
+                        usable[index] = crate::source_api::usable_size(client.as_ptr());
+                        clients[index] = Some(client);
+                    }
+                    for stop in [0, 1, 2] {
+                        let mut capture = GuardedVisitCapture { heap, clients, usable, seen: [false; 4],
+                            valid: true, calls: 0, blocks: 0, stop };
+                        assert_eq!(super::heap_visit_blocks(heap, true, Some(capture_guarded_visit),
+                            core::ptr::from_mut(&mut capture).cast()), stop == 0);
+                        assert!(capture.valid);
+                        if stop == 0 {
+                            assert_eq!(capture.blocks, clients.len());
+                            assert_eq!(capture.seen, [true; 4]);
+                        } else { assert_eq!(capture.calls, stop); }
+                    }
+                    let mut capture = GuardedVisitCapture { heap, clients, usable, seen: [false; 4],
+                        valid: true, calls: 0, blocks: 0, stop: 0 };
+                    assert!(crate::source_api::theap_visit_blocks(theap, true, Some(capture_guarded_visit),
+                        core::ptr::from_mut(&mut capture).cast()));
+                    assert!(capture.valid && capture.blocks > 0);
+                    let freed = clients[1].take().unwrap();
+                    assert_eq!(crate::source_api::free_sourced(freed.as_ptr()).value,
+                        crate::source_api::FreeOutcome::Freed);
+                    let mut capture = GuardedVisitCapture { heap, clients, usable, seen: [false; 4],
+                        valid: true, calls: 0, blocks: 0, stop: 0 };
+                    assert!(super::heap_visit_blocks(heap, true, Some(capture_guarded_visit),
+                        core::ptr::from_mut(&mut capture).cast()));
+                    assert!(capture.valid);
+                    assert_eq!(capture.blocks, 3);
+                    assert_eq!(capture.seen, [true, false, true, true]);
+                    for client in clients.into_iter().flatten() {
+                        assert_eq!(crate::source_api::free_sourced(client.as_ptr()).value,
+                            crate::source_api::FreeOutcome::Freed);
+                    }
+                    assert!(super::heap_release(heap, false));
+                }
+            },
+        );
+    }
+
     #[test]
     fn cyclic_free_list_is_rejected_before_a_live_callback() {
         let mut blocks = [0usize; 2];
