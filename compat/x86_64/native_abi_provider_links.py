@@ -510,7 +510,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Ordinary immutable objects also require the complete unrelocated source
     payload in one final read-only mapping; only loads may reference them.
     Pooled byte strings require the selected definition's pool and forcing
-    relocation authority before a bounded load or interior address is admitted.
+    relocation authority before a bounded load or address is admitted. A formed
+    one-past address is recorded separately and supplies no memory-read extent.
     Trailing immediate bytes are part of the instruction, not payload
     bytes at a NOBITS target. No execution or subsequent values are asserted.
     Source instruction spans must come from disassembly checked against the
@@ -709,6 +710,7 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             record.update(got_slot=slot, branch_kind='got-address-compare' if address_compare else 'got-address-load')
         else:
             provider_offset = 0
+            object_end = False
             if 'address_addend' in reference or pooled_string and address_load:
                 require(address_load and provider_object is not None,
                         f'provider {name} interior address lacks its source object')
@@ -742,9 +744,11 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                 if merged:
                     merged_string_translation(image, elf_type, source_image, definition, provider_address, provider_pool)
                 # PC32 is S + A - P; RIP is four bytes beyond P. LEA forms
-                # an address inside the selected object without reading it.
+                # a bounded address without reading it. A pooled string's exact
+                # one-past address is a formed pointer, never a load permission.
                 provider_offset = reference.get('address_addend', -4) + 4
-                require(0 <= provider_offset < symbol['size'],
+                object_end = merged and provider_offset == symbol['size']
+                require(0 <= provider_offset and (provider_offset < symbol['size'] or object_end),
                         f'provider {name} interior address leaves provider object')
                 final = static_authority.elf_bytes(image)
                 final_symbol = final.symbol(name, dynamic=False)
@@ -773,7 +777,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                 record['target_address'] = provider_address + provider_offset
             require(target == provider_address + provider_offset,
                     f'provider {name} reference resolves to a foreign provider')
-            record['branch_kind'] = 'rip-relative-address' if address_load else 'conditional-jump'
+            record['branch_kind'] = ('rip-relative-object-end-address' if object_end else
+                                     'rip-relative-address' if address_load else 'conditional-jump')
         resolved.append(record)
     return {'resolved_calls': resolved, 'discarded_calls': discarded}
 

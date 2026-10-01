@@ -762,9 +762,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
                 '.type domain_caller,@function\ndomain_caller:\n'
                 'lea domain_string+2(%rip),%rax\nmov domain_string+4(%rip),%ecx\n'
+                'lea domain_string+13(%rip),%rax\n'
                 'lea domain_suffix+1(%rip),%rcx\nmovzbl domain_suffix+6(%rip),%eax\n'
                 'lea domain_suffix(%rip),%rax\n'
+                'lea domain_suffix+7(%rip),%rcx\n'
                 'lea domain_duplicate+2(%rip),%rax\nmov domain_duplicate(%rip),%ecx\n'
+                'lea domain_duplicate+7(%rip),%rax\n'
                 'ret\n.size domain_caller,.-domain_caller\n.section .note.GNU-stack,"",@progbits\n')
             (work / 'providers.c').write_text(links.source(names, object_names=names))
             for source, target in [('provider.S', 'provider.o'), ('providers.c', 'providers.o'), ('caller.S', 'caller.o')]:
@@ -860,20 +863,24 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             source_sections=links.calls._ordinary_source_sections(caller, {row['section'] for row in references}),
                             provider_object=(image, definition), provider_pool=(view, member))
                         bound = links.final_member_references(view['image'], **reference_arguments)
-                        self.assertEqual(len(bound['resolved_calls']), 3 if name == 'domain_suffix' else 2)
+                        self.assertEqual(len(bound['resolved_calls']), 4 if name == 'domain_suffix' else 3)
                         self.assertEqual(bound['discarded_calls'], [])
                         self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']},
-                            {'rip-relative-address', 'integer-zero-extend-load' if name == 'domain_suffix' else 'integer-data-load'})
+                            {'rip-relative-address', 'rip-relative-object-end-address',
+                             'integer-zero-extend-load' if name == 'domain_suffix' else 'integer-data-load'})
                         wrong = copy.deepcopy(references)
                         wrong[0]['address_addend'] += row['size_bytes']
                         wrong_span = copy.deepcopy(references)
                         wrong_span[0]['instruction_end'] += 1
+                        end_load = copy.deepcopy(next(reference for reference in references if 'operand_addend' in reference))
+                        end_load['operand_addend'] = row['size_bytes'] - 4
                         ambiguous = {**view, 'map_rows': {**view['map_rows'],
                             pool_key: [*view['map_rows'][pool_key], *view['map_rows'][pool_key]]}}
                         for altered, message in [({'provider_pool': None}, 'owned pool translation'),
                                 ({'provider_pool': (ambiguous, member)}, 'selected member or pool'),
                                 ({'provider_pool': ({**view, 'forcing_image': b''}, member)}, 'ELF'),
                                 ({'source_calls': wrong}, 'leaves provider object'),
+                                ({'source_calls': [end_load]}, 'leaves provider object'),
                                 ({'source_calls': wrong_span}, 'supported load or address')]:
                             with self.assertRaisesRegex(ValueError, message):
                                 links.final_member_references(view['image'], **{**reference_arguments, **altered})
