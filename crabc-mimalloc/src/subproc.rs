@@ -1046,6 +1046,14 @@ impl SubprocessIdentity {
 
 
 impl MainSubprocess {
+    /// Allocates one address-stable test owner without extending its borrow.
+    /// Raw arena and bitmap users must end before the returned owner drops;
+    /// this constructor neither publishes a runtime root nor proves teardown.
+    #[cfg(test)]
+    pub(crate) fn test_scoped_owner() -> core::pin::Pin<std::boxed::Box<Self>> {
+        std::boxed::Box::pin(Self::new())
+    }
+
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_static_owner() -> &'static Self {
