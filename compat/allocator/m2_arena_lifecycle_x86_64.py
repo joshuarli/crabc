@@ -226,6 +226,44 @@ def parse_attributed_retention(output: str, *, source: str, last_cycle: int = 32
     return snapshots
 
 
+def parse_retention_geometry(output: str, snapshots: Sequence[Mapping[str, Any]], *, arena_reserve: int, source: str) -> dict[str, Any]:
+    """Bind a finite PageMap storage ceiling to its actual mapped root roster."""
+    lines = [line for line in output.splitlines() if line.startswith("source_root_bound ")]
+    if len(lines) != 1:
+        raise ValueError(f"{source} PageMap geometry observation missing or duplicated")
+    pairs = re.findall(r"([a-z_]+)=([0-9]+)", lines[0])
+    fields = {key: int(value) for key, value in pairs}
+    required = {"arena_reserve_kib", "pagemap_slots", "submap_bytes", "maximum_pagemap_bytes"}
+    if len(fields) != len(pairs) or set(fields) not in (required | {"pagemap_root_bytes"}, required | {"pagemap_reserved_bytes"}) or fields["arena_reserve_kib"] != arena_reserve:
+        raise ValueError(f"{source} PageMap geometry policy or fields differ")
+    slots, submap = fields["pagemap_slots"], fields["submap_bytes"]
+    if slots < 1 or submap != 65536:
+        raise ValueError(f"{source} PageMap storage geometry differs")
+    root_extent = None
+    observed = []
+    for snapshot in snapshots:
+        current = []
+        for child in snapshot["children"]:
+            extents = [(start, end) for category, start, end, covered in child if category == "process-pagemap" and covered == end-start]
+            if not extents:
+                raise ValueError(f"{source} PageMap owner root missing")
+            if root_extent is None:
+                root_extent = extents[0]
+            if extents[0] != root_extent or len(extents) > slots or any(end-start != submap for start, end in extents[1:]):
+                raise ValueError(f"{source} PageMap source roster exceeds or differs from storage geometry")
+            total = sum(end-start for start, end in extents)
+            if total != sum(end-start for start, end in retention_interval_union(extents)):
+                raise ValueError(f"{source} PageMap storage extents overlap")
+            current.append(total)
+        observed.append(max(current))
+    if root_extent is None:
+        raise ValueError(f"{source} PageMap observation empty")
+    root_bytes = root_extent[1]-root_extent[0]
+    if fields.get("pagemap_root_bytes", root_bytes) != root_bytes or fields.get("pagemap_reserved_bytes", root_bytes) > root_bytes or fields["maximum_pagemap_bytes"] != root_bytes + (slots-1)*submap:
+        raise ValueError(f"{source} PageMap ceiling differs from actual root extent")
+    return {**fields, "pagemap_root_bytes": root_bytes, "observed_pagemap_bytes": observed}
+
+
 def parse_ambient_retention(output: str, snapshots: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Admit current circular pool membership; never carry old groups forward."""
     groups: dict[int, list[tuple[int, ...]]] = {}
@@ -463,8 +501,13 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
         (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
         harness.require_success(run, "pinned C native x86 arena lifecycle oracle")
     (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
-    return command, (parse_attributed_retention(str(run["stdout"]), source="pinned C", last_cycle=last_cycle) if repeat_retention
-                     else parse_trace(str(run["stdout"]), source="pinned C"))
+    rows = (parse_attributed_retention(str(run["stdout"]), source="pinned C", last_cycle=last_cycle) if repeat_retention
+            else parse_trace(str(run["stdout"]), source="pinned C"))
+    if repeat_retention and arena_reserve is not None:
+        geometry = parse_retention_geometry(str(run["stdout"]) + "\n" + str(run["stderr"]), rows,
+                                            arena_reserve=arena_reserve, source="pinned C")
+        harness.write_json(artifacts / "c-pagemap-geometry.json", geometry)
+    return command, rows
 
 
 def run_evidence(
@@ -592,6 +635,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 raise harness.HarnessError("exact arena lifecycle selection did not execute one passing test")
             if arguments.repeat_retention:
                 native_rows = parse_attributed_retention(output, source="Rust", last_cycle=arguments.retention_last_cycle)
+                if arguments.retention_arena_reserve is not None:
+                    geometry = parse_retention_geometry(output, native_rows, arena_reserve=arguments.retention_arena_reserve, source="Rust")
+                    harness.write_json(artifacts / "rust-pagemap-geometry.json", geometry)
                 if arguments.observe_ambient_pool:
                     ambient = parse_ambient_retention(output, native_rows)
                     harness.write_json(artifacts / "ambient-pool-observation.json", ambient)

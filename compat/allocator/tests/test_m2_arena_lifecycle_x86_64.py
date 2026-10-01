@@ -31,13 +31,31 @@ class ArenaLifecycleProfiles(unittest.TestCase):
     def test_retention_reservation_selects_both_producers_and_separate_products(self):
         rows = [{"ranges": 1, "bytes": 4096, "classification": {"added_bytes": 0}}] * 129
         record = {"status": 0, "stdout": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n", "stderr": ""}
-        with mock.patch.object(lifecycle, "run_oracle", return_value=([], rows)) as oracle, mock.patch.object(harness, "require_native_x86_64"), mock.patch.object(lifecycle, "native_program", return_value={"path": Path(__file__), "execution": {"test_threads": 1}}) as product, mock.patch.object(harness, "command_record", return_value=record) as native, mock.patch.object(harness, "write_json"), mock.patch.object(lifecycle.Path, "write_text"), mock.patch.object(lifecycle, "parse_attributed_retention", return_value=rows):
+        with mock.patch.object(lifecycle, "run_oracle", return_value=([], rows)) as oracle, mock.patch.object(harness, "require_native_x86_64"), mock.patch.object(lifecycle, "native_program", return_value={"path": Path(__file__), "execution": {"test_threads": 1}}) as product, mock.patch.object(harness, "command_record", return_value=record) as native, mock.patch.object(harness, "write_json"), mock.patch.object(lifecycle.Path, "write_text"), mock.patch.object(lifecycle, "parse_attributed_retention", return_value=rows), mock.patch.object(lifecycle, "parse_retention_geometry", return_value={}):
             self.assertEqual(lifecycle.main(["--repeat-retention", "--retention-last-cycle", "128", "--retention-arena-reserve", "1048576"]), 0)
         self.assertEqual(oracle.call_args.kwargs["arena_reserve"], 1048576)
         self.assertEqual(oracle.call_args.kwargs["last_cycle"], 128)
         self.assertEqual(native.call_args.kwargs["env"]["CRABC_MI_RETENTION_ARENA_RESERVE_KIB"], "1048576")
         self.assertEqual(native.call_args.kwargs["env"]["CRABC_MI_RETENTION_LAST_CYCLE"], "128")
         self.assertEqual(product.call_args.args[2].parts[-3:], ("retention", "last-cycle-128", "arena-reserve-1048576"))
+
+    def test_pagemap_geometry_binds_actual_storage_and_preserves_growth(self):
+        root = ("process-pagemap", 1048576, 1179648, 131072)
+        submap = ("process-pagemap", 2097152, 2162688, 65536)
+        rows = [{"children": [[root] for _ in range(6)]},
+                {"children": [[root, submap] for _ in range(6)]}]
+        text = "source_root_bound arena_reserve_kib=1048576 pagemap_root_bytes=131072 pagemap_slots=4 submap_bytes=65536 maximum_pagemap_bytes=327680"
+        observed = lifecycle.parse_retention_geometry(text, rows, arena_reserve=1048576, source="actual owner")
+        self.assertEqual(observed["maximum_pagemap_bytes"], 327680)
+        self.assertEqual(observed["observed_pagemap_bytes"], [131072, 196608])
+        for altered in (text + "\n" + text, text.replace("slots=4", "slots=1"),
+                        text.replace("bytes=327680", "bytes=196608"),
+                        text.replace("root_bytes=131072", "root_bytes=65536"),
+                        text.replace("reserve_kib=1048576", "reserve_kib=0")):
+            with self.assertRaises(ValueError):
+                lifecycle.parse_retention_geometry(altered, rows, arena_reserve=1048576, source="corrupted owner")
+        c_text = text.replace("pagemap_root_bytes=131072", "pagemap_reserved_bytes=65536")
+        self.assertEqual(lifecycle.parse_retention_geometry(c_text, rows, arena_reserve=1048576, source="C owner")["observed_pagemap_bytes"], [131072, 196608])
 
     def test_selected_statistics_caller_uses_matching_native_features(self):
         trace = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]

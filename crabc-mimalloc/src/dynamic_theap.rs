@@ -4567,6 +4567,7 @@ mod tests {
         scope: &'scope thread::Scope<'scope, 'env>,
         control: &'scope CrossThreadAbandonedControl,
         cycle: usize,
+        geometry_reserve: Option<usize>,
     ) {
         let observed = core::cell::RefCell::new(None::<RetentionRoots>);
         let completed = core::cell::Cell::new(0usize);
@@ -4583,9 +4584,23 @@ mod tests {
             // SAFETY: native admission retains the ready process owner. This
             // publication-locked visitor only records bounded scalar extents;
             // it performs no allocation, reentry, or ownership operation.
+            let mut root_bytes = 0usize;
             unsafe { page_map.test_visit_mapping_extents(|base, length| {
+                if root_bytes == 0 { root_bytes = length; }
                 roots.extent(RetentionRootCategory::ProcessPageMap, base, length);
             }) }.unwrap();
+            if cycle == 0 && child_index == 0 {
+                if let Some(arena_reserve_kib) = geometry_reserve {
+                    let slots = page_map.reserved_count();
+                    let submap_bytes = crate::config::PAGE_MAP_SUB_COUNT * core::mem::size_of::<usize>();
+                    // The first actual mapping contains the zero-address
+                    // submap; each remaining reserved slot can publish one
+                    // process-lived submap. This ceiling bounds PageMap
+                    // storage, independently of child metadata retention.
+                    let maximum = root_bytes.checked_add((slots - 1).checked_mul(submap_bytes).unwrap()).unwrap();
+                    std::eprintln!("source_root_bound arena_reserve_kib={arena_reserve_kib} pagemap_root_bytes={root_bytes} pagemap_slots={slots} submap_bytes={submap_bytes} maximum_pagemap_bytes={maximum}");
+                }
+            }
             let main = crate::subproc::MainSubprocess::global();
             crate::meta::MetaAllocator::global().test_with_held_backing_entry(|| {
                 let Some(theap) = NonNull::new(main.test_published_metadata_theap()) else { roots.failed = true; return; };
@@ -4642,7 +4657,7 @@ mod tests {
     fn x86_64_cross_thread_arena_retention_attribution_once() {
         prepare_cross_thread_managed_abandoned_lifecycle();
         let control = CrossThreadAbandonedControl::new();
-        thread::scope(|scope| retention_attribution_cycle(scope, &control, 0));
+        thread::scope(|scope| retention_attribution_cycle(scope, &control, 0, None));
     }
 
     /// Reports actual same-process mappings after joined child teardown. Source
@@ -4655,9 +4670,9 @@ mod tests {
         // public child operation. Repeating this integration transition after
         // child Heap allocations retires an active initial-owner engine; it is
         // not part of the ordinary C caller's create/destroy cycle.
-        let arena_reserve_kib = std::env::var("CRABC_MI_RETENTION_ARENA_RESERVE_KIB")
-            .map(|value| value.parse::<usize>().expect("retention arena reservation is an integer"))
-            .unwrap_or(0);
+        let geometry_reserve = std::env::var("CRABC_MI_RETENTION_ARENA_RESERVE_KIB")
+            .ok().map(|value| value.parse::<usize>().expect("retention arena reservation is an integer"));
+        let arena_reserve_kib = geometry_reserve.unwrap_or(0);
         prepare_cross_thread_managed_abandoned_lifecycle_with_reservation(arena_reserve_kib);
         let control = CrossThreadAbandonedControl::new();
         // A thread scope allocates shared bookkeeping. Keep that observer
@@ -4669,7 +4684,7 @@ mod tests {
         assert!((32..=128).contains(&last_cycle), "retention last cycle must be between 32 and 128");
         thread::scope(|scope| {
             for cycle in 0..=last_cycle {
-                retention_attribution_cycle(scope, &control, cycle);
+                retention_attribution_cycle(scope, &control, cycle, geometry_reserve);
                 #[cfg(target_env = "musl")]
                 if observe_ambient { report_ambient_retention_pool(cycle); }
                 #[cfg(not(target_env = "musl"))]
