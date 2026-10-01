@@ -7336,6 +7336,21 @@ impl Theap {
         }) }
     }
 
+    /// Observes the selected published Theap's immutable subprocess association.
+    /// The returned scalar grants no owner, mutation, or release authority.
+    ///
+    /// # Safety
+    /// The caller retains this initialized, Heap-published Theap and its
+    /// actual Heap/member lifetime. The subprocess association remains fixed
+    /// through this read; no whole-Theap reference or image retirement overlaps.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn subprocess_identity_at(
+        pointer: NonNull<Self>,
+    ) -> *mut SubprocessIdentity {
+        // SAFETY: only the retained image's atomic association is projected.
+        unsafe { (&*core::ptr::addr_of!((*pointer.as_ptr()).subproc)).load(Ordering::Acquire) }
+    }
+
     /// The admission read of source `mi_subproc_add_current_thread`
     /// (`subproc.c:291-296`): `None` while this default Theap is
     /// uninitialized, otherwise the subprocess its TLD names (null when the
@@ -8339,6 +8354,34 @@ mod tests {
         // All three unlisted fixture owners stay at their final addresses
         // through this source-owner observation; no allocation or TLS exists.
         assert!(theap.matches_owner(TheapOwner::Detached));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn selected_published_metadata_theap_identity_matches_its_actual_heap_owner() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let mut tld = ThreadLocalData::detached();
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let mut theap = Theap::empty();
+        assert!(theap.set_detached_main_metadata_static_memid());
+        theap.initialize_metadata_static(&mut heap, &mut tld).unwrap();
+        let pointer = NonNull::new(core::ptr::addr_of_mut!(theap)).unwrap();
+        let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(heap)).unwrap();
+        assert!(theap.is_initialized());
+        // SAFETY: the actual initialized source images remain at their final
+        // addresses; no list mutation or retirement overlaps these reads.
+        unsafe {
+            let selected = Theap::subprocess_identity_at(pointer);
+            assert_eq!(selected, PARENT.identity_ptr());
+            assert_eq!(selected, Heap::subprocess_pointer_at(heap_pointer));
+            tld.detach_one_theap_from_heap(&mut heap, pointer.as_ptr()).unwrap();
+            tld.detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
+        }
+        assert!(heap.theaps.is_null());
+        assert!(tld.theaps.is_null());
     }
 
     #[cfg(target_arch = "x86_64")]
