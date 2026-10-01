@@ -2938,12 +2938,14 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     }
 
     /// Preserves a canonical-source admission refusal through phase transport.
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn begin_deferred_free_guarded_canonical_checked(
         &mut self, source_size: usize,
     ) -> crate::single_thread::GuardedCanonicalAllocationPhase {
         self.engine.begin_deferred_free_guarded_canonical_checked(source_size)
     }
 
+    #[cfg(target_arch = "x86_64")]
     pub(crate) fn resume_deferred_free_guarded_canonical_checked(
         &mut self,
         collection: crate::single_thread::GenericAllocationCollection,
@@ -2956,6 +2958,7 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     /// The actual original allocator admission, selected Theap and backing
     /// remain retained across the source getter callback. `frequency` is its
     /// source-clamped value; no issuing image is retired or rebound.
+    #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn resume_guarded_canonical_frequency_checked(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
