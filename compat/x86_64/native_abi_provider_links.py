@@ -358,18 +358,86 @@ def integer_memory_operand(source: bytes, offset: int, *,
     return None
 
 
+def data_pointer_relocations(image: bytes, name: str) -> list[dict[str, Any]]:
+    """Read named slots from complete ordinary data.rel.ro pointer tables.
+
+    The source holder can be a section without an OBJECT symbol. Its complete
+    file extent must consist of aligned, zero-filled RELA pointer slots, each
+    naming a strong hidden undefined symbol. Mixed data, section-local targets,
+    merge pools, TLS, constructor arrays and partial relocation coverage do not
+    acquire pointer-table ownership through a similar name or equal bytes.
+    """
+    original = static_authority.elf_bytes(image)
+    require(original.elf_type == 1, 'data pointer source is not relocatable ELF')
+    result = []
+    for relocation in original.sections:
+        if relocation[1] != 4:
+            continue
+        require(relocation[9] == 24 and relocation[5] % 24 == 0
+                and relocation[4] + relocation[5] <= len(image)
+                and 0 < relocation[7] < len(original.sections), 'data pointer relocation table differs')
+        entries = [original.unpack('<QQq', position)
+                   for position in range(relocation[4], relocation[4] + relocation[5], 24)]
+        if not any(info & 0xffffffff == 1 and original.symbol_row(relocation[6], info >> 32)['name'] == name
+                   for _, info, _ in entries):
+            continue
+        section = original.sections[relocation[7]]
+        if section[1] != 1 or section[2] != 3:
+            continue
+        section_name = static_authority.section_name(original, section)
+        # Explicit relocation-ready data tables are this source class. GOT and
+        # constructor storage require their own ABI ownership authority even
+        # when their file bytes resemble ordinary pointer slots.
+        if section_name != '.data.rel.ro' and not section_name.startswith('.data.rel.ro.'):
+            continue
+        require(section[3] == 0 and section[5] > 0 and section[5] % 8 == 0
+                and section[8] >= 8 and section[8] % 8 == 0 and section[9] == 0
+                and section[6] == section[7] == 0 and section[4] + section[5] <= len(image)
+                and image[section[4]:section[4] + section[5]] == bytes(section[5])
+                and static_authority.section_name(original, relocation) == '.rela' + section_name
+                and original.sections[relocation[6]][1] == 2
+                and len([other for other in original.sections if other[1] in {4, 9, 19}
+                         and other[7] == relocation[7]]) == 1,
+                'data pointer holder extent or payload differs')
+        positions = []
+        for offset, info, addend in entries:
+            imported = original.symbol_row(relocation[6], info >> 32)
+            require(info & 0xffffffff == 1 and imported['name']
+                    and imported['binding'] == 'GLOBAL' and imported['visibility'] == 'HIDDEN'
+                    and imported['type'] in {'0', 'OBJECT'}
+                    and imported['section'] == imported['value'] == imported['size'] == 0
+                    and imported['version_index'] == 1
+                    and offset % 8 == 0 and 0 <= offset and offset + 8 <= section[5],
+                    'data pointer holder relocation footprint differs')
+            positions.append(offset)
+            if imported['name'] == name:
+                result.append({'section': section_name, 'offset': offset, 'kind': 'R_X86_64_64',
+                               'pointer_addend': addend})
+        require(len(positions) == len(set(positions)) and set(positions) == set(range(0, section[5], 8)),
+                'data pointer holder relocation coverage differs')
+    return result
+
+
 def import_relocations(transcript: str, name: str, *, image: bytes,
                        disassembly: str | None = None) -> list[dict[str, Any]]:
     """Retain the complete executable relocation roster for a symbol import.
 
     A function reference may load its address without calling it at that site.
     Only the exact PC-relative instruction forms decoded below are accepted.
-    Non-executable relocations remain outside this proof. Interior LEA addends
+    Ordinary complete data-pointer tables have a separate raw relocation proof.
+    Other non-executable forms stay unsupported. Interior LEA addends
     require a separately authenticated object extent during final projection.
     Disassembly boundaries are checked against raw section bytes so a preceding
     instruction displacement cannot be mistaken for an operand-size prefix.
     """
     sections = calls._ordinary_relocation_sections(image)
+    pointers = data_pointer_relocations(image, name) if 'R_X86_64_64' in transcript else []
+    if pointers:
+        original = static_authority.elf_bytes(image)
+        pointer_sections = {reference['section'] for reference in pointers}
+        for relocation in original.sections:
+            if relocation[1] == 4 and static_authority.section_name(original, original.sections[relocation[7]]) in pointer_sections:
+                sections[relocation[4]] = static_authority.section_name(original, original.sections[relocation[7]])
     instruction_spans = {}
     if disassembly is not None:
         source_sections = calls._ordinary_source_sections(image, set(sections.values()))
@@ -392,10 +460,11 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
             spans[start] = end
     section, references = None, []
     for line in transcript.splitlines():
-        header = re.match(r"^Relocation section '(\.rela\.text(?:\.[^']+)?)' at offset 0x([0-9a-f]+)", line)
+        header = re.match(r"^Relocation section '(\.rela[^']*)' at offset 0x([0-9a-f]+)", line)
         if header:
             section = sections.get(int(header.group(2), 16))
-            require(section is not None and ('.rela' + section).startswith(header.group(1)),
+            require((section is not None or not header.group(1).startswith('.rela.text'))
+                    and (section is None or ('.rela' + section).startswith(header.group(1))),
                     'provider import relocation heading differs from ELF target')
             continue
         if line.startswith('Relocation section '):
@@ -406,6 +475,11 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
             continue
         addend = int(row.group(5), 16) * (-1 if row.group(4) == '-' else 1)
         offset, kind = int(row.group(1), 16), row.group(2)
+        if kind == 'R_X86_64_64':
+            reference = {'section': section, 'offset': offset, 'kind': kind, 'pointer_addend': addend}
+            require(reference in pointers, f'provider import {name} data pointer relocation differs')
+            references.append(reference)
+            continue
         source = calls._ordinary_source_sections(image, {section})[section] if section is not None else b''
         scalar = section is not None and kind == 'R_X86_64_PC32' and scalar_read_prefix(source, offset)
         prefix = source[offset - 3:offset] if offset >= 3 else b''
@@ -430,6 +504,8 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
                            **({'operand_addend': addend} if integer is not None else {}),
                            **({'instruction_start': instruction_span[0], 'instruction_end': instruction_span[1]}
                               if instruction_span is not None else {})})
+    require([reference for reference in references if reference['kind'] == 'R_X86_64_64'] == pointers,
+            f'provider import {name} data pointer transcript roster differs')
     require(len({(row['section'], row['offset']) for row in references}) == len(references),
             f'provider import {name} relocation roster differs')
     return references
@@ -511,18 +587,136 @@ def immutable_object_payload(image: bytes, source_image: bytes, *, symbol: Mappi
             f'provider {name} immutable payload differs')
 
 
+def writable_object_mapping(image: bytes, *, address: int, extent: int,
+                            output: tuple[int, ...], label: str) -> None:
+    """Prove the full object's exclusive non-executable writable mapping."""
+    table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+    programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
+    mappings = [program for program in programs if program[0] == 1
+                and program[3] < address + extent and address < program[3] + program[6]]
+    require(len(mappings) == 1 and mappings[0][1] == 6 and mappings[0][3] <= address
+            and address + extent <= mappings[0][3] + mappings[0][6]
+            and mappings[0][2] + mappings[0][5] <= len(image)
+            and (output[1] == 8 or
+                 (address + extent <= mappings[0][3] + mappings[0][5]
+                  and mappings[0][2] + address - mappings[0][3] == output[4] + address - output[3])),
+            f'{label} lacks an exclusive writable load extent')
+
+
+def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement: list[str],
+                       importer_image: bytes | None, source_payload: bytes,
+                       provider_object: tuple[bytes, Mapping[str, Any]] | None,
+                       provider_address: int, elf_type: int, name: str) -> dict[str, Any]:
+    """Bind a named source table slot to the exact selected ordinary OBJECT.
+
+    This proves an initial address representation or its RELATIVE fixup, not a
+    later dereference or the active contents of a relocatable target object.
+    Neighbor slots must retain the table's complete pointer footprint; their
+    target ownership is proved independently when their names are selected.
+    """
+    require(importer_image is not None and provider_object is not None,
+            'data pointer lacks its owned source table or target object')
+    require(reference in data_pointer_relocations(importer_image, name),
+            'data pointer source reference differs')
+    original = static_authority.elf_bytes(importer_image)
+    headers = [header for header in original.sections
+               if static_authority.section_name(original, header) == reference['section']]
+    require(len(headers) == 1, 'data pointer source holder is ambiguous')
+    holder = headers[0]
+    require(source_payload == importer_image[holder[4]:holder[4] + holder[5]],
+            'data pointer source holder payload differs')
+    require(len(placement) >= 5 and int(placement[0], 16) == int(placement[1], 16)
+            and int(placement[2], 16) == holder[5] and int(placement[3]) == holder[8],
+            'data pointer source holder placement differs')
+    base, offset = int(placement[0], 16), reference['offset']
+    require(base % holder[8] == 0 and offset % 8 == 0 and offset + 8 <= holder[5],
+            'data pointer source slot extent differs')
+    final = static_authority.elf_bytes(image)
+    require(final.elf_type == elf_type, 'data pointer final ELF type differs')
+    outputs = [section for section in final.sections if section[1] == 1 and section[2] == 3
+               and section[3] <= base and base + holder[5] <= section[3] + section[5]
+               and section[4] + section[5] <= len(image)]
+    require(len(outputs) == 1, 'data pointer final holder extent differs')
+    writable_object_mapping(image, address=base, extent=holder[5], output=outputs[0], label='data pointer holder')
+    source_image, definition = provider_object
+    provider = static_authority.elf_bytes(source_image)
+    symbol = provider.symbol(name, dynamic=False)
+    row, observed = definition['row'], definition['definition_section']
+    require(provider.elf_type == 1 and symbol is not None
+            and symbol['type'] == row['type'] == 'OBJECT'
+            and symbol['binding'] == row['binding'] == 'GLOBAL'
+            and symbol['visibility'] == row['visibility'] == 'HIDDEN'
+            and symbol['section'] == int(row['section_index']) == observed['index']
+            and symbol['value'] == int(row['value'], 16) and symbol['size'] == row['size_bytes'] > 0
+            and 0 < symbol['section'] < len(provider.sections), 'data pointer target source symbol differs')
+    header = provider.sections[symbol['section']]
+    readonly = header[2] == 2
+    require(header[1] == 1 and observed['type'] == 'PROGBITS'
+            and (header[2], observed['flags']) == ((2, 'A') if readonly else (3, 'WA'))
+            and header[3] == int(observed['address'], 16) and header[4] == int(observed['offset'], 16)
+            and header[5] == int(observed['size'], 16) and header[6] == observed['link']
+            and header[7] == observed['info'] and header[8] == observed['alignment'] > 0
+            and header[9] == int(observed['entry_size'], 16) == 0
+            and header[4] + header[5] <= len(source_image) and symbol['value'] + symbol['size'] <= header[5]
+            and static_authority.section_name(provider, header) == observed['name'],
+            'data pointer target source extent differs')
+    addend = reference['pointer_addend']
+    require(type(addend) is int and 0 <= addend < symbol['size'], 'data pointer addend leaves target object')
+    target = final.symbol(name, dynamic=False)
+    require(target is not None and target['type'] == 'OBJECT' and target['binding'] == 'LOCAL'
+            and target['visibility'] == 'HIDDEN' and target['value'] == provider_address
+            and target['size'] == symbol['size'] and 0 < target['section'] < len(final.sections),
+            'data pointer target final symbol differs')
+    output = final.sections[target['section']]
+    require(output[1] == 1 and (output[2] in {2, 18, 50} if readonly else output[2] == 3)
+            and output[3] <= provider_address and provider_address + symbol['size'] <= output[3] + output[5]
+            and output[4] + output[5] <= len(image), 'data pointer target final extent differs')
+    if readonly:
+        immutable_object_payload(image, source_image, symbol=symbol, header=header, output=output,
+                                 address=provider_address, name=name)
+    else:
+        writable_object_mapping(image, address=provider_address, extent=symbol['size'], output=output,
+                                label='data pointer target')
+    footprint = []
+    for relocation in final.sections:
+        if relocation[1] not in {4, 9, 19}:
+            continue
+        require(relocation[1] == 4 and relocation[9] == 24 and relocation[5] % 24 == 0
+                and relocation[4] + relocation[5] <= len(image), 'data pointer final relocation encoding differs')
+        for position in range(relocation[4], relocation[4] + relocation[5], 24):
+            address, info, value = final.unpack('<QQq', position)
+            require(info == 8, 'data pointer final relocation type differs')
+            if address < base + holder[5] and base < address + 8:
+                footprint.append((address, info, value))
+    slot = base + offset
+    value = struct.unpack('<Q', calls._public_weak_virtual_bytes(image, slot, 8, elf_type, executable=False))[0]
+    expected = provider_address + addend
+    positions = [position for position, _, _ in footprint]
+    require((elf_type == 2 and not footprint and value == expected)
+            or (elf_type == 3 and len(positions) == len(set(positions))
+                and set(positions) == set(range(base, base + holder[5], 8))
+                and (slot, 8, expected) in footprint and value == 0),
+            'data pointer final slot or relocation footprint differs')
+    return {'section': reference['section'], 'offset': offset, 'slot_address': slot,
+            'target_address': expected, 'provider_offset': addend, 'operand_size': 8,
+            'branch_kind': 'data-object-pointer'}
+
+
 def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
                             map_text: str, relocation_text: str, provider_address: int,
                             elf_type: int, name: str, source_sections: Mapping[str, bytes],
                             provider_data: bytes | None = None,
                             provider_object: tuple[bytes, Mapping[str, Any]] | None = None,
-                            provider_pool: tuple[Mapping[str, Any], str] | None = None) -> dict[str, Any]:
-    """Bind exact source instruction operands to their final provider address.
+                            provider_pool: tuple[Mapping[str, Any], str] | None = None,
+                            importer_image: bytes | None = None) -> dict[str, Any]:
+    """Bind source instruction operands and data pointer slots to provider owners.
 
     Register address loads and GOT comparisons prove address binding only.
     They do not assert a later call, register lifetime, comparison outcome,
     reachability or runtime semantics.
     Direct calls retain the existing branch proof and all sites must survive.
+    Ordinary data tables require raw named R64 slots and complete source/final
+    pointer footprints; an address representation grants no dereference scope.
     Scalar reads require the exact unrelocated bytes and full extent of the
     selected read-only OBJECT; the caller authenticates its source definition.
     They prove initial operand bytes, not execution or later memory contents.
@@ -549,6 +743,11 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             continue
         source = source_sections[section]
         parts = rows[0].split()
+        if kind == 'R_X86_64_64':
+            resolved.append(final_data_pointer(image, reference=reference, placement=parts,
+                importer_image=importer_image, source_payload=source, provider_object=provider_object,
+                provider_address=provider_address, elf_type=elf_type, name=name))
+            continue
         require(len(parts) >= 5 and type(offset) is int and offset >= 1
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
                 f'provider {name} reference leaves selected section')
@@ -659,17 +858,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                 # The complete selected object belongs to one writable,
                 # non-executable mapping. An overlapping LOAD cannot offer
                 # different permissions or a second interpretation of it.
-                mappings = [program for program in programs if program[0] == 1
-                            and program[3] < provider_address + symbol['size']
-                            and provider_address < program[3] + program[6]]
-                require(len(mappings) == 1 and mappings[0][1] == 6
-                        and mappings[0][3] <= provider_address
-                        and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][6]
-                        and (output[1] == 8 or
-                             (provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
-                              and mappings[0][2] + provider_address - mappings[0][3]
-                              == output[4] + provider_address - output[3])),
-                        f'provider {name} integer object lacks an exclusive writable load extent')
+                writable_object_mapping(image, address=provider_address, extent=symbol['size'], output=output,
+                                        label=f'provider {name} integer object')
             resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
                              'target_address': target, 'operand_size': operand_size, 'branch_kind': operation,
                              **({'provider_offset': provider_offset} if provider_offset else {})})
@@ -809,23 +999,11 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     immutable_object_payload(image, source_image, symbol=symbol, header=header,
                                              output=output, address=provider_address, name=name)
                 if not merged:
-                    table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
                     # NOBITS owns memory extent, never a file payload. Forming
                     # an interior address proves the whole writable object's
                     # placement without granting a read or one-past extent.
-                    programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index)
-                                for index in range(count)]
-                    mappings = [program for program in programs if program[0] == 1
-                                and program[3] < provider_address + symbol['size']
-                                and provider_address < program[3] + program[6]]
-                    require(len(mappings) == 1 and mappings[0][1] == 6
-                            and mappings[0][3] <= provider_address
-                            and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][6]
-                            and (output[1] == 8 or
-                                 (provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
-                                  and mappings[0][2] + provider_address - mappings[0][3]
-                                  == output[4] + provider_address - output[3])),
-                            f'provider {name} interior object lacks a writable load extent')
+                    writable_object_mapping(image, address=provider_address, extent=symbol['size'], output=output,
+                                            label=f'provider {name} interior object')
                 record['provider_offset'] = provider_offset
                 record['target_address'] = provider_address + provider_offset
             require(target == provider_address + provider_offset,
@@ -1069,6 +1247,8 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
             provider_data = None
             integer_object = any('operand_addend' in reference
                                  for _, references, _ in source_imports for reference in references)
+            pointer_object = any(reference['kind'] == 'R_X86_64_64'
+                                 for _, references, _ in source_imports for reference in references)
             interior_object = any('address_addend' in reference
                                   for _, references, _ in source_imports for reference in references)
             merged_string = definition['row']['type'] == 'OBJECT' and definition['definition_section']['flags'] == 'AMS'
@@ -1088,7 +1268,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 selected = mapped_archive + '(' + definition['member_name'] + ')'
                 source_image = None
                 if (definition['row']['type'] in {'FUNC', 'OBJECT'}
-                        and (integer_object or interior_object or merged_string or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
+                        and (integer_object or interior_object or pointer_object or merged_string or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
                     member = definition['member_name']
                     require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
                     if member not in definition_images:
@@ -1106,8 +1286,9 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
                         provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data,
-                        provider_object=(source_image, definition) if integer_object or interior_object or merged_string else None,
-                        provider_pool=(view, selected) if merged_string else None)
+                        provider_object=(source_image, definition) if integer_object or interior_object or pointer_object or merged_string else None,
+                        provider_pool=(view, selected) if merged_string else None,
+                        importer_image=source_members[imported['member_name']][0] if pointer_object else None)
                     require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':

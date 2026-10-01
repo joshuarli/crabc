@@ -162,6 +162,190 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     self.assertEqual({row['identity']['name'] for row in wrong_owner['failures']}, set(names))
                     self.assertEqual(list(private.iterdir()), [])
 
+    def test_whole_projection_binds_data_pointer_tables_to_selected_object_addresses(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            static = work / 'product'
+            (static / 'usr/lib').mkdir(parents=True)
+            private = work / 'private'
+            private.mkdir()
+            names = ['domain_body', 'domain_caller', 'domain_target']
+            (work / 'providers.c').write_text(links.source(names, object_names=['domain_target']))
+            for storage, addend, supported in [('data', 0, True), ('data', 8, True),
+                    ('rodata', 0, True), ('rodata', 8, True), ('data', 16, False), ('data', -1, False),
+                    ('function', 0, False), ('table-gap', 0, False), ('got-table', 0, False)]:
+                with self.subTest(storage=storage, addend=addend):
+                    (work / 'provider.S').write_text(
+                        '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
+                        '.type domain_body,@function\ndomain_body: ret\n.size domain_body,.-domain_body\n'
+                        + '.section .' + ('text' if storage == 'function' else 'data' if storage in {'table-gap', 'got-table'} else storage)
+                        + '.domain_target,"' + ('ax' if storage == 'function' else 'a' if storage == 'rodata' else 'aw')
+                        + '",@progbits\n.balign 8\n.globl domain_target\n.hidden domain_target\n'
+                        + '.type domain_target,@' + ('function' if storage == 'function' else 'object') + '\ndomain_target:\n'
+                        + ('ret\n' if storage == 'function' else '.quad .Lbytes; .quad 8\n'
+                           if storage in {'data', 'table-gap', 'got-table'} else '.quad 0x1234; .quad 0x5678\n')
+                        + '.size domain_target,.-domain_target\n.section .rodata.bytes,"a",@progbits\n.Lbytes: .quad 7\n'
+                        '.section .note.GNU-stack,"",@progbits\n')
+                    (work / 'caller.S').write_text(
+                        '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
+                        '.hidden domain_body\n.hidden domain_target\n.type domain_caller,@function\n'
+                        'domain_caller: call domain_body; ret\n.size domain_caller,.-domain_caller\n'
+                        + '.section ' + ('.got' if storage == 'got-table' else '.data.rel.ro.pointer_table') + ',"aw",@progbits\n.balign 8\n'
+                        + f'.quad domain_target+({addend}); ' + ('.quad 0\n' if storage == 'table-gap'
+                                                                  else f'.quad domain_target+({addend})\n')
+                        + '.section .note.GNU-stack,"",@progbits\n')
+                    for source, target in [('provider.S', 'provider.o'), ('caller.S', 'caller.o'), ('providers.c', 'providers.o')]:
+                        subprocess.run([compiler, '-fPIC', '-c', str(work / source), '-o', str(work / target)],
+                                       check=True, capture_output=True)
+                    archive = static / 'usr/lib/libc.a'
+                    subprocess.run(['ar', 'rcs', str(archive), str(work / 'caller.o'), str(work / 'provider.o')],
+                                   check=True, capture_output=True)
+                    occurrences = []
+                    for member in ('caller.o', 'provider.o'):
+                        symbols = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / member))
+                        sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / member))['sections']
+                        for row in symbols[0]['rows']:
+                            if row['name'] not in names:
+                                continue
+                            role = 'import' if row['section_index'] == 'UND' else 'definition'
+                            occurrence = {'index': len(occurrences), 'artifact_key': 'candidate-static',
+                                          'member_name': member, 'member_occurrence': 0, 'role': role, 'row': row}
+                            if role == 'definition':
+                                occurrence['definition_section'] = next(section for section in sections
+                                    if str(section['index']) == row['section_index'])
+                            occurrences.append(occurrence)
+                    accounting = {'occurrences': occurrences, 'identities': [
+                        {'identity': selection.identity(name), 'selection': {'disposition': 'unresolved'},
+                         'unresolved': []} for name in names]}
+                    for mode, flag in [('static', '-static'), ('static-pie', '-pie')]:
+                        linked = subprocess.run([linker, flag, '--no-relax', '-e', 'main', '--trace',
+                            '-Map=' + str(work / (mode + '.receipt.map')), str(work / 'providers.o'), str(archive),
+                            '-o', str(work / mode)], check=True, capture_output=True)
+                        (work / (mode + '.receipt.trace')).write_bytes(linked.stdout)
+                    arguments = dict(mapped_archive=str(archive), forcing_owner=str(work / 'providers.o'), temporary_parent=private)
+                    proof = links.project_references(work, static, accounting, **arguments)
+                    admitted = {row['identity']['name']: row for row in proof['identities']}
+                    if not supported:
+                        self.assertEqual(set(admitted), {'domain_body', 'domain_caller'}, proof['failures'])
+                        self.assertEqual([row['identity']['name'] for row in proof['failures']], ['domain_target'])
+                        continue
+                    self.assertEqual(set(admitted), set(names), proof['failures'])
+                    self.assertEqual(proof['failures'], [])
+                    definition = next(row for row in occurrences
+                        if row['role'] == 'definition' and row['row']['name'] == 'domain_target')
+                    caller = (work / 'caller.o').read_bytes()
+                    references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                        'domain_target', image=caller, disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
+                    sections = links.calls._ordinary_source_sections(caller, {row['section'] for row in references})
+                    source_object = (work / 'provider.o').read_bytes()
+                    for mode, elf_type in [('static', 2), ('static-pie', 3)]:
+                        image = (work / mode).read_bytes()
+                        address = admitted['domain_target']['links'][mode]['provider_address']
+                        reference_arguments = dict(archive_member=str(archive) + '(caller.o)', source_calls=references,
+                            map_text=(work / (mode + '.receipt.map')).read_text(),
+                            relocation_text=links.read_tool('readelf', '-rW', work / mode), provider_address=address,
+                            elf_type=elf_type, name='domain_target', source_sections=sections,
+                            provider_object=(source_object, definition), importer_image=caller)
+                        bound = links.final_member_references(image, **reference_arguments)
+                        self.assertEqual(len(bound['resolved_calls']), 2)
+                        self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, {'data-object-pointer'})
+                        self.assertEqual({row['operand_size'] for row in bound['resolved_calls']}, {8})
+                        self.assertEqual({row['target_address'] for row in bound['resolved_calls']}, {address + addend})
+                        wrong = copy.deepcopy(definition)
+                        wrong['row']['size_bytes'] += 1
+                        wrong_reference = copy.deepcopy(references)
+                        wrong_reference[0]['pointer_addend'] += 1
+                        for altered in [{'provider_object': None}, {'importer_image': None},
+                                {'provider_object': (source_object, wrong)}, {'provider_address': address + 1},
+                                {'source_calls': wrong_reference}]:
+                            with self.assertRaises(ValueError):
+                                links.final_member_references(image, **{**reference_arguments, **altered})
+                        source = links.static_authority.elf_bytes(caller)
+                        table_index, table_header = next((index, header) for index, header in enumerate(source.sections)
+                            if links.static_authority.section_name(source, header) == references[0]['section'])
+                        relocation = next(header for header in source.sections if header[1] == 4 and header[7] == table_index)
+                        changed_source = bytearray(caller)
+                        changed_source[table_header[4]] = 1
+                        changed_addend = bytearray(caller)
+                        struct.pack_into('<q', changed_addend, relocation[4] + 16, addend + 1)
+                        body_index = next(index for index in range(source.sections[relocation[6]][5] // 24)
+                            if source.symbol_row(relocation[6], index)['name'] == 'domain_body')
+                        changed_symbol = bytearray(caller)
+                        struct.pack_into('<Q', changed_symbol, relocation[4] + 8, (body_index << 32) | 1)
+                        section_table, section_width = struct.unpack_from('<Q', caller, 40)[0], struct.unpack_from('<H', caller, 58)[0]
+                        changed_extent = bytearray(caller)
+                        struct.pack_into('<Q', changed_extent, section_table + section_width * table_index + 32, 15)
+                        for altered_source in [changed_source, changed_addend, changed_symbol, changed_extent]:
+                            with self.assertRaises(ValueError):
+                                links.final_member_references(image, **{**reference_arguments, 'importer_image': bytes(altered_source)})
+                        changed_references = links.data_pointer_relocations(bytes(changed_addend), 'domain_target')
+                        with self.assertRaisesRegex(ValueError, 'slot or relocation footprint differs'):
+                            links.final_member_references(image, **{**reference_arguments,
+                                'importer_image': bytes(changed_addend), 'source_calls': changed_references})
+                        target_source = links.static_authority.elf_bytes(source_object)
+                        target_symbol = target_source.symbol('domain_target', dynamic=False)
+                        target_table, target_width = struct.unpack_from('<Q', source_object, 40)[0], struct.unpack_from('<H', source_object, 58)[0]
+                        target_header = target_table + target_width * target_symbol['section']
+                        for field, value, encoding in [(4, 8, '<I'), (8, 7, '<Q'), (32, 15, '<Q')]:
+                            changed = bytearray(source_object)
+                            struct.pack_into(encoding, changed, target_header + field, value)
+                            with self.assertRaisesRegex(ValueError, 'target source extent differs'):
+                                links.final_member_references(image, **{**reference_arguments, 'provider_object': (bytes(changed), definition)})
+                        final = links.static_authority.elf_bytes(image)
+                        symbol = final.symbol('domain_target', dynamic=False)
+                        final_table, final_width = struct.unpack_from('<Q', image, 40)[0], struct.unpack_from('<H', image, 58)[0]
+                        changed = bytearray(image)
+                        struct.pack_into('<Q', changed, final_table + final_width * symbol['section'] + 32,
+                                         address + 15 - final.sections[symbol['section']][3])
+                        with self.assertRaisesRegex(ValueError, 'target final extent differs'):
+                            links.final_member_references(bytes(changed), **reference_arguments)
+                        slot = bound['resolved_calls'][0]['slot_address']
+                        program_table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+                        programs = [(program_table + width * index, struct.unpack_from('<IIQQQQQQ', image, program_table + width * index))
+                                    for index in range(count)]
+                        holder_location, holder_load = next((location, program) for location, program in programs
+                            if program[0] == 1 and program[3] <= slot < program[3] + program[5])
+                        for flags in [4, 7]:
+                            changed = bytearray(image)
+                            struct.pack_into('<I', changed, holder_location + 4, flags)
+                            with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                links.final_member_references(bytes(changed), **reference_arguments)
+                        changed = bytearray(image)
+                        struct.pack_into('<Q', changed, holder_location + 32, slot + 7 - holder_load[3])
+                        with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                            links.final_member_references(bytes(changed), **reference_arguments)
+                        readonly_location, _ = next((location, program) for location, program in programs if program[:2] == (1, 4))
+                        changed = bytearray(image)
+                        struct.pack_into('<Q', changed, readonly_location + 16, slot)
+                        with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                            links.final_member_references(bytes(changed), **reference_arguments)
+                        changed = bytearray(image)
+                        struct.pack_into('<Q', changed, holder_location + 8, holder_load[2] + 1)
+                        with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                            links.final_member_references(bytes(changed), **reference_arguments)
+                        changed = bytearray(image)
+                        changed[holder_load[2] + slot - holder_load[3]] ^= 1
+                        with self.assertRaisesRegex(ValueError, 'slot or relocation footprint differs'):
+                            links.final_member_references(bytes(changed), **reference_arguments)
+                        if elf_type == 3:
+                            relative = next(header for header in final.sections if header[1] == 4
+                                and any(final.unpack('<Q', position)[0] == slot
+                                        for position in range(header[4], header[4] + header[5], 24)))
+                            position = next(position for position in range(relative[4], relative[4] + relative[5], 24)
+                                            if final.unpack('<Q', position)[0] == slot)
+                            for field, value, encoding in [(0, slot + 4, '<Q'), (8, 1, '<Q'), (16, address + addend + 1, '<q')]:
+                                changed = bytearray(image)
+                                struct.pack_into(encoding, changed, position + field, value)
+                                with self.assertRaises(ValueError):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                    self.assertEqual(list(private.iterdir()), [])
+
     def test_whole_projection_binds_observed_integer_memory_operands(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
