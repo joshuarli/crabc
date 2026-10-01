@@ -1106,6 +1106,17 @@ impl ProcessMainInitializationStorage {
                 // option image. Do not collapse it into the global wrapper:
                 // the retained policy owns `mimalloc_use_numa_nodes`'s cache.
                 Some(process) => {
+                    #[cfg(target_arch = "x86_64")]
+                    if let ProcessBootstrapOutput::Selected(output) = &bootstrap_output {
+                        MainStaticTheapAttachment::begin_after_heap_foundation_with_bootstrap_output(
+                            foundation, selection, process, output,
+                        )
+                    } else {
+                        MainStaticTheapAttachment::begin_after_heap_foundation_with_vm_process(
+                            foundation, selection, process,
+                        )
+                    }
+                    #[cfg(not(target_arch = "x86_64"))]
                     MainStaticTheapAttachment::begin_after_heap_foundation_with_vm_process(
                         foundation,
                         selection,
