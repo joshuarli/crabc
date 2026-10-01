@@ -136,6 +136,45 @@ def product_binding(root, product):
             'tree': tree_binding(root, product)}
 
 
+def matrix_product_bindings(root, matrix):
+    """Project all prerequisite product payloads into one native phase seal.
+
+    Only the installed dynamic product executes native components, but the
+    consumed matrix also depends on its independent and extracted products.
+    Their bytes must remain the bytes judged before this phase can return.
+    """
+    require(isinstance(matrix, dict) and isinstance(matrix.get('inputs'), dict),
+            'matrix product inputs differ')
+    inputs = matrix['inputs']
+    static = inputs.get('static_products')
+    dynamic = inputs.get('dynamic_products')
+    require(isinstance(static, dict) and isinstance(dynamic, dict)
+            and set(static) == set(family.PAIRS) and set(dynamic) == set(family.PAIRS),
+            'matrix product roster differs')
+    result = {}
+    for label in family.PAIRS:
+        record = static[label]
+        require(isinstance(record, dict) and isinstance(record.get('path'), str),
+                'matrix static product manifest differs')
+        manifest = family.physical(root, root / record['path'])
+        require(manifest.parts[-3:] == ('share', 'crabc', 'manifest.json')
+                and same_json(family.file_identity(root, manifest), record),
+                'matrix static product manifest changed')
+        static_product = manifest.parents[2]
+        record = dynamic[label]
+        require(isinstance(record, dict) and set(record) == {'path', 'manifest_sha256'}
+                and isinstance(record['path'], str), 'matrix dynamic product fields differ')
+        dynamic_product = family.physical(root, root / record['path'])
+        require(static_product.is_relative_to(root / '.work')
+                and dynamic_product.is_relative_to(root / '.work'),
+                'matrix product escapes checkout evidence')
+        dynamic_binding = product_binding(root, dynamic_product)
+        require(dynamic_binding['manifest']['sha256'] == record['manifest_sha256'],
+                'matrix dynamic product manifest changed')
+        result[label] = {'static': product_binding(root, static_product), 'dynamic': dynamic_binding}
+    return result
+
+
 def io_replacement(root, matrix):
     source = family.source_file(root, IO_SOURCE)
     content = (root / IO_SOURCE).read_text()
@@ -210,7 +249,10 @@ def _input_matrix(root, request):
     value = request['family_execution']
     require(isinstance(value, str) and not Path(value).is_absolute(), 'matrix input must be checkout-relative')
     path = family.physical(root, root / value)
+    matrix_products = matrix_product_bindings(root, read(path))
     matrix = family.validate_receipt(root, path)
+    require(same_json(matrix_product_bindings(root, matrix), matrix_products),
+            'matrix product changed during prerequisite validation')
     require(matrix['schema'] == family.SCHEMA and matrix['status'] == 'workload-matrix-verified'
             and matrix['family'] == 'libc.posix-runtime', 'complete POSIX family matrix required')
     require(all(matrix[key] is False for key in ('family_completion', 'public_support', 'native_aggregate_complete')),
@@ -256,7 +298,8 @@ def _input_matrix(root, request):
                                      'wordexp': wordexp_record},
               'family_execution': family.file_identity(root, path), 'source': source,
               'source_files': source_files(root), 'product': product_binding(root, product),
-              'matrix_inputs': matrix['inputs'], 'io_cancellation_replacement': io_replacement(root, matrix)}
+              'matrix_inputs': matrix['inputs'], 'matrix_products': matrix_products,
+              'io_cancellation_replacement': io_replacement(root, matrix)}
     return inputs, product, matrix
 
 
@@ -629,6 +672,8 @@ def guard(root, inputs, product):
     require(same_json(source_identity(root), inputs['source']) and
             same_json(source_files(root), inputs['source_files']), 'source changed during native execution')
     require(same_json(product_binding(root, product), inputs['product']), 'product changed during native execution')
+    require(same_json(matrix_product_bindings(root, {'inputs': inputs['matrix_inputs']}),
+                      inputs['matrix_products']), 'matrix product changed during native execution')
     require(same_json(family.file_identity(root, root / inputs['family_execution']['path']), inputs['family_execution']),
             'matrix input changed during native execution')
     require(same_json(family.file_identity(root, root / inputs['crypt_profile']['path']), inputs['crypt_profile'])

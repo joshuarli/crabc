@@ -94,8 +94,12 @@ class NativeExecutionTests(unittest.TestCase):
                 f'printf \'{{"component":"{component.id}"}}\\n\' > "$leaf/report.json"\n')
             self.put(self.root / component.runner, script.encode())
         static = {}
+        self.static_products = {}
         for label in family.PAIRS:
-            path = self.put(self.root / '.work/static' / label / 'manifest.json', {'static': label})
+            product = self.root / '.work/static' / label
+            path = self.put(product / 'share/crabc/manifest.json', {'static': label})
+            self.put(product / 'usr/lib/libc.a', b'installed static archive bytes')
+            self.static_products[label] = product
             static[label] = family.file_identity(self.root, path)
         self.matrix = {'schema': family.SCHEMA, 'status': 'workload-matrix-verified',
             'family': 'libc.posix-runtime', 'work': '.work/family', 'family_completion': False,
@@ -122,6 +126,7 @@ class NativeExecutionTests(unittest.TestCase):
                     {'kind': 'differential', 'oracle': oracle, 'candidates': candidates}
                     if name == 'owned_io_cancellation' else {'fixture': 'validated by the complete family judge'})
                     for name in family_observations.IO_SCENARIOS}}}}
+        self.put(self.matrix_path, self.matrix)
         self.patch(family, 'validate_receipt', side_effect=lambda root, path: self.matrix)
         self.patch(execution, 'source_identity', side_effect=self.current_source)
         self.patch(execution, 'require_execution_environment')
@@ -437,6 +442,37 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertFalse((self.work / 'native-execution.json').exists())
         self.assertNotEqual(json.loads((self.work / 'product-before.json').read_bytes()),
                             json.loads((self.work / 'product-after.json').read_bytes()))
+
+    def test_nonselected_matrix_product_mutation_cannot_seal_native_receipt(self):
+        receipt = self.execute()
+        payloads = ([product / 'usr/lib/libc.a' for product in self.static_products.values()]
+                    + [product / 'usr/lib/libc.so' for product in self.products.values()])
+        for payload in payloads:
+            original = payload.read_bytes()
+
+            def mutate_after_last_judge(component, leaf, **arguments):
+                result = self.native_result(component, leaf, **arguments)
+                if component == 'libc-test':
+                    payload.write_bytes(b'changed after matrix validation')
+                return result
+
+            self.native_judge.side_effect = mutate_after_last_judge
+            with self.subTest(product=self.relative(payload)):
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'product|matrix'):
+                        execution.validate_receipt(self.root, receipt)
+                finally:
+                    payload.write_bytes(original)
+
+    def test_matrix_product_change_after_full_judge_cannot_become_phase_baseline(self):
+        def mutate_after_matrix_judge(root, path):
+            (self.products['second'] / 'usr/lib/libc.so').write_bytes(b'changed after complete matrix judge')
+            return self.matrix
+
+        with patch.object(family, 'validate_receipt', side_effect=mutate_after_matrix_judge):
+            with self.assertRaisesRegex(RuntimeError, 'matrix product changed during prerequisite validation'):
+                self.execute()
+        self.assertFalse(self.work.exists())
 
     def test_component_receipts_reject_missing_cells_and_scalar_substitution(self):
         path = self.execute()

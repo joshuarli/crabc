@@ -45,7 +45,13 @@ under `.work/`, disjoint from all input products and receipt trees. Every step
 retains its exact invocation, environment, streams, status, private scratch,
 source-derived native observations, immutable fixture-node snapshot and a
 predecessor receipt identity. Source, product payload and oracle checks bracket
-each command. Failure retains `incomplete.json`, completed receipts, and raw
+each command. The native input's `matrix_products` seal covers all three static
+and all three dynamic product payloads, including the independent and extracted
+products that do not execute the native commands. These trees are captured before
+the complete matrix validation, compared after it, and rechecked before execution
+and at the end of standalone receipt reconstruction. A changed prerequisite
+product cannot become the new accepted baseline after its judge returns.
+Failure retains `incomplete.json`, completed receipts, and raw
 partial artifacts; it stops the sequence and cannot issue a success receipt.
 
 `validate` is a host-readable reconstruction. It checks the complete prerequisite
