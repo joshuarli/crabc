@@ -4390,6 +4390,102 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn selected_static_theap_is_counted_after_tld_link_before_heap_publication() {
+        crate::test_process::run_in_fresh_process(
+            "process_init::tests::selected_static_theap_is_counted_after_tld_link_before_heap_publication",
+            || {
+                #[derive(Default)]
+                struct Observation {
+                    calls: usize,
+                    theaps: (i64, i64, i64),
+                    tld_linked: bool,
+                    heap_member_absent: bool,
+                    heap_head_is_metadata: bool,
+                    initialized: bool,
+                    heap_unpublished: bool,
+                    refcount: usize,
+                    subprocess_matches: bool,
+                    theap: *mut Theap,
+                    heap: *mut crate::types::Heap,
+                }
+                unsafe fn observe(
+                    theap: NonNull<Theap>, heap: NonNull<crate::types::Heap>,
+                    tld: NonNull<crate::types::ThreadLocalData>, subprocess: &MainSubprocess,
+                    argument: *mut core::ffi::c_void,
+                ) {
+                    // SAFETY: the winning startup retains these exact images;
+                    // all mutable projections and list guards have ended. The
+                    // stack observation remains exclusively borrowed until the
+                    // synchronous operation returns, and no reference escapes.
+                    let observation = unsafe { &mut *argument.cast::<Observation>() };
+                    let theaps = subprocess.identity().statistics().final_output_snapshot().theaps;
+                    observation.calls += 1;
+                    observation.theaps = (theaps.current, theaps.peak, theaps.total);
+                    observation.tld_linked = unsafe { tld.as_ref() }.test_theap_head_is(theap.as_ptr());
+                    observation.heap_member_absent = unsafe { heap.as_ref() }
+                        .has_shared_theap_member_blocking(theap.as_ptr()) == Ok(false);
+                    let metadata = subprocess.identity().test_published_metadata_theap();
+                    observation.heap_head_is_metadata = !metadata.is_null()
+                        && unsafe { heap.as_ref() }.test_theap_head_is(metadata);
+                    observation.initialized = unsafe { theap.as_ref() }.is_initialized();
+                    observation.heap_unpublished = unsafe { theap.as_ref() }.heap().is_null();
+                    observation.refcount = unsafe { theap.as_ref() }.refcount();
+                    observation.subprocess_matches = unsafe { theap.as_ref() }
+                        .is_bound_to_main_subprocess(subprocess);
+                    observation.theap = theap.as_ptr();
+                    observation.heap = heap.as_ptr();
+                }
+                unsafe extern "C" fn stderr_output(message: *const core::ffi::c_char) {
+                    unsafe extern "C" {
+                        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void)
+                            -> core::ffi::c_int;
+                        static mut stderr: *mut core::ffi::c_void;
+                    }
+                    // SAFETY: normal source output supplies a terminated fragment
+                    // and the pinned native runtime retains its actual stderr FILE.
+                    unsafe { let _ = fputs(message, stderr); }
+                }
+                let mut observation = Observation::default();
+                // SAFETY: this fresh process enters its actual winning startup
+                // with valid host environment and FILE providers. The callback
+                // only reads retained images and writes bounded stack fields.
+                let started = unsafe {
+                    crate::main_theap::with_static_theap_publication_observer_for_test(
+                        observe, core::ptr::from_mut(&mut observation).cast(), || {
+                            crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                                4096, crate::diagnostic_output::RuntimeStderrOutput::new(stderr_output),
+                            )
+                        },
+                    )
+                };
+                assert!(started);
+                assert_eq!(observation.calls, 1, "only the winning static startup is observed");
+                assert_eq!(observation.theaps, (1, 1, 1),
+                    "static Theap accounting precedes Heap publication");
+                assert!(observation.tld_linked, "the actual TLD already links its static Theap");
+                assert!(observation.heap_member_absent, "the ordinary Theap is not linked into its Heap yet");
+                assert!(observation.heap_head_is_metadata,
+                    "the actual Heap still retains only its earlier detached metadata head");
+                assert!(!observation.initialized);
+                assert!(observation.heap_unpublished);
+                assert_eq!(observation.refcount, 1);
+                assert!(observation.subprocess_matches);
+                assert_eq!(default_theap().as_ptr(), observation.theap);
+                // SAFETY: successful startup retains the same actual static
+                // images, and this thread only reads them after publication.
+                assert!(unsafe { &*observation.theap }.is_initialized());
+                assert_eq!(unsafe { &*observation.theap }.heap(), observation.heap);
+                assert!(unsafe { &*observation.heap }.test_theap_head_is(observation.theap));
+                assert!(crate::runtime_lifecycle::initialize_process());
+                assert_eq!(MainSubprocess::global().identity().statistics()
+                    .final_output_snapshot().theaps.current, 1,
+                    "ordinary repeated startup does not count the owner twice");
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn first_allocation_metadata_entropy_refusal_buffers_normal_warning_until_runtime_tail() {
         crate::test_process::run_in_fresh_process(
             "process_init::tests::first_allocation_metadata_entropy_refusal_buffers_normal_warning_until_runtime_tail",
