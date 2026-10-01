@@ -4,7 +4,8 @@
 // `_mi_heap_new_for_subproc`, `mi_heap_free_theaps`, `mi_heap_free`,
 // `mi_heap_delete`, `_mi_heap_force_destroy`, `mi_heap_destroy`),
 // src/theap.c:236-445, src/init.c:377-480, src/threadlocal.c:103-202,
-// src/prim/prim-tls.c:211-229, and src/arena.c:1661-1672,2531-2644.
+// src/prim/prim-tls.c:211-229, src/arena.c:1661-1672,2531-2644,
+// and src/alloc.c:909-941 (guarded canonical generic allocation).
 
 //! Allocated Theaps of the process main subprocess: ordinary non-main
 //! Heaps and fresh main-Heap siblings after the source fast slot is cleared.
@@ -1232,6 +1233,45 @@ pub(crate) unsafe fn native_theap_allocate_variant(
     allocate_on_theap(thread, theap, size, aligned, zero)
 }
 
+/// Allocate one guarded backing block on the exact auxiliary main Theap.
+/// The request is already the source generic size, including its padding
+/// allowance; this route neither samples nor zeroes the eventual client.
+/// `None` declines another owner domain. `Some(None)` preserves a recognized
+/// owner's refusal so callers cannot retry through the default allocator.
+///
+/// # Safety
+/// `theap` and its Heap remain live and linked to the calling thread's TLD.
+/// The caller excludes concurrent Heap destruction and thread exit, and
+/// retains the exact selected owner across any synchronous user callback.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) unsafe fn native_theap_allocate_guarded_canonical(
+    theap: NonNull<Theap>,
+    source_size: usize,
+) -> Option<Option<NonNull<u8>>> {
+    // SAFETY: the caller retains the selected source image and its Heap.
+    let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+    // SAFETY: the retained Heap's immutable subprocess identity is copied
+    // without borrowing independently accessed Heap metadata.
+    if unsafe { Heap::subprocess_pointer_at(heap) } != MainSubprocess::global().identity_ptr() {
+        return None;
+    }
+    let Some(thread) = current_main_thread() else { return Some(None) };
+    if theap == thread.theap {
+        return None;
+    }
+    // SAFETY: the source image remains initialized for this scalar check.
+    if unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
+        return Some(None);
+    }
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(None);
+    };
+    let Some(phase) = with_theap_engine(thread, theap, |engine| {
+        engine.begin_deferred_free_guarded_canonical(source_size)
+    }) else { return Some(None) };
+    Some(finish_allocation_on_theap(thread, theap, phase))
+}
+
 fn allocate_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
@@ -1239,14 +1279,22 @@ fn allocate_on_theap(
     aligned: Option<(usize, usize)>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     // `_mi_malloc_generic`'s collections run `_mi_deferred_free` first; the
     // engine returns each selected collection so that the callback runs with
     // no engine or Theap projection live, then resumes.
-    let mut phase = with_theap_engine(thread, theap, |engine| match aligned {
+    let phase = with_theap_engine(thread, theap, |engine| match aligned {
         None => engine.begin_deferred_free_allocation(size, zero),
         Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
     })?;
+    finish_allocation_on_theap(thread, theap, phase)
+}
+
+fn finish_allocation_on_theap(
+    thread: MainThread,
+    theap: NonNull<Theap>,
+    mut phase: crate::single_thread::DeferredFreeAllocationPhase,
+) -> Option<NonNull<u8>> {
+    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return block,
@@ -1940,6 +1988,127 @@ pub(crate) fn native_reserve_os_memory(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn guarded_canonical_auxiliary_main_theap_preserves_source_block_geometry_and_owner() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::guarded_canonical_auxiliary_main_theap_preserves_source_block_geometry_and_owner",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                let heap = native_heap_new().expect("a live auxiliary main Heap");
+                let selected = native_heap_theap(heap).expect("its exact current-thread Theap");
+                let other_heap = native_heap_new().expect("another live auxiliary main Heap");
+                let other = native_heap_theap(other_heap).expect("a different cached Theap");
+                assert_ne!(selected, other);
+                let default = crate::compiler_tls::default_theap();
+                let cached = cached_theap();
+                assert_eq!(cached, other);
+                struct CallbackState {
+                    selected: NonNull<Theap>,
+                    calls: core::cell::Cell<usize>,
+                    entered: core::cell::Cell<bool>,
+                    nested: core::cell::Cell<bool>,
+                }
+                unsafe extern "C" fn callback(_: bool, _: u64, context: *mut core::ffi::c_void) {
+                    // SAFETY: registration holds this stack state and its
+                    // selected source owner through every synchronous call.
+                    let state = unsafe { &*context.cast::<CallbackState>() };
+                    state.calls.set(state.calls.get() + 1);
+                    if !state.entered.replace(true) {
+                        // A nested request uses the same exact owner while
+                        // the outer canonical engine has released its session.
+                        if let Some(block) = unsafe { native_theap_allocate(state.selected, 64, false) } {
+                            state.nested.set(unsafe { native_free(block) } == NativePageFreeResult::Freed);
+                        }
+                    }
+                }
+                let mut state = CallbackState {
+                    selected, calls: core::cell::Cell::new(0),
+                    entered: core::cell::Cell::new(false), nested: core::cell::Cell::new(false),
+                };
+                // SAFETY: this fresh process serializes registration. The
+                // stack context and Heap outlive callback removal below.
+                unsafe { crate::deferred_free::register_process_callback(Some(callback),
+                    core::ptr::addr_of_mut!(state).cast()) };
+                assert_eq!(unsafe { native_theap_allocate_guarded_canonical(selected, 1) }, Some(None));
+                assert_eq!(unsafe { native_theap_allocate_guarded_canonical(default, 8192) }, None);
+                let first = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }.expect("the selected auxiliary main domain")
+                    .expect("one canonical guarded backing block");
+                let second = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }.expect("the selected auxiliary main domain")
+                    .expect("another simultaneously live backing block");
+                assert_ne!(first, second);
+                // The source administrative callback runs after the generic
+                // counter reaches its threshold, not on every allocation.
+                for _ in 0..1001 {
+                    let temporary = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }
+                        .expect("the exact auxiliary domain").expect("a generic counter step");
+                    assert_eq!(unsafe { native_free(temporary) }, NativePageFreeResult::Freed);
+                }
+                // SAFETY: all synchronous invocations ended, and no other
+                // thread can observe this fresh process's registration.
+                unsafe { crate::deferred_free::register_process_callback(None, core::ptr::null_mut()) };
+                assert!(state.calls.get() > 0);
+                assert!(state.nested.get(), "the canonical callback permits same-owner allocation/free");
+                for block in [first, second] {
+                    assert_eq!(unsafe { crate::runtime_lifecycle::native_usable_size(block) },
+                        Some(8192 - crate::config::PADDING_SIZE));
+                    let allocation = unsafe { binding().unwrap().page_map().lookup_live_allocation(block) }
+                        .unwrap().expect("registered live canonical allocation");
+                    let page = allocation.page();
+                    assert_eq!(unsafe { Page::theap_at(page) }, selected.as_ptr());
+                    assert_eq!(unsafe { Page::heap_identity_at(page) }, heap.as_ptr());
+                    assert_eq!(unsafe { page.as_ref() }.block_size(), 8192,
+                        "the source generic input already includes padding allowance");
+                    drop(allocation);
+                }
+                assert_eq!(crate::compiler_tls::default_theap(), default);
+                assert_eq!(cached_theap(), cached);
+                for block in [first, second] {
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                }
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                assert_eq!(unsafe { native_heap_release(other_heap, false) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn guarded_canonical_auxiliary_main_theap_retries_after_real_mapping_failure() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::guarded_canonical_auxiliary_main_theap_retries_after_real_mapping_failure",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                let heap = native_heap_new().expect("a live auxiliary main Heap");
+                let selected = native_heap_theap(heap).expect("its source-selected Theap");
+                unsafe extern "C" {
+                    fn getrlimit(resource: core::ffi::c_int, limit: *mut [usize; 2]) -> core::ffi::c_int;
+                    fn setrlimit(resource: core::ffi::c_int, limit: *const [usize; 2]) -> core::ffi::c_int;
+                }
+                let mut previous = [0usize; 2];
+                // SAFETY: Linux's native rlimit is two unsigned long fields;
+                // this private child changes only its own address-space limit.
+                assert_eq!(unsafe { getrlimit(9, &mut previous) }, 0);
+                let limited = [1usize, previous[1]];
+                assert_eq!(unsafe { setrlimit(9, &limited) }, 0);
+                let refused = unsafe { native_theap_allocate_guarded_canonical(selected, 1 << 30) };
+                // Restore before assertions or client diagnostics can allocate.
+                let restored = unsafe { setrlimit(9, &previous) };
+                assert_eq!(restored, 0);
+                assert_eq!(refused, Some(None), "owned OOM must not decline to another allocator");
+                let block = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }
+                    .expect("the same auxiliary owner").expect("allocation resumes after mapping failure");
+                assert_eq!(unsafe { heap_of_block(block) }, Some(heap));
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
 
     /// A joined remote free can remain queued on the creating thread's
     /// arena page until Heap deletion collects it during target abandonment.
