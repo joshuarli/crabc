@@ -4050,7 +4050,7 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum RetentionRootCategory { OsPage, OsArena, ExternalArena, ExternalRaw }
+    enum RetentionRootCategory { OsPage, OsArena, ExternalArena, ExternalRaw, ProcessPageMap, ProcessMetadata }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     impl RetentionRootCategory {
@@ -4058,6 +4058,8 @@ mod tests {
             match self {
                 Self::OsPage => "os-page", Self::OsArena => "os-arena",
                 Self::ExternalArena => "external-arena", Self::ExternalRaw => "external-raw",
+                Self::ProcessPageMap => "process-pagemap",
+                Self::ProcessMetadata => "process-metadata",
             }
         }
     }
@@ -4087,7 +4089,7 @@ mod tests {
         /// # Safety
         /// The actual source list and every Page remain live and unchanged.
         /// Its owner lock or joined-worker quiescence excludes list mutation.
-        unsafe fn pages(&mut self, mut page: *mut crate::types::Page) {
+        unsafe fn pages(&mut self, mut page: *mut crate::types::Page, category: RetentionRootCategory) {
             let mut visited = 0usize;
             while let Some(pointer) = NonNull::new(page) {
                 visited += 1;
@@ -4098,7 +4100,7 @@ mod tests {
                 if state.memid.is_os() {
                     let memory = state.memid.os_memory().expect("OS Page has its original OS extent");
                     let start = memory.base.addr();
-                    self.add(RetentionRootCategory::OsPage, start, start.checked_add(memory.size).unwrap());
+                    self.add(category, start, start.checked_add(memory.size).unwrap());
                 }
                 page = unsafe { crate::types::Page::queue_next_at(pointer) };
             }
@@ -4107,10 +4109,10 @@ mod tests {
         /// # Safety
         /// The exact detached Theap is retained under its metadata owner lock;
         /// no queue or Page can change before this numeric projection ends.
-        unsafe fn theap(&mut self, theap: NonNull<Theap>) {
+        unsafe fn theap(&mut self, theap: NonNull<Theap>, category: RetentionRootCategory) {
             for bin in 0..crate::config::BIN_COUNT {
                 let queue = unsafe { Theap::local_queue_at(theap, bin) }.unwrap();
-                unsafe { self.pages(queue.first()) };
+                unsafe { self.pages(queue.first(), category) };
             }
         }
 
@@ -4167,23 +4169,34 @@ mod tests {
         let observed = core::cell::RefCell::new(None::<RetentionRoots>);
         let completed = core::cell::Cell::new(0usize);
         cross_thread_managed_abandoned_lifecycle_observe(|_| {}, |child_index, child, start, end| {
+            let _observation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+                .expect("native admission retains the process throughout source-root observation");
             assert_eq!(child_index, completed.get());
             assert!(observed.borrow().is_none());
             let mut roots = RetentionRoots::new();
             roots.add(RetentionRootCategory::ExternalRaw, start, end);
+            let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs().unwrap();
+            let page_map = binding.page_map().page_map().unwrap();
+            // SAFETY: native admission retains the ready process owner. This
+            // publication-locked visitor only records bounded scalar extents;
+            // it performs no allocation, reentry, or ownership operation.
+            unsafe { page_map.test_visit_mapping_extents(|base, length| {
+                roots.add(RetentionRootCategory::ProcessPageMap, base, base.checked_add(length).unwrap());
+            }) }.unwrap();
             let main = crate::subproc::MainSubprocess::global();
             crate::meta::MetaAllocator::global().test_with_held_backing_entry(|| {
                 let theap = NonNull::new(main.test_published_metadata_theap()).unwrap();
                 // SAFETY: the real metadata entry holds both backing and source
                 // metadata locks. No allocation or callback occurs here.
-                unsafe { roots.theap(theap) };
+                unsafe { roots.theap(theap, RetentionRootCategory::ProcessMetadata) };
             }).unwrap();
             // SAFETY: only the fixture's coordinator remains; its process main
             // owner outlives this joined-worker interval. Registered arena
             // roots below belong to the actual child, not this parent.
             unsafe {
                 let heap = NonNull::new(main.ready_main_heap_pointer()).unwrap();
-                roots.pages(heap.as_ref().test_os_abandoned_page_head());
+                roots.pages(heap.as_ref().test_os_abandoned_page_head(), RetentionRootCategory::ProcessMetadata);
             }
             let pointer = NonNull::new(child).unwrap();
             // SAFETY: this exact id is still live and every worker/client has
@@ -4193,8 +4206,8 @@ mod tests {
                 owner.as_mut().unwrap().with_child_metadata_entry(|image, heap, theap, _| {
                     // SAFETY: the child and metadata guards retain these actual
                     // lists and arenas; the closure records scalar extents only.
-                    roots.theap(NonNull::from(theap));
-                    roots.pages(heap.test_os_abandoned_page_head());
+                    roots.theap(NonNull::from(theap), RetentionRootCategory::OsPage);
+                    roots.pages(heap.test_os_abandoned_page_head(), RetentionRootCategory::OsPage);
                     roots.arenas(image.identity());
                 }).unwrap();
             }) }.unwrap();
