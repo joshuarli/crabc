@@ -1937,6 +1937,206 @@ mod tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    fn initialize_secure_source_after_joined_worker() -> *mut core::ffi::c_void {
+        unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+        assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+            4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+        ));
+        assert!(crate::__crabc_runtime::prepare_native_initial_thread_owner());
+        let base = crate::source_heap_api::theap_get_default();
+        assert!(!base.is_null());
+        let main = super::malloc(64).value.expect("initial source client");
+        // SAFETY: this thread owns the exact successful source client.
+        assert_eq!(unsafe { super::free(main.as_ptr()) }, super::FreeOutcome::Freed);
+        std::thread::spawn(|| {
+            let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+            // SAFETY: this real worker retains its compiler-TLS descriptor
+            // through attachment, all source calls and its explicit finish.
+            assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+            assert_eq!(crate::__crabc_runtime::attach_current_thread(), crate::__crabc_runtime::ThreadAttachResult::Attached);
+            let heap = crate::source_heap_api::heap_new();
+            assert!(!heap.is_null());
+            // SAFETY: this worker retains the actual Heap and owns its client
+            // until the one terminal free, before releasing its empty Heap.
+            unsafe {
+                assert!(!crate::source_heap_api::heap_theap(heap).is_null());
+                let client = crate::source_heap_api::heap_malloc(heap, 64).value.expect("worker source client");
+                client.as_ptr().write_bytes(0x47, 64);
+                assert_eq!(super::free(client.as_ptr()), super::FreeOutcome::Freed);
+                assert!(crate::source_heap_api::heap_release(heap, false));
+            }
+            assert_eq!(crate::__crabc_runtime::finish_current_thread_native_after_user_destructors(),
+                crate::__crabc_runtime::ThreadFinishResult::Finished);
+        }).join().expect("the real source worker finishes before the next Heap creation");
+        assert_eq!(crate::source_heap_api::theap_get_default(), base);
+        base
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[test]
+    fn joined_secure_source_worker_preserves_public_auxiliary_heap_creation() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::joined_secure_source_worker_preserves_public_auxiliary_heap_creation",
+            || {
+                let base = initialize_secure_source_after_joined_worker();
+                let heap = crate::source_heap_api::heap_new();
+                assert!(!heap.is_null(), "joined-worker parent creates a source Heap");
+                // SAFETY: this thread retains the actual new Heap and its
+                // member through public allocation, free and terminal delete.
+                unsafe {
+                    let other = crate::source_heap_api::heap_theap(heap);
+                    assert!(!other.is_null());
+                    assert_ne!(other, base);
+                    let client = crate::source_heap_api::heap_malloc(heap, 64).value.expect("post-worker source client");
+                    assert_eq!(super::free(client.as_ptr()), super::FreeOutcome::Freed);
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                }
+                assert_eq!(crate::source_heap_api::theap_get_default(), base);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[test]
+    fn ordinary_fork_after_joined_secure_source_worker_preserves_auxiliary_heap_creation() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::ordinary_fork_after_joined_secure_source_worker_preserves_auxiliary_heap_creation",
+            || {
+                unsafe extern "C" { fn fork() -> core::ffi::c_int; }
+                let base = initialize_secure_source_after_joined_worker();
+                // SAFETY: call ordinary linked libc fork after the worker
+                // joined. No allocator fork callbacks are registered here:
+                // the standalone source adapter has no such registrations.
+                let pid = unsafe { fork() };
+                assert!(pid >= 0);
+                if pid == 0 {
+                    let main = crate::source_heap_api::heap_main();
+                    let child_base = crate::source_heap_api::theap_get_default();
+                    if main.is_null() || child_base.is_null() { crabc_core::process::exit_immediately(20); }
+                    let heap = crate::source_heap_api::heap_new();
+                    if heap.is_null() { crabc_core::process::exit_immediately(21); }
+                    // SAFETY: the single child thread retains this newly
+                    // created Heap and exclusively owns its successful client.
+                    unsafe {
+                        if crate::source_heap_api::heap_theap(heap).is_null() { crabc_core::process::exit_immediately(22); }
+                        let Some(client) = crate::source_heap_api::heap_malloc(heap, 64).value
+                            else { crabc_core::process::exit_immediately(23); };
+                        client.as_ptr().write_bytes(0x61, 64);
+                        if super::free(client.as_ptr()) != super::FreeOutcome::Freed {
+                            crabc_core::process::exit_immediately(24);
+                        }
+                        if !crate::source_heap_api::heap_release(heap, false) { crabc_core::process::exit_immediately(25); }
+                    }
+                    crabc_core::process::exit_immediately(0);
+                }
+                let mut status = 0;
+                let mut joined = false;
+                for _ in 0..500 {
+                    // SAFETY: this parent owns the status slot and exact child.
+                    let waited = unsafe { crabc_core::process::wait4_raw(pid, &mut status, 1) }.unwrap();
+                    if waited == pid { joined = true; break; }
+                    assert_eq!(waited, 0);
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                if !joined {
+                    let _ = crabc_core::process::kill(pid, 9);
+                    // SAFETY: reap the same timed-out child before failure.
+                    let _ = unsafe { crabc_core::process::wait4_raw(pid, &mut status, 0) };
+                }
+                assert!(joined, "ordinary fork child must complete its source Heap calls");
+                assert_eq!(status, 0, "ordinary fork child completion status {status}");
+                assert_eq!(crate::source_heap_api::theap_get_default(), base);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn selected_theap_realloc_keeps_replacement_when_consumed_old_mapping_is_retained() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::selected_theap_realloc_keeps_replacement_when_consumed_old_mapping_is_retained",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                assert!(!heap.is_null());
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                let root = binding.page_map();
+                // SAFETY: this fresh-process thread retains the actual Heap
+                // and member, owns each exact client, and excludes teardown.
+                let (warm, old, new_size) = unsafe {
+                    let old = super::theap_malloc_aligned_at(selected, 17, 128 * 1024, 0, false)
+                        .value.expect("separate OS-aligned source client");
+                    let old_usable = super::usable_size(old.as_ptr());
+                    let new_size = old_usable.checked_add(1).unwrap().max(512);
+                    std::println!("realloc.old_usable={old_usable},new_size={new_size}");
+                    let warm = crate::source_heap_api::theap_malloc(selected, new_size, false)
+                        .value.expect("live ordinary page warms replacement allocation");
+                    warm.as_ptr().write_bytes(0x63, new_size);
+                    old.as_ptr().write_bytes(0xa7, 17);
+                    (warm, old, new_size)
+                };
+                let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Unmap, 1, Errno::NOMEM));
+                let unmaps = fault.capture_unmap_ranges();
+                // SAFETY: the exact old client belongs to this retained Theap.
+                // The live ordinary page supplies the fresh replacement; the
+                // first selected unmap must therefore be old-client cleanup.
+                let result = unsafe { super::theap_realloc(selected, old.as_ptr(), new_size, false) };
+                let replacement = result.value.expect("old mapping retention must not erase the replacement");
+                assert_eq!(result.errno, super::SourceErrno::Unchanged);
+                assert_ne!(replacement, old);
+                // SAFETY: the successful returned client and warm client are
+                // still owned. No old-client access or repeated free follows.
+                unsafe {
+                    assert!(core::slice::from_raw_parts(replacement.as_ptr(), 17).iter().all(|byte| *byte == 0xa7));
+                    assert!(core::slice::from_raw_parts(warm.as_ptr(), new_size).iter().all(|byte| *byte == 0x63));
+                }
+                let (ranges, count) = unmaps.all().expect("bounded actual unmap trace");
+                assert_eq!(count, 1, "replacement must use its warmed ordinary page");
+                let (address, length) = ranges[0];
+                let end = address.checked_add(length).unwrap();
+                assert!(address <= old.as_ptr().addr() && old.as_ptr().addr() < end,
+                    "the fault must select the actual old-client mapping");
+                assert!(replacement.as_ptr().addr() < address || replacement.as_ptr().addr() >= end);
+                let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+                let mut mapped_until = address;
+                for line in maps.lines() {
+                    let Some(range) = line.split_whitespace().next() else { continue };
+                    let Some((start, stop)) = range.split_once('-') else { continue };
+                    let (Ok(start), Ok(stop)) = (usize::from_str_radix(start, 16), usize::from_str_radix(stop, 16))
+                        else { continue };
+                    if start <= mapped_until && mapped_until < stop {
+                        mapped_until = stop;
+                    }
+                    if mapped_until >= end { break; }
+                }
+                assert!(mapped_until >= end, "refused unmap must retain the entire original backing");
+                let map = root.test_retained_page_map().expect("the actual process retains its map");
+                // SAFETY: these are address-only map observations after the
+                // synchronous release ended. The isolated thread excludes
+                // overlapping registration and never dereferences old metadata.
+                unsafe {
+                    assert!(map.checked_lookup(old.as_ptr()).is_null(),
+                        "old client consumption must be distinct from retained backing");
+                    assert!(!map.checked_lookup(replacement.as_ptr()).is_null(),
+                        "the returned replacement keeps its registered source page");
+                }
+                std::println!("realloc.cleanup=old-consumed,mapping-retained,replacement-owned");
+                drop(unmaps);
+                fault.set(crate::os::fault::Plan::disabled());
+                // The fixture ends with the replacement and warm client still
+                // owned by this retained process. Retention is not authority to
+                // retry the consumed old client or destroy the terminal Heap.
+            },
+        );
+    }
+
     #[test]
     fn direct_theap_variants_preserve_roots_and_reallocation_lifetime() {
         crate::test_process::run_in_fresh_process(
