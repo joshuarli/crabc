@@ -178,6 +178,24 @@ impl ScopedBootstrapOutput<'_> {
         Ok(self.output)
     }
 
+    /// Reborrows the actual VM pair retained by the winning startup owner.
+    /// Metadata initialization precedes process PageMap publication, so this
+    /// projection neither requires a published map nor grants backing access.
+    pub(crate) fn process(&self) -> Result<&VmProcess<'static>, BootstrapOutputAdmissionError> {
+        self.validate()?;
+        Ok(self.process)
+    }
+
+    /// Refuses a diagnostic origin that differs from this retained VM pair.
+    /// Matching identities grant no allocation, Heap, or PageMap authority;
+    /// the caller must separately retain the original backing issuer.
+    pub(crate) fn matches_process(&self, process: &VmProcess<'_>) -> bool {
+        self.validate().is_ok()
+            && core::ptr::eq(self.process.policy(), process.policy())
+            && core::ptr::eq(self.process.subprocess(), process.subprocess())
+            && process.main_subprocess().is_some_and(|owner| core::ptr::eq(owner, self.subprocess))
+    }
+
     pub(crate) fn matches_subprocess(&self, subprocess: &MainSubprocess) -> bool {
         self.validate().is_ok() && core::ptr::eq(self.subprocess, subprocess)
     }
@@ -4632,8 +4650,20 @@ mod tests {
             let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
             assert!(scope.matches_subprocess(subprocess));
             assert!(core::ptr::eq(scope.output().unwrap(), pointer));
+            assert!(storage.page_map_storage.load(Ordering::Acquire).is_null(),
+                "metadata startup precedes process PageMap publication");
+            assert!(core::ptr::eq(scope.process().unwrap(), &process));
+            assert!(scope.matches_process(&process));
+            assert!(scope.matches_process(&VmProcess::new_main(process.policy(), subprocess)));
+            assert!(!scope.matches_process(&crossed));
+            assert!(!scope.matches_process(&VmProcess::new_main(
+                process.policy(), MainSubprocess::test_static_owner(),
+            )));
+            assert!(!scope.matches_process(&VmProcess::new(process.policy(), subprocess.identity())));
             storage.state.store(RETAINED, Ordering::Release);
             assert!(!scope.matches_subprocess(subprocess));
+            assert!(!scope.matches_process(&process));
+            assert!(matches!(scope.process(), Err(BootstrapOutputAdmissionError::Invalid)));
             assert!(matches!(scope.output(), Err(BootstrapOutputAdmissionError::Invalid)));
             storage.publish_terminal_state_and_release(completion, RETAINED);
         }).join().unwrap();
