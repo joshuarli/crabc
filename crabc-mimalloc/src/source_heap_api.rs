@@ -591,6 +591,79 @@ pub unsafe fn theap_guarded_set_size_bound(theap: *mut c_void, minimum: usize, m
     let _ = (theap, minimum, maximum);
 }
 
+/// Scalar source selection, not an admitted owner or allocation capability.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+struct GuardedSampledRequest {
+    size: usize,
+    alignment: Option<usize>,
+}
+
+/// Advances the selected Theap's source sampler exactly once at allocation
+/// ingress. Offset or large-alignment requests do not take this guarded path.
+/// Plain zero-size requests normalize before sampling, as the small source
+/// entry does; aligned sampling observes the original unrounded size.
+///
+/// # Safety
+/// `theap` is address-stable and its initialized sampler fields are exclusively
+/// owned by the calling thread, excluding initialization and teardown. An
+/// immutable empty image is permitted only on its read-only rate-zero path.
+/// A nonempty image has mutable provenance for countdown writes. `aligned`,
+/// when present, contains a validated nonzero power-of-two alignment.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+unsafe fn guarded_sample_source_request(
+    theap: NonNull<Theap>,
+    size: usize,
+    aligned: Option<(usize, usize)>,
+) -> Option<GuardedSampledRequest> {
+    let (size, alignment) = match aligned {
+        None => (if size == 0 { core::mem::size_of::<usize>() } else { size }, None),
+        Some((alignment, 0)) if alignment < crate::config::PAGE_MAX_OVERALLOC_ALIGN =>
+            (size, Some(alignment)),
+        Some(_) => return None,
+    };
+    // SAFETY: only initialized current-thread sampler fields are projected;
+    // that projection ends before owner admission or any diagnostic callback.
+    if !unsafe { Theap::guarded_sample_at(theap, size) } { return None; }
+    Some(GuardedSampledRequest { size, alignment })
+}
+
+/// Source guarded allocation extents, before any engine client exists.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+struct GuardedRequestGeometry {
+    object_size: usize,
+    source_size: usize,
+    counted_request: usize,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl GuardedSampledRequest {
+    fn geometry(&self, os_page_size: crate::os::PageSize, precise: bool) -> Result<GuardedRequestGeometry, SourceErrorReport> {
+        let os_page_size = os_page_size.bytes();
+        let size = if let Some(alignment) = self.alignment {
+            if self.size > crate::config::MAX_ALLOC_SIZE - crate::config::PADDING_SIZE - alignment {
+                return Err(SourceErrorReport::GuardedAlignedAllocationTooLarge { size: self.size, alignment });
+            }
+            self.size + alignment - 1
+        } else {
+            self.size
+        };
+        if size >= crate::config::MAX_ALLOC_SIZE - crate::config::PADDING_SIZE {
+            return Err(SourceErrorReport::GuardedAllocationTooLarge { size });
+        }
+        let round_up = |value: usize, alignment: usize| {
+            value.checked_add(alignment - 1).map(|value| value & !(alignment - 1))
+        };
+        let overflow = SourceErrorReport::GuardedAllocationTooLarge { size };
+        let rounded = round_up(size, crate::config::MAX_ALIGN_SIZE).ok_or(overflow)?;
+        let object_size = if precise { size } else { rounded };
+        let bsize = round_up(rounded.checked_add(core::mem::size_of::<usize>()).ok_or(overflow)?,
+            crate::config::MAX_ALIGN_SIZE).ok_or(overflow)?;
+        let source_size = round_up(bsize.checked_add(os_page_size).ok_or(overflow)?,
+            os_page_size).ok_or(overflow)?;
+        Ok(GuardedRequestGeometry { object_size, source_size, counted_request: size })
+    }
+}
+
 /// Direct allocation from an initialized Theap of the calling thread.
 ///
 /// # Safety
@@ -762,6 +835,161 @@ mod heap_membership_tests {
                     assert!(!Theap::guarded_sample_at(selected, 81));
                     assert!(heap_release(heap, false));
                 }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    unsafe fn guarded_tail_faults(client: NonNull<u8>, usable: usize) -> bool {
+        unsafe extern "C" {
+            fn fork() -> c_int;
+            fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
+            fn _exit(status: c_int) -> !;
+        }
+        // SAFETY: the isolated child only probes the retained client's tail
+        // and exits without allocation or acquiring inherited owner locks.
+        let child = unsafe { fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            unsafe { core::ptr::read_volatile(client.as_ptr().add(usable)); _exit(0) }
+        }
+        let mut status = 0;
+        // SAFETY: this parent waits for its own probe child and retains its
+        // stack status word until the synchronous wait returns.
+        assert_eq!(unsafe { waitpid(child, &mut status, 0) }, child);
+        status & 0x7f == 11
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn public_heap_guarded_sample_preserves_source_tag_and_usable_extent() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::public_heap_guarded_sample_preserves_source_tag_and_usable_extent",
+            || {
+                initialize_test_owner();
+                let heap = heap_new();
+                assert!(!heap.is_null());
+                // SAFETY: this thread retains its new Heap and selected Theap
+                // until all clients are freed and the Heap is released.
+                unsafe {
+                    let theap = heap_theap(heap);
+                    assert!(!theap.is_null());
+                    theap_guarded_set_sample_rate(theap, 1, 1);
+                    theap_guarded_set_size_bound(theap, 0, 100_000);
+                    let block = heap_malloc(heap, 81).value.expect("a sampled Heap client");
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().expect("the actual process owner");
+                    let observed = binding.page_map().lookup_live_allocation(block)
+                        .expect("registered page").expect("live client");
+                    assert!(observed.is_guarded(), "a rate-one public Heap request must carry the source guarded tag");
+                    assert_eq!(observed.usable_size(), 96);
+                    drop(observed);
+                    assert!(guarded_tail_faults(block, 96), "the selected Heap client's tail is physically protected");
+                    block.as_ptr().write_bytes(0x61, 81);
+                    let replaced = heap_realloc(heap, block.as_ptr(), 244, false).value.0
+                        .expect("a replacement client");
+                    for index in 0..81 { assert_eq!(replaced.as_ptr().add(index).read(), 0x61); }
+                    assert!(guarded_tail_faults(replaced, crate::source_api::usable_size(replaced.as_ptr())),
+                        "the sampled replacement keeps its physical tail guard");
+                    assert_eq!(crate::source_api::free_sourced(replaced.as_ptr()).value, FreeOutcome::Freed);
+                    assert!(heap_release(heap, false));
+                }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    struct GuardedWarningProbe {
+        heap: *mut c_void,
+        os_warnings: core::sync::atomic::AtomicUsize,
+        object_warnings: core::sync::atomic::AtomicUsize,
+        nested_clients: core::sync::atomic::AtomicUsize,
+        warning_order: core::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    unsafe extern "C" fn guarded_heap_warning_reentry(message: *const core::ffi::c_char, argument: *mut c_void) {
+        use core::sync::atomic::Ordering;
+        if message.is_null() { return; }
+        // SAFETY: the synchronous registration retains this fixture and the
+        // NUL-terminated fragment. This projection is not allocator metadata.
+        let probe = unsafe { &*argument.cast::<GuardedWarningProbe>() };
+        let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+        if message.starts_with(b"cannot protect OS memory") {
+            assert_eq!(probe.warning_order.compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed), Ok(0));
+            probe.os_warnings.fetch_add(1, Ordering::Relaxed);
+        }
+        if !message.starts_with(b"failed to set a guard page behind an object") { return; }
+        assert_eq!(probe.warning_order.compare_exchange(1, 2, Ordering::Relaxed, Ordering::Relaxed), Ok(1));
+        probe.object_warnings.fetch_add(1, Ordering::Relaxed);
+        // SAFETY: the outer call retains this actual selected Heap and member.
+        // No engine or Heap/Theap/Page reference survives warning dispatch.
+        let nested = unsafe { heap_malloc(probe.heap, 32) }.value.expect("a legal nested Heap allocation");
+        let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs().unwrap();
+        let observed = unsafe { binding.page_map().lookup_live_allocation(nested) }.unwrap().unwrap();
+        assert!(!observed.is_guarded(), "the source size bounds exclude the nested client");
+        drop(observed);
+        // SAFETY: this callback owns exactly the nested client through its free.
+        unsafe { nested.as_ptr().write_bytes(0x47, 32) };
+        assert_eq!(unsafe { crate::source_api::free_sourced(nested.as_ptr()) }.value, FreeOutcome::Freed);
+        probe.nested_clients.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn public_heap_guard_protection_refusal_keeps_client_and_allows_nested_allocation() {
+        use core::sync::atomic::{AtomicUsize, Ordering};
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::public_heap_guard_protection_refusal_keeps_client_and_allows_nested_allocation",
+            || {
+                initialize_test_owner();
+                crate::source_options_api::option_set(crate::config::SourceOption::ShowErrors as c_int, 1);
+                let heap = heap_new();
+                assert!(!heap.is_null());
+                let probe = GuardedWarningProbe { heap, os_warnings: AtomicUsize::new(0),
+                    object_warnings: AtomicUsize::new(0), nested_clients: AtomicUsize::new(0),
+                    warning_order: AtomicUsize::new(0) };
+                let output = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: this thread exclusively retains the selected live
+                // Heap fields and synchronous callback argument until reset.
+                unsafe {
+                    let selected = NonNull::new(heap_theap(heap).cast::<Theap>()).unwrap();
+                    theap_guarded_set_sample_rate(selected.as_ptr().cast(), 1, 1);
+                    theap_guarded_set_size_bound(selected.as_ptr().cast(), 81, 81);
+                    output.register_output(Some(guarded_heap_warning_reentry),
+                        (&probe as *const GuardedWarningProbe).cast_mut().cast());
+                }
+                let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Protect, 1, Errno::PERM));
+                let protections = fault.capture_protection_ranges();
+                // SAFETY: this actual Heap and its selected member remain live
+                // across the real protection primitive and nested callback.
+                let outer = unsafe { heap_malloc(heap, 81) }.value.expect("protection refusal keeps the client");
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                let observed = unsafe { binding.page_map().lookup_live_allocation(outer) }.unwrap().unwrap();
+                assert!(observed.is_guarded());
+                assert_eq!(observed.usable_size(), 96);
+                drop(observed);
+                assert_eq!(probe.os_warnings.load(Ordering::Relaxed), 1);
+                assert_eq!(probe.object_warnings.load(Ordering::Relaxed), 1);
+                assert_eq!(probe.nested_clients.load(Ordering::Relaxed), 1);
+                assert_eq!(probe.warning_order.load(Ordering::Relaxed), 2);
+                // SAFETY: the exact outer client remains writable and is
+                // returned once; its actual Heap remains live through cleanup.
+                unsafe { outer.as_ptr().write_bytes(0x61, 81) };
+                let guard_address = outer.as_ptr().addr() + 96;
+                assert_eq!(unsafe { crate::source_api::free_sourced(outer.as_ptr()) }.value, FreeOutcome::Freed);
+                let (ranges, count) = protections.attempts().expect("the real protection trace");
+                let guard: Vec<_> = ranges[..count].iter().filter(|(address, length, _)|
+                    *address == guard_address && *length == 4096).copied().collect();
+                assert_eq!(guard, std::vec![(guard_address, 4096, 0), (guard_address, 4096, 3)],
+                    "one refused PROT_NONE and one terminal read/write unprotect");
+                unsafe { output.register_output(None, null_mut()) };
+                drop(protections);
+                fault.set(crate::os::fault::Plan::disabled());
+                assert!(unsafe { heap_release(heap, false) });
             },
         );
     }
