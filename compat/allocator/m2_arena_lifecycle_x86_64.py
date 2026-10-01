@@ -227,7 +227,7 @@ def parse_attributed_retention(output: str, *, source: str, last_cycle: int = 32
 
 
 def parse_retention_geometry(output: str, snapshots: Sequence[Mapping[str, Any]], *, arena_reserve: int, source: str) -> dict[str, Any]:
-    """Bind a finite PageMap storage ceiling to its actual mapped root roster."""
+    """Bind PageMap storage and selected child-parent release to actual root rosters."""
     lines = [line for line in output.splitlines() if line.startswith("source_root_bound ")]
     if len(lines) != 1:
         raise ValueError(f"{source} PageMap geometry observation missing or duplicated")
@@ -244,7 +244,18 @@ def parse_retention_geometry(output: str, snapshots: Sequence[Mapping[str, Any]]
     for snapshot in snapshots:
         current = []
         for child in snapshot["children"]:
-            extents = [(start, end) for category, start, end, covered in child if category == "process-pagemap" and covered == end-start]
+            if arena_reserve > 0:
+                parents = [(start, end, covered) for category, start, end, covered in child if category == "os-arena"]
+                if not parents:
+                    raise ValueError(f"{source} selected child has no observed OS arena parent")
+                if any(covered != 0 for _, _, covered in parents):
+                    raise ValueError(f"{source} selected child OS arena parent retains terminal mapping coverage")
+                if any(category == "os-page" and covered != 0 for category, _, _, covered in child):
+                    raise ValueError(f"{source} selected child retains direct OS page mapping coverage")
+            page_map_roots = [(start, end, covered) for category, start, end, covered in child if category == "process-pagemap"]
+            if any(covered != end-start for start, end, covered in page_map_roots):
+                raise ValueError(f"{source} process PageMap root is not fully mapped")
+            extents = [(start, end) for start, end, _ in page_map_roots]
             if not extents:
                 raise ValueError(f"{source} PageMap owner root missing")
             if root_extent is None:

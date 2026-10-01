@@ -42,8 +42,9 @@ class ArenaLifecycleProfiles(unittest.TestCase):
     def test_pagemap_geometry_binds_actual_storage_and_preserves_growth(self):
         root = ("process-pagemap", 1048576, 1179648, 131072)
         submap = ("process-pagemap", 2097152, 2162688, 65536)
-        rows = [{"children": [[root] for _ in range(6)]},
-                {"children": [[root, submap] for _ in range(6)]}]
+        arena = ("os-arena", 4194304, 5242880, 0)
+        rows = [{"children": [[root, arena] for _ in range(6)]},
+                {"children": [[root, submap, arena] for _ in range(6)]}]
         text = "source_root_bound arena_reserve_kib=1048576 pagemap_root_bytes=131072 pagemap_slots=4 submap_bytes=65536 maximum_pagemap_bytes=327680"
         observed = lifecycle.parse_retention_geometry(text, rows, arena_reserve=1048576, source="actual owner")
         self.assertEqual(observed["maximum_pagemap_bytes"], 327680)
@@ -56,6 +57,39 @@ class ArenaLifecycleProfiles(unittest.TestCase):
                 lifecycle.parse_retention_geometry(altered, rows, arena_reserve=1048576, source="corrupted owner")
         c_text = text.replace("pagemap_root_bytes=131072", "pagemap_reserved_bytes=65536")
         self.assertEqual(lifecycle.parse_retention_geometry(c_text, rows, arena_reserve=1048576, source="C owner")["observed_pagemap_bytes"], [131072, 196608])
+
+    def test_nonzero_reservation_requires_each_child_parent_release_from_raw_extents(self):
+        lines = []
+        for cycle in range(33):
+            for child in range(6):
+                lines.extend([
+                    f"m2.arena.retention.root.{cycle}.{child}.0.external-raw=100,200,0",
+                    f"m2.arena.retention.root.{cycle}.{child}.1.process-pagemap=1048576,1179648,131072",
+                    f"m2.arena.retention.root.{cycle}.{child}.2.os-arena=4194304,5242880,0",
+                    f"m2.arena.retention.child.{cycle}.{child}=3"])
+            lines.extend([f"m2.arena.retention.map.{cycle}.0=1048576,1179648",
+                          f"m2.arena.retention.maps.{cycle}=1",
+                          f"m2.arena.retention.{cycle}.ranges=1",
+                          f"m2.arena.retention.{cycle}.bytes=131072"])
+        raw = "\n".join(lines)
+        geometry = "source_root_bound arena_reserve_kib=1048576 pagemap_root_bytes=131072 pagemap_slots=4 submap_bytes=65536 maximum_pagemap_bytes=327680"
+        def receive(raw, reserve=1048576):
+            rows = lifecycle.parse_attributed_retention(raw, source="complete raw extent receiver")
+            return lifecycle.parse_retention_geometry(geometry.replace("reserve_kib=1048576", f"reserve_kib={reserve}"), rows, arena_reserve=reserve, source="selected reservation receiver")
+        self.assertEqual(receive(raw)["observed_pagemap_bytes"], [131072]*33)
+        parent = "m2.arena.retention.root.17.3.2.os-arena=4194304,5242880,0"
+        for altered in (
+                raw.replace(parent, parent.replace("os-arena", "external-arena")),
+                raw.replace(parent, "").replace("m2.arena.retention.child.17.3=3", "m2.arena.retention.child.17.3=2"),
+                raw.replace(parent, parent[:-1]+"1"),
+                raw.replace(parent, parent[:-1]+"1048576"),
+                raw.replace("m2.arena.retention.root.17.3.1.process-pagemap=1048576,1179648,131072", "m2.arena.retention.root.17.3.1.process-pagemap=1048576,1179648,131071"),
+                raw.replace("m2.arena.retention.child.17.3=3", "m2.arena.retention.root.17.3.3.os-page=6291456,6356992,65536\nm2.arena.retention.child.17.3=4")):
+            with self.subTest(altered=altered[altered.find("root.17.3"):altered.find("root.17.3")+160]):
+                with self.assertRaises(ValueError):
+                    receive(altered)
+        direct = raw.replace("os-arena=4194304,5242880,0", "os-page=4194304,5242880,1048576")
+        self.assertEqual(receive(direct, reserve=0)["observed_pagemap_bytes"], [131072]*33)
 
     def test_selected_statistics_caller_uses_matching_native_features(self):
         trace = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
