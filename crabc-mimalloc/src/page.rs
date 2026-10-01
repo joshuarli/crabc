@@ -901,7 +901,7 @@ use crate::os::PageSize;
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn failed_initial_regular_page_commit_recovers_source_statistics() {
         crate::test_process::run_in_fresh_process(
@@ -919,6 +919,9 @@ use crate::os::PageSize;
                     static mut stderr: *mut c_void;
                     fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
                 }
+
+                let matrix = std::env::var("CRABC_MI_STATISTICS_MATRIX").as_deref() == Ok("1");
+                let faulted = !matrix || std::env::var("CRABC_MI_STATISTICS_FAULT_CONTROL").as_deref() != Ok("success");
 
                 static WARNINGS: AtomicUsize = AtomicUsize::new(0);
 
@@ -947,18 +950,30 @@ use crate::os::PageSize;
                 fn show(stage: &str, before: (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot), failures: usize) {
                     let (now, bins) = stats();
                     let old = before.0;
+                    // Disabled scalar fields in the public statistics image are zero.
+                    #[cfg(not(feature = "mi-stat-2"))]
+                    let zero = crate::statistics::FinalStatCount { total: 0, peak: 0, current: 0 };
+                    #[cfg(feature = "mi-stat-2")]
+                    let requested = (now.malloc_requested, old.malloc_requested);
+                    #[cfg(not(feature = "mi-stat-2"))]
+                    let requested = (zero, zero);
+                    #[cfg(feature = "mi-stat-1")]
+                    let normal = (now.malloc_normal, old.malloc_normal);
+                    #[cfg(not(feature = "mi-stat-1"))]
+                    let normal = (zero, zero);
                     for (name, value, prior) in [
                         ("pages", now.pages, old.pages),
                         ("page_committed", now.page_committed, old.page_committed),
                         ("reserved", now.reserved, old.reserved),
                         ("committed", now.committed, old.committed),
-                        ("requested", now.malloc_requested, old.malloc_requested),
-                        ("normal", now.malloc_normal, old.malloc_normal),
+                        ("requested", requested.0, requested.1),
+                        ("normal", normal.0, normal.1),
                     ] {
                         std::println!("{stage}.{name}={},{},{}",
                             value.total - prior.total, value.peak - prior.peak,
                             value.current - prior.current);
                     }
+                    #[cfg(feature = "mi-stat-2")]
                     for (index, (current, previous)) in now.malloc_bins.iter()
                         .zip(old.malloc_bins.iter()).enumerate()
                     {
@@ -992,6 +1007,13 @@ use crate::os::PageSize;
                 crate::source_options_api::option_set(SourceOption::ShowErrors as c_int, 1);
                 // SAFETY: the static callback and null context remain valid until process exit.
                 unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };
+                if matrix {
+                    crate::source_options_api::option_set(SourceOption::GuardedSampleRate as c_int, 0);
+                    let theap = crate::source_heap_api::theap_get_default();
+                    assert!(!theap.is_null());
+                    // SAFETY: this fresh thread exclusively retains its initialized Theap.
+                    unsafe { crate::source_heap_api::theap_guarded_set_sample_rate(theap, 0, 0) };
+                }
                 let warm = match runtime_lifecycle::native_allocate(64, false) {
                     NativePageAllocationResult::Allocated(pointer) => pointer,
                     _ => panic!("arena warmup allocation failed"),
@@ -1000,7 +1022,19 @@ use crate::os::PageSize;
                 assert_eq!(unsafe { runtime_lifecycle::native_free(warm) }, NativePageFreeResult::Freed);
                 let before = stats();
                 std::println!("CRABC_MI_M7_INITIAL_PAGE_COMMIT_FAULT_TRACE_BEGIN");
-                std::println!("profile.level=2");
+                std::println!("profile.level={}", crate::config::STAT_LEVEL);
+                if matrix {
+                    std::println!("profile.debug={}", crate::config::DEBUG_LEVEL);
+                    std::println!("profile.guarded={}", usize::from(crate::config::GUARDED));
+                    std::println!("profile.faulted={}", usize::from(faulted));
+                    std::println!("profile.sample_rate={}", crate::source_options_api::option_get(SourceOption::GuardedSampleRate as c_int));
+                    #[cfg(feature = "mi-guarded")]
+                    {
+                        let theap = core::ptr::NonNull::new(crate::source_heap_api::theap_get_default().cast::<crate::types::Theap>()).unwrap();
+                        // SAFETY: no allocation or rate change overlaps this local owner's scalar read.
+                        std::println!("profile.theap_sample_rate={}", unsafe { crate::types::Theap::guarded_sample_rate_at(theap) });
+                    }
+                }
                 std::println!("profile.on_demand={}",
                     crate::source_options_api::option_get(SourceOption::PageCommitOnDemand as c_int));
                 std::println!("profile.eager_arena={}",
@@ -1008,7 +1042,7 @@ use crate::os::PageSize;
                 std::println!("profile.show_errors={}",
                     crate::source_options_api::option_get(SourceOption::ShowErrors as c_int));
                 show("before", before, 0);
-                let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
+                let fault = fault::install(fault::Plan::at(fault::Point::Commit, if faulted { 1 } else { usize::MAX }, crabc_core::Errno::NOMEM));
                 let protections = fault.capture_protection_ranges();
                 let block = match runtime_lifecycle::native_allocate(100000, false) {
                     NativePageAllocationResult::Allocated(pointer) => Some(pointer),
@@ -1016,21 +1050,46 @@ use crate::os::PageSize;
                 };
                 std::println!("fault.nonnull={}", usize::from(block.is_some()));
                 let (ranges, count) = protections.attempts().expect("bounded raw protect capture");
-                assert!(count >= 2, "the failed initial commit must have a successful retry");
+                assert!(count >= if faulted { 2 } else { 1 }, "the selected initial commit must reach the kernel or retry");
                 std::println!("fault.commit_size={}", ranges[0].1);
-                assert!(fault.observed() >= 2, "the failed first commit must be retried");
-                show("fault", before, 1);
+                assert!(fault.observed() >= if faulted { 2 } else { 1 }, "the selected first commit must be observed");
+                if matrix {
+                    let pointer = block.expect("live client after initial commit");
+                    // SAFETY: this client exclusively owns its requested writable prefix.
+                    unsafe { core::ptr::write_bytes(pointer.as_ptr(), 0x35, 100000) };
+                }
+                show("fault", before, usize::from(faulted));
                 let recovered = match runtime_lifecycle::native_allocate(100000, false) {
                     NativePageAllocationResult::Allocated(pointer) => Some(pointer),
                     _ => None,
                 };
                 std::println!("recovery.nonnull={}", usize::from(recovered.is_some()));
-                show("recovery", before, 1);
+                if matrix {
+                    let first = block.unwrap();
+                    let second = recovered.expect("live recovery client");
+                    // SAFETY: both distinct clients remain live until the frees below; all
+                    // reads and writes stay inside their requested 100000-byte prefixes.
+                    let (bytes, owned) = unsafe {
+                        assert!(runtime_lifecycle::native_usable_size(first).unwrap() >= 100000);
+                        assert!(runtime_lifecycle::native_usable_size(second).unwrap() >= 100000);
+                        core::ptr::write_bytes(second.as_ptr(), 0xb7, 100000);
+                        let bytes = core::slice::from_raw_parts(first.as_ptr(), 100000).iter().all(|byte| *byte == 0x35)
+                            && core::slice::from_raw_parts(second.as_ptr(), 100000).iter().all(|byte| *byte == 0xb7);
+                        let main = crate::source_heap_api::heap_main();
+                        (bytes, crate::source_api::check_owned(first.as_ptr()) && crate::source_api::check_owned(second.as_ptr())
+                            && crate::source_heap_api::heap_contains(main, first.as_ptr())
+                            && crate::source_heap_api::heap_contains(main, second.as_ptr()))
+                    };
+                    std::println!("recovery.client_bytes={}", usize::from(bytes));
+                    std::println!("recovery.clients_distinct={}", usize::from(first.as_ptr().addr().abs_diff(second.as_ptr().addr()) >= 100000));
+                    std::println!("recovery.clients_owned={}", usize::from(owned));
+                }
+                show("recovery", before, usize::from(faulted));
                 for pointer in [block, recovered].into_iter().flatten() {
                     // SAFETY: each distinct allocation remains live and locally owned.
                     assert_eq!(unsafe { runtime_lifecycle::native_free(pointer) }, NativePageFreeResult::Freed);
                 }
-                show("freed", before, 1);
+                show("freed", before, usize::from(faulted));
                 std::println!("CRABC_MI_M7_INITIAL_PAGE_COMMIT_FAULT_TRACE_END");
             },
         );

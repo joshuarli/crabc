@@ -19,6 +19,32 @@ class InitialPageCommitProducts(unittest.TestCase):
     def test_compiler_program_outside_owned_target_preserves_failure_inputs(self):
         self._produce(escaped=True)
 
+    def test_guarded_receiver_requires_live_options_and_surviving_clients(self):
+        for profile, (level, debug) in producer.PROFILES.items():
+            for faulted in (False, True):
+                with self.subTest(profile=profile, faulted=faulted):
+                    trace = {"profile.level": str(level), "profile.debug": str(int(debug)),
+                             "profile.guarded": "1", "profile.faulted": str(int(faulted)),
+                             "profile.sample_rate": "0", "profile.theap_sample_rate": "0",
+                             "profile.on_demand": "1", "profile.eager_arena": "0", "profile.show_errors": "1",
+                             "fault.nonnull": "1", "fault.commit_size": "114688", "recovery.nonnull": "1",
+                             "recovery.client_bytes": "1", "recovery.clients_distinct": "1", "recovery.clients_owned": "1"}
+                    for stage in ('fault', 'recovery', 'freed'):
+                        trace[stage + '.failures'] = str(int(faulted))
+                        trace[stage + '.warnings'] = str(int(faulted))
+                        if level == 0:
+                            trace[stage + '.normal'] = '0,0,0'
+                        if level < 2:
+                            trace[stage + '.requested'] = '0,0,0'
+                    producer.require_commit_failure_shape(trace, 'current raw control', profile=profile, faulted=faulted)
+                    for key, value in [('profile.sample_rate', '4000'), ('profile.theap_sample_rate', '4000'),
+                                       ('profile.guarded', '0'), ('profile.level', '3'),
+                                       ('recovery.client_bytes', '0'), ('recovery.clients_distinct', '0'),
+                                       ('recovery.clients_owned', '0'), ('fault.failures', str(int(not faulted)))]:
+                        altered = dict(trace);altered[key] = value
+                        with self.assertRaises(producer.harness.HarnessError):
+                            producer.require_commit_failure_shape(altered, 'altered raw control', profile=profile, faulted=faulted)
+
     def _produce(self, *, escaped=False):
         scratch = producer.harness.WORK_ROOT / 'tmp/initial-page-commit-tests'
         scratch.mkdir(parents=True, exist_ok=True)
@@ -60,7 +86,7 @@ class InitialPageCommitProducts(unittest.TestCase):
                 (producer.m7.integrated, 'source_seal', lambda: {}),
                 (producer.m7, 'parse_options_trace', lambda *args: {}),
                 (producer.m7, 'compare_options_traces', lambda *args: None),
-                (producer, 'require_commit_failure_shape', lambda *args: None)]
+                (producer, 'require_commit_failure_shape', lambda *args, **kwargs: None)]
             for owner, name, value in replacements:
                 stack.enter_context(mock.patch.object(owner, name, value))
             if escaped:
