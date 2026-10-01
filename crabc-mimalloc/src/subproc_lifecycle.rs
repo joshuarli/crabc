@@ -2983,6 +2983,69 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_destroy_retains_record_until_failed_teardown_member_finishes() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::child_destroy_retains_record_until_failed_teardown_member_finishes",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("a live child");
+                let (retained, observed) = std::sync::mpsc::channel();
+                let (terminal, complete) = std::sync::mpsc::channel::<bool>();
+                let worker = std::thread::spawn(move || {
+                    assert!(unsafe {
+                        crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                            crate::runtime_lifecycle::current_native_allocator_thread_descriptor())
+                    });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    // The actual teardown removes source registration before
+                    // admitting the metadata engine that returns its images.
+                    unsafe { id.with_owner(|owner| {
+                        owner.as_mut().expect("live child").test_fail_next_metadata_session_setup();
+                    }) }.expect("exclusive child failure control");
+                    assert_eq!(native_child_thread_done(), Some(Err(NativeChildThreadDoneError::Done(
+                        ChildThreadDoneError::Teardown(crate::meta::ChildThreadTeardownError::PageEngine(
+                            crate::meta::ChildMetadataPageEngineError::SessionNotReady))))));
+                    let current = unsafe { current_child_member() }.as_ref().expect("actual retained TLS member");
+                    assert!(current.member.owner.theap_pointer().is_some(),
+                        "a refused engine admission consumes no metadata client");
+                    retained.send(()).expect("failed member parked");
+                    // An audit failure ends this worker without consulting
+                    // any child record, image, root, or allocation again.
+                    if !complete.recv().unwrap_or(false) { return; }
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                    assert!(unsafe { current_child_member() }.is_none());
+                });
+                observed.recv().expect("actual TLS member retained after failure");
+                // SAFETY: the worker is parked outside allocator operations;
+                // its actual TLS capability remains retained until signalled.
+                unsafe { id.with_owner(|owner| {
+                    let child = owner.as_mut().expect("live retained child");
+                    assert_eq!(child.with_child_image(|image| image.get_ref().identity().live_thread_count()), Some(0));
+                }) }.expect("exclusive source registration observation");
+                let metadata = crate::meta::MetaAllocator::global();
+                let before = metadata.test_allocation_audit().live_capability_count;
+                // SAFETY: every child client is permanently quiescent. The
+                // worker's next allocator operation is its own terminal finish.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+                let after = metadata.test_allocation_audit().live_capability_count;
+                std::println!("retained-record.before={before}; after={after}");
+                assert_eq!(after + 2, before,
+                    "context and metadata Theap return while actual TLS retains its record capability");
+                terminal.send(true).expect("audited record remains allocated");
+                worker.join().expect("actual retained member completes terminal finish");
+                assert_eq!(metadata.test_allocation_audit().live_capability_count + 1, after,
+                    "the last real TLS member returns the record capability exactly once");
+            },
+        );
+    }
+
     /// A live Heap of one child cannot become another child's cached Theap.
     /// Both child images remain live during the attempted selection.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
