@@ -4860,7 +4860,126 @@ pub(crate) struct MetaAllocatorBound<'owner> {
     subprocess: &'static MainSubprocess,
 }
 
+/// Refusal to capture the original metadata diagnostic domain before a
+/// fresh process-backed candidate is created. Refusal grants no replacement
+/// allocation, cleanup or process-readiness authority.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceInitializationOutputAdmissionError {
+    Metadata(MetaError),
+    Bootstrap(crate::process_init::BootstrapOutputAdmissionError),
+    BackingUnavailable,
+    OriginMismatch,
+}
+
+/// A borrowed startup diagnostic admission for the actual detached metadata
+/// issuer. The scope retains its original completion, output and VM process;
+/// the pinned metadata owner and its selected process binding retain the
+/// exact Theap, canonical Heap and PageMap. No image projection or allocator
+/// lock is retained. This is captured before the original page candidate,
+/// and cannot be persisted beside a task that outlives the startup scope.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct SourceInitializationOutputWitness<'scope, 'startup, 'owner> {
+    scope: &'scope crate::process_init::ScopedBootstrapOutput<'startup>,
+    issuer: MetaAllocatorBound<'owner>,
+    process: &'scope crate::os::VmProcess<'static>,
+    binding: crate::process_init::ProcessMainBackingBinding,
+    page_map: &'static PageMap,
+    theap: NonNull<Theap>,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl SourceInitializationOutputWitness<'_, '_, '_> {
+    fn validate(&self) -> Result<(), SourceInitializationOutputAdmissionError> {
+        use SourceInitializationOutputAdmissionError as Error;
+        if !self.scope.matches_process(self.process)
+            || !self.scope.matches_subprocess(self.issuer.subprocess)
+            || !self.binding.is_active()
+        { return Err(Error::OriginMismatch); }
+        let entry = self.issuer.allocator.enter().map_err(Error::Metadata)?;
+        if !matches!(entry.status(), BOUND | READY) { return Err(Error::OriginMismatch); }
+        entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess).map_err(Error::Metadata)?;
+        // SAFETY: this short entry serializes immutable backing selection.
+        // The copied binding retains the actual process map; no projection
+        // survives this validation or a later output callback.
+        let backing = unsafe { *self.issuer.allocator.get_ref().process_backing.get() }
+            .ok_or(Error::BackingUnavailable)?;
+        if !core::ptr::eq(backing.page_map, self.page_map)
+            || !self.scope.matches_process(&backing.binding.process())
+            || self.issuer.allocator.get_ref().detached_metadata_theap.load(Ordering::Acquire) != self.theap.as_ptr()
+        { return Err(Error::OriginMismatch); }
+        Ok(())
+    }
+
+    /// Revalidates this original domain after all allocator projections end.
+    /// The returned output borrow remains bounded by the winning startup scope.
+    pub(crate) fn output(&self) -> Result<&crate::diagnostic_output::OutputOwner,
+        SourceInitializationOutputAdmissionError> {
+        self.validate()?;
+        self.scope.output().map_err(SourceInitializationOutputAdmissionError::Bootstrap)
+    }
+
+    pub(crate) fn process(&self) -> Result<&crate::os::VmProcess<'static>,
+        SourceInitializationOutputAdmissionError> {
+        self.validate()?;
+        Ok(self.process)
+    }
+
+    pub(crate) fn page_map(&self) -> Result<&PageMap, SourceInitializationOutputAdmissionError> {
+        self.validate()?;
+        Ok(self.page_map)
+    }
+
+    /// This comparison refuses a foreign original task; the retained issuer
+    /// pin and scope, rather than address equality, carry lifetime authority.
+    pub(crate) fn matches_theap(&self, theap: NonNull<Theap>) -> bool {
+        self.validate().is_ok() && self.theap == theap
+    }
+}
+
 impl<'owner> MetaAllocatorBound<'owner> {
+    /// Captures the actual startup metadata output domain before allocation.
+    /// The process PageMap may be initialized while global process readiness
+    /// remains unpublished. Earlier bootstrap prefixes without a selected
+    /// process backing refuse this factory and retain failures terminally.
+    ///
+    /// # Safety
+    /// The caller retains this actual pinned metadata owner, canonical Heap,
+    /// original scope and selected process binding before creating a fresh
+    /// candidate and continuously through any diagnostic dispatch. It excludes
+    /// issuer teardown/rebinding and ends every allocator, metadata, Page,
+    /// Heap, Theap, TLD and random projection or guard before output delivery.
+    /// Callback registrations and arguments remain valid and serialized; no
+    /// nested operation may reuse the unpublished original candidate.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn capture_startup_source_initialization_output<'scope, 'startup>(
+        self,
+        scope: &'scope crate::process_init::ScopedBootstrapOutput<'startup>,
+    ) -> Result<SourceInitializationOutputWitness<'scope, 'startup, 'owner>,
+        SourceInitializationOutputAdmissionError> {
+        use SourceInitializationOutputAdmissionError as Error;
+        let process = scope.process().map_err(Error::Bootstrap)?;
+        if !scope.matches_subprocess(self.subprocess) { return Err(Error::OriginMismatch); }
+        let entry = self.allocator.enter().map_err(Error::Metadata)?;
+        if !matches!(entry.status(), BOUND | READY) { return Err(Error::OriginMismatch); }
+        entry.validate_bound_tuple(self.config, self.subprocess).map_err(Error::Metadata)?;
+        // SAFETY: the original metadata entry excludes selection changes;
+        // these copies retain the actual already selected process backing.
+        let backing = unsafe { *self.allocator.get_ref().process_backing.get() }
+            .ok_or(Error::BackingUnavailable)?;
+        if !backing.binding.is_active() || !scope.matches_process(&backing.binding.process()) {
+            return Err(Error::OriginMismatch);
+        }
+        let theap = NonNull::new(self.allocator.get_ref().detached_metadata_theap.load(Ordering::Acquire))
+            .ok_or(Error::Metadata(MetaError::TheapMetaUnpublished))?;
+        // No metadata-entry guard crosses the returned caller boundary.
+        drop(entry);
+        Ok(SourceInitializationOutputWitness { scope, issuer: self, process,
+            binding: backing.binding, page_map: backing.page_map, theap,
+            _not_send_or_sync: PhantomData })
+    }
+
     #[inline]
     pub(crate) const fn subprocess(self) -> &'static MainSubprocess {
         self.subprocess
