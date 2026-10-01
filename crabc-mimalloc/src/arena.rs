@@ -3392,6 +3392,26 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-secure-2")))]
+    #[test]
+    fn secure_committed_metadata_without_a_guard_capability_retains_unpublished_bytes() {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let base = region.as_ptr();
+        let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
+        // SAFETY: this region owns its exclusive live, writable first byte.
+        unsafe { base.write(0xa5) };
+        let result = unsafe { manage_external_in_place(
+            &registry, base, ARENA_MIN_SIZE, PageSize::new(4096).unwrap(),
+            true, false, false, -1, false, None,
+        ) };
+        let preserved = unsafe { base.read() };
+        std::println!("secure.info.missing_guard={}:{}:{}",
+            result.is_err(), registry.count(), preserved);
+        assert!(result.is_err(), "a missing transition owner cannot initialize metadata");
+        assert_eq!(registry.count(), 0);
+        assert_eq!(preserved, 0xa5);
+    }
+
     #[test]
     fn in_place_initialization_marks_only_usable_slices_free_and_preserves_flags() {
         let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
