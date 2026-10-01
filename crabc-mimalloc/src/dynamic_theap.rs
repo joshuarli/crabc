@@ -3870,12 +3870,36 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
-        cross_thread_managed_abandoned_lifecycle_observe(&mut emit, |_, _, _, _| {}, |_| {});
+    struct HeldAbandonedControl {
+        held: std::sync::Barrier,
+        unhold: std::sync::Barrier,
+        claimed: std::sync::atomic::AtomicBool,
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn cross_thread_managed_abandoned_lifecycle_observe(
+    impl HeldAbandonedControl {
+        fn new() -> Self {
+            Self {
+                held: std::sync::Barrier::new(2),
+                unhold: std::sync::Barrier::new(2),
+                claimed: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
+        let control = HeldAbandonedControl::new();
+        thread::scope(|scope| {
+            cross_thread_managed_abandoned_lifecycle_observe(scope, &control, &mut emit,
+                |_, _, _, _| {}, |_| {});
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn cross_thread_managed_abandoned_lifecycle_observe<'scope, 'env>(
+        scope: &'scope thread::Scope<'scope, 'env>,
+        control: &'scope HeldAbandonedControl,
         mut emit: impl FnMut(i64),
         mut before_destroy: impl FnMut(usize, *mut core::ffi::c_void, usize, usize),
         mut after_destroy: impl FnMut(usize),
@@ -3927,7 +3951,7 @@ mod tests {
                     release_receive.recv().unwrap();
                 });
                 let (heap_address, first_address, survivor_address, original_thread) = ready_receive.recv().unwrap();
-                let target = thread::spawn(move || {
+                let target = scope.spawn(move || {
                     let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
                     // SAFETY: this worker retains its own TLS descriptor through
                     // its explicit allocator finish and physical thread exit.
@@ -3978,21 +4002,30 @@ mod tests {
                     if blocked {
                         let head = unsafe { crate::types::Page::abandonment_atomic_state_at(page) }
                             .xthread_free.as_ptr().expose_provenance();
-                        let (held_send, held_receive) = mpsc::channel();
-                        let (unhold_send, unhold_receive) = mpsc::channel();
-                        let holder = thread::spawn(move || {
+                        control.claimed.store(false, Ordering::Release);
+                        // Release the parked holder on coordinator panic too;
+                        // the scope joins it before these stack controls drop.
+                        struct ReleaseHolder<'a>(&'a std::sync::Barrier);
+                        impl Drop for ReleaseHolder<'_> {
+                            fn drop(&mut self) { self.0.wait(); }
+                        }
+                        let holder = scope.spawn(move || {
                             // SAFETY: two live clients retain the page while
                             // this worker owns only its atomic low-owner word.
                             let head = unsafe { &*core::ptr::with_exposed_provenance::<crate::atomic::AtomicWord>(head) };
-                            assert_eq!(crate::remote_free::claim_abandoned_owner(head),
-                                crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned);
-                            held_send.send(()).unwrap();
-                            unhold_receive.recv().unwrap();
+                            let claim = crate::remote_free::claim_abandoned_owner(head);
+                            control.claimed.store(claim == crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned,
+                                Ordering::Release);
+                            control.held.wait();
+                            control.unhold.wait();
+                            assert_eq!(claim, crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned);
                             let mut hook: Option<fn()> = None;
                             assert_eq!(crate::remote_free::try_unown_abandoned_head(head, &mut hook),
                                 crate::remote_free::AbandonedOwnerHeadTransition::Released);
                         });
-                        held_receive.recv().unwrap();
+                        let release = ReleaseHolder(&control.unhold);
+                        control.held.wait();
+                        assert!(control.claimed.load(Ordering::Acquire), "holder claims the abandoned low-owner word");
                         let fallback = unsafe { crate::source_heap_api::heap_malloc(heap, request) }.value.expect("held claim falls back");
                         assert_ne!(page_of(fallback), page, "foreign low-owner claim refuses reassociation");
                         rows.extend([!bitmap_clear(bin + 1) as i64, count() as i64,
@@ -4000,7 +4033,7 @@ mod tests {
                         assert!(matches!(unsafe { crate::runtime_lifecycle::native_free(fallback) },
                             crate::runtime_lifecycle::NativePageFreeResult::Freed));
                         unsafe { crate::source_heap_api::heap_collect(heap, true) };
-                        unhold_send.send(()).unwrap();
+                        drop(release);
                         holder.join().unwrap();
                     } else {
                         rows.extend([!bitmap_clear(bin + 1) as i64, count() as i64,
@@ -4254,10 +4287,14 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn retention_attribution_cycle(cycle: usize) {
+    fn retention_attribution_cycle<'scope, 'env>(
+        scope: &'scope thread::Scope<'scope, 'env>,
+        control: &'scope HeldAbandonedControl,
+        cycle: usize,
+    ) {
         let observed = core::cell::RefCell::new(None::<RetentionRoots>);
         let completed = core::cell::Cell::new(0usize);
-        cross_thread_managed_abandoned_lifecycle_observe(|_| {}, |child_index, child, start, end| {
+        cross_thread_managed_abandoned_lifecycle_observe(scope, control, |_| {}, |child_index, child, start, end| {
             let _observation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
                 .expect("native admission retains the process throughout source-root observation");
             assert_eq!(child_index, completed.get());
@@ -4328,7 +4365,8 @@ mod tests {
     #[test]
     fn x86_64_cross_thread_arena_retention_attribution_once() {
         prepare_cross_thread_managed_abandoned_lifecycle();
-        retention_attribution_cycle(0);
+        let control = HeldAbandonedControl::new();
+        thread::scope(|scope| retention_attribution_cycle(scope, &control, 0));
     }
 
     /// Reports actual same-process mappings after joined child teardown. Source
@@ -4342,7 +4380,12 @@ mod tests {
         // child Heap allocations retires an active initial-owner engine; it is
         // not part of the ordinary C caller's create/destroy cycle.
         prepare_cross_thread_managed_abandoned_lifecycle();
-        for cycle in 0..=32 { retention_attribution_cycle(cycle); }
+        let control = HeldAbandonedControl::new();
+        // A thread scope allocates shared bookkeeping. Keep that observer
+        // allocation alive for both the baseline and every later snapshot.
+        thread::scope(|scope| {
+            for cycle in 0..=32 { retention_attribution_cycle(scope, &control, cycle); }
+        });
     }
 
     #[cfg(target_arch = "x86_64")]
