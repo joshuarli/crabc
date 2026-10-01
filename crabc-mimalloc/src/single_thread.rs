@@ -40456,7 +40456,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let state = unsafe { Page::abandonment_state_at(page) };
         let identity = unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire) & !PAGE_FLAG_MASK;
         if matches!(identity, THREAD_ID_ABANDONED | crate::types::THREAD_ID_ABANDONED_MAPPED)
-            || unsafe { state.theap.as_ptr().read() } != self.session.local_field_theap_pointer().as_ptr()
+            || unsafe { state.theap.as_ptr().read() } != self.theap_identity()
             || (state.memid.is_os() && !self.selected_main_os_page_is_current_local_owner(page))
         {
             return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::ForeignPage);
