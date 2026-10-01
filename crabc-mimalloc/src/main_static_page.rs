@@ -3008,6 +3008,30 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Frees an already classified local allocation while preserving whether
+    /// its client was consumed before a later source lifecycle failure.
+    ///
+    /// # Safety
+    /// `allocation` is the original live allocation classified under this
+    /// retained initial owner. Its Theap, Heap and process admission remain
+    /// held and its local page and queue fields are exclusive through this
+    /// call. Consumed discharges the client even when its result is an error;
+    /// that client must never be freed again or returned as live.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn free_captured_live_allocation_with_progress_current_initial_thread_local(
+        &mut self,
+        allocation: crate::process_page_map::LiveAllocationPointer,
+    ) -> Option<crate::single_thread::LocalClientFreeProgress> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                // SAFETY: the caller retains the original classified client
+                // and this engine's source-local ownership through the free.
+                Some(unsafe { active.engine.free_captured_live_allocation_with_progress(allocation) })
+            }
+            _ => None,
+        }
+    }
+
     /// Offers a claimed abandoned page to the initial thread's Theap through
     /// pinned `mi_abandoned_page_try_reclaim`. Only an active engine owns the
     /// Theap queues; a dormant or awaiting owner declines.

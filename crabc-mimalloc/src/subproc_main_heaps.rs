@@ -1537,6 +1537,53 @@ pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>
     }
 }
 
+/// Frees a canonical guarded backing allocation on its original auxiliary
+/// main Theap, retaining consumption even if finishing the local session
+/// subsequently retains an incomplete backing release. `None` declines a
+/// different owner domain; a recognized owner's refusal remains explicit.
+///
+/// # Safety
+/// `allocation` is the original live local classification issued while this
+/// exact Theap, Heap, TLD and native admission were retained. The canonical
+/// backing block has no guard tag or interior client placement yet. The caller
+/// excludes retirement, thread exit, another free and concurrent page/queue
+/// access. Consumed discharges the client even after a later failure, so it
+/// must never be retried or returned as a live allocation.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) unsafe fn native_theap_free_guarded_canonical_progress(
+    theap: NonNull<Theap>,
+    allocation: crate::process_page_map::LiveAllocationPointer,
+) -> Option<crate::single_thread::LocalClientFreeProgress> {
+    use crate::single_thread::{FreeError, LocalClientFreeProgress};
+    // SAFETY: the original selected owner remains retained by the caller;
+    // only its immutable Heap and subprocess identities are projected here.
+    let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+    if unsafe { Heap::subprocess_pointer_at(heap) } != MainSubprocess::global().identity_ptr() {
+        return None;
+    }
+    let Some(thread) = current_main_thread() else {
+        return Some(LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::Lifecycle));
+    };
+    if theap == thread.theap { return None; }
+    // SAFETY: the retained source image supplies this scalar TLD identity.
+    if unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
+        return Some(LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::ForeignPage));
+    }
+    let mut progress = None;
+    let finished = with_theap_engine(thread, theap, |engine| {
+        // SAFETY: the caller retains the original classified client and
+        // selected local fields through this source publication boundary.
+        progress = Some(unsafe { engine.free_captured_live_allocation_with_progress(allocation) });
+    }).is_some();
+    Some(match progress {
+        Some(LocalClientFreeProgress::Consumed(Ok(()))) if !finished => {
+            LocalClientFreeProgress::Consumed(Err(FreeError::Lifecycle))
+        }
+        Some(progress) => progress,
+        None => LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::Lifecycle),
+    })
+}
+
 /// The non-main Heap of the process main subprocess that owns `page`.
 ///
 /// # Safety
