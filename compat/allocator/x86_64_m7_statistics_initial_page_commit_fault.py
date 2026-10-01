@@ -66,16 +66,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true")
     args = parser.parse_args()
-    harness.require_native_x86_64()
+    execution_before = harness.require_native_x86_64(require_image_identity=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, args.offline)
     artifacts = REPORT.with_suffix("")
     artifacts.mkdir(parents=True, exist_ok=True)
     compiled_input = artifacts / "compiled-input.c"
     shutil.copy2(DRIVER, compiled_input)
+    retained_archive = artifacts / "upstream.tar.gz"
+    shutil.copy2(archive, retained_archive)
     with harness.temporary_directory("crabc-m7-statistics-initial-page-commit-fault-") as name:
         temporary = Path(name)
-        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        source = harness.safe_extract(retained_archive, artifacts / "source", pin["archive_root"])
         compiler = harness.require_tool("musl-gcc")
         flags = ["-DMI_STAT=2" if flag == "-DMI_STAT=0" else flag
                  for flag in harness.CONFIGURATION_PROFILES["release"]]
@@ -93,6 +95,16 @@ def main() -> int:
         harness.require_success(c_run, "pinned initial-page commit fault C execution")
 
         program = lifecycle.native_program(harness, "stat-2", artifacts)
+        build = harness.read_json(artifacts / "rust-build.json")
+        selected = harness.read_json(artifacts / "compiler-artifact.json")
+        # The build event names the original executable. Its retained copy is
+        # useful for other callers but cannot replace compiler product authority.
+        program["path"] = Path(selected["executable"])
+        (artifacts / "native-program").unlink()
+        unit_program = {"build": build, "build_command": build["command"],
+                        "cargo_target": str(harness.WORK_ROOT / "target"),
+                        "execution": program["execution"],
+                        "artifact": harness.artifact_record(program["path"])}
         rust_run = harness.command_record(harness._x86_64_program_check_command(
             program, TEST, nocapture=True, gate_name="initial-page commit fault"),
             cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=m7.EVIDENCE_TIMEOUT_SECONDS)
@@ -101,6 +113,18 @@ def main() -> int:
             "status": "failed", "c_build": c_build, "c_run": c_run,
             "rust_test": rust_run,
             "fault_placement": "one failed initial page write-enable after arena warmup; subsequent page commits reach the kernel",
+            "physical_inputs": {
+                "unit_program": unit_program,
+                "c_program": harness.artifact_record(c_binary),
+                "fixture": harness.artifact_record(compiled_input),
+                "archive": harness.artifact_record(retained_archive),
+                "oracle_source": harness.source_file_records(source, sorted(
+                    path.relative_to(source).as_posix()
+                    for parent in (source / "include", source / "src")
+                    for path in parent.rglob("*") if path.is_file())),
+            },
+            "native_execution_provenance": harness.native_execution_attestation(
+                execution_before, harness.require_native_x86_64(require_image_identity=True)),
             "provenance": {
                 "pin": {key: pin[key] for key in ("tag", "revision", "sha256")},
                 "git": m7.engine.git_provenance(),
