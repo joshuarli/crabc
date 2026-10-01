@@ -3871,10 +3871,19 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
+        cross_thread_managed_abandoned_lifecycle_observe(&mut emit, |_, _, _, _| {}, |_| {});
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn cross_thread_managed_abandoned_lifecycle_observe(
+        mut emit: impl FnMut(i64),
+        mut before_destroy: impl FnMut(usize, *mut core::ffi::c_void, usize, usize),
+        mut after_destroy: impl FnMut(usize),
+    ) {
         use core::sync::atomic::Ordering;
         emit(-1027);
-        for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
-            for blocked in [false, true] {
+        for (kind, request) in [37, SMALL_SIZE_MAX + 1024, 86699].into_iter().enumerate() {
+            for (blocked_index, blocked) in [false, true].into_iter().enumerate() {
                 let mut region = DynamicArenaRegion::zeroed();
                 let region_address = region.as_ptr().expose_provenance();
                 let child = crate::source_heap_api::subproc_new();
@@ -4025,13 +4034,198 @@ mod tests {
                 for value in target.join().expect("cross-thread target finishes") { emit(value); }
                 release_send.send(()).unwrap();
                 origin.join().unwrap();
+                let child_index = kind * 2 + blocked_index;
+                let start = region.as_ptr().addr();
+                before_destroy(child_index, child, start,
+                    start.checked_add(region.layout.size()).unwrap());
                 // SAFETY: both workers and every client have quiesced before
                 // child/arena retirement and caller-owned mapping release.
                 assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
                 drop(region);
+                after_destroy(child_index);
             }
         }
 
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum RetentionRootCategory { OsPage, OsArena, ExternalArena, ExternalRaw }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl RetentionRootCategory {
+        fn name(self) -> &'static str {
+            match self {
+                Self::OsPage => "os-page", Self::OsArena => "os-arena",
+                Self::ExternalArena => "external-arena", Self::ExternalRaw => "external-raw",
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[derive(Clone, Copy)]
+    struct RetentionRoot { category: RetentionRootCategory, start: usize, end: usize }
+
+    /// Numeric observations carry no mapping or release capability. The bound
+    /// fails explicitly rather than omitting an otherwise live source root.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    struct RetentionRoots { entries: [Option<RetentionRoot>; 1024], len: usize }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl RetentionRoots {
+        fn new() -> Self { Self { entries: [None; 1024], len: 0 } }
+
+        fn add(&mut self, category: RetentionRootCategory, start: usize, end: usize) {
+            assert!(start != 0 && end > start, "a retained source root has a nonempty extent");
+            if self.entries[..self.len].iter().flatten()
+                .any(|root| root.category == category && root.start == start && root.end == end) { return; }
+            assert!(self.len < self.entries.len(), "retained source root observation exceeded its bound");
+            self.entries[self.len] = Some(RetentionRoot { category, start, end });
+            self.len += 1;
+        }
+
+        /// # Safety
+        /// The actual source list and every Page remain live and unchanged.
+        /// Its owner lock or joined-worker quiescence excludes list mutation.
+        unsafe fn pages(&mut self, mut page: *mut crate::types::Page) {
+            let mut visited = 0usize;
+            while let Some(pointer) = NonNull::new(page) {
+                visited += 1;
+                assert!(visited <= self.entries.len(), "source page list exceeds the observation bound");
+                // SAFETY: the retained source list supplies this actual Page;
+                // only its MemoryId fields and next link are observed.
+                let state = unsafe { crate::types::Page::abandonment_state_at(pointer) };
+                if state.memid.is_os() {
+                    let memory = state.memid.os_memory().expect("OS Page has its original OS extent");
+                    let start = memory.base.addr();
+                    self.add(RetentionRootCategory::OsPage, start, start.checked_add(memory.size).unwrap());
+                }
+                page = unsafe { crate::types::Page::queue_next_at(pointer) };
+            }
+        }
+
+        /// # Safety
+        /// The exact detached Theap is retained under its metadata owner lock;
+        /// no queue or Page can change before this numeric projection ends.
+        unsafe fn theap(&mut self, theap: NonNull<Theap>) {
+            for bin in 0..crate::config::BIN_COUNT {
+                let queue = unsafe { Theap::local_queue_at(theap, bin) }.unwrap();
+                unsafe { self.pages(queue.first()) };
+            }
+        }
+
+        /// # Safety
+        /// The retained subprocess owns every published arena and all workers
+        /// are joined. Registry teardown has not begun.
+        unsafe fn arenas(&mut self, identity: &crate::subproc::SubprocessIdentity) {
+            let registry = identity.arena_backing().registry();
+            for index in 0..registry.count() {
+                let arena = unsafe { registry.arena_at(index) }.unwrap();
+                let category = match arena.memid.kind() {
+                    MemoryKind::External => RetentionRootCategory::ExternalArena,
+                    kind if kind.is_os() => RetentionRootCategory::OsArena,
+                    _ => continue,
+                };
+                let memory = arena.memid.os_memory().expect("registered mapping retains its source extent");
+                let start = memory.base.addr();
+                self.add(category, start, start.checked_add(memory.size).unwrap());
+            }
+        }
+
+        fn report_after_destroy(&self, cycle: usize, child: usize) {
+            // Read immediately after this child's destroy and caller-region
+            // drop, before a later child can reuse any of these addresses.
+            let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+            for (index, root) in self.entries[..self.len].iter().flatten().enumerate() {
+                let mut covered = 0usize;
+                for line in maps.lines() {
+                    let (start, end) = retention_mapping(line);
+                    covered = covered.checked_add(end.min(root.end).saturating_sub(start.max(root.start))).unwrap();
+                }
+                assert!(covered <= root.end - root.start);
+                if root.category == RetentionRootCategory::ExternalRaw {
+                    assert_eq!(covered, 0, "the caller-owned region was released before this observation");
+                }
+                std::println!("m2.arena.retention.root.{cycle}.{child}.{index}.{}={},{},{covered}",
+                    root.category.name(), root.start, root.end);
+            }
+            std::println!("m2.arena.retention.child.{cycle}.{child}={}", self.len);
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn retention_mapping(line: &str) -> (usize, usize) {
+        let (start, end) = line.split_whitespace().next().unwrap().split_once('-').unwrap();
+        let start = usize::from_str_radix(start, 16).unwrap();
+        let end = usize::from_str_radix(end, 16).unwrap();
+        assert!(end > start);
+        (start, end)
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn retention_attribution_cycle(cycle: usize) {
+        let observed = core::cell::RefCell::new(None::<RetentionRoots>);
+        let completed = core::cell::Cell::new(0usize);
+        cross_thread_managed_abandoned_lifecycle_observe(|_| {}, |child_index, child, start, end| {
+            assert_eq!(child_index, completed.get());
+            assert!(observed.borrow().is_none());
+            let mut roots = RetentionRoots::new();
+            roots.add(RetentionRootCategory::ExternalRaw, start, end);
+            let main = crate::subproc::MainSubprocess::global();
+            crate::meta::MetaAllocator::global().test_with_held_backing_entry(|| {
+                let theap = NonNull::new(main.test_published_metadata_theap()).unwrap();
+                // SAFETY: the real metadata entry holds both backing and source
+                // metadata locks. No allocation or callback occurs here.
+                unsafe { roots.theap(theap) };
+            }).unwrap();
+            // SAFETY: only the fixture's coordinator remains; its process main
+            // owner outlives this joined-worker interval. Registered arena
+            // roots below belong to the actual child, not this parent.
+            unsafe {
+                let heap = NonNull::new(main.ready_main_heap_pointer()).unwrap();
+                roots.pages(heap.as_ref().test_os_abandoned_page_head());
+            }
+            let pointer = NonNull::new(child).unwrap();
+            // SAFETY: this exact id is still live and every worker/client has
+            // quiesced. The child record lock retains its actual source owner.
+            let id = unsafe { crate::subproc::lifecycle::NativeSubprocessId::from_ptr(pointer) };
+            unsafe { id.with_owner(|owner| {
+                owner.as_mut().unwrap().with_child_metadata_entry(|image, heap, theap, _| {
+                    // SAFETY: the child and metadata guards retain these actual
+                    // lists and arenas; the closure records scalar extents only.
+                    roots.theap(NonNull::from(theap));
+                    roots.pages(heap.test_os_abandoned_page_head());
+                    roots.arenas(image.identity());
+                }).unwrap();
+            }) }.unwrap();
+            *observed.borrow_mut() = Some(roots);
+        }, |child_index| {
+            observed.borrow_mut().take().unwrap().report_after_destroy(cycle, child_index);
+            completed.set(completed.get() + 1);
+        });
+        assert_eq!(completed.get(), 6);
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        let mut previous_end = 0usize;
+        for line in maps.lines() {
+            let (start, end) = retention_mapping(line);
+            assert!(start >= previous_end, "kernel mappings are ordered and nonoverlapping");
+            std::println!("m2.arena.retention.map.{cycle}.{count}={start},{end}");
+            previous_end = end;
+            count += 1;
+            bytes = bytes.checked_add(end - start).unwrap();
+        }
+        std::println!("m2.arena.retention.maps.{cycle}={count}");
+        std::println!("m2.arena.retention.{cycle}.ranges={count}");
+        std::println!("m2.arena.retention.{cycle}.bytes={bytes}");
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn x86_64_cross_thread_arena_retention_attribution_once() {
+        prepare_cross_thread_managed_abandoned_lifecycle();
+        retention_attribution_cycle(0);
     }
 
     /// Reports actual same-process mappings after joined child teardown. Source
@@ -4040,32 +4234,12 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn x86_64_cross_thread_arena_retention_trace() {
-        fn snapshot(cycle: usize) {
-            let maps = std::fs::read_to_string("/proc/self/maps").expect("live process mapping snapshot");
-            let mut ranges = 0usize;
-            let mut bytes = 0usize;
-            for line in maps.lines() {
-                let (start, end) = line.split_whitespace().next().unwrap().split_once('-').unwrap();
-                let start = usize::from_str_radix(start, 16).unwrap();
-                let end = usize::from_str_radix(end, 16).unwrap();
-                assert!(end > start);
-                ranges += 1;
-                bytes = bytes.checked_add(end - start).unwrap();
-            }
-            std::println!("m2.arena.retention.{cycle}.ranges={ranges}");
-            std::println!("m2.arena.retention.{cycle}.bytes={bytes}");
-        }
         // The embedding runtime prepares the first owner once, before any
         // public child operation. Repeating this integration transition after
         // child Heap allocations retires an active initial-owner engine; it is
         // not part of the ordinary C caller's create/destroy cycle.
         prepare_cross_thread_managed_abandoned_lifecycle();
-        cross_thread_managed_abandoned_lifecycle_trace(|_| {});
-        snapshot(0);
-        for cycle in 1..=32 {
-            cross_thread_managed_abandoned_lifecycle_trace(|_| {});
-            snapshot(cycle);
-        }
+        for cycle in 0..=32 { retention_attribution_cycle(cycle); }
     }
 
     #[cfg(target_arch = "x86_64")]
