@@ -3192,6 +3192,28 @@ pub(crate) enum FreeError {
     Lifecycle,
 }
 
+/// Ownership disposition of one source-local client free.
+/// A successful local-list publication consumes the client even when later
+/// queue retirement or backing release fails. A refusal before publication
+/// leaves its exactly-once allocation ownership with the caller.
+#[must_use = "client ownership follows consumption, not the final lifecycle result"]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LocalClientFreeProgress {
+    RefusedBeforeConsumption(FreeError),
+    Consumed(Result<(), FreeError>),
+}
+
+impl LocalClientFreeProgress {
+    /// Preserves the older result contract for callers that do not retain a
+    /// separate linear client token. It deliberately erases consumption.
+    fn into_result(self) -> Result<(), FreeError> {
+        match self {
+            Self::RefusedBeforeConsumption(error) => Err(error),
+            Self::Consumed(result) => result,
+        }
+    }
+}
+
 /// One non-mutating failure to prepare a scoped remote free.
 ///
 /// This is deliberately separate from [`RemoteFreeError`]: preparation still
@@ -40404,6 +40426,52 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         unsafe { self.free_captured_local_page(page, base) }
     }
 
+    /// Returns one current local client and reports its publication progress.
+    /// A pre-publication refusal retains that client; a successful local-list
+    /// push consumes it even when later retirement or backing release fails.
+    /// Source-abandoned pages are refused before entering their remote tail.
+    ///
+    /// # Safety
+    /// `block` is exactly one current local client returned by this engine.
+    /// Its page, mapping and canonical block remain live until consumption;
+    /// the caller exclusively owns ordinary session/page/queue fields. A
+    /// detached metadata caller must hold the source metadata lock. On
+    /// `Consumed` the client must never be accessed, retried or returned live,
+    /// including when its lifecycle result is an error. On
+    /// `RefusedBeforeConsumption` the caller retains the original client.
+    pub(crate) unsafe fn free_with_progress(
+        &mut self,
+        block: NonNull<u8>,
+    ) -> LocalClientFreeProgress {
+        if self.is_collection_poisoned() {
+            return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::CollectionPoisoned);
+        }
+        // SAFETY: this exact live client's mapping is stable through lookup.
+        let Some(page) = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) }) else {
+            return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::Unmapped);
+        };
+        // SAFETY: read only immutable provenance and atomic ownership before
+        // forming an ordinary-page projection; an abandoned OS page may be
+        // concurrently linked in its Heap's private list.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        let identity = unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire) & !PAGE_FLAG_MASK;
+        if matches!(identity, THREAD_ID_ABANDONED | crate::types::THREAD_ID_ABANDONED_MAPPED)
+            || unsafe { state.theap.as_ptr().read() } != self.session.local_field_theap_pointer().as_ptr()
+            || (state.memid.is_os() && !self.selected_main_os_page_is_current_local_owner(page))
+        {
+            return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::ForeignPage);
+        }
+        // SAFETY: the exact current client retains immutable page geometry.
+        let Some(base) = (unsafe { Page::canonical_remote_block_for_live_client_at(page, block) }) else {
+            return LocalClientFreeProgress::RefusedBeforeConsumption(
+                FreeError::InvalidBlock(FreeListError::InvalidBlock),
+            );
+        };
+        // SAFETY: the checked mapping, current owner and canonical recovery
+        // retain this local page/block through its sole link publication.
+        unsafe { self.free_captured_local_page_with_progress(page, base) }
+    }
+
     /// Consumes one already captured local PageMap classification without a
     /// second lookup.
     ///
@@ -40422,22 +40490,39 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &mut self,
         allocation: LiveAllocationPointer,
     ) -> Result<(), FreeError> {
+        // SAFETY: the caller supplies the same captured local allocation and
+        // source-session ownership required by the progress-returning path.
+        unsafe { self.free_captured_live_allocation_with_progress(allocation) }.into_result()
+    }
+
+    /// Reports whether the source-local client was consumed before any later
+    /// lifecycle failure. This never publishes to a foreign or remote owner.
+    ///
+    /// # Safety
+    /// `allocation` is the exact live local classification, retained through
+    /// this call. The session owns its source Theap and ordinary page/queue
+    /// fields exclusively. On RefusedBeforeConsumption the caller retains the
+    /// client; on Consumed it must discharge that client even for an error and
+    /// must neither retry its free nor return it as a live allocation.
+    pub(crate) unsafe fn free_captured_live_allocation_with_progress(
+        &mut self,
+        allocation: LiveAllocationPointer,
+    ) -> LocalClientFreeProgress {
         if self.is_captured_local_free_unavailable() {
-            return Err(FreeError::CollectionPoisoned);
+            return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::CollectionPoisoned);
         }
         let page = allocation.page();
-        // SAFETY: the held allocation keeps this metadata initialized for the
-        // one source free operation.
+        // SAFETY: the held client keeps these geometry fields initialized.
         let page_ref = unsafe { page.as_ref() };
         if !self.owns_page(page_ref)
             || allocation.block_size() != page_ref.block_size()
             || allocation.has_interior_pointers() != page_ref.has_interior_pointers()
         {
-            return Err(FreeError::ForeignPage);
+            return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::ForeignPage);
         }
-        // SAFETY: the allocation's single PageMap observation froze this
-        // exact canonical block before the source local dispatch.
-        unsafe { self.free_captured_local_page(page, allocation.canonical_block()) }
+        // SAFETY: the captured classification freezes this live canonical
+        // block and the selected session owns its local publication fields.
+        unsafe { self.free_captured_local_page_with_progress(page, allocation.canonical_block()) }
     }
 
     /// Whether one held pointer-first classification belongs to this active
@@ -40490,7 +40575,22 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         page: NonNull<Page>,
         base: NonNull<u8>,
     ) -> Result<(), FreeError> {
+        // SAFETY: this caller retains the same current local page and block.
+        unsafe { self.free_captured_local_page_with_progress(page, base) }.into_result()
+    }
 
+    /// Separates the client-link publication from the following queue and
+    /// backing lifecycle work. No error after that publication restores a
+    /// current client, even when its detached mapping remains retained.
+    ///
+    /// # Safety
+    /// `page` and `base` are this session's exact current local allocation;
+    /// all ordinary local-list and queue fields remain exclusively owned.
+    unsafe fn free_captured_local_page_with_progress(
+        &mut self,
+        page: NonNull<Page>,
+        base: NonNull<u8>,
+    ) -> LocalClientFreeProgress {
         let (in_full, queue_bin, regular_bin, block_size) = {
             // SAFETY: this read-only fact snapshot ends before the owner raw-
             // mutates ordinary local-list fields. Live producer accesses are
@@ -40510,51 +40610,60 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let used = {
             // SAFETY: this lifecycle owns the page block and its ordinary
             // local-list fields; producer capabilities access only atomics.
-            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
-                .map_err(FreeError::InvalidBlock)?;
+            let mut free_list = match unsafe { LocalFreeList::from_page_at(page) } {
+                Ok(free_list) => free_list,
+                Err(error) => return LocalClientFreeProgress::RefusedBeforeConsumption(
+                    FreeError::InvalidBlock(error),
+                ),
+            };
             // SAFETY: the public caller contract proves exactly-once ownership
             // of `block`; the borrowed list additionally validates the
             // canonical base block's page range
             // and initialized-capacity membership before writing a link.
-            unsafe { free_list.push_local(base) }
-                .map_err(FreeError::InvalidBlock)?;
+            if let Err(error) = unsafe { free_list.push_local(base) } {
+                return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::InvalidBlock(error));
+            }
             free_list.used()
         };
-        let queue_bin = queue_bin.ok_or(FreeError::Lifecycle)?;
+        // The successful push committed the link, local head and used count.
+        // Every following result therefore discharges the client's ownership.
+        LocalClientFreeProgress::Consumed((|| {
+            let queue_bin = queue_bin.ok_or(FreeError::Lifecycle)?;
 
-        if used == 0 {
-            // Pinned `free.c:49-52` does not re-retire an already retired
-            // page: its partly elapsed countdown and interior marker stay.
-            // SAFETY: this owner exclusively controls the ordinary byte.
-            if unsafe { page.as_ref() }.retire_expire() != 0 {
-                return Ok(());
+            if used == 0 {
+                // Pinned `free.c:49-52` does not re-retire an already retired
+                // page: its partly elapsed countdown and interior marker stay.
+                // SAFETY: this owner exclusively controls the ordinary byte.
+                if unsafe { page.as_ref() }.retire_expire() != 0 {
+                    return Ok(());
+                }
+                // `mi_page_retire` clears the page-wide interior marker only once
+                // every allocation from the page has returned. Clearing it for an
+                // individual aligned free would make another live interior
+                // pointer unfreeable and give it the wrong usable size.
+                // SAFETY: `used == 0` proves every valid client allocation has
+                // returned; the source accounting therefore excludes a retained
+                // live producer while this atomic flag is cleared.
+                unsafe { page.as_ref() }.set_has_interior_pointers(false);
+                // A full page and a huge singleton both bypass retirement. The
+                // source route is selected from the page's actual queue, not its
+                // ordinary object-size bin: a small OS-aligned singleton belongs
+                // to `BIN_HUGE`, never its small ordinary bin.
+                if self.retire_or_release(queue_bin, page.as_ptr()) {
+                    return Ok(());
+                }
+                return Err(FreeError::Lifecycle);
             }
-            // `mi_page_retire` clears the page-wide interior marker only once
-            // every allocation from the page has returned. Clearing it for an
-            // individual aligned free would make another live interior
-            // pointer unfreeable and give it the wrong usable size.
-            // SAFETY: `used == 0` proves every valid client allocation has
-            // returned; the source accounting therefore excludes a retained
-            // live producer while this atomic flag is cleared.
-            unsafe { page.as_ref() }.set_has_interior_pointers(false);
-            // A full page and a huge singleton both bypass retirement. The
-            // source route is selected from the page's actual queue, not its
-            // ordinary object-size bin: a small OS-aligned singleton belongs
-            // to `BIN_HUGE`, never its small ordinary bin.
-            if self.retire_or_release(queue_bin, page.as_ptr()) {
-                return Ok(());
-            }
-            return Err(FreeError::Lifecycle);
-        }
 
-        if in_full {
-            let regular_bin = regular_bin.ok_or(FreeError::Lifecycle)?;
-            if self.move_full_to_regular(regular_bin, page.as_ptr()) {
-                return Ok(());
+            if in_full {
+                let regular_bin = regular_bin.ok_or(FreeError::Lifecycle)?;
+                if self.move_full_to_regular(regular_bin, page.as_ptr()) {
+                    return Ok(());
+                }
+                return Err(FreeError::Lifecycle);
             }
-            return Err(FreeError::Lifecycle);
-        }
-        Ok(())
+            Ok(())
+        })())
     }
 
     /// Transfers one current regular-or-full-page allocation to a scoped
@@ -48511,6 +48620,75 @@ mod tests {
             assert!(!allocator.has_pending_os_release());
             assert_eq!(allocator.session.theap().page_count(), 0);
         });
+    }
+
+    #[test]
+    fn captured_local_free_refusal_preserves_the_live_client_and_local_list() {
+        for captured_entry in [false, true] {
+            with_allocator(|allocator| {
+                let client = allocator.allocate(32, false).unwrap();
+                // SAFETY: the fixture owns this live allocation's complete extent.
+                unsafe { client.as_ptr().write_bytes(0x6D, 32) };
+                let page = NonNull::new(unsafe { allocator.page_for_block(client) }).unwrap();
+                // SAFETY: the current client and isolated owner keep the source
+                // page geometry initialized through the captured local operation.
+                let captured = unsafe {
+                    crate::process_page_map::classify_live_allocation_in_page(page, client)
+                }.unwrap();
+                allocator.inject_page_free_collect_failure_once();
+                assert!(!allocator.collect_all_pages_for_allocation_retry());
+                let used = unsafe { page.as_ref().used() };
+                let local = unsafe { page.as_ref().remote_free_test_local_free() };
+                assert_eq!(unsafe {
+                    if captured_entry { allocator.free_captured_live_allocation_with_progress(captured) }
+                    else { allocator.free_with_progress(client) }
+                }, LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::CollectionPoisoned));
+                assert_eq!(unsafe { page.as_ref().used() }, used);
+                assert_eq!(unsafe { page.as_ref().remote_free_test_local_free() }, local);
+                // A pre-consumption refusal leaves the caller's ordinary live
+                // client readable; no free-list link has replaced its contents.
+                assert!(unsafe { core::slice::from_raw_parts(client.as_ptr(), 32) }
+                    .iter().all(|byte| *byte == 0x6D));
+                assert!(allocator.take_page_collect_poison_for_fixture_cleanup().is_some());
+                unsafe { allocator.free(client).unwrap() };
+            });
+        }
+    }
+
+    #[test]
+    fn captured_local_free_lifecycle_failure_discharges_the_consumed_client() {
+        let fault = fault::install(fault::Plan::disabled());
+        for captured_entry in [false, true] {
+            with_allocator(|allocator| {
+                let first = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+                let client = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+                let page = NonNull::new(unsafe { allocator.page_for_block(client) }).unwrap();
+                // SAFETY: this isolated owner retains the exact live aligned
+                // client and its published source page until local consumption.
+                let captured = unsafe {
+                    crate::process_page_map::classify_live_allocation_in_page(page, client)
+                }.unwrap();
+                let canonical = captured.canonical_block();
+                fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                unsafe { allocator.free(first).unwrap() };
+                assert!(allocator.has_pending_os_release());
+                assert_eq!(unsafe {
+                    if captured_entry { allocator.free_captured_live_allocation_with_progress(captured) }
+                    else { allocator.free_with_progress(client) }
+                }, LocalClientFreeProgress::Consumed(Err(FreeError::Lifecycle)));
+                // The second page remains linked because the first detached
+                // mapping is still retained. Its client has nevertheless become
+                // the local free-list head, and must never be freed a second time.
+                assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
+                assert_eq!(unsafe { allocator.page_map.checked_lookup(client.as_ptr()) }, page.as_ptr());
+                assert_eq!(unsafe { page.as_ref().used() }, 0);
+                assert_eq!(unsafe { page.as_ref().remote_free_test_local_free() }, canonical.cast().as_ptr());
+                fault.set(fault::Plan::disabled());
+                assert!(allocator.collect_all_pages_for_allocation_retry());
+                assert!(!allocator.has_pending_os_release());
+                assert_eq!(allocator.session.theap().page_count(), 0);
+            });
+        }
     }
 
     #[test]
