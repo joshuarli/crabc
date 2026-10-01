@@ -1351,6 +1351,24 @@ impl VmPolicy {
         }
     }
 
+    /// Delivers a source error after the owning caller ends allocator
+    /// projections. A registered handler determines the returned disposition;
+    /// an image policy uses the existing source default without hidden errno
+    /// storage. This operation never substitutes the preceding OS error.
+    pub(crate) fn source_error(
+        &self,
+        report: crate::diagnostic_output::SourceErrorReport,
+    ) -> crate::diagnostic_output::SourceErrorDisposition {
+        if let Some(output) = self.process_options {
+            // SAFETY: the process-policy constructor accepted this output
+            // owner's synchronous callback and lifetime obligations, just
+            // as for source option reads and warning delivery.
+            unsafe { output.error_message(report.error(), report.message()) }
+        } else {
+            crate::diagnostic_output::source_default_error_disposition(report.error())
+        }
+    }
+
     /// Reads a descriptor outside the [`VmOption`] image at its source read
     /// point. The process policy reads the live table; an image policy has
     /// no slot for it and returns the pinned release default, which is the
@@ -15427,6 +15445,33 @@ mod tests {
             }
         };
         let first_failed = decommit(&mapping) == Err(Errno::IO);
+        if external {
+            struct GuardErrorCapture<'a> {
+                warning: &'a ProcessOwnedDecommitWarning,
+                calls: AtomicUsize,
+            }
+            unsafe extern "C" fn error_after_warning(error: core::ffi::c_int, argument: *mut c_void) {
+                // SAFETY: registration retains this capture through the
+                // synchronous report and is removed before its lifetime ends.
+                let capture = unsafe { &*argument.cast::<GuardErrorCapture<'_>>() };
+                assert_eq!(error, Errno::INVAL.raw());
+                assert_eq!(capture.warning.count.load(Ordering::Acquire), 1);
+                assert_eq!(capture.warning.after_attempt.load(Ordering::Acquire), 1);
+                capture.calls.fetch_add(1, Ordering::AcqRel);
+            }
+            let error_capture = GuardErrorCapture { warning: capture, calls: AtomicUsize::new(0) };
+            // SAFETY: the callback capture is retained through the report;
+            // no allocator projection or registration mutation overlaps it.
+            unsafe { output.register_error(Some(error_after_warning),
+                core::ptr::from_ref(&error_capture).cast_mut().cast()) };
+            let disposition = policy.source_error(crate::diagnostic_output::SourceErrorReport::BadAlignment {
+                size: page, alignment: 3, offset: 0,
+            });
+            assert_eq!(disposition, crate::diagnostic_output::SourceErrorDisposition::Handled);
+            assert_eq!(error_capture.calls.load(Ordering::Acquire), 1);
+            // SAFETY: the synchronous report has ended.
+            unsafe { output.register_error(None, core::ptr::null_mut()) };
+        }
         if decommit_needs_recommit() {
             #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
             assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
