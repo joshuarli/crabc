@@ -37761,6 +37761,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.session.theap() as *const Theap as *mut Theap
     }
 
+    /// Compares the selected source identity with the exact session owner.
+    /// This does not consult a default cache or project the Theap image.
+    #[inline]
+    pub(crate) fn owns_theap(&self, selected: NonNull<Theap>) -> bool {
+        self.session.local_field_theap_pointer() == selected
+    }
+
     /// Checks and marks this bounded page lifecycle quiescent while retaining
     /// its typed session for the caller that owns the next lifecycle boundary.
     ///
@@ -37947,6 +37954,25 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         self.allocate_generic(request, zero)
+    }
+
+    /// Starts the canonical allocation used by a guarded client. The source
+    /// generic entry receives an already-padded, OS-page-rounded extent;
+    /// ordinary engine entries instead receive the public requested extent.
+    /// Sampling, tag placement, protection and client zeroing belong to the
+    /// caller's later owner-retaining phase, after this engine borrow ends.
+    pub(crate) fn begin_deferred_free_guarded_canonical(
+        &mut self,
+        source_size: usize,
+    ) -> DeferredFreeAllocationPhase {
+        let page_size = self.page_map.memory_config().page_size().bytes();
+        if !crate::config::GUARDED || source_size <= page_size || source_size % page_size != 0 {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        let Some(request) = source_size.checked_sub(PADDING_SIZE) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
+        self.begin_deferred_free_allocation(request, false)
     }
 
     /// Starts one ordinary allocation with explicit source deferred-free
@@ -40152,6 +40178,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let base = self.canonical_block_start(page, block)?;
+        let adjustment = block.as_ptr().addr().checked_sub(base.as_ptr().addr())?;
+        if crate::config::GUARDED && adjustment >= WORD_SIZE
+            // SAFETY: canonical recovery retained the original allocation's
+            // provenance. Its first word precedes the live interior client
+            // and remains readable while the trailing guard is protected.
+            && unsafe { base.cast::<usize>().as_ptr().read() } == usize::MAX
+        {
+            return page.block_size()
+                .checked_sub(self.page_map.memory_config().page_size().bytes())?
+                .checked_sub(adjustment);
+        }
         #[cfg(not(feature = "mi-debug-1"))]
         let canonical_usable = page.block_size();
         #[cfg(feature = "mi-debug-1")]
@@ -44500,6 +44537,69 @@ mod tests {
             ).unwrap(), Some(page));
             assert_ne!(available(), before, "the source decision consumes a selected-Theap word");
             unsafe { allocator.free(block).unwrap(); }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_tagged_client_usable_extent_excludes_the_protected_tail() {
+        with_allocator(|allocator| {
+            let os_page_size = allocator.page_map.memory_config().page_size().bytes();
+            let source_size = 2 * os_page_size;
+            assert!(allocator.owns_theap(allocator.session.local_field_theap_pointer()));
+            assert!(!allocator.owns_theap(NonNull::dangling()));
+            assert!(matches!(allocator.begin_deferred_free_guarded_canonical(source_size + 1),
+                DeferredFreeAllocationPhase::Complete(None)));
+            assert_eq!(allocator.test_page_count(), 0);
+            let mut blocks = Vec::new();
+            let mut first_page: *mut Page = core::ptr::null_mut();
+            for _ in 0..4 {
+                let mut phase = allocator.begin_deferred_free_guarded_canonical(source_size);
+                let base = loop {
+                    match phase {
+                        DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
+                        DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                            phase = allocator.resume_deferred_free_allocation(collection, continuation);
+                        }
+                    }
+                };
+                assert_eq!(base.as_ptr().addr() % os_page_size, 0);
+                let page = unsafe { allocator.page_for_block(base) };
+                if first_page.is_null() { first_page = page; }
+                assert_eq!(page, first_page);
+                let block_size = unsafe { (*page).block_size() };
+                assert_eq!(block_size, source_size);
+                assert_eq!(block_size % os_page_size, 0);
+                // The fixture owns this current canonical allocation. Its tag
+                // and interior flag are the source representation installed
+                // before the VM owner protects the trailing page.
+                unsafe { base.cast::<usize>().as_ptr().write(usize::MAX); }
+                unsafe { (*page).set_has_interior_pointers(true); }
+                let offset = block_size - os_page_size - 33;
+                let client = NonNull::new(base.as_ptr().wrapping_add(offset)).unwrap();
+                assert_eq!(unsafe { allocator.usable_size(client) }, Some(33));
+                blocks.push(base);
+            }
+            for base in blocks {
+                // No protection was installed by this geometry fixture. The
+                // current canonical allocation is returned exactly once.
+                unsafe { allocator.free(base).unwrap(); }
+            }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_ordinary_aligned_interior_pointer_clears_the_guard_tag() {
+        with_allocator(|allocator| {
+            let client = allocator.allocate_aligned_at(33, 64, 1).unwrap();
+            let page = unsafe { allocator.page_for_block(client) };
+            let base = allocator.canonical_block_start(unsafe { &*page }, client).unwrap();
+            assert!(client.as_ptr().addr() - base.as_ptr().addr() >= WORD_SIZE);
+            // The source reserves this prefix word for distinguishing an
+            // ordinary aligned interior pointer from a guarded allocation.
+            assert_eq!(unsafe { base.cast::<usize>().as_ptr().read() }, 0);
+            unsafe { allocator.free(client).unwrap(); }
         });
     }
 

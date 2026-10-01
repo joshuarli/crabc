@@ -2181,6 +2181,59 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         })
     }
 
+    /// Compares one selected Theap with the permanent session retained in
+    /// this owner state, without consulting compiler-TLS default caches.
+    pub(crate) fn owns_theap(&self, selected: NonNull<crate::types::Theap>) -> bool {
+        use crate::bootstrap::TheapPageSession;
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.engine.owns_theap(selected),
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, .. } => {
+                session.local_field_theap_pointer() == selected
+            }
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => parked.session.local_field_theap_pointer() == selected,
+            _ => false,
+        }
+    }
+
+    /// Starts a guarded canonical block through the persistent initial
+    /// owner's existing deferred-callback phases. The source size already
+    /// includes padding and the guard-page rounding; the engine translates
+    /// it once before selecting its ordinary page queue.
+    pub(crate) fn begin_deferred_free_guarded_canonical_current_initial_thread_local(
+        &mut self,
+        source_size: usize,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        let page_map = match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { reservation, .. } => reservation.page_map(),
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.page_map,
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { page_map, .. } => *page_map,
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => parked.page_map,
+            _ => return None,
+        };
+        let page_size = page_map.memory_config().ok()?.page_size().bytes();
+        if !crate::config::GUARDED || source_size <= page_size || source_size % page_size != 0 {
+            return Some(MainStaticDeferredFreeAllocationPhase::Complete(None));
+        }
+        let request = source_size.checked_sub(crate::config::PADDING_SIZE)?;
+        self.allocate_with(request, |engine| {
+            match engine.begin_deferred_free_guarded_canonical(source_size) {
+                DeferredFreeAllocationPhase::Complete(block) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
+                }
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                        source: engine.deferred_free_source()?,
+                        collection,
+                        continuation,
+                    })
+                }
+            }
+        })
+    }
+
     /// Starts an aligned persistent-initial allocation with the same
     /// caller-stack deferred-free phase contract as ordinary allocation.
     #[inline]
