@@ -26,6 +26,42 @@
  * static TLD and normal process-init body for this one translation unit. */
 #include "init.c"
 
+#ifdef CRABC_MI_STATIC_THEAP_ACCOUNTING
+/* The linker routes the ordinary source counter call through this observer.
+ * Delegating to the original counter preserves its update and memory order;
+ * neither the initializer nor its publication stores are replaced. */
+void __real___mi_stat_increase_mt(mi_stat_count_t* stat, size_t amount);
+static size_t initial_theap_count_calls;
+static bool count_before_heap_publication;
+static bool count_after_tld_link;
+static bool count_before_heap_link;
+static bool count_update_before_heap_publication;
+static mi_stat_count_t initial_theap_count;
+
+void __wrap___mi_stat_increase_mt(mi_stat_count_t* stat, size_t amount) {
+  const bool selected = stat == &_mi_subproc_main()->stats.theaps;
+  if (selected) {
+    initial_theap_count_calls++;
+    count_before_heap_publication = amount == 1
+        && !mi_theap_is_initialized(&mi_process_theap_main)
+        && _mi_theap_heap_peek(&mi_process_theap_main) == NULL;
+    count_after_tld_link = mi_process_tld_main.theaps == &mi_process_theap_main
+        && mi_process_theap_main.tld == &mi_process_tld_main;
+    count_before_heap_link = mi_process_heap_main.theaps == &mi_process_theap_meta
+        && mi_process_theap_meta.hnext == NULL
+        && mi_process_theap_main.hprev == NULL
+        && mi_process_theap_main.hnext == NULL;
+  }
+  __real___mi_stat_increase_mt(stat, amount);
+  if (selected) {
+    initial_theap_count = *stat;
+    count_update_before_heap_publication =
+        _mi_theap_heap_peek(&mi_process_theap_main) == NULL
+        && stat->current == 1 && stat->total == 1 && stat->peak == 1;
+  }
+}
+#endif
+
 /* `src/arena.c` owns these non-public source definitions. The fixture links
  * that ordinary translation unit exactly once and observes only the first
  * regular arena it actually registered after `mi_malloc(79)`. */
@@ -109,6 +145,46 @@ int main(void) {
   trace_unsigned("regular_first_arena_retained_after_free",
       regular_first_arena_retained_after_free);
   puts(TRACE_END);
+
+#ifdef CRABC_MI_STATIC_THEAP_ACCOUNTING
+  const bool static_main_counted = initial_theap_count_calls == 1
+      && initial_theap_count.current == 1 && initial_theap_count.total == 1
+      && initial_theap_count.peak == 1
+      && mi_process_theap_main.memid.memkind == MI_MEM_STATIC;
+  const bool detached_metadata_excluded = mi_process_theap_meta.is_detached
+      && mi_process_theap_meta.memid.memkind == MI_MEM_STATIC
+      && mi_tld_detached.theaps == &mi_process_theap_meta;
+  const bool final_heap_link = mi_process_heap_main.theaps == &mi_process_theap_main
+      && mi_process_theap_main.hnext == &mi_process_theap_meta
+      && mi_process_theap_meta.hprev == &mi_process_theap_main;
+  mi_process_init();
+  const bool repeated_init_count_unchanged = initial_theap_count_calls == 1
+      && subproc->stats.theaps.current == 1
+      && subproc->stats.theaps.total == 1 && subproc->stats.theaps.peak == 1;
+  mi_thread_done();
+  const bool static_teardown_count_retained = subproc->stats.theaps.current == 1
+      && subproc->stats.theaps.total == 1 && subproc->stats.theaps.peak == 1
+      && mi_process_tld_main.theaps == NULL
+      && mi_process_theap_main.tld == NULL
+      && _mi_theap_heap_peek(&mi_process_theap_main) == NULL
+      && mi_process_heap_main.theaps == &mi_process_theap_meta;
+  puts("CRABC_MI_STATIC_THEAP_ACCOUNTING_TRACE_BEGIN");
+  trace_unsigned("static_main_counted", static_main_counted);
+  trace_unsigned("detached_metadata_excluded", detached_metadata_excluded);
+  trace_unsigned("count_before_heap_publication", count_before_heap_publication);
+  trace_unsigned("count_after_tld_link", count_after_tld_link);
+  trace_unsigned("count_before_heap_link", count_before_heap_link);
+  trace_unsigned("count_update_before_heap_publication", count_update_before_heap_publication);
+  trace_unsigned("final_heap_link", final_heap_link);
+  trace_unsigned("repeated_init_count_unchanged", repeated_init_count_unchanged);
+  trace_unsigned("static_teardown_count_retained", static_teardown_count_retained);
+  puts("CRABC_MI_STATIC_THEAP_ACCOUNTING_TRACE_END");
+  if (!(static_main_counted && detached_metadata_excluded
+        && count_before_heap_publication && count_after_tld_link
+        && count_before_heap_link && count_update_before_heap_publication
+        && final_heap_link && repeated_init_count_unchanged
+        && static_teardown_count_retained)) return 3;
+#endif
 
   return (source_option_applied && arena_is_numa_local_option_applied
           && count_uses_configured_policy && ticket_zero_tld
