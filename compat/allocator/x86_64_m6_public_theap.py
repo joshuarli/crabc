@@ -78,7 +78,7 @@ def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False) 
 
 
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
-AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2")
+AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2", "debug-2", "debug-3")
 RUNNER = "allocator-public-theap"
 DIRECT_TEST = "public_theap_selection_allocation_collection_and_lifetime"
 UNIT_TESTS = (

@@ -548,6 +548,8 @@ def api_profile_flags(profile: str) -> tuple[str, ...]:
         "stat-1": ("-DMI_DEBUG=0", "-DMI_STAT=1"),
         "stat-2": ("-DMI_DEBUG=0", "-DMI_STAT=2"),
         "debug-1": ("-DMI_DEBUG=1", "-DMI_STAT=2", "-DMI_PADDING=1"),
+        "debug-2": ("-DMI_DEBUG=2", "-DMI_STAT=2", "-DMI_PADDING=1"),
+        "debug-3": ("-DMI_DEBUG=3", "-DMI_STAT=2", "-DMI_PADDING=1"),
     }[profile])
 
 

@@ -131,6 +131,24 @@ class TheapProducerTests(unittest.TestCase):
              mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
             self.assertEqual(theap.cli(['--profiles','secure-2','--read']),0)
 
+    def test_numeric_debug_reader_rejects_lower_c_or_native_selector(self):
+        receipt,pin,_=self.receipt_fixture('debug-3')
+        with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
+             mock.patch.object(theap.harness,'load_pin',return_value=pin), \
+             mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
+            self.assertEqual(theap.cli(['--profiles','debug-3','--read']),0)
+            for label,original,replacement in (
+                    ('c-build','-DMI_DEBUG=3','-DMI_DEBUG=2'),
+                    ('adapter-build','crabc-mimalloc/mi-debug-3','crabc-mimalloc/mi-debug-2'),
+                    ('native_theap_contract','mi-debug-3','mi-debug-2')):
+                path=receipt.path.parent/'logs/debug-3'/f'{label}.json'
+                saved=path.read_text();data=json.loads(saved)
+                data['command'][data['command'].index(original)]=replacement
+                path.write_text(json.dumps(data))
+                with self.subTest(label=label),self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--profiles','debug-3','--read'])
+                path.write_text(saved)
+
     def test_successful_process_with_wrong_visitor_geometry_is_retained_and_rejected(self):
         changed = self.observation(visitor='0,0,1,1,1,1,1,1')
         with mock.patch.object(theap.harness, 'command_record',
@@ -180,6 +198,11 @@ class TheapProducerTests(unittest.TestCase):
 
 
 class TheapProfileSelectionTests(unittest.TestCase):
+    def test_internal_debug_selection_is_explicit_and_ordered(self):
+        with mock.patch.object(theap, 'run_cohort') as run:
+            self.assertEqual(theap.cli(['--profiles', 'debug-3', 'debug-2']), 0)
+            run.assert_called_once_with(('debug-3', 'debug-2'), False)
+
     def test_secure_selection_is_explicit_and_ordered(self):
         with mock.patch.object(theap, 'run_cohort') as run:
             self.assertEqual(theap.cli(['--profiles', 'secure-1', 'secure-2']), 0)

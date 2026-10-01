@@ -24,6 +24,21 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
+    def test_internal_debug_c_build_selects_exact_numeric_level(self) -> None:
+        for profile, level in (("debug-2", 2), ("debug-3", 3)):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+                output = Path(directory)
+                with mock.patch.object(harness, "require_tool", return_value="/musl-gcc"), \
+                        mock.patch.object(harness, "command_record", return_value={"status": 0}) as compile, \
+                        mock.patch.object(harness, "require_success"):
+                    gate.build_c_driver(output / "source", output, profile=profile)
+                command = compile.call_args.args[0]
+                self.assertEqual([flag for flag in command if flag.startswith("-DMI_DEBUG=")],
+                                 [f"-DMI_DEBUG={level}"])
+                self.assertIn("-DMI_STAT=2", command)
+                self.assertIn("-DMI_PADDING=1", command)
+                self.assertEqual(gate.API_PROFILES, ("release", "debug-1", "stat-1", "stat-2"))
+
     def test_secure_c_build_selects_one_exact_source_level(self) -> None:
         for profile, level in (("secure-1", 1), ("secure-2", 2)):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
