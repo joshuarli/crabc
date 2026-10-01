@@ -303,6 +303,42 @@ class FamilyMatrixTests(unittest.TestCase):
         with self.assertRaisesRegex(execution.ExecutionError, 'workload receipt changed'):
             execution.validate_receipt(self.root, path)
 
+    def test_product_mutation_after_last_observation_cannot_validate_matrix(self):
+        payloads = []
+        for pair in self.products.values():
+            for kind, product in pair.items():
+                payload = product / ('libc.a' if kind == 'static' else 'libc.so')
+                payload.write_bytes(b'judged product bytes')
+                payloads.append(payload)
+        path = self.execute()
+        collect_step = execution.collect_step
+
+        def mutate_after_observation(root, work, label, workload, products, source_mount):
+            result = collect_step(root, work, label, workload, products, source_mount)
+            if label == 'extracted':
+                payload.write_bytes(b'changed after the last semantic observation')
+            return result
+
+        for payload in payloads:
+            with self.subTest(product=payload.relative_to(self.root).as_posix()):
+                try:
+                    with patch.object(execution, 'collect_step', side_effect=mutate_after_observation):
+                        with self.assertRaisesRegex(execution.ExecutionError, 'product.*changed'):
+                            execution.validate_receipt(self.root, path)
+                finally:
+                    payload.write_bytes(b'judged product bytes')
+
+    def test_workload_product_mutation_stops_before_success_receipt(self):
+        payload = self.products['primary']['static'] / 'libc.a'
+        payload.write_bytes(b'judged product bytes')
+        runner = self.root / 'runner.sh'
+        runner.write_text(runner.read_text() + 'printf "changed archive\\n" > "$2/libc.a"\n')
+        with self.assertRaisesRegex(execution.ExecutionError, 'product payload changed during workload execution'):
+            self.execute()
+        self.assertEqual((self.run / 'runs/primary/fixture/status').read_bytes(), b'0\n')
+        self.assertFalse((self.run / 'runs/primary/fixture/receipt.json').exists())
+        self.assertFalse((self.run / 'execution.json').exists())
+
     def test_container_mount_records_validate_on_host_without_reexecution(self):
         path = self.execute()
         request = execution.read(self.run / 'request.json')
@@ -441,6 +477,33 @@ class ValidatedInputProductsTests(unittest.TestCase):
                 patch.object(execution.static_products, 'validate_receipt', return_value=static), \
                 patch.object(execution.static_products, 'source_identity', return_value=self.source):
             with self.assertRaisesRegex(execution.ExecutionError, 'allocator backend'):
+                execution.input_products(self.root, self.request)
+
+    def test_product_change_after_owner_judge_cannot_become_matrix_baseline(self):
+        import owned_dynamic_qualification as dynamic
+
+        static = {'source': self.source, 'products': {
+            label: {'manifest': record} for label, record in self.evidence['static_products'].items()
+        }}
+        qualified = {'work': self.evidence['dynamic_work'],
+                     'source_sha256': self.source['content_sha256'],
+                     'family_completion': False, 'public_support': False,
+                     'products': {dynamic_label: self.evidence['dynamic_products'][label]['manifest_sha256']
+                                  for label, dynamic_label in execution.PAIRS.items()}}
+        product = execution.static_products.product_paths(self.static_work)['primary']
+        payload = product / 'libc.a'
+        payload.write_bytes(b'judged archive bytes')
+
+        def mutate_after_owner_judge(path):
+            payload.write_bytes(b'changed after the complete product judge')
+            return qualified
+
+        with patch.object(dynamic, 'ROOT', self.root), \
+                patch.object(dynamic, 'validate_receipt', side_effect=mutate_after_owner_judge), \
+                patch.object(dynamic, 'read', return_value={'oracle': self.evidence['oracle']}), \
+                patch.object(execution.static_products, 'validate_receipt', return_value=static), \
+                patch.object(execution.static_products, 'source_identity', return_value=self.source):
+            with self.assertRaisesRegex(execution.ExecutionError, 'product.*changed'):
                 execution.input_products(self.root, self.request)
 
 

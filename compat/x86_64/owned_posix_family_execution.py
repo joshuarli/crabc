@@ -113,6 +113,22 @@ def snapshot(directory: Path) -> dict:
     return result
 
 
+def product_payloads(root: Path, products: Mapping[str, Mapping[str, Path]]) -> dict:
+    """Keep every independent product's judged bytes within one phase boundary."""
+    result = {}
+    for label, pair in products.items():
+        result[label] = {}
+        for kind, product in pair.items():
+            product = physical(root, product)
+            metadata = product.stat()
+            result[label][kind] = {
+                'path': product.relative_to(root).as_posix(),
+                'root': {'mode': stat.S_IMODE(metadata.st_mode), 'uid': metadata.st_uid,
+                         'gid': metadata.st_gid, 'links': metadata.st_nlink},
+                'nodes': snapshot(product)}
+    return result
+
+
 def invocation(root: Path, command: list[str], environment: Mapping[str, str]) -> dict:
     return {'command': command, 'cwd': str(root), 'environment': dict(environment)}
 
@@ -360,6 +376,14 @@ def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str,
     import owned_dynamic_qualification as dynamic
     require(root == dynamic.ROOT, 'product owners must use this coordinator checkout')
     paths = _request_paths(root, request)
+    require(paths['dynamic_qualification'].name == 'qualification.json',
+            'dynamic qualification receipt path differs')
+    static_paths = static_products.product_paths(paths['static_preparation'].parent)
+    dynamic_work = _dynamic_work(root, paths['dynamic_qualification'],
+                                paths['dynamic_qualification'].parent.relative_to(root).as_posix())
+    products = {label: {'static': static_paths[label], 'dynamic': dynamic_work / dynamic_label}
+                for label, dynamic_label in PAIRS.items()}
+    payloads = product_payloads(root, products)
     static = static_products.validate_receipt(root, paths['static_preparation'])
     shared = dynamic.validate_receipt(paths['dynamic_qualification'])
     source = static_products.source_identity(root)
@@ -367,10 +391,10 @@ def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str,
             and shared['source_sha256'] == source['content_sha256'], 'product source seals differ')
     require(shared['family_completion'] is False and shared['public_support'] is False,
             'product qualification cannot replace family execution')
-    static_paths = static_products.product_paths(paths['static_preparation'].parent)
-    dynamic_work = _dynamic_work(root, paths['dynamic_qualification'], shared['work'])
-    products = {label: {'static': static_paths[label], 'dynamic': dynamic_work / dynamic_label}
-                for label, dynamic_label in PAIRS.items()}
+    require(_dynamic_work(root, paths['dynamic_qualification'], shared['work']) == dynamic_work,
+            'product qualification work changed')
+    require(same_json(product_payloads(root, products), payloads),
+            'product payload changed during prerequisite validation')
     allocator_backend(root, products)
     evidence = {name: file_identity(root, path) for name, path in paths.items()}
     evidence['source'] = source
@@ -459,6 +483,7 @@ def collect(root: Path, work: Path) -> dict:
     work = physical(root, work)
     request = read(work / 'request.json')
     inputs, products = input_products(root, request)
+    payloads = product_payloads(root, products)
     for name in ('source-before.json', 'source-after.json'):
         require(same_json(read(work / name), inputs['source']), f'execution source changed: {name}')
     roster = workload_roster()
@@ -483,9 +508,10 @@ def collect(root: Path, work: Path) -> dict:
         identical_objects(objects)
         object_sets[workload.id] = objects['primary']
     require(same_json(static_products.source_identity(root), inputs['source']), 'source changed during matrix validation')
+    require(same_json(product_payloads(root, products), payloads), 'product payload changed during matrix validation')
     return {'schema': SCHEMA, 'status': 'workload-matrix-verified',
             'family': 'libc.posix-runtime', 'work': work.relative_to(root).as_posix(),
-            'inputs': inputs, 'request': file_identity(root, work / 'request.json'),
+            'inputs': inputs, 'product_payloads': payloads, 'request': file_identity(root, work / 'request.json'),
             'source_seals': {name: file_identity(root, work / name)
                              for name in ('source-before.json', 'source-after.json')},
             'workloads': json.loads(json.dumps([asdict(workload) for workload in roster])),
@@ -501,6 +527,7 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
                'static_preparation': physical(root, static_preparation).relative_to(root).as_posix(),
                'dynamic_qualification': physical(root, dynamic_qualification).relative_to(root).as_posix()}
     inputs, products = input_products(root, request)
+    payloads = product_payloads(root, products)
     roster = workload_roster()
     # The required dynamic cases must exist in the complete source-bound
     # product qualification; canonical aliases may dispatch an explicit static
@@ -515,6 +542,8 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
             for workload in roster:
                 step = work / 'runs' / label / workload.id
                 dynamic.require_live_oracle(root / inputs['dynamic_work'], inputs['oracle'])
+                require(same_json(product_payloads(root, products), payloads),
+                        'product payload changed before workload execution')
                 require(same_json(static_products.source_identity(root), inputs['source']),
                         'source changed before workload execution')
                 print(f'POSIX matrix {label}/{workload.id}: running', flush=True)
@@ -527,9 +556,13 @@ def execute(root: Path, work: Path, static_preparation: Path, dynamic_qualificat
                     if step.exists():
                         static_products.make_retained_evidence_readable(step)
                 dynamic.require_live_oracle(root / inputs['dynamic_work'], inputs['oracle'])
+                require(same_json(product_payloads(root, products), payloads),
+                        'product payload changed during workload execution')
                 require(same_json(static_products.source_identity(root), inputs['source']),
                         'source changed during workload execution')
                 record = collect_step(root, work, label, workload, products[label], str(root))
+                require(same_json(product_payloads(root, products), payloads),
+                        'product payload changed during workload observation')
                 static_products.write_new(step / 'receipt.json', record)
                 print(f'POSIX matrix {label}/{workload.id}: PASS', flush=True)
     finally:

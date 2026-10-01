@@ -16,6 +16,10 @@ Run from clean committed source through the pinned native dispatcher:
 ```
 
 Both input receipts must validate against current source and retained products.
+All six product payload trees are sealed before their complete prerequisite
+judges run and compared afterward. The same seals bracket each workload and
+standalone matrix reconstruction. A payload changed after a judge returns
+cannot become a newly accepted baseline or yield a successful matrix receipt.
 The output must be a fresh physical directory under checkout `.work`. The
 dispatcher translates the host receipt/output paths through its actual mounts.
 The execution container permits the existing contained chroot, procfs-mount,
@@ -66,6 +70,7 @@ The final `execution.json` has schema
 `crabc.x86_64-owned-posix-family-execution/v1` and status
 `workload-matrix-verified`. It binds current clean revision/content, both
 validated input receipts and the observed musl identity, all workload receipts,
+the six product payload seals in `product_payloads`,
 and each of the 149 frozen spellings to all six static and twelve dynamic
 cells. The explicit `fork → static-fork` static binding prevents a dynamic-only
 result or the composition workload from standing in for static fork evidence.
