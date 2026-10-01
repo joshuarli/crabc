@@ -824,12 +824,12 @@ static void retention_add_root(const char* category, const void* base, size_t si
   retention_roots[retention_root_count++] = (retention_root_t){start, start+size, 0, category};
 }
 
-static void retention_theap_roots(mi_theap_t* theap) {
+static void retention_theap_roots(mi_theap_t* theap, const char* category) {
   if (theap == NULL) return;
   for (size_t bin = 0; bin < MI_BIN_COUNT; bin++) {
     for (mi_page_t* page = theap->pages[bin].first; page != NULL; page = page->next) {
       if (mi_memid_is_os(page->memid)) {
-        retention_add_root("os-page", page->memid.mem.os.base, page->memid.mem.os.size);
+        retention_add_root(category, page->memid.mem.os.base, page->memid.mem.os.size);
       }
     }
   }
@@ -859,16 +859,37 @@ static void retention_process_page_map_roots(void) {
 #endif
 }
 
+/* Parent metadata pages keep ordinary live allocator ownership after a child
+   is destroyed. They are distinct from terminally retained child pages, and
+   a later allocation can collect them. Observe only the current owner lists. */
+static void retention_process_metadata_roots(void) {
+  mi_subproc_t* main = _mi_subproc_main();
+  mi_lock(&main->theap_meta_lock) {
+    retention_theap_roots(main->theap_meta, "process-metadata");
+  }
+  mi_lock(&main->heaps_lock) {
+    mi_heap_t* heap = main->heap_main;
+    require(heap != NULL);
+    mi_lock(&heap->theaps_lock) {
+      for (mi_page_t* page = heap->os_abandoned_pages; page != NULL; page = page->next) {
+        require(mi_memid_is_os(page->memid));
+        retention_add_root("process-metadata", page->memid.mem.os.base, page->memid.mem.os.size);
+      }
+    }
+  }
+}
+
 static void retention_child_roots(mi_subproc_t* child, void* raw, size_t raw_size) {
   retention_root_count = 0;
   retention_add_root("external-raw", raw, raw_size);
   retention_process_page_map_roots();
+  retention_process_metadata_roots();
   mi_lock(&child->heaps_lock) {
     mi_heap_t* main = child->heap_main;
     require(main != NULL);
     mi_lock(&main->theaps_lock) {
       for (mi_theap_t* theap = main->theaps; theap != NULL; theap = theap->hnext) {
-        retention_theap_roots(theap);
+        retention_theap_roots(theap, "os-page");
       }
       for (mi_page_t* page = main->os_abandoned_pages; page != NULL; page = page->next) {
         require(mi_memid_is_os(page->memid));
@@ -877,7 +898,7 @@ static void retention_child_roots(mi_subproc_t* child, void* raw, size_t raw_siz
     }
   }
   mi_lock(&child->theap_meta_lock) {
-    retention_theap_roots(child->theap_meta);
+    retention_theap_roots(child->theap_meta, "os-page");
   }
   const size_t count = mi_arenas_get_count(child);
   for (size_t i = 0; i < count; i++) {

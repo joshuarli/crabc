@@ -151,7 +151,7 @@ def parse_retention_attribution(output: str, *, source: str) -> list[dict[str, A
         line = line.removeprefix(prefix)
         if not line.startswith("m2.arena.retention."):
             continue
-        root = re.fullmatch(r"m2\.arena\.retention\.root\.([0-9]+)\.([0-9]+)\.([0-9]+)\.(os-page|os-arena|external-arena|external-raw|process-pagemap)=([0-9]+),([0-9]+),([0-9]+)", line)
+        root = re.fullmatch(r"m2\.arena\.retention\.root\.([0-9]+)\.([0-9]+)\.([0-9]+)\.(os-page|os-arena|external-arena|external-raw|process-pagemap|process-metadata)=([0-9]+),([0-9]+),([0-9]+)", line)
         child = re.fullmatch(r"m2\.arena\.retention\.child\.([0-9]+)\.([0-9]+)=([0-9]+)", line)
         mapping = re.fullmatch(r"m2\.arena\.retention\.map\.([0-9]+)\.([0-9]+)=([0-9]+),([0-9]+)", line)
         count = re.fullmatch(r"m2\.arena\.retention\.maps\.([0-9]+)=([0-9]+)", line)
@@ -196,8 +196,12 @@ def parse_retention_attribution(output: str, *, source: str) -> list[dict[str, A
         for child in range(6):
             cumulative.extend((start, end) for category, start, end, covered in roots[cycle, child]
                               if category in ("os-page", "process-pagemap") and covered == end-start)
+        # Parent metadata pages can be reclaimed during later allocations;
+        # only the last child's current owner observation supports this snapshot.
+        current_metadata = [(start, end) for category, start, end, covered in roots[cycle, 5]
+                            if category == "process-metadata" and covered == end-start]
         result.append({"maps": maps[cycle], "children": [roots[cycle, child] for child in range(6)],
-                       "classification": classify_retention_intervals(maps[0], maps[cycle], cumulative)})
+                       "classification": classify_retention_intervals(maps[0], maps[cycle], cumulative + current_metadata)})
     return result
 
 

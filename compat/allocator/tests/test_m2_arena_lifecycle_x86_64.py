@@ -143,6 +143,24 @@ class ArenaLifecycleProfiles(unittest.TestCase):
             with self.assertRaises(ValueError):
                 lifecycle.parse_retention_attribution(altered, source="corrupted receiver")
 
+    def test_process_metadata_attribution_requires_current_owner_observation(self):
+        lines = []
+        for cycle in range(33):
+            for child in range(6):
+                lines.append(f"m2.arena.retention.root.{cycle}.{child}.0.external-raw=100,200,0")
+                count = 1
+                if cycle == 1 and child == 5:
+                    lines.append(f"m2.arena.retention.root.{cycle}.{child}.1.process-metadata=2000,2100,100")
+                    count = 2
+                lines.append(f"m2.arena.retention.child.{cycle}.{child}={count}")
+            lines.append(f"m2.arena.retention.map.{cycle}.0=1000,2000")
+            if cycle > 0:
+                lines.append(f"m2.arena.retention.map.{cycle}.1=2000,2100")
+            lines.append(f"m2.arena.retention.maps.{cycle}={1 if cycle == 0 else 2}")
+        rows = lifecycle.parse_retention_attribution("\n".join(lines), source="current parent ownership")
+        self.assertEqual(rows[1]["classification"]["attributed_bytes"], 100)
+        self.assertEqual(rows[2]["classification"]["unexplained_bytes"], 100)
+
     def test_changed_cross_thread_relation_still_rejects(self):
         c = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
         native = c.copy()
