@@ -193,7 +193,36 @@ pub(crate) struct Heap {
     _pin: PhantomPinned,
 }
 
+/// Immutable Heap selection copied without borrowing its mutable lists.
+/// Pointer values transfer no allocation, mutation, or retirement authority.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct HeapSourceSnapshot {
+    pub(crate) subprocess: *mut SubprocessIdentity,
+    pub(crate) theap_slot: usize,
+    pub(crate) exclusive_arena: *mut Arena,
+    pub(crate) memory_id: MemoryId,
+}
+
 impl Heap {
+    /// Copies only the source fields fixed by Heap initialization.
+    ///
+    /// # Safety
+    /// The caller retains the original initialized Heap and excludes image
+    /// replacement and retirement. The copied fields stay immutable while
+    /// lists, statistics, and affinity may change independently.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn source_snapshot_at(heap: NonNull<Self>) -> HeapSourceSnapshot {
+        let raw = heap.as_ptr();
+        // SAFETY: only the four retained immutable fields are copied.
+        unsafe { HeapSourceSnapshot {
+            subprocess: core::ptr::addr_of!((*raw).subprocess).read(),
+            theap_slot: core::ptr::addr_of!((*raw).theap_slot).read(),
+            exclusive_arena: core::ptr::addr_of!((*raw).exclusive_arena).read(),
+            memory_id: core::ptr::addr_of!((*raw).memid).read(),
+        } }
+    }
+
     /// Source Heap affinity is mutable independently of its intrusive lists.
     ///
     /// # Safety
@@ -1038,6 +1067,31 @@ impl Heap {
                 (*(*head).hprev.get()) = theap;
             }
             self.theaps = theap;
+        }
+        guard.unlock().map_err(HeapTheapListError::Lock)
+    }
+
+    /// Links a source Theap using only the Heap list's synchronized fields.
+    ///
+    /// # Safety
+    /// The caller retains both live image capabilities and has already
+    /// Release-published the incoming Heap predicate. Existing members remain
+    /// live; all list writers and retirement obey this same private lock.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn attach_theap_after_heap_publication_at(
+        heap: NonNull<Self>, theap: NonNull<Theap>, blocking: bool,
+    ) -> Result<(), HeapTheapListError> {
+        let heap = heap.as_ptr();
+        let theap = theap.as_ptr();
+        let lock = unsafe { &*core::ptr::addr_of!((*heap).theaps_lock) };
+        let guard = if blocking { lock.lock().map_err(HeapTheapListError::Lock)? }
+            else { lock.try_lock().ok_or(HeapTheapListError::Busy)? };
+        unsafe {
+            let head = (*heap).theaps;
+            *(*theap).hprev.get() = null_mut();
+            *(*theap).hnext.get() = head;
+            if !head.is_null() { *(*head).hprev.get() = theap; }
+            (*heap).theaps = theap;
         }
         guard.unlock().map_err(HeapTheapListError::Lock)
     }
@@ -2218,6 +2272,29 @@ impl ThreadLocalData {
         second.unlock().is_ok()
     }
 
+    /// Holds the actual list mutex during a bounded test synchronization step.
+    /// An unavailable lock or failed release produces no success witness.
+    ///
+    /// # Safety
+    /// The caller independently retains the initialized TLD and its owner,
+    /// including the original writable allocation capability, through this
+    /// synchronous call. No whole-TLD reference or retirement overlaps it.
+    /// The body performs only bounded operations: it neither allocates nor
+    /// invokes a runtime allocator entry. Other field projections need their
+    /// own independent authority; protected list access requires its lock.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) unsafe fn with_locked_theap_list_for_test_at<R>(
+        pointer: NonNull<Self>, body: impl FnOnce() -> R,
+    ) -> Option<R> {
+        // Only the independently synchronized mutex is projected; its owner
+        // keeps the original allocation live until the guard is released.
+        let lock = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).theaps_lock) };
+        let guard = lock.try_lock()?;
+        let result = body();
+        guard.unlock().ok()?;
+        Some(result)
+    }
+
     /// Checks the direct C fixture's all-zero normal-helper preimage except
     /// for the private lock state. The production predicate deliberately
     /// leaves `memid` caller-owned so static and metadata callers can install
@@ -3021,6 +3098,38 @@ impl ThreadLocalData {
             };
             self.theaps = theap;
             head_random
+        };
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+        Ok(head_random)
+    }
+
+    /// Source list insertion without reborrowing the whole TLD whose pointer
+    /// is already stored in the prepared prefix.
+    ///
+    /// # Safety
+    /// The caller retains the original TLD and incoming Theap capabilities,
+    /// excludes list retirement, and owns all ordinary incoming-image fields.
+    /// Existing list members remain live through the locked random snapshot.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn attach_one_theap_at(
+        tld: NonNull<Self>, theap: NonNull<Theap>,
+    ) -> Result<Option<TheapRandomImage>, ThreadLocalTheapListError> {
+        let tld = tld.as_ptr();
+        let theap = theap.as_ptr();
+        // SAFETY: the lock is a short shared field projection; every list
+        // link is accessed with this lock and the caller's live-image proof.
+        let guard = unsafe { (&*core::ptr::addr_of!((*tld).theaps_lock)).try_lock() }
+            .ok_or(ThreadLocalTheapListError::Busy)?;
+        let head_random = unsafe {
+            let head = (*tld).theaps;
+            (*theap).tprev = null_mut();
+            (*theap).tnext = head;
+            let random = if head.is_null() { None } else {
+                (*head).tprev = theap;
+                Some((&*core::ptr::addr_of!((*head).random)).snapshot_for_split())
+            };
+            (*tld).theaps = theap;
+            random
         };
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
         Ok(head_random)
@@ -6139,7 +6248,8 @@ const fn detached_thread_local_ptr() -> *mut ThreadLocalData {
     core::ptr::addr_of!(DETACHED_THREAD_LOCAL.0).cast_mut()
 }
 
-/// Callback-producing source options captured before allocator projections.
+/// Callback-producing source options captured after successful image
+/// allocation/prefix preparation and before TLD-list attachment.
 ///
 /// Lazy option initialization can deliver a registered output callback. The
 /// resulting scalar image is therefore passed into Theap initialization rather
@@ -6150,6 +6260,20 @@ pub(crate) struct SourceTheapOptions {
     allow_page_reclaim: bool,
     allow_page_abandon: bool,
     page_full_retain: isize,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[derive(Clone, Copy)]
+pub(crate) struct GuardedSampleOptions {
+    sample_rate: usize,
+    sample_seed: usize,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[derive(Clone, Copy)]
+pub(crate) struct GuardedSizeOptions {
+    size_min: usize,
+    size_max: usize,
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
@@ -6173,6 +6297,26 @@ impl SourceTheapOptions {
         Self::capture_with(crate::process_init::process_source_option)
     }
 
+    /// Reads only the actual diagnostic owner's installed option table.
+    ///
+    /// # Safety
+    /// The caller retains this selected output owner and its installed table
+    /// through every read, with no Heap, TLD, Theap, page-engine, or owner
+    /// projection or lock accessible to warning callbacks. The incoming image
+    /// and its allocating storage remain retained across callback reentry.
+    pub(crate) unsafe fn capture_from_output(
+        output: &crate::diagnostic_output::OutputOwner,
+    ) -> Self {
+        Self::capture_with(|option| unsafe { output.option_value(option) })
+    }
+
+    /// Explicit pinned ordinary defaults for locally owned test images;
+    /// this performs no process option access under their existing borrows.
+    #[cfg(test)]
+    pub(crate) const fn release_defaults_for_test() -> Self {
+        Self { allow_page_reclaim: true, allow_page_abandon: true, page_full_retain: 2 }
+    }
+
     fn capture_with(mut get: impl FnMut(crate::config::SourceOption) -> i64) -> Self {
         use crate::config::SourceOption;
         // Preserve the two distinct full-retain reads: a warning callback
@@ -6181,6 +6325,72 @@ impl SourceTheapOptions {
         let allow_page_abandon = get(SourceOption::PageFullRetain) >= 0;
         let page_full_retain = get(SourceOption::PageFullRetain).clamp(-1, 32) as isize;
         Self { allow_page_reclaim, allow_page_abandon, page_full_retain }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl GuardedSampleOptions {
+    /// Captures rate/seed after the selected Theap's cookie draw.
+    ///
+    /// # Safety
+    /// The actual initialization owner remains live, with no Heap, TLD,
+    /// Theap, page-engine, or owner projection or lock held across callbacks.
+    /// The incoming image is not yet published as an allocation owner.
+    pub(crate) unsafe fn capture_source() -> Self {
+        Self::capture_with(crate::process_init::process_source_option)
+    }
+
+    /// Reads only the actual diagnostic owner's installed option table.
+    ///
+    /// # Safety
+    /// The caller retains this selected output owner and its installed table
+    /// through every read, with no Heap, TLD, Theap, page-engine, or owner
+    /// projection or lock accessible to warning callbacks. The incoming image
+    /// and its allocating storage remain retained across callback reentry.
+    pub(crate) unsafe fn capture_from_output(
+        output: &crate::diagnostic_output::OutputOwner,
+    ) -> Self {
+        Self::capture_with(|option| unsafe { output.option_value(option) })
+    }
+
+    fn capture_with(mut get: impl FnMut(crate::config::SourceOption) -> i64) -> Self {
+        use crate::config::SourceOption;
+        let sample_rate = get(SourceOption::GuardedSampleRate).max(0) as usize;
+        let sample_seed = get(SourceOption::GuardedSampleSeed) as usize;
+        Self { sample_rate, sample_seed }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl GuardedSizeOptions {
+    /// Captures bounds after sample-rate initialization, including any
+    /// selected-Theap random draw for a zero seed and rate greater than one.
+    ///
+    /// # Safety
+    /// As for the sample snapshot: the real image owner is retained and no
+    /// allocator projection or lock spans callback-producing option reads.
+    pub(crate) unsafe fn capture_source() -> Self {
+        Self::capture_with(crate::process_init::process_source_option)
+    }
+
+    /// Reads only the actual diagnostic owner's installed option table.
+    ///
+    /// # Safety
+    /// The caller retains this selected output owner and its installed table
+    /// through every read, with no Heap, TLD, Theap, page-engine, or owner
+    /// projection or lock accessible to warning callbacks. The incoming image
+    /// and its allocating storage remain retained across callback reentry.
+    pub(crate) unsafe fn capture_from_output(
+        output: &crate::diagnostic_output::OutputOwner,
+    ) -> Self {
+        Self::capture_with(|option| unsafe { output.option_value(option) })
+    }
+
+    fn capture_with(mut get: impl FnMut(crate::config::SourceOption) -> i64) -> Self {
+        use crate::config::SourceOption;
+        let size_min = get(SourceOption::GuardedMin).max(0) as usize;
+        let size_max = (get(SourceOption::GuardedMax).max(0) as usize).max(size_min);
+        Self { size_min, size_max }
     }
 }
 
@@ -6205,6 +6415,233 @@ impl GuardedTheapOptions {
         let size_min = get(SourceOption::GuardedMin).max(0) as usize;
         let size_max = (get(SourceOption::GuardedMax).max(0) as usize).max(size_min);
         Self { sample_rate, sample_seed, size_min, size_max }
+    }
+}
+
+/// Independently observed atomic publication fields of a retained Theap.
+/// This image is not a coherent lifecycle transaction or a lifetime capability.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct TheapPublicationSnapshot {
+    pub(crate) heap: *mut Heap,
+    pub(crate) subprocess: *mut SubprocessIdentity,
+    pub(crate) refcount: usize,
+}
+
+/// Source owner fields copied during a short admitted owner operation.
+/// A post-exit TLD value is only its former owner's identity; copying it
+/// neither dereferences the former TLD nor admits a replacement owner.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct TheapOwnerSnapshot {
+    pub(crate) heap: NonNull<Heap>,
+    pub(crate) subprocess: NonNull<SubprocessIdentity>,
+    pub(crate) tld: *mut ThreadLocalData,
+    pub(crate) is_detached: bool,
+    pub(crate) allow_page_abandon: bool,
+    pub(crate) memory_id: MemoryId,
+}
+
+/// The concrete source initializer admitted by a retained image owner.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) enum TheapInitializationKind {
+    ProcessStatic,
+    MetadataStatic,
+    ChildMetadata,
+    Dynamic { page_mode: TheapPageMode, tld_may_have_theaps: bool },
+    RequestedArena { main_default: NonNull<Theap> },
+    SharedMain { page_mode: TheapPageMode },
+}
+
+/// An allocated source prefix awaiting ordinary option callbacks.
+///
+/// This phase witness owns no allocation or release capability. The actual
+/// static, metadata, or arena owner must keep all three images live and retain
+/// a partial image on failure. No references or list guards cross a callback.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct PreparedTheapInitialization {
+    theap: NonNull<Theap>,
+    heap: NonNull<Heap>,
+    tld: NonNull<ThreadLocalData>,
+    kind: TheapInitializationKind,
+    owner: TheapOwner,
+}
+
+/// The original source list-head decision awaiting its random branch.
+/// No new head lookup or list splice occurs after a warning callback.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) enum TheapRandomInitialization {
+    FirstHead(FirstHeadTheapInitialization),
+    SplitComplete(LinkedTheapInitialization),
+}
+
+/// A first TLD member retaining its exact unpublished image while normal
+/// entropy initialization delivers a source warning outside all projections.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct FirstHeadTheapInitialization(PreparedTheapInitialization);
+
+/// The TLD-linked image whose random split and cookie are complete, but whose
+/// initialized Heap predicate is still null while guarded options are read.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct LinkedTheapInitialization(PreparedTheapInitialization);
+
+/// The source sample-rate setter has run, including its conditional random
+/// draw. Bounds callbacks run next with all projections released.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[must_use]
+pub(crate) struct SampledTheapInitialization(PreparedTheapInitialization);
+
+/// A fully initialized private image awaiting source statistics accounting
+/// and the final Release Heap/list publication.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct ReadyTheapInitialization(PreparedTheapInitialization);
+
+#[cfg(target_arch = "x86_64")]
+impl PreparedTheapInitialization {
+    /// Applies inert ordinary options, then links the current TLD head and
+    /// performs the selected source random split and cookie draw.
+    ///
+    /// # Safety
+    /// The original image owner still retains the exact pointers' allocation
+    /// provenance and lifetimes. No owner projection, list mutator, or image
+    /// retirement overlaps this call. Any error retains the partial image;
+    /// it must not free storage that this operation may already have linked.
+    pub(crate) unsafe fn apply_source_options_and_attach(
+        self, options: SourceTheapOptions,
+    ) -> Result<TheapRandomInitialization, TheapMainStaticInitError> {
+        let pointer = self.theap.as_ptr();
+        // SAFETY: the caller retains exclusive ordinary-field authority;
+        // these projections end before any callback-producing option read.
+        unsafe {
+            (*pointer).allow_page_reclaim = options.allow_page_reclaim;
+            (*pointer).allow_page_abandon = options.allow_page_abandon;
+            (*pointer).page_full_retain = options.page_full_retain;
+            if (*self.tld.as_ptr()).is_in_threadpool && (*pointer).page_full_retain > 0 {
+                (*pointer).page_full_retain /= 4;
+            }
+            if matches!(self.kind,
+                TheapInitializationKind::Dynamic { page_mode: TheapPageMode::NonAbandoningPageSession, .. }
+                | TheapInitializationKind::SharedMain { page_mode: TheapPageMode::NonAbandoningPageSession }) {
+                (*pointer).allow_page_abandon = false;
+                (*pointer).page_full_retain = -1;
+            }
+            (*pointer).is_detached = self.owner == TheapOwner::Detached;
+        }
+        // The option callback may have added another valid member. Snapshot
+        // the actual head now, without rechecking a pre-callback empty list.
+        let head_random = unsafe { ThreadLocalData::attach_one_theap_at(self.tld, self.theap) }
+            .map_err(TheapMainStaticInitError::ThreadList)?;
+        let Some(mut head_random) = head_random else {
+            return Ok(TheapRandomInitialization::FirstHead(FirstHeadTheapInitialization(self)));
+        };
+        // SAFETY: the previous head was copied under its list lock. This
+        // existing-head split is callback-free and does not read OS entropy.
+        unsafe {
+            let random = &mut *core::ptr::addr_of_mut!((*pointer).random);
+            head_random.split_into(random);
+            (*pointer).cookie = random.next() as usize | 1;
+        }
+        Ok(TheapRandomInitialization::SplitComplete(LinkedTheapInitialization(self)))
+    }
+
+
+}
+
+#[cfg(target_arch = "x86_64")]
+impl FirstHeadTheapInitialization {
+    /// Installs material whose source warning has already been delivered,
+    /// then performs the original selected-image cookie draw.
+    ///
+    /// # Safety
+    /// The real owner retains the original image and list membership through
+    /// the callback. All callback projections and guards have ended. This
+    /// short operation exclusively owns the original random and cookie fields.
+    pub(crate) unsafe fn finish_random_initialization(
+        self, material: crate::random::RandomInitializationMaterial,
+    ) -> LinkedTheapInitialization {
+        let pointer = self.0.theap.as_ptr();
+        unsafe {
+            let random = &mut *core::ptr::addr_of_mut!((*pointer).random);
+            random.initialize_prepared(material);
+            (*pointer).cookie = random.next() as usize | 1;
+        }
+        LinkedTheapInitialization(self.0)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl LinkedTheapInitialization {
+    /// Applies rate/seed before the subsequent bound getter callbacks.
+    ///
+    /// # Safety
+    /// The original owner excludes mutation and retirement during these short
+    /// field projections; its initialized Heap predicate remains unpublished.
+    #[cfg(feature = "mi-guarded")]
+    pub(crate) unsafe fn apply_guarded_sample_options(
+        self, options: GuardedSampleOptions,
+    ) -> SampledTheapInitialization {
+        // SAFETY: selected image random/count fields are exclusively retained.
+        unsafe { Theap::guarded_set_sample_rate_at(self.0.theap, options.sample_rate, options.sample_seed); }
+        SampledTheapInitialization(self.0)
+    }
+
+    /// The selected build has no guarded source setter or option reads.
+    #[cfg(not(feature = "mi-guarded"))]
+    pub(crate) fn finish_without_guarded_options(self) -> ReadyTheapInitialization {
+        ReadyTheapInitialization(self.0)
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl SampledTheapInitialization {
+    /// Applies bound scalars after their separate callback window.
+    ///
+    /// # Safety
+    /// The original image owner retains the same exclusive bound-field
+    /// authority and excludes image retirement through the operation.
+    pub(crate) unsafe fn apply_guarded_size_options(
+        self, options: GuardedSizeOptions,
+    ) -> ReadyTheapInitialization {
+        unsafe { Theap::guarded_set_size_bound_at(self.0.theap, options.size_min, options.size_max); }
+        ReadyTheapInitialization(self.0)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl ReadyTheapInitialization {
+    /// Release-publishes the source initialized predicate and then inserts
+    /// the image on the selected Heap list. Source statistics must already
+    /// have been accounted for by the actual subprocess owner.
+    ///
+    /// # Safety
+    /// The real owner retains all images and excludes retirement throughout
+    /// publication. An error after the Release store retains the initialized
+    /// image terminally; dropping this witness never unlinks or frees it.
+    pub(crate) unsafe fn publish_heap(self) -> Result<NonNull<Theap>, TheapMainStaticInitError> {
+        let prepared = self.0;
+        // SAFETY: exact raw image provenance is retained by the caller. The
+        // Heap projection is bounded to its existing synchronized list API.
+        unsafe {
+            (*prepared.theap.as_ptr()).heap.store(prepared.heap.as_ptr(), Ordering::Release);
+            Heap::attach_theap_after_heap_publication_at(
+                prepared.heap, prepared.theap,
+                matches!(prepared.kind, TheapInitializationKind::SharedMain { .. }),
+            ).map_err(TheapMainStaticInitError::HeapList)?;
+            // The process-static metadata exception is applied only after
+            // the full source initializer returns. Child metadata keeps its
+            // ordinary options despite using the parent's detached TLD.
+            if matches!(prepared.kind, TheapInitializationKind::MetadataStatic) {
+                (*prepared.theap.as_ptr()).allow_page_abandon = false;
+                (*prepared.theap.as_ptr()).page_full_retain = 2;
+            }
+        }
+        Ok(prepared.theap)
     }
 }
 
@@ -6274,7 +6711,169 @@ pub(crate) enum GenericAllocationAdministration {
     Full,
 }
 
+/// A completed generic threshold step awaiting the source option callback.
+///
+/// This linear phase witness carries neither a Theap pointer nor cached
+/// counters. The actual selected owner retains lifetime and resumes on the
+/// same image after releasing projections needed by nested allocation.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct GenericAllocationFrequencyRequest {
+    issuer: NonNull<Theap>,
+    _owner_thread: core::marker::PhantomData<*mut ()>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl GenericAllocationFrequencyRequest {
+    /// Checks identity only; the retained session still supplies field access.
+    pub(crate) fn matches_theap(&self, pointer: NonNull<Theap>) -> bool {
+        self.issuer == pointer
+    }
+}
+
 impl Theap {
+    /// Reads atomic publication without projecting ordinary owner fields.
+    ///
+    /// # Safety
+    /// The original typed Theap allocation stays live throughout this call.
+    /// Image replacement, exclusive whole-image references, and retirement
+    /// are excluded; atomic publication and disjoint field mutation may overlap.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn publication_snapshot_at(theap: NonNull<Self>) -> TheapPublicationSnapshot {
+        let raw = theap.as_ptr();
+        // SAFETY: these short references cover only atomic fields.
+        unsafe { TheapPublicationSnapshot {
+            heap: (&*core::ptr::addr_of!((*raw).heap)).load(Ordering::Acquire),
+            subprocess: (&*core::ptr::addr_of!((*raw).subproc)).load(Ordering::Acquire),
+            refcount: (&*core::ptr::addr_of!((*raw).refcount)).load(Ordering::Acquire),
+        } }
+    }
+
+    /// Validates publication and copies ordinary owner fields without
+    /// dereferencing a former TLD. Retained post-exit page owners can observe
+    /// these fields using their existing source custody.
+    ///
+    /// # Safety
+    /// The caller retains this exact image and its Heap/subprocess lifetimes
+    /// and excludes writes to the copied fields, image replacement, Heap
+    /// detachment, and retirement for this call. Page queues and random or
+    /// guarded counters can be mutated independently by their admitted owners.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn owner_snapshot_at(theap: NonNull<Self>) -> Option<TheapOwnerSnapshot> {
+        let raw = theap.as_ptr();
+        // SAFETY: publication is atomic; ordinary copies rely on retained
+        // field authority and create no whole-image reference.
+        unsafe {
+            let heap = NonNull::new((&*core::ptr::addr_of!((*raw).heap)).load(Ordering::Acquire))?;
+            let subprocess = NonNull::new((&*core::ptr::addr_of!((*raw).subproc)).load(Ordering::Acquire))?;
+            Some(TheapOwnerSnapshot {
+                heap, subprocess,
+                tld: core::ptr::addr_of!((*raw).tld).read(),
+                is_detached: core::ptr::addr_of!((*raw).is_detached).read(),
+                allow_page_abandon: core::ptr::addr_of!((*raw).allow_page_abandon).read(),
+                memory_id: core::ptr::addr_of!((*raw).memid).read(),
+            })
+        }
+    }
+
+    /// Prepares the actual allocated prefix before ordinary option reads.
+    /// This preserves the producer's memory ID and ownership administration,
+    /// then copies the empty image and installs TLD/refcount/subprocess.
+    ///
+    /// # Safety
+    /// All pointers originate from the caller's original live image
+    /// capabilities, not temporary exclusive field reborrows. The caller
+    /// retains their address-stable storage and exact allocation/cleanup
+    /// authority through every returned phase, with no overlapping image
+    /// mutation or list retirement. Before invoking a source option capture,
+    /// all Heap/TLD/Theap/owner references and locks that its callback could
+    /// reach must end. The phase witness alone grants no cleanup authority.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_initialization_at(
+        theap: NonNull<Theap>, heap: NonNull<Heap>, tld: NonNull<ThreadLocalData>,
+        kind: TheapInitializationKind,
+    ) -> Result<PreparedTheapInitialization, TheapMainStaticInitError> {
+        // SAFETY: only pre-callback, caller-exclusive scalar/image projections
+        // occur here. No reference is retained in the returned witness.
+        let image = unsafe { &mut *theap.as_ptr() };
+        let heap_source = unsafe { Heap::source_snapshot_at(heap) };
+        let (heap_subprocess, heap_arena, heap_slot, heap_kind) = (
+            heap_source.subprocess, heap_source.exclusive_arena,
+            heap_source.theap_slot, heap_source.memory_id.kind(),
+        );
+        let (tld_subprocess, tld_thread_id, tld_in_threadpool) = unsafe {
+            (core::ptr::addr_of!((*tld.as_ptr()).subprocess).read(),
+                core::ptr::addr_of!((*tld.as_ptr()).thread_id).read(),
+                core::ptr::addr_of!((*tld.as_ptr()).is_in_threadpool).read())
+        };
+        // Only the list mutex is borrowed. Other owners may inspect this
+        // source head, so even prefix validation uses their synchronization.
+        let list_guard = unsafe { (&*core::ptr::addr_of!((*tld.as_ptr()).theaps_lock)).try_lock() }
+            .ok_or(TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy))?;
+        let tld_head = unsafe { core::ptr::addr_of!((*tld.as_ptr()).theaps).read() };
+        let detached = matches!(kind,
+            TheapInitializationKind::MetadataStatic | TheapInitializationKind::ChildMetadata);
+        let owner = if detached { TheapOwner::Detached } else {
+            TheapOwner::Live(LiveThreadId::new(tld_thread_id)
+                .ok_or(TheapMainStaticInitError::InvalidInput)?)
+        };
+        let same_subprocess = core::ptr::eq(heap_subprocess, tld_subprocess);
+        let subprocess_valid = !heap_subprocess.is_null() && !tld_subprocess.is_null()
+            && (same_subprocess || (matches!(kind, TheapInitializationKind::ChildMetadata)
+                && unsafe { (&*heap_subprocess).is_registered_descendant_of(&*tld_subprocess) }));
+        let existing_members = match kind {
+            TheapInitializationKind::ChildMetadata | TheapInitializationKind::RequestedArena { .. } => true,
+            TheapInitializationKind::Dynamic { tld_may_have_theaps, .. } => tld_may_have_theaps,
+            _ => false,
+        };
+        let storage_valid = match kind {
+            TheapInitializationKind::ProcessStatic | TheapInitializationKind::MetadataStatic => image.memid.kind() == MemoryKind::Static,
+            TheapInitializationKind::ChildMetadata | TheapInitializationKind::SharedMain { .. } => image.memid.kind() == MemoryKind::Malloc,
+            TheapInitializationKind::Dynamic { .. } => match image.memid.kind() {
+                MemoryKind::Malloc => heap_arena.is_null(),
+                MemoryKind::Arena => image.memid.initially_committed()
+                    && image.memid.arena_memory().is_some_and(|arena| !arena.arena.is_null()
+                        && arena.arena == heap_arena
+                        && arena.slice_count as usize == crate::config::ARENA_MIN_OBJ_SLICES),
+                _ => false,
+            },
+            TheapInitializationKind::RequestedArena { main_default } => {
+                let main = main_default.as_ptr();
+                image.memid.kind() == MemoryKind::Arena && image.memid.initially_committed()
+                    && image.memid.arena_memory().is_some_and(|arena| !arena.arena.is_null()
+                        && arena.arena == heap_arena)
+                    && tld_head == main_default.as_ptr()
+                    && unsafe {
+                        (*main).tprev.is_null() && (*main).tnext.is_null() && (*main).tld == tld.as_ptr()
+                            && !(&*core::ptr::addr_of!((*main).heap)).load(Ordering::Acquire).is_null()
+                            && (*main).memid.kind() == MemoryKind::Static
+                            && (&*core::ptr::addr_of!((*main).refcount)).load(Ordering::Acquire) == 1
+                            && (&*core::ptr::addr_of!((*main).subproc)).load(Ordering::Acquire) == tld_subprocess
+                    }
+            },
+        };
+        if image.is_initialized() || !storage_valid || !subprocess_valid
+            || tld_thread_id != owner.thread_id()
+            || (!existing_members && (tld_subprocess.is_null() || !tld_head.is_null()))
+            || (matches!(kind, TheapInitializationKind::Dynamic { .. } | TheapInitializationKind::RequestedArena { .. })
+                && tld_in_threadpool)
+            || (matches!(kind, TheapInitializationKind::SharedMain { .. })
+                && (heap_slot != 1 || heap_kind != MemoryKind::Static)) {
+            return Err(TheapMainStaticInitError::InvalidInput);
+        }
+        list_guard.unlock().map_err(|error|
+            TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Lock(error)))?;
+        let memid = image.memid;
+        let lifecycle = image.main_heap_lifecycle;
+        let replaced = core::mem::replace(image, Self::empty());
+        drop(replaced);
+        image.memid = memid;
+        image.main_heap_lifecycle = lifecycle;
+        image.tld = tld.as_ptr();
+        image.refcount.store(1, Ordering::Release);
+        image.subproc.store(heap_subprocess, Ordering::Release);
+        Ok(PreparedTheapInitialization { theap, heap, tld, kind, owner })
+    }
     /// `src/init.c:_mi_theap_empty` through its `memid` prefix.
     ///
     /// No heap is published, so `is_initialized` remains false exactly as in
@@ -7838,10 +8437,27 @@ impl Theap {
         }
     }
 
+    /// Completes the immediate, non-reentrant frequency path. Runtime option
+    /// callbacks use the explicit begin/finish phases after parking the owner.
+    ///
+    /// # Safety
+    /// The caller retains exclusive generic-counter authority. The frequency
+    /// callback may not reach this image or its held owner projections and
+    /// returns the source-clamped value in `1..=1_000_000`.
     pub(crate) unsafe fn advance_generic_allocation_administration_at(
         pointer: NonNull<Theap>,
         generic_collect_frequency: impl FnOnce() -> isize,
     ) -> GenericAllocationAdministration {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let Some(request) = (unsafe { Self::begin_generic_allocation_administration_at(pointer) }) else {
+                return GenericAllocationAdministration::None;
+            };
+            let frequency = generic_collect_frequency();
+            unsafe { Self::finish_generic_allocation_administration_at(pointer, request, frequency) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
         const GENERIC_ADMIN_FREQUENCY: isize = 1_000;
 
         // C reaches this function only after `_mi_malloc_generic` has
@@ -7874,6 +8490,55 @@ impl Theap {
             // not be retried by the other 999 generic calls.
             if *generic_collect_count >= generic_collect_frequency() {
                 *generic_collect_count = 0;
+                GenericAllocationAdministration::Full
+            } else {
+                GenericAllocationAdministration::Mini
+            }
+        }
+        }
+    }
+
+    /// Accumulates and resets the generic count at the source threshold,
+    /// before the callback-producing frequency getter is invoked.
+    ///
+    /// # Safety
+    /// The selected Theap is live and the caller exclusively owns its two
+    /// counters for this short operation; their valid values cannot overflow.
+    /// Before capturing options, park the actual owner and end projections
+    /// the callback may access while retaining this same image's lifetime.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn begin_generic_allocation_administration_at(
+        pointer: NonNull<Theap>,
+    ) -> Option<GenericAllocationFrequencyRequest> {
+        unsafe {
+            let count = core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_count);
+            let collected = core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_collect_count);
+            *count += 1;
+            if *count < 1_000 { return None; }
+            *collected += *count;
+            *count = 0;
+        }
+        Some(GenericAllocationFrequencyRequest {
+            issuer: pointer, _owner_thread: core::marker::PhantomData,
+        })
+    }
+
+    /// Reads the current collection count after the frequency getter returns.
+    /// Nested callback allocation may have changed it; source compares this
+    /// current value and resets only when selecting full collection.
+    ///
+    /// # Safety
+    /// `request` began administration on this exact retained Theap. The same
+    /// admitted owner has resumed with exclusive counter authority, and
+    /// `frequency` is the source-clamped value `1..=1_000_000`.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn finish_generic_allocation_administration_at(
+        pointer: NonNull<Theap>, _request: GenericAllocationFrequencyRequest, frequency: isize,
+    ) -> GenericAllocationAdministration {
+        unsafe {
+            let collected = core::ptr::addr_of_mut!((*pointer.as_ptr()).generic_collect_count);
+            if *collected >= frequency {
+                *collected = 0;
                 GenericAllocationAdministration::Full
             } else {
                 GenericAllocationAdministration::Mini
@@ -8340,6 +9005,389 @@ const _: [(); 74] = [(); BIN_FULL];
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn finish_unfaulted_test_random(branch: TheapRandomInitialization) -> LinkedTheapInitialization {
+        match branch {
+            TheapRandomInitialization::SplitComplete(linked) => linked,
+            TheapRandomInitialization::FirstHead(first) => {
+                let material = crate::random::PreparedRandomInitialization::prepare_normal();
+                assert!(!material.requires_warning(), "the unfaulted fixture must receive normal entropy");
+                // The fixture retains all original images; normal entropy
+                // succeeded and no warning callback needs to run.
+                unsafe { first.finish_random_initialization(material.after_warning()) }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn owner_snapshots_preserve_field_authority_during_atomic_and_local_mutation() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let heap = NonNull::new(std::boxed::Box::into_raw(heap)).unwrap();
+        let theap = NonNull::new(std::boxed::Box::into_raw(std::boxed::Box::new(Theap::empty()))).unwrap();
+        let former_tld = std::boxed::Box::into_raw(std::boxed::Box::new(ThreadLocalData::detached()));
+        // Original allocation pointers retain field-level write provenance.
+        // The former TLD is retired before observation to prove that source
+        // owner copying does not dereference a retained post-exit identity.
+        unsafe {
+            (*theap.as_ptr()).tld = former_tld;
+            (*theap.as_ptr()).is_detached = true;
+            (*theap.as_ptr()).heap.store(heap.as_ptr(), Ordering::Release);
+            (*theap.as_ptr()).subproc.store(PARENT.identity_ptr(), Ordering::Release);
+            drop(std::boxed::Box::from_raw(former_tld));
+        }
+        let published = AtomicPtr::new(theap.as_ptr());
+        let barrier = std::sync::Barrier::new(2);
+        let heap_address = heap.as_ptr().addr();
+        let subprocess_address = PARENT.identity_ptr().addr();
+        let former_tld_address = former_tld.addr();
+        let iterations = if cfg!(miri) { 8 } else { 128 };
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let pointer = NonNull::new(published.load(Ordering::Acquire)).unwrap();
+                for iteration in 1..=iterations {
+                    barrier.wait();
+                    // Only atomic publication and copied immutable owner fields
+                    // are accessed here; the other thread owns local counters.
+                    unsafe {
+                        (&*core::ptr::addr_of!((*pointer.as_ptr()).refcount)).store(iteration, Ordering::Release);
+                        let atomic = Theap::publication_snapshot_at(pointer);
+                        assert_eq!(atomic.refcount, iteration);
+                        assert_eq!(atomic.heap.addr(), heap_address);
+                        assert_eq!(atomic.subprocess.addr(), subprocess_address);
+                        let owner = Theap::owner_snapshot_at(pointer).unwrap();
+                        assert_eq!(owner.heap.as_ptr().addr(), heap_address);
+                        assert_eq!(owner.subprocess.as_ptr().addr(), subprocess_address);
+                        assert_eq!(owner.tld.addr(), former_tld_address);
+                        assert!(owner.is_detached);
+                        assert!(owner.allow_page_abandon);
+                        assert_eq!(owner.memory_id.kind(), MemoryKind::Static);
+                        let source = Heap::source_snapshot_at(owner.heap);
+                        assert_eq!(source.subprocess.addr(), subprocess_address);
+                        assert_eq!(source.theap_slot, 1);
+                        assert!(source.exclusive_arena.is_null());
+                        assert_eq!(source.memory_id.kind(), MemoryKind::Static);
+                    }
+                    barrier.wait();
+                }
+            });
+            for iteration in 1..=iterations {
+                barrier.wait();
+                // These fields are disjoint from every reader projection.
+                // No whole-Theap reference is formed while the reader runs.
+                unsafe {
+                    core::ptr::addr_of_mut!((*theap.as_ptr()).generic_count).write(iteration as isize);
+                    core::ptr::addr_of_mut!((*theap.as_ptr()).page_count).write(iteration);
+                }
+                barrier.wait();
+            }
+        });
+        // All source projections have ended and the reader has joined before
+        // original allocation custody is reconstituted for destruction.
+        unsafe {
+            assert_eq!(core::ptr::addr_of!((*theap.as_ptr()).page_count).read(), iterations);
+            drop(std::boxed::Box::from_raw(theap.as_ptr()));
+            drop(std::boxed::Box::from_raw(heap.as_ptr()));
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn prepared_theap_list_contention_preserves_incoming_preimage() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let mut tld = ThreadLocalData::detached();
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let mut incoming = Theap::empty();
+        assert!(incoming.set_detached_main_metadata_static_memid());
+        let image = NonNull::new(core::ptr::addr_of_mut!(incoming)).unwrap();
+        let heap = NonNull::new(core::ptr::addr_of_mut!(heap)).unwrap();
+        let tld = NonNull::new(core::ptr::addr_of_mut!(tld)).unwrap();
+        // The fixture keeps the original images live, and the outer callback
+        // inspects only the mutex until it releases the contention witness.
+        unsafe {
+            let busy = ThreadLocalData::with_locked_theap_list_for_test_at(tld, || {
+                matches!(Theap::prepare_initialization_at(image, heap, tld,
+                    TheapInitializationKind::MetadataStatic),
+                    Err(TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy)))
+            });
+            assert_eq!(busy, Some(true));
+            assert!((*image.as_ptr()).heap.load(Ordering::Acquire).is_null());
+            assert!((*image.as_ptr()).subproc.load(Ordering::Acquire).is_null());
+            assert_eq!((*image.as_ptr()).tld, detached_thread_local_ptr());
+            assert_eq!((*image.as_ptr()).memid.kind(), MemoryKind::Static);
+            assert!((*tld.as_ptr()).theaps.is_null());
+            assert!(Theap::prepare_initialization_at(image, heap, tld,
+                TheapInitializationKind::MetadataStatic).is_ok());
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn generic_frequency_resume_observes_nested_collection_reset_instead_of_stale_count() {
+        let mut image = Theap::empty();
+        image.generic_count = 999;
+        let pointer = NonNull::new(core::ptr::addr_of_mut!(image)).unwrap();
+        // SAFETY: this stable fixture's counter projections are sequential;
+        // nested threshold work occurs after the outer owner is released.
+        unsafe {
+            let outer = Theap::begin_generic_allocation_administration_at(pointer).unwrap();
+            assert_eq!((image.generic_count, image.generic_collect_count), (0, 1_000));
+            for _ in 0..999 {
+                assert!(Theap::begin_generic_allocation_administration_at(pointer).is_none());
+            }
+            let nested = Theap::begin_generic_allocation_administration_at(pointer).unwrap();
+            assert_eq!(image.generic_collect_count, 2_000);
+            assert_eq!(Theap::finish_generic_allocation_administration_at(pointer, nested, 1_000),
+                GenericAllocationAdministration::Full);
+            assert_eq!(image.generic_collect_count, 0);
+            assert_eq!(Theap::finish_generic_allocation_administration_at(pointer, outer, 1_000),
+                GenericAllocationAdministration::Mini);
+            assert_eq!((image.generic_count, image.generic_collect_count), (0, 0));
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn prepared_theap_keeps_prefix_custody_and_links_callback_created_head_before_publication() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let mut tld = ThreadLocalData::detached();
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let mut incoming = Theap::empty();
+        let mut callback_member = Theap::empty();
+        assert!(incoming.set_detached_main_metadata_static_memid());
+        assert!(callback_member.set_detached_main_metadata_static_memid());
+        let incoming_pointer = NonNull::new(core::ptr::addr_of_mut!(incoming)).unwrap();
+        let callback_pointer = NonNull::new(core::ptr::addr_of_mut!(callback_member)).unwrap();
+        let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(heap)).unwrap();
+        let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(tld)).unwrap();
+        // SAFETY: these pointers originate from the complete stable fixture
+        // objects. No projection survives a simulated option callback; both
+        // exact source images are detached before their storage is dropped.
+        unsafe {
+            let prepared = Theap::prepare_initialization_at(
+                incoming_pointer, heap_pointer, tld_pointer, TheapInitializationKind::MetadataStatic,
+            ).unwrap();
+            assert_eq!(incoming.memid.kind(), MemoryKind::Static);
+            assert_eq!(incoming.refcount(), 1);
+            assert_eq!(incoming.tld, tld_pointer.as_ptr());
+            assert_eq!(incoming.subproc.load(Ordering::Acquire), heap.subprocess);
+            assert!(!incoming.is_initialized());
+            assert!(tld.theaps.is_null());
+            let ordinary = SourceTheapOptions::capture_with(|option| {
+                if tld.theaps.is_null() {
+                    let sibling = Theap::prepare_initialization_at(
+                        callback_pointer, heap_pointer, tld_pointer,
+                        TheapInitializationKind::MetadataStatic,
+                    ).unwrap();
+                    let branch = sibling.apply_source_options_and_attach(SourceTheapOptions {
+                        allow_page_reclaim: true, allow_page_abandon: true, page_full_retain: 2,
+                    }).unwrap();
+                    let linked = finish_unfaulted_test_random(branch);
+                    #[cfg(feature = "mi-guarded")]
+                    let ready = linked.apply_guarded_sample_options(GuardedSampleOptions {
+                        sample_rate: 0, sample_seed: 0,
+                    }).apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+                    #[cfg(not(feature = "mi-guarded"))]
+                    let ready = linked.finish_without_guarded_options();
+                    ready.publish_heap().unwrap();
+                }
+                match option {
+                    crate::config::SourceOption::PageReclaimOnFree => -1,
+                    crate::config::SourceOption::PageFullRetain => 32,
+                    _ => panic!("unexpected ordinary option"),
+                }
+            });
+            assert_eq!(tld.theaps, callback_pointer.as_ptr());
+            assert!(!incoming.is_initialized());
+            let linked = finish_unfaulted_test_random(prepared.apply_source_options_and_attach(ordinary).unwrap());
+            assert_eq!(tld.theaps, incoming_pointer.as_ptr());
+            assert_eq!(incoming.tnext, callback_pointer.as_ptr());
+            assert_eq!(callback_member.tprev, incoming_pointer.as_ptr());
+            assert!(incoming.random.is_initialized());
+            assert_eq!(incoming.cookie & 1, 1);
+            assert!(!incoming.allow_page_reclaim);
+            assert!(incoming.allow_page_abandon);
+            assert_eq!(incoming.page_full_retain, 32);
+            assert!(!incoming.is_initialized());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions {
+                sample_rate: 3, sample_seed: 1,
+            }).apply_guarded_size_options(GuardedSizeOptions { size_min: 80, size_max: 96 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            #[cfg(feature = "mi-guarded")]
+            {
+                assert_eq!(incoming.guarded_sample_rate, 3);
+                assert_eq!(incoming.guarded_sample_count, 2);
+                assert_eq!((incoming.guarded_size_min, incoming.guarded_size_max), (80, 96));
+            }
+            assert!(!incoming.is_initialized());
+            ready.publish_heap().unwrap();
+            assert!(incoming.is_initialized());
+            assert!(!incoming.allow_page_abandon);
+            assert_eq!(incoming.page_full_retain, 2);
+            for pointer in [incoming_pointer, callback_pointer] {
+                tld.detach_one_theap_from_heap(&mut heap, pointer.as_ptr()).unwrap();
+                tld.detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
+            }
+            assert!(heap.theaps.is_null());
+            assert!(tld.theaps.is_null());
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn first_head_random_warning_precedes_material_cookie_and_heap_publication() {
+        use crate::diagnostic_output::{OutputOwner, SourceFormattedMessage};
+        struct Observation {
+            incoming: NonNull<Theap>,
+            tld: NonNull<ThreadLocalData>,
+            fault: *const crate::os::fault::Guard,
+            calls: core::cell::Cell<usize>,
+        }
+        std::thread_local! {
+            static ACTIVE: core::cell::Cell<*const Observation> = const { core::cell::Cell::new(core::ptr::null()) };
+        }
+        unsafe extern "C" fn warning(message: *const core::ffi::c_char) {
+            // The actual output owner provides a terminated diagnostic fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"unable to use secure randomness\n".len())
+                .any(|window| window == b"unable to use secure randomness\n") { return; }
+            ACTIVE.with(|slot| {
+                // The fixture retains its original images and observation record;
+                // no image reference or list guard spans this callback.
+                let observation = unsafe { &*slot.get() };
+                let incoming = observation.incoming.as_ptr();
+                assert_eq!(unsafe { (*observation.tld.as_ptr()).theaps }, incoming);
+                assert!(unsafe { (*incoming).heap.load(Ordering::Acquire) }.is_null());
+                assert_eq!(unsafe { (*incoming).cookie }, 0);
+                assert!(!unsafe { &*core::ptr::addr_of!((*incoming).random) }.is_initialized());
+                assert_eq!(unsafe { &*observation.fault }.secondary_observed(), 0);
+                assert_eq!(unsafe { ThreadLocalData::with_locked_theap_list_for_test_at(
+                    observation.tld, || 19,
+                ) }, Some(19));
+                let mut nested = crate::random::TheapRandomImage::empty_weak();
+                nested.initialize_weak();
+                assert!(nested.is_initialized());
+                observation.calls.set(observation.calls.get() + 1);
+            });
+        }
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let mut tld = ThreadLocalData::detached();
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let mut incoming = Theap::empty();
+        assert!(incoming.set_detached_main_metadata_static_memid());
+        let incoming_pointer = NonNull::new(core::ptr::addr_of_mut!(incoming)).unwrap();
+        let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(heap)).unwrap();
+        let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(tld)).unwrap();
+        let output = OutputOwner::new(warning);
+        // This isolated actual output owner stays live through warning delivery.
+        unsafe {
+            output.initialize_source_options(|| core::ptr::null());
+            output.option_set(crate::config::SourceOption::ShowErrors, 1).unwrap();
+            output.post_init();
+        }
+        let fault = crate::os::fault::install(crate::os::fault::Plan::at_pair(
+            crate::os::fault::Point::Entropy, 1, crate::os::fault::Point::Clock, 1,
+            crabc_core::Errno::NOMEM,
+        ));
+        let observation = Observation { incoming: incoming_pointer, tld: tld_pointer,
+            fault: core::ptr::from_ref(&fault), calls: core::cell::Cell::new(0) };
+        ACTIVE.with(|slot| slot.set(core::ptr::from_ref(&observation)));
+        // These original stack allocations remain live until both source lists
+        // are unlinked; all projections end before the admitted warning call.
+        unsafe {
+            let phase = Theap::prepare_initialization_at(incoming_pointer, heap_pointer,
+                tld_pointer, TheapInitializationKind::MetadataStatic).unwrap();
+            let branch = phase.apply_source_options_and_attach(SourceTheapOptions {
+                allow_page_reclaim: true, allow_page_abandon: true, page_full_retain: 2,
+            }).unwrap();
+            let TheapRandomInitialization::FirstHead(first) = branch else {
+                panic!("an empty original TLD must select normal entropy");
+            };
+            let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+            assert!(prepared.requires_warning());
+            output.warning_from_source_options(SourceFormattedMessage::from_source_formatted(
+                c"unable to use secure randomness\n",
+            ));
+            assert_eq!(observation.calls.get(), 1);
+            let linked = first.finish_random_initialization(prepared.after_warning());
+            assert_eq!(tld.theaps, incoming_pointer.as_ptr());
+            assert!(incoming.random.is_initialized());
+            assert_eq!(incoming.cookie & 1, 1);
+            assert!(!incoming.is_initialized());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions {
+                sample_rate: 0, sample_seed: 0,
+            }).apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            assert!(incoming.is_initialized());
+            tld.detach_one_theap_from_heap(&mut heap, incoming_pointer.as_ptr()).unwrap();
+            tld.detach_one_theap_from_tld(incoming_pointer.as_ptr()).unwrap();
+        }
+        ACTIVE.with(|slot| slot.set(core::ptr::null()));
+        assert!(tld.theaps.is_null());
+        assert!(heap.theaps.is_null());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn theap_option_snapshots_read_the_supplied_output_owner() {
+        use crate::config::SourceOption;
+        use crate::diagnostic_output::OutputOwner;
+        unsafe extern "C" fn ignore(_: *const core::ffi::c_char) {}
+        let first = OutputOwner::new(ignore);
+        let second = OutputOwner::new(ignore);
+        // Both original owner tables stay live and independently installed;
+        // no allocator image or projection is borrowed during these reads.
+        unsafe {
+            first.initialize_source_options(|| core::ptr::null());
+            second.initialize_source_options(|| core::ptr::null());
+            first.option_set(SourceOption::PageReclaimOnFree, -1).unwrap();
+            first.option_set(SourceOption::PageFullRetain, -8).unwrap();
+            second.option_set(SourceOption::PageReclaimOnFree, 1).unwrap();
+            second.option_set(SourceOption::PageFullRetain, 100).unwrap();
+            let a = SourceTheapOptions::capture_from_output(&first);
+            let b = SourceTheapOptions::capture_from_output(&second);
+            assert_eq!((a.allow_page_reclaim, a.allow_page_abandon, a.page_full_retain),
+                (false, false, -1));
+            assert_eq!((b.allow_page_reclaim, b.allow_page_abandon, b.page_full_retain),
+                (true, true, 32));
+            #[cfg(feature = "mi-guarded")]
+            {
+                first.option_set(SourceOption::GuardedSampleRate, -1).unwrap();
+                first.option_set(SourceOption::GuardedSampleSeed, -1).unwrap();
+                first.option_set(SourceOption::GuardedMin, 512).unwrap();
+                first.option_set(SourceOption::GuardedMax, 64).unwrap();
+                second.option_set(SourceOption::GuardedSampleRate, 3).unwrap();
+                second.option_set(SourceOption::GuardedSampleSeed, 9).unwrap();
+                second.option_set(SourceOption::GuardedMin, 16).unwrap();
+                second.option_set(SourceOption::GuardedMax, 128).unwrap();
+                let a = GuardedSampleOptions::capture_from_output(&first);
+                let b = GuardedSampleOptions::capture_from_output(&second);
+                assert_eq!((a.sample_rate, a.sample_seed), (0, usize::MAX));
+                assert_eq!((b.sample_rate, b.sample_seed), (3, 9));
+                let a = GuardedSizeOptions::capture_from_output(&first);
+                let b = GuardedSizeOptions::capture_from_output(&second);
+                assert_eq!((a.size_min, a.size_max), (64, 64));
+                assert_eq!((b.size_min, b.size_max), (16, 128));
+            }
+        }
+    }
+
     #[test]
     fn metadata_theap_owner_projection_survives_tld_list_attachment() {
         static PARENT: MainSubprocess = MainSubprocess::new();
@@ -10439,6 +11487,26 @@ mod tests {
             "rejection must not normalize the caller's thread-pool checkpoint"
         );
         assert_unchanged_static_source_image(&threadpool_candidate);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn retained_tld_list_guard_reports_real_contention_and_restores_availability() {
+        let mut tld = ThreadLocalData::detached();
+        let pointer = NonNull::from(&mut tld);
+        // The stack owner keeps the initialized image live. The first mutable
+        // projection has ended; both calls project only its actual mutex.
+        let contention = unsafe {
+            ThreadLocalData::with_locked_theap_list_for_test_at(pointer, || {
+                ThreadLocalData::with_locked_theap_list_for_test_at(pointer, || ()).is_none()
+            })
+        };
+        assert_eq!(contention, Some(true));
+        assert_eq!(unsafe {
+            ThreadLocalData::with_locked_theap_list_for_test_at(pointer, || 17)
+        }, Some(17));
+        assert!(tld.test_theaps_lock_starts_and_restores_unlocked());
+        assert!(tld.test_theap_head_is(core::ptr::null_mut()));
     }
 
     #[test]
