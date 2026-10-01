@@ -140,6 +140,71 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'opcode differs'):
                     links.final_member_references(bytes(changed), **arguments)
 
+    def test_long_function_section_display_keeps_exact_indexed_archive_owner(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            common = '.text.' + 'indexed_provider_' * 20
+            (work / 'provider.S').write_text(''.join(
+                f'.section {common + suffix},"ax",@progbits\n.globl {name}\n.hidden {name}\n'
+                f'.type {name},@function\n{name}: mov ${value},%eax; ret\n.size {name},.-{name}\n'
+                for suffix, name, value in [('first', 'domain_function', 42), ('second', 'other_function', 43)])
+                + '.section .note.GNU-stack,"",@progbits\n')
+            subprocess.run([compiler, '-c', str(work / 'provider.S'), '-o', str(work / 'provider.o')],
+                           check=True, capture_output=True)
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'provider.o')],
+                           check=True, capture_output=True)
+            tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / 'provider.o'))
+            row = next(row for row in tables[0]['rows'] if row['name'] == 'domain_function')
+            sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / 'provider.o'))['sections']
+            section = next(section for section in sections if str(section['index']) == row['section_index'])
+            self.assertEqual(section['name'], (common + 'first')[:256])
+            definition = {'row': row, 'definition_section': section}
+            image = (work / 'provider.o').read_bytes()
+            for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
+                output, map_path, trace_path = work / mode, work / (mode + '.receipt.map'), work / (mode + '.receipt.trace')
+                linked = subprocess.run([linker, flag, '-e', 'domain_function', '--undefined=domain_function',
+                                         '--undefined=other_function', '--trace', '-Map=' + str(map_path),
+                                         str(work / 'libdomain.a'), '-o', str(output)], check=True, capture_output=True)
+                trace_path.write_bytes(linked.stdout)
+                view = links._indexed_view(work, mode, elf_type)
+                address = links.definition_address(view, str(work / 'libdomain.a') + '(provider.o)',
+                                                   definition, source_image=image)
+                self.assertEqual(address, int(view['symbol_rows']['domain_function'][0][1], 16))
+                self.assertEqual(links.calls._public_weak_virtual_bytes(output.read_bytes(), address,
+                                 row['size_bytes'], elf_type, executable=True),
+                                 image[int(section['offset'], 16):int(section['offset'], 16) + row['size_bytes']])
+                member = str(work / 'libdomain.a') + '(provider.o)'
+                other = next(row for row in tables[0]['rows'] if row['name'] == 'other_function')
+                changes = [({'row': {**row, 'section_index': other['section_index']}}, 'symbol metadata differs'),
+                           ({'definition_section': {**section, 'index': int(other['section_index'])}}, 'section index differs'),
+                           ({'definition_section': {**section, 'name': 'wrong' + section['name'][5:]}}, 'display name differs'),
+                           ({'definition_section': {**section, 'flags': 'A'}}, 'section flags differ'),
+                           ({'definition_section': {**section, 'flags': 'WWX'}}, 'section flags differ'),
+                           ({'definition_section': {**section, 'type': 'NOBITS'}}, 'section geometry differs'),
+                           ({'row': {**row, 'binding': 'WEAK'}}, 'symbol metadata differs'),
+                           ({'row': {**row, 'visibility': 'DEFAULT'}}, 'symbol metadata differs'),
+                           ({'row': {**row, 'value': '0000000000000001'}}, 'symbol metadata differs')]
+                for field in ('address', 'offset', 'size', 'entry_size'):
+                    changes.append(({'definition_section': {**section, field: format(int(section[field], 16) + 1, 'x')}},
+                                    'section geometry differs'))
+                for field in ('alignment', 'link', 'info'):
+                    changes.append(({'definition_section': {**section, field: section[field] + 1}},
+                                    'section geometry differs'))
+                for altered, message in changes:
+                    with self.assertRaisesRegex(ValueError, message):
+                        links.definition_address(view, member, {**definition, **altered}, source_image=image)
+                for altered in ({'trace_counts': {}}, {'map_rows': {}},
+                                {'symbol_rows': {'domain_function': [*view['symbol_rows']['domain_function'],
+                                                                     *view['symbol_rows']['domain_function']]}}):
+                    with self.assertRaises(ValueError):
+                        links.definition_address({**view, **altered}, member, definition, source_image=image)
+
     def test_real_scalar_table_reads_bind_interior_object_bytes_in_both_static_modes(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')

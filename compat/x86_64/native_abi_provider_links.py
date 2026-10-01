@@ -27,6 +27,7 @@ import native_abi_inventory as inventory
 import native_c_allocator_boundary as calls
 import owned_posix_product_evidence as products
 import native_declaration_abi as declaration
+import owned_static_link_authority as static_authority
 
 ROOT = inventory.ROOT
 MODES = ('static', 'static-pie')
@@ -446,6 +447,64 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     return {'resolved_calls': resolved, 'discarded_calls': discarded}
 
 
+def definition_address(view: Mapping[str, Any], archive_member: str, definition: Mapping[str, Any],
+                       *, source_image: bytes | None = None) -> int:
+    """Bind a final symbol to its exact selected archive section and offset."""
+    name = definition['row']['name']
+    symbol_rows = view['symbol_rows'].get(name, [])
+    require(all(row[3] == definition['row']['type'] and row[6] != 'UND' for row in symbol_rows),
+            'provider final symbol metadata differs')
+    symbols = [(int(row[1], 16), int(row[2])) for row in symbol_rows]
+    require(len(symbols) == 1 and symbols[0][1] == definition['row']['size_bytes'],
+            'provider final symbol is absent, ambiguous or mismatched')
+    address = symbols[0][0]
+    section = definition['definition_section']['name']
+    maps = view['map_rows'].get(archive_member + ':(' + section + ')', [])
+    if not maps and definition['row']['type'] == 'FUNC' and source_image is not None:
+        source = static_authority.elf_bytes(source_image)
+        require(source.elf_type == 1, 'provider source is not a relocatable ELF')
+        symbol = source.symbol(name, dynamic=False)
+        row, observed = definition['row'], definition['definition_section']
+        require(symbol is not None and symbol['type'] == row['type']
+                and symbol['binding'] == row['binding'] and symbol['visibility'] == row['visibility']
+                and symbol['section'] == int(row['section_index'])
+                and symbol['value'] == int(row['value'], 16) and symbol['size'] == row['size_bytes'],
+                'provider source symbol metadata differs')
+        index = symbol['section']
+        require(0 < index < len(source.sections) and observed['index'] == index,
+                'provider source section index differs')
+        header = source.sections[index]
+        flag_bits = {'W': 1, 'A': 2, 'X': 4, 'M': 16, 'S': 32, 'I': 64, 'L': 128,
+                     'O': 256, 'G': 512, 'T': 1024, 'C': 2048, 'R': 0x200000,
+                     'D': 0x1000000, 'E': 0x80000000}
+        require(len(observed['flags']) == len(set(observed['flags']))
+                and set(observed['flags']) <= set(flag_bits)
+                and sum(flag_bits[flag] for flag in observed['flags']) == header[2]
+                and header[2] & 6 == 6, 'provider source section flags differ')
+        require(header[1] == 1 and observed['type'] == 'PROGBITS'
+                and header[3] == int(observed['address'], 16)
+                and header[4] == int(observed['offset'], 16)
+                and header[5] == int(observed['size'], 16)
+                and header[9] == int(observed['entry_size'], 16)
+                and header[6] == observed['link'] and header[7] == observed['info']
+                and header[8] == observed['alignment']
+                and header[4] + header[5] <= len(source_image)
+                and symbol['value'] + symbol['size'] <= header[5],
+                'provider source section geometry differs')
+        actual_name = static_authority.section_name(source, header)
+        # The pinned GNU renderer caps section names at 256 bytes even in wide
+        # output. The indexed ELF string defines ownership; a display prefix
+        # alone never identifies a section or permits a different member.
+        require(section == actual_name or (len(section) == 256 and len(actual_name) > 256
+                                           and section == actual_name[:256]),
+                'provider source section display name differs')
+        maps = view['map_rows'].get(archive_member + ':(' + actual_name + ')', [])
+    require(view['trace_counts'].get(archive_member) == 1 and len(maps) == 1
+            and int(maps[0].split()[0], 16) + int(definition['row']['value'], 16) == address,
+            'provider final symbol does not belong to the exact archive definition')
+    return address
+
+
 def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapping[str, Any]) -> dict[str, Any]:
     retained = validate(work, static, facts)
     archive = static / 'usr/lib/libc.a'
@@ -453,6 +512,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
     for mode, elf_type in (('static', 2), ('static-pie', 3)):
         final[mode] = _indexed_view(work, mode, elf_type)
     source_members = {}
+    definition_images = {}
     by_name = {}
     for row in accounting['occurrences']:
         if row['artifact_key'] == 'candidate-static' and row['role'] in {'definition', 'import'}:
@@ -510,19 +570,18 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                 require(start + size <= len(source_data), 'scalar provider leaves its source section')
                 provider_data = source_data[start:start + size]
             for mode, view in final.items():
-                symbol_rows = view['symbol_rows'].get(name, [])
-                require(all(row[3] == definition['row']['type'] and row[6] != 'UND' for row in symbol_rows),
-                        'provider final symbol metadata differs')
-                symbols = [(int(row[1], 16), int(row[2])) for row in symbol_rows]
-                require(len(symbols) == 1 and symbols[0][1] == definition['row']['size_bytes'],
-                        'provider final symbol is absent, ambiguous or mismatched')
-                address = symbols[0][0]
                 selected = calls.mounted_path(archive) + '(' + definition['member_name'] + ')'
-                section = definition['definition_section']['name']
-                maps = view['map_rows'].get(selected + ':(' + section + ')', [])
-                require(view['trace_counts'].get(selected) == 1 and len(maps) == 1
-                        and int(maps[0].split()[0], 16) + int(definition['row']['value'], 16) == address,
-                        'provider final symbol does not belong to the exact archive definition')
+                source_image = None
+                if (definition['row']['type'] == 'FUNC'
+                        and not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')')):
+                    member = definition['member_name']
+                    require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
+                    if member not in definition_images:
+                        result = subprocess.run(['/usr/bin/ar', 'p', str(archive), member], capture_output=True, check=False)
+                        require(result.returncode == 0 and result.stdout, 'provider definition member is unreadable')
+                        definition_images[member] = result.stdout
+                    source_image = definition_images[member]
+                address = definition_address(view, selected, definition, source_image=source_image)
                 linked = []
                 for imported, source_calls, sections in source_imports:
                     member = calls.mounted_path(archive) + '(' + imported['member_name'] + ')'
