@@ -1369,3 +1369,57 @@ impl Heap {
 
 #[path = "heap_lifecycle.rs"]
 pub(crate) mod lifecycle;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::subproc::MainSubprocess;
+    use crate::types::{MemoryId, Theap, ThreadLocalData};
+    use core::ptr::NonNull;
+    use std::boxed::Box;
+
+    #[test]
+    fn allocated_heap_list_retirement_clears_original_tld_and_visits_each_theap_once() {
+        let subprocess = MainSubprocess::new();
+        let heap = NonNull::new(Box::into_raw(Box::new(Heap::bootstrap_empty()))).unwrap();
+        let tld = NonNull::new(Box::into_raw(Box::new(ThreadLocalData::detached()))).unwrap();
+        let first = NonNull::new(Box::into_raw(Box::new(Theap::empty()))).unwrap();
+        let second = NonNull::new(Box::into_raw(Box::new(Theap::empty()))).unwrap();
+        // All four original allocation capabilities stay live and exclusive
+        // until list publication. The callback never frees a list member.
+        unsafe {
+            (*heap.as_ptr()).initialize_non_main(subprocess.identity(), 1, null_mut(), MemoryId::static_empty());
+            for theap in [first, second] {
+                (*theap.as_ptr()).heap.store(heap.as_ptr(), Ordering::Release);
+                (*theap.as_ptr()).tld = tld.as_ptr();
+                (*heap.as_ptr()).attach_theap_after_heap_publication_blocking(theap.as_ptr()).unwrap();
+            }
+            let guard = (&*core::ptr::addr_of!((*tld.as_ptr()).theaps_lock)).lock().unwrap();
+            (*tld.as_ptr()).theaps = second.as_ptr();
+            (*second.as_ptr()).tnext = first.as_ptr();
+            (*first.as_ptr()).tprev = second.as_ptr();
+            guard.unlock().unwrap();
+        }
+        let mut visited = std::vec::Vec::new();
+        // No competing Heap-list operation or finishing thread exists; every
+        // original image remains allocated throughout the locked retirement.
+        unsafe {
+            heap.as_ref().detach_and_take_theaps(subprocess.identity(), |theap| {
+                let pointer = theap.as_ptr();
+                assert!((*pointer).tld.is_null());
+                assert!((*pointer).tnext.is_null() && (*pointer).tprev.is_null());
+                assert!((*(*pointer).hnext.get()).is_null() && (*(*pointer).hprev.get()).is_null());
+                visited.push(theap);
+            }).unwrap();
+            assert_eq!(visited, [second, first]);
+            assert!((*heap.as_ptr()).theaps.is_null());
+            assert!((*tld.as_ptr()).theaps.is_null());
+            heap.as_ref().detach_and_take_theaps(subprocess.identity(), |_| {
+                panic!("an empty retired list cannot revisit a member");
+            }).unwrap();
+            drop(Box::from_raw(second.as_ptr()));
+            drop(Box::from_raw(first.as_ptr()));
+            drop(Box::from_raw(tld.as_ptr()));
+            drop(Box::from_raw(heap.as_ptr()));
+        }
+    }
+}
