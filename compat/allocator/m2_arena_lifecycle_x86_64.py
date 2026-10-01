@@ -78,6 +78,8 @@ def parse_retention(output: str, *, source: str) -> list[dict[str, int]]:
         line = line.removeprefix(prefix)
         if "m2.arena.retention." not in line:
             continue
+        if line.startswith(tuple(f"m2.arena.retention.{kind}." for kind in ("root", "child", "map", "maps"))):
+            continue
         match = re.fullmatch(r"m2\.arena\.retention\.([0-9]+)\.(ranges|bytes)=([0-9]+)", line)
         if match is None:
             raise ValueError(f"{source} retention snapshot malformed")
@@ -86,6 +88,129 @@ def parse_retention(output: str, *, source: str) -> list[dict[str, int]]:
     if [(cycle, kind) for cycle, kind, _ in fields] != roster or any(value <= 0 for _, _, value in fields):
         raise ValueError(f"{source} retention snapshots incomplete or out of order")
     return [{"ranges": fields[cycle*2][2], "bytes": fields[cycle*2+1][2]} for cycle in range(33)]
+
+
+def retention_interval_union(intervals: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Normalize live mapping observations without counting overlapping VMAs twice."""
+    ordered = sorted(intervals)
+    result: list[tuple[int, int]] = []
+    for start, end in ordered:
+        if start < 0 or end <= start:
+            raise ValueError("retention interval is empty or reversed")
+        if result and start <= result[-1][1]:
+            result[-1] = (result[-1][0], max(end, result[-1][1]))
+        else:
+            result.append((start, end))
+    return result
+
+
+def _retention_overlap(left: Sequence[tuple[int, int]], right: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    a = retention_interval_union(left)
+    b = retention_interval_union(right)
+    i = j = 0
+    result = []
+    while i < len(a) and j < len(b):
+        lo, hi = max(a[i][0], b[j][0]), min(a[i][1], b[j][1])
+        if hi > lo:
+            result.append((lo, hi))
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return result
+
+
+def _retention_intersection(left: Sequence[tuple[int, int]], right: Sequence[tuple[int, int]]) -> int:
+    return sum(end-start for start, end in _retention_overlap(left, right))
+
+
+def classify_retention_intervals(before: Sequence[tuple[int, int]], after: Sequence[tuple[int, int]],
+                                 roots: Sequence[tuple[int, int]]) -> dict[str, int]:
+    """Expose growth not covered by original direct-OS metadata extents."""
+    old = retention_interval_union(before)
+    new = retention_interval_union(after)
+    witnesses = retention_interval_union(roots)
+    common = _retention_intersection(old, new)
+    added = sum(end-start for start, end in new) - common
+    removed = sum(end-start for start, end in old) - common
+    # A root overlapping the warmed baseline explains no newly mapped byte.
+    covered = _retention_overlap(new, witnesses)
+    attributed = sum(end-start for start, end in retention_interval_union(covered)) - _retention_intersection(covered, old)
+    return {"added_bytes": added, "removed_bytes": removed,
+            "attributed_bytes": attributed, "unexplained_bytes": added-attributed}
+
+
+def parse_retention_attribution(output: str, *, source: str) -> list[dict[str, Any]]:
+    """Require every child and mapping observation before attributing virtual growth."""
+    roots: dict[tuple[int, int], list[tuple[str, int, int, int]]] = {}
+    children: dict[tuple[int, int], int] = {}
+    maps: dict[int, list[tuple[int, int]]] = {}
+    map_counts: dict[int, int] = {}
+    prefix = f"test {RETENTION_TARGET} ... "
+    for line in output.splitlines():
+        line = line.removeprefix(prefix)
+        if not line.startswith("m2.arena.retention."):
+            continue
+        root = re.fullmatch(r"m2\.arena\.retention\.root\.([0-9]+)\.([0-9]+)\.([0-9]+)\.(os-page|os-arena|external-arena|external-raw)=([0-9]+),([0-9]+),([0-9]+)", line)
+        child = re.fullmatch(r"m2\.arena\.retention\.child\.([0-9]+)\.([0-9]+)=([0-9]+)", line)
+        mapping = re.fullmatch(r"m2\.arena\.retention\.map\.([0-9]+)\.([0-9]+)=([0-9]+),([0-9]+)", line)
+        count = re.fullmatch(r"m2\.arena\.retention\.maps\.([0-9]+)=([0-9]+)", line)
+        if root:
+            cycle, member, index = map(int, root.group(1, 2, 3))
+            category = root[4]
+            start, end, coverage = map(int, root.group(5, 6, 7))
+            key = (cycle, member)
+            entries = roots.setdefault(key, [])
+            value = (category, start, end, coverage)
+            if index != len(entries) or end <= start or coverage > end-start or any(value[:3] == existing[:3] for existing in entries) or key in children:
+                raise ValueError(f"{source} root observation malformed or duplicated")
+            if category == "external-raw" and coverage != 0:
+                raise ValueError(f"{source} caller external mapping survived its explicit unmap")
+            entries.append(value)
+        elif child:
+            cycle, member, value = map(int, child.groups())
+            key = (cycle, member)
+            if key in children or value != len(roots.get(key, [])) or value == 0:
+                raise ValueError(f"{source} child root roster incomplete or duplicated")
+            if sum(root[0] == "external-raw" for root in roots[key]) != 1:
+                raise ValueError(f"{source} child caller mapping observation missing")
+            children[key] = value
+        elif mapping:
+            cycle, index, start, end = map(int, mapping.groups())
+            entries = maps.setdefault(cycle, [])
+            if index != len(entries) or end <= start or (entries and start < entries[-1][1]) or cycle in map_counts:
+                raise ValueError(f"{source} mapping observation malformed or duplicated")
+            entries.append((start, end))
+        elif count:
+            cycle, value = map(int, count.groups())
+            if cycle in map_counts or value != len(maps.get(cycle, [])) or value == 0:
+                raise ValueError(f"{source} mapping roster incomplete or duplicated")
+            map_counts[cycle] = value
+        elif not re.fullmatch(r"m2\.arena\.retention\.[0-9]+\.(ranges|bytes)=[0-9]+", line):
+            raise ValueError(f"{source} unknown retention observation")
+    if set(children) != {(cycle, child) for cycle in range(33) for child in range(6)} or set(map_counts) != set(range(33)) or set(roots) != set(children) or set(maps) != set(map_counts):
+        raise ValueError(f"{source} retention attribution population incomplete")
+    result = []
+    cumulative = []
+    for cycle in range(33):
+        for child in range(6):
+            cumulative.extend((start, end) for category, start, end, covered in roots[cycle, child]
+                              if category == "os-page" and covered == end-start)
+        result.append({"maps": maps[cycle], "children": [roots[cycle, child] for child in range(6)],
+                       "classification": classify_retention_intervals(maps[0], maps[cycle], cumulative)})
+    return result
+
+
+def parse_attributed_retention(output: str, *, source: str) -> list[dict[str, Any]]:
+    """Bind aggregate snapshots to the same complete observed interval population."""
+    snapshots = parse_retention(output, source=source)
+    observations = parse_retention_attribution(output, source=source)
+    for snapshot, observation in zip(snapshots, observations):
+        mappings = observation["maps"]
+        if snapshot["ranges"] != len(mappings) or snapshot["bytes"] != sum(end-start for start, end in mappings):
+            raise ValueError(f"{source} aggregate retention snapshot differs from observed mappings")
+        snapshot.update(observation)
+    return snapshots
 
 
 def expected_rust(c_trace: list[int]) -> list[int]:
@@ -159,7 +284,7 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
         (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
         harness.require_success(run, "pinned C native x86 arena lifecycle oracle")
     (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
-    return command, (parse_retention(str(run["stdout"]), source="pinned C") if repeat_retention
+    return command, (parse_attributed_retention(str(run["stdout"]), source="pinned C") if repeat_retention
                      else parse_trace(str(run["stdout"]), source="pinned C"))
 
 
@@ -262,9 +387,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
             if harness.parse_rust_test_count(output) != 1:
                 raise harness.HarnessError("exact arena lifecycle selection did not execute one passing test")
             if arguments.repeat_retention:
-                native_rows = parse_retention(output, source="Rust")
+                native_rows = parse_attributed_retention(output, source="Rust")
                 for label, rows in (("C", c_trace), ("native", native_rows)):
-                    print(f"arena retention {profile} {label}: ranges {rows[0]['ranges']}->{rows[-1]['ranges']}; bytes {rows[0]['bytes']}->{rows[-1]['bytes']}; exact raw snapshots {artifacts}")
+                    print(f"arena retention {profile} {label}: ranges {rows[0]['ranges']}->{rows[-1]['ranges']}; bytes {rows[0]['bytes']}->{rows[-1]['bytes']}; source-root classification {rows[-1]['classification']}; exact raw snapshots {artifacts}")
                 continue
             comparison = compare(c_trace, parse_trace(output, source="Rust"))
         except (ValueError, harness.HarnessError) as error:

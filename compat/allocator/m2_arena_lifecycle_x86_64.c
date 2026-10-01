@@ -800,6 +800,99 @@ static void* cross_abandoned_target(void* argument) {
   return NULL;
 }
 
+/* These are scalar observations of still-owned source extents, never copied
+   allocation capabilities. Joined workers and the source list locks bound all
+   page projections; only numeric intervals survive destruction. */
+typedef struct retention_root_s {
+  uintptr_t start, end;
+  size_t covered;
+  const char* category;
+} retention_root_t;
+static retention_root_t retention_roots[4096];
+static size_t retention_root_count;
+static bool retention_enabled;
+static size_t retention_cycle;
+
+static void retention_add_root(const char* category, const void* base, size_t size) {
+  const uintptr_t start = (uintptr_t)base;
+  require(base != NULL && size > 0 && UINTPTR_MAX - start >= size);
+  for (size_t i = 0; i < retention_root_count; i++) {
+    if (retention_roots[i].start == start && retention_roots[i].end == start + size
+        && strcmp(retention_roots[i].category, category) == 0) return;
+  }
+  require(retention_root_count < sizeof(retention_roots)/sizeof(retention_roots[0]));
+  retention_roots[retention_root_count++] = (retention_root_t){start, start+size, 0, category};
+}
+
+static void retention_theap_roots(mi_theap_t* theap) {
+  if (theap == NULL) return;
+  for (size_t bin = 0; bin < MI_BIN_COUNT; bin++) {
+    for (mi_page_t* page = theap->pages[bin].first; page != NULL; page = page->next) {
+      if (mi_memid_is_os(page->memid)) {
+        retention_add_root("os-page", page->memid.mem.os.base, page->memid.mem.os.size);
+      }
+    }
+  }
+}
+
+static void retention_child_roots(mi_subproc_t* child, void* raw, size_t raw_size) {
+  retention_root_count = 0;
+  retention_add_root("external-raw", raw, raw_size);
+  mi_lock(&child->heaps_lock) {
+    mi_heap_t* main = child->heap_main;
+    require(main != NULL);
+    mi_lock(&main->theaps_lock) {
+      for (mi_theap_t* theap = main->theaps; theap != NULL; theap = theap->hnext) {
+        retention_theap_roots(theap);
+      }
+      for (mi_page_t* page = main->os_abandoned_pages; page != NULL; page = page->next) {
+        require(mi_memid_is_os(page->memid));
+        retention_add_root("os-page", page->memid.mem.os.base, page->memid.mem.os.size);
+      }
+    }
+  }
+  mi_lock(&child->theap_meta_lock) {
+    retention_theap_roots(child->theap_meta);
+  }
+  const size_t count = mi_arenas_get_count(child);
+  for (size_t i = 0; i < count; i++) {
+    mi_arena_t* arena = mi_atomic_load_ptr_acquire(mi_arena_t, &child->arenas[i]);
+    if (arena == NULL) continue;
+    if (mi_memid_is_os(arena->memid)) {
+      retention_add_root("os-arena", arena->memid.mem.os.base, arena->memid.mem.os.size);
+    } else if (arena->memid.memkind == MI_MEM_EXTERNAL) {
+      retention_add_root("external-arena", arena->memid.mem.os.base, arena->memid.mem.os.size);
+    }
+  }
+}
+
+static void retention_child_coverage(size_t child) {
+  FILE* maps = fopen("/proc/self/maps", "r");
+  require(maps != NULL);
+  char line[4096];
+  uintptr_t previous = 0;
+  while (fgets(line, sizeof(line), maps) != NULL) {
+    uintptr_t start, end;
+    require(sscanf(line, "%lx-%lx", &start, &end) == 2 && end > start && start >= previous);
+    previous = end;
+    for (size_t i = 0; i < retention_root_count; i++) {
+      retention_root_t* root = &retention_roots[i];
+      const uintptr_t lo = (start > root->start ? start : root->start);
+      const uintptr_t hi = (end < root->end ? end : root->end);
+      if (hi > lo) root->covered += hi - lo;
+    }
+  }
+  require(!ferror(maps) && fclose(maps) == 0);
+  for (size_t i = 0; i < retention_root_count; i++) {
+    const retention_root_t* root = &retention_roots[i];
+    require(root->covered <= root->end - root->start);
+    if (strcmp(root->category, "external-raw") == 0) require(root->covered == 0);
+    printf("m2.arena.retention.root.%zu.%zu.%zu.%s=%zu,%zu,%zu\n",
+      retention_cycle, child, i, root->category, (size_t)root->start, (size_t)root->end, root->covered);
+  }
+  printf("m2.arena.retention.child.%zu.%zu=%zu\n", retention_cycle, child, retention_root_count);
+}
+
 static void cross_thread_abandoned_lifecycle(void) {
   static const size_t requests[] = {37, MI_SMALL_SIZE_MAX + 1024, 86699};
   emit_marker(27);
@@ -822,9 +915,13 @@ static void cross_thread_abandoned_lifecycle(void) {
     require(sem_post(&state.reclaim) == 0 && pthread_join(target, NULL) == 0);
     require(sem_destroy(&state.ready) == 0 && sem_destroy(&state.release) == 0
         && sem_destroy(&state.reclaim) == 0);
+    if (retention_enabled) {
+      retention_child_roots((mi_subproc_t*)state.child._mi_subproc_id, state.raw, raw_size);
+    }
     _mi_arenas_unsafe_destroy_all((mi_subproc_t*)state.child._mi_subproc_id);
     mi_subproc_destroy(state.child);
     require(__real_munmap(state.raw, raw_size) == 0);
+    if (retention_enabled) retention_child_coverage(kind*2 + (size_t)blocked);
   }
 }
 
@@ -837,10 +934,14 @@ static void retention_snapshot(size_t cycle) {
     uintptr_t start, end;
     require(sscanf(line, "%lx-%lx", &start, &end) == 2 && end > start);
     require(SIZE_MAX - bytes >= end - start);
+    if (retention_enabled) {
+      printf("m2.arena.retention.map.%zu.%zu=%zu,%zu\n", cycle, ranges, (size_t)start, (size_t)end);
+    }
     ranges++;
     bytes += end - start;
   }
   require(!ferror(maps) && fclose(maps) == 0);
+  if (retention_enabled) printf("m2.arena.retention.maps.%zu=%zu\n", cycle, ranges);
   printf("m2.arena.retention.%zu.ranges=%zu\n", cycle, ranges);
   printf("m2.arena.retention.%zu.bytes=%zu\n", cycle, bytes);
 }
@@ -849,9 +950,12 @@ int main(int argc, char** argv) {
   _mi_auto_process_init();
   if (argc == 2 && strcmp(argv[1], "--repeat-retention") == 0) {
     emit_enabled = false;
+    retention_enabled = true;
+    retention_cycle = 0;
     cross_thread_abandoned_lifecycle();
     retention_snapshot(0);
     for (size_t cycle = 1; cycle <= 32; cycle++) {
+      retention_cycle = cycle;
       cross_thread_abandoned_lifecycle();
       retention_snapshot(cycle);
     }

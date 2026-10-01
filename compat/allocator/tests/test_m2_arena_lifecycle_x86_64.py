@@ -81,6 +81,65 @@ class ArenaLifecycleProfiles(unittest.TestCase):
         with self.assertRaises(ValueError):
             lifecycle.parse_retention(output([0, 0, *range(1, 33)]), source="duplicate source")
 
+    def test_interval_union_classifies_split_overlap_and_unexplained_growth(self):
+        self.assertEqual(lifecycle.retention_interval_union([(10, 20), (15, 30), (30, 40)]), [(10, 40)])
+        result = lifecycle.classify_retention_intervals(
+            [(0, 10)], [(0, 5), (5, 10), (20, 30), (30, 40), (50, 55)],
+            [(20, 35), (25, 40)])
+        self.assertEqual(result, {"added_bytes": 25, "removed_bytes": 0,
+                                  "attributed_bytes": 20, "unexplained_bytes": 5})
+        with self.assertRaises(ValueError):
+            lifecycle.retention_interval_union([(10, 10)])
+        with self.assertRaises(ValueError):
+            lifecycle.retention_interval_union([(20, 10)])
+
+    def test_retention_attribution_requires_each_child_and_map_roster(self):
+        def transcript():
+            lines = []
+            for cycle in range(33):
+                for child in range(6):
+                    lines.extend([
+                        f"m2.arena.retention.root.{cycle}.{child}.0.external-raw=100,200,0",
+                        f"m2.arena.retention.child.{cycle}.{child}=1"])
+                lines.extend([f"m2.arena.retention.map.{cycle}.0=1000,2000",
+                              f"m2.arena.retention.maps.{cycle}=1"])
+                lines.extend([f"m2.arena.retention.{cycle}.ranges=1",
+                              f"m2.arena.retention.{cycle}.bytes=1000"])
+            return "\n".join(lines)
+        text = transcript()
+        rows = lifecycle.parse_retention_attribution(text, source="actual receiver")
+        self.assertEqual(len(rows), 33)
+        self.assertEqual(rows[0]["classification"]["unexplained_bytes"], 0)
+        self.assertEqual(lifecycle.parse_attributed_retention(text, source="same observation")[0]["bytes"], 1000)
+        with self.assertRaises(ValueError):
+            lifecycle.parse_attributed_retention(text.replace(".7.bytes=1000", ".7.bytes=1001"), source="wrong aggregate")
+        observed = text.replace("m2.arena.retention.child.1.0=1",
+                                "m2.arena.retention.root.1.0.1.os-page=2000,2100,50\nm2.arena.retention.child.1.0=2")
+        observed = observed.replace("m2.arena.retention.maps.1=1",
+                                    "m2.arena.retention.map.1.1=2000,2100\nm2.arena.retention.maps.1=2")
+        observed = observed.replace("m2.arena.retention.1.ranges=1", "m2.arena.retention.1.ranges=2")
+        observed = observed.replace("m2.arena.retention.1.bytes=1000", "m2.arena.retention.1.bytes=1100")
+        partial = lifecycle.parse_attributed_retention(observed, source="partial mapped root")
+        self.assertEqual(partial[1]["classification"]["unexplained_bytes"], 100)
+        complete = lifecycle.parse_attributed_retention(observed.replace("os-page=2000,2100,50", "os-page=2000,2100,100"),
+                                                        source="fully mapped root")
+        self.assertEqual(complete[1]["classification"]["attributed_bytes"], 100)
+        aggregate_only = "\n".join(line for line in text.splitlines()
+                                   if line.split(".")[3].isdigit())
+        with self.assertRaises(ValueError):
+            lifecycle.parse_attributed_retention(aggregate_only, source="historical aggregate without provenance")
+        for altered in (text.replace("m2.arena.retention.child.5.3=1", ""),
+                        text + "\nm2.arena.retention.child.5.3=1",
+                        text.replace("m2.arena.retention.root.4.2.0.external-raw=100,200,0",
+                                     "m2.arena.retention.root.4.2.1.external-raw=100,200,0"),
+                        text.replace("m2.arena.retention.map.4.0=1000,2000",
+                                     "m2.arena.retention.map.4.0=1000,2000\nm2.arena.retention.map.4.1=1500,2100"),
+                        text.replace("m2.arena.retention.maps.4=1", "m2.arena.retention.maps.4=2"),
+                        text.replace("external-raw=100,200,0", "external-raw=100,200,1", 1),
+                        text.replace("external-raw=100,200,0", "unknown-root=100,200,0", 1)):
+            with self.assertRaises(ValueError):
+                lifecycle.parse_retention_attribution(altered, source="corrupted receiver")
+
     def test_changed_cross_thread_relation_still_rejects(self):
         c = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
         native = c.copy()
