@@ -3870,26 +3870,211 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    struct HeldAbandonedControl {
+    struct CrossThreadAbandonedControl {
+        origin_ready: std::sync::Barrier,
+        origin_release: std::sync::Barrier,
+        origin_ready_succeeded: std::sync::atomic::AtomicBool,
+        origin_heap: std::sync::atomic::AtomicUsize,
+        origin_first_client: std::sync::atomic::AtomicUsize,
+        origin_survivor_client: std::sync::atomic::AtomicUsize,
+        origin_thread: std::sync::atomic::AtomicUsize,
         held: std::sync::Barrier,
         unhold: std::sync::Barrier,
         claimed: std::sync::atomic::AtomicBool,
+        holder_ready_for_release: std::sync::atomic::AtomicBool,
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    impl HeldAbandonedControl {
+    impl CrossThreadAbandonedControl {
         fn new() -> Self {
             Self {
+                origin_ready: std::sync::Barrier::new(2),
+                origin_release: std::sync::Barrier::new(2),
+                origin_ready_succeeded: std::sync::atomic::AtomicBool::new(false),
+                origin_heap: std::sync::atomic::AtomicUsize::new(0),
+                origin_first_client: std::sync::atomic::AtomicUsize::new(0),
+                origin_survivor_client: std::sync::atomic::AtomicUsize::new(0),
+                origin_thread: std::sync::atomic::AtomicUsize::new(0),
                 held: std::sync::Barrier::new(2),
                 unhold: std::sync::Barrier::new(2),
                 claimed: std::sync::atomic::AtomicBool::new(false),
+                holder_ready_for_release: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    // Rendezvous on both successful publication and worker panic, so the
+    // coordinator can join a worker that never reached its release park.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    struct AbandonedWorkerReadiness<'a>(&'a std::sync::Barrier);
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl Drop for AbandonedWorkerReadiness<'_> {
+        fn drop(&mut self) { self.0.wait(); }
+    }
+
+    // The helper's region can unwind before the outer scope ends. Its
+    // parked origin must therefore be released and joined by this owner.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    struct ParkedOrigin<'scope, 'control> {
+        control: &'control CrossThreadAbandonedControl,
+        worker: Option<thread::ScopedJoinHandle<'scope, ()>>,
+        ready_observed: bool,
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl ParkedOrigin<'_, '_> {
+        fn wait_ready(&mut self) -> Option<(usize, usize, usize, usize)> {
+            use core::sync::atomic::Ordering;
+            if !self.ready_observed {
+                self.control.origin_ready.wait();
+                self.ready_observed = true;
+            }
+            if !self.control.origin_ready_succeeded.load(Ordering::Acquire) { return None; }
+            Some((self.control.origin_heap.load(Ordering::Relaxed),
+                self.control.origin_first_client.load(Ordering::Relaxed),
+                self.control.origin_survivor_client.load(Ordering::Relaxed),
+                self.control.origin_thread.load(Ordering::Relaxed)))
+        }
+
+        fn release_and_join(&mut self) -> thread::Result<()> {
+            if self.wait_ready().is_some() { self.control.origin_release.wait(); }
+            self.worker.take().unwrap().join()
+        }
+
+        fn finish(mut self) -> thread::Result<()> { self.release_and_join() }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl Drop for ParkedOrigin<'_, '_> {
+        fn drop(&mut self) {
+            if self.worker.is_some() { let _ = self.release_and_join(); }
+        }
+    }
+
+    // Releasing the low-owner claimant alone is insufficient on panic:
+    // join it before the target can unwind its live page references.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    struct HeldAbandonedWorker<'scope, 'control> {
+        control: &'control CrossThreadAbandonedControl,
+        worker: Option<thread::ScopedJoinHandle<'scope, ()>>,
+        ready_observed: bool,
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl HeldAbandonedWorker<'_, '_> {
+        fn wait_ready(&mut self) {
+            if !self.ready_observed {
+                self.control.held.wait();
+                self.ready_observed = true;
+            }
+        }
+
+        fn release_and_join(&mut self) -> thread::Result<()> {
+            self.wait_ready();
+            if self.control.holder_ready_for_release.load(core::sync::atomic::Ordering::Acquire) {
+                self.control.unhold.wait();
+            }
+            self.worker.take().unwrap().join()
+        }
+
+        fn finish(mut self) -> thread::Result<()> { self.release_and_join() }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    impl Drop for HeldAbandonedWorker<'_, '_> {
+        fn drop(&mut self) {
+            if self.worker.is_some() { let _ = self.release_and_join(); }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn abandoned_fixture_unwind_joins_before_region_release() {
+        use core::sync::atomic::{AtomicBool, Ordering};
+        struct WorkerFinished<'a>(&'a AtomicBool);
+        impl Drop for WorkerFinished<'_> {
+            fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+        }
+        struct LocalRegion<'a> {
+            released: &'a AtomicBool,
+            finished: &'a AtomicBool,
+            finished_before_release: &'a AtomicBool,
+        }
+        impl Drop for LocalRegion<'_> {
+            fn drop(&mut self) {
+                self.finished_before_release.store(self.finished.load(Ordering::Acquire), Ordering::Release);
+                self.released.store(true, Ordering::Release);
+            }
+        }
+        for origin in [true, false] {
+            for readiness_succeeds in [true, false] {
+                let control = CrossThreadAbandonedControl::new();
+                let finished = AtomicBool::new(false);
+                let released = AtomicBool::new(false);
+                let finished_before_release = AtomicBool::new(false);
+                thread::scope(|scope| {
+                    let control = &control;
+                    let finished = &finished;
+                    let released = &released;
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> () {
+                        let _region = LocalRegion { released, finished, finished_before_release: &finished_before_release };
+                        let worker = scope.spawn(move || {
+                            let _finished = WorkerFinished(finished);
+                            let readiness = AbandonedWorkerReadiness(if origin { &control.origin_ready } else { &control.held });
+                            if !readiness_succeeds { panic!("worker failed before readiness"); }
+                            if origin {
+                                control.origin_heap.store(11, Ordering::Relaxed);
+                                control.origin_first_client.store(22, Ordering::Relaxed);
+                                control.origin_survivor_client.store(33, Ordering::Relaxed);
+                                control.origin_thread.store(44, Ordering::Relaxed);
+                                control.origin_ready_succeeded.store(true, Ordering::Release);
+                            } else {
+                                control.holder_ready_for_release.store(true, Ordering::Release);
+                            }
+                            drop(readiness);
+                            if origin { control.origin_release.wait(); } else { control.unhold.wait(); }
+                            assert!(!released.load(Ordering::Acquire), "parked worker retains its local region");
+                        });
+                        if origin {
+                            let mut worker = ParkedOrigin { control, worker: Some(worker), ready_observed: false };
+                            assert_eq!(worker.wait_ready(), if readiness_succeeds { Some((11, 22, 33, 44)) } else { None });
+                            panic!("coordinator cleanup");
+                        } else {
+                            let mut worker = HeldAbandonedWorker { control, worker: Some(worker), ready_observed: false };
+                            worker.wait_ready();
+                            panic!("coordinator cleanup");
+                        }
+                    }));
+                    let error = result.unwrap_err();
+                    assert_eq!(error.downcast_ref::<&str>(), Some(&"coordinator cleanup"));
+                    // This check runs before the outer scope's implicit join.
+                    assert!(finished_before_release.load(Ordering::Acquire), "guard joins before local region release");
+                    assert!(released.load(Ordering::Acquire));
+                });
             }
         }
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn abandoned_fixture_finish_preserves_worker_error() {
+        let control = CrossThreadAbandonedControl::new();
+        thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                let _readiness = AbandonedWorkerReadiness(&control.origin_ready);
+                panic!("origin failed before publication");
+            });
+            let mut origin = ParkedOrigin { control: &control, worker: Some(worker), ready_observed: false };
+            assert_eq!(origin.wait_ready(), None);
+            let error = origin.finish().unwrap_err();
+            assert_eq!(error.downcast_ref::<&str>(), Some(&"origin failed before publication"));
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
-        let control = HeldAbandonedControl::new();
+        let control = CrossThreadAbandonedControl::new();
         thread::scope(|scope| {
             cross_thread_managed_abandoned_lifecycle_observe(scope, &control, &mut emit,
                 |_, _, _, _| {}, |_| {});
@@ -3899,7 +4084,7 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn cross_thread_managed_abandoned_lifecycle_observe<'scope, 'env>(
         scope: &'scope thread::Scope<'scope, 'env>,
-        control: &'scope HeldAbandonedControl,
+        control: &'scope CrossThreadAbandonedControl,
         mut emit: impl FnMut(i64),
         mut before_destroy: impl FnMut(usize, *mut core::ffi::c_void, usize, usize),
         mut after_destroy: impl FnMut(usize),
@@ -3913,9 +4098,11 @@ mod tests {
                 let child = crate::source_heap_api::subproc_new();
                 assert!(!child.is_null(), "live child for cross-thread arena reclamation");
                 let child_address = child.expose_provenance();
-                let (ready_send, ready_receive) = mpsc::channel();
-                let (release_send, release_receive) = mpsc::channel();
-                let origin = thread::spawn(move || {
+                // Heap-backed transport changes the observed mapping population.
+                // These reusable stack controls have the same lifetime as every snapshot.
+                control.origin_ready_succeeded.store(false, Ordering::Release);
+                let origin = scope.spawn(move || {
+                    let readiness = AbandonedWorkerReadiness(&control.origin_ready);
                     let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
                     // SAFETY: this worker retains its own TLS descriptor through
                     // its explicit allocator finish and physical thread exit.
@@ -3944,13 +4131,19 @@ mod tests {
                         & !(crate::types::PAGE_FLAG_MASK as usize);
                     assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
                         crate::runtime_lifecycle::ThreadFinishResult::Finished);
-                    ready_send.send((heap.expose_provenance(), first.as_ptr().expose_provenance(),
-                        survivor.as_ptr().expose_provenance(), original_thread)).unwrap();
+                    control.origin_heap.store(heap.expose_provenance(), Ordering::Relaxed);
+                    control.origin_first_client.store(first.as_ptr().expose_provenance(), Ordering::Relaxed);
+                    control.origin_survivor_client.store(survivor.as_ptr().expose_provenance(), Ordering::Relaxed);
+                    control.origin_thread.store(original_thread, Ordering::Relaxed);
+                    control.origin_ready_succeeded.store(true, Ordering::Release);
+                    drop(readiness);
                     // The retired owner makes no further allocator entry. Its
                     // live pthread prevents physical thread-identity reuse.
-                    release_receive.recv().unwrap();
+                    control.origin_release.wait();
                 });
-                let (heap_address, first_address, survivor_address, original_thread) = ready_receive.recv().unwrap();
+                let mut origin = ParkedOrigin { control, worker: Some(origin), ready_observed: false };
+                let (heap_address, first_address, survivor_address, original_thread) = origin.wait_ready()
+                    .expect("cross-thread origin publishes live clients");
                 let target = scope.spawn(move || {
                     let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
                     // SAFETY: this worker retains its own TLS descriptor through
@@ -4003,28 +4196,25 @@ mod tests {
                         let head = unsafe { crate::types::Page::abandonment_atomic_state_at(page) }
                             .xthread_free.as_ptr().expose_provenance();
                         control.claimed.store(false, Ordering::Release);
-                        // Release the parked holder on coordinator panic too;
-                        // the scope joins it before these stack controls drop.
-                        struct ReleaseHolder<'a>(&'a std::sync::Barrier);
-                        impl Drop for ReleaseHolder<'_> {
-                            fn drop(&mut self) { self.0.wait(); }
-                        }
+                        control.holder_ready_for_release.store(false, Ordering::Release);
                         let holder = scope.spawn(move || {
+                            let readiness = AbandonedWorkerReadiness(&control.held);
                             // SAFETY: two live clients retain the page while
                             // this worker owns only its atomic low-owner word.
                             let head = unsafe { &*core::ptr::with_exposed_provenance::<crate::atomic::AtomicWord>(head) };
                             let claim = crate::remote_free::claim_abandoned_owner(head);
                             control.claimed.store(claim == crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned,
                                 Ordering::Release);
-                            control.held.wait();
+                            control.holder_ready_for_release.store(true, Ordering::Release);
+                            drop(readiness);
                             control.unhold.wait();
                             assert_eq!(claim, crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned);
                             let mut hook: Option<fn()> = None;
                             assert_eq!(crate::remote_free::try_unown_abandoned_head(head, &mut hook),
                                 crate::remote_free::AbandonedOwnerHeadTransition::Released);
                         });
-                        let release = ReleaseHolder(&control.unhold);
-                        control.held.wait();
+                        let mut holder = HeldAbandonedWorker { control, worker: Some(holder), ready_observed: false };
+                        holder.wait_ready();
                         assert!(control.claimed.load(Ordering::Acquire), "holder claims the abandoned low-owner word");
                         let fallback = unsafe { crate::source_heap_api::heap_malloc(heap, request) }.value.expect("held claim falls back");
                         assert_ne!(page_of(fallback), page, "foreign low-owner claim refuses reassociation");
@@ -4033,8 +4223,7 @@ mod tests {
                         assert!(matches!(unsafe { crate::runtime_lifecycle::native_free(fallback) },
                             crate::runtime_lifecycle::NativePageFreeResult::Freed));
                         unsafe { crate::source_heap_api::heap_collect(heap, true) };
-                        drop(release);
-                        holder.join().unwrap();
+                        holder.finish().unwrap();
                     } else {
                         rows.extend([!bitmap_clear(bin + 1) as i64, count() as i64,
                             (page_of(first) == page && page_of(survivor) == page) as i64, span_free(false) as i64]);
@@ -4065,8 +4254,7 @@ mod tests {
                     rows
                 });
                 for value in target.join().expect("cross-thread target finishes") { emit(value); }
-                release_send.send(()).unwrap();
-                origin.join().unwrap();
+                origin.finish().unwrap();
                 let child_index = kind * 2 + blocked_index;
                 let start = region.as_ptr().addr();
                 before_destroy(child_index, child, start,
@@ -4289,7 +4477,7 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn retention_attribution_cycle<'scope, 'env>(
         scope: &'scope thread::Scope<'scope, 'env>,
-        control: &'scope HeldAbandonedControl,
+        control: &'scope CrossThreadAbandonedControl,
         cycle: usize,
     ) {
         let observed = core::cell::RefCell::new(None::<RetentionRoots>);
@@ -4365,7 +4553,7 @@ mod tests {
     #[test]
     fn x86_64_cross_thread_arena_retention_attribution_once() {
         prepare_cross_thread_managed_abandoned_lifecycle();
-        let control = HeldAbandonedControl::new();
+        let control = CrossThreadAbandonedControl::new();
         thread::scope(|scope| retention_attribution_cycle(scope, &control, 0));
     }
 
@@ -4380,7 +4568,7 @@ mod tests {
         // child Heap allocations retires an active initial-owner engine; it is
         // not part of the ordinary C caller's create/destroy cycle.
         prepare_cross_thread_managed_abandoned_lifecycle();
-        let control = HeldAbandonedControl::new();
+        let control = CrossThreadAbandonedControl::new();
         // A thread scope allocates shared bookkeeping. Keep that observer
         // allocation alive for both the baseline and every later snapshot.
         thread::scope(|scope| {
