@@ -1220,6 +1220,8 @@ pub(crate) enum SourceErrorReport {
     AllocationTooLarge { size: usize },
     /// Guarded request rounding checks the original size before allocating.
     GuardedAllocationTooLarge { size: usize },
+    /// Guarded alignment over-allocation reports both unrounded arguments.
+    GuardedAlignedAllocationTooLarge { size: usize, alignment: usize },
     /// An overflowing count product reports its two original operands before
     /// the public allocation entry returns; release profiles remain quiet.
     #[cfg(feature = "mi-debug-1")]
@@ -1263,6 +1265,7 @@ impl SourceErrorReport {
             Self::CountSizeOverflow { .. } => Errno::OVERFLOW,
             Self::AllocationTooLarge { .. }
             | Self::GuardedAllocationTooLarge { .. }
+            | Self::GuardedAlignedAllocationTooLarge { .. }
             | Self::AlignedLargeAlignmentOffset { .. }
             | Self::ReservationTooLarge { .. } => Errno::OVERFLOW,
             Self::OutOfMemory { .. }
@@ -1290,6 +1293,13 @@ impl SourceErrorReport {
                 message.append(b": invalid (unaligned) pointer: ");
                 append_source_pointer(&mut message.bytes, &mut message.length, pointer);
                 message.append(b"\n");
+            }
+            Self::GuardedAlignedAllocationTooLarge { size, alignment } => {
+                message.append(b"(guarded) aligned allocation request is too large (size ");
+                decimal(&mut message, size);
+                message.append(b", alignment ");
+                decimal(&mut message, alignment);
+                message.append(b")\n");
             }
             Self::GuardedAllocationTooLarge { size } => {
                 message.append(b"(guarded) allocation request is too large (");
@@ -3925,6 +3935,48 @@ mod tests {
         let bounded = SourceFormattedMessage::from_source_formatted(source);
 
         assert_eq!(bounded.as_c_str().to_bytes().len(), 990);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn diagnostic_inputs_forward_explicit_errno_while_retaining_legacy_output() {
+        std::thread_local! {
+            static SLOT: core::cell::Cell<core::ffi::c_int> = const { core::cell::Cell::new(0) };
+        }
+        unsafe fn store(errno: core::ffi::c_int) {
+            SLOT.with(|slot| slot.set(errno));
+        }
+        let _output_guard = default_stderr_test_guard();
+        reset_default_stderr_capture();
+        // SAFETY: the fixture's environment reader and output callback remain
+        // live, and this test serializes the static output capture.
+        let inputs = unsafe { super::ProcessDiagnosticInputs::new(
+            diagnostic_test_environment_reader, test_default_stderr_output) };
+        assert!(inputs.source_errno_store().is_none());
+        // SAFETY: the static primitive writes only the calling thread's slot
+        // without allocation or unwinding during this active test lifetime.
+        let setter = unsafe { crate::process_init::SourceErrnoStore::new(store) };
+        let inputs = inputs.with_source_errno_store(setter);
+        inputs.source_errno_store().unwrap().store(Errno::PERM);
+        assert_eq!(SLOT.with(|slot| slot.get()), Errno::PERM.raw());
+        let (_, output) = inputs.into_parts();
+        let message = source_message(b"retained output\n\0");
+        // SAFETY: the source message and serialized capture remain live until
+        // the legacy output primitive finishes its synchronous delivery.
+        unsafe { output(message.as_c_str().as_ptr()) };
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), b"retained output\n");
+    }
+
+    #[test]
+    fn guarded_aligned_oversize_error_preserves_both_source_arguments() {
+        use super::SourceErrorReport;
+        for (size, alignment) in [(usize::MAX, 64), (81, crate::config::PAGE_MAX_OVERALLOC_ALIGN)] {
+            let report = SourceErrorReport::GuardedAlignedAllocationTooLarge { size, alignment };
+            assert_eq!(report.error(), Errno::OVERFLOW);
+            assert_eq!(report.message().as_c_str().to_bytes(), std::format!(
+                "(guarded) aligned allocation request is too large (size {size}, alignment {alignment})\n"
+            ).as_bytes());
+        }
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
