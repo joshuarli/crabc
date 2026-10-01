@@ -3055,6 +3055,22 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         unsafe { self.engine.free_captured_live_allocation(allocation) }
     }
 
+    /// Frees one held classification while preserving client consumption.
+    ///
+    /// # Safety
+    /// The classification still describes one live allocation of this exact
+    /// retained owner, which grants exclusive Theap and page-field authority
+    /// for the transition. A consumed client may never be accessed or retried,
+    /// even when later retirement or backing release reports an error.
+    #[inline]
+    pub(crate) unsafe fn free_captured_live_allocation_with_progress(
+        &mut self,
+        allocation: LiveAllocationPointer,
+    ) -> crate::single_thread::LocalClientFreeProgress {
+        // SAFETY: the caller retains this exact classification and owner.
+        unsafe { self.engine.free_captured_live_allocation_with_progress(allocation) }
+    }
+
     /// Offers a claimed abandoned page to this worker's Theap through pinned
     /// `mi_abandoned_page_try_reclaim`.
     #[inline]

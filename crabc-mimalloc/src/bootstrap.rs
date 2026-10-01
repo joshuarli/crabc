@@ -315,6 +315,23 @@ impl ExclusiveTheapBootstrap {
             .map_err(|_| BootstrapError::InvalidThreadState)
     }
 
+    /// Returns original field identities for bounded metadata contention controls.
+    ///
+    /// # Safety
+    /// The actual pinned bootstrap owner retains this exact allocation and
+    /// its prepared fields through every use. The pointers grant no image
+    /// lifetime, mutation, allocation, or release authority on their own.
+    #[cfg(all(test, target_arch = "x86_64"))]
+    pub(crate) unsafe fn test_source_metadata_pointers_at(
+        pointer: NonNull<Self>,
+    ) -> (NonNull<Theap>, NonNull<ThreadLocalData>) {
+        let state = pointer.as_ptr();
+        unsafe { (
+            NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).theap)),
+            NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).tld)),
+        ) }
+    }
+
     /// Marks the independently initialized static image available for later
     /// metadata sessions. No whole-bootstrap projection is created after its
     /// intrusive pointers have been published.

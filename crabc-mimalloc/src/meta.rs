@@ -5240,8 +5240,7 @@ impl<'owner> MetadataEngine<'owner> {
         if !output.matches_subprocess(subprocess) {
             return Err(MetaError::BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError::Invalid));
         }
-        let linked = match unsafe { binding.1.apply_source_options_and_attach(options) }
-            .map_err(|_| MetaError::InitializationRetained)? {
+        let linked = match unsafe { binding.0.attach_source_options(binding.1, options) }? {
             crate::types::TheapRandomInitialization::SplitComplete(linked) => linked,
             crate::types::TheapRandomInitialization::FirstHead(first) => {
                 let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
@@ -6369,6 +6368,33 @@ struct SourceMetadataBinding<'owner> {
 }
 
 #[cfg(target_arch = "x86_64")]
+impl SourceMetadataBinding<'_> {
+    /// # Safety
+    /// The phase was prepared from this exact claimed bootstrap allocation.
+    /// This owner and canonical foundation retain all images; no projection,
+    /// list mutator, or existing-head random mutation overlaps attachment.
+    unsafe fn attach_source_options(
+        &mut self,
+        phase: crate::types::PreparedTheapInitialization,
+        options: crate::types::SourceTheapOptions,
+    ) -> Result<crate::types::TheapRandomInitialization, MetaError> {
+        match unsafe { phase.apply_source_options_and_attach_with_failure_owner(options) } {
+            Ok(random) => Ok(random),
+            Err(failure) => {
+                if let Ok(unattached) = failure.into_unattached() {
+                    // The linear prelink witness permits resetting only this
+                    // owned Theap. The original TLD mutex may still be held;
+                    // keep the claimed bootstrap terminal rather than replace
+                    // its lock image or infer permission to release storage.
+                    unsafe { unattached.reset_unattached() };
+                }
+                Err(MetaError::InitializationRetained)
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
 impl Drop for SourceMetadataBinding<'_> {
     fn drop(&mut self) {
         if !self.complete {
@@ -6551,6 +6577,75 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn source_metadata_prelink_refusal_resets_only_theap_and_retains_claimed_slot() {
+        struct ScopedTldMutex(NonNull<ThreadLocalData>);
+        // SAFETY: the scoped worker projects only the synchronized list mutex;
+        // the actual fixture retains the original writable TLD allocation.
+        unsafe impl Send for ScopedTldMutex {}
+        impl ScopedTldMutex {
+            fn hold(self, ready: &Barrier, release: &Barrier) -> bool {
+                // SAFETY: the owner retains the TLD through the joined worker;
+                // the bounded body neither allocates nor enters the allocator.
+                unsafe { ThreadLocalData::with_locked_theap_list_for_test_at(self.0, || {
+                    ready.wait();
+                    release.wait();
+                }) }.is_some()
+            }
+        }
+        let owner = MetaAllocator::test_static_owner();
+        let subprocess = owner.test_default_subprocess();
+        let storage = crate::main_theap::MainStaticAttachmentStorage::test_static_owner();
+        let mut selection = subprocess.reserve_static_bootstrap().unwrap();
+        let foundation = crate::main_theap::MainStaticHeapFoundation::initialize(
+            storage, subprocess, &mut selection,
+        ).unwrap();
+        // SAFETY: the fixture owns the previously untouched pinned slot; no
+        // whole-bootstrap projection is formed after its field pointers exist.
+        let bootstrap = unsafe { NonNull::new_unchecked(owner.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
+        unsafe { bootstrap.as_ptr().write(ExclusiveTheapBootstrap::new()) };
+        let phase = unsafe { ExclusiveTheapBootstrap::prepare_source_metadata_at(
+            bootstrap, foundation.metadata_heap(),
+        ) }.unwrap();
+        let (theap, tld) = unsafe { ExclusiveTheapBootstrap::test_source_metadata_pointers_at(bootstrap) };
+        owner.status.store(BINDING, Ordering::Release);
+        let mut binding = SourceMetadataBinding { owner, bootstrap, complete: false };
+        let ready = Barrier::new(2);
+        let release = Barrier::new(2);
+        let (refused, image, original_lock_busy, retry_refused) = std::thread::scope(|scope| {
+            let lock_owner = ScopedTldMutex(tld);
+            let observer = scope.spawn(|| lock_owner.hold(&ready, &release));
+            ready.wait();
+            // SAFETY: this original binding retains all three images; only
+            // the foreign mutex guard overlaps, so attachment must refuse.
+            let refused = matches!(unsafe { binding.attach_source_options(phase,
+                crate::types::SourceTheapOptions::release_defaults_for_test()) },
+                Err(MetaError::InitializationRetained));
+            let image = unsafe { theap.as_ref().test_main_static_fields() };
+            let original_lock_busy = unsafe {
+                ThreadLocalData::with_locked_theap_list_for_test_at(tld, || ()).is_none()
+            };
+            drop(binding);
+            let retry_refused = matches!(owner.prepare_for_main_subprocess(config(), subprocess),
+                Err(MetaError::InitializationRetained));
+            // Release and join the foreign guard before any assertion can
+            // unwind the owning fixture or strand the observer.
+            release.wait();
+            assert!(observer.join().unwrap());
+            (refused, image, original_lock_busy, retry_refused)
+        });
+        assert!(refused && original_lock_busy && retry_refused);
+        assert!(!image.initialized && !image.random_initialized);
+        assert!(image.detached, "an unattached failure restores the empty Theap prefix");
+        assert!(!image.allows_page_reclaim && image.allows_page_abandon);
+        assert_eq!(image.page_full_retain, 0);
+        assert_eq!(image.memid.kind(), MemoryKind::Static);
+        assert_eq!(owner.status.load(Ordering::Acquire), FAILED);
+        assert!(unsafe { tld.as_ref().test_theaps_lock_starts_and_restores_unlocked() });
+        selection.retain();
+    }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
