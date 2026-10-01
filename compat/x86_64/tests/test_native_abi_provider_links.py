@@ -140,6 +140,83 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'opcode differs'):
                     links.final_member_references(bytes(changed), **arguments)
 
+    def test_real_scalar_table_reads_bind_interior_object_bytes_in_both_static_modes(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            (work / 'caller.S').write_text('.section .text.caller,"ax",@progbits\n'
+                '.globl caller\n.type caller,@function\ncaller:\n'
+                'movsd domain_table+48(%rip),%xmm0\n'
+                'mulsd domain_table+8(%rip),%xmm1\n'
+                'addsd domain_table+40(%rip),%xmm2\n'
+                'movsd domain_table+56(%rip),%xmm9\n'
+                'ret\n.size caller,.-caller\n.section .note.GNU-stack,"",@progbits\n')
+            data = bytes(range(64))
+            (work / 'table.S').write_text('.section .rodata.table,"a",@progbits\n'
+                '.globl domain_table\n.type domain_table,@object\ndomain_table:\n.byte '
+                + ','.join(str(value) for value in data)
+                + '\n.size domain_table,.-domain_table\n.section .note.GNU-stack,"",@progbits\n')
+            for name in ('caller', 'table'):
+                subprocess.run([compiler, '-c', str(work / (name + '.S')), '-o', str(work / (name + '.o'))],
+                               check=True, capture_output=True)
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'caller.o'),
+                            str(work / 'table.o')], check=True, capture_output=True)
+            image = (work / 'caller.o').read_bytes()
+            references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                                  'domain_table', image=image)
+            self.assertEqual(len(references), 4)
+            sections = links.calls._ordinary_source_sections(image, {row['section'] for row in references})
+            for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
+                output, map_path = work / mode, work / (mode + '.map')
+                subprocess.run([linker, flag, '-e', 'caller', '--undefined=caller',
+                                '-Map=' + str(map_path), str(work / 'libdomain.a'), '-o', str(output)],
+                               check=True, capture_output=True)
+                address = int(next(row.split()[1] for row in links.read_tool('readelf', '-sW', output).splitlines()
+                                   if row.split() and row.split()[-1] == 'domain_table'), 16)
+                arguments = dict(archive_member=str(work / 'libdomain.a') + '(caller.o)', source_calls=references,
+                                 map_text=map_path.read_text(), relocation_text=links.read_tool('readelf', '-rW', output),
+                                 provider_address=address, elf_type=elf_type, name='domain_table',
+                                 source_sections=sections, provider_data=data)
+                proof = links.final_member_references(output.read_bytes(), **arguments)
+                self.assertEqual([row['provider_offset'] for row in proof['resolved_calls']], [48, 8, 40, 56])
+                self.assertEqual({row['branch_kind'] for row in proof['resolved_calls']}, {'scalar-data-read'})
+                self.assertEqual(proof['discarded_calls'], [])
+                for altered, message in [({'provider_data': None}, 'leaves provider object'),
+                                         ({'provider_data': data[:56]}, 'leaves provider object'),
+                                         ({'provider_address': address + 1}, 'foreign provider'),
+                                         ({'provider_data': data[:48] + b'\xff' + data[49:]}, 'bytes differ')]:
+                    with self.assertRaisesRegex(ValueError, message):
+                        links.final_member_references(output.read_bytes(), **{**arguments, **altered})
+                table, count = struct.unpack_from('<Q', output.read_bytes(), 32)[0], struct.unpack_from('<H', output.read_bytes(), 56)[0]
+                headers = [(table + 56 * index, struct.unpack_from('<IIQQQQQQ', output.read_bytes(), table + 56 * index))
+                           for index in range(count)]
+                for label, virtual, message in [('opcode', proof['resolved_calls'][0]['call_address'], 'opcode differs'),
+                                                 ('data', address + 48, 'bytes differ')]:
+                    changed = bytearray(output.read_bytes())
+                    header = next(row for _, row in headers if row[0] == 1 and row[3] <= virtual < row[3] + row[5])
+                    changed[header[2] + virtual - header[3]] ^= 1
+                    with self.assertRaisesRegex(ValueError, message):
+                        links.final_member_references(bytes(changed), **arguments)
+                changed = bytearray(output.read_bytes())
+                location, header = next((location, row) for location, row in headers
+                                        if row[0] == 1 and row[3] <= address < row[3] + row[5])
+                struct.pack_into('<I', changed, location + 4, header[1] & ~4)
+                with self.assertRaisesRegex(ValueError, 'read-only load segment'):
+                    links.final_member_references(bytes(changed), **arguments)
+            section_headers = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / 'caller.o'))['sections']
+            section = next(row for row in section_headers if row['name'] == references[0]['section'])
+            for prefix_offset, opcode in [(-2, 0x11), (-4, 0xf3)]:
+                changed = bytearray(image)
+                changed[int(section['offset'], 16) + references[0]['offset'] + prefix_offset] = opcode
+                with self.assertRaisesRegex(ValueError, 'not a supported reference'):
+                    links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                             'domain_table', image=bytes(changed))
+
     def test_real_object_addresses_cover_complete_data_roster_and_got_comparison_operands(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('clang') or shutil.which('gcc'), shutil.which('ld.lld')

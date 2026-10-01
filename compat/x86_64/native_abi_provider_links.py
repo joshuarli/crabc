@@ -259,6 +259,26 @@ def _call_transcripts(view: Mapping[str, Any], member: str,
             '\n'.join(line for rows in relocations.values() for line in rows))
 
 
+def scalar_read_prefix(source: bytes, offset: int) -> bytes:
+    """Recognize eight-byte RIP-relative scalar double reads, never stores.
+
+    The optional REX.R bit only extends the XMM destination register. Other
+    prefixes, opcodes, addressing modes and operand widths stay unsupported.
+    """
+    for size in (5, 4):
+        prefix = source[offset - size:offset] if offset >= size else b''
+        if size == 5 and prefix[:2] == b'\xf2\x44':
+            operation = prefix[2:]
+        elif size == 4 and prefix[:1] == b'\xf2':
+            operation = prefix[1:]
+        else:
+            continue
+        if (len(operation) == 3 and operation[0] == 0x0f
+                and operation[1] in {0x10, 0x58, 0x59} and operation[2] & 0xc7 == 0x05):
+            return prefix
+    return b''
+
+
 def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict[str, Any]]:
     """Retain the complete executable relocation roster for a symbol import.
 
@@ -278,13 +298,18 @@ def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict
         if line.startswith('Relocation section '):
             section = None
             continue
-        row = re.match(r'^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+(\d+)\s*$', line)
+        row = re.match(r'^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+([0-9a-f]+)\s*$', line)
         if row is None or row.group(3) != name:
             continue
-        require(section is not None and row.group(2) in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
-                and row.group(4) == '-' and row.group(5) == '4',
+        addend = int(row.group(5), 16) * (-1 if row.group(4) == '-' else 1)
+        offset, kind = int(row.group(1), 16), row.group(2)
+        scalar = (section is not None and kind == 'R_X86_64_PC32'
+                  and scalar_read_prefix(calls._ordinary_source_sections(image, {section})[section], offset))
+        require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
+                and (addend == -4 or scalar),
                 f'provider import {name} relocation is not a supported reference')
-        references.append({'section': section, 'offset': int(row.group(1), 16), 'kind': row.group(2)})
+        references.append({'section': section, 'offset': offset, 'kind': kind,
+                           **({'addend': addend} if scalar else {})})
     require(len({(row['section'], row['offset']) for row in references}) == len(references),
             f'provider import {name} relocation roster differs')
     return references
@@ -316,13 +341,17 @@ def symbol_only_import(tables: list[dict[str, Any]], imported: Mapping[str, Any]
 
 def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
                             map_text: str, relocation_text: str, provider_address: int,
-                            elf_type: int, name: str, source_sections: Mapping[str, bytes]) -> dict[str, Any]:
+                            elf_type: int, name: str, source_sections: Mapping[str, bytes],
+                            provider_data: bytes | None = None) -> dict[str, Any]:
     """Bind exact source instruction operands to their final provider address.
 
     Register address loads and GOT comparisons prove address binding only.
     They do not assert a later call, register lifetime, comparison outcome,
     reachability or runtime semantics.
     Direct calls retain the existing branch proof and all sites must survive.
+    Scalar reads require the exact unrelocated bytes and full extent of the
+    selected read-only OBJECT; the caller authenticates its source definition.
+    They prove initial operand bytes, not execution or later memory contents.
     """
     resolved, discarded = [], []
     for reference in source_calls:
@@ -337,6 +366,35 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         require(len(parts) >= 5 and type(offset) is int and offset >= 1
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
                 f'provider {name} reference leaves selected section')
+        scalar = scalar_read_prefix(source, offset) if kind == 'R_X86_64_PC32' else b''
+        if scalar:
+            # S + A - P encodes a displacement relative to the relocation word;
+            # the instruction reads relative to its end, four bytes after P.
+            provider_offset = reference.get('addend', -4) + 4
+            require(provider_data is not None and 0 <= provider_offset
+                    and provider_offset + 8 <= len(provider_data),
+                    f'provider {name} scalar read leaves provider object')
+            call_address = int(parts[0], 16) + offset - len(scalar)
+            opcode = calls._public_weak_virtual_bytes(image, call_address, len(scalar) + 4,
+                                                     elf_type, executable=True)
+            require(opcode[:len(scalar)] == scalar, f'provider {name} reference opcode differs')
+            target = call_address + len(scalar) + 4 + struct.unpack_from('<i', opcode, len(scalar))[0]
+            require(target == provider_address + provider_offset,
+                    f'provider {name} scalar read resolves to a foreign provider')
+            data = calls._public_weak_virtual_bytes(image, target, 8, elf_type, executable=False)
+            table, entry_size, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+            readable = [struct.unpack_from('<IIQQQQQQ', image, table + entry_size * index)
+                        for index in range(count)]
+            require(sum(header[0] == 1 and header[1] & 4 != 0 and header[1] & 3 == 0
+                        and header[3] <= target and target + 8 <= header[3] + header[5]
+                        for header in readable) == 1,
+                    f'provider {name} scalar data lacks a read-only load segment')
+            require(data == provider_data[provider_offset:provider_offset + 8],
+                    f'provider {name} scalar data bytes differ')
+            resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
+                             'target_address': target, 'provider_offset': provider_offset,
+                             'read_size': 8, 'branch_kind': 'scalar-data-read'})
+            continue
         prefix = source[offset - 3:offset] if offset >= 3 else b''
         address_compare = (len(prefix) == 3 and kind == 'R_X86_64_GOTPCREL'
                            and prefix[0] in {0x48, 0x4c} and prefix[1] == 0x3b
@@ -438,6 +496,19 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                     symbol_only_import(symbols, row['row'], relocations)
                 source_imports.append((row, source_calls, calls._ordinary_source_sections(
                     image, {item['section'] for item in source_calls})))
+            provider_data = None
+            if any('addend' in reference for _, references, _ in source_imports for reference in references):
+                section = definition['definition_section']
+                require(definition['row']['type'] == 'OBJECT' and section['type'] == 'PROGBITS'
+                        and 'A' in section['flags'] and 'W' not in section['flags'] and 'X' not in section['flags'],
+                        'scalar provider is not a read-only source object')
+                result = subprocess.run(['/usr/bin/ar', 'p', str(archive), definition['member_name']],
+                                        capture_output=True, check=False)
+                require(result.returncode == 0 and result.stdout, 'scalar provider source member is unreadable')
+                source_data = calls._ordinary_source_sections(result.stdout, {section['name']})[section['name']]
+                start, size = int(definition['row']['value'], 16), definition['row']['size_bytes']
+                require(start + size <= len(source_data), 'scalar provider leaves its source section')
+                provider_data = source_data[start:start + size]
             for mode, view in final.items():
                 symbol_rows = view['symbol_rows'].get(name, [])
                 require(all(row[3] == definition['row']['type'] and row[6] != 'UND' for row in symbol_rows),
@@ -460,7 +531,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                     map_text, relocation_text = _call_transcripts(view, member, source_calls)
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
-                        provider_address=address, elf_type=view['type'], name=name, source_sections=sections)
+                        provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data)
                     require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':
