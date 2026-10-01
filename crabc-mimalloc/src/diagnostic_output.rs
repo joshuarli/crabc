@@ -1791,11 +1791,16 @@ impl OutputOwner {
         unsafe {
             self.with_source_options(|owner, pending| {
                 // SAFETY: `with_source_options` holds the descriptor lock.
-                let (value, warnings) = owner.source_option_get_unlocked(option);
+                let (_, warnings) = owner.source_option_get_unlocked(option);
                 owner.collect_source_option_init_warnings_unlocked(option, warnings, pending);
-                value
-            })
+            })?;
         }
+        // Lazy initialization may deliver a warning whose callback changes
+        // this descriptor. Read its live value after delivery, as the source
+        // getter does; no descriptor lock or table projection spans callbacks.
+        // SAFETY: successful access above proves the table is installed, and
+        // the owner retains it permanently with atomic descriptor slots.
+        Ok(unsafe { self.source_options_ref_unlocked() }.value(option))
     }
 
     /// The engine's `mi_option_get` read point for an allocator-effect
