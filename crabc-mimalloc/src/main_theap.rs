@@ -1209,6 +1209,9 @@ impl MainStaticTheapAttachment {
                     return Err(MainStaticTheapError::BootstrapOutput(
                         crate::process_init::BootstrapOutputAdmissionError::Invalid));
                 }
+                // Source accounting precedes the initialized predicate;
+                // a later list failure retains this already counted image.
+                subprocess.identity().record_statistics_theap_linked();
                 unsafe { ready.publish_heap() }.map_err(MainStaticTheapError::TheapInit)?;
                 Ok(())
             })();
@@ -1248,9 +1251,11 @@ impl MainStaticTheapAttachment {
                 return Err(MainStaticTheapError::TheapInit(error));
             }
         }
-        // The non-detached static Theap is counted when initialization succeeds.
-        // Its static allocation skips the later free path, retaining this count.
-        subprocess.identity().record_statistics_theap_linked();
+        if !selected {
+            // The legacy static path retains its existing accounting order.
+            // Static allocation skips the later free path, retaining this count.
+            subprocess.identity().record_statistics_theap_linked();
+        }
 
         // Initialization's exclusive field projection has finished. Publish
         // the static storage's original capability, so later local-field and
