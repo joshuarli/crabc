@@ -13209,6 +13209,110 @@ fn native_free_claimed_tail_process_page_facts(
     Some((process, main_heap))
 }
 
+/// Refuses a selected allocation before any candidate client is created.
+/// Unavailable process admission differs from an invalid selected owner;
+/// neither outcome grants a fallback allocator or VM authority.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeAllocationOwnerAdmissionError {
+    Unavailable,
+    Invalid,
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+static NATIVE_ALLOCATION_OWNER_BUSY_RETRIES: AtomicUsize = AtomicUsize::new(0);
+
+/// A borrowed selected allocation context within actual process admission.
+/// The enclosing callback retains the process-ready witness and, for a child,
+/// its registered record lease. This view cannot replace either lifetime.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct NativeAllocationOwner<'scope> {
+    selected_theap: core::ptr::NonNull<crate::types::Theap>,
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    process: crate::os::VmProcess<'scope>,
+    output: &'scope crate::diagnostic_output::OutputOwner,
+    _ready: &'scope crate::process_init::ProcessMainReadyLease,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeAllocationOwner<'_> {
+    pub(crate) fn selected_theap(&self) -> core::ptr::NonNull<crate::types::Theap> {
+        self.selected_theap
+    }
+
+    /// Returns a process view borrowed from this still-admitted context.
+    pub(crate) fn process(&self) -> crate::os::VmProcess<'_> { self.process }
+
+    /// Borrows the output selected with this context's ready process binding.
+    pub(crate) fn output(&self) -> &crate::diagnostic_output::OutputOwner { self.output }
+}
+
+/// Admits an initialized selected Theap before creating an allocation client.
+/// The callback may allocate a candidate and perform its protection, warning
+/// and cleanup phases after each short engine projection ends. Actual child
+/// admission remains held throughout; copying VM facts cannot extend it.
+/// Unpublished Heap construction and bootstrap initialization are not admitted.
+///
+/// # Safety
+/// `selected_theap` names stable initialized metadata. If its Heap is
+/// published, the caller retains that Heap, Theap, member and any in-flight
+/// client throughout acquisition and the callback. No engine, Page, Heap,
+/// Theap or member reference or allocator lock survives entry. The callback
+/// must not delete its selected Heap, finish its member, or consume a client
+/// whose lifetime supplies an ongoing protection or allocation operation.
+/// Ordinary nested allocation is permitted after metadata projections end.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn with_native_allocation_owner<R>(
+    selected_theap: core::ptr::NonNull<crate::types::Theap>,
+    callback: impl for<'scope> FnOnce(NativeAllocationOwner<'scope>) -> R,
+) -> Result<R, NativeAllocationOwnerAdmissionError> {
+    use NativeAllocationOwnerAdmissionError::{Invalid, Unavailable};
+    let _operation = NativeSubprocessOperation::enter().ok_or(Unavailable)?;
+    // SAFETY: the caller retains initialized selected metadata; only its
+    // published atomic Heap pointer is observed, without a whole projection.
+    let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(selected_theap) })
+        .ok_or(Invalid)?;
+    // SAFETY: actual operation admission keeps the process coordinator live.
+    // This immutable ready witness supplies both output and VM from one root.
+    let ready = unsafe { RUNTIME_PROCESS.active_owner() }.ok_or(Unavailable)?
+        .ready().map_err(|_| Unavailable)?;
+    let main_process = ready.vm_process().map_err(|_| Unavailable)?;
+    let output = ready.diagnostic_output().map_err(|_| Unavailable)?.ok_or(Unavailable)?;
+    // SAFETY: the caller retains the published Heap and selected Theap.
+    // These short immutable/atomic field reads grant no surrounding owner.
+    let identity = unsafe { crate::types::Heap::subprocess_pointer_at(heap) };
+    let theap_identity = unsafe { crate::types::Theap::subprocess_identity_at(selected_theap) };
+    if identity.is_null() || theap_identity != identity { return Err(Invalid); }
+    if identity == main_process.subprocess() as *const _ as *mut _ {
+        return Ok(callback(NativeAllocationOwner {
+            selected_theap, heap, process: main_process, output, _ready: &ready,
+        }));
+    }
+    let mut callback = Some(callback);
+    loop {
+        // SAFETY: real selected Heap/member lifetime remains retained and
+        // every registry/record projection ends before this callback body.
+        let admitted = unsafe { crate::subproc::lifecycle::try_with_native_child_callback_owner(heap, |process| {
+            if !core::ptr::eq(process.policy(), main_process.policy()) { return Err(Invalid); }
+            let Some(callback) = callback.take() else { return Err(Invalid); };
+            Ok(callback(NativeAllocationOwner {
+                selected_theap, heap, process, output, _ready: &ready,
+            }))
+        }) };
+        match admitted {
+            Ok(result) => return result,
+            Err(crate::subproc::lifecycle::NativeChildCallbackAdmissionError::Invalid) => return Err(Invalid),
+            Err(crate::subproc::lifecycle::NativeChildCallbackAdmissionError::Busy) => {
+                // Nothing was acquired and no client exists. Retry only this
+                // contention after all registry and record projections ended.
+                #[cfg(test)]
+                NATIVE_ALLOCATION_OWNER_BUSY_RETRIES.fetch_add(1, Ordering::Relaxed);
+                core::hint::spin_loop();
+            }
+        }
+    }
+}
+
 /// Runs a synchronous VM operation after its allocation engine and metadata
 /// projections ended, retaining the actual main or registered child owner.
 ///
@@ -20582,6 +20686,100 @@ mod tests {
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
+    #[cfg(target_arch = "x86_64")]
+    static NATIVE_ALLOCATION_OWNER_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn native_allocation_owner_warning_reentry(
+        message: *const core::ffi::c_char, _argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() { return; }
+        // SAFETY: synchronous output supplies this initialized terminated fragment.
+        if unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes()
+            != b"native allocation owner warning" { return; }
+        NATIVE_ALLOCATION_OWNER_WARNING_COUNT.fetch_add(1, Ordering::AcqRel);
+        let NativePageAllocationResult::Allocated(nested) = native_allocate(96, false)
+            else { panic!("an admitted warning leaves the selected engine idle"); };
+        // SAFETY: the callback exclusively owns this independent client.
+        assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct SelectedChildAllocationWarning {
+        theap: NonNull<crate::types::Theap>,
+        calls: AtomicUsize,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn native_child_allocation_owner_warning_reentry(
+        message: *const core::ffi::c_char, argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() { return; }
+        // SAFETY: synchronous output supplies the initialized fragment and
+        // this fixture retains its argument and actual selected child owner.
+        if unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes()
+            != b"native child allocation owner warning" { return; }
+        let observed = unsafe { &*argument.cast::<SelectedChildAllocationWarning>() };
+        let nested = unsafe { crate::subproc::lifecycle::native_child_theap_allocate(
+            observed.theap, 96, false) }.unwrap()
+            .expect("the exact selected child Theap is idle during its warning");
+        // SAFETY: this synchronous callback exclusively owns the nested client.
+        assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
+        observed.calls.fetch_add(1, Ordering::AcqRel);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_allocation_owner_scope_precedes_candidate_and_allows_warning_reentry() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_allocation_owner_scope_precedes_candidate_and_allows_warning_reentry",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(seed) = native_allocate(32, false)
+                    else { panic!("the fixture publishes its actual selected Theap"); };
+                let selected = default_theap();
+                let output = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: this fresh process excludes registration races and
+                // retains the synchronous callback until reset below.
+                unsafe { output.register_output(Some(native_allocation_owner_warning_reentry),
+                    core::ptr::null_mut()); }
+                NATIVE_ALLOCATION_OWNER_WARNING_COUNT.store(0, Ordering::Release);
+                // SAFETY: the initialized selected owner and member remain
+                // live. No engine or metadata projection crosses this scope.
+                let result = unsafe { with_native_allocation_owner(selected, |owner| {
+                    assert_eq!(owner.selected_theap(), selected);
+                    assert!(core::ptr::eq(owner.output(), output));
+                    assert_eq!(owner.process().subprocess() as *const _,
+                        crate::subproc::MainSubprocess::global().identity_ptr().cast_const());
+                    owner.output().warning(crate::diagnostic_output::DiagnosticOptionSnapshot::new(1, 0, 16),
+                        crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                            c"native allocation owner warning"));
+                    NATIVE_ALLOCATION_OWNER_WARNING_COUNT.load(Ordering::Acquire)
+                }) };
+                assert_eq!(result, Ok(1));
+                // An initialized empty Theap has no published selected Heap;
+                // refusal must precede any candidate or warning callback.
+                let mut empty = crate::types::Theap::empty();
+                assert_eq!(unsafe { with_native_allocation_owner::<()>(NonNull::from(&mut empty),
+                    |_| panic!("an unbound source Theap admits no allocation")) },
+                    Err(NativeAllocationOwnerAdmissionError::Invalid));
+                std::thread::spawn(|| {
+                    let mut empty = crate::types::Theap::empty();
+                    // SAFETY: initialized metadata remains stable on this
+                    // unregistered thread; refusal invokes no callback.
+                    assert_eq!(unsafe { with_native_allocation_owner::<()>(NonNull::from(&mut empty),
+                        |_| panic!("unavailable operation admission creates no candidate")) },
+                        Err(NativeAllocationOwnerAdmissionError::Unavailable));
+                }).join().unwrap();
+                // SAFETY: callback delivery ended before registration reset;
+                // the fixture still exclusively holds the original client.
+                unsafe { output.register_output(None, core::ptr::null_mut()); }
+                assert_eq!(unsafe { native_free(seed) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     unsafe extern "C" fn capture_secure_three_padding_error(
         error: core::ffi::c_int, argument: *mut core::ffi::c_void,
@@ -20893,6 +21091,24 @@ mod tests {
                         .unwrap().unwrap();
                     // SAFETY: the same member retains its selected Heap.
                     let theap = unsafe { crate::subproc::lifecycle::native_child_heap_theap(heap) }.unwrap();
+                    let output = crate::process_init::process_output_owner().unwrap();
+                    let warning = SelectedChildAllocationWarning { theap, calls: AtomicUsize::new(0) };
+                    // SAFETY: this isolated worker retains the callback argument
+                    // and excludes all registration changes until reset below.
+                    unsafe { output.register_output(Some(native_child_allocation_owner_warning_reentry),
+                        core::ptr::addr_of!(warning).cast_mut().cast()); }
+                    // SAFETY: the exact selected child Heap/Theap/member remain
+                    // live; the admitted scope holds no engine or record lock.
+                    assert_eq!(unsafe { with_native_allocation_owner(theap, |owner| {
+                        assert_eq!(owner.selected_theap(), theap);
+                        assert!(core::ptr::eq(owner.output(), output));
+                        owner.output().warning(crate::diagnostic_output::DiagnosticOptionSnapshot::new(1, 0, 16),
+                            crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                                c"native child allocation owner warning"));
+                        warning.calls.load(Ordering::Acquire)
+                    }) }, Ok(1));
+                    // SAFETY: synchronous delivery ended before reset.
+                    unsafe { output.register_output(None, core::ptr::null_mut()); }
                     // SAFETY: the selected Theap and canonical client remain
                     // live; the callback never tears down its selected owner.
                     assert_eq!(unsafe { with_guarded_live_block(theap, block, |facts| {
@@ -20984,8 +21200,34 @@ mod tests {
                 assert_eq!(unsafe { map.lookup_live_allocation(transferred.block) }
                     .unwrap().unwrap().has_interior_pointers(), before,
                     "owner refusal must leave the source interior flag unchanged");
-                unlock_send.send(()).unwrap();
+                let retries = NATIVE_ALLOCATION_OWNER_BUSY_RETRIES.load(Ordering::Acquire);
+                let unlocker = std::thread::spawn(move || {
+                    // Observe a real refused record try-lock before releasing
+                    // it. Admission cannot manufacture a candidate meanwhile.
+                    while NATIVE_ALLOCATION_OWNER_BUSY_RETRIES.load(Ordering::Acquire) == retries {
+                        std::thread::yield_now();
+                    }
+                    unlock_send.send(()).unwrap();
+                });
+                // SAFETY: the parked foreign member retains its selected
+                // Heap/Theap. This pre-candidate scope must retain that actual
+                // registered child without borrowing its engine or record.
+                assert_eq!(unsafe { with_native_allocation_owner(transferred.theap, |owner| {
+                    assert_eq!(owner.selected_theap(), transferred.theap);
+                    assert_eq!(owner.process().subprocess() as *const _,
+                        crate::types::Heap::subprocess_pointer_at(transferred.heap).cast_const());
+                    assert_eq!(crate::subproc::lifecycle::native_subproc_destroy(id),
+                        Err(crate::subproc::lifecycle::NativeSubprocessError::DestroyRefused(
+                            crate::subproc::lifecycle::ChildSubprocessDestroyError::CallbackActive)));
+                    let NativePageAllocationResult::Allocated(nested) = native_allocate(96, false)
+                        else { panic!("the foreign admitted scope permits caller allocation"); };
+                    assert_eq!(native_free(nested), NativePageFreeResult::Freed);
+                    13
+                }) }, Ok(13));
+                unlocker.join().unwrap();
                 unlocked_receive.recv().unwrap();
+                assert!(NATIVE_ALLOCATION_OWNER_BUSY_RETRIES.load(Ordering::Acquire) > retries,
+                    "actual Busy admission is retried before invoking the allocation scope");
                 // SAFETY: the parked worker retains the selected owner and
                 // the receiver exclusively holds the original live client.
                 assert_eq!(unsafe { with_guarded_live_block(transferred.theap, transferred.block, |facts| {
