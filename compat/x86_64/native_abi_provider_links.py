@@ -294,6 +294,12 @@ def integer_memory_operand(source: bytes, offset: int, *,
         operation = prefix[1:] if len(prefix) == 4 and prefix[0] == 0x44 else prefix
         if (len(operation) == 3 and operation[:2] == b'\x0f\xb6' and operation[2] & 0xc7 == 0x05):
             return prefix, 1, b'', 'integer-zero-extend-load'
+        # REX.R extends the destination register without widening this load.
+        # The unprefixed byte store has no REX or operand-size interpretation.
+        if len(prefix) == 3 and prefix[:2] == b'\x44\x8b' and prefix[2] & 0xc7 == 0x05:
+            return prefix, 4, b'', 'integer-data-load'
+        if len(prefix) == 2 and prefix[0] == 0x88 and prefix[1] & 0xc7 == 0x05:
+            return prefix, 1, b'', 'integer-data-store'
         # Atomic operands are decoded only from a complete authenticated span.
         # LOCK is explicit for compare/exchange and increments; memory XCHG
         # supplies its own lock. Only these observed widths and REX bits belong
@@ -640,21 +646,20 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                             and program[3] <= target and target + operand_size <= program[3] + program[6 if output[1] == 8 else 5]
                             for program in programs) == 1,
                         f'provider {name} integer operand lacks a writable load extent')
-                if atomic:
-                    # The complete selected object belongs to one writable,
-                    # non-executable mapping. An overlapping LOAD cannot offer
-                    # different permissions or a second interpretation of it.
-                    mappings = [program for program in programs if program[0] == 1
-                                and program[3] < provider_address + symbol['size']
-                                and provider_address < program[3] + program[6]]
-                    require(len(mappings) == 1 and mappings[0][1] == 6
-                            and mappings[0][3] <= provider_address
-                            and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][6]
-                            and (output[1] == 8 or
-                                 (provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
-                                  and mappings[0][2] + provider_address - mappings[0][3]
-                                  == output[4] + provider_address - output[3])),
-                            f'provider {name} atomic object lacks an exclusive writable load extent')
+                # The complete selected object belongs to one writable,
+                # non-executable mapping. An overlapping LOAD cannot offer
+                # different permissions or a second interpretation of it.
+                mappings = [program for program in programs if program[0] == 1
+                            and program[3] < provider_address + symbol['size']
+                            and provider_address < program[3] + program[6]]
+                require(len(mappings) == 1 and mappings[0][1] == 6
+                        and mappings[0][3] <= provider_address
+                        and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][6]
+                        and (output[1] == 8 or
+                             (provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
+                              and mappings[0][2] + provider_address - mappings[0][3]
+                              == output[4] + provider_address - output[3])),
+                        f'provider {name} integer object lacks an exclusive writable load extent')
             resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
                              'target_address': target, 'operand_size': operand_size, 'branch_kind': operation,
                              **({'provider_offset': provider_offset} if provider_offset else {})})

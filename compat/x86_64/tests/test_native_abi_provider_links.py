@@ -177,7 +177,25 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             private.mkdir()
             names = ['domain_body', 'domain_caller', 'domain_scalar']
             (work / 'providers.c').write_text(links.source(names, object_names=['domain_scalar']))
-            cases = [('bss', 1, 'movzbl domain_scalar(%rip),%eax; movzbl domain_scalar(%rip),%r9d', True),
+            cases = [('bss', 1, 'mov %al,domain_scalar(%rip)', True),
+                     ('bss', 8, 'mov %al,domain_scalar(%rip)', True),
+                     ('data', 1, 'mov %cl,domain_scalar(%rip)', True),
+                     ('bss', 1, 'mov $0x66000000,%eax; mov %al,domain_scalar(%rip)', True),
+                     ('bss', 1, 'mov %al,domain_scalar+1(%rip)', False),
+                     ('rodata', 1, 'mov %al,domain_scalar(%rip)', False),
+                     ('bss', 1, 'mov %al,%fs:domain_scalar(%rip)', False),
+                     ('bss', 1, 'addr32 mov %al,domain_scalar(%eip)', False),
+                     ('bss', 1, 'mov %r8b,domain_scalar(%rip)', False),
+                     ('bss', 4, 'mov domain_scalar(%rip),%r8d; mov domain_scalar(%rip),%r9d; '
+                                 'mov domain_scalar(%rip),%r12d', True),
+                     ('data', 4, 'mov $0xf3000000,%eax; mov domain_scalar(%rip),%r12d', True),
+                     ('bss', 8, 'mov domain_scalar+4(%rip),%r9d', True),
+                     ('bss', 8, 'mov domain_scalar+5(%rip),%r9d', False),
+                     ('rodata', 4, 'mov domain_scalar(%rip),%r9d', True),
+                     ('bss', 4, 'mov %r9d,domain_scalar(%rip)', False),
+                     ('bss', 4, 'mov %fs:domain_scalar(%rip),%r9d', False),
+                     ('bss', 4, 'addr32 mov domain_scalar(%eip),%r9d', False),
+                     ('bss', 1, 'movzbl domain_scalar(%rip),%eax; movzbl domain_scalar(%rip),%r9d', True),
                      ('data', 1, 'movzbl domain_scalar(%rip),%ecx', True),
                      ('bss', 1, 'test %eax,%eax; jz 1f; movzbl domain_scalar(%rip),%ecx; '
                                   '.space 39,0x90; 1:', True),
@@ -278,10 +296,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     proof = links.project_references(work, static, accounting, **arguments)
                     admitted = {row['identity']['name']: row for row in proof['identities']}
                     if supported:
+                        byte_store = 'mov %al,' in read or 'mov %cl,' in read
+                        rex_load = any(register in read for register in ('%r8d', '%r9d', '%r12d'))
                         self.assertEqual(set(admitted), set(names), proof['failures'])
                         self.assertEqual(proof['failures'], [])
                         for mode in links.MODES:
-                            self.assertTrue(all(site['operand_size'] == (1 if 'movzbl' in read else 4 if size == 4 or storage == 'rodata' and size == 12 else 8)
+                            self.assertTrue(all(site['operand_size'] == (1 if 'movzbl' in read or byte_store else 4 if rex_load or size == 4 or storage == 'rodata' and size == 12 else 8)
                                 for importer in admitted['domain_scalar']['links'][mode]['importers']
                                 for site in importer['resolved_calls']))
                             self.assertFalse(any(importer['discarded_calls'] for row in proof['identities']
@@ -315,12 +335,19 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 elf_type=elf_type, name='domain_scalar', source_sections=sections,
                                 provider_object=(source_object, definition))
                             bound = links.final_member_references(image, **reference_arguments)
-                            expected_operations = ({'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
+                            expected_operations = ({'integer-data-store'} if byte_store else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
                                 'integer-immediate-store', 'locked-subtract'} if size == 4 else
                                 {'integer-data-load', 'integer-data-store'} if size == 8 else {'integer-data-load'})
                             self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, expected_operations)
                             self.assertEqual({row['target_address'] for row in bound['resolved_calls']},
-                                             {address + (8 if storage == 'rodata' and size in {9, 12} else 6 if storage == 'rodata' and size == 14 else 55 if size == 56 and 'movzbl' in read else 48 if size == 56 else 0)})
+                                             {address + (4 if 'domain_scalar+4(' in read else 8 if storage == 'rodata' and size in {9, 12} else 6 if storage == 'rodata' and size == 14 else 55 if size == 56 and 'movzbl' in read else 48 if size == 56 else 0)})
+                            if byte_store or rex_load and 'movzbl' not in read:
+                                missing_spans = [{key: value for key, value in reference.items()
+                                                  if key not in {'instruction_start', 'instruction_end'}}
+                                                 for reference in references]
+                                with self.assertRaises(ValueError):
+                                    links.final_member_references(image, **{**reference_arguments,
+                                        'source_calls': missing_spans})
                             wrong = copy.deepcopy(definition)
                             wrong['row']['size_bytes'] += 1
                             wrong_references = copy.deepcopy(references)
@@ -337,6 +364,34 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             program_table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
                             headers = [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)
                                        for index in range(count)]
+                            if storage != 'rodata' and (byte_store or rex_load and 'movzbl' not in read):
+                                writable_index = next(index for index, segment in enumerate(headers)
+                                    if segment[0] == 1 and segment[1] == 6
+                                    and segment[3] <= address < segment[3] + segment[6])
+                                writable = headers[writable_index]
+                                for flags in [4, 7]:
+                                    changed = bytearray(image)
+                                    struct.pack_into('<I', changed, program_table + width * writable_index + 4, flags)
+                                    with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
+                                readonly_index = next(index for index, segment in enumerate(headers)
+                                                      if segment[0] == 1 and segment[1] == 4)
+                                changed = bytearray(image)
+                                struct.pack_into('<Q', changed, program_table + width * readonly_index + 16, address)
+                                with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                                if byte_store and size == 8:
+                                    changed = bytearray(image)
+                                    struct.pack_into('<Q', changed, program_table + width * writable_index + 40,
+                                                     address + 1 - writable[3])
+                                    with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
+                                if storage == 'data':
+                                    changed = bytearray(image)
+                                    struct.pack_into('<Q', changed, program_table + width * writable_index + 8,
+                                                     writable[2] + 1)
+                                    with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
                             if storage == 'rodata':
                                 immutable_index = next(index for index, segment in enumerate(headers)
                                     if segment[0] == 1 and segment[1] == 4
@@ -375,10 +430,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 executable = next(segment for segment in headers
                                                   if segment[0] == 1 and segment[3] <= code < segment[3] + segment[5])
                                 location = executable[2] + code - executable[3]
-                                changed = bytearray(image)
-                                changed[location] ^= 1
-                                with self.assertRaisesRegex(ValueError, 'opcode differs'):
-                                    links.final_member_references(bytes(changed), **reference_arguments)
+                                reference = next(reference for reference in references if reference['offset'] == site['offset'])
+                                for opcode_byte in range(reference['offset'] - reference['instruction_start']):
+                                    changed = bytearray(image)
+                                    changed[location + opcode_byte] ^= 1
+                                    with self.assertRaisesRegex(ValueError, 'opcode differs'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
                                 if site['branch_kind'] in {'integer-immediate-store', 'locked-subtract'}:
                                     changed = bytearray(image)
                                     changed[location + (10 if site['branch_kind'] == 'locked-subtract' else 9)] ^= 1
