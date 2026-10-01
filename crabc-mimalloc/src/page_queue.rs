@@ -1668,6 +1668,127 @@ pub(crate) unsafe fn page_queue_enqueue_from_full_metadata(
     unsafe { page_queue_enqueue_from_ex_metadata(to, from, true, page) };
 }
 
+/// One failed source queue assertion. The predicate does not deliver output
+/// or abort: its caller must retain the appropriate diagnostic owner and end
+/// metadata projections before invoking an assertion-failure callback.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceQueueInvariant {
+    MissingPage,
+    NextPredecessor,
+    PreviousSuccessor,
+    PredecessorOrder,
+    FullSize,
+    HugeSize,
+    RegularSize,
+    TheapOwner,
+    Tail,
+    Count,
+}
+
+impl SourceQueueInvariant {
+    pub(crate) const fn assertion(self) -> &'static core::ffi::CStr {
+        match self {
+            Self::MissingPage => c"page != NULL",
+            Self::NextPredecessor => c"list->next == NULL || list->next->prev == list",
+            Self::PreviousSuccessor => c"list->prev == NULL || list->prev->next == list",
+            Self::PredecessorOrder => c"page->prev == prev",
+            Self::FullSize => c"_mi_wsize_from_size(pq->block_size) == MI_LARGE_MAX_OBJ_WSIZE + 2",
+            Self::HugeSize => c"_mi_wsize_from_size(pq->block_size) == MI_LARGE_MAX_OBJ_WSIZE + 1",
+            Self::RegularSize => c"mi_page_block_size(page) == pq->block_size",
+            Self::TheapOwner => c"page->theap == theap",
+            Self::Tail => c"pq->last == page",
+            Self::Count => c"pq->count == count",
+        }
+    }
+}
+
+/// Searches in source order, checking both neighboring backlinks before
+/// comparing each node with the sought page. Internal checks use this query
+/// for insertion and movement; expensive checks use it before removal and
+/// transfer. The caller selects that numeric debug threshold separately.
+///
+/// # Safety
+/// All non-null forward and backward links reached by this acyclic queue
+/// must name initialized, stable Pages. The caller excludes ordinary link
+/// mutation for the call; concurrent clients may use only disjoint atomic
+/// producer fields. `page` is compared without dereferencing it.
+pub(crate) unsafe fn source_page_queue_contains(
+    queue: &PageQueue,
+    page: *const Page,
+) -> Result<bool, SourceQueueInvariant> {
+    if page.is_null() { return Err(SourceQueueInvariant::MissingPage); }
+    let mut current = queue.first;
+    while !current.is_null() {
+        // SAFETY: the caller retains this node and both initialized neighbors.
+        let next = unsafe { page_next(current) };
+        let previous = unsafe { page_prev(current) };
+        if !next.is_null() && unsafe { page_prev(next) } != current {
+            return Err(SourceQueueInvariant::NextPredecessor);
+        }
+        if !previous.is_null() && unsafe { page_next(previous) } != current {
+            return Err(SourceQueueInvariant::PreviousSuccessor);
+        }
+        if core::ptr::eq(current, page) { return Ok(true); }
+        current = next;
+    }
+    Ok(false)
+}
+
+/// Checks the complete source queue: predecessor order, size classification,
+/// source Theap identity, tail, and count. This is a predicate, not an owner
+/// admission or a release capability; the expected Theap is only compared.
+///
+/// # Safety
+/// Every reachable forward link names an initialized, immobile Page in a
+/// finite acyclic list. Ordinary links, identity, size and provenance fields
+/// remain stable for the call. Concurrent clients may retain only disjoint
+/// atomic producer fields and their own allocations.
+pub(crate) unsafe fn source_page_queue_check(
+    theap: *mut Theap,
+    queue: &PageQueue,
+) -> Result<(), SourceQueueInvariant> {
+    let queue_wsize = queue.block_size.wrapping_add(WORD_SIZE - 1) / WORD_SIZE;
+    let mut count = 0usize;
+    let mut previous = null_mut();
+    let mut current = queue.first;
+    while !current.is_null() {
+        // SAFETY: only caller-stable ordinary subobjects are copied. The
+        // full-membership flag uses its disjoint initialized atomic field.
+        let (prev, next, block_size, reserved, memory, owner, full) = unsafe {
+            (
+                page_prev(current), page_next(current),
+                core::ptr::read(core::ptr::addr_of!((*current).block_size)),
+                core::ptr::read(core::ptr::addr_of!((*current).reserved)),
+                core::ptr::read(core::ptr::addr_of!((*current).memid)),
+                core::ptr::read(core::ptr::addr_of!((*current).theap)),
+                (&*core::ptr::addr_of!((*current).xthread_id)).load(Ordering::Relaxed)
+                    & PAGE_IN_FULL_QUEUE != 0,
+            )
+        };
+        if prev != previous { return Err(SourceQueueInvariant::PredecessorOrder); }
+        let huge = reserved == 1 && (block_size > crate::config::LARGE_MAX_OBJ_SIZE
+            || memory.os_memory().is_some_and(|memory| memory.base.addr() < current.addr()));
+        if full {
+            if queue_wsize != LARGE_MAX_OBJ_WSIZE + 2 {
+                return Err(SourceQueueInvariant::FullSize);
+            }
+        } else if huge {
+            if queue_wsize != LARGE_MAX_OBJ_WSIZE + 1 {
+                return Err(SourceQueueInvariant::HugeSize);
+            }
+        } else if block_size != queue.block_size {
+            return Err(SourceQueueInvariant::RegularSize);
+        }
+        if owner != theap { return Err(SourceQueueInvariant::TheapOwner); }
+        if next.is_null() && queue.last != current { return Err(SourceQueueInvariant::Tail); }
+        count = count.wrapping_add(1);
+        previous = current;
+        current = next;
+    }
+    if queue.count != count { return Err(SourceQueueInvariant::Count); }
+    Ok(())
+}
+
 /// Test-only validator corresponding to mimalloc v3.5.0
 /// `_mi_page_queue_is_valid` (`src/page-queue.c:147-172`).
 ///
@@ -1689,69 +1810,10 @@ pub(crate) unsafe fn page_queue_is_valid_for_test(
     theap: *mut Theap,
     queue: *const PageQueue,
 ) -> bool {
-    if queue.is_null() {
-        return false;
-    }
-
-    // SAFETY: the caller guarantees that `queue` names an initialized queue
-    // whose reachable page links remain valid for this exclusive check.
-    let queue = unsafe { &*queue };
-    let Some(queue_wsize) = queue
-        .block_size
-        .checked_add(WORD_SIZE.saturating_sub(1))
-        .map(|size| size / WORD_SIZE)
-    else {
-        return false;
-    };
-
-    let mut count = 0usize;
-    let mut previous = null_mut();
-    let mut current = queue.first;
-    while !current.is_null() {
-        // SAFETY: each queue link is required by the caller to name an
-        // initialized page in the same stable intrusive list.
-        let page = unsafe { &*current };
-        if page.prev != previous {
-            return false;
-        }
-
-        // `mi_page_is_huge` is singleton-plus-(large-size or OS-base-before-
-        // metadata) in the pinned source. The latter is retained here even
-        // though production queue ownership does not construct OS-huge pages.
-        let page_is_huge = page.reserved == 1
-            && (page.block_size > LARGE_MAX_OBJ_SIZE
-                || match page.memid().os_memory() {
-                    Some(memory) => (memory.base as usize) < (current as usize),
-                    None => false,
-                });
-        if page_is_in_full(page) {
-            if queue_wsize != LARGE_MAX_OBJ_WSIZE + 2 {
-                return false;
-            }
-        } else if page_is_huge {
-            if queue_wsize != LARGE_MAX_OBJ_WSIZE + 1 {
-                return false;
-            }
-        } else if page.block_size != queue.block_size {
-            return false;
-        }
-
-        if page.theap != theap {
-            return false;
-        }
-        if page.next.is_null() && queue.last != current {
-            return false;
-        }
-
-        let Some(next_count) = count.checked_add(1) else {
-            return false;
-        };
-        count = next_count;
-        previous = current;
-        current = page.next;
-    }
-
-    queue.count == count
+    // SAFETY: the legacy test seam retains the same initialized, stable
+    // forward-link domain as the production predicate; null stays false.
+    unsafe { queue.as_ref() }
+        .is_some_and(|queue| unsafe { source_page_queue_check(theap, queue) }.is_ok())
 }
 
 #[cfg(test)]
@@ -1819,6 +1881,63 @@ mod tests {
             current = page.next;
         }
         assert!(current.is_null());
+    }
+
+    #[test]
+    fn source_queue_contains_observes_membership_and_bidirectional_links() {
+        let mut queue = PageQueue::empty(16);
+        let mut first = page(16);
+        let mut last = page(16);
+        let outsider = page(16);
+        // SAFETY: every link names an initialized local page, and the test
+        // retains exclusive ordinary-link ownership throughout each query.
+        unsafe {
+            page_queue_push_at_end_metadata(&mut queue, &mut first);
+            page_queue_push_at_end_metadata(&mut queue, &mut last);
+            assert_eq!(source_page_queue_contains(&queue, &first), Ok(true));
+            assert_eq!(source_page_queue_contains(&queue, &last), Ok(true));
+            assert_eq!(source_page_queue_contains(&queue, &outsider), Ok(false));
+            last.test_set_queue_prev(null_mut());
+            assert_eq!(source_page_queue_contains(&queue, &first),
+                Err(SourceQueueInvariant::NextPredecessor));
+            last.test_set_queue_prev(&mut first);
+            first.test_set_queue_prev(&mut last);
+            assert_eq!(source_page_queue_contains(&queue, &first),
+                Err(SourceQueueInvariant::PreviousSuccessor));
+            first.test_set_queue_prev(null_mut());
+            assert_eq!(source_page_queue_contains(&queue, &last), Ok(true));
+        }
+    }
+
+    #[test]
+    fn source_complete_queue_check_reports_count_owner_and_link_order() {
+        let mut queue = PageQueue::empty(16);
+        let mut first = page(16);
+        let mut last = page(16);
+        // SAFETY: only initialized local pages are traversed; the expected
+        // owner is compared as an identity and is never dereferenced.
+        unsafe {
+            page_queue_push_at_end_metadata(&mut queue, &mut first);
+            page_queue_push_at_end_metadata(&mut queue, &mut last);
+            assert_eq!(source_page_queue_check(null_mut(), &queue), Ok(()));
+            queue.count += 1;
+            assert_eq!(source_page_queue_check(null_mut(), &queue),
+                Err(SourceQueueInvariant::Count));
+            queue.count -= 1;
+            last.test_set_queue_prev(null_mut());
+            assert_eq!(source_page_queue_check(null_mut(), &queue),
+                Err(SourceQueueInvariant::PredecessorOrder));
+            last.test_set_queue_prev(&mut first);
+            first.abandoned_test_set_theap(NonNull::<Theap>::dangling().as_ptr());
+            assert_eq!(source_page_queue_check(null_mut(), &queue),
+                Err(SourceQueueInvariant::TheapOwner));
+            first.abandoned_test_set_theap(null_mut());
+            queue.last = &mut first;
+            assert_eq!(source_page_queue_check(null_mut(), &queue),
+                Err(SourceQueueInvariant::Tail));
+            queue.last = &mut last;
+            assert_eq!(source_page_queue_check(null_mut(), &queue), Ok(()));
+        }
     }
 
     #[test]
