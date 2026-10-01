@@ -95,6 +95,25 @@ impl theap_page_session_sealed::Sealed for CanonicalMetadataTheapSession {}
 // session borrow, so local mutation cannot overlap a returned observation.
 unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
     #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        // SAFETY: the retained canonical foundation supplies its original
+        // Heap capability; no temporary Heap reference becomes page identity.
+        let heap = unsafe { self.heap.source_initialization_heap_pointer() }.ok()?;
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            self.theap, heap, TheapOwner::Detached, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the actual metadata/thread owner retains this issuer and
+        // original Page; source registration callbacks have already ended.
+        unsafe { Page::initialize_fresh_page_keys_at(page, self.theap) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 
     fn theap(&self) -> &Theap { unsafe { self.theap.as_ref() } }
@@ -483,6 +502,23 @@ impl theap_page_session_sealed::Sealed for ChildOrdinaryTheapPageSession<'_, '_>
 // Heap addresses remain retained by the external owner for the operation.
 unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
     #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        let heap = self.heap;
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            self.theap, heap, TheapOwner::Detached, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the actual metadata/thread owner retains this issuer and
+        // original Page; source registration callbacks have already ended.
+        unsafe { Page::initialize_fresh_page_keys_at(page, self.theap) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 
     fn theap(&self) -> &Theap { self.theap() }
@@ -592,6 +628,23 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
 // operation. The originating thread, or an exclusive sole-child vanished
 // owner continuation, is the only mutator of the local fields.
 unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        let heap = self.heap;
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            self.theap, heap, TheapOwner::Live(self.thread), block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the actual metadata/thread owner retains this issuer and
+        // original Page; source registration callbacks have already ended.
+        unsafe { Page::initialize_fresh_page_keys_at(page, self.theap) }
+    }
+
     #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 

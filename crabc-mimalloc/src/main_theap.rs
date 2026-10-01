@@ -3312,6 +3312,28 @@ impl MainStaticTheapPageSession for MainStaticProcessPageSession {}
 // plain entries; this session selects only the arena's embedded main bitmap.
 unsafe impl TheapPageSession for MainStaticPageSession<'_> {
     #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        // SAFETY: the actual static session retains both original images;
+        // raw capabilities preserve their published identity without retags.
+        let theap = unsafe { NonNull::new_unchecked(self.attachment.storage.theap.image.get()) };
+        let heap = unsafe { NonNull::new_unchecked(self.attachment.storage.heap.image.get()) };
+        let owner = TheapOwner::Live(self.attachment.thread);
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            theap, heap, owner, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the original static owner retains the fresh Page and
+        // issuer; all registration callbacks have ended before this draw.
+        let theap = unsafe { NonNull::new_unchecked(self.attachment.storage.theap.image.get()) };
+        unsafe { Page::initialize_fresh_page_keys_at(page, theap) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> {
         // SAFETY: the attachment's exclusive session retains this initialized
         // static image and its local-field authority without a shared retag.
@@ -3500,6 +3522,30 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
 // Heap access is serialized through `shared_heap_projection_lock`, while the
 // paired process map lease remains the separate plain PageMap exclusion.
 unsafe impl TheapPageSession for MainStaticProcessPageSession {
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        if !self.is_current() { self.latch(); return None; }
+        // SAFETY: the actual static session retains both original images;
+        // raw capabilities preserve their published identity without retags.
+        let theap = unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) };
+        let heap = unsafe { NonNull::new_unchecked(self.storage.heap.image.get()) };
+        let owner = TheapOwner::Live(self.thread);
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            theap, heap, owner, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        if !self.is_current() { self.latch(); return false; }
+        // SAFETY: the original static owner retains the fresh Page and
+        // issuer; all registration callbacks have ended before this draw.
+        let theap = unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) };
+        unsafe { Page::initialize_fresh_page_keys_at(page, theap) }
+    }
+
     #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> {
         // SAFETY: the ticket-zero process session retains the initialized

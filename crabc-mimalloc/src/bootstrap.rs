@@ -646,6 +646,27 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// Clears one ordinary arena-pages bit after page-map unregistration and
     /// before returning the source arena slice claim.
     fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool;
+    /// Publishes source primary ownership without consuming Page key draws.
+    ///
+    /// # Safety
+    /// The actual source session retains the original fresh metadata and
+    /// initialized committed backing with exact geometry. No alias, map,
+    /// free-list or client publication overlaps this owned primary write.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> { None }
+
+    /// Draws Page keys after exact source PageMap and accounting registration.
+    ///
+    /// # Safety
+    /// The original fresh owner retains the Page, selected Theap and backing;
+    /// all registration callbacks and projections have ended. Keys have not
+    /// been initialized and no zero observation, list or client is published.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool { false }
+
     unsafe fn publish_fresh_page(
         &mut self,
         metadata: NonNull<Page>,
@@ -990,6 +1011,26 @@ impl ExclusiveTheapSession<'_> {
 impl theap_page_session_sealed::Sealed for ExclusiveTheapSession<'_> {}
 
 unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        let theap = self.theap_pointer();
+        // SAFETY: this pinned owner retains the original field allocations;
+        // only their addresses, rather than whole-image references, escape.
+        let heap = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*self.state.as_ptr()).heap)) };
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            theap, heap, self.owner, block_size, page_offset, reserved,
+            slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the caller ends registrations and retains the original
+        // fresh Page and this exclusive issuer through the short key draw.
+        unsafe { Page::initialize_fresh_page_keys_at(page, self.theap_pointer()) }
+    }
+
     #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap_pointer() }
 
