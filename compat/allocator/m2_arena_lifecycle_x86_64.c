@@ -835,9 +835,34 @@ static void retention_theap_roots(mi_theap_t* theap) {
   }
 }
 
+/* PageMap storage belongs to the entire process, not the child. Publication
+   keeps each submap alive until global PageMap destruction. Observe its actual
+   pointer and allocation extent under the same lock that publishes submaps;
+   the embedded zero-address submap is already inside the root allocation. */
+static void retention_process_page_map_roots(void) {
+#if MI_PAGE_MAP_FLAT
+  require(mi_memid_is_os(mi_page_map_memid));
+  retention_add_root("process-pagemap", mi_page_map_memid.mem.os.base, mi_page_map_memid.mem.os.size);
+#else
+  mi_page_map_t* pmap = _mi_page_map();
+  require(pmap != NULL && pmap != &mi_page_map_empty);
+  mi_lock(&pmap->lock) {
+    require(mi_memid_is_os(pmap->memid));
+    retention_add_root("process-pagemap", pmap->memid.mem.os.base, pmap->memid.mem.os.size);
+    const size_t count = mi_atomic_load_acquire(&pmap->committed_count);
+    require(count <= mi_page_map_count_of_size(pmap->reserved_size));
+    for (size_t idx = 1; idx < count; idx++) {
+      mi_submap_t sub = mi_atomic_load_ptr_acquire(mi_page_t*, &pmap->submaps[idx]);
+      if (sub != NULL) retention_add_root("process-pagemap", sub, MI_PAGE_MAP_SUB_SIZE);
+    }
+  }
+#endif
+}
+
 static void retention_child_roots(mi_subproc_t* child, void* raw, size_t raw_size) {
   retention_root_count = 0;
   retention_add_root("external-raw", raw, raw_size);
+  retention_process_page_map_roots();
   mi_lock(&child->heaps_lock) {
     mi_heap_t* main = child->heap_main;
     require(main != NULL);

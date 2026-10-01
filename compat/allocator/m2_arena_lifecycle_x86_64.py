@@ -126,7 +126,7 @@ def _retention_intersection(left: Sequence[tuple[int, int]], right: Sequence[tup
 
 def classify_retention_intervals(before: Sequence[tuple[int, int]], after: Sequence[tuple[int, int]],
                                  roots: Sequence[tuple[int, int]]) -> dict[str, int]:
-    """Expose growth not covered by original direct-OS metadata extents."""
+    """Expose growth outside observed metadata and process-wide PageMap extents."""
     old = retention_interval_union(before)
     new = retention_interval_union(after)
     witnesses = retention_interval_union(roots)
@@ -151,7 +151,7 @@ def parse_retention_attribution(output: str, *, source: str) -> list[dict[str, A
         line = line.removeprefix(prefix)
         if not line.startswith("m2.arena.retention."):
             continue
-        root = re.fullmatch(r"m2\.arena\.retention\.root\.([0-9]+)\.([0-9]+)\.([0-9]+)\.(os-page|os-arena|external-arena|external-raw)=([0-9]+),([0-9]+),([0-9]+)", line)
+        root = re.fullmatch(r"m2\.arena\.retention\.root\.([0-9]+)\.([0-9]+)\.([0-9]+)\.(os-page|os-arena|external-arena|external-raw|process-pagemap)=([0-9]+),([0-9]+),([0-9]+)", line)
         child = re.fullmatch(r"m2\.arena\.retention\.child\.([0-9]+)\.([0-9]+)=([0-9]+)", line)
         mapping = re.fullmatch(r"m2\.arena\.retention\.map\.([0-9]+)\.([0-9]+)=([0-9]+),([0-9]+)", line)
         count = re.fullmatch(r"m2\.arena\.retention\.maps\.([0-9]+)=([0-9]+)", line)
@@ -195,7 +195,7 @@ def parse_retention_attribution(output: str, *, source: str) -> list[dict[str, A
     for cycle in range(33):
         for child in range(6):
             cumulative.extend((start, end) for category, start, end, covered in roots[cycle, child]
-                              if category == "os-page" and covered == end-start)
+                              if category in ("os-page", "process-pagemap") and covered == end-start)
         result.append({"maps": maps[cycle], "children": [roots[cycle, child] for child in range(6)],
                        "classification": classify_retention_intervals(maps[0], maps[cycle], cumulative)})
     return result

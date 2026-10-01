@@ -124,6 +124,9 @@ class ArenaLifecycleProfiles(unittest.TestCase):
         complete = lifecycle.parse_attributed_retention(observed.replace("os-page=2000,2100,50", "os-page=2000,2100,100"),
                                                         source="fully mapped root")
         self.assertEqual(complete[1]["classification"]["attributed_bytes"], 100)
+        process_maps = observed.replace("os-page=2000,2100,50", "process-pagemap=2000,2100,100")
+        process = lifecycle.parse_attributed_retention(process_maps, source="actual global PageMap root")
+        self.assertEqual(process[1]["classification"]["attributed_bytes"], 100)
         aggregate_only = "\n".join(line for line in text.splitlines()
                                    if line.split(".")[3].isdigit())
         with self.assertRaises(ValueError):
