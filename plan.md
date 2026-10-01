@@ -29,182 +29,149 @@ reports remain unqualified and cannot supply correctness evidence.
 Update this section in place when the frontier changes. A retained report qualifies
 only its exact source, configuration, image, products, and execution context.
 
+- **Winddown (2026-10-01):** paused at the user's request. No successor lanes,
+  builds or new implementation were started during settlement. Qualified changes
+  are integrated through `b499caaeb`; unfinished source is committed on the
+  parked branches below. Resume only after a new user instruction. All 21 remaining
+  lane worktrees are retired; branch/source/raw-input custody is preserved.
+  Detached exact-source evidence checkouts remain registered. Winddown custody
+  and cleanup records are under `.work/x86_64/reports/integrated-lanes/`
+  in `cleanup-winddown-current70`, `cleanup-winddown-historical70` and
+  `cleanup-winddown-admin70`. Resume worktrees must be recreated from parked refs.
 - **Campaign:** 9/26 frozen families are `foundation-verified`; 17 remain
-  planned. The inventory retains 223 capabilities: 180 implemented and 43
-  selected-private. Correctness completion requires 25 active families and
-  seven ordered gates; the performance family and full eight-gate chain remain
-  deferred. Every Codex lane uses `gpt-6.1-sol` at medium, with 16 lane slots.
-  Public x86 support and allocator promotion remain disabled pending functional
-  qualification; C mimalloc remains selected and AArch64 qualification is paused.
-- **Owned runtime:** exact accepted-C `b2a903880` passes the complete combined
-  four-mode qualification, independent reproducibility builds, package
-  extraction, both full static suites and all 219 installed/rebuilt/extracted
-  dynamic executions. Its owning independent read-only reader passes. Separate
-  static, dynamic and full54 aggregate readers also pass. These results qualify
-  that exact source, not newer merged source or the native allocator.
-- **Runtime families:** the same `b2a903880` cohort passes the complete native
-  POSIX five-component producer, pthread component, POSIX family admission,
-  and independent read-only admission and pthread-join readers. Fresh Rust
-  std/LTO passes the unchanged whole consumer and owning read-only reader:
-  four frozen gates, installed/extracted cleanup and cross-DSO execution,
-  and all provider controls. The earlier private-lockfile mount failure remains
-  retained. All 33 retained executables replay successfully; process-specific
-  backtrace addresses retain their raw differences and pass the existing
-  semantic receiver. This cohort also passes all 206 selected math/fenv entries
-  in eighteen execution cells and its independent reader. The complete
-  nine-component, sixteen-capability text family producer and independent
-  read-only validator pass. This cohort also passes fresh
-  183-obligation CRT and 32-helper producers and their owning readers. Its
-  historical CRT selector still rejects the older nine-artifact projection
-  against the thirteen-artifact receipt. Static Lua passes both modes on all
-  three sealed roots and independent replay; dynamic Lua passes complete
-  installed/extracted workloads and independent replay; the original normal
-  Lua dispatchers and source-build admission also pass their owning read-only
-  reader. Three fixed pthread worker fixtures pass 54 candidate cells and owning
-  replay. Loader-family assembly and independent read-only validation pass.
-  Resolver component producers and assembly pass, but the original read-only
-  reader fails on two writes into retained inputs. The scratch repairs are
-  integrated. Fresh `d13ce0ffe` static preparation and its owning reader pass;
-  the subsequent full installed suite fails on a pinned musl AIO descriptor-reuse
-  defect. A causal source control proves that defect, and the integrated receiver
-  accepts only its complete signature. The failed cohort remains unqualified;
-  fresh `e9de501dd` static preparation and its owning read-only reader pass.
-  The complete 219-case installed/rebuilt/extracted dynamic qualification and
-  its independent read-only reader pass at `e9de501dd`. All five resolver
-  components and the independent whole-family reader also pass. Assembly
-  produced the complete assessment, but disk exhaustion prevented recording
-  its child status; the empty status and wrapper failure remain retained.
-  These results qualify only that frozen source. Ordered family and
-  callable-provider closure remain open.
-- **Allocator source geometry:** source-faithful auxiliary and ordinary main
-  Theap geometry repairs are integrated with ownership repairs. Their exact
-  sources pass four-profile C/native layout comparisons and independent replay.
-  Child main-Heap birth requests the source's 6,464-byte allocation. Child
-  creation still adds 131,072 committed bytes against C's 65,536 in all four
-  profiles: remove the separate child control allocation while preserving
-  explicit ownership, failure retry and live-thread destruction semantics.
-- **Allocator ownership:** coherent pointer/capability repairs are
-  integrated. Both original strict environment/TLS startup fixtures and five
-  isolated strict regressions pass at their exact repaired sources; all nine
-  merged Rust compiler profiles pass. Compiler-selected Miri descriptors,
-  dependencies, source files, tools, sysroot and exact phase environments are
-  now retained. The original complete roster records fifteen of seventeen
-  completions: both remaining interpreter runs exit successfully, but their
-  startup markers interleave with libtest output. The strict parser repair is
-  integrated. One fresh clean-source six-program/seventeen-test run at
-  `1c22908bf` completes all six programs and all seventeen strict tests. Its
-  first independent physical replay passes all seventeen strict tests, then
-  rejects a cold/cached compiler-record comparison. The authenticated physical
-  product comparison is repaired, and omitted original queue inputs are now
-  independently retained. The corrected complete read-only replay passes
-  at receiver `bd207c0b0` against unchanged producer `1c22908bf`: all seventeen
-  strict interpreter tests, all 69 foundation commands and five original
-  queue-helper commands pass. Exact producer and receiver identities remain
-  separate. The whole gate remains unmet pending M1/M2. Prior full-roster,
-  receiver and disk-exhaustion failures remain unqualified and retained.
-- **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
-  statistics, remote ownership and failure evidence remain retained by exact
-  source. M6 now requests the supported full-profile producer commands and
-  rejects wrong or missing selectors; eight reviewed functional blockers remain.
-  The reviewed M4 valid-client four-profile matrix matches all 32 pairs;
-  assertion-invalid calls remain separate retained observations. The complete
-  eleven-gate API producer and independent owning replay pass at `2891812d7`,
-  including rejection of altered nested profile evidence. The accepted live
-  aligned-offset C debug defect retains its source refusal and separate native
-  correctness proof. Full Heap conveniences and Theap visitors pass all four
-  profiles and owning read-only replay at their exact sources. A new real
-  cross-thread arena reassociation regression matches all client observations;
-  its source-faithful noncollecting metadata free repairs Heap deletion. The
-  subsequent child-destroy refusal exposes direct OS metadata pages that pinned
-  C retains. The coherent source-faithful repair at `12d00301e` passes the
-  unchanged lifecycle judge in all four profiles and owning read-only replay.
-  A separate 32-cycle child teardown diagnostic also completes all four
-  profiles and owning replay. Both allocators retain about 245 MB of virtual
-  mappings across those cycles; bounded-memory/leak qualification remains open.
-  The original repeated fixture's startup error and its once-only repair remain
-  retained. Heap destroy/finish contention now has causal retry evidence,
-  complete compiler-command authentication and four-profile read-only replay.
-  All nineteen Heap fault controls pass and replay without writing retained
-  inputs. Queue receipts retain executable/compiler authority and replay.
-  M7 abort-on-failure passes original C/native production, compiler/provider
-  authentication and owning read-only replay at its exact source. Public and
-  child visitation pass the four implemented profiles and owning replay.
-  Sixteen initial-worker statistics cases pass their exact-source producer and
-  owning read-only replay, including address-dependent OS-aligned accounting.
-  Secure shuffle, selected-Theap randomness, secure singleton and arena guard
-  geometry, guarded error publication, and local and foreign child callback-owner
-  primitives are integrated with focused native evidence. Exact frozen sources
-  pass their independent read-only replays;
-  complete secure and guarded profiles, debug applicability and physical
-  options remain open.
-  Explicit debug-2 and debug-3 public Theap cohorts each pass 111 C/native
-  comparisons and six native controls, with independent read-only replay at
-  `3e17f9559`. Recursive caller-owned arena registration and guarded-free
-  warning reentry repairs are integrated with exact-source replay. Repeated
-  child teardown at `e6972b244` passes all four profiles and whole read-only
-  replay. It attributes the C growth to retained source roots; every native
-  profile still leaves 270,336 added bytes unexplained. A causal observation
-  proves that the fixture's live mapping-reader buffer accounts for 266,240
-  of those bytes. The integrated allocation-free observer passes two focused
-  tests. Fresh four-profile production and all eight independent read-only
-  executable replays pass at `8d7e8e4e8`: C leaves no unexplained growth and
-  each native profile leaves 4,096 bytes. A causal syscall trace ties that
-  residual to the fixture's live Rust channel. The integrated fixture repair
-  retains one thread scope across the baseline and all later observations;
-  its focused development run passes all 33 cycles with zero unexplained bytes,
-  and all 184,330 C/native values match, including six 21-row cross-thread traces.
-  Fresh complete four-profile production and its owning independent read-only
-  replay pass at `365090643`, but every native original and replay leaves
-  4,096 unexplained bytes from cycle sixteen. A same-executable syscall trace
-  identifies the fixture's origin-ready channel allocation. Replacing that
-  observer state and retaining a panic-safe origin join remain open; the
-  earlier disk-exhaustion failure is retained. Bounded-memory qualification
-  stays open, including approximately 245 MB of retained source-root growth.
-  Secure-3 padding, canonical prefixes, encoded visitation and diagnostic
-  repairs are integrated with exact-source focused read-only evidence.
-  Complete secure-3 production at `365090643` passes the C trace, then exposes
-  native aligned zero-growth corruption and an ordinary valid-client abort;
-  the eight native controls are not reached and its owning reader rejects the
-  absent receipt. The integrated secure padding decoder repair passes both
-  genuine public-growth regressions and four nearby PageMap controls at their
-  exact repaired source, including independent read-only replay. The unchanged
-  complete 111-comparison/eight-control producer remains pending on merged
-  source. The pinned C controls prove
-  keyed Page geometry; corrected exact layout tests pass all nineteen focused
-  secure-3 cases, five nearby cases and independent read-only replay. The
-  unchanged caller-locked arena fixture requires a 64-MiB memlock budget;
-  original C/native refusals under 8 MiB remain retained. Selected allocation
-  admission now retains the actual main or child owner before candidate creation;
-  exact main, child and foreign-owner controls and owning replay pass.
-  All nine merged compiler profiles pass at `bd6f847d0`. Actual fixed and
-  auxiliary child callback allocation regressions pass after the integrated
-  admission repair; broader initializer and guarded custody transport remain
-  open. Winning-once-owner and buffered warning suppliers are qualified, but
-  their first-allocation metadata caller hookup remains unfinished. Indexed
-  source ELF sections authenticate all 32 previously refused callable
-  definitions; merged read-only object bindings also replay successfully.
-  A complete diagnostic projection of the unchanged retained runtime cohort
-  admits 2,839 of 2,958 applicable references, with 119 still refused. Exact
-  locked atomic bindings to owned BSS storage now pass thirteen real-ELF
-  controls and independent whole diagnostic replay; the remaining forms stay
-  explicit.
-  Diagnostic replay does not qualify a newer source: public source-identity
-  admission remains strict, and whole callable-provider closure remains open.
-  ISA correctness passes separately from deferred throughput. Complete
-  M2/M3/M4 and merged-source qualification remain open.
+  planned. All 223 capabilities are accounted for: 180 implemented and 43
+  selected-private. Completion requires 25 active families and seven ordered
+  correctness gates. Performance remains outside scope. C mimalloc remains
+  selected, public x86 support is disabled and AArch64 qualification is paused.
+  Resumed Codex lanes use sixteen `gpt-6.1-sol` agents at medium reasoning effort.
+- **Qualified runtime sources:** accepted-C `b2a903880` passes complete
+  four-mode qualification, independent builds and extraction, both static suites
+  and 219 installed/rebuilt/extracted dynamic executions with owning read-only
+  replay. Its POSIX/pthread, std/LTO, text, CRT/helpers, Lua, loader and selected
+  math/fenv cohorts pass their exact-source producers and readers. These results
+  qualify that source, not newer merged source or the native allocator.
+  Fresh `e9de501dd` static preparation and owning replay pass; all 219 dynamic
+  executions and their independent reader pass, as do all five resolver components
+  and the whole-family reader. Its assembly assessment survives, but disk
+  exhaustion prevented its child status from being recorded; the empty status
+  and wrapper failure remain retained. The earlier pinned-musl AIO reuse failure
+  and its narrowly proved causal receiver remain separate. Ordered family and
+  whole callable-provider closure remain open.
+- **Merged compiler and ownership evidence:** all nine Rust compiler profiles
+  pass at `3616c493c`, with exact root check 66 log/status in `.work/tmp`.
+  The lane checker now disables incremental caches. Actual fixed and auxiliary
+  child callback allocation regressions pass after the integrated admission
+  repair. The original complete six-program/seventeen-test Miri producer passes
+  at `1c22908bf`; corrected independent read-only receiver `bd207c0b0` passes
+  all seventeen strict tests, 69 foundation commands and five queue helpers
+  against that unchanged producer. Earlier failures remain retained. The whole
+  ownership gate remains unmet pending the initializer and allocator contracts.
+- **Allocator verified slices:** exact frozen sources retain independent replay
+  for ordinary/auxiliary Theap geometry, public API and Heap/Theap visitors,
+  fault controls, queue ownership, abort-on-failure, visitation and statistics.
+  The eleven-gate API cohort passes at `2891812d7`; source-faithful metadata
+  lifecycle repair passes all four profiles at `12d00301e`. Debug-2/debug-3 public
+  Theap cohorts pass 111 comparisons and six controls at `3e17f9559`.
+  Secure shuffle, Page geometry/padding, guarded warning primitives and child
+  callback ownership have focused evidence; complete secure/guarded profiles,
+  M2/M3/M4, debug applicability and physical options remain open. Child main-Heap
+  birth requests the source's 6,464 bytes, but child creation still commits
+  131,072 bytes versus C's 65,536. Removing the separate control allocation must
+  preserve owner provenance, failure retry and live-thread destruction.
+- **Retention:** observer repairs are integrated through `dc8f66e98`: stack
+  barriers/atomic readiness and owned release/join guards protect panic unwinding.
+  Its two panic controls, unchanged 33-cycle/six-trace execution, all 184,330
+  C/native comparisons and independent read-only replay pass. Every native
+  profile still leaves 4,096 unexplained bytes from cycle sixteen, matching the
+  original/replayed `365090643` result. The new same-executable trace identifies
+  a `std::thread` allocation; its allocation stack does not identify the eventual
+  retaining owner. Actual Rust self-contained musl 1.2.5 is authenticated by its
+  pinned archive and byte comparisons for five linked functions. Its bouncing
+  size-class pool is a hypothesis; the live pool-observation blueprint is
+  unimplemented. About 245 MB of retained source-root growth also lacks a proved
+  bound. Evidence and both settlement scratch directories remain under
+  `.work/allocator-x86_64/reports/allocator/x86_64/retentionresidual60-38e6c0e13`
+  and `retentionresidual60-38e6-causal`. Memory qualification remains open.
+- **Secure-3:** integrated padding repair passes both genuine public-growth
+  regressions, four PageMap controls and independent replay. Complete production
+  at `bd6f847d0` passes pinned C and native main/worker growth, then aborts in both
+  parent and child; the eight native controls are not reached and the absent
+  receipt reader rejects. A smaller three-cycle Heap birth/delete control passes
+  pinned C and aborts during native's second Heap creation, including independent
+  read-only repetition, without workers or fork. The raw local fast path is
+  incompatible with encoded free lists and padding. Parked `secureforkruntime56`
+  contains the actual regression and an eligibility repair using the complete
+  engine; neither is validated and no patched adapter build was launched. No fork
+  repair or complete secure-profile pass is claimed. Original failures, products
+  and the small control remain under
+  `.work/allocator-x86_64/reports/allocator/x86_64/secureprofilefidelity59-bd6f847d0/source`.
+- **Callable providers:** the complete diagnostic projection of frozen runtime
+  `e9de501dd` admits 2,875/2,958 applicable references; 83 remain refused.
+  Exact locked BSS atomics, bounded interior data addresses and common 4/8-byte
+  integer operand proofs are integrated. Latest receiver tests pass fifteen
+  real-ELF controls, pinned controls and independent whole read-only replay,
+  including root replay 69. Exact receiver source and raw inputs remain under
+  `.work/x86_64/reports/runtimeclosure59/source`. Byte-load/instruction-boundary
+  source is parked separately: latest host fifteen controls pass, but pinned
+  checks and whole source-bound replay are unrun. Diagnostic replay cannot
+  qualify a newer runtime source; public source-identity admission still rejects
+  the wrong source. Whole closure remains open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
-  and no such pages; no alternate host is available. Continue independent
-  correctness work and retain this unmet requirement. Performance is outside
-  this plan's scope and cannot delay or qualify functional completion.
-- **Next:** qualify the merged ownership and geometry repairs, finish child
-  control lifetime parity, and close remaining functional families and
-  source/API/profile conditions,
-  replay the seven ordered gates on merged source, then perform the isolated
-  default switch, fresh native qualification and correctness-backed public
-  promotion. Retire integrated, stopped worktrees promptly after preserving
-  exact source/raw inputs and checking their owning readers. Preserve active
-  product leases; use existing ignored report locations. Git owns history.
+  and no such pages; no alternate host is available. Keep this requirement unmet.
+  The caller-locked arena fixture needs 64 MiB memlock; original 8-MiB refusals
+  remain retained. Native environments remain pinned to core image
+  `sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`
+  and allocator image
+  `sha256:4815f7fbcc2cd03ea82574fff38441365f9aced034008b0468d0d2758aa286ec`.
+- **Parked source:** these branch tips preserve unfinished work, not qualification.
+  Recreate disposable worktrees from the refs; compare each with current `main`
+  before composing overlapping drafts. Substantive ignored inputs were moved
+  unchanged into existing report locations before retirement.
+
+  | Branch (`lane/` prefix) | Tip | Unfinished contract |
+  | --- | --- | --- |
+  | `secureforkruntime56` | `b28d6e5c9` | Repeated Heap-birth regression and encoded/padded fast-path eligibility repair; unvalidated. |
+  | `securegrowth56` | `ecfc6f8a7` | Public realloc consumption and joined-worker/fork regressions; unexecuted. |
+  | `runtimeclosure60` | `404bc3760` | Byte-load and instruction-boundary proof; latest pinned/replay checks unrun. |
+  | `theapmetasnapshot54` | `ccb3b8b96` | Eighteen-file bootstrap graph; initializer lifetime, prelink cleanup and allocation custody unresolved; uncompiled. |
+  | `randomwarning57` | `afa37e734` | First-allocation entropy/warning caller hookup, dependent on the bootstrap graph; uncompiled. |
+  | `guardedsnapshot54` | `7178e745b` | General, auxiliary and post-exit owner snapshots; uncompiled drafts retained separately. |
+  | `claimcustody57` | `be30b3039` | Arena prepare/finish ownership and progress-sensitive cleanup; uncompiled. |
+  | `guardedengine55` | `dcc46f477` | Consumed/refused free progress and pending OS/Arena transport; issuer predicate and setup classification unresolved. |
+  | `guardedruntime55` | `5f0736531` | Native guarded owner/engine custody and terminal controls; unqualified. |
+  | `guardedfrontend55` | `96bcc64fc` | Typed sampled placement; allocation/failure/cleanup relays incomplete, controls uncompiled. |
+  | `pagefatal56` | `e3e27adba` | Debug geometry and OS claim controls; raw Page caller contract unresolved, uncompiled. |
+  | `guardedlayout54` | `9ec606118` | Child control layout; hardcoded C class probes do not prove the actual production layout. |
+
+  Older unfinished source is also parked: `lane/childsourceclosure41` at
+  `22e278449`, `lane/terminalmodel43` at `eebf58f16`,
+  `lane/childownership41` at `4324756d3`,
+  `review/composedownership41-fbc-455` at `9df898bea`, and
+  `lane/subprocfootprint38` at `46160c729`. Their work is unqualified;
+  compare against integrated repairs before reuse. Both nested exact-source
+  evidence checkouts and original ignored inputs are retained under the existing
+  `.work/x86_64/reports/integrated-lanes/cleanup-winddown-historical70`,
+  with former namespace aliases recorded.
+  Moving those inputs does not establish a new reader or source qualification.
+
+  No complete bootstrap/guarded graph is claimed. WIP products and patches remain
+  under matching report directories in `.work/allocator-x86_64/reports/allocator/x86_64`,
+  `.work/allocator-x86_64/reports/guardedsnapshot53-f7685029b`,
+  `.work/x86_64/reports/runtimeclosure60`,
+  `.work/x86_64/reports/guardedfrontend55-wip-96bcc64fc`, and
+  `.work/reports/allocator/claimcustody57-wip-be30b3039`.
+- **Resume:** first execute the small Heap-birth regression against the parked
+  eligibility repair and pinned C, then run merged compiler checks and the unchanged
+  complete secure-3 111-comparison/eight-control producer with its owning reader.
+  Observe the actual live ambient pool before assigning the retention residual;
+  prove the source-root memory bound. Qualify byte-load closure without relaxing
+  source identity. Compose and prove bootstrap/guarded custody, finish child
+  control lifetime parity and remaining families, then replay all seven gates on
+  one merged source before default/public promotion. On explicit resumption,
+  use sixteen `gpt-6.1-sol` medium lanes, preserve product leases and retire
+  settled worktrees promptly. Performance remains outside scope. Git owns source
+  history and this section owns the handoff.
 
 ## Parallel lanes
 
