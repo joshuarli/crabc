@@ -97,6 +97,8 @@ mod owned_tls_key_registry;
 // model; only the raw syscall seams below it are replaced.
 mod os;
 mod page;
+#[cfg(target_arch = "x86_64")]
+mod page_validity;
 mod page_map;
 mod process_arena;
 mod process_init;
