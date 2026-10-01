@@ -28,6 +28,17 @@ class ArenaLifecycleProfiles(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 lifecycle.main(arguments)
 
+    def test_retention_reservation_selects_both_producers_and_separate_products(self):
+        rows = [{"ranges": 1, "bytes": 4096, "classification": {"added_bytes": 0}}] * 129
+        record = {"status": 0, "stdout": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n", "stderr": ""}
+        with mock.patch.object(lifecycle, "run_oracle", return_value=([], rows)) as oracle, mock.patch.object(harness, "require_native_x86_64"), mock.patch.object(lifecycle, "native_program", return_value={"path": Path(__file__), "execution": {"test_threads": 1}}) as product, mock.patch.object(harness, "command_record", return_value=record) as native, mock.patch.object(harness, "write_json"), mock.patch.object(lifecycle.Path, "write_text"), mock.patch.object(lifecycle, "parse_attributed_retention", return_value=rows):
+            self.assertEqual(lifecycle.main(["--repeat-retention", "--retention-last-cycle", "128", "--retention-arena-reserve", "1048576"]), 0)
+        self.assertEqual(oracle.call_args.kwargs["arena_reserve"], 1048576)
+        self.assertEqual(oracle.call_args.kwargs["last_cycle"], 128)
+        self.assertEqual(native.call_args.kwargs["env"]["CRABC_MI_RETENTION_ARENA_RESERVE_KIB"], "1048576")
+        self.assertEqual(native.call_args.kwargs["env"]["CRABC_MI_RETENTION_LAST_CYCLE"], "128")
+        self.assertEqual(product.call_args.args[2].parts[-3:], ("retention", "last-cycle-128", "arena-reserve-1048576"))
+
     def test_selected_statistics_caller_uses_matching_native_features(self):
         trace = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
         output = "\n".join(f"m2.arena.lifecycle.{i}={value}" for i, value in enumerate(trace))
