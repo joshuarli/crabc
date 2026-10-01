@@ -875,6 +875,48 @@ impl<'a> VmProcess<'a> {
         unsafe { self.commit_external_arena_range(page_size, address, length, 0) }
     }
 
+    /// Decommits contained pages of a caller-owned external arena span.
+    ///
+    /// Only a successful transition that requires recommit removes the
+    /// source's charged `stat_size`. Advisory failure warns through this
+    /// process policy and retains accounting and terminal release ownership.
+    ///
+    /// # Safety
+    ///
+    /// The original-provenance requested span and every complete contained
+    /// page must remain in one live caller-owned mapping. `page_size` must
+    /// be its actual base page size; `stat_size` must be the source's charged
+    /// byte span to remove on a successful recommit-requiring transition.
+    /// The caller retains the actual process and arena lifetime through the
+    /// syscall and warning, excludes byte references and allocator metadata
+    /// projections across callbacks, and remains the sole release owner.
+    /// Pinned-memory policy must be checked by the owning caller beforehand.
+    pub(crate) unsafe fn decommit_external_arena_range(
+        self,
+        page_size: PageSize,
+        address: *mut u8,
+        length: usize,
+        stat_size: usize,
+    ) -> Result<Option<DecommitOutcome>> {
+        let Some((address, length)) = contained_unowned_page_range(page_size, address, length)? else {
+            return Ok(None);
+        };
+        // SAFETY: the caller retains the complete contained pages and
+        // excludes aliases across both the advisory and protection changes.
+        let result = unsafe { decommit_primitive(address, length) }.map(Some);
+        if result == Ok(Some(DecommitOutcome::NeedsRecommit)) {
+            self.subprocess.vm_statistics().committed_decrease(stat_size);
+        }
+        if let Err(error) = &result {
+            // Advisory failure keeps accounting even if the debug protection
+            // transition removed access; warn before the owning caller returns.
+            self.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
+                *error, address.addr(), length,
+            ));
+        }
+        result
+    }
+
     /// Commits a caller-owned external arena span with source slice accounting.
     ///
     /// The protection change covers complete base pages around the requested
@@ -3230,20 +3272,14 @@ impl Mapping {
         length: usize,
         stat_size: usize,
     ) -> Result<Option<DecommitOutcome>> {
-        let range = self.page_range(offset, length, PageAlignment::Contained)?;
-        let result = self.decommit(offset, length);
-        if result == Ok(Some(DecommitOutcome::NeedsRecommit)) {
-            process.subprocess.vm_statistics().committed_decrease(stat_size);
-        }
-        if let (Some(range), Err(error)) = (range, &result) {
-            // The conservative range is the primitive's exact attempted span.
-            // A failed advisory retains ownership and accounting even when
-            // debug protection removed access; warn before the caller returns.
-            process.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
-                *error, range.address.addr(), range.length,
-            ));
-        }
-        result
+        let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
+            return Ok(None);
+        };
+        // SAFETY: this mapping retains the validated complete-page range;
+        // the process binding supplies its accounting and warning authority.
+        unsafe { process.decommit_external_arena_range(
+            self.page_size, range.address, range.length, stat_size,
+        ) }
     }
 
     /// Purges complete pages inside the requested range using the Unix reset path.
@@ -15310,6 +15346,20 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_m2_process_owned_decommit_fault_c_rust_trace() {
+        process_owned_decommit_fault_receiver(false);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn external_arena_decommit_retains_mapping_warning_and_source_accounting() {
+        crate::test_process::run_in_fresh_process(
+            "os::tests::external_arena_decommit_retains_mapping_warning_and_source_accounting",
+            || process_owned_decommit_fault_receiver(true),
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn process_owned_decommit_fault_receiver(external: bool) {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
         let _environment_reset = VmPolicySourceEnvironmentReset;
         let mut environment = [
@@ -15365,8 +15415,18 @@ mod tests {
         let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO));
         capture.fault.store(core::ptr::from_ref(&fault).cast_mut(), Ordering::Release);
         let advice = fault.capture_advice_range();
-        let first_failed = mapping.decommit_for_process(process, request_offset,
-            decommit_size, decommit_size) == Err(Errno::IO);
+        let decommit = |mapping: &Mapping| {
+            if external {
+                // SAFETY: this original mapping owns every complete contained
+                // page through the syscall and warning; no byte alias or
+                // allocator metadata projection survives this call.
+                unsafe { process.decommit_external_arena_range(config.page_size(),
+                    mapping.base().unwrap().wrapping_add(request_offset), decommit_size, decommit_size) }
+            } else {
+                mapping.decommit_for_process(process, request_offset, decommit_size, decommit_size)
+            }
+        };
+        let first_failed = decommit(&mapping) == Err(Errno::IO);
         if decommit_needs_recommit() {
             #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
             assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
@@ -15379,8 +15439,7 @@ mod tests {
         };
         let failed_attempts = fault.observed();
         fault.set(fault::Plan::disabled());
-        let retry_succeeded = mapping.decommit_for_process(process, request_offset,
-            decommit_size, decommit_size) == Ok(Some(if decommit_needs_recommit() {
+        let retry_succeeded = decommit(&mapping) == Ok(Some(if decommit_needs_recommit() {
                 DecommitOutcome::NeedsRecommit
             } else { DecommitOutcome::DoesNotNeedRecommit }));
         if decommit_needs_recommit() {
@@ -15449,6 +15508,21 @@ mod tests {
         for (field, value) in fields { std::println!("{field}={value}"); }
         std::println!("CRABC_M2_PROCESS_OWNED_DECOMMIT_FAULT_RUST_TRACE_END");
         assert_eq!(capture.count.load(Ordering::Acquire), 1);
+        if external {
+            assert!(first_failed && failed_attempts == 1 && retained_after_failure);
+            assert!(retry_succeeded && mapped_after_retry && writable_after_retry);
+            assert!(full_owner && terminal_unmapped);
+            assert!(capture.exact.load(Ordering::Acquire));
+            assert_eq!(capture.offset.load(Ordering::Acquire), page);
+            assert_eq!(capture.size.load(Ordering::Acquire), page);
+            assert_eq!(capture.after_attempt.load(Ordering::Acquire), 1);
+            assert_eq!(capture.reserved.load(Ordering::Acquire), at_map.reserved_current);
+            assert_eq!(capture.committed.load(Ordering::Acquire), at_map.committed_current);
+            assert_eq!(after_retry.reserved_current, at_map.reserved_current);
+            assert_eq!(after_retry.committed_current, at_map.committed_current);
+            assert_eq!(terminal.reserved_current, before.reserved_current);
+            assert_eq!(terminal.committed_current, before.committed_current);
+        }
     }
 
     #[cfg(target_arch = "x86_64")]
