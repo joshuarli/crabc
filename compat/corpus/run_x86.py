@@ -906,6 +906,49 @@ def stage_execution_root(manifest: ManifestSpec, payload: Path, destination: Pat
     return staged
 
 
+def retain_completed_application_payload(manifest: ManifestSpec, payload: Path, completed: Path) -> None:
+    """Share unchanged APK bytes only after the private process boundary exits.
+
+    The caller must have observed the runner and every owned descendant exit.
+    Active roots always receive independent copies. Only readable, unchanged
+    ordinary payload files can share storage; runtime inputs, private fixtures,
+    changed permissions, and files linked to another private node stay separate.
+    """
+    payload = require_physical_directory(payload, "application payload")
+    completed = require_physical_directory(completed, "completed execution root")
+    if payload.is_relative_to(completed) or completed.is_relative_to(payload):
+        fail("completed execution root and application payload overlap")
+    protected = {path.lstrip("/") for path in (
+        CANONICAL_INTERPRETER, CANONICAL_LIBC, "/lib/libc.so", "/usr/lib/libc.musl-x86_64.so.1",
+        *manifest.base_fixtures, *manifest.base_image_files)}
+    for source in payload.rglob("*"):
+        original = source.lstat()
+        if not stat.S_ISREG(original.st_mode) or stat.S_IMODE(original.st_mode) & 0o444 != 0o444:
+            continue
+        relative = source.relative_to(payload)
+        if relative.as_posix() in protected:
+            continue
+        target = completed / relative
+        if target.parent.resolve() != target.parent:
+            continue
+        try:
+            retained = target.lstat()
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        if (not stat.S_ISREG(retained.st_mode) or retained.st_nlink != 1
+                or (retained.st_mode, retained.st_uid, retained.st_gid, retained.st_size)
+                != (original.st_mode, original.st_uid, original.st_gid, original.st_size)):
+            continue
+        if sha256_file(source, "application payload") != sha256_file(target, "completed application payload"):
+            continue
+        # Replacement is atomic so a failed link never removes retained bytes.
+        # These modes already include every bit the later readability pass adds.
+        with tempfile.TemporaryDirectory(prefix=".retained-payload-", dir=target.parent) as temporary:
+            link = Path(temporary) / "payload"
+            os.link(source, link, follow_symlinks=False)
+            os.replace(link, target)
+
+
 def audit_application_elf_closure(
     root: Path, library_dirs: Sequence[str], runtime: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
@@ -1337,6 +1380,9 @@ def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot:
                     fail(f"{case.id} {side} private base fixture changed during execution")
                 assert_runtime_boundary(root, runtime)
                 after = tree_sha256(root, f"{case.id} {side} post-execution root")
+                retain_completed_application_payload(manifest, payload, root)
+                if tree_sha256(root, f"{case.id} {side} retained root") != after:
+                    fail(f"{case.id} {side} completed payload retention changed its tree")
                 roots[side] = {"base_fixtures": base_fixtures, "runtime": runtime, "execution_tree_before_sha256": before, "execution_tree_after_sha256": after, "executable": elf}
             comparison = compare_results(side_results["oracle"], side_results["candidate"])
             outcomes.append({"id": case.id, "tier": case.tier, "package": case.package, "path": case.path, "argv": list(case.argv), "environment": CASE_ENVIRONMENT, "stateful": case.stateful, "requires_dt_relr": case.requires_dt_relr, "roots": roots, "comparison": comparison})

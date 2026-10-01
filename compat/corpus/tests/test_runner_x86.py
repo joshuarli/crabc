@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+from contextlib import ExitStack
 import hashlib
 import importlib.util
 import io
@@ -464,6 +465,191 @@ class PrivatePayloadTests(unittest.TestCase):
             self.assertFalse((payload / "dev/null").exists())
 
 
+class CompletedPayloadRetentionTests(unittest.TestCase):
+    def test_corpus_transaction_retains_payload_only_after_each_private_execution(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-retention-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            campaign = Path(temporary)
+            execution = campaign / "execution"
+            execution.mkdir()
+            payload = execution / "application-payload"
+            manifest = RUNNER.load_manifest()
+            case = dataclasses.replace(manifest.cases[0], path="/program")
+            observed = []
+
+            def stage_payload(_manifest: object, _archives: Path, destination: Path) -> None:
+                destination.mkdir()
+                (destination / "program").write_bytes(b"authenticated executable")
+                (destination / "program").chmod(0o755)
+
+            def execute(root: Path, _case: object) -> object:
+                self.assertFalse((root / "program").samefile(payload / "program"))
+                observed.append(root)
+                return RUNNER.ProcessResult(0, b"", b"")
+
+            patches = {
+                "require_native_environment": mock.Mock(),
+                "private_campaign_parent": mock.Mock(return_value=campaign),
+                "source_identity": mock.Mock(return_value={"source": "same"}),
+                "apk_identity": mock.Mock(return_value={"tool": "same"}),
+                "verify_inputs": mock.Mock(return_value={"identity": {"input": "same"}}),
+                "oracle_source_identity": mock.Mock(return_value={"oracle": "same"}),
+                "validate_product": mock.Mock(return_value={"product": "same"}),
+                "input_identity": mock.Mock(return_value={"input": "same"}),
+                "stage_application_payload": stage_payload,
+                "audit_application_elf_closure": mock.Mock(return_value=[]),
+                "stage_base_image_fixtures": mock.Mock(return_value={}),
+                "assert_base_image_fixtures": mock.Mock(return_value={}),
+                "copy_runtime": mock.Mock(return_value={}),
+                "create_fixture": mock.Mock(),
+                "assert_runtime_boundary": mock.Mock(),
+                "executable_elf_record": mock.Mock(return_value={}),
+                "execute_case": execute,
+            }
+            original_mkdtemp = RUNNER.tempfile.mkdtemp
+
+            def private_directory(*args: object, **kwargs: object) -> str:
+                if kwargs.get("prefix") == "owned-package-corpus-":
+                    return str(execution)
+                return original_mkdtemp(*args, **kwargs)
+
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.multiple(RUNNER, **patches))
+                stack.enter_context(mock.patch.object(RUNNER.tempfile, "mkdtemp", side_effect=private_directory))
+                report = RUNNER.run(manifest, campaign / "archives", campaign / "index",
+                                    campaign / "product", campaign, (case,))
+            self.assertTrue(report["passed"])
+            self.assertEqual(len(observed), 2)
+            for root in observed:
+                self.assertTrue((root / "program").samefile(payload / "program"))
+            for side in ("oracle", "candidate"):
+                record = report["outcomes"][0]["roots"][side]
+                self.assertEqual(record["execution_tree_before_sha256"], record["execution_tree_after_sha256"])
+
+    def test_completed_payload_sharing_preserves_independent_active_roots(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-retention-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            payload = Path(temporary) / "payload"
+            payload.mkdir()
+            source = payload / "program"
+            source.write_bytes(b"authenticated application")
+            source.chmod(0o755)
+            completed = Path(temporary) / "completed"
+            active = Path(temporary) / "active"
+            with mock.patch.object(RUNNER, "stage_base_image_fixtures", return_value={}), \
+                 mock.patch.object(RUNNER, "assert_base_image_fixtures", return_value={}):
+                RUNNER.stage_execution_root(RUNNER.load_manifest(), payload, completed)
+                RUNNER.stage_execution_root(RUNNER.load_manifest(), payload, active)
+            self.assertFalse(source.samefile(completed / "program"))
+            self.assertFalse(source.samefile(active / "program"))
+            (active / "program").write_bytes(b"private active mutation")
+            seal = RUNNER.tree_sha256(completed, "completed root")
+            metadata = (completed / "program").stat()
+            RUNNER.retain_completed_application_payload(RUNNER.load_manifest(), payload, completed)
+            self.assertTrue(source.samefile(completed / "program"))
+            self.assertFalse(source.samefile(active / "program"))
+            self.assertEqual((active / "program").read_bytes(), b"private active mutation")
+            self.assertEqual(source.read_bytes(), b"authenticated application")
+            self.assertEqual(RUNNER.tree_sha256(completed, "retained root"), seal)
+            retained = (completed / "program").stat()
+            self.assertEqual((retained.st_mode, retained.st_uid, retained.st_gid),
+                             (metadata.st_mode, metadata.st_uid, metadata.st_gid))
+
+    def test_retention_leaves_modified_restricted_and_fixture_linked_files_private(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-retention-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            payload = Path(temporary) / "payload"
+            completed = Path(temporary) / "completed"
+            payload.mkdir()
+            completed.mkdir()
+            for name in ("changed", "mode", "restricted", "fixture-linked"):
+                (payload / name).write_bytes(b"application")
+                (completed / name).write_bytes(b"application")
+                (payload / name).chmod(0o644)
+                (completed / name).chmod(0o644)
+            (completed / "changed").write_bytes(b"stateful change")
+            (completed / "mode").chmod(0o600)
+            (payload / "restricted").chmod(0o600)
+            (completed / "restricted").chmod(0o600)
+            os.link(completed / "fixture-linked", completed / "fixture-alias")
+            (completed / "runtime").write_bytes(b"private runtime")
+            (payload / "alias").symlink_to("changed")
+            (completed / "alias").symlink_to("changed")
+            seal = RUNNER.tree_sha256(completed, "completed root")
+            RUNNER.retain_completed_application_payload(RUNNER.load_manifest(), payload, completed)
+            for name in ("changed", "mode", "restricted", "fixture-linked"):
+                self.assertFalse((payload / name).samefile(completed / name))
+            self.assertTrue((completed / "fixture-linked").samefile(completed / "fixture-alias"))
+            self.assertEqual((completed / "runtime").read_bytes(), b"private runtime")
+            self.assertEqual(os.readlink(completed / "alias"), "changed")
+            self.assertEqual(RUNNER.tree_sha256(completed, "retained root"), seal)
+
+    def test_retention_never_follows_private_parent_links_or_shares_runtime_and_base_fixtures(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-retention-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            payload = Path(temporary) / "payload"
+            completed = Path(temporary) / "completed"
+            outside = Path(temporary) / "outside"
+            for root in (payload, completed, outside):
+                root.mkdir()
+            (payload / "branch").mkdir()
+            (payload / "branch/file").write_bytes(b"same bytes")
+            (outside / "file").write_bytes(b"same bytes")
+            (completed / "branch").symlink_to(outside)
+            protected = (RUNNER.CANONICAL_INTERPRETER, RUNNER.CANONICAL_LIBC,
+                         *RUNNER.load_manifest().base_fixtures, *RUNNER.load_manifest().base_image_files)
+            for name in protected:
+                for root in (payload, completed):
+                    path = root / name.lstrip("/")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"runtime bytes")
+                    path.chmod(0o755)
+            seal = RUNNER.tree_sha256(completed, "completed root")
+            RUNNER.retain_completed_application_payload(RUNNER.load_manifest(), payload, completed)
+            self.assertFalse((payload / "branch/file").samefile(outside / "file"))
+            for name in protected:
+                self.assertFalse((payload / name.lstrip("/")).samefile(completed / name.lstrip("/")))
+            self.assertEqual(RUNNER.tree_sha256(completed, "retained root"), seal)
+
+    def test_failed_retention_link_preserves_completed_bytes_and_tree(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-retention-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            payload = Path(temporary) / "payload"
+            completed = Path(temporary) / "completed"
+            for root in (payload, completed):
+                root.mkdir()
+                (root / "program").write_bytes(b"authenticated executable")
+                (root / "program").chmod(0o755)
+            seal = RUNNER.tree_sha256(completed, "completed root")
+            with mock.patch.object(RUNNER.os, "link", side_effect=OSError("link unavailable")):
+                with self.assertRaisesRegex(OSError, "link unavailable"):
+                    RUNNER.retain_completed_application_payload(RUNNER.load_manifest(), payload, completed)
+            self.assertEqual(RUNNER.tree_sha256(completed, "retained root"), seal)
+            self.assertEqual(list(completed.iterdir()), [completed / "program"])
+
+    @unittest.skipUnless(os.geteuid() == 0, "ownership changes require root")
+    def test_retention_preserves_distinct_private_file_ownership(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-retention-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            payload = Path(temporary) / "payload"
+            completed = Path(temporary) / "completed"
+            for root in (payload, completed):
+                root.mkdir()
+                (root / "program").write_bytes(b"authenticated executable")
+                (root / "program").chmod(0o755)
+            os.chown(completed / "program", 1, 1)
+            RUNNER.retain_completed_application_payload(RUNNER.load_manifest(), payload, completed)
+            self.assertFalse((payload / "program").samefile(completed / "program"))
+            metadata = (completed / "program").stat()
+            self.assertEqual((metadata.st_uid, metadata.st_gid), (1, 1))
+
+
 class RawOutcomeTests(unittest.TestCase):
     def test_dynamic_tag_match_does_not_accept_a_longer_tag(self) -> None:
         self.assertTrue(RUNNER.has_dynamic_tag("0x24 (RELR) 0x100\n", "RELR"))
@@ -670,7 +856,8 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
                  mock.patch.object(RUNNER, "stage_application_payload"), \
                  mock.patch.object(RUNNER, "audit_application_elf_closure", return_value=[]), \
                  mock.patch.object(RUNNER, "tree_sha256", return_value="payload-seal"), \
-                 mock.patch.object(RUNNER, "stage_execution_root", return_value={}), \
+                 mock.patch.multiple(RUNNER, stage_execution_root=lambda *args: {},
+                                     retain_completed_application_payload=lambda *args: None), \
                  mock.patch.object(RUNNER, "copy_runtime", return_value={}), \
                  mock.patch.object(RUNNER, "create_fixture"), \
                  mock.patch.object(RUNNER, "assert_base_image_fixtures", return_value={}), \
