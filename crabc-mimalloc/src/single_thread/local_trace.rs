@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Test-only M3 deterministic local-engine trace driver.
+// Test-only deterministic local-engine trace driver.
 //
 // Pinned mimalloc v3.5.0 is the oracle: `compat/allocator/m3_local_trace_x86_64.c`
 // runs the same workload file against the pinned C default Theap and emits the
@@ -371,6 +371,16 @@ fn allocate_phased(
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return block,
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                // This isolated external arena has no process option owner.
+                // Its source profile uses one full collection per 10,000
+                // counted generic calls. Reentry may have advanced the source
+                // counters; resume reads their current values after capture.
+                phase = allocator.resume_generic_allocation_frequency(
+                    request, 10_000, continuation,
+                );
+            }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 let force = matches!(collection, GenericAllocationCollection::Force);
                 allocator.session.test_run_empty_deferred_free_phase(force);
@@ -481,7 +491,7 @@ fn run_workload(workload: &Workload) -> String {
     tracer.out
 }
 
-/// Produces the Rust half of the M3 C/Rust local-engine differential.
+/// Produces the Rust half of the C/Rust local-engine differential.
 ///
 /// Without `CRABC_M3_LOCAL_TRACE_WORKLOAD`, this runs the built-in workload,
 /// which keeps the test meaningful in the ordinary unit suite and under Miri.
