@@ -178,20 +178,22 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             names = ['domain_body', 'domain_caller', 'domain_target']
             (work / 'providers.c').write_text(links.source(names, object_names=['domain_target']))
             for storage, addend, supported in [('data', 0, True), ('data', 8, True),
-                    ('rodata', 0, True), ('rodata', 8, True), ('data', 16, False), ('data', -1, False),
+                    ('rodata', 0, True), ('rodata', 8, True), ('retained-output', 0, True), ('data', 16, False), ('data', -1, False),
                     ('function', 0, False), ('table-gap', 0, False), ('got-table', 0, False)]:
                 with self.subTest(storage=storage, addend=addend):
                     (work / 'provider.S').write_text(
                         '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
                         '.type domain_body,@function\ndomain_body: ret\n.size domain_body,.-domain_body\n'
-                        + '.section .' + ('text' if storage == 'function' else 'data' if storage in {'table-gap', 'got-table'} else storage)
+                        + '.section .' + ('text' if storage == 'function' else 'data.rel.ro' if storage == 'retained-output' else 'data' if storage in {'table-gap', 'got-table'} else storage)
                         + '.domain_target,"' + ('ax' if storage == 'function' else 'a' if storage == 'rodata' else 'aw')
                         + '",@progbits\n.balign 8\n.globl domain_target\n.hidden domain_target\n'
                         + '.type domain_target,@' + ('function' if storage == 'function' else 'object') + '\ndomain_target:\n'
                         + ('ret\n' if storage == 'function' else '.quad .Lbytes; .quad 8\n'
-                           if storage in {'data', 'table-gap', 'got-table'} else '.quad 0x1234; .quad 0x5678\n')
+                           if storage in {'data', 'table-gap', 'got-table', 'retained-output'} else '.quad 0x1234; .quad 0x5678\n')
                         + '.size domain_target,.-domain_target\n.section .rodata.bytes,"a",@progbits\n.Lbytes: .quad 7\n'
-                        '.section .note.GNU-stack,"",@progbits\n')
+                        + ('.section .data.rel.ro.retained_companion,"awR",@progbits\n.quad 0\n'
+                           if storage == 'retained-output' else '')
+                        + '.section .note.GNU-stack,"",@progbits\n')
                     (work / 'caller.S').write_text(
                         '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
                         '.hidden domain_body\n.hidden domain_target\n.type domain_caller,@function\n'
@@ -228,6 +230,14 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             '-Map=' + str(work / (mode + '.receipt.map')), str(work / 'providers.o'), str(archive),
                             '-o', str(work / mode)], check=True, capture_output=True)
                         (work / (mode + '.receipt.trace')).write_bytes(linked.stdout)
+                    if storage == 'retained-output':
+                        original = links.static_authority.elf_bytes((work / 'caller.o').read_bytes())
+                        self.assertEqual(next(header[2] for header in original.sections
+                            if links.static_authority.section_name(original, header) == '.data.rel.ro.pointer_table'), 3)
+                        for mode in ['static', 'static-pie']:
+                            retained = links.static_authority.elf_bytes((work / mode).read_bytes())
+                            self.assertEqual(next(header[2] for header in retained.sections
+                                if links.static_authority.section_name(retained, header) == '.data.rel.ro'), 0x200003)
                     arguments = dict(mapped_archive=str(archive), forcing_owner=str(work / 'providers.o'), temporary_parent=private)
                     proof = links.project_references(work, static, accounting, **arguments)
                     admitted = {row['identity']['name']: row for row in proof['identities']}
@@ -300,6 +310,11 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         final = links.static_authority.elf_bytes(image)
                         symbol = final.symbol('domain_target', dynamic=False)
                         final_table, final_width = struct.unpack_from('<Q', image, 40)[0], struct.unpack_from('<H', image, 58)[0]
+                        for flags in [7, 19, 0x200007, 0x200403]:
+                            changed = bytearray(image)
+                            struct.pack_into('<Q', changed, final_table + final_width * symbol['section'] + 8, flags)
+                            with self.assertRaises(ValueError):
+                                links.final_member_references(bytes(changed), **reference_arguments)
                         changed = bytearray(image)
                         struct.pack_into('<Q', changed, final_table + final_width * symbol['section'] + 32,
                                          address + 15 - final.sections[symbol['section']][3])

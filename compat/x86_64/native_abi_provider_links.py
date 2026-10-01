@@ -633,7 +633,9 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
             'data pointer source slot extent differs')
     final = static_authority.elf_bytes(image)
     require(final.elf_type == elf_type, 'data pointer final ELF type differs')
-    outputs = [section for section in final.sections if section[1] == 1 and section[2] == 3
+    # The linker can pool an ordinary input with retained writable data.
+    # GNU retain changes collection policy, not its read/write permissions.
+    outputs = [section for section in final.sections if section[1] == 1 and section[2] in {3, 0x200003}
                and section[3] <= base and base + holder[5] <= section[3] + section[5]
                and section[4] + section[5] <= len(image)]
     require(len(outputs) == 1, 'data pointer final holder extent differs')
@@ -668,7 +670,7 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
             and target['size'] == symbol['size'] and 0 < target['section'] < len(final.sections),
             'data pointer target final symbol differs')
     output = final.sections[target['section']]
-    require(output[1] == 1 and (output[2] in {2, 18, 50} if readonly else output[2] == 3)
+    require(output[1] == 1 and (output[2] in {2, 18, 50} if readonly else output[2] in {3, 0x200003})
             and output[3] <= provider_address and provider_address + symbol['size'] <= output[3] + output[5]
             and output[4] + output[5] <= len(image), 'data pointer target final extent differs')
     if readonly:
