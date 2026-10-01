@@ -1958,7 +1958,7 @@ pub(crate) struct MainHeapThreadPageSession<'attachment, 'main> {
 
 impl<'attachment, 'main> MainHeapThreadPageSession<'attachment, 'main> {
     #[cfg(target_arch = "x86_64")]
-    fn permits_generic_counter_administration(&self) -> bool {
+    fn permits_source_owner_administration(&self) -> bool {
         if self.attachment.terminal_os_release.is_some() { return false; }
         let admitted = self.attachment.ensure_attached_current().is_ok() || {
             let generation = self.attachment.deferred_free_callback_active.load(Ordering::Acquire);
@@ -2529,7 +2529,7 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
     fn begin_generic_allocation_administration(
         &mut self,
     ) -> crate::bootstrap::GenericAllocationAdministrationStart {
-        if !self.permits_generic_counter_administration() {
+        if !self.permits_source_owner_administration() {
             return crate::bootstrap::GenericAllocationAdministrationStart::Denied;
         }
         // SAFETY: this admitted owner retains the selected image and owns
@@ -2544,7 +2544,7 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
     unsafe fn finish_generic_allocation_administration(
         &mut self, request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
     ) -> Option<crate::types::GenericAllocationAdministration> {
-        if !self.permits_generic_counter_administration()
+        if !self.permits_source_owner_administration()
             || !request.matches_theap(self.local_theap_pointer())
             || !(1..=1_000_000).contains(&frequency)
         { return None; }
@@ -2727,6 +2727,36 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
         unsafe { arena.pages() }
             .and_then(|pages| pages.clear_range(arena_memory.slice_index as usize, 1))
             == Some(true)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        if !self.permits_source_owner_administration() { return None; }
+        let theap = self.local_theap_pointer();
+        // SAFETY: the exclusive attachment session retains its original
+        // initialized Theap and the static Heap lease. Reading the published
+        // Heap pointer creates no whole-image projection or new authority.
+        let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+        // SAFETY: the caller retains the fresh mapping and original metadata;
+        // this session retains the issuing Theap, TLD and Heap. Primary
+        // publication consumes no randomness and exposes no client free list.
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(
+            metadata, theap, heap, TheapOwner::Live(self.attachment.thread),
+            block_size, page_offset, reserved, slice_pcommitted, free_is_zero, memid,
+        ) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        if !self.permits_source_owner_administration() { return false; }
+        // SAFETY: the caller retains the original primary Page before client
+        // publication, and registration callbacks and projections have ended.
+        // The attachment session retains the exact issuing Theap and owns its
+        // random fields; pointer checks only reject mismatches.
+        unsafe { Page::initialize_fresh_page_keys_at(page, self.local_theap_pointer()) }
     }
 
     unsafe fn publish_fresh_page(
