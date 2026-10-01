@@ -68,7 +68,9 @@ only its exact source, configuration, image, products, and execution context.
   the subsequent full installed suite fails on a pinned musl AIO descriptor-reuse
   defect. A causal source control proves that defect, and the integrated receiver
   accepts only its complete signature. The failed cohort remains unqualified;
-  fresh dynamic and resolver qualification is still required. Ordered family
+  fresh `e9de501dd` static preparation and its owning read-only reader pass.
+  The complete 219-case dynamic qualification is running on its independent
+  frozen source; resolver family qualification follows that result. Ordered family
   and callable-provider closure remain open.
 - **Allocator source geometry:** source-faithful auxiliary and ordinary main
   Theap geometry repairs are integrated with ownership repairs. Their exact
@@ -77,7 +79,7 @@ only its exact source, configuration, image, products, and execution context.
   creation still adds 131,072 committed bytes against C's 65,536 in all four
   profiles: remove the separate child control allocation while preserving
   explicit ownership, failure retry and live-thread destruction semantics.
-- **Allocator ownership:** fourteen coherent pointer/capability repairs are
+- **Allocator ownership:** coherent pointer/capability repairs are
   integrated. Both original strict environment/TLS startup fixtures and five
   isolated strict regressions pass at their exact repaired sources; all nine
   merged Rust compiler profiles pass. Compiler-selected Miri descriptors,
@@ -87,7 +89,10 @@ only its exact source, configuration, image, products, and execution context.
   startup markers interleave with libtest output. The strict parser repair is
   integrated. One fresh clean-source six-program/seventeen-test run at
   `1c22908bf` completes all six programs and all seventeen strict tests. Its
-  independent physical receiver follows canonical retention; the whole gate
+  first independent physical replay passes all seventeen strict tests, then
+  rejects a cold/cached compiler-record comparison. The authenticated physical
+  product comparison is repaired, and omitted original queue inputs are now
+  independently retained. One corrected whole read-only replay is running; the whole gate
   remains unmet pending M1/M2. Prior full-roster failures remain unqualified
   and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
@@ -119,8 +124,10 @@ only its exact source, configuration, image, products, and execution context.
   child visitation pass the four implemented profiles and owning replay.
   Sixteen initial-worker statistics cases pass their exact-source producer and
   owning read-only replay, including address-dependent OS-aligned accounting.
-  Secure shuffle, selected-Theap randomness, guarded error publication and local
-  child callback-owner primitives are integrated with focused native evidence;
+  Secure shuffle, selected-Theap randomness, secure singleton and arena guard
+  geometry, guarded error publication, and local and foreign child callback-owner
+  primitives are integrated with focused native evidence. Exact frozen sources
+  pass their independent read-only replays;
   complete secure and guarded profiles, debug applicability and physical
   options remain open.
   ISA correctness passes separately from deferred throughput. Complete M2/M3/M4
