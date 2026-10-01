@@ -249,6 +249,10 @@ mi-stat-2 = ["mi-stat-1"]
 # Pinned MI_DEBUG=1 selects byte-precise padding, encoded free lists, and the
 # source's default level-two statistics. The release allocator keeps this off.
 mi-debug-1 = ["mi-stat-2"]
+# Numeric internal and expensive checks retain the basic debug profile.
+# Their runtime assertion coverage is qualified independently of selection.
+mi-debug-2 = ["mi-debug-1"]
+mi-debug-3 = ["mi-debug-2"]
 # Pinned MI_SHOW_ERRORS changes the initial show_errors descriptor while
 # retaining release allocation layout and algorithms.
 mi-show-errors = []

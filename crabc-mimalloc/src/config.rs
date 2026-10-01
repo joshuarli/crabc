@@ -57,10 +57,15 @@ pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", featu
 /// Defined `MI_XMALLOC` affects only the default allocation-error handler.
 /// The optional x86 profile leaves the AArch64 default handler unchanged.
 pub(crate) const XMALLOC: bool = cfg!(all(target_arch = "x86_64", feature = "mi-xmalloc"));
-#[cfg(feature = "mi-debug-1")]
-pub(crate) const DEBUG_LEVEL: usize = 1;
-#[cfg(not(feature = "mi-debug-1"))]
-pub(crate) const DEBUG_LEVEL: usize = 0;
+// Numeric x86 profiles retain the basic debug layout through feature ancestry.
+// Other targets keep the previously selected basic debug level.
+pub(crate) const DEBUG_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-debug-3")) {
+    3
+} else if cfg!(all(target_arch = "x86_64", feature = "mi-debug-2")) {
+    2
+} else {
+    cfg!(feature = "mi-debug-1") as usize
+};
 // The second optional source profile includes the first profile's producers;
 // Cargo's additive feature selection therefore chooses the highest level.
 #[cfg(feature = "mi-stat-2")]
@@ -1107,7 +1112,13 @@ mod tests {
         } else {
             0
         });
-        assert_eq!(DEBUG_LEVEL, usize::from(cfg!(feature = "mi-debug-1")));
+        assert_eq!(DEBUG_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-debug-3")) {
+            3
+        } else if cfg!(all(target_arch = "x86_64", feature = "mi-debug-2")) {
+            2
+        } else {
+            usize::from(cfg!(feature = "mi-debug-1"))
+        });
         let expected_stat_level = if cfg!(feature = "mi-stat-2") {
             2
         } else if cfg!(feature = "mi-stat-1") {
