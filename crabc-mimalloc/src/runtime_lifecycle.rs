@@ -20576,6 +20576,95 @@ mod tests {
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    std::thread_local! {
+        static GUARDED_FREE_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(33) };
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    static GUARDED_FREE_WARNING_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    static GUARDED_FREE_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    static GUARDED_FREE_WARNING_ERRNO: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    unsafe fn guarded_free_store_errno(value: core::ffi::c_int) {
+        GUARDED_FREE_ERRNO.with(|slot| slot.set(value));
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    unsafe extern "C" fn guarded_free_warning_reentry(
+        message: *const core::ffi::c_char, _argument: *mut core::ffi::c_void,
+    ) {
+        if !GUARDED_FREE_WARNING_ARMED.load(Ordering::Acquire) || message.is_null() { return; }
+        // SAFETY: synchronous output delivery supplies its initialized,
+        // terminated source fragment for the duration of this callback.
+        let body = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+        if !body.starts_with(b"cannot unprotect OS memory") { return; }
+        if GUARDED_FREE_WARNING_COUNT.fetch_add(1, Ordering::AcqRel) != 0 { return; }
+        GUARDED_FREE_WARNING_ERRNO.store(GUARDED_FREE_ERRNO.with(|slot| slot.get()) as usize, Ordering::Release);
+        let NativePageAllocationResult::Allocated(nested) = native_allocate(96, false) else {
+            panic!("warning callback must reenter the parked native engine");
+        };
+        // SAFETY: the callback exclusively owns this independent client.
+        assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
+        GUARDED_FREE_ERRNO.with(|slot| slot.set(34));
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_free_protection_refusal_publishes_errno_before_reentry_and_still_consumes_client() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::guarded_free_protection_refusal_publishes_errno_before_reentry_and_still_consumes_client",
+            || {
+                // SAFETY: the explicit writer touches only this fixture's
+                // owned thread-local scalar and cannot allocate or retain it.
+                let store = unsafe { crate::process_init::SourceErrnoStore::new(guarded_free_store_errno) };
+                assert!(publish_native_process_startup_facts(host_startup_facts().with_source_errno_store(store)));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(block) = native_allocate(8192 - crate::config::PADDING_SIZE, false) else { panic!("guard candidate"); };
+                let NativePageAllocationResult::Allocated(keeper) = native_allocate(8192 - crate::config::PADDING_SIZE, false) else { panic!("Page keeper"); };
+                // SAFETY: the fixture owns this distinct client byte.
+                unsafe { keeper.as_ptr().write(0xa4); }
+                // SAFETY: source guarded placement consumes this canonical
+                // candidate while its selected Heap and member remain live.
+                let (client, tail) = unsafe { with_guarded_live_block(default_theap(), block, |facts| {
+                    let tail = facts.canonical.as_ptr().add(facts.block_size - facts.os_page_size);
+                    facts.canonical.cast::<usize>().as_ptr().write(usize::MAX);
+                    assert_eq!(crate::os::protect_guarded_live_range(tail, facts.os_page_size, true, facts.process), Ok(true));
+                    (NonNull::new_unchecked(facts.canonical.as_ptr().add(core::mem::size_of::<usize>())), tail.addr())
+                }) }.unwrap();
+                let output = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: this fresh process excludes concurrent option or
+                // callback registration; the static callback stays initialized.
+                unsafe {
+                    output.option_set(crate::config::SourceOption::ShowErrors, 1).unwrap();
+                    output.register_output(Some(guarded_free_warning_reentry), core::ptr::null_mut());
+                }
+                let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Unprotect, 1, crabc_core::Errno::NOMEM,
+                ));
+                GUARDED_FREE_ERRNO.with(|slot| slot.set(33));
+                GUARDED_FREE_WARNING_ARMED.store(true, Ordering::Release);
+                // SAFETY: this is the exact guarded client, consumed once;
+                // warnings can reenter only after every engine projection ends.
+                assert_eq!(unsafe { native_free(client) }, NativePageFreeResult::Freed);
+                GUARDED_FREE_WARNING_ARMED.store(false, Ordering::Release);
+                assert_eq!(fault.observed(), 1, "source unprotect failure must not retry");
+                assert_eq!(GUARDED_FREE_WARNING_COUNT.load(Ordering::Acquire), 1);
+                assert_eq!(GUARDED_FREE_WARNING_ERRNO.load(Ordering::Acquire), 12);
+                assert_eq!(GUARDED_FREE_ERRNO.with(|slot| slot.get()), 34);
+                assert!(native_mapping_permissions_for_test(tail).starts_with("---"));
+                // SAFETY: the other independently owned client remains live.
+                assert_eq!(unsafe { keeper.as_ptr().read() }, 0xa4);
+                fault.set(crate::os::fault::Plan::disabled());
+                assert_eq!(unsafe { native_free(keeper) }, NativePageFreeResult::Freed);
+                // SAFETY: no callback delivery is active at registration reset.
+                unsafe { output.register_output(None, core::ptr::null_mut()); }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
     #[test]
     fn guarded_reallocation_keeps_old_guard_until_replacement_then_unprotects_its_tail() {
         crate::test_process::run_in_fresh_process(
