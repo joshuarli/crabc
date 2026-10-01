@@ -504,6 +504,15 @@ pub(crate) enum DeferredFreeAllocationPhase {
     },
 }
 
+/// The selected canonical engine could not complete a source page attempt.
+/// This quiet refusal is distinct from a completed source null result and
+/// grants no ownership, admission or retry permission.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct GuardedCanonicalAllocationRefusal;
+
+pub(crate) type GuardedCanonicalAllocationPhase =
+    Result<DeferredFreeAllocationPhase, GuardedCanonicalAllocationRefusal>;
+
 /// Source aligned selection before the ordinary base allocator is entered.
 /// A plain fallback can temporarily disable guarded sampling only after the
 /// engine projection has ended; cached and huge-alignment paths stay inside
@@ -38056,26 +38065,35 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Sampling, tag placement, protection and client zeroing belong to the
     /// caller's later owner-retaining phase, after this engine borrow ends.
     pub(crate) fn begin_deferred_free_guarded_canonical(
+        &mut self, source_size: usize,
+    ) -> DeferredFreeAllocationPhase {
+        self.begin_deferred_free_guarded_canonical_checked(source_size)
+            .unwrap_or(DeferredFreeAllocationPhase::Complete(None))
+    }
+
+    /// Starts the exact canonical source entry while preserving a quiet
+    /// selected-engine refusal separately from a completed source null.
+    pub(crate) fn begin_deferred_free_guarded_canonical_checked(
         &mut self,
         source_size: usize,
-    ) -> DeferredFreeAllocationPhase {
+    ) -> GuardedCanonicalAllocationPhase {
         let page_size = self.page_map.memory_config().page_size().bytes();
         if !crate::config::GUARDED || source_size <= page_size || source_size % page_size != 0 {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         }
         let Some(request) = source_size.checked_sub(PADDING_SIZE) else {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         };
         if self.is_collection_poisoned() {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         }
         let Some(continuation) = self.generic_allocation_continuation(request, false) else {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         };
         // Guarded allocation enters the counted generic allocator even when
         // its rounded extent fits the public small direct-page cache. Taking
         // that cache here would skip source administration and deferred frees.
-        self.begin_deferred_free_generic_allocation(
+        self.begin_deferred_free_generic_allocation_checked(
             DeferredFreeAllocationContinuation::Generic(continuation),
             generic_request_searches_before_fallback(source_size),
         )
@@ -38256,17 +38274,34 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// returned and the runtime revalidated the attachment that produced the
     /// continuation.
     pub(crate) fn resume_deferred_free_allocation(
+        &mut self, collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> DeferredFreeAllocationPhase {
+        self.resume_deferred_free_allocation_checked(collection, continuation)
+            .unwrap_or(DeferredFreeAllocationPhase::Complete(None))
+    }
+
+    /// Resumes canonical collection without translating a failed collector,
+    /// page attempt or statistics completion into source out-of-memory.
+    pub(crate) fn resume_deferred_free_guarded_canonical_checked(
+        &mut self, collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> GuardedCanonicalAllocationPhase {
+        self.resume_deferred_free_allocation_checked(collection, continuation)
+    }
+
+    fn resume_deferred_free_allocation_checked(
         &mut self,
         collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation,
-    ) -> DeferredFreeAllocationPhase {
+    ) -> GuardedCanonicalAllocationPhase {
         let collected = match collection {
             GenericAllocationCollection::Mini => self.collect_retired(false),
             GenericAllocationCollection::Full => self.collect_generic_administration(false),
             GenericAllocationCollection::Force => self.collect_all_pages_for_allocation_retry(),
         };
         if !collected {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         }
         // Pinned `theap.c:123-148` merges the current Theap statistics only
         // after the selected complete collector has returned. Mini collection
@@ -38278,21 +38313,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 .theap()
                 .merge_statistics_into_owning_heap_after_collection()
         {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         }
         if continuation == DeferredFreeAllocationContinuation::Collection {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Ok(DeferredFreeAllocationPhase::Complete(None));
         }
         match collection {
             // The force collector is the source's one retry. A second no-page
             // result is final and must not schedule another force callback.
-            GenericAllocationCollection::Force => DeferredFreeAllocationPhase::Complete(
-                self.attempt_deferred_free_allocation(continuation)
-                    .ok()
-                    .flatten(),
-            ),
+            GenericAllocationCollection::Force => match self.attempt_deferred_free_allocation(continuation) {
+                Ok(block) => Ok(DeferredFreeAllocationPhase::Complete(block)),
+                Err(_) => Err(GuardedCanonicalAllocationRefusal),
+            },
             GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
-                self.try_deferred_free_allocation_once(continuation)
+                self.try_deferred_free_allocation_once_checked(continuation)
             }
         }
     }
@@ -38427,26 +38461,33 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// request; a call reaching the 1,000-call administration threshold
     /// skips the search, as the source's `++generic_count < 1000` does.
     fn begin_deferred_free_generic_allocation(
+        &mut self, continuation: DeferredFreeAllocationContinuation, search_first: bool,
+    ) -> DeferredFreeAllocationPhase {
+        self.begin_deferred_free_generic_allocation_checked(continuation, search_first)
+            .unwrap_or(DeferredFreeAllocationPhase::Complete(None))
+    }
+
+    fn begin_deferred_free_generic_allocation_checked(
         &mut self,
         continuation: DeferredFreeAllocationContinuation,
         search_first: bool,
-    ) -> DeferredFreeAllocationPhase {
+    ) -> GuardedCanonicalAllocationPhase {
         #[cfg(target_arch = "x86_64")]
         {
             match self.session.begin_generic_allocation_administration() {
-                crate::bootstrap::GenericAllocationAdministrationStart::Denied => DeferredFreeAllocationPhase::Complete(None),
+                crate::bootstrap::GenericAllocationAdministrationStart::Denied => Err(GuardedCanonicalAllocationRefusal),
                 crate::bootstrap::GenericAllocationAdministrationStart::NotDue => {
                     if search_first {
                         match self.attempt_deferred_free_allocation(continuation) {
-                            Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
-                            Err(_) => return DeferredFreeAllocationPhase::Complete(None),
+                            Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
+                            Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
                     }
-                    self.try_deferred_free_allocation_once(continuation)
+                    self.try_deferred_free_allocation_once_checked(continuation)
                 }
                 crate::bootstrap::GenericAllocationAdministrationStart::Frequency(request) => {
-                    DeferredFreeAllocationPhase::GenericFrequency { request, continuation }
+                    Ok(DeferredFreeAllocationPhase::GenericFrequency { request, continuation })
                 }
             }
         }
@@ -38456,21 +38497,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 GenericAllocationAdministration::None => {
                     if search_first {
                         match self.attempt_deferred_free_allocation(continuation) {
-                            Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
-                            Err(_) => return DeferredFreeAllocationPhase::Complete(None),
+                            Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
+                            Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
                     }
-                    self.try_deferred_free_allocation_once(continuation)
+                    self.try_deferred_free_allocation_once_checked(continuation)
                 }
-                GenericAllocationAdministration::Mini => DeferredFreeAllocationPhase::Collect {
+                GenericAllocationAdministration::Mini => Ok(DeferredFreeAllocationPhase::Collect {
                     collection: GenericAllocationCollection::Mini,
                     continuation,
-                },
-                GenericAllocationAdministration::Full => DeferredFreeAllocationPhase::Collect {
+                }),
+                GenericAllocationAdministration::Full => Ok(DeferredFreeAllocationPhase::Collect {
                     collection: GenericAllocationCollection::Full,
                     continuation,
-                },
+                }),
             }
         }
     }
@@ -38489,35 +38530,62 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// in `1..=1_000_000`. Pointer identity alone proves none of that custody.
     #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn resume_generic_allocation_frequency(
+        &mut self, request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize, continuation: DeferredFreeAllocationContinuation,
+    ) -> DeferredFreeAllocationPhase {
+        // SAFETY: the caller retains the original admitted issuer, request and
+        // allocation across capture and supplies its actual source-clamped value.
+        unsafe { self.resume_guarded_canonical_frequency_checked(request, frequency, continuation) }
+            .unwrap_or(DeferredFreeAllocationPhase::Complete(None))
+    }
+
+    /// Resumes the exact canonical counted phase without inventing source OOM.
+    ///
+    /// # Safety
+    /// The actual original Theap, session, allocation and backing issuers stay
+    /// live and admitted across capture and resume. The request and continuation
+    /// came from this same original counted entry, without retirement, replacement
+    /// or address reuse. No engine/source projection or callback-accessible lock
+    /// crosses the getter. `frequency` is its actual source-clamped option in
+    /// `1..=1_000_000`; pointer equality alone cannot establish retained custody.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn resume_guarded_canonical_frequency_checked(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize,
         continuation: DeferredFreeAllocationContinuation,
-    ) -> DeferredFreeAllocationPhase {
+    ) -> GuardedCanonicalAllocationPhase {
         if self.is_collection_poisoned() {
-            return DeferredFreeAllocationPhase::Complete(None);
+            return Err(GuardedCanonicalAllocationRefusal);
         }
         // SAFETY: the caller keeps the actual originating owner admitted
         // across capture and resumes its exact session with the source value.
         let collection = match unsafe { self.session.finish_generic_allocation_administration(request, frequency) } {
             Some(GenericAllocationAdministration::Mini) => GenericAllocationCollection::Mini,
             Some(GenericAllocationAdministration::Full) => GenericAllocationCollection::Full,
-            None | Some(GenericAllocationAdministration::None) => return DeferredFreeAllocationPhase::Complete(None),
+            None | Some(GenericAllocationAdministration::None) => return Err(GuardedCanonicalAllocationRefusal),
         };
-        DeferredFreeAllocationPhase::Collect { collection, continuation }
+        Ok(DeferredFreeAllocationPhase::Collect { collection, continuation })
     }
 
     fn try_deferred_free_allocation_once(
+        &mut self, continuation: DeferredFreeAllocationContinuation,
+    ) -> DeferredFreeAllocationPhase {
+        self.try_deferred_free_allocation_once_checked(continuation)
+            .unwrap_or(DeferredFreeAllocationPhase::Complete(None))
+    }
+
+    fn try_deferred_free_allocation_once_checked(
         &mut self,
         continuation: DeferredFreeAllocationContinuation,
-    ) -> DeferredFreeAllocationPhase {
+    ) -> GuardedCanonicalAllocationPhase {
         match self.attempt_deferred_free_allocation(continuation) {
-            Ok(Some(block)) => DeferredFreeAllocationPhase::Complete(Some(block)),
-            Err(_) => DeferredFreeAllocationPhase::Complete(None),
-            Ok(None) => DeferredFreeAllocationPhase::Collect {
+            Ok(Some(block)) => Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
+            Err(_) => Err(GuardedCanonicalAllocationRefusal),
+            Ok(None) => Ok(DeferredFreeAllocationPhase::Collect {
                 collection: GenericAllocationCollection::Force,
                 continuation,
-            },
+            }),
         }
     }
 
@@ -44871,6 +44939,76 @@ mod tests {
             ).unwrap(), Some(page));
             assert_ne!(available(), before, "the source decision consumes a selected-Theap word");
             unsafe { allocator.free(block).unwrap(); }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_canonical_frequency_resume_refuses_a_collector_poison_without_source_null() {
+        with_allocator(|allocator| {
+            let client = allocator.allocate(32, false).unwrap();
+            let mut frequency_phase = None;
+            for _ in 0..1001 {
+                match allocator.begin_deferred_free_guarded_canonical_checked(64 * MIB).unwrap() {
+                    DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                        frequency_phase = Some((request, continuation));
+                        break;
+                    }
+                    DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                        assert!(matches!(allocator.resume_deferred_free_guarded_canonical_checked(
+                            collection, continuation,
+                        ), Ok(DeferredFreeAllocationPhase::Complete(None))));
+                    }
+                    _ => panic!("the exhausted source arena yields retry or counted administration"),
+                }
+            }
+            let (request, continuation) = frequency_phase.expect("source counted threshold is reached");
+            allocator.inject_page_free_collect_failure_once();
+            assert!(!allocator.collect_all_pages_for_allocation_retry());
+            // SAFETY: this fixture retains the original pinned engine/session,
+            // client and arena/registry throughout the counted phase. It uses
+            // its isolated source-default frequency, without teardown/rebinding.
+            assert!(unsafe { allocator.resume_guarded_canonical_frequency_checked(
+                request, 10_000, continuation,
+            ) }.is_err());
+            assert!(allocator.take_page_collect_poison_for_fixture_cleanup().is_some());
+            unsafe { allocator.free(client).unwrap(); }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_canonical_checked_null_and_poisoned_owner_refusal_remain_distinct() {
+        // This source-valid extent exceeds the isolated caller-owned arena;
+        // its genuine no-page result takes exactly the source forced retry.
+        let source_size = 64 * MIB;
+        with_allocator(|allocator| {
+            let phase = allocator.begin_deferred_free_guarded_canonical_checked(source_size).unwrap();
+            let DeferredFreeAllocationPhase::Collect { collection, continuation } = phase
+                else { panic!("the exhausted source arena must request its forced retry") };
+            assert_eq!(collection, GenericAllocationCollection::Force);
+            assert!(matches!(allocator.resume_deferred_free_guarded_canonical_checked(
+                collection, continuation,
+            ), Ok(DeferredFreeAllocationPhase::Complete(None))));
+        });
+        with_allocator(|allocator| {
+            let client = allocator.allocate(32, false).unwrap();
+            // SAFETY: the fixture owns the live client's entire private extent.
+            unsafe { client.as_ptr().write_bytes(0x6D, 32); }
+            let phase = allocator.begin_deferred_free_guarded_canonical_checked(source_size).unwrap();
+            let DeferredFreeAllocationPhase::Collect { collection, continuation } = phase
+                else { panic!("the no-page attempt must retain its source continuation") };
+            allocator.inject_page_free_collect_failure_once();
+            assert!(allocator.resume_deferred_free_guarded_canonical_checked(
+                collection, continuation,
+            ).is_err(), "a failed source collector cannot complete as source null");
+            assert!(allocator.begin_deferred_free_guarded_canonical_checked(8192).is_err());
+            assert!(matches!(allocator.begin_deferred_free_guarded_canonical(8192),
+                DeferredFreeAllocationPhase::Complete(None)), "the legacy adapter preserves its old null shape");
+            assert!(unsafe { core::slice::from_raw_parts(client.as_ptr(), 32) }
+                .iter().all(|byte| *byte == 0x6D));
+            assert!(allocator.take_page_collect_poison_for_fixture_cleanup().is_some());
+            unsafe { allocator.free(client).unwrap(); }
         });
     }
 
