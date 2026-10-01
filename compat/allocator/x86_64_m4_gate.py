@@ -537,7 +537,19 @@ def compare_source_client_control(profile: str, case: str, original: Mapping[str
         raise harness.HarnessError("original source live-client control differs from its exact debug rejection")
 
 
+GUARDED_API_PROFILE_BASES = {
+    "guarded": "release",
+    "guarded-debug-1": "debug-1",
+    "guarded-secure-3": "secure-3",
+    "guarded-stat-2": "stat-2",
+}
+
+
 def api_profile_flags(profile: str) -> tuple[str, ...]:
+    if profile in GUARDED_API_PROFILE_BASES:
+        ordinary = api_profile_flags(GUARDED_API_PROFILE_BASES[profile])
+        return (*(flag for flag in ordinary if not flag.startswith("-DMI_GUARDED=")),
+                "-DMI_GUARDED=1")
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))
                   and not (profile in ("secure-1", "secure-2", "secure-3") and flag.startswith("-DMI_SECURE=")))
@@ -552,6 +564,14 @@ def api_profile_flags(profile: str) -> tuple[str, ...]:
         "debug-2": ("-DMI_DEBUG=2", "-DMI_STAT=2", "-DMI_PADDING=1"),
         "debug-3": ("-DMI_DEBUG=3", "-DMI_STAT=2", "-DMI_PADDING=1"),
     }[profile])
+
+
+def api_profile_features(profile: str) -> tuple[str, ...]:
+    """Select actual crate features independently of the source C macro names."""
+    ordinary = GUARDED_API_PROFILE_BASES.get(profile, profile)
+    api_profile_flags(ordinary)
+    features = () if ordinary == "release" else (f"mi-{ordinary}",)
+    return ("mi-guarded", *features) if profile in GUARDED_API_PROFILE_BASES else features
 
 
 def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER,
@@ -578,11 +598,12 @@ def build_adapter_library(temporary: Path, profile: str = "release") -> Path:
     """Build the native adapter static library in this run's own target."""
 
     target_dir = temporary / "cargo-target"
+    features = api_profile_features(profile)
     build = harness.command_record(
         [
             harness.require_tool("cargo"), "build", "--locked", "--release", "--message-format=json", "--target", RUST_TARGET,
             "-p", ADAPTER_PACKAGE, "--target-dir", str(target_dir),
-            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ()),
+            *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in features)) if features else ()),
         ],
         cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )

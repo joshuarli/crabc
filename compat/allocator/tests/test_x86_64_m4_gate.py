@@ -24,6 +24,27 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
+    def test_guarded_profiles_select_independent_source_and_rust_features(self) -> None:
+        for profile, base in (("guarded", "release"), ("guarded-debug-1", "debug-1"),
+                              ("guarded-secure-3", "secure-3"), ("guarded-stat-2", "stat-2")):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+                flags = gate.api_profile_flags(profile)
+                ordinary = gate.api_profile_flags(base)
+                self.assertEqual([flag for flag in flags if flag.startswith("-DMI_GUARDED=")],
+                                 ["-DMI_GUARDED=1"])
+                self.assertEqual([flag for flag in flags if not flag.startswith("-DMI_GUARDED=")],
+                                 [flag for flag in ordinary if not flag.startswith("-DMI_GUARDED=")])
+                features = ("mi-guarded", *((f"mi-{base}",) if base != "release" else ()))
+                self.assertEqual(gate.api_profile_features(profile), features)
+                with mock.patch.object(harness, "require_tool", return_value="/cargo"), \
+                        mock.patch.object(harness, "command_record", return_value={"status": 0}) as compile, \
+                        mock.patch.object(harness, "require_success"), \
+                        mock.patch.object(harness, "artifact_record", return_value={}):
+                    gate.build_adapter_library(Path(directory), profile)
+                command = compile.call_args.args[0]
+                self.assertEqual(command[command.index("--features") + 1],
+                                 ",".join(f"crabc-mimalloc/{feature}" for feature in features))
+
     def test_internal_debug_c_build_selects_exact_numeric_level(self) -> None:
         for profile, level in (("debug-2", 2), ("debug-3", 3)):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
