@@ -106,6 +106,24 @@ pub(crate) enum MainStaticDeferredFreeAllocationPhase {
     },
 }
 
+/// Captures scalar source identity while the original initial engine is
+/// still admitted, preserving checked refusal across later callback phases.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+fn initial_guarded_canonical_phase(
+    source: crate::deferred_free::DeferredFreeSource,
+    phase: crate::single_thread::GuardedCanonicalAllocationPhase,
+) -> Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal> {
+    phase.map(|phase| match phase {
+        DeferredFreeAllocationPhase::Complete(block) => MainStaticDeferredFreeAllocationPhase::Complete(block),
+        DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+            MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation }
+        }
+        DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+            MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation }
+        }
+    })
+}
+
 /// An initial-owner aligned request before its ordinary base allocator
 /// runs. Plain continuations retain no engine projection across sampling.
 #[must_use = "an initial aligned admission must complete or resume its plain allocation"]
@@ -1483,14 +1501,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Runs one allocation operation while preserving the permanent
     /// ticket-zero owner's source arena/page-map transition.
     ///
-    /// Ordinary and aligned allocation share this lifecycle: a first request
-    /// consumes one admitted source-start regular parent or reserves exactly
-    /// one source default arena, and a dormant owner may only reactivate that
-    /// same arena. Production releases its short setup
-    /// lease before an active engine can publish a client, then relies on the
-    /// engine's exact-owned-range PageMap contract. The operation itself
-    /// selects only the source allocation primitive; it cannot change the
-    /// owner state machine.
+    /// The production source-process route binds its existing registry and
+    /// activates the engine before any backing search or mapping attempt.
+    /// Its preparation refusals are distinct from the operation's completed
+    /// source-null result: even that null result leaves the engine active.
+    /// The legacy sidecar fixture instead reserves its selected first arena
+    /// before activation. Both routes release their short setup boundary
+    /// before publishing a client and preserve the supplied operation's
+    /// result without changing its source allocation primitive.
     fn allocate_with<R>(
         &mut self,
         request: usize,
@@ -2299,6 +2317,78 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 }
             }
         })
+    }
+
+    /// Starts the source canonical allocator while keeping owner preparation
+    /// refusal separate from checked engine refusal and completed source null.
+    /// The production source registry performs backing allocation only after
+    /// this method has activated the original initial engine.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) fn begin_deferred_free_guarded_canonical_checked_current_initial_thread_local(
+        &mut self, source_size: usize,
+    ) -> Option<Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal>> {
+        let page_map = match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { reservation, .. } => reservation.page_map(),
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.page_map,
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { page_map, .. } => *page_map,
+            _ => return None,
+        };
+        let page_size = page_map.memory_config().ok()?.page_size().bytes();
+        if source_size <= page_size || source_size % page_size != 0 {
+            return Some(Err(crate::single_thread::GuardedCanonicalAllocationRefusal));
+        }
+        let Some(request) = source_size.checked_sub(crate::config::PADDING_SIZE) else {
+            return Some(Err(crate::single_thread::GuardedCanonicalAllocationRefusal));
+        };
+        self.allocate_with(request, |engine| {
+            let source = engine.deferred_free_source()?;
+            Some(initial_guarded_canonical_phase(source,
+                engine.begin_deferred_free_guarded_canonical_checked(source_size)))
+        })
+    }
+
+    /// Resumes checked canonical collection on the retained initial issuer.
+    /// Matching source identity observes this permanent owner; it does not
+    /// authorize reopening an owner after a terminal transition.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) fn resume_deferred_free_guarded_canonical_current_initial_thread_local(
+        &mut self, source: crate::deferred_free::DeferredFreeSource,
+        collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Option<Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal>> {
+        let MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) = &mut self.state else { return None };
+        if !active.engine.deferred_free_source().is_some_and(|current| source.matches_current(current)) {
+            return None;
+        }
+        Some(initial_guarded_canonical_phase(source,
+            active.engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)))
+    }
+
+    /// Resumes the checked canonical counter prefix after actual option
+    /// capture, preserving any explicit refusal selected by the engine.
+    ///
+    /// # Safety
+    /// The originating initial Theap, Heap and process admission remain
+    /// retained from the counter prefix through the getter and this call.
+    /// The source-clamped frequency comes from that same process. No callback
+    /// may retire, replace or rebind the original issuer; address matches
+    /// alone do not establish its retained lifetime.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn resume_guarded_canonical_frequency_current_initial_thread_local(
+        &mut self, source: crate::deferred_free::DeferredFreeSource,
+        request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Option<Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal>> {
+        let MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) = &mut self.state else { return None };
+        if !active.engine.deferred_free_source().is_some_and(|current| source.matches_current(current)) {
+            return None;
+        }
+        // SAFETY: the caller retains the original counter issuer and actual
+        // process admission across the getter; no fresh authority is minted.
+        let phase = unsafe {
+            active.engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation)
+        };
+        Some(initial_guarded_canonical_phase(source, phase))
     }
 
     /// Selects an aligned cached head before the caller can disable guarded
@@ -4212,6 +4302,75 @@ mod tests {
         })
         .join()
         .expect("the persistent initial OS-list regression remains current-thread local");
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn source_initial_failed_mapping_keeps_active_engine_for_checked_canonical_retry() {
+        fn complete(
+            allocator: &mut MainStaticRuntimeFirstArenaPageAllocator,
+            mut phase: MainStaticDeferredFreeAllocationPhase,
+        ) -> Option<NonNull<u8>> {
+            for _ in 0..16 {
+                phase = match phase {
+                    MainStaticDeferredFreeAllocationPhase::Complete(block) => return block,
+                    MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation } => {
+                        allocator.resume_deferred_free_guarded_canonical_current_initial_thread_local(
+                            source, collection, continuation,
+                        ).expect("the original source owner remains selected")
+                            .expect("source mapping exhaustion is a completed null, not owner refusal")
+                    }
+                    MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation } => {
+                        let frequency = allocator.allocation_process().unwrap().policy().generic_collect_frequency();
+                        // SAFETY: this fixture retains the original initial
+                        // issuer and process through actual option capture.
+                        unsafe {
+                            allocator.resume_guarded_canonical_frequency_current_initial_thread_local(
+                                source, request, frequency, continuation,
+                            )
+                        }.unwrap().unwrap()
+                    }
+                };
+            }
+            panic!("the source retry completes without cycling its collection phases");
+        }
+        thread::spawn(|| {
+            let owner = process_main_with_first_arena_options(
+                memory_config(), MainSubprocess::test_static_owner(), 128 * 1024 * 1024, 2, 1,
+            );
+            let binding = owner.ready().unwrap().process_backing().unwrap();
+            let session = owner.begin_process_lifetime_page_session().unwrap();
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, binding, ProcessSharedArenaStorage::test_static_owner(),
+            ).unwrap();
+            assert!(matches!(&allocator.state,
+                MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }));
+            // Process and PageMap setup has completed. Every backing mapping
+            // of this first source canonical attempt now fails genuinely.
+            let fault = fault::install(fault::Plan::every(fault::Point::Map, crabc_core::Errno::NOMEM));
+            let phase = allocator.begin_deferred_free_guarded_canonical_checked_current_initial_thread_local(8192)
+                .expect("source registry preparation needs no backing mapping").unwrap();
+            assert_eq!(complete(&mut allocator, phase), None);
+            assert!(fault.observed() > 0, "the actual source backing attempted mapping");
+            let original_engine = match &allocator.state {
+                MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => core::ptr::addr_of!(active.engine).addr(),
+                _ => panic!("completed first-map exhaustion preserves the active source engine"),
+            };
+            fault.set(fault::Plan::disabled());
+            let phase = allocator.begin_deferred_free_guarded_canonical_checked_current_initial_thread_local(8192)
+                .unwrap().unwrap();
+            let client = complete(&mut allocator, phase).expect("the original source owner retries successfully");
+            assert_eq!(match &allocator.state {
+                MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => core::ptr::addr_of!(active.engine).addr(),
+                _ => panic!("successful retry retains its original source engine"),
+            }, original_engine);
+            let allocation = unsafe { binding.page_map().lookup_live_allocation(client) }.unwrap().unwrap();
+            assert_eq!(unsafe {
+                allocator.free_captured_live_allocation_with_progress_current_initial_thread_local(allocation)
+            }, Some(crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))));
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        }).join().unwrap();
     }
 
     #[cfg(target_arch = "x86_64")]

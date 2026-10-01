@@ -45,6 +45,8 @@ use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_init::{ProcessMainBackingBinding, ProcessMainInitializationStorage};
 use crate::runtime_lifecycle::{native_allocate_aligned, native_free, NativePageAllocationResult, NativePageFreeResult};
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+use crate::runtime_lifecycle::NativeGuardedCanonicalAllocationProgress;
 use crate::subproc::MainSubprocess;
 use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSlotIndex, TLS_INDEX_BITS, TLS_INDEX_MASK};
 use crate::types::heap_registry::lifecycle::{HeapKeySource, HeapReleaseError, HeapReleaseOutcome, NonMainHeapImage};
@@ -1256,30 +1258,49 @@ pub(crate) unsafe fn native_theap_allocate_guarded_canonical(
     theap: NonNull<Theap>,
     source_size: usize,
 ) -> Option<Option<NonNull<u8>>> {
+    // SAFETY: this compatibility adapter forwards the retained exact-owner
+    // obligations; source drivers use the explicit progress transport.
+    match unsafe { native_theap_allocate_guarded_canonical_progress(theap, source_size) } {
+        NativeGuardedCanonicalAllocationProgress::OtherDomain => None,
+        NativeGuardedCanonicalAllocationProgress::Refused => Some(None),
+        NativeGuardedCanonicalAllocationProgress::Complete(block) => Some(block),
+    }
+}
+
+/// Allocates the canonical backing extent with explicit source completion.
+///
+/// # Safety
+/// The exact selected Theap, Heap, TLD and native admission remain retained
+/// before allocation through every getter, callback and continuation. The
+/// caller excludes retirement, thread exit and concurrent local fields.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) unsafe fn native_theap_allocate_guarded_canonical_progress(
+    theap: NonNull<Theap>, source_size: usize,
+) -> NativeGuardedCanonicalAllocationProgress {
+    use NativeGuardedCanonicalAllocationProgress::{OtherDomain, Refused, Complete};
     // SAFETY: the caller retains the selected source image and its Heap.
-    let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+    let Some(heap) = NonNull::new(unsafe { Theap::heap_at(theap) }) else { return OtherDomain };
     // SAFETY: the retained Heap's immutable subprocess identity is copied
     // without borrowing independently accessed Heap metadata.
     if unsafe { Heap::subprocess_pointer_at(heap) } != MainSubprocess::global().identity_ptr() {
-        return None;
+        return OtherDomain;
     }
-    let Some(thread) = current_main_thread() else { return Some(None) };
-    if theap == thread.theap {
-        return None;
-    }
+    let Some(thread) = current_main_thread() else { return Refused };
+    if theap == thread.theap { return OtherDomain; }
     // SAFETY: the source image remains initialized for this scalar check.
-    if unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
-        return Some(None);
-    }
+    if unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() { return Refused; }
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
-        return Some(None);
+        return Refused;
     };
-    let Some(phase) = with_theap_engine(thread, theap, |engine| {
-        engine.begin_deferred_free_guarded_canonical(source_size)
-    }) else { return Some(None) };
+    let Some(Ok(phase)) = with_theap_engine(thread, theap, |engine| {
+        engine.begin_deferred_free_guarded_canonical_checked(source_size)
+    }) else { return Refused };
     // SAFETY: the caller retains this original selected owner through all
     // callbacks and the native admission remains held beside this phase.
-    Some(unsafe { finish_allocation_on_theap(thread, theap, phase) })
+    match unsafe { finish_guarded_canonical_allocation_on_theap(thread, theap, phase) } {
+        Ok(block) => Complete(block),
+        Err(()) => Refused,
+    }
 }
 
 /// # Safety
@@ -1339,6 +1360,48 @@ unsafe fn finish_allocation_on_theap(
                 phase = with_theap_engine(thread, theap, |engine| {
                     engine.resume_deferred_free_allocation(collection, continuation)
                 })?;
+            }
+        }
+    }
+}
+
+
+/// # Safety
+/// The caller retains the phase's original Theap, Heap, TLD and admission
+/// through every synchronous getter, callback and continuation.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+unsafe fn finish_guarded_canonical_allocation_on_theap(
+    thread: MainThread,
+    theap: NonNull<Theap>,
+    mut phase: crate::single_thread::DeferredFreeAllocationPhase,
+) -> Result<Option<NonNull<u8>>, ()> {
+    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
+    loop {
+        match phase {
+            DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                // The actual process binding and selected owner outlive this
+                // operation; no engine or TLS projection crosses the getter.
+                let frequency = binding().ok_or(())?.process().policy().generic_collect_frequency();
+                phase = with_theap_engine(thread, theap, |engine| {
+                    // SAFETY: the caller retained this original issuer
+                    // across the getter, with native admission still held.
+                    unsafe { engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation) }
+                }).ok_or(())?.map_err(|_| ())?;
+            }
+            DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                let force = matches!(collection, GenericAllocationCollection::Force);
+                if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {
+                    // SAFETY: this thread's live TLD outlives the synchronous
+                    // callback, and nothing of this module is borrowed across it.
+                    let _ = unsafe {
+                        crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() })
+                    };
+                }
+                phase = with_theap_engine(thread, theap, |engine| {
+                    engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)
+                }).ok_or(())?.map_err(|_| ())?;
             }
         }
     }
@@ -2111,6 +2174,8 @@ pub(crate) mod tests {
                     core::ptr::addr_of_mut!(state).cast()) };
                 assert_eq!(unsafe { native_theap_allocate_guarded_canonical(selected, 1) }, Some(None));
                 assert_eq!(unsafe { native_theap_allocate_guarded_canonical(default, 8192) }, None);
+                assert_eq!(unsafe { native_theap_allocate_guarded_canonical_progress(default, 8192) },
+                    NativeGuardedCanonicalAllocationProgress::OtherDomain);
                 let first = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }.expect("the selected auxiliary main domain")
                     .expect("one canonical guarded backing block");
                 let second = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }.expect("the selected auxiliary main domain")
@@ -2184,13 +2249,15 @@ pub(crate) mod tests {
                 assert_eq!(unsafe { getrlimit(9, &mut previous) }, 0);
                 let limited = [1usize, previous[1]];
                 assert_eq!(unsafe { setrlimit(9, &limited) }, 0);
-                let refused = unsafe { native_theap_allocate_guarded_canonical(selected, 1 << 30) };
+                let refused = unsafe { native_theap_allocate_guarded_canonical_progress(selected, 1 << 30) };
                 // Restore before assertions or client diagnostics can allocate.
                 let restored = unsafe { setrlimit(9, &previous) };
                 assert_eq!(restored, 0);
-                assert_eq!(refused, Some(None), "owned OOM must not decline to another allocator");
-                let block = unsafe { native_theap_allocate_guarded_canonical(selected, 8192) }
-                    .expect("the same auxiliary owner").expect("allocation resumes after mapping failure");
+                assert_eq!(refused, NativeGuardedCanonicalAllocationProgress::Complete(None),
+                    "a completed source mapping failure remains distinct from refused admission");
+                let NativeGuardedCanonicalAllocationProgress::Complete(Some(block)) =
+                    (unsafe { native_theap_allocate_guarded_canonical_progress(selected, 8192) })
+                    else { panic!("the same source owner resumes after mapping failure") };
                 assert_eq!(unsafe { heap_of_block(block) }, Some(heap));
                 assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
