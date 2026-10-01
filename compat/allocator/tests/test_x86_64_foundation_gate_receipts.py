@@ -362,12 +362,26 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         self.guarded_authority = {key: self.guarded["physical_inputs"][key] for key in self.authority}
         self.guarded_authority["tools"] = self.authority["tools"]
         self.guarded["physical_inputs"].update(self.guarded_authority)
+        page_program = self.producer.program.with_name("page-compiler")
+        metadata = json.loads(self.producer.program.read_text())
+        for name in ("mi-debug-1", "mi-stat-1", "mi-stat-2"):
+            metadata["args"].extend(["--cfg", f'feature="{name}"'])
+        page_program.write_text(json.dumps(metadata))
+        page_program.with_suffix(".d").write_bytes(self.producer.program.with_suffix(".d").read_bytes())
+        self.producer.contract["miri_page_ownership"] = {**self.contract["miri_ownership"], "features": ["mi-debug-1"]}
+        self.contract["miri_page_ownership"] = self.producer.contract["miri_page_ownership"]
+        with mock.patch.dict(self.producer.environment, {"MIRI_TEST_PROGRAM": str(page_program)}):
+            self.page, _calls = self.producer.execute(profile=local.MiriProfile.PAGE_OWNERSHIP)
+        self.page_authority = {key: self.page["physical_inputs"][key] for key in self.authority}
+        self.page_authority["tools"] = self.authority["tools"]
+        self.page["physical_inputs"].update(self.page_authority)
         checks = {name: {"status": "passed", "unmet": []}
                   for component in self.contract["components"] for name in component["checks"]}
         self.ownership["physical_inputs"].update(self.authority)
         checks["miri"] = self.miri
         checks["miri-ownership"] = self.ownership
         checks["miri-guarded-ownership"] = self.guarded
+        checks["miri-page-ownership"] = self.page
         checks["prerequisites"] = {"unmet": ["memory substrate remains incomplete"]}
         self.report = {"source": {}, "checks": checks,
                        "contract_sha256": reader.harness.file_digest(local.CONTRACT_PATH),
@@ -409,6 +423,24 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                                       [local.RUST_TRACE_TEST], execution)},
                           "physical_inputs": {"build": unit, "binary": unit["artifact"],
                               "listing": self.native_listing, "commands": {local.RUST_TRACE_TEST: execution}}})
+        self.contract["rust_page_ownership_batch"] = {"features": ["mi-debug-1"], "module_prefixes": [local.RUST_TRACE_TEST]}
+        self.page_binary = target / "page-unit-program"
+        self.page_binary.write_bytes(self.unit_binary.read_bytes())
+        page_unit = json.loads(json.dumps(unit))
+        page_unit["artifact"] = h.artifact_record(self.page_binary)
+        page_command = local.unit_test_command(self.contract["rust_page_ownership_batch"])
+        page_unit["build_command"] = page_command
+        page_unit["build"]["command"] = page_command
+        message = json.loads(page_unit["build"]["stdout"])
+        message.update({"executable": str(self.page_binary), "features": ["mi-debug-1", "mi-stat-1", "mi-stat-2"]})
+        page_unit["build"]["stdout"] = json.dumps(message)
+        page_check = json.loads(json.dumps(unit_check))
+        page_check["binary"] = str(self.page_binary)
+        page_check["physical_inputs"]["build"] = page_unit
+        page_check["physical_inputs"]["binary"] = page_unit["artifact"]
+        page_check["physical_inputs"]["listing"]["command"][0] = str(self.page_binary)
+        page_check["physical_inputs"]["commands"][local.RUST_TRACE_TEST]["command"][0] = str(self.page_binary)
+        self.report["checks"]["rust-page-ownership-batch"] = page_check
         self.native_execution = execution
         specification = next(row for row in self.contract["workloads"] if row["generator"] == "queue-candidate-front")
         self.contract["workloads"] = [specification]
@@ -533,7 +565,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
              mock.patch.object(reader.harness, "require_tool", return_value="musl-gcc"), \
              mock.patch.object(self.local, "generate_owner_workloads", return_value=self.owner_workloads), \
              mock.patch.object(self.local, "load_contract", return_value=self.contract), \
-             mock.patch.object(self.local, "_miri_compiler_inputs", side_effect=lambda listing, selected: self.guarded_authority if selected.get("features") else self.authority), \
+             mock.patch.object(self.local, "_miri_compiler_inputs", side_effect=lambda listing, selected: self.page_authority if selected.get("features") == ["mi-debug-1"] else self.guarded_authority if selected.get("features") else self.authority), \
              mock.patch.object(reader, "authenticate_source"), \
              mock.patch.object(reader.harness, "runtime_ticket_zero_soak_source_state", return_value={}), \
              mock.patch.object(reader.harness, "TEMP_ROOT", self.producer.fixture / "reader-scratch"), \
@@ -596,6 +628,21 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                     self.ownership.clear()
                     self.ownership.update(original)
 
+    def test_page_profile_cannot_substitute_an_ordinary_compiler_program(self):
+        self.page["physical_inputs"]["program"] = self.authority["program"]
+        with self.assertRaisesRegex(reader.harness.HarnessError, "physical input authority changed"):
+            self.read(native_only=True)
+        self.assertEqual(self.executions, [])
+
+    def test_native_page_profile_cannot_erase_compiler_feature_ancestry(self):
+        build = self.report["checks"]["rust-page-ownership-batch"]["physical_inputs"]["build"]["build"]
+        message = json.loads(build["stdout"])
+        message["features"] = ["mi-debug-1"]
+        build["stdout"] = json.dumps(message)
+        with self.assertRaisesRegex(reader.harness.HarnessError, "unit features differ"):
+            self.read(native_only=True)
+        self.assertFalse(any(call.args[0][0] == str(self.page_binary) for call in self.executions))
+
     def test_guarded_profile_cannot_substitute_an_ordinary_compiler_program(self):
         self.guarded["physical_inputs"]["program"] = self.authority["program"]
         with self.assertRaisesRegex(reader.harness.HarnessError, "physical input authority changed"):
@@ -653,7 +700,9 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         def replay(command, timeout, **options):
             private = json.loads(Path(command[2]).read_text())
             selected_original = (json.loads((ROOT / self.guarded_authority["program"]["path"]).read_text())
-                                 if 'feature="mi-guarded"' in private["args"] else original)
+                                 if 'feature="mi-guarded"' in private["args"] else
+                                 json.loads((ROOT / self.page_authority["program"]["path"]).read_text())
+                                 if 'feature="mi-debug-1"' in private["args"] else original)
             args = list(selected_original["args"])
             out = args.index("--out-dir") + 1
             incremental = next(index + 1 for index, value in enumerate(args[:-1])
@@ -675,7 +724,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
             self.assertEqual(options["env"][self.local.FRESH_TEST_CHILD_ENV], name)
             return next(row for row in self.miri["physical_inputs"]["commands"]["fixture::"] if row["command"][-1] == name)
         self.assertEqual(self.read(replay), self.report)
-        self.assertEqual(len(observed), 7)
+        self.assertEqual(len(observed), 9)
         self.assertEqual(json.loads((ROOT / self.authority["program"]["path"]).read_text()), original)
 
     def test_raw_group_order_survives_sorted_json_report_keys(self):
@@ -692,7 +741,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                         for row in rows if row["command"][-1] == command[-1])
         self.assertEqual(self.read(replay), self.report)
         self.assertEqual(sum(call.args[0][0] == self.authority["tools"]["cargo-miri"]["executable_path"]
-                             for call in self.executions), 7)
+                             for call in self.executions), 9)
 
     def test_wrong_pinned_tool_directory_is_rejected_before_interpretation(self):
         self.authority["tools"]["miri"]["executable_path"] = "/ambient/bin/miri"

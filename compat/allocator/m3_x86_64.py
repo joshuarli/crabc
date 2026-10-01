@@ -49,6 +49,7 @@ import re
 import shlex
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -82,6 +83,8 @@ OWNER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-persistent-owner-trace-latest.j
 MIRI_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-latest.json"
 MIRI_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-ownership-latest.json"
 MIRI_GUARDED_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-guarded-ownership-latest.json"
+MIRI_PAGE_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-page-ownership-latest.json"
+PAGE_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-page-ownership-latest.json"
 QUEUE_REORDER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-queue-reorder-latest.json"
 ARTIFACT_ROOT = run.ARTIFACT_ROOT / "x86_64/m3-local-engine"
 
@@ -581,11 +584,13 @@ def run_c_trace(
     run.require_success(record, f"pinned C M3 {mode} trace for {workload.name}")
 
 
-def rust_test_binary() -> Path:
-    command = [
-        "cargo", "test", "--locked", "--target", TARGET, "-p", "crabc-mimalloc", "--lib",
-        "--no-default-features", "--no-run", "--message-format=json",
-    ]
+def unit_test_command(profile: Mapping[str, Any] | None = None) -> list[str]:
+    return ["cargo", "test", "--locked", "--target", TARGET, "-p", "crabc-mimalloc", "--lib",
+            "--no-default-features", *cargo_feature_args(profile or {}), "--no-run", "--message-format=json"]
+
+
+def rust_test_binary(*, profile: Mapping[str, Any] | None = None) -> Path:
+    command = unit_test_command(profile)
     record = run.command_record(command, cwd=ROOT, timeout_seconds=3600)
     run.require_success(record, "Rust M3 local-trace test build")
     executables: list[str] = []
@@ -605,7 +610,8 @@ def rust_test_binary() -> Path:
         raise GateError(f"expected one crabc-mimalloc unit test executable, found {executables}")
     binary = Path(executables[0])
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
-    run.write_json(ARTIFACT_ROOT / "rust-unit-build.json", {
+    build_path = ARTIFACT_ROOT / ("rust-page-ownership-build.json" if profile is not None else "rust-unit-build.json")
+    run.write_json(build_path, {
         "artifact": run.artifact_record(binary), "build": record, "build_command": command,
     })
     return binary
@@ -1455,8 +1461,10 @@ def summarize_group(prefix: str, selected: Sequence[str], record: Mapping[str, A
     }
 
 
-def run_unit_batch(contract: Mapping[str, Any], binary: Path) -> dict[str, Any]:
-    prefixes = contract["rust_unit_batch"]["module_prefixes"]
+def run_unit_batch(contract: Mapping[str, Any], binary: Path, *, page_ownership: bool = False) -> dict[str, Any]:
+    profile = contract["rust_page_ownership_batch" if page_ownership else "rust_unit_batch"]
+    prefixes = profile["module_prefixes"]
+    stem = "rust-page-ownership" if page_ownership else "rust-unit"
     listing = run.command_record((str(binary), "--list", "--format", "terse"), cwd=ROOT, timeout_seconds=600)
     run.require_success(listing, "Rust M3 unit test listing")
     groups = select_by_prefix(str(listing["stdout"]), prefixes)
@@ -1475,14 +1483,14 @@ def run_unit_batch(contract: Mapping[str, Any], binary: Path) -> dict[str, Any]:
         logs.append(f"### {prefix}\n{record['stdout']}\n{record['stderr']}")
         results[prefix] = summarize_group(prefix, selected, record)
         unmet += [f"{prefix} {item}" for item in results[prefix]["unmet"]]
-    (ARTIFACT_ROOT / "rust-unit-batch.log").write_text("\n".join(logs), encoding="utf-8")
+    (ARTIFACT_ROOT / (stem + "-batch.log")).write_text("\n".join(logs), encoding="utf-8")
     return {
         "binary": str(binary),
         "physical_inputs": {
             "binary": run.artifact_record(binary),
-            "build": run.read_json(ARTIFACT_ROOT / "rust-unit-build.json"),
+            "build": run.read_json(ARTIFACT_ROOT / (stem + "-build.json")),
             "listing": listing, "commands": commands,
-            "log": run.artifact_record(ARTIFACT_ROOT / "rust-unit-batch.log"),
+            "log": run.artifact_record(ARTIFACT_ROOT / (stem + "-batch.log")),
         },
         "groups": results,
         "passed": sum(group["passed"] for group in results.values()),
@@ -1495,15 +1503,39 @@ class MiriProfile(Enum):
     LOCAL = "miri"
     OWNERSHIP = "miri_ownership"
     GUARDED_OWNERSHIP = "miri_guarded_ownership"
+    PAGE_OWNERSHIP = "miri_page_ownership"
+
+
+def cargo_feature_args(profile: Mapping[str, Any]) -> list[str]:
+    features = profile.get("features", [])
+    if (not isinstance(features, list) or any(not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", name)
+                                            for name in features) or len(set(features)) != len(features)):
+        raise GateError("selected features must be distinct Cargo feature names")
+    return ["--features", ",".join(features)] if features else []
+
+
+def cargo_selected_features(profile: Mapping[str, Any]) -> list[str]:
+    # Rust's selected cfg includes local feature ancestry, even though Cargo
+    # receives only the coarse profile names. Read the same retained manifest
+    # that selected the compiler input, rather than hardcoding its hierarchy.
+    cargo_feature_args(profile)
+    definitions = tomllib.loads((ROOT / "crabc-mimalloc/Cargo.toml").read_text())["features"]
+    selected: set[str] = set()
+    pending = list(profile.get("features", []))
+    while pending:
+        name = pending.pop()
+        if name in selected:
+            continue
+        if name not in definitions:
+            raise GateError(f"selected allocator feature is undeclared: {name}")
+        selected.add(name)
+        pending.extend(dependency for dependency in definitions[name] if dependency in definitions)
+    return sorted(selected)
 
 
 def miri_command(miri: Mapping[str, Any]) -> list[str]:
-    features = miri.get("features", [])
-    if (not isinstance(features, list) or any(not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", name)
-                                            for name in features) or len(set(features)) != len(features)):
-        raise GateError("Miri selected features must be distinct Cargo feature names")
     return ["cargo", "miri", "test", "--locked", "--target", miri["target"], "-p", "crabc-mimalloc",
-            "--lib", "--no-default-features", *(["--features", ",".join(features)] if features else []), "--"]
+            "--lib", "--no-default-features", *cargo_feature_args(miri), "--"]
 
 
 def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -> dict[str, Any]:
@@ -1529,7 +1561,7 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
     cfgs = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "--cfg"]
     cfgs.extend(value.removeprefix("--cfg=") for value in args if value.startswith("--cfg="))
     features = [match.group(1) for cfg in cfgs if (match := re.fullmatch(r'feature="([^"]+)"', cfg))]
-    if sorted(features) != sorted(miri.get("features", [])):
+    if sorted(features) != cargo_selected_features(miri):
         raise GateError("Miri compiler runner features differ from the selected profile")
     if saved_environment["MIRI_BE_RUSTC"] != "host":
         raise GateError("Miri compiler runner does not preserve the selected host phase")
@@ -1788,7 +1820,7 @@ def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
 def evaluate_gate(contract: Mapping[str, Any], checks: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     required_checks = {
         "local-trace-differential", "queue-reorder-differential", "queue-retirement-differential",
-        "persistent-owner-trace-differential", "rust-unit-batch", "miri", "miri-ownership", "miri-guarded-ownership",
+        "persistent-owner-trace-differential", "rust-unit-batch", "miri", "miri-ownership", "miri-guarded-ownership", "miri-page-ownership", "rust-page-ownership-batch",
     }
     declared_checks = {check for component in contract["components"] for check in component["checks"]}
     omitted = required_checks - declared_checks
@@ -1875,6 +1907,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         action="store_true",
         help="run only strict guarded staged-ownership controls (development; no gate report)",
     )
+    parser.add_argument("--miri-page-ownership-only", action="store_true",
+                        help="run only strict fresh Page ownership controls (development; no gate report)")
+    parser.add_argument("--page-ownership-only", action="store_true",
+                        help="run only native fresh Page ownership controls (development; no gate report)")
     parser.add_argument(
         "--queue-reorder-only",
         action="store_true",
@@ -1887,7 +1923,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         # the immutable compiler/oracle image selected by the native launcher.
         qualification = not any((
             options.queue_reorder_only, options.miri_only, options.miri_ownership_only, options.miri_guarded_ownership_only,
-            options.owner_only, options.differential_only,
+            options.owner_only, options.differential_only, options.miri_page_ownership_only, options.page_ownership_only,
         ))
         source_before = run.runtime_ticket_zero_soak_source_state() if qualification else None
         contract = load_contract()
@@ -1903,12 +1939,22 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 print("\n".join(["M3 queue reorder differential failed:", *(f"  - {item}" for item in queue["unmet"])]), file=sys.stderr)
                 return 1
             return 0
-        if options.miri_only or options.miri_ownership_only or options.miri_guarded_ownership_only:
-            profile = (MiriProfile.GUARDED_OWNERSHIP if options.miri_guarded_ownership_only else
+        if options.page_ownership_only:
+            unit = run_unit_batch(contract, rust_test_binary(profile=contract["rust_page_ownership_batch"]), page_ownership=True)
+            run.write_json(PAGE_OWNERSHIP_REPORT_PATH, {"rust_unit_batch": unit, "provenance": provenance})
+            print(PAGE_OWNERSHIP_REPORT_PATH)
+            if unit["status"] != "passed":
+                print("\n".join(unit["unmet"]), file=sys.stderr)
+                return 1
+            return 0
+        if options.miri_only or options.miri_ownership_only or options.miri_guarded_ownership_only or options.miri_page_ownership_only:
+            profile = (MiriProfile.PAGE_OWNERSHIP if options.miri_page_ownership_only else
+                       MiriProfile.GUARDED_OWNERSHIP if options.miri_guarded_ownership_only else
                        MiriProfile.OWNERSHIP if options.miri_ownership_only else MiriProfile.LOCAL)
             miri = run_miri(contract, profile=profile)
             report_path = {MiriProfile.LOCAL: MIRI_REPORT_PATH, MiriProfile.OWNERSHIP: MIRI_OWNERSHIP_REPORT_PATH,
-                           MiriProfile.GUARDED_OWNERSHIP: MIRI_GUARDED_OWNERSHIP_REPORT_PATH}[profile]
+                           MiriProfile.GUARDED_OWNERSHIP: MIRI_GUARDED_OWNERSHIP_REPORT_PATH,
+                           MiriProfile.PAGE_OWNERSHIP: MIRI_PAGE_OWNERSHIP_REPORT_PATH}[profile]
             run.write_json(report_path, {"miri": miri, "provenance": provenance})
             print(report_path)
             if miri["status"] != "passed":
@@ -1944,9 +1990,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "queue-retirement-differential": run_queue_retirement_differential(contract),
             "persistent-owner-trace-differential": run_owner_differential(contract, offline=options.offline),
             "rust-unit-batch": run_unit_batch(contract, rust_binary),
+            "rust-page-ownership-batch": run_unit_batch(contract, rust_test_binary(profile=contract["rust_page_ownership_batch"]), page_ownership=True),
             "miri": run_miri(contract),
             "miri-ownership": run_miri(contract, profile=MiriProfile.OWNERSHIP),
             "miri-guarded-ownership": run_miri(contract, profile=MiriProfile.GUARDED_OWNERSHIP),
+            "miri-page-ownership": run_miri(contract, profile=MiriProfile.PAGE_OWNERSHIP),
         }
         if run.sha256_file(LOCKFILE) != lockfile:
             raise GateError("Cargo.lock changed during the --locked M3 gate")

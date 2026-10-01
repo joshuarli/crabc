@@ -246,11 +246,38 @@
       "mi-guarded"
     ]
   },
+  "miri_page_ownership": {
+    "target": "x86_64-unknown-linux-gnu",
+    "features": [
+      "mi-debug-1"
+    ],
+    "miriflags": [
+      "-Zmiri-strict-provenance"
+    ],
+    "module_prefixes": [
+      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw"
+    ],
+    "required_tests": [
+      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw"
+    ]
+  },
+  "rust_page_ownership_batch": {
+    "features": [
+      "mi-debug-1"
+    ],
+    "module_prefixes": [
+      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw",
+      "arena::owned::tests::fresh_arena_initialization_keeps_successful_prefix_with_original_custody",
+      "os_page::tests::borrowed_on_demand_initial_prefix_failure_cannot_publish_or_repeat_accounting",
+      "types::tests::source_page_map_failure_precedes_fresh_page_key_random_draws",
+      "arena::owned::tests::fresh_arena_registered_page_rollback_retains_progress_through_reentrant_purge"
+    ]
+  },
   "components": [
     {
       "id": "heap-theap-bootstrap",
       "source_scope": "src/init.c _mi_theap_empty/MI_PAGE_QUEUES_EMPTY images and src/theap.c _mi_theap_init/mi_theap_options_init for the page-bearing local Theap: queue block sizes, empty direct cache, retired bounds, counters, and page-full/abandon/reclaim option image. Selected staged initialization retains the original prefix across warning callbacks, reads the current TLD head after nested creation, rejects recapture, resets only unattached failure, and retains linked storage after publication failure.",
-      "checks": ["local-trace-differential", "rust-unit-batch", "miri-ownership", "miri-guarded-ownership"],
+      "checks": ["local-trace-differential", "rust-unit-batch", "miri-ownership", "miri-guarded-ownership", "rust-page-ownership-batch", "miri-page-ownership"],
       "remaining_conditions": []
     },
     {
@@ -285,8 +312,8 @@
     },
     {
       "id": "miri-execution",
-      "source_scope": "Strict-provenance Miri (Stacked Borrows) over the complete local trace engine, all reachable bin queue/free-list primitive matrices, and page geometry: arena management, PageMap initialize/register/unregister/destroy, fresh pages, intrusive queue and full-queue transitions, free-list extend/pop/push/collect, retirement and release, with provenance, initialization, pointer arithmetic, and mapping lifetimes through crabc-core's cfg(miri) kernel model beneath the unchanged os.rs. A concurrent foreign-free rejection proves atomic owner identity is checked before borrowing ordinary page metadata. A separate selected ordinary-profile execution proves staged initializer callback/list/token custody and generic-frequency completion after nested counter reset, foreign-issuer refusal, and frequency bound refusal; The guarded-profile execution additionally proves zero-seed random draws precede bound-option callbacks on the unpublished image; complete process initialization remains a prerequisite.",
-      "checks": ["miri", "miri-ownership", "miri-guarded-ownership"],
+      "source_scope": "Strict-provenance Miri (Stacked Borrows) over the complete local trace engine, all reachable bin queue/free-list primitive matrices, and page geometry: arena management, PageMap initialize/register/unregister/destroy, fresh pages, intrusive queue and full-queue transitions, free-list extend/pop/push/collect, retirement and release, with provenance, initialization, pointer arithmetic, and mapping lifetimes through crabc-core's cfg(miri) kernel model beneath the unchanged os.rs. A concurrent foreign-free rejection proves atomic owner identity is checked before borrowing ordinary page metadata. A separate selected ordinary-profile execution proves staged initializer callback/list/token custody and generic-frequency completion after nested counter reset, foreign-issuer refusal, and frequency bound refusal. The guarded-profile execution additionally proves zero-seed random draws precede bound-option callbacks on the unpublished image. Selected debug-key fresh Page controls separately retain original primary/self and Theap random capabilities across registration and later key draws, refuse foreign and repeated completion; native execution retains original prefix custody through callback progress and exactly-once cleanup and additionally reaches failed lazy PageMap registration and registered rollback. Complete process initialization remains a prerequisite.",
+      "checks": ["miri", "miri-ownership", "miri-guarded-ownership", "miri-page-ownership"],
       "remaining_conditions": []
     },
     {

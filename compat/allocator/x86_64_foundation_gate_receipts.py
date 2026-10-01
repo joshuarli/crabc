@@ -18,7 +18,7 @@ import sys
 import tomllib
 import uuid
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import run as harness
 
@@ -216,7 +216,8 @@ def read_m1(path: Path | None = None) -> dict[str, Any]:
 
 
 def authenticate_unit_program(program: Mapping[str, Any], *, target: str = "crabc_mimalloc", kind: str = "lib",
-                              expected_product: Mapping[str, Any] | None = None) -> None:
+                              expected_product: Mapping[str, Any] | None = None,
+                              features: Sequence[str] | None = None) -> None:
     if expected_product is not None:
         require(program.get("build_command") == expected_product.get("build_command"),
                 "local unit compiler command changed")
@@ -235,6 +236,10 @@ def authenticate_unit_program(program: Mapping[str, Any], *, target: str = "crab
                 and message.get("target", {}).get("kind") == [kind]
                 and message.get("profile", {}).get("test") is True
                 and message.get("executable")):
+            if features is not None:
+                require(isinstance(message.get("features"), list)
+                        and sorted(message["features"]) == sorted(features),
+                        "compiler-selected unit features differ from the source profile")
             candidates.append(message["executable"])
     artifact = program.get("artifact")
     require(isinstance(artifact, Mapping) and len(candidates) == 1
@@ -381,7 +386,8 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                     for name in required_checks), "local selected check remains incomplete")
     interpreter_inputs = []
     for check_name, config_name in (("miri", "miri"), ("miri-ownership", "miri_ownership"),
-                                    ("miri-guarded-ownership", "miri_guarded_ownership")):
+                                    ("miri-guarded-ownership", "miri_guarded_ownership"),
+                                    ("miri-page-ownership", "miri_page_ownership")):
         miri = checks[check_name]
         physical = miri.get("physical_inputs")
         require(isinstance(physical, Mapping) and isinstance(physical.get("program"), Mapping),
@@ -455,38 +461,43 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                               for file in parent.rglob("*") if file.is_file())
         for check in checks.values():
             authenticate_artifacts(check.get("physical_inputs", {}), pinned)
-        expected_unit_build = ["cargo", "test", "--locked", "--target", local.TARGET,
-                               "-p", "crabc-mimalloc", "--lib", "--no-default-features",
-                               "--no-run", "--message-format=json"]
-        unit = checks["rust-unit-batch"]
-        unit_inputs = unit["physical_inputs"]
-        unit_program = {**unit_inputs["build"], "cargo_target": str(harness.WORK_ROOT / "target")}
-        require(unit_program["build_command"] == expected_unit_build, "local unit compiler command changed")
-        authenticate_unit_program(unit_program)
+        unit_programs = {}
+        for check_name, config_name in (("rust-unit-batch", "rust_unit_batch"),
+                                        ("rust-page-ownership-batch", "rust_page_ownership_batch")):
+            expected_unit_build = local.unit_test_command(contract[config_name] if check_name == "rust-page-ownership-batch" else None)
+            unit = checks[check_name]
+            unit_inputs = unit["physical_inputs"]
+            unit_program = {**unit_inputs["build"], "cargo_target": str(harness.WORK_ROOT / "target")}
+            require(unit_program["build_command"] == expected_unit_build, "local unit compiler command changed")
+            authenticate_unit_program(unit_program, features=(local.cargo_selected_features(contract[config_name])
+                                                             if check_name == "rust-page-ownership-batch" else None))
+            binary = str(harness.ROOT / unit_program["artifact"]["path"])
+            require(unit_inputs["binary"] == unit_program["artifact"] and unit["binary"] == binary,
+                    "local unit observations name another compiler product")
+            unit_listing = unit_inputs["listing"]
+            require(unit_listing["command"] == [binary, "--list", "--format", "terse"]
+                    and unit_listing["status"] == 0, "local unit listing command changed")
+            observed_listing = execute(unit_listing["command"], 600)
+            require(local.TEST_LISTING.findall(observed_listing["stdout"]) == local.TEST_LISTING.findall(unit_listing["stdout"]),
+                    "local retained unit compiler product selects different tests")
+            unit_groups = local.select_by_prefix(unit_listing["stdout"], contract[config_name]["module_prefixes"])
+            require(set(unit_inputs["commands"]) == set(unit_groups) and set(unit["groups"]) == set(unit_groups),
+                    "local unit group roster changed")
+            for prefix, names in unit_groups.items():
+                row = unit_inputs["commands"][prefix]
+                require(names and row["command"] == [binary, "--exact", "--test-threads=1", *names]
+                        and row["status"] == 0, "local unit exact group command changed")
+                expected_results = [(name, "ok") for name in names]
+                require(sorted(local.TEST_RESULT.findall(output(row))) == sorted(expected_results)
+                        and local.summarize_group(prefix, names, row) == unit["groups"][prefix],
+                        "local original unit observations changed")
+                replay = execute(row["command"], 7200)
+                require(sorted(local.TEST_RESULT.findall(output(replay))) == sorted(expected_results),
+                        "local retained unit observation changed")
+            require(unit["passed"] == sum(len(names) for names in unit_groups.values()), "local unit test total changed")
+            unit_programs[check_name] = unit_program
+        unit_program = unit_programs["rust-unit-batch"]
         binary = str(harness.ROOT / unit_program["artifact"]["path"])
-        require(unit_inputs["binary"] == unit_program["artifact"] and unit["binary"] == binary,
-                "local unit observations name another compiler product")
-        unit_listing = unit_inputs["listing"]
-        require(unit_listing["command"] == [binary, "--list", "--format", "terse"]
-                and unit_listing["status"] == 0, "local unit listing command changed")
-        observed_listing = execute(unit_listing["command"], 600)
-        require(local.TEST_LISTING.findall(observed_listing["stdout"]) == local.TEST_LISTING.findall(unit_listing["stdout"]),
-                "local retained unit compiler product selects different tests")
-        unit_groups = local.select_by_prefix(unit_listing["stdout"], contract["rust_unit_batch"]["module_prefixes"])
-        require(set(unit_inputs["commands"]) == set(unit_groups) and set(unit["groups"]) == set(unit_groups),
-                "local unit group roster changed")
-        for prefix, names in unit_groups.items():
-            row = unit_inputs["commands"][prefix]
-            require(names and row["command"] == [binary, "--exact", "--test-threads=1", *names]
-                    and row["status"] == 0, "local unit exact group command changed")
-            expected_results = [(name, "ok") for name in names]
-            require(sorted(local.TEST_RESULT.findall(output(row))) == sorted(expected_results)
-                    and local.summarize_group(prefix, names, row) == unit["groups"][prefix],
-                    "local original unit observations changed")
-            replay = execute(row["command"], 7200)
-            require(sorted(local.TEST_RESULT.findall(output(replay))) == sorted(expected_results),
-                    "local retained unit observation changed")
-        require(unit["passed"] == sum(len(names) for names in unit_groups.values()), "local unit test total changed")
         for check_name, owner_profile in (("local-trace-differential", None),
                                           ("persistent-owner-trace-differential", contract["persistent_owner_profile"])):
             check = checks[check_name]

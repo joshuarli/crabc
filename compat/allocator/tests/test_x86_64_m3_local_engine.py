@@ -90,6 +90,36 @@ class LocalPrimitiveTraceTests(unittest.TestCase):
         self.assertTrue(any("miri-ownership" in item for component in result["components"] for item in component["unmet"]))
 
 
+class NativePageBatchTests(unittest.TestCase):
+    def test_page_batch_cannot_reuse_the_ordinary_compiler_product_or_log(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            binary = root / "page-program"
+            binary.write_text("""#!/usr/bin/env python3
+import sys
+if '--list' in sys.argv:
+    print('fixture::ownership: test')
+else:
+    print('test fixture::ownership ... ok')
+    print('test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out')
+""")
+            binary.chmod(0o755)
+            ordinary = root / "ordinary-program"
+            ordinary.write_bytes(b"other compiler product")
+            gate.run.write_json(root / "rust-unit-build.json", {"artifact": gate.run.artifact_record(ordinary)})
+            gate.run.write_json(root / "rust-page-ownership-build.json", {"artifact": gate.run.artifact_record(binary)})
+            log = root / "rust-unit-batch.log"
+            log.write_text("retained ordinary observations\n")
+            contract = {"rust_page_ownership_batch": {"features": ["mi-debug-1"], "module_prefixes": ["fixture::ownership"]}}
+            with mock.patch.object(gate, "ARTIFACT_ROOT", root):
+                result = gate.run_unit_batch(contract, binary, page_ownership=True)
+            self.assertEqual(result["status"], "passed")
+            self.assertEqual(result["physical_inputs"]["build"]["artifact"], result["physical_inputs"]["binary"])
+            self.assertEqual(log.read_text(), "retained ordinary observations\n")
+
+
 class LocalEngineSourceTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work/tmp"
@@ -196,6 +226,17 @@ class LocalEngineSourceTests(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertIn("miri", reports[0])
         self.assertNotIn("gate", reports[0])
+
+    def test_page_development_subsets_publish_only_the_selected_evidence(self) -> None:
+        self.source.write_text("work in progress\n")
+        for argument, key in (("--miri-page-ownership-only", "miri"), ("--page-ownership-only", "rust_unit_batch")):
+            with self.subTest(argument=argument):
+                status, reports, executed = self.execute(arguments=[argument])
+                self.assertEqual(status, 0)
+                self.assertFalse(executed)
+                self.assertEqual(len(reports), 1)
+                self.assertIn(key, reports[0])
+                self.assertNotIn("gate", reports[0])
 
     def test_gate_receipt_attests_one_unchanged_clean_source(self) -> None:
         status, reports, executed = self.execute()
@@ -608,6 +649,24 @@ sys.exit(1 if failed else 0)
                 result = gate.run_miri(self.contract, profile=profile or (gate.MiriProfile.OWNERSHIP if ownership_only else gate.MiriProfile.LOCAL))
         calls = [json.loads(line) for line in self.capture.read_text().splitlines()]
         return result, calls
+
+    def test_coarse_debug_profile_authenticates_its_statistics_ancestors(self) -> None:
+        self.contract["miri"]["features"] = ["mi-debug-1"]
+        metadata = json.loads(self.program.read_text())
+        for name in ("mi-debug-1", "mi-stat-2", "mi-stat-1"):
+            metadata["args"].extend(["--cfg", f'feature="{name}"'])
+        self.program.write_text(json.dumps(metadata))
+        result, _calls = self.execute()
+        self.assertEqual(result["status"], "passed")
+
+    def test_debug_profile_cannot_erase_its_compiler_selected_ancestors(self) -> None:
+        self.contract["miri"]["features"] = ["mi-debug-1"]
+        metadata = json.loads(self.program.read_text())
+        metadata["args"].extend(["--cfg", 'feature="mi-debug-1"'])
+        self.program.write_text(json.dumps(metadata))
+        result, _calls = self.execute()
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("features differ" in item for item in result["unmet"]))
 
     def test_guarded_feature_must_be_present_in_selected_compiler_program(self) -> None:
         self.contract["miri"]["features"] = ["mi-guarded"]
