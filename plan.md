@@ -146,11 +146,18 @@ only its exact source, configuration, image, products, and execution context.
   profile still leaves 270,336 added bytes unexplained. A causal observation
   proves that the fixture's live mapping-reader buffer accounts for 266,240
   of those bytes. The integrated allocation-free observer passes two focused
-  tests and the unchanged 33-cycle trace; fresh merged-source four-profile
-  qualification is running. A separate 4,096-byte residual remains unexplained,
-  so bounded-memory qualification stays open. All nine merged Rust compiler
-  profiles pass. ISA correctness passes separately from deferred
-  throughput. Complete M2/M3/M4 and merged-source qualification remain open.
+  tests. Fresh four-profile production and all eight independent read-only
+  executable replays pass at `8d7e8e4e8`: C leaves no unexplained growth and
+  each native profile leaves 4,096 bytes. A causal syscall trace ties that
+  residual to the fixture's live Rust channel; the channel-free fixture repair
+  awaits execution after disk exhaustion stopped compilation. Bounded-memory
+  qualification stays open, including the retained source-root growth.
+  Secure-3 padding, canonical prefixes, encoded visitation and diagnostic
+  repairs are integrated with exact-source focused read-only evidence;
+  complete secure-3 production and merged-source compiler checks remain pending.
+  All nine compiler profiles passed at the earlier observer source. ISA
+  correctness passes separately from deferred throughput. Complete M2/M3/M4
+  and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Continue independent
