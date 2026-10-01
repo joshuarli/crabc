@@ -140,6 +140,110 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'opcode differs'):
                     links.final_member_references(bytes(changed), **arguments)
 
+    def test_merged_objects_keep_selected_owner_and_exact_forcing_relocations(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            names = ['domain_scalar', 'domain_string', 'domain_suffix']
+            (work / 'provider.S').write_text(
+                '.section .rodata.cst8,"aM",@progbits,8\n.balign 8\n'
+                '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
+                'domain_scalar: .quad 0x123456789abcdef0\n.size domain_scalar,.-domain_scalar\n'
+                '.section .rodata.str1.1,"aMS",@progbits,1\n'
+                '.globl domain_string\n.hidden domain_string\n.type domain_string,@object\n'
+                'domain_string: .asciz "prefixsuffix"\n.size domain_string,.-domain_string\n'
+                '.globl domain_suffix\n.hidden domain_suffix\n.type domain_suffix,@object\n'
+                'domain_suffix: .asciz "suffix"\n.size domain_suffix,.-domain_suffix\n'
+                '.section .note.GNU-stack,"",@progbits\n')
+            (work / 'providers.c').write_text(links.source(names, object_names=names))
+            for source, target in [('provider.S', 'provider.o'), ('providers.c', 'providers.o')]:
+                subprocess.run([compiler, '-fPIC', '-c', str(work / source), '-o', str(work / target)],
+                               check=True, capture_output=True)
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'provider.o')],
+                           check=True, capture_output=True)
+            image = (work / 'provider.o').read_bytes()
+            tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / 'provider.o'))
+            sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / 'provider.o'))['sections']
+            forcing = links.fixture_object(work / 'providers.o', names)
+            member = str(work / 'libdomain.a') + '(provider.o)'
+            for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
+                linked = subprocess.run([linker, flag, '-O2', '--no-relax', '-e', 'main', '--trace',
+                                         '-Map=' + str(work / (mode + '.receipt.map')),
+                                         str(work / 'providers.o'), str(work / 'libdomain.a'),
+                                         '-o', str(work / mode)], check=True, capture_output=True)
+                (work / (mode + '.receipt.trace')).write_bytes(linked.stdout)
+                view = links._indexed_view(work, mode, elf_type)
+                view.update(forcing_owner=str(work / 'providers.o'),
+                            forcing_image=(work / 'providers.o').read_bytes())
+                addresses = {}
+                for name in names:
+                    row = next(row for row in tables[0]['rows'] if row['name'] == name)
+                    section = next(section for section in sections if str(section['index']) == row['section_index'])
+                    definition = {'row': row, 'definition_section': section}
+                    address = int(view['symbol_rows'][name][0][1], 16)
+                    for altered in ({'trace_counts': {**view['trace_counts'], member: 0}},
+                                    {'forcing_owner': member}, {'forcing_image': image},
+                                    {'map_rows': {}}, {'forcing_image': b''}):
+                        with self.assertRaises(ValueError):
+                            links.definition_address({**view, **altered}, member, definition, source_image=image)
+                    for field, value in [('flags', 'A'), ('entry_size', '0'), ('size', '0'),
+                                         ('alignment', section['alignment'] + 1)]:
+                        with self.assertRaises(ValueError):
+                            links.definition_address(view, member, {**definition,
+                                'definition_section': {**section, field: value}}, source_image=image)
+                    changed = bytearray(view['image'])
+                    address_offset = links.static_authority.elf_bytes(bytes(changed)).sections[
+                        int(view['symbol_rows'][name][0][6])]
+                    changed[address_offset[4] + address - address_offset[3]] ^= 1
+                    with self.assertRaises(ValueError):
+                        links.definition_address({**view, 'image': bytes(changed)}, member,
+                                                 definition, source_image=image)
+                    source_forcing = links.static_authority.elf_bytes(view['forcing_image'])
+                    holder = source_forcing.symbol('providers', dynamic=False)
+                    reference = next(r for r in forcing['references'] if r['symbol'] == name)
+                    forcing_section = links.static_authority.section_name(source_forcing,
+                        source_forcing.sections[holder['section']])
+                    placement = view['map_rows'][view['forcing_owner'] + ':(' + forcing_section + ')'][0].split()
+                    slot = int(placement[0], 16) + reference['offset']
+                    changed = bytearray(view['image'])
+                    final = links.static_authority.elf_bytes(bytes(changed))
+                    if elf_type == 2:
+                        data_section = next(s for s in final.sections if s[1] == 1
+                                            and s[3] <= slot and slot + 8 <= s[3] + s[5])
+                        struct.pack_into('<Q', changed, data_section[4] + slot - data_section[3], address + 1)
+                    else:
+                        for rela in final.sections:
+                            if rela[1] == 4:
+                                for offset in range(0, rela[5], 24):
+                                    if final.unpack('<Q', rela[4] + offset)[0] == slot:
+                                        struct.pack_into('<q', changed, rela[4] + offset + 16, address + 1)
+                    with self.assertRaisesRegex(ValueError, 'forcing target differs'):
+                        links.definition_address({**view, 'image': bytes(changed)}, member,
+                                                 definition, source_image=image)
+                    changed = bytearray(view['forcing_image'])
+                    for rela in source_forcing.sections:
+                        if rela[1] == 4 and rela[7] == holder['section']:
+                            for offset in range(0, rela[5], 24):
+                                if source_forcing.unpack('<Q', rela[4] + offset)[0] == reference['offset']:
+                                    struct.pack_into('<q', changed, rela[4] + offset + 16, 1)
+                    with self.assertRaisesRegex(ValueError, 'forcing reference differs'):
+                        links.definition_address({**view, 'forcing_image': bytes(changed)}, member,
+                                                 definition, source_image=image)
+                    pool_key = '<internal>:(' + section['name'] + ')'
+                    pool = view['map_rows'][pool_key][0].split()
+                    pool[2] = '0'
+                    with self.assertRaisesRegex(ValueError, 'pool geometry differs'):
+                        links.definition_address({**view, 'map_rows': {**view['map_rows'],
+                            pool_key: [' '.join(pool)]}}, member, definition, source_image=image)
+                    addresses[name] = links.definition_address(view, member, definition, source_image=image)
+                    self.assertEqual(addresses[name], address)
+                self.assertEqual(addresses['domain_suffix'], addresses['domain_string'] + 6)
+
     def test_long_function_section_display_keeps_exact_indexed_archive_owner(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')

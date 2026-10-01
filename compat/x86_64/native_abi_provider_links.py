@@ -228,6 +228,8 @@ def _indexed_view(work: Path, mode: str, elf_type: int) -> dict[str, Any]:
         address = re.match(r'^\s*([0-9a-f]+)\s+', line)
         if address:
             view['relocation_rows'].setdefault(int(address.group(1), 16), []).append(line)
+    if (work / 'providers.o').is_file():
+        view['forcing_image'] = (work / 'providers.o').read_bytes()
     return view
 
 
@@ -460,7 +462,7 @@ def definition_address(view: Mapping[str, Any], archive_member: str, definition:
     address = symbols[0][0]
     section = definition['definition_section']['name']
     maps = view['map_rows'].get(archive_member + ':(' + section + ')', [])
-    if not maps and definition['row']['type'] == 'FUNC' and source_image is not None:
+    if not maps and definition['row']['type'] in {'FUNC', 'OBJECT'} and source_image is not None:
         source = static_authority.elf_bytes(source_image)
         require(source.elf_type == 1, 'provider source is not a relocatable ELF')
         symbol = source.symbol(name, dynamic=False)
@@ -480,7 +482,8 @@ def definition_address(view: Mapping[str, Any], archive_member: str, definition:
         require(len(observed['flags']) == len(set(observed['flags']))
                 and set(observed['flags']) <= set(flag_bits)
                 and sum(flag_bits[flag] for flag in observed['flags']) == header[2]
-                and header[2] & 6 == 6, 'provider source section flags differ')
+                and header[2] & 6 == (6 if row['type'] == 'FUNC' else 2),
+                'provider source section flags differ')
         require(header[1] == 1 and observed['type'] == 'PROGBITS'
                 and header[3] == int(observed['address'], 16)
                 and header[4] == int(observed['offset'], 16)
@@ -499,6 +502,108 @@ def definition_address(view: Mapping[str, Any], archive_member: str, definition:
                                            and section == actual_name[:256]),
                 'provider source section display name differs')
         maps = view['map_rows'].get(archive_member + ':(' + actual_name + ')', [])
+        if row['type'] == 'OBJECT' and not maps:
+            require(row['binding'] == 'GLOBAL' and row['visibility'] == 'HIDDEN'
+                    and header[2] in {18, 50} and header[8] > 0
+                    and header[9] > 0 and header[5] % header[9] == 0
+                    and symbol['value'] % header[9] == 0
+                    and symbol['size'] > 0 and symbol['size'] % header[9] == 0,
+                    'provider merged object metadata differs')
+            start = header[4] + symbol['value']
+            data = source_image[start:start + symbol['size']]
+            strings = bool(header[2] & 32)
+            require((strings and header[9] == 1 and data[-1:] == b'\0'
+                     and data.count(b'\0') == 1
+                     and (symbol['value'] == 0 or source_image[start - 1] == 0))
+                    or (not strings and header[9] in {4, 8, 16} and symbol['size'] == header[9]),
+                    'provider merged object element differs')
+            require(symbol_rows[0][4:6] == ['LOCAL', 'HIDDEN'],
+                    'provider merged final symbol metadata differs')
+            pools = view['map_rows'].get('<internal>:(' + actual_name + ')', [])
+            require(view['trace_counts'].get(archive_member) == 1 and len(pools) == 1,
+                    'provider merged object lacks selected member or pool')
+            parts = pools[0].split()
+            base, load, extent, alignment = int(parts[0], 16), int(parts[1], 16), int(parts[2], 16), int(parts[3])
+            final = static_authority.elf_bytes(view['image'])
+            final_index = int(symbol_rows[0][6])
+            require(0 < final_index < len(final.sections), 'provider merged final section differs')
+            output = final.sections[final_index]
+            require(output[1] == 1 and output[2] & 7 == 2 and base == load
+                    and alignment >= header[8] and base % alignment == 0
+                    and extent > 0 and extent % header[9] == 0
+                    and output[3] <= base and base + extent <= output[3] + output[5]
+                    and base <= address and address + len(data) <= base + extent
+                    and (address - base) % header[9] == 0,
+                    'provider merged pool geometry differs')
+            table, width, count = struct.unpack_from('<Q', view['image'], 32)[0], *struct.unpack_from('<HH', view['image'], 54)
+            require(sum(program[0] == 1 and program[1] == 4
+                        and program[3] <= base and base + extent <= program[3] + program[5]
+                        for program in (struct.unpack_from('<IIQQQQQQ', view['image'], table + width * index)
+                                        for index in range(count))) == 1,
+                    'provider merged pool lacks a read-only load segment')
+            require(calls._public_weak_virtual_bytes(view['image'], address, len(data), view['type'],
+                                                   executable=False) == data,
+                    'provider merged object bytes differ')
+            # A merge pool has no winning input member. Ownership comes from
+            # the selected hidden definition and its exact forcing relocation,
+            # not another constant with equal bytes or the same pooled address.
+            forcing = static_authority.elf_bytes(view.get('forcing_image', b''))
+            holder = forcing.symbol('providers', dynamic=False)
+            require(forcing.elf_type == 1 and holder is not None and holder['type'] == 'OBJECT'
+                    and holder['binding'] == 'LOCAL' and holder['visibility'] == 'DEFAULT'
+                    and holder['size'] > 0 and holder['size'] % 8 == 0
+                    and 0 < holder['section'] < len(forcing.sections),
+                    'provider forcing holder differs')
+            holder_section = forcing.sections[holder['section']]
+            require(holder_section[1] == 1 and holder_section[2] == 3
+                    and holder['value'] + holder['size'] <= holder_section[5],
+                    'provider forcing section differs')
+            references = []
+            for relocation in forcing.sections:
+                if relocation[1] != 4 or relocation[7] != holder['section']:
+                    continue
+                require(relocation[9] == 24 and relocation[5] % 24 == 0,
+                        'provider forcing relocation table differs')
+                for offset in range(0, relocation[5], 24):
+                    position, info, addend = forcing.unpack('<QQq', relocation[4] + offset)
+                    imported = forcing.symbol_row(relocation[6], info >> 32)
+                    if imported['name'] != name:
+                        continue
+                    require(info & 0xffffffff == 1 and addend == 0
+                            and imported['binding'] == 'GLOBAL' and imported['visibility'] == 'DEFAULT'
+                            and imported['section'] == imported['value'] == imported['size'] == 0
+                            and holder['value'] <= position and position + 8 <= holder['value'] + holder['size']
+                            and (position - holder['value']) % 8 == 0,
+                            'provider forcing reference differs')
+                    references.append(position)
+            owner = view.get('forcing_owner')
+            forcing_maps = view['map_rows'].get(str(owner) + ':(' + static_authority.section_name(forcing, holder_section) + ')', [])
+            require(len(references) == 1 and view['trace_counts'].get(owner) == 1 and len(forcing_maps) == 1,
+                    'provider merged object lacks its exact forcing reference')
+            placement = forcing_maps[0].split()
+            forcing_base = int(placement[0], 16)
+            require(forcing_base == int(placement[1], 16) and int(placement[2], 16) == holder_section[5]
+                    and holder_section[8] > 0 and forcing_base % holder_section[8] == 0,
+                    'provider forcing placement differs')
+            slot = forcing_base + references[0]
+            value = struct.unpack('<Q', calls._public_weak_virtual_bytes(view['image'], slot, 8,
+                                                                      view['type'], executable=False))[0]
+            targets = []
+            for relocation in final.sections:
+                require(not (relocation[1] in {9, 19} and relocation[2] & 2),
+                        'provider forcing relocation encoding is unsupported')
+                if relocation[1] != 4:
+                    continue
+                require(relocation[9] == 24 and relocation[5] % 24 == 0,
+                        'provider final relocation table differs')
+                for offset in range(0, relocation[5], 24):
+                    position, info, addend = final.unpack('<QQq', relocation[4] + offset)
+                    if position == slot:
+                        targets.append((info, addend))
+            require((view['type'] == 2 and value == address and not targets)
+                    or (view['type'] == 3 and value == 0 and targets == [(8, address)]),
+                    'provider forcing target differs')
+            return address
     require(view['trace_counts'].get(archive_member) == 1 and len(maps) == 1
             and int(maps[0].split()[0], 16) + int(definition['row']['value'], 16) == address,
             'provider final symbol does not belong to the exact archive definition')
@@ -511,6 +616,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
     final = {}
     for mode, elf_type in (('static', 2), ('static-pie', 3)):
         final[mode] = _indexed_view(work, mode, elf_type)
+        final[mode]['forcing_owner'] = calls.mounted_path(work / 'providers.o')
     source_members = {}
     definition_images = {}
     by_name = {}
@@ -572,7 +678,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
             for mode, view in final.items():
                 selected = calls.mounted_path(archive) + '(' + definition['member_name'] + ')'
                 source_image = None
-                if (definition['row']['type'] == 'FUNC'
+                if (definition['row']['type'] in {'FUNC', 'OBJECT'}
                         and not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')')):
                     member = definition['member_name']
                     require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
