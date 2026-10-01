@@ -21,7 +21,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
-use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion};
+use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, MetadataGuardHook, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion};
 use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS};
 use crate::lock::PrivateLock;
 use crate::os::{MapAccess, Mapping, PublishedMappingView, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
@@ -1006,6 +1006,9 @@ impl ProcessArenaBacking {
         let mut published = false;
         drop(guard);
 
+        let guard_owner = ArenaMetadataGuardOwner::External { lease: &lease,
+            process: stored_process, config };
+        let metadata_guard = MetadataGuardHook::new(decommit_arena_metadata_guard, &guard_owner);
         let result = unsafe {
             super::manage_in_place_with_publisher_and_numa_source(
                 &self.registry,
@@ -1025,6 +1028,7 @@ impl ProcessArenaBacking {
                 exclusive,
                 Some(hook),
                 Some(hook),
+                Some(metadata_guard),
                 memory,
                 |arena| {
                     let _guard = self
@@ -1292,6 +1296,8 @@ impl ProcessArenaBacking {
         let hook = None;
         // The metadata-only external capability is used before publication;
         // the source arena field retains no callback for ordinary OS memory.
+        let guard_owner = ArenaMetadataGuardOwner::Owned(&owner);
+        let metadata_guard = MetadataGuardHook::new(decommit_arena_metadata_guard, &guard_owner);
         let result = unsafe {
             super::manage_in_place_with_publisher_and_numa_source(
                 &self.registry, start, managed_size, config.page_size(),
@@ -1303,7 +1309,7 @@ impl ProcessArenaBacking {
                         process.current_numa_node() as i32
                     } else { numa_node }
                 },
-                exclusive, hook, metadata_hook, memory,
+                exclusive, hook, metadata_hook, Some(metadata_guard), memory,
                 |arena| {
                     // Readers may observe this entry before the synchronous
                     // call returns. The local owner still retains the live
@@ -1782,6 +1788,43 @@ impl<'process> ProcessArenaInstallFailure<'process> {
 
     pub(crate) fn into_parts(self) -> (Mapping, MemoryId, VmProcess<'process>) {
         (self.mapping, self.memory, self.process)
+    }
+}
+
+/// The actual retained mapping or external lease for one preparing arena.
+/// This view survives only synchronous initialization; publication never
+/// retains either its stack address or a borrowed process capability.
+enum ArenaMetadataGuardOwner<'owner> {
+    Owned(&'owner OwnedArenaAllocation),
+    External { lease: &'owner ProcessExternalArenaLease, process: StoredVmProcess, config: MemoryConfig },
+}
+
+unsafe fn decommit_arena_metadata_guard(start: *mut u8, size: usize, argument: *const c_void) {
+    // SAFETY: MetadataGuardHook's borrow retains this exact synchronous owner.
+    let owner = unsafe { &*argument.cast::<ArenaMetadataGuardOwner<'_>>() };
+    let (base, length, process, config) = match owner {
+        ArenaMetadataGuardOwner::Owned(owner) => {
+            let base = owner.allocation.base().expect("preparing guard owner has a live mapping");
+            let length = owner.allocation.length().expect("preparing guard owner retains its complete span");
+            (base, length, owner.process(), owner.config)
+        }
+        ArenaMetadataGuardOwner::External { lease, process, config } =>
+            (lease.base(), lease.size(), process.project(), *config),
+    };
+    let offset = start.addr().checked_sub(base.addr()).expect("guard belongs to its preparing owner");
+    assert!(offset.checked_add(size).is_some_and(|end| end <= length),
+        "validated metadata guard remains in its retained mapping");
+    // SAFETY: the retained mapping/lease proves the complete, aligned guard
+    // span and actual process lifetime. No header, bitmap, Heap, or Theap view
+    // is live across OS warnings or the source error handler. External memory
+    // uses the OS route even when it has a user commit callback.
+    let result = unsafe { process.decommit_external_arena_range(
+        config.page_size(), start, size, size,
+    ) };
+    if result.is_err() {
+        let _ = process.policy().source_error(crate::diagnostic_output::SourceErrorReport::SecureGuardFailure {
+            level: crate::config::SECURE_LEVEL, address: start.addr(), size,
+        });
     }
 }
 
@@ -4160,6 +4203,182 @@ mod tests {
         assert_eq!(observed_commit, (base.addr(), info_size - guard_size, 3));
         assert_eq!(after.committed_current - before.committed_current, (info_size - guard_size) as i64);
         assert_eq!(signal, if guard_size == 0 { 0 } else { 11 });
+    }
+
+    #[test]
+    fn secure_committed_owned_metadata_decommits_its_guard_without_revoking_release_access() {
+        let fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let (mapping, memory) = mapped(process, MapAccess::Committed);
+        let base = mapping.base().unwrap();
+        let layout = crate::arena::ArenaInfoLayout::for_slice_count(
+            super::super::BCHUNK_BITS, config().page_size().bytes(),
+        ).unwrap();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let advice = fault.capture_advice_range();
+        // SAFETY: the mapping and actual process remain owned until this
+        // installation transfers their source publication lifetime.
+        let managed = unsafe { backing.install_owned_os_mapping(
+            process, config(), ARENA_MIN_SIZE, mapping, memory, -1, false,
+        ) }.unwrap_or_else(|failure| panic!("committed metadata: {:?}", failure.error()));
+        let observed = advice.range();
+        let count = advice.count();
+        drop(advice);
+        let after = process.subprocess().vm_statistics().snapshot();
+        // Secure levels one and two use advisory discard in the release
+        // source profile; their already-accessible info tail stays writable.
+        let tail = unsafe { base.add(layout.info_size() - 1) };
+        unsafe { tail.write_volatile(0x5a) };
+        assert_eq!(unsafe { tail.read_volatile() }, 0x5a);
+        std::println!("secure.info.committed={}:{}:{}", layout.info_size(), count,
+            after.committed_current - before.committed_current);
+        assert!(managed.is_complete());
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
+        if crate::config::SECURE_LEVEL > 0 {
+            assert_eq!(observed, Some((base.addr() + layout.info_size() - layout.guard_size(),
+                layout.guard_size(), 4)));
+            assert_eq!(count, 1);
+        } else {
+            assert_eq!(observed, None);
+            assert_eq!(count, 0);
+        }
+        assert_eq!(after.committed_current, before.committed_current);
+    }
+
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-secure-2")))]
+    #[test]
+    fn secure_arena_guard_refusal_warns_then_reports_and_preserves_published_ownership() {
+        use crate::diagnostic_output::OutputOwner;
+        use crate::config::SourceOption;
+        use core::ffi::{c_char, c_int};
+        use std::cell::Cell;
+        std::thread_local! { static ERRNO: Cell<c_int> = const { Cell::new(33) }; }
+        struct Capture { replacement: c_int, warning: Cell<c_int>, error: Cell<c_int>, calls: Cell<usize> }
+        unsafe fn unavailable_environment() -> *const *const c_char { core::ptr::null() }
+        unsafe extern "C" fn no_default_output(_: *const c_char) {}
+        unsafe fn store_errno(value: c_int) { ERRNO.with(|slot| slot.set(value)); }
+        unsafe fn store_default_errno(value: c_int) {
+            ERRNO.with(|slot| if slot.get() == 0 { slot.set(value); });
+        }
+        unsafe extern "C" fn output(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: the output owner retains this capture and source string
+            // throughout synchronous initialization and all later teardown.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            let body = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if body.windows(b"cannot decommit OS memory".len())
+                .any(|part| part == b"cannot decommit OS memory") {
+                ERRNO.with(|slot| { capture.warning.set(slot.get()); slot.set(capture.replacement); });
+                capture.calls.set(capture.calls.get() + 1);
+            }
+        }
+        unsafe extern "C" fn error(code: c_int, argument: *mut c_void) {
+            // SAFETY: registration retains this capture for the synchronous
+            // source error, after the OS warning has completed.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            assert_eq!(code, Errno::INVAL.raw());
+            assert_eq!(capture.calls.get(), 1);
+            ERRNO.with(|slot| { capture.error.set(slot.get()); slot.set(34); });
+        }
+        for (replacement, handled, expected) in [(0, false, 22), (4, false, 4), (4, true, 34)] {
+            ERRNO.with(|slot| slot.set(33));
+            let capture = Box::leak(Box::new(Capture {
+                replacement, warning: Cell::new(-1), error: Cell::new(-1), calls: Cell::new(0),
+            }));
+            let output_owner = Box::leak(Box::new(OutputOwner::new(no_default_output)));
+            // SAFETY: this fixture exclusively initializes and registers one
+            // process-lived output owner. Both callback captures are leaked.
+            unsafe {
+                output_owner.initialize_source_options(unavailable_environment);
+                output_owner.option_set(SourceOption::ShowErrors, 1).unwrap();
+                output_owner.option_set(SourceOption::MaxWarnings, 100).unwrap();
+                output_owner.option_set(SourceOption::AllowLargeOsPages, 0).unwrap();
+                output_owner.option_set(SourceOption::AllowThp, 0).unwrap();
+                output_owner.register_output(Some(output), core::ptr::from_ref(capture).cast_mut().cast());
+                if handled { output_owner.register_error(Some(error), core::ptr::from_ref(capture).cast_mut().cast()); }
+            }
+            // SAFETY: these embedding capabilities change only the current
+            // test thread's errno cell; neither callback unwinds or allocates.
+            let writer = unsafe { crate::process_init::SourceErrnoStore::new(store_errno)
+                .with_default_store(store_default_errno) };
+            let mut policy = unsafe { VmPolicy::from_process_options(output_owner) }
+                .with_source_errno_store(Some(writer));
+            policy.finish_preloading();
+            let process = VmProcess::new_main(Box::leak(Box::new(policy)), MainSubprocess::test_static_owner());
+            let backing = backing();
+            let (mapping, memory) = mapped(process, MapAccess::Committed);
+            let base = mapping.base().unwrap();
+            let layout = crate::arena::ArenaInfoLayout::for_slice_count(
+                super::super::BCHUNK_BITS, config().page_size().bytes(),
+            ).unwrap();
+            let before = process.subprocess().vm_statistics().snapshot();
+            let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+            // SAFETY: this actual owner retains its complete mapping through
+            // both callbacks; no arena or byte view exists during preparation.
+            let managed = unsafe { backing.install_owned_os_mapping(
+                process, config(), ARENA_MIN_SIZE, mapping, memory, -1, false,
+            ) }.unwrap_or_else(|failure| panic!("guard refusal retains initialization: {:?}", failure.error()));
+            let after = process.subprocess().vm_statistics().snapshot();
+            let final_errno = ERRNO.with(|slot| slot.get());
+            assert_eq!(capture.warning.get(), 12);
+            assert_eq!(capture.calls.get(), 1);
+            assert_eq!(capture.error.get(), if handled { 4 } else { -1 });
+            assert_eq!(final_errno, expected);
+            assert!(managed.is_complete());
+            assert_eq!(backing.registry.count(), 1);
+            assert_eq!(after.committed_current, before.committed_current);
+            // The failed advisory discard leaves the retained guard page RW.
+            // No callback or allocator projection remains during this access.
+            unsafe { base.add(layout.info_size() - 1).write_volatile(0x5a); }
+            assert_eq!(unsafe { base.add(layout.info_size() - 1).read_volatile() }, 0x5a);
+            std::println!("secure.info.refusal={}:{}:{}:{}:{}", replacement, u8::from(handled),
+                capture.warning.get(), capture.error.get(), final_errno);
+            drop(fault);
+            assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
+            assert_eq!(backing.registry.count(), 0);
+        }
+    }
+
+    #[test]
+    fn secure_caller_locked_metadata_skips_decommit_and_preserves_the_excluded_tail() {
+        let fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let (mut mapping, _) = mapped(process, MapAccess::Committed);
+        let base = mapping.base().unwrap();
+        let layout = crate::arena::ArenaInfoLayout::for_slice_count(
+            super::super::BCHUNK_BITS, config().page_size().bytes(),
+        ).unwrap();
+        // SAFETY: this caller owns the complete accessible reservation; the
+        // live lock is retained through arena destruction and caller release.
+        unsafe { crabc_core::mm::mlock_raw(base, ARENA_MIN_SIZE) }.unwrap();
+        let tail_page = unsafe { base.add(layout.info_size() - config().page_size().bytes()) };
+        assert_eq!(unsafe { crabc_core::mm::madvise_raw(
+            tail_page, config().page_size().bytes(), 4,
+        ) }, Err(Errno::INVAL));
+        unsafe { base.add(layout.info_size() - 1).write(0xa5) };
+        let before = process.subprocess().vm_statistics().snapshot();
+        let advice = fault.capture_advice_range();
+        // SAFETY: the external caller retains this locked mapping and marks
+        // its existing contents nonzero. No view survives initialization.
+        let managed = unsafe { backing.install_owned_external_os_arena(
+            process, config(), base, ARENA_MIN_SIZE,
+            true, true, false, -1, false,
+        ) }.expect("caller-owned locked arena initializes");
+        let count = advice.count();
+        drop(advice);
+        let after = process.subprocess().vm_statistics().snapshot();
+        let marker = unsafe { base.add(layout.info_size() - 1).read() };
+        std::println!("secure.info.pinned={}:{}:{}", layout.info_size(), count, marker);
+        assert!(managed.is_complete());
+        // No arena/Page projection remains; external destruction transfers no
+        // unmap right, so the caller still owns both unlock and final release.
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
+        unsafe { crabc_core::mm::munlock_raw(base, ARENA_MIN_SIZE) }.unwrap();
+        mapping.unmap_for_process(process, ARENA_MIN_SIZE, false).unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(marker, if crate::config::SECURE_LEVEL > 0 { 0xa5 } else { 0 });
+        assert_eq!(after.committed_current, before.committed_current);
     }
 
     #[test]

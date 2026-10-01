@@ -1150,6 +1150,24 @@ impl CommitHook {
     }
 }
 
+/// Synchronous secure metadata transition borrowed from its live owner.
+/// The initializer never retains this callback in a published arena. Failure
+/// reporting belongs to the callback: source initialization continues after
+/// an unsuccessful guard operation, but cannot invent an absent owner.
+#[derive(Clone, Copy)]
+pub(super) struct MetadataGuardHook<'owner> {
+    function: unsafe fn(*mut u8, usize, *const c_void),
+    argument: *const c_void,
+    _owner: core::marker::PhantomData<&'owner c_void>,
+}
+
+impl<'owner> MetadataGuardHook<'owner> {
+    pub(super) fn new<T>(function: unsafe fn(*mut u8, usize, *const c_void), owner: &'owner T) -> Self {
+        Self { function, argument: core::ptr::from_ref(owner).cast(),
+            _owner: core::marker::PhantomData }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ManageArenaError {
     InvalidRegion,
@@ -1157,6 +1175,7 @@ pub(crate) enum ManageArenaError {
     MetadataDoesNotFit,
     CommitRequired,
     CommitFailed,
+    GuardRequired,
     RegistryFull,
     BitmapInitialization,
 }
@@ -1323,6 +1342,7 @@ where
             exclusive,
             commit_hook,
             commit_hook,
+            None,
             memory,
             |arena| {
                 if registry.insert(arena) {
@@ -1365,6 +1385,7 @@ unsafe fn manage_in_place(
             exclusive,
             commit_hook,
             commit_hook,
+            None,
             memory,
             |arena| {
                 if registry.insert(arena) {
@@ -1416,6 +1437,7 @@ where
             exclusive,
             commit_hook,
             commit_hook,
+            None,
             memory,
             publish,
         )
@@ -1438,6 +1460,7 @@ unsafe fn manage_in_place_with_publisher_and_numa_source<F, N>(
     exclusive: bool,
     commit_hook: Option<CommitHook>,
     metadata_commit_hook: Option<CommitHook>,
+    metadata_guard_hook: Option<MetadataGuardHook<'_>>,
     mut memory: MemoryId,
     mut publish: F,
 ) -> Result<ManagedExternalRegion, ManageArenaError>
@@ -1481,6 +1504,7 @@ where
                 initially_committed,
                 commit_hook,
                 metadata_commit_hook,
+                metadata_guard_hook,
             )
         };
         match initialized {
@@ -2066,6 +2090,7 @@ unsafe fn prepare_arena_in_place<N>(
     metadata_already_accessible: bool,
     commit_hook: Option<CommitHook>,
     metadata_commit_hook: Option<CommitHook>,
+    metadata_guard_hook: Option<MetadataGuardHook<'_>>,
 ) -> Result<*mut Arena, ManageArenaError>
 where
     N: FnMut() -> i32,
@@ -2083,6 +2108,16 @@ where
         .ok_or(ManageArenaError::InvalidPageSize)?;
     if slice_count < layout.info_slices() + 1 || region_size < layout.info_size() {
         return Err(ManageArenaError::MetadataDoesNotFit);
+    }
+
+    if memory.initially_committed() && !memory.is_pinned() && layout.guard_size() > 0 {
+        // Geometry-only and policy-less callers cannot borrow a different
+        // subprocess's VM policy or silently omit this source transition.
+        let hook = metadata_guard_hook.ok_or(ManageArenaError::GuardRequired)?;
+        // SAFETY: the complete validated region and borrowed transition owner
+        // remain live. No typed arena header or bitmap exists across callbacks.
+        unsafe { (hook.function)(start.add(layout.info_size() - layout.guard_size()),
+            layout.guard_size(), hook.argument) };
     }
 
     if !memory.initially_committed() && !metadata_already_accessible {
@@ -3407,7 +3442,7 @@ pub(crate) mod tests {
         let preserved = unsafe { base.read() };
         std::println!("secure.info.missing_guard={}:{}:{}",
             result.is_err(), registry.count(), preserved);
-        assert!(result.is_err(), "a missing transition owner cannot initialize metadata");
+        assert!(matches!(result, Err(ManageArenaError::GuardRequired)));
         assert_eq!(registry.count(), 0);
         assert_eq!(preserved, 0xa5);
     }
