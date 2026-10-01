@@ -257,18 +257,18 @@ impl LiveAllocationPointer {
                 );
             }
         }
-        #[cfg(not(feature = "mi-debug-1"))]
+        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
         let canonical_usable = self.block_size;
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         let canonical_usable = {
             // SAFETY: this operation-scoped observation retains the exact
             // live block and its page's immutable padding key. The caller
             // excludes concurrent client mutation through its source operation.
-            let key = unsafe { Page::debug_padding_keys_at(self.page) };
+            let key = unsafe { Page::source_page_keys_at(self.page) };
             // SAFETY: the same exact live block retains the full readable
             // trailing record. Reallocation may copy only the logical client
             // extent, excluding both padding bytes and the record itself.
-            unsafe { crate::alloc::debug_padding_usable_size(
+            unsafe { crate::alloc::source_padding_usable_size(
                 self.canonical_block, self.block_size, self.page.as_ptr().addr(), key,
             ) }
         };
@@ -2147,6 +2147,16 @@ mod tests {
         unsafe { page.as_mut() }.set_exclusive_used(1);
         let block = NonNull::new(unsafe { base.as_ptr().add(page_offset) })
             .expect("the fixture canonical block is non-null");
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        // SAFETY: the fixture exclusively owns this complete live block and
+        // initialized Page; a padding-enabled client must have a real record.
+        unsafe {
+            crate::alloc::initialize_source_padding(
+                block, block_size, block_size - crate::config::PADDING_SIZE,
+                page.as_ptr().addr(), Page::source_page_keys_at(page), false, false,
+                crate::alloc::SourcePaddingPolicy::RecordOnly,
+            ).unwrap();
+        }
         // SAFETY: this fixture owns the one registered block area and has no
         // concurrent PageMap writer or reader.
         let page_map = unsafe { lease.page_map_for_owned_ranges() }
@@ -2171,6 +2181,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3"))]
+    fn live_secure_client_reported_extent_and_reallocation_copy_exclude_the_padding_record() {
+        with_live_pointer_fixture_block_size(160, |lease, page, canonical| {
+            // SAFETY: this fixture owns the complete live block. Model a
+            // 128-byte request in its larger source size class with padding
+            // recording enabled and debug byte filling disabled.
+            unsafe {
+                crate::alloc::initialize_source_padding(
+                    canonical, 160, 128, page.as_ptr().addr(),
+                    Page::source_page_keys_at(page), false, false,
+                    crate::alloc::SourcePaddingPolicy::RecordOnly,
+                ).unwrap();
+            }
+            let allocation = unsafe { lease.lookup_live_allocation(canonical) }.unwrap().unwrap();
+            assert_eq!(allocation.usable_size(), 128);
+            // A valid caller may fill every byte of the reported public
+            // extent without corrupting the source's trailing record.
+            unsafe { core::ptr::write_bytes(canonical.as_ptr(), 0x59, allocation.usable_size()); }
+            let copy = allocation.into_reallocation_copy_source(512);
+            assert_eq!(copy.usable_prefix_len(), 128);
+            assert_eq!(copy.copy_prefix_len(), 128);
+            assert_eq!(copy.into_live_allocation().usable_size(), 128);
+
+            store_source_xthread_id_for_pointer_test(page, 16 | PAGE_HAS_INTERIOR_POINTERS);
+            let client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(16)) };
+            let aligned = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
+            assert_eq!(aligned.usable_size(), 112);
+            let copy = aligned.into_reallocation_copy_source(512);
+            assert_eq!(copy.copy_prefix_len(), 112);
+            assert_eq!(copy.canonical_block_for_release(), canonical);
+        });
+    }
+
+    #[test]
     fn guarded_live_client_usable_extent_excludes_the_exact_tail_page() {
         with_live_pointer_fixture_block_size(8192, |lease, page, canonical| {
             store_source_xthread_id_for_pointer_test(page, 16 | PAGE_HAS_INTERIOR_POINTERS);
@@ -2183,15 +2227,16 @@ mod tests {
             assert_eq!(allocation.guarded_tail_page(4096).unwrap().as_ptr(),
                 unsafe { canonical.as_ptr().add(4096) });
             assert_eq!(allocation.usable_size_with_guarded_page_size(Some(4096)), 81);
-            #[cfg(not(feature = "mi-debug-1"))]
-            assert_eq!(allocation.usable_size_with_guarded_page_size(None), 4177);
+            assert_eq!(allocation.usable_size_with_guarded_page_size(None),
+                4177 - crate::config::PADDING_SIZE);
             // An ordinary aligned block with a different first word has no
-            // guard; its usable extent still includes the complete stride.
-            #[cfg(feature = "mi-debug-1")]
+            // guard; its usable extent excludes any source padding record.
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             unsafe {
-                crate::alloc::initialize_debug_padding(
+                crate::alloc::initialize_source_padding(
                     canonical, 8192, 8192 - crate::config::PADDING_SIZE,
-                    page.as_ptr().addr(), Page::debug_padding_keys_at(page), false, false,
+                    page.as_ptr().addr(), Page::source_page_keys_at(page), false, false,
+                    crate::alloc::SourcePaddingPolicy::RecordOnly,
                 ).unwrap();
             }
             unsafe { canonical.cast::<usize>().as_ptr().write(0); }
@@ -2272,8 +2317,8 @@ mod tests {
             // prefix that starts at that exact adjusted client.
             assert_eq!(source.copy_client(), client);
             assert_eq!(source.canonical_block_for_release(), block);
-            assert_eq!(source.usable_prefix_len(), BLOCK_SIZE - INTERIOR_ADJUSTMENT);
-            assert_eq!(source.copy_prefix_len(), BLOCK_SIZE - INTERIOR_ADJUSTMENT);
+            assert_eq!(source.usable_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE - INTERIOR_ADJUSTMENT);
+            assert_eq!(source.copy_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE - INTERIOR_ADJUSTMENT);
 
             // A failed replacement leaves the old client live, so it returns
             // the non-Copy observation and a later operation may form one new
@@ -2284,7 +2329,7 @@ mod tests {
                 .into_reallocation_copy_source(SHORT_REPLACEMENT_REQUEST);
             assert_eq!(source.copy_client(), client);
             assert_eq!(source.canonical_block_for_release(), block);
-            assert_eq!(source.usable_prefix_len(), BLOCK_SIZE - INTERIOR_ADJUSTMENT);
+            assert_eq!(source.usable_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE - INTERIOR_ADJUSTMENT);
             assert_eq!(source.copy_prefix_len(), SHORT_REPLACEMENT_REQUEST);
 
             // The non-Copy source token returns the original observation only
@@ -2449,6 +2494,16 @@ mod tests {
         // allocation and starts at the source page offset.
         let block = NonNull::new(unsafe { base.as_ptr().add(page_offset + BLOCK_SIZE) })
             .expect("the fixture block address is non-null");
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+        // SAFETY: the fixture owns the complete live second block and stable
+        // Page keys until its exact registration and allocation are released.
+        unsafe {
+            crate::alloc::initialize_source_padding(
+                block, BLOCK_SIZE, BLOCK_SIZE - crate::config::PADDING_SIZE,
+                page.as_ptr().addr(), Page::source_page_keys_at(page), false, false,
+                crate::alloc::SourcePaddingPolicy::RecordOnly,
+            ).unwrap();
+        }
         // SAFETY: the interior client remains inside the second exact source
         // block and its lifetime pins the registered page for this test.
         let client = NonNull::new(unsafe { block.as_ptr().add(5) })
@@ -2485,16 +2540,16 @@ mod tests {
         ));
         assert!(!normal.has_interior_pointers());
         assert_eq!(normal.block_size(), BLOCK_SIZE);
-        assert_eq!(normal.usable_size(), BLOCK_SIZE);
+        assert_eq!(normal.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE);
 
         // SAFETY: the fixture owns the page exclusively until map
         // unregistration, so this source flag can be published before the
         // read-only interior-client operation below.
         unsafe { page.as_mut() }.set_has_interior_pointers(true);
-        assert_eq!(normal.usable_size(), BLOCK_SIZE);
+        assert_eq!(normal.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE);
         let normal_reallocation = normal.into_reallocation_copy_source(BLOCK_SIZE + 1);
-        assert_eq!(normal_reallocation.usable_prefix_len(), BLOCK_SIZE);
-        assert_eq!(normal_reallocation.copy_prefix_len(), BLOCK_SIZE);
+        assert_eq!(normal_reallocation.usable_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE);
+        assert_eq!(normal_reallocation.copy_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE);
         // SAFETY: `client` is an exact current interior allocation from this
         // registered page, and the same live-block invariant spans lookup.
         let pointer = unsafe { lease.lookup_live_allocation(client) }
@@ -2511,10 +2566,10 @@ mod tests {
         assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.block_size(), BLOCK_SIZE);
-        assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
-        // The final client byte still belongs to this canonical block and
-        // leaves exactly one usable byte before the next block starts.
-        let last_client = NonNull::new(unsafe { block.as_ptr().add(BLOCK_SIZE - 1) })
+        assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
+        // The final public client byte belongs to this canonical block and
+        // leaves exactly one usable byte before any source padding record.
+        let last_client = NonNull::new(unsafe { block.as_ptr().add(BLOCK_SIZE - crate::config::PADDING_SIZE - 1) })
             .expect("the final client byte is non-null");
         let last = unsafe { lease.lookup_live_allocation(last_client) }
             .expect("the process root stays ready")
@@ -2523,12 +2578,12 @@ mod tests {
         assert_eq!(last.usable_size(), 1);
 
         store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE);
-        assert_eq!(pointer.usable_size(), BLOCK_SIZE - 5);
+        assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
         let interior_reallocation = pointer.into_reallocation_copy_source(BLOCK_SIZE);
         assert_eq!(interior_reallocation.copy_client(), client);
         assert_eq!(interior_reallocation.canonical_block_for_release(), block);
-        assert_eq!(interior_reallocation.usable_prefix_len(), BLOCK_SIZE - 5);
-        assert_eq!(interior_reallocation.copy_prefix_len(), BLOCK_SIZE - 5);
+        assert_eq!(interior_reallocation.usable_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
+        assert_eq!(interior_reallocation.copy_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
         // SAFETY: `block` remains an exact live allocation. The source state
         // snapshot is deliberately abandoned but still PageMap-published.
         let abandoned = unsafe { lease.lookup_live_allocation(block) }
