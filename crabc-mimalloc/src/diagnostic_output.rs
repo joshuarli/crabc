@@ -1291,11 +1291,11 @@ pub(crate) enum SourceErrorReport {
     /// map's reservation, in KiB, could not be mapped.
     PageMapReservation { kib: usize },
     /// `mi_check_padding_on_free` found the source freed canary (EAGAIN).
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     PaddingDoubleFree { block: usize, usable_size: usize },
     /// `mi_check_padding_on_free` found a changed record or padding byte
     /// (EFAULT). A changed record reports the full usable block size.
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     PaddingOverflow { block: usize, usable_size: usize, wrong_offset: usize },
 }
 
@@ -1318,9 +1318,9 @@ impl SourceErrorReport {
             | Self::PageMapReservation { .. } => Errno::NOMEM,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. }
             | Self::SecureGuardFailure { .. } => Errno::INVAL,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             Self::PaddingDoubleFree { .. } => Errno::AGAIN,
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             Self::PaddingOverflow { .. } => Errno::FAULT,
         }
     }
@@ -1421,7 +1421,7 @@ impl SourceErrorReport {
                 decimal(&mut message, offset);
                 message.append(b")\n");
             }
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             Self::PaddingDoubleFree { block, usable_size } => {
                 message.append(b"double free detected of heap block ");
                 append_source_pointer(&mut message.bytes, &mut message.length, block);
@@ -1429,7 +1429,7 @@ impl SourceErrorReport {
                 decimal(&mut message, usable_size);
                 message.append(b"\n");
             }
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             Self::PaddingOverflow { block, usable_size, wrong_offset } => {
                 message.append(b"buffer overflow in heap block ");
                 append_source_pointer(&mut message.bytes, &mut message.length, block);
@@ -4058,6 +4058,24 @@ mod tests {
             .env(CHILD, "1").output().unwrap();
         assert_eq!(result.status.signal(), Some(6));
         assert_eq!(result.stderr, b"mimalloc: assertion failed: at \"src/page.c\":43, mi_page_list_count\n  assertion: \"page != NULL\"\n");
+    }
+
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[test]
+    fn padding_reports_preserve_source_error_and_record_geometry() {
+        use super::SourceErrorReport;
+        for (block, usable_size, wrong_offset) in [(0usize, 24usize, 8usize), (0xABCD, 1024, 1007)] {
+            let double_free = SourceErrorReport::PaddingDoubleFree { block, usable_size };
+            assert_eq!(double_free.error(), Errno::AGAIN);
+            assert_eq!(double_free.message().as_c_str().to_bytes(), std::format!(
+                "double free detected of heap block 0x{block:08X} with size {usable_size}\n",
+            ).as_bytes());
+            let overflow = SourceErrorReport::PaddingOverflow { block, usable_size, wrong_offset };
+            assert_eq!(overflow.error(), Errno::FAULT);
+            assert_eq!(overflow.message().as_c_str().to_bytes(), std::format!(
+                "buffer overflow in heap block 0x{block:08X} of size {usable_size}: write after {wrong_offset} bytes\n",
+            ).as_bytes());
+        }
     }
 
     #[test]
