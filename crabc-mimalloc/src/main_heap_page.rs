@@ -463,7 +463,7 @@ pub(crate) struct MainHeapThreadOwnerLocalAllocator<'owner> {
     engine: &'owner mut OwnerLocalMainHeapPageAllocator<'static, 'static, RuntimeFirstRegularPageBacking>,
 }
 
-/// The M3 persistent-owner trace image of the bound later owner's default
+/// The persistent-owner trace image of the bound later owner's default
 /// Theap; absent from production builds.
 #[cfg(feature = "native-runtime-test-audit")]
 impl MainHeapThreadOwnerLocalAllocator<'_> {

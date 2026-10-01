@@ -58,14 +58,19 @@ only its exact source, configuration, image, products, and execution context.
   and its narrowly proved causal receiver remain separate. Ordered family and
   whole callable-provider closure remain open.
 - **Merged compiler and ownership evidence:** all nine Rust compiler profiles
-  pass at `3616c493c`, with exact root check 66 log/status in `.work/tmp`.
-  The lane checker now disables incremental caches. Actual fixed and auxiliary
-  child callback allocation regressions pass after the integrated admission
-  repair. The original complete six-program/seventeen-test Miri producer passes
-  at `1c22908bf`; corrected independent read-only receiver `bd207c0b0` passes
-  all seventeen strict tests, 69 foundation commands and five queue helpers
-  against that unchanged producer. Earlier failures remain retained. The whole
-  ownership gate remains unmet pending the initializer and allocator contracts.
+  pass on the composed bootstrap/frequency graph at `27f714e5e`; exact checks
+  73 and 74 remain under `.work/tmp`. Live option getters now return descriptor
+  changes made by warning callbacks. Staged initializer controls preserve
+  prelink reset custody, reject recapture, and retain linked storage on failure;
+  focused strict-provenance Miri and guarded draw-order controls pass on their
+  exact sources. A pending initial-owner frequency capture survives an ordinary
+  fork and resumes in both images on the lane source; merged native qualification
+  remains in progress. The original seventeen-test Miri receipts remain unchanged.
+  Current development ownership subsets authenticate eighteen strict tests and
+  replay native owner/queue controls from relocated read-only custody under
+  `.work/allocator-x86_64/reports/allocator/x86_64/ownership71-0d373c72f`.
+  These subsets do not close the whole ownership gate; fresh Page transport,
+  child control lifetime and complete allocator contracts remain open.
 - **Allocator verified slices:** exact frozen sources retain independent replay
   for ordinary/auxiliary Theap geometry, public API and Heap/Theap visitors,
   fault controls, queue ownership, abort-on-failure, visitation and statistics.
@@ -78,44 +83,44 @@ only its exact source, configuration, image, products, and execution context.
   birth requests the source's 6,464 bytes, but child creation still commits
   131,072 bytes versus C's 65,536. Removing the separate control allocation must
   preserve owner provenance, failure retry and live-thread destruction.
-- **Retention:** observer repairs are integrated through `dc8f66e98`: stack
-  barriers/atomic readiness and owned release/join guards protect panic unwinding.
-  Its two panic controls, unchanged 33-cycle/six-trace execution, all 184,330
-  C/native comparisons and independent read-only replay pass. Every native
-  profile still leaves 4,096 unexplained bytes from cycle sixteen, matching the
-  original/replayed `365090643` result. The new same-executable trace identifies
-  a `std::thread` allocation; its allocation stack does not identify the eventual
-  retaining owner. Actual Rust self-contained musl 1.2.5 is authenticated by its
-  pinned archive and byte comparisons for five linked functions. Its bouncing
-  size-class pool is a hypothesis; the live pool-observation blueprint is
-  unimplemented. About 245 MB of retained source-root growth also lacks a proved
-  bound. Evidence and both settlement scratch directories remain under
-  `.work/allocator-x86_64/reports/allocator/x86_64/retentionresidual60-38e6c0e13`
-  and `retentionresidual60-38e6-causal`. Memory qualification remains open.
-- **Secure-3:** integrated padding repair passes both genuine public-growth
-  regressions, four PageMap controls and independent replay. Complete production
-  at `bd6f847d0` passes pinned C and native main/worker growth, then aborts in both
-  parent and child; the eight native controls are not reached and the absent
-  receipt reader rejects. A smaller three-cycle Heap birth/delete control passes
-  pinned C and aborts during native's second Heap creation, including independent
-  read-only repetition, without workers or fork. The raw local fast path is
-  incompatible with encoded free lists and padding. Parked `secureforkruntime56`
-  contains the actual regression and an eligibility repair using the complete
-  engine; neither is validated and no patched adapter build was launched. No fork
-  repair or complete secure-profile pass is claimed. Original failures, products
-  and the small control remain under
-  `.work/allocator-x86_64/reports/allocator/x86_64/secureprofilefidelity59-bd6f847d0/source`.
-- **Callable providers:** byte-load instruction-boundary admission is integrated
-  at `32b40e346`. Fifteen real-ELF host and pinned controls and all nine compiler
-  profiles pass on its lane source. The frozen `e9de501dd` diagnostic projection
-  and independent read-only replay admit 2,881/2,958 references; 77 remain
-  refused, with six added and none lost. Public source-identity admission still
-  rejects the wrong source. Exact receiver source and raw inputs are retained
-  under `.work/x86_64/reports/runtimeclosure71/source`; relocated custody replay
-  passes and the settled lane worktree is retired. Exact locked BSS atomics, bounded
-  interior data addresses and common 4/8-byte integer proofs remain integrated.
-  Diagnostic replay cannot qualify newer runtime source. Whole closure remains
-  open.
+- **Retention:** observer and receiver repairs are integrated through
+  `f76997d38`. Authenticated Rust self-contained musl 1.2.5 live state identifies
+  the 4,096-byte residual: `__malloc_context.active[23]` retains a fully free
+  bouncing group from cycle sixteen. All four 33-cycle/six-child profiles and
+  independent read-only replay pass on the exact observer source; release,
+  stat-1 and stat-2 compare 184,330 fields, debug-1 compares 184,324.
+  Frozen inputs and relocated replay remain under
+  `.work/allocator-x86_64/reports/allocator/x86_64/retention71-c12704dab`;
+  all 13,825 input hashes remain unchanged. Separate worker-root controls stay
+  bounded through 512 epochs with actual panic release/join controls. The child
+  fixture explicitly sets arena reservation to zero and retains source main-Heap
+  OS pages; its extended 128-cycle producer and owning reader pass but establish
+  no workload-independent memory bound. Pinned C controls restoring source-default
+  reservation release child arenas while process-lived PageMap address coverage
+  still grows. Native policy parity and the memory qualification contract remain
+  open; no plateau or whole memory gate is claimed.
+- **Secure-3:** encoded/padded fast-path eligibility repair is integrated
+  at `f66846874` from exact lane source `42a3f7c4f`. The genuine repeated Heap-birth
+  regression passes against pinned C and native; the complete public producer
+  and independent read-only reader pass all 111 comparisons and eight controls.
+  Public growth and realloc-consumption controls also pass on exact `43586c271`
+  source, including joined worker and parent/child execution. Relocated owning
+  replay passes under
+  `.work/allocator-x86_64/reports/allocator/x86_64/secureapi71-43586c271/source`;
+  original failures and the earlier incomplete producer remain retained. This
+  proves the selected secure-3 public cohort, not complete allocator promotion.
+  Public guarded control setters now relay through the native adapter; sampled
+  allocation routing and the complete guarded profile remain in progress.
+- **Callable providers:** exact instruction/operand and ordinary immutable
+  object proofs are integrated through `6bca58f16`. Fifteen real-ELF host and
+  pinned controls and all nine compiler profiles pass. Frozen `e9de501dd`
+  diagnostic projection admits 2,892/2,958 references, with 66 refused; its
+  owning read-only replay is byte-identical. Three ordinary immutable objects
+  are newly admitted, none lost; mergeable source string objects remain refused.
+  Source-identity admission still rejects the wrong runtime source. Exact source
+  and raw inputs have relocated custody under
+  `.work/x86_64/reports/integrated-lanes/closure73-7828a2137/source`.
+  Diagnostic replay cannot qualify newer runtime source; whole closure remains open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Keep this requirement unmet.
@@ -161,17 +166,18 @@ only its exact source, configuration, image, products, and execution context.
   `.work/x86_64/reports/runtimeclosure60`,
   `.work/x86_64/reports/guardedfrontend55-wip-96bcc64fc`, and
   `.work/reports/allocator/claimcustody57-wip-be30b3039`.
-- **Resume:** first execute the small Heap-birth regression against the parked
-  eligibility repair and pinned C, then run merged compiler checks and the unchanged
-  complete secure-3 111-comparison/eight-control producer with its owning reader.
-  Observe the actual live ambient pool before assigning the retention residual;
-  prove the source-root memory bound. Qualify byte-load closure without relaxing
-  source identity. Compose and prove bootstrap/guarded custody, finish child
-  control lifetime parity and remaining families, then replay all seven gates on
-  one merged source before default/public promotion. On explicit resumption,
-  use sixteen `gpt-6.1-sol` medium lanes, preserve product leases and retire
-  settled worktrees promptly. Performance remains outside scope. Git owns source
-  history and this section owns the handoff.
+- **Continue:** qualify the composed bootstrap/frequency graph on merged
+  source, including first-allocation warnings, consumed child metadata custody,
+  guarded callback routing and surviving-owner fork continuation. Complete fresh
+  OS/Arena Page transport with exact publication order and persistent cleanup
+  custody, child control lifetime and footprint parity, and sampled guarded
+  allocation relays. Compare source-default reservation retention controls without
+  converting source-lived roots into a false memory pass. Finish callable-provider
+  closure and remaining runtime families, then replay all seven gates on one merged
+  source before default/public promotion. Keep sixteen medium `gpt-6.1-sol` lanes
+  occupied; preserve exact inputs and retire settled worktrees promptly.
+  Performance remains outside scope. Git owns source history and this section
+  owns the handoff.
 
 ## Parallel lanes
 
