@@ -12,6 +12,9 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import x86_64_m6_public_child_heap as public
 import x86_64_m6_child_main_heap_reuse as reuse
+import x86_64_m6_heap_visit_profiles as heap_visit
+import x86_64_m6_child_main_heap_visitor as child_visit
+import x86_64_m6_child_abandoned_visitor as abandoned_visit
 
 
 class ChildHeapProfileTests(unittest.TestCase):
@@ -131,6 +134,141 @@ class ChildHeapProfileTests(unittest.TestCase):
                     with self.assertRaisesRegex(runner.harness.HarnessError, 'image differs'):
                         runner.main(['--replay'])
                     execute.assert_not_called()
+
+
+class VisitationProfileSelectionTests(unittest.TestCase):
+    runners = (heap_visit, child_visit, abandoned_visit)
+    defaults = ('release', 'debug-1', 'stat-1', 'stat-2')
+
+    def execute(self, runner, arguments):
+        with mock.patch.object(sys, 'argv', [runner.__name__, *arguments]):
+            runner.main()
+
+    def test_secure_single_profile_routes_the_exact_development_selection(self):
+        for runner in self.runners:
+            for profile in ('secure-1', 'secure-2'):
+                method = 'run' if runner is heap_visit else 'run_profiles'
+                with self.subTest(runner=runner.__name__, profile=profile), mock.patch.object(runner, method) as run:
+                    self.execute(runner, ['--profile', profile])
+                    run.assert_called_once_with((profile,))
+
+    def test_explicit_secure_cohort_routes_the_closed_requested_roster(self):
+        for runner in self.runners:
+            method = 'run' if runner is heap_visit else 'run_profiles'
+            with self.subTest(runner=runner.__name__), mock.patch.object(runner, method) as run:
+                self.execute(runner, ['--profiles', 'secure-1', 'secure-2'])
+                run.assert_called_once_with(('secure-1', 'secure-2'), canonical=True)
+
+    def test_default_workload_preserves_the_historical_profile_selection(self):
+        for runner in self.runners:
+            method = 'run' if runner is heap_visit else 'run_profiles'
+            arguments = [] if runner is heap_visit else ['--matrix']
+            with self.subTest(runner=runner.__name__), mock.patch.object(runner, method) as run:
+                self.execute(runner, arguments)
+                run.assert_called_once_with(self.defaults)
+
+    def test_unknown_duplicate_or_conflicting_profiles_fail_before_work(self):
+        for runner in self.runners:
+            method = 'run' if runner is heap_visit else 'run_profiles'
+            for arguments in (['--profiles'], ['--profiles', 'secure-3'],
+                              ['--profiles', 'secure-1', 'secure-1'],
+                              ['--profiles', 'secure-1', '--profile', 'release']):
+                with self.subTest(runner=runner.__name__, arguments=arguments), \
+                     mock.patch.object(runner, method) as run, mock.patch('sys.stderr'):
+                    with self.assertRaises(SystemExit) as stopped:
+                        self.execute(runner, arguments)
+                    self.assertEqual(stopped.exception.code, 2)
+                    run.assert_not_called()
+
+    def receipt(self, root, profiles, parameters=None, cases=None):
+        (root / 'products').mkdir()
+        (root / 'products/inputs.json').write_text(json.dumps({'profiles': list(profiles)}))
+        case_ids = [f'{profile}-{backend}-run' for profile in profiles for backend in ('c', 'native')]
+        return SimpleNamespace(path=root / 'receipt.json',
+            parameters={'profiles': ','.join(profiles) if parameters is None else parameters},
+            case_ids=lambda: case_ids if cases is None else cases)
+
+    def test_direct_cohort_rejects_empty_unknown_or_duplicate_selection_before_execution(self):
+        for runner in self.runners:
+            method = runner.run if runner is heap_visit else runner.run_profiles
+            for profiles in ((), ('secure-3',), ('secure-1', 'secure-1')):
+                with self.subTest(runner=runner.__name__, profiles=profiles), \
+                     mock.patch.object(runner.harness, 'require_native_x86_64') as execute:
+                    with self.assertRaises(runner.harness.HarnessError):
+                        method(profiles, canonical=True)
+                    execute.assert_not_called()
+
+    def test_reader_rejects_retained_inputs_with_another_profile_roster(self):
+        for runner in self.runners:
+            work = runner.harness.ROOT / '.work/tmp'
+            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=work) as name:
+                root = Path(name)
+                receipt = self.receipt(root, self.defaults)
+                (root / 'products/inputs.json').write_text(json.dumps({'profiles': ['secure-1', 'secure-2']}))
+                with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
+                     self.assertRaises(runner.receipts.ReceiptError):
+                    self.execute(runner, ['--read'])
+
+    def test_reader_rejects_wrong_replay_image_before_executing_products(self):
+        for runner in self.runners:
+            work = runner.harness.ROOT / '.work/tmp'
+            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=work) as name:
+                root = Path(name)
+                receipt = self.receipt(root, ('secure-1', 'secure-2'))
+                prior = {'execution_mode': 'native', 'host_architecture': 'x86_64', 'image_id': 'sha256:' + '0' * 64}
+                (root / 'products/inputs.json').write_text(json.dumps({'profiles': ['secure-1', 'secure-2'], 'execution': prior}))
+                current = dict(prior, image_id='sha256:' + '1' * 64)
+                with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
+                     mock.patch.object(runner.harness, 'require_native_x86_64', return_value=current), \
+                     mock.patch.object(runner, 'record') as execute:
+                    with self.assertRaisesRegex(runner.harness.HarnessError, 'image differs'):
+                        self.execute(runner, ['--profiles', 'secure-1', 'secure-2', '--replay'])
+                    execute.assert_not_called()
+
+    def test_reader_rejects_a_wrong_or_missing_declared_profile_selector(self):
+        for runner in self.runners:
+            work = runner.harness.ROOT / '.work/tmp'
+            work.mkdir(parents=True, exist_ok=True)
+            for selector in (None, 'secure-1', ','.join(reversed(self.defaults))):
+                with self.subTest(runner=runner.__name__, selector=selector), tempfile.TemporaryDirectory(dir=work) as name:
+                    receipt = self.receipt(Path(name), self.defaults)
+                    receipt.parameters = {} if selector is None else {'profiles': selector}
+                    with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
+                         self.assertRaises(runner.receipts.ReceiptError):
+                        self.execute(runner, ['--read'])
+
+    def test_secure_reader_cannot_accept_old_or_partial_runtime_roster(self):
+        profiles = ('secure-1', 'secure-2')
+        for runner in self.runners:
+            work = runner.harness.ROOT / '.work/tmp'
+            for cases in ([f'{profile}-{backend}-run' for profile in self.defaults for backend in ('c', 'native')],
+                          ['secure-1-c-run', 'secure-1-native-run', 'secure-2-c-run']):
+                with self.subTest(runner=runner.__name__, cases=cases), tempfile.TemporaryDirectory(dir=work) as name:
+                    receipt = self.receipt(Path(name), profiles, cases=cases)
+                    with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
+                         self.assertRaises(runner.receipts.ReceiptError):
+                        self.execute(runner, ['--profiles', *profiles, '--read'])
+
+    def test_reader_rejects_runtime_order_that_disagrees_with_requested_cohort(self):
+        profiles = ('secure-1', 'secure-2')
+        for runner in self.runners:
+            work = runner.harness.ROOT / '.work/tmp'
+            cases = [f'{profile}-{backend}-run' for profile in profiles for backend in ('c', 'native')]
+            cases[0], cases[1] = cases[1], cases[0]
+            with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=work) as name:
+                receipt = self.receipt(Path(name), profiles, cases=cases)
+                with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
+                     self.assertRaises(runner.receipts.ReceiptError):
+                    self.execute(runner, ['--profiles', *profiles, '--read'])
+
+    def test_complete_requested_cohort_and_historical_reader_are_accepted(self):
+        for runner in self.runners:
+            work = runner.harness.ROOT / '.work/tmp'
+            for profiles in (self.defaults, ('secure-1', 'secure-2')):
+                with self.subTest(runner=runner.__name__, profiles=profiles), tempfile.TemporaryDirectory(dir=work) as name:
+                    receipt = self.receipt(Path(name), profiles)
+                    with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt):
+                        self.execute(runner, ['--profiles', *profiles, '--read'])
 
 
 if __name__ == '__main__':

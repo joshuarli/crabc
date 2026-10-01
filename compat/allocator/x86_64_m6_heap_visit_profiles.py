@@ -17,6 +17,7 @@ receipts = load_module("heap_visit_profiles_receipts", harness.ROOT / "compat/x8
 RUNNER = "allocator-heap-visit-profiles"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-heap-visit-profiles"
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2")
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_heap_visit_profiles_driver.c"
 ALIASES = ("mi_heap_visit_blocks", "mi_heap_visit_abandoned_blocks", "mi_theap_visit_blocks")
 
@@ -36,7 +37,10 @@ def record(output, name, argv, cwd, runtime=False):
     return result, logs
 
 
-def run(profiles):
+def run(profiles, *, canonical=False):
+    if (not profiles or len(set(profiles)) != len(profiles)
+            or any(profile not in AVAILABLE_PROFILES for profile in profiles)):
+        raise harness.HarnessError("unknown or duplicate visitation profile selection")
     execution = harness.require_native_x86_64(require_image_identity=True)
     seal = receipts.source_seal(harness.ROOT)
     pin = harness.load_pin()
@@ -96,31 +100,44 @@ def run(profiles):
         print(f"Heap visitation {profile}: all public aliases PASS", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during Heap visitation")
-    canonical = tuple(profiles) == PROFILES
+    canonical = canonical or tuple(profiles) == PROFILES
     path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
         {"profiles": ",".join(profiles), "aliases": ",".join(ALIASES),
          "boundary": "explicit native-mi-adapter", "watchdog-seconds": "60"}, canonical)
     if canonical:
         receipts.read_receipt(harness.ROOT, RUNNER)
-    print(f"Heap visitation {'canonical four-profile' if canonical else 'development-only'} receipt: {path}")
+    print(f"Heap visitation {'canonical requested-profile' if canonical else 'development-only'} receipt: {path}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=PROFILES, help="development-only single-profile execution")
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--profile", choices=AVAILABLE_PROFILES, help="development-only single-profile execution")
+    selection.add_argument("--profiles", nargs="+", choices=AVAILABLE_PROFILES,
+        help="complete ordered profile cohort for production or retained reading")
     parser.add_argument("--read", action="store_true", help="read exact-source physical receipt")
     parser.add_argument("--replay", action="store_true", help="read and execute all retained C/native aliases")
     args = parser.parse_args()
+    profiles = tuple(args.profiles) if args.profiles else PROFILES
+    if len(set(profiles)) != len(profiles):
+        parser.error("profile selection cannot contain duplicates")
     if args.read or args.replay:
         if args.profile:
             parser.error("reading a canonical receipt cannot select one profile")
         receipt = receipts.read_receipt(harness.ROOT, RUNNER)
+        inputs = harness.read_json(receipt.path.parent / "products/inputs.json")
+        wanted = [f"{profile}-{backend}-run" for profile in profiles for backend in ("c", "native")]
+        recorded = [case for case in receipt.case_ids() if case.endswith("-run")]
+        if (receipt.parameters.get("profiles") != ",".join(profiles)
+                or inputs.get("profiles") != list(profiles) or recorded != wanted):
+            raise receipts.ReceiptError("visitation receipt does not cover the exact requested profile cohort")
         print("Heap visitation exact-source physical receipt: PASS")
         if args.replay:
-            harness.require_native_x86_64(require_image_identity=True)
+            execution = harness.require_native_x86_64(require_image_identity=True)
+            harness.native_execution_attestation(inputs.get("execution"), execution)
             harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
             scratch = Path(tempfile.mkdtemp(prefix="heap-visit-profiles-replay-", dir=harness.TEMP_ROOT))
-            for profile in PROFILES:
+            for profile in profiles:
                 for backend in ("c", "native"):
                     product = f"{profile}-{backend}"
                     binary = scratch / product
@@ -131,9 +148,12 @@ def main():
                     stdout = next(path for path in case["logs"] if path.endswith(".stdout"))
                     if stress.byte_record_payload(result["stdout"], product) != (receipt.path.parent / "logs" / stdout).read_bytes():
                         raise harness.HarnessError(f"retained {product} visitation output differs; raw in {scratch}")
-            print(f"Heap visitation retained four-profile aliases: PASS; raw {scratch}")
+            print(f"Heap visitation retained requested-profile aliases: PASS; raw {scratch}")
     else:
-        run((args.profile,) if args.profile else PROFILES)
+        if args.profiles:
+            run(profiles, canonical=True)
+        else:
+            run((args.profile,) if args.profile else PROFILES)
 
 
 if __name__ == "__main__":

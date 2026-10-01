@@ -51,6 +51,7 @@ def require_trace(trace: dict[str, str], side: str) -> None:
 
 
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2")
 RUNNER = "allocator-child-main-heap-visitor"
 receipts = load_module("child_main_heap_visitor_receipts", harness.ROOT / "compat/x86_64/native_shadow_receipt.py")
 
@@ -70,7 +71,10 @@ def record(output, name, argv, cwd, runtime=False):
     return result, logs
 
 
-def run_profiles(profiles):
+def run_profiles(profiles, *, canonical=False):
+    if (not profiles or len(set(profiles)) != len(profiles)
+            or any(profile not in AVAILABLE_PROFILES for profile in profiles)):
+        raise harness.HarnessError("unknown or duplicate visitation profile selection")
     execution = harness.require_native_x86_64(require_image_identity=True)
     seal = receipts.source_seal(harness.ROOT)
     pin = harness.load_pin()
@@ -136,13 +140,13 @@ def run_profiles(profiles):
         print(f"child main heap visitor {profile}: {len(c_trace)} C/native keys PASS", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during child Heap visitation")
-    canonical = tuple(profiles) == PROFILES
+    canonical = canonical or tuple(profiles) == PROFILES
     path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
         {"profiles": ",".join(profiles), "boundary": "explicit native-mi-adapter",
          "source-internal-checks": "true", "geometry": "ordered retained clients and areas", "watchdog-seconds": "60"}, canonical)
     if canonical:
         receipts.read_receipt(harness.ROOT, RUNNER)
-    print(f"child main heap visitor {'canonical four-profile' if canonical else 'development-only'} receipt: {path}")
+    print(f"child main heap visitor {'canonical requested-profile' if canonical else 'development-only'} receipt: {path}")
     return len(STAGES)
 
 
@@ -153,21 +157,33 @@ def run_differential() -> int:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group()
-    selection.add_argument("--profile", choices=PROFILES, help="development-only selected profile")
+    selection.add_argument("--profile", choices=AVAILABLE_PROFILES, help="development-only selected profile")
     selection.add_argument("--matrix", action="store_true", help="canonical four-profile visitation comparison")
+    selection.add_argument("--profiles", nargs="+", choices=AVAILABLE_PROFILES,
+        help="complete ordered profile cohort for production or retained reading")
     parser.add_argument("--read", action="store_true", help="read exact-source physical receipt")
     parser.add_argument("--replay", action="store_true", help="read and execute all retained C/native products")
     args = parser.parse_args()
+    profiles = tuple(args.profiles) if args.profiles else PROFILES
+    if len(set(profiles)) != len(profiles):
+        parser.error("profile selection cannot contain duplicates")
     if args.read or args.replay:
         if args.profile or args.matrix:
             parser.error("reading a canonical receipt cannot select profiles")
         receipt = receipts.read_receipt(harness.ROOT, RUNNER)
+        inputs = harness.read_json(receipt.path.parent / "products/inputs.json")
+        wanted = [f"{profile}-{backend}-run" for profile in profiles for backend in ("c", "native")]
+        recorded = [case for case in receipt.case_ids() if case.endswith("-run")]
+        if (receipt.parameters.get("profiles") != ",".join(profiles)
+                or inputs.get("profiles") != list(profiles) or recorded != wanted):
+            raise receipts.ReceiptError("visitation receipt does not cover the exact requested profile cohort")
         print("child main heap visitor exact-source physical receipt: PASS")
         if args.replay:
-            harness.require_native_x86_64(require_image_identity=True)
+            execution = harness.require_native_x86_64(require_image_identity=True)
+            harness.native_execution_attestation(inputs.get("execution"), execution)
             harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
             scratch = Path(tempfile.mkdtemp(prefix="child_main_heap_visitor-replay-", dir=harness.TEMP_ROOT))
-            for profile in PROFILES:
+            for profile in profiles:
                 for backend in ("c", "native"):
                     product = f"{profile}-{backend}"
                     binary = scratch / product
@@ -186,9 +202,12 @@ def main():
                         raise harness.HarnessError(f"retained {product} client geometry differs; raw {scratch}")
                     if backend == "c" and re.findall(r"^source\.child_main=([01]),([01]),([01]),([01])$", stderr, re.MULTILINE) != [("1",) * 4]:
                         raise harness.HarnessError(f"retained {product} source owners differ; raw {scratch}")
-            print(f"child main heap visitor retained four-profile products: PASS; raw {scratch}")
+            print(f"child main heap visitor retained requested-profile products: PASS; raw {scratch}")
     else:
-        run_profiles(PROFILES if args.matrix else (args.profile or "release",))
+        if args.profiles:
+            run_profiles(profiles, canonical=True)
+        else:
+            run_profiles(PROFILES if args.matrix else (args.profile or "release",))
 
 
 if __name__ == "__main__":
