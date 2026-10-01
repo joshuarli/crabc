@@ -136,7 +136,7 @@ unsafe fn walk_list(
 /// client bytes have been written. Ordinary page validity never calls this.
 ///
 /// # Safety
-/// The caller exclusively retains the actual fresh committed region from
+/// Above debug level two, the caller exclusively retains the actual fresh committed region from
 /// `area`, with every byte initialized and readable. For on-demand pages the
 /// actual OS page size and source committed-prefix count describe that same
 /// region, which can extend beyond `reserved * block_size`. No concurrent
@@ -145,6 +145,10 @@ pub(crate) unsafe fn source_initial_page_is_zero(
     state: &PageValiditySnapshot,
     os_page_size: usize,
 ) -> Result<(), SourcePageInvariant> {
+    // The source compiles this expensive initialization assertion only above
+    // debug level two. In lower profiles neither byte nor geometry observation
+    // is permitted by this assertion site.
+    if crate::config::DEBUG_LEVEL <= 2 { return Ok(()); }
     if !state.initially_zero { return Ok(()); }
     let bytes = if state.slice_pcommitted == 0 { state.area_bytes } else {
         if !os_page_size.is_power_of_two() { return Err(SourcePageInvariant::ObservationGeometry); }
@@ -180,6 +184,23 @@ mod tests {
     }
 
     fn with_page(test: impl FnOnce(NonNull<Page>, &PageMap)) {
+        with_page_zero_state(true, true, test);
+    }
+
+    fn with_page_zero_state(
+        initially_zero: bool,
+        free_is_zero: bool,
+        test: impl FnOnce(NonNull<Page>, &PageMap),
+    ) {
+        with_page_initial_state(initially_zero, free_is_zero, 0, test);
+    }
+
+    fn with_page_initial_state(
+        initially_zero: bool,
+        free_is_zero: bool,
+        slice_pcommitted: u16,
+        test: impl FnOnce(NonNull<Page>, &PageMap),
+    ) {
         let mut storage = std::boxed::Box::new(PageStorage {
             metadata: MaybeUninit::uninit(),
             bytes: [0; 2 * ARENA_SLICE_SIZE - size_of::<Page>()],
@@ -199,12 +220,13 @@ mod tests {
         // Selected source metadata is separated from the area's aligned
         // slice. Both remain in this one typed backing allocation.
         let offset = ARENA_SLICE_SIZE;
-        let memory = MemoryId::external(page.as_ptr().cast(), 2 * ARENA_SLICE_SIZE, true, false, true);
+        let memory = MemoryId::external(page.as_ptr().cast(), 2 * ARENA_SLICE_SIZE,
+            slice_pcommitted == 0, false, initially_zero);
         // SAFETY: the aligned typed allocation contains both metadata and
         // complete block backing; publication precedes every observer.
         unsafe {
             Page::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
-                32, offset, 8, 0, true, memory)
+                32, offset, 8, slice_pcommitted, free_is_zero, memory)
         }.unwrap();
         let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
             8 * 1024 * 1024, true, false);
@@ -271,6 +293,31 @@ mod tests {
     }
 
     #[test]
+    fn initially_zero_assertion_uses_source_expensive_debug_threshold() {
+        with_page(|page, _map| unsafe {
+            let state = Page::validity_snapshot_at(page);
+            assert_eq!(state.used, 0);
+            assert_eq!(state.capacity, 0);
+            assert!(state.free.is_null());
+            state.area.as_ptr().write(0x5a);
+            let expected = if crate::config::DEBUG_LEVEL > 2 {
+                Err(SourcePageInvariant::InitiallyZero)
+            } else { Ok(()) };
+            assert_eq!(source_initial_page_is_zero(&state, 4096), expected);
+        });
+    }
+
+    #[test]
+    fn initially_zero_assertion_uses_birth_flag_instead_of_local_free_zero() {
+        with_page_zero_state(false, true, |page, _map| unsafe {
+            let state = Page::validity_snapshot_at(page);
+            assert!(!state.initially_zero);
+            state.area.as_ptr().write(0x5a);
+            assert_eq!(source_initial_page_is_zero(&state, 4096), Ok(()));
+        });
+    }
+
+    #[test]
     fn initially_zero_checks_only_fresh_committed_region_before_list_initialization() {
         with_page(|page, _map| unsafe {
             // SAFETY: all area bytes are initialized and exclusively owned;
@@ -278,7 +325,10 @@ mod tests {
             let mut state = Page::validity_snapshot_at(page);
             assert_eq!(source_initial_page_is_zero(&state, 4096), Ok(()));
             state.area.as_ptr().add(255).write(1);
-            assert_eq!(source_initial_page_is_zero(&state, 4096), Err(SourcePageInvariant::InitiallyZero));
+            let expected = if crate::config::DEBUG_LEVEL > 2 {
+                Err(SourcePageInvariant::InitiallyZero)
+            } else { Ok(()) };
+            assert_eq!(source_initial_page_is_zero(&state, 4096), expected);
             state.initially_zero = false;
             assert_eq!(source_initial_page_is_zero(&state, 4096), Ok(()));
         });
@@ -336,11 +386,16 @@ mod tests {
 
     #[test]
     fn initialization_checks_committed_prefix_beyond_reserved_block_bytes() {
-        with_page(|page, _map| unsafe {
-            let mut state = Page::validity_snapshot_at(page);
-            state.slice_pcommitted = 1;
+        with_page_initial_state(true, true, 1, |page, _map| unsafe {
+            let state = Page::validity_snapshot_at(page);
+            assert_eq!(state.slice_pcommitted, 1);
+            assert_eq!(state.area_bytes, 256);
+            assert_eq!(source_initial_page_is_zero(&state, 4096), Ok(()));
             state.area.as_ptr().add(256).write(1);
-            assert_eq!(source_initial_page_is_zero(&state, 4096), Err(SourcePageInvariant::InitiallyZero));
+            let expected = if crate::config::DEBUG_LEVEL > 2 {
+                Err(SourcePageInvariant::InitiallyZero)
+            } else { Ok(()) };
+            assert_eq!(source_initial_page_is_zero(&state, 4096), expected);
         });
     }
 }
