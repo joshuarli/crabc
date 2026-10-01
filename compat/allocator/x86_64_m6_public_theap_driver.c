@@ -88,7 +88,13 @@ static bool guarded_configuration(const char* name, mi_theap_t* base,
     {0, 0, 0, 0}, {1, 123, 1, 4096}, {17, 0, 32, 8192},
     {1024, 987, 8192, 65536}, {1, 0, 0, SIZE_MAX},
   };
+  /* Guarded setters require a live Theap; their non-guarded definitions
+     ignore all operands, including a null pointer. */
+#if MI_GUARDED
+  mi_theap_t* targets[] = {base, selected};
+#else
   mi_theap_t* targets[] = {base, selected, NULL};
+#endif
   for (size_t setting = 0; setting < sizeof(settings) / sizeof(settings[0]); setting++) {
     for (size_t target = 0; target < sizeof(targets) / sizeof(targets[0]); target++) {
       mi_stats_t before_base, before_selected, after_base, after_selected;
