@@ -553,6 +553,44 @@ pub unsafe fn theap_set_default(theap: *mut c_void) -> *mut c_void {
     previous
 }
 
+/// `mi_theap_guarded_set_sample_rate`: initializes the selected source sampler.
+/// The seed selects its initial countdown; zero draws from the Theap random
+/// state only when the rate exceeds one. Non-guarded builds have no effect.
+///
+/// # Safety
+/// In a guarded build, `theap` is a live writable initialized Theap owned by
+/// the calling thread. The caller excludes allocation, other guarded setters,
+/// random-state access, initialization and teardown for the duration of this call.
+pub unsafe fn theap_guarded_set_sample_rate(theap: *mut c_void, rate: usize, seed: usize) {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    {
+        let Some(theap) = NonNull::new(theap.cast::<Theap>()) else { return };
+        // SAFETY: the caller exclusively retains the initialized sampler and,
+        // for a zero seed with rate greater than one, its random state.
+        unsafe { Theap::guarded_set_sample_rate_at(theap, rate, seed) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+    let _ = (theap, rate, seed);
+}
+
+/// `mi_theap_guarded_set_size_bound`: sets inclusive sampler bounds,
+/// normalizing the maximum upward to the minimum. Non-guarded builds have no effect.
+///
+/// # Safety
+/// In a guarded build, `theap` is a live writable initialized Theap owned by
+/// the calling thread. The caller excludes allocation, other guarded setters,
+/// initialization and teardown for the duration of this call.
+pub unsafe fn theap_guarded_set_size_bound(theap: *mut c_void, minimum: usize, maximum: usize) {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    {
+        let Some(theap) = NonNull::new(theap.cast::<Theap>()) else { return };
+        // SAFETY: the caller exclusively owns the selected live bound fields.
+        unsafe { Theap::guarded_set_size_bound_at(theap, minimum, maximum) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+    let _ = (theap, minimum, maximum);
+}
+
 /// Direct allocation from an initialized Theap of the calling thread.
 ///
 /// # Safety
@@ -692,6 +730,40 @@ mod heap_membership_tests {
             crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
         }));
         assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn public_theap_guarded_controls_preserve_seed_countdown_and_inclusive_bounds() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::public_theap_guarded_controls_preserve_seed_countdown_and_inclusive_bounds",
+            || {
+                initialize_test_owner();
+                let heap = heap_new();
+                assert!(!heap.is_null());
+                // SAFETY: this thread retains the new Heap and initialized
+                // selected sampler, excluding allocation and teardown while
+                // its public controls and countdown are observed.
+                unsafe {
+                    let theap = heap_theap(heap);
+                    let selected = NonNull::new(theap.cast::<Theap>()).unwrap();
+                    theap_guarded_set_size_bound(theap, 81, 64);
+                    theap_guarded_set_sample_rate(theap, 3, 1);
+                    assert!(!Theap::guarded_sample_at(selected, 81));
+                    assert!(Theap::guarded_sample_at(selected, 81));
+                    assert!(!Theap::guarded_sample_at(selected, 81));
+                    assert!(!Theap::guarded_sample_at(selected, 81));
+                    assert!(!Theap::guarded_sample_at(selected, 80));
+                    assert!(Theap::guarded_sample_at(selected, 81));
+                    theap_guarded_set_sample_rate(theap, 1, 0);
+                    assert!(Theap::guarded_sample_at(selected, 81));
+                    assert!(!Theap::guarded_sample_at(selected, 82));
+                    theap_guarded_set_sample_rate(theap, 0, 0);
+                    assert!(!Theap::guarded_sample_at(selected, 81));
+                    assert!(heap_release(heap, false));
+                }
+            },
+        );
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
