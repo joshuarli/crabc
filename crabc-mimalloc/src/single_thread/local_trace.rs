@@ -377,9 +377,11 @@ fn allocate_phased(
                 // Its source profile uses one full collection per 10,000
                 // counted generic calls. Reentry may have advanced the source
                 // counters; resume reads their current values after capture.
-                phase = allocator.resume_generic_allocation_frequency(
+                // SAFETY: this run retains its original engine/session and
+                // arena/registry through the isolated source-default phase.
+                phase = unsafe { allocator.resume_generic_allocation_frequency(
                     request, 10_000, continuation,
-                );
+                ) };
             }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 let force = matches!(collection, GenericAllocationCollection::Force);

@@ -5164,12 +5164,14 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
         TheapPageSession::begin_generic_allocation_administration(self.active_mut())
     }
     #[cfg(target_arch = "x86_64")]
-    fn finish_generic_allocation_administration(
+    unsafe fn finish_generic_allocation_administration(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize,
     ) -> Option<GenericAllocationAdministration> {
-        TheapPageSession::finish_generic_allocation_administration(self.active_mut(), request, frequency)
+        // SAFETY: the caller retains the request's actual originating owner
+        // across capture; the bound adapter still names that same session.
+        unsafe { TheapPageSession::finish_generic_allocation_administration(self.active_mut(), request, frequency) }
     }
     #[cfg(not(target_arch = "x86_64"))]
     fn advance_generic_allocation_administration(&mut self) -> GenericAllocationAdministration {
@@ -38464,8 +38466,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Resumes the counted administration after the retained owner captured
     /// its source frequency with every engine projection ended. The session
     /// rereads the current collection count, which reentry may have changed.
+    ///
+    /// # Safety
+    /// `request` and `continuation` came from this same original engine's
+    /// counted allocation phase. Its actual Theap, session, allocation and
+    /// backing issuers remain live and admitted through capture and this
+    /// resume; no retirement, replacement or same-address reuse occurred.
+    /// All engine/source projections and locks accessible to callbacks ended
+    /// before capture. `frequency` is the actual source-clamped option value
+    /// in `1..=1_000_000`. Pointer identity alone proves none of that custody.
     #[cfg(target_arch = "x86_64")]
-    pub(crate) fn resume_generic_allocation_frequency(
+    pub(crate) unsafe fn resume_generic_allocation_frequency(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize,
@@ -38474,7 +38485,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if self.is_collection_poisoned() {
             return DeferredFreeAllocationPhase::Complete(None);
         }
-        let collection = match self.session.finish_generic_allocation_administration(request, frequency) {
+        // SAFETY: the caller keeps the actual originating owner admitted
+        // across capture and resumes its exact session with the source value.
+        let collection = match unsafe { self.session.finish_generic_allocation_administration(request, frequency) } {
             Some(GenericAllocationAdministration::Mini) => GenericAllocationCollection::Mini,
             Some(GenericAllocationAdministration::Full) => GenericAllocationCollection::Full,
             None | Some(GenericAllocationAdministration::None) => return DeferredFreeAllocationPhase::Complete(None),
@@ -44869,7 +44882,9 @@ mod tests {
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                         #[cfg(target_arch = "x86_64")]
                         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
-                            phase = allocator.resume_generic_allocation_frequency(request, 10_000, continuation);
+                            // SAFETY: this fixture retains its original engine, session
+                            // and backing throughout the source-default frequency phase.
+                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                         }
                         DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                             phase = allocator.resume_deferred_free_allocation(collection, continuation);
@@ -44917,7 +44932,9 @@ mod tests {
                     DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
-                        phase = allocator.resume_generic_allocation_frequency(request, 10_000, continuation);
+                        // SAFETY: this fixture retains its original engine, session
+                            // and backing throughout the source-default frequency phase.
+                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                     }
                     DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                         phase = allocator.resume_deferred_free_allocation(collection, continuation);
@@ -44939,7 +44956,9 @@ mod tests {
                     DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
-                        phase = allocator.resume_generic_allocation_frequency(request, 10_000, continuation);
+                        // SAFETY: this fixture retains its original engine, session
+                            // and backing throughout the source-default frequency phase.
+                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                     }
                     DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                         phase = allocator.resume_deferred_free_allocation(collection, continuation);
@@ -50953,7 +50972,9 @@ mod tests {
                 }
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
-                    phase = allocator.resume_generic_allocation_frequency(request, 10_000, continuation);
+                    // SAFETY: this fixture retains its original engine, session
+                            // and backing throughout the source-default frequency phase.
+                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                 }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     let force = matches!(collection, GenericAllocationCollection::Force);
