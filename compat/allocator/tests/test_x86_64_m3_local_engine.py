@@ -81,6 +81,14 @@ class LocalPrimitiveTraceTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateError, "required checks.*miri"):
             gate.evaluate_gate(contract, checks)
 
+    def test_original_miri_success_cannot_replace_ownership_phase_execution(self) -> None:
+        checks = {check: {"status": "passed"} for component in self.contract["components"] for check in component["checks"]}
+        checks.pop("miri-ownership", None)
+        checks["prerequisites"] = {"milestones": {}, "unmet": []}
+        result = gate.evaluate_gate(self.contract, checks)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertTrue(any("miri-ownership" in item for component in result["components"] for item in component["unmet"]))
+
 
 class LocalEngineSourceTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -170,6 +178,15 @@ class LocalEngineSourceTests(unittest.TestCase):
         self.assertFalse(executed)
         self.assertEqual(len(reports), 1)
         self.assertNotIn("milestone", reports[0])
+
+    def test_ownership_subset_publishes_development_evidence_without_a_gate(self) -> None:
+        self.source.write_text("work in progress\n")
+        status, reports, executed = self.execute(arguments=["--miri-ownership-only"])
+        self.assertEqual(status, 0)
+        self.assertFalse(executed)
+        self.assertEqual(len(reports), 1)
+        self.assertIn("miri", reports[0])
+        self.assertNotIn("gate", reports[0])
 
     def test_gate_receipt_attests_one_unchanged_clean_source(self) -> None:
         status, reports, executed = self.execute()
@@ -573,15 +590,44 @@ sys.exit(1 if failed else 0)
             "miriflags": ["-Zmiri-strict-provenance"], "module_prefixes": ["fixture::"],
             "required_tests": ["fixture::first", "fixture::second"]}}
 
-    def execute(self, fail=None):
+    def execute(self, fail=None, *, ownership_only=False):
         environment = dict(self.environment)
         if fail is not None:
             environment["MIRI_DISPATCH_FAIL"] = fail
         with mock.patch.dict(os.environ, environment):
             with mock.patch.object(gate, "ARTIFACT_ROOT", self.fixture / "artifacts"):
-                result = gate.run_miri(self.contract)
+                result = (gate.run_miri(self.contract, ownership_only=True) if ownership_only
+                          else gate.run_miri(self.contract))
         calls = [json.loads(line) for line in self.capture.read_text().splitlines()]
         return result, calls
+
+    def test_ownership_subset_runs_only_its_declared_phase_control(self) -> None:
+        self.contract["miri_ownership"] = {**self.contract["miri"],
+            "module_prefixes": ["fixture::second"], "required_tests": ["fixture::second"]}
+        result, calls = self.execute(ownership_only=True)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual([call["selected"] for call in calls], [["fixture::second"]])
+        self.assertEqual(result["passed"], 1)
+        self.assertIn("program", result["physical_inputs"])
+
+    def test_ownership_failure_cannot_inherit_success_from_the_original_matrix(self) -> None:
+        self.contract["miri_ownership"] = {**self.contract["miri"],
+            "module_prefixes": ["fixture::second"], "required_tests": ["fixture::second"]}
+        result, calls = self.execute(fail="fixture::second", ownership_only=True)
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual([call["selected"] for call in calls], [["fixture::second"]])
+        self.assertEqual(result["passed"], 0)
+
+    def test_ownership_subset_preserves_the_original_interpreter_log(self) -> None:
+        self.contract["miri_ownership"] = {**self.contract["miri"],
+            "module_prefixes": ["fixture::second"], "required_tests": ["fixture::second"]}
+        original_log = self.fixture / "artifacts/miri.log"
+        original_log.parent.mkdir()
+        original_log.write_text("retained original interpreter observations\n")
+        result, _calls = self.execute(ownership_only=True)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(original_log.read_text(), "retained original interpreter observations\n")
+        self.assertNotEqual(result["physical_inputs"]["log"]["path"], str(original_log.relative_to(ROOT)))
 
     def test_missing_compiler_runner_cannot_be_replaced_by_passing_test_labels(self) -> None:
         self.program.unlink()

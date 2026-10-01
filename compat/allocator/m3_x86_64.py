@@ -79,6 +79,7 @@ REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-engine-latest.json"
 DIFFERENTIAL_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-trace-latest.json"
 OWNER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-persistent-owner-trace-latest.json"
 MIRI_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-latest.json"
+MIRI_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-ownership-latest.json"
 QUEUE_REORDER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-queue-reorder-latest.json"
 ARTIFACT_ROOT = run.ARTIFACT_ROOT / "x86_64/m3-local-engine"
 
@@ -1589,8 +1590,9 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
     }
 
 
-def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
-    miri = contract["miri"]
+def run_miri(contract: Mapping[str, Any], *, ownership_only: bool = False) -> dict[str, Any]:
+    miri = contract["miri_ownership" if ownership_only else "miri"]
+    log_path = ARTIFACT_ROOT / ("miri-ownership.log" if ownership_only else "miri.log")
     probe = run.command_record(("cargo", "miri", "--version"), cwd=ROOT, timeout_seconds=600)
     if probe["status"] != 0:
         # The pinned image installs the component; an older image must be
@@ -1628,7 +1630,7 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
     listing["environment"] = {name: environment[name] for name in ("MIRIFLAGS", "TMPDIR", "XDG_CACHE_HOME")}
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     if listing["status"] != 0:
-        (ARTIFACT_ROOT / "miri.log").write_text(
+        log_path.write_text(
             str(listing["stdout"]) + "\n" + str(listing["stderr"]), encoding="utf-8"
         )
         return {
@@ -1696,14 +1698,14 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
                     raise GateError("Miri selected tool changed during execution")
         except (GateError, OSError, run.HarnessError) as error:
             unmet.append(str(error))
-    (ARTIFACT_ROOT / "miri.log").write_text("\n".join(logs), encoding="utf-8")
+    log_path.write_text("\n".join(logs), encoding="utf-8")
     for name in miri["required_tests"]:
         if name not in passed:
             unmet.append(f"required Miri test did not pass: {name}")
     return {
         "physical_inputs": {
             **authority, "probe": probe, "listing": listing, "commands": commands,
-            "log": run.artifact_record(ARTIFACT_ROOT / "miri.log"),
+            "log": run.artifact_record(log_path),
         },
         "groups": results,
         "miriflags": miriflags,
@@ -1766,7 +1768,7 @@ def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
 def evaluate_gate(contract: Mapping[str, Any], checks: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     required_checks = {
         "local-trace-differential", "queue-reorder-differential", "queue-retirement-differential",
-        "persistent-owner-trace-differential", "rust-unit-batch", "miri",
+        "persistent-owner-trace-differential", "rust-unit-batch", "miri", "miri-ownership",
     }
     declared_checks = {check for component in contract["components"] for check in component["checks"]}
     omitted = required_checks - declared_checks
@@ -1844,6 +1846,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         help="run only the Miri component (development; no gate report)",
     )
     parser.add_argument(
+        "--miri-ownership-only",
+        action="store_true",
+        help="run only strict staged-initializer and generic-frequency ownership controls (development; no gate report)",
+    )
+    parser.add_argument(
         "--queue-reorder-only",
         action="store_true",
         help="run only the pinned C/Rust page-queue reorder differential",
@@ -1854,7 +1861,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         # binds every local-engine observation to clean committed source and
         # the immutable compiler/oracle image selected by the native launcher.
         qualification = not any((
-            options.queue_reorder_only, options.miri_only, options.owner_only, options.differential_only,
+            options.queue_reorder_only, options.miri_only, options.miri_ownership_only,
+            options.owner_only, options.differential_only,
         ))
         source_before = run.runtime_ticket_zero_soak_source_state() if qualification else None
         contract = load_contract()
@@ -1870,10 +1878,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 print("\n".join(["M3 queue reorder differential failed:", *(f"  - {item}" for item in queue["unmet"])]), file=sys.stderr)
                 return 1
             return 0
-        if options.miri_only:
-            miri = run_miri(contract)
-            run.write_json(MIRI_REPORT_PATH, {"miri": miri, "provenance": provenance})
-            print(MIRI_REPORT_PATH)
+        if options.miri_only or options.miri_ownership_only:
+            miri = (run_miri(contract, ownership_only=True) if options.miri_ownership_only
+                    else run_miri(contract))
+            report_path = MIRI_OWNERSHIP_REPORT_PATH if options.miri_ownership_only else MIRI_REPORT_PATH
+            run.write_json(report_path, {"miri": miri, "provenance": provenance})
+            print(report_path)
             if miri["status"] != "passed":
                 print("\n".join(["M3 Miri component failed:", *(f"  - {item}" for item in miri["unmet"])]), file=sys.stderr)
                 return 1
@@ -1908,6 +1918,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "persistent-owner-trace-differential": run_owner_differential(contract, offline=options.offline),
             "rust-unit-batch": run_unit_batch(contract, rust_binary),
             "miri": run_miri(contract),
+            "miri-ownership": run_miri(contract, ownership_only=True),
         }
         if run.sha256_file(LOCKFILE) != lockfile:
             raise GateError("Cargo.lock changed during the --locked M3 gate")
