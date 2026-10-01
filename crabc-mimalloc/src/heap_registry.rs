@@ -857,6 +857,20 @@ impl Heap {
     #[inline]
     pub(crate) fn subprocess_pointer(&self) -> *mut SubprocessIdentity { self.subprocess }
 
+    /// Copies a live Heap's immutable subprocess identity without borrowing
+    /// its independently mutable lists or statistics.
+    ///
+    /// # Safety
+    /// `heap` must name initialized Heap storage that remains live throughout
+    /// this read. Its published subprocess identity must remain unchanged.
+    /// The returned identity grants no enclosing-owner or teardown authority.
+    #[inline]
+    pub(crate) unsafe fn subprocess_pointer_at(heap: core::ptr::NonNull<Self>) -> *mut SubprocessIdentity {
+        // SAFETY: the caller retains the initialized immutable scalar; no
+        // whole-Heap reference is formed or retained across a callback.
+        unsafe { core::ptr::addr_of!((*heap.as_ptr()).subprocess).read() }
+    }
+
     /// The Heap's slot for arena `arena_index` (`mi_heap_arena_pages`).
     #[inline]
     pub(crate) fn arena_pages_slot(&self, arena_index: usize) -> Option<core::ptr::NonNull<super::ArenaPages>> {
