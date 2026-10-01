@@ -612,11 +612,27 @@ def definition_address(view: Mapping[str, Any], archive_member: str, definition:
 
 def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapping[str, Any]) -> dict[str, Any]:
     retained = validate(work, static, facts)
+    proof = project_references(work, static, accounting,
+        mapped_archive=calls.mounted_path(static / 'usr/lib/libc.a'),
+        forcing_owner=calls.mounted_path(work / 'providers.o'), temporary_parent=ROOT / '.work/x86_64')
+    require(retained == validate(work, static, facts), 'provider work changed during physical projection')
+    return {'retained': retained, **proof}
+
+
+def project_references(work: Path, static: Path, accounting: Mapping[str, Any], *,
+                       mapped_archive: str, forcing_owner: str, temporary_parent: Path) -> dict[str, Any]:
+    """Replay the complete reference roster after independent input admission.
+
+    The caller authenticates the accounting/facts, archive, forcing object,
+    maps, executables and exact original trace names as one immutable tuple.
+    This stage does not admit that tuple or qualify a different receiver source.
+    Tool input copies belong to the caller's private temporary directory.
+    """
     archive = static / 'usr/lib/libc.a'
     final = {}
     for mode, elf_type in (('static', 2), ('static-pie', 3)):
         final[mode] = _indexed_view(work, mode, elf_type)
-        final[mode]['forcing_owner'] = calls.mounted_path(work / 'providers.o')
+        final[mode]['forcing_owner'] = forcing_owner
     source_members = {}
     definition_images = {}
     by_name = {}
@@ -648,7 +664,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                 if member not in source_members:
                     result = subprocess.run(['/usr/bin/ar', 'p', str(archive), member], capture_output=True, check=False)
                     require(result.returncode == 0 and result.stdout, 'provider archive member is unreadable')
-                    with tempfile.TemporaryDirectory(dir=ROOT / '.work/x86_64') as temporary:
+                    with tempfile.TemporaryDirectory(dir=temporary_parent) as temporary:
                         path = Path(temporary) / 'member.o'
                         path.write_bytes(result.stdout)
                         relocations = read_tool('readelf', '-rW', path)
@@ -676,7 +692,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                 require(start + size <= len(source_data), 'scalar provider leaves its source section')
                 provider_data = source_data[start:start + size]
             for mode, view in final.items():
-                selected = calls.mounted_path(archive) + '(' + definition['member_name'] + ')'
+                selected = mapped_archive + '(' + definition['member_name'] + ')'
                 source_image = None
                 if (definition['row']['type'] in {'FUNC', 'OBJECT'}
                         and not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')')):
@@ -690,7 +706,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                 address = definition_address(view, selected, definition, source_image=source_image)
                 linked = []
                 for imported, source_calls, sections in source_imports:
-                    member = calls.mounted_path(archive) + '(' + imported['member_name'] + ')'
+                    member = mapped_archive + '(' + imported['member_name'] + ')'
                     require(view['trace_counts'].get(member) == 1,
                             'provider importer was not extracted exactly once')
                     map_text, relocation_text = _call_transcripts(view, member, source_calls)
@@ -706,8 +722,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
             admitted.append(proof)
         except (ValueError, KeyError, calls.AllocatorBoundaryError) as error:
             failures.append({'identity': record['identity'], 'reason': str(error)})
-    require(retained == validate(work, static, facts), 'provider work changed during physical projection')
-    return {'retained': retained, 'identities': admitted, 'failures': failures}
+    return {'identities': admitted, 'failures': failures}
 
 
 def main() -> int:
