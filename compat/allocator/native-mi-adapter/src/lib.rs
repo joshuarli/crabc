@@ -1486,12 +1486,24 @@ pub unsafe extern "C" fn mi_theap_visit_blocks(
 }
 
 #[no_mangle]
-/// The selected release build has no guarded allocation state.
-pub extern "C" fn mi_theap_guarded_set_sample_rate(_theap: TheapPointer, _rate: usize, _seed: usize) {}
+/// # Safety
+/// A non-null pointer identifies a retained initialized Theap whose guarded
+/// sampling fields and random state the caller exclusively owns. Retirement
+/// and another guarded-control operation must not overlap this call.
+pub unsafe extern "C" fn mi_theap_guarded_set_sample_rate(theap: TheapPointer, rate: usize, seed: usize) {
+    // SAFETY: the C caller retains the selected Theap and its mutable state.
+    unsafe { heaps::theap_guarded_set_sample_rate(theap, rate, seed) }
+}
 
 #[no_mangle]
-/// The selected release build has no guarded allocation state.
-pub extern "C" fn mi_theap_guarded_set_size_bound(_theap: TheapPointer, _minimum: usize, _maximum: usize) {}
+/// # Safety
+/// A non-null pointer identifies a retained initialized Theap whose guarded
+/// size bounds the caller exclusively owns. Retirement and another guarded
+/// control operation must not overlap this call.
+pub unsafe extern "C" fn mi_theap_guarded_set_size_bound(theap: TheapPointer, minimum: usize, maximum: usize) {
+    // SAFETY: the C caller retains the selected Theap and its mutable state.
+    unsafe { heaps::theap_guarded_set_size_bound(theap, minimum, maximum) }
+}
 
 #[no_mangle]
 /// # Safety
