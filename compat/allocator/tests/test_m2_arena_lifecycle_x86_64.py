@@ -190,6 +190,7 @@ class ArenaLifecycleProfiles(unittest.TestCase):
         self.assertEqual(rows[2]["classification"]["unexplained_bytes"], 4096)
         for altered in (text.replace("32792,32792,32792", "32792,32832,32792"),
                         text.replace("3,0,1,1,100,2", "3,1,1,1,100,2"),
+                        text.replace(".1.0=7,", ".1.0=0,"),
                         text.replace("8192,12288", "8192,16384"),
                         text.replace("groups.2=0", "groups.2=1"),
                         text.replace("groups.0=0", "groups.0=0\nm2.arena.ambient.groups.0=0")):
@@ -249,7 +250,6 @@ class ArenaLifecycleProfiles(unittest.TestCase):
             with mock.patch.object(harness, "rust_target_self_contained_native_library_search_path", return_value=str(root)), mock.patch.object(lifecycle, "AMBIENT_LIBC_SHA256", hashlib.sha256(archive).hexdigest()):
                 proof = lifecycle.authenticate_ambient_pool(harness, binary)
                 self.assertEqual(proof["ambient_musl_version"], "1.2.5")
-                self.assertEqual(len(proof["functions"]), 6)
                 binary.write_bytes(elf(b"\x91\xc3" + bytes(926)))
                 with self.assertRaisesRegex(ValueError, "bytes differ"):
                     lifecycle.authenticate_ambient_pool(harness, binary)

@@ -244,6 +244,7 @@ def parse_ambient_retention(output: str, snapshots: Sequence[Mapping[str, Any]])
                     or meta == 0 or meta % 8 or prev == 0 or next_ == 0 or start == 0 or start % 16
                     or end < start or (end > start and (start % 4096 or (end-start) % 4096))
                     or last > 31 or freeable > 1 or bounce > 150 or usage < last+1
+                    or (not 7 <= sc < 39 and bounce != 0)
                     or (avail | freed) & ~((2 << last)-1) or avail & freed
                     or any(entry[1] == meta for entry in entries)):
                 raise ValueError("ambient pool group malformed or duplicated")
