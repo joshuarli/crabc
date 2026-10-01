@@ -198,6 +198,22 @@ class FoundationReceiptTests(unittest.TestCase):
                 self.assertEqual(reader.main(), 0)
             components.assert_called_once_with(Path("local.json"))
 
+    def test_native_only_cli_requires_bounded_local_component_mode(self):
+        for arguments in (("m3",), ("m1", "--components-only"), ("m2", "--components-only")):
+            with self.subTest(arguments=arguments), mock.patch.object(reader, "read_m3_components") as components, \
+                 mock.patch.object(reader, "read_report") as full, mock.patch("builtins.print"):
+                with mock.patch.object(sys, "argv", ["reader", *arguments, "--native-only"]):
+                    self.assertEqual(reader.main(), 1)
+                components.assert_not_called()
+                full.assert_not_called()
+        with mock.patch.object(reader, "read_m3_components", return_value={
+                "scope": "native-only-diagnostic", "miri_replayed": False}) as components, \
+             mock.patch("builtins.print") as printed:
+            with mock.patch.object(sys, "argv", ["reader", "m3", "--components-only", "--native-only"]):
+                self.assertEqual(reader.main(), 0)
+            components.assert_called_once_with(None, source_root=None, native_only=True)
+            printed.assert_called_once_with("retained native boundaries replay passed; Miri replay not performed")
+
     def test_local_component_completion_labels_require_physical_miri_inputs(self):
         import m3_x86_64 as local
         contract = local.load_contract()
@@ -337,20 +353,194 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         self.report = {"source": {}, "checks": checks,
                        "contract_sha256": reader.harness.file_digest(local.CONTRACT_PATH),
                        "gate": local.evaluate_gate(self.contract, checks)}
+        self.prepare_native_inputs()
 
-    def read(self, replay=None):
+    def prepare_native_inputs(self):
+        h, local = reader.harness, self.local
+        self.artifacts = self.producer.fixture / "native-artifacts"
+        self.artifacts.mkdir()
+        self.pin = h.load_pin()
+        self.oracle = self.artifacts / "source" / self.pin["archive_root"]
+        (self.oracle / "include").mkdir(parents=True)
+        (self.oracle / "src").mkdir()
+        self.c_binary = self.artifacts / "c-program"
+        self.c_binary.write_bytes(b"native fixture C compiler product")
+        target = self.producer.fixture / "target"
+        target.mkdir()
+        self.unit_binary = target / "unit-program"
+        self.owner_binary = target / "owner-program"
+        for binary in (self.unit_binary, self.owner_binary):
+            binary.write_bytes(b"native fixture Rust compiler product")
+        command = ["cargo", "test", "--locked", "--target", local.TARGET, "-p", "crabc-mimalloc",
+                   "--lib", "--no-default-features", "--no-run", "--message-format=json"]
+        unit = {"artifact": h.artifact_record(self.unit_binary), "build_command": command,
+                "build": {"command": command, "status": 0, "stdout": json.dumps({
+                    "reason": "compiler-artifact", "target": {"name": "crabc_mimalloc", "kind": ["lib"]},
+                    "profile": {"test": True}, "executable": str(self.unit_binary)}), "stderr": ""}}
+        self.native_listing = {"command": [str(self.unit_binary), "--list", "--format", "terse"],
+                               "status": 0, "stdout": local.RUST_TRACE_TEST + ": test\n", "stderr": ""}
+        execution = {"command": [str(self.unit_binary), "--exact", "--test-threads=1", local.RUST_TRACE_TEST],
+                     "status": 0, "stdout": "test " + local.RUST_TRACE_TEST + " ... ok\n\n"
+                     "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+                     "stderr": ""}
+        self.contract["rust_unit_batch"]["module_prefixes"] = [local.RUST_TRACE_TEST]
+        unit_check = self.report["checks"]["rust-unit-batch"]
+        unit_check.update({"binary": str(self.unit_binary), "passed": 1,
+                          "groups": {local.RUST_TRACE_TEST: local.summarize_group(local.RUST_TRACE_TEST,
+                                      [local.RUST_TRACE_TEST], execution)},
+                          "physical_inputs": {"build": unit, "binary": unit["artifact"],
+                              "listing": self.native_listing, "commands": {local.RUST_TRACE_TEST: execution}}})
+        self.native_execution = execution
+        specification = next(row for row in self.contract["workloads"] if row["generator"] == "queue-candidate-front")
+        self.contract["workloads"] = [specification]
+        size, freed = (int(specification["parameters"][key]) for key in ("size", "freed_from_first"))
+        capacity = local.page_size_for_block(size) // size
+        bin_index = local.source_bin(size)
+        before, move = capacity + 1 + freed, capacity + 2 + freed
+        self.c_lines = ["@1 a", "= P1", f"@{capacity + 1} a", "= P2",
+                        f"Q{bin_index} 2 n1", f"Q{local.BIN_FULL} 1 n1",
+                        f"+P2 q{bin_index} s{size} c1 r{capacity} u1 f- l- x0 F0 z0 S0",
+                        f"@{before} f", f"Q{bin_index} 2,1 n2",
+                        f"+P1 q{bin_index} s{size} c{capacity} r{capacity} u{capacity - freed} f- l1 x0 F0 z0 S0",
+                        f"@{move} a", "= P1", f"Q{bin_index} 1,2 n2"]
+        self.c_lines.extend(f"D{index} P1" for index in range(1, local.SMALL_SIZE_MAX // local.WORD + 1))
+        self.contract["coverage_requirements"] = {"regular_bin_events": [], "huge_bin_events": [],
+            "retired_reuse_classes": [], "minimum_admin_mini_collections": 0, "minimum_admin_full_collections": 0}
+        coverage = local.trace_coverage(self.c_lines)
+        workload_name, workload_text = next(iter(local.generate_workloads(self.contract).items()))
+        workload = self.artifacts / "workload"
+        workload.write_text(workload_text)
+        trace = self.artifacts / "trace"
+        trace.write_text("\n".join(self.c_lines) + "\n")
+        row = {"id": workload_name, "status": "matched", "divergence": None, "c_repeat_identical": True,
+               "trace_lines": len(self.c_lines), "coverage": coverage,
+               "workload_sha256": local.sha256_bytes(workload_text.encode()),
+               "c_trace_sha256": h.sha256_file(trace), "rust_trace_sha256": h.sha256_file(trace),
+               "queue_candidate_front": json.loads(json.dumps(local.queue_candidate_front_witness(self.c_lines, size, freed))),
+               "physical_inputs": {"workload": h.artifact_record(workload),
+                   **{name: h.artifact_record(trace) for name in ("c_trace", "c_repeat", "rust_trace")}}}
+        self.witness_row = row
+        driver = self.contract["persistent_owner_profile"]["rust_driver"]
+        owner_command = ["cargo", "test", "--locked", "--target", local.TARGET, "-p", "crabc-mimalloc",
+                         "--no-default-features", "--features", ",".join(driver["features"]), "--test", driver["target"],
+                         "--no-run", "--message-format=json"]
+        owner = {"artifact": h.artifact_record(self.owner_binary), "build_command": owner_command,
+                 "build": {"command": owner_command, "status": 0, "stdout": json.dumps({
+                     "reason": "compiler-artifact", "target": {"name": driver["target"], "kind": ["test"]},
+                     "profile": {"test": True}, "executable": str(self.owner_binary)}), "stderr": ""}}
+        self.contract["persistent_owner_profile"]["coverage_requirements"] = {
+            "page_classes": [], "page_class_events": [], "forbidden_events": [], "minimum_admin_mini_collections": 0}
+        for name, program, rows in (("local-trace-differential", unit, [row]),
+                                     ("persistent-owner-trace-differential", owner, [])):
+            check = self.report["checks"][name]
+            check.update({"archive_sha256": self.pin["sha256"], "c_driver_sha256": h.sha256_file(local.C_DRIVER_PATH),
+                "rust_driver_sha256": h.sha256_file(local.OWNER_RUST_DRIVER_PATH if rows == [] else local.RUST_DRIVER_PATH),
+                "workloads": rows, "coverage_unmet": [], "coverage": local.merge_coverage([coverage]) if rows else {
+                    owner: local.merge_coverage([]) for owner in self.contract["persistent_owner_profile"]["owners"]},
+                "trace_audit_sha256": h.sha256_file(local.OWNER_TRACE_AUDIT_PATH),
+                "physical_inputs": {"artifact": h.artifact_record(self.c_binary), "source_files": [], "rust_program": program,
+                    "build": {"command": local.c_driver_command("musl-gcc", self.oracle, self.c_binary, self.contract),
+                              "status": 0, "stdout": "", "stderr": ""}}})
+        self.reorder_lines = [f"M3Q {step} regular={regular} full={full} bytes={sum({'A':128,'B':192,'C':256}[p] for p in full)} pages=3"
+            for step, regular, full in (("start", "ABC", ""), ("first-full", "BC", "A"), ("middle-full", "C", "AB"),
+                                       ("full-front", "C", "BA"), ("second-position", "CB", "A"), ("full-return", "CBA", ""))]
+        fixture = self.contract["queue_reorder_differential"]
+        runtime = {"physical_inputs": {"c_program": h.artifact_record(self.c_binary), "rust_program": unit["artifact"]},
+            **{key: h.sha256_file(ROOT / fixture[key.removesuffix("_sha256")]) for key in ("c_fixture_sha256", "runner_sha256")},
+            "rust_source_sha256": h.sha256_file(ROOT / "crabc-mimalloc/src/page_queue.rs"),
+            "archive_sha256": self.pin["sha256"], "rust_test": fixture["rust_test"],
+            "c_build": {"command": ["musl-gcc", "-std=c11", "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1", *h.CONFIGURATION_PROFILES["release"],
+                "-I", str(self.oracle / "include"), "-I", str(self.oracle / "src"), str(ROOT / fixture["c_fixture"]), "-o", str(self.c_binary)], "status": 0},
+            "c_runtime": {"command": [str(self.c_binary)], "status": 0, "stdout": "\n".join(self.reorder_lines)},
+            "rust_runtime": {"command": [str(self.unit_binary), fixture["rust_test"], "--exact", "--nocapture", "--test-threads=1"],
+                "status": 0, "stdout": "\n".join(self.reorder_lines) + "\n" + execution["stdout"], "stderr": ""}}
+        receipt = self.artifacts / "reorder.json"
+        h.write_json(receipt, runtime)
+        self.report["checks"]["queue-reorder-differential"].update({**runtime, "raw_runtime_receipt": str(receipt),
+            "physical_inputs": {**runtime["physical_inputs"], "receipt": h.artifact_record(receipt)}})
+        retirement = self.report["checks"]["queue-retirement-differential"]
+        fixture = self.contract["queue_retirement_differential"]
+        h.write_json(self.artifacts / "queue-retirement-driver.json", {})
+        for filename in ("queue-retirement.c.trace", "queue-retirement.rust.trace", "queue-retirement.trace"):
+            (self.artifacts / filename).write_text("retained queue fixture trace\n")
+        retirement.update({"raw_driver_receipt": str(self.artifacts / "queue-retirement-driver.json"),
+            **{key: h.sha256_file(ROOT / fixture[key.removesuffix("_sha256")]) for key in ("c_fixture_sha256", "runner_sha256")},
+            "rust_source_sha256": h.sha256_file(ROOT / "crabc-mimalloc/src/page_queue.rs"),
+            "rust_free_list_sha256": h.sha256_file(ROOT / "crabc-mimalloc/src/free_list.rs"),
+            **{key: fixture[key] for key in ("rust_test", "rust_matrix_test", "rust_free_test")},
+            **{key: h.sha256_file(self.artifacts / filename) for key, filename in (
+                ("c_trace_sha256", "queue-retirement.c.trace"), ("rust_trace_sha256", "queue-retirement.rust.trace"),
+                ("trace_sha256", "queue-retirement.trace"))}})
+
+    def replay_native(self, command, timeout, **options):
+        if "-o" in command:
+            Path(command[command.index("-o") + 1]).write_bytes(self.c_binary.read_bytes())
+            return {"command": command, "status": 0, "stdout": "", "stderr": ""}
+        if "--list" in command:
+            return self.native_listing
+        if command == [str(self.c_binary)]:
+            return {"command": command, "status": 0, "stdout": "\n".join(self.reorder_lines), "stderr": ""}
+        if command[0] == str(self.c_binary):
+            Path(command[2]).write_text("\n".join(self.c_lines) + "\n")
+        if self.local.OUTPUT_ENV in options.get("env", {}):
+            Path(options["env"][self.local.OUTPUT_ENV]).write_text("\n".join(self.c_lines) + "\n")
+        return {**self.native_execution, "command": command,
+                "stdout": "\n".join(self.reorder_lines) + "\n" + self.native_execution["stdout"]}
+
+    def read(self, replay=None, *, native_only=False):
         original = reader.harness.read_json
-        with mock.patch.object(self.local, "load_contract", return_value=self.contract), \
+        import x86_64_m3_queue_retirement as queue
+        def dispatch(command, timeout, **options):
+            if command[0] == self.authority["tools"]["cargo-miri"]["executable_path"]:
+                return replay(command, timeout, **options)
+            return self.replay_native(command, timeout, **options)
+        with mock.patch.object(queue, "read_report", return_value={}), \
+             mock.patch.object(reader.harness, "WORK_ROOT", self.producer.fixture), \
+             mock.patch.object(self.local, "ARTIFACT_ROOT", self.artifacts), \
+             mock.patch.object(reader.harness, "fetch_archive", return_value=self.artifacts / "archive"), \
+             mock.patch.object(reader.harness, "safe_extract", return_value=self.oracle), \
+             mock.patch.object(reader.harness, "source_file_records", return_value=[]), \
+             mock.patch.object(reader.harness, "require_tool", return_value="musl-gcc"), \
+             mock.patch.object(self.local, "generate_owner_workloads", return_value={}), \
+             mock.patch.object(self.local, "load_contract", return_value=self.contract), \
              mock.patch.object(self.local, "_miri_compiler_inputs", return_value=self.authority), \
              mock.patch.object(reader, "authenticate_source"), \
              mock.patch.object(reader.harness, "runtime_ticket_zero_soak_source_state", return_value={}), \
              mock.patch.object(reader.harness, "TEMP_ROOT", self.producer.fixture / "reader-scratch"), \
              mock.patch.object(reader.harness, "read_json", side_effect=lambda path: self.report if path == Path("local.json") else original(path)), \
-             mock.patch.object(reader, "execute", side_effect=replay) as execute:
+             mock.patch.object(reader, "execute", side_effect=dispatch) as execute:
             try:
-                return reader.read_m3_components(Path("local.json"))
+                return reader.read_m3_components(Path("local.json"), native_only=native_only)
             finally:
                 self.executions = execute.call_args_list
+
+    def test_queue_witness_json_roundtrip_and_native_only_scope(self):
+        result = self.read(native_only=True)
+        self.assertEqual(result, {"scope": "native-only-diagnostic", "miri_replayed": False})
+        self.assertTrue(self.executions)
+        self.assertFalse(any(call.args[0][0] == self.authority["tools"]["cargo-miri"]["executable_path"]
+                             for call in self.executions))
+        original = json.loads(json.dumps(self.witness_row["queue_candidate_front"]))
+        for defect in ("wrong-value", "missing", "extra", "wrong-type", "boolean", "float"):
+            with self.subTest(defect=defect):
+                witness = json.loads(json.dumps(original))
+                if defect == "wrong-value":
+                    witness["selected_page"] += 1
+                elif defect == "missing":
+                    del witness["first_before_move"]
+                elif defect == "extra":
+                    witness["invented"] = 1
+                elif defect == "boolean":
+                    witness["selected_page"] = True
+                elif defect == "float":
+                    witness["selected_page"] = float(witness["selected_page"])
+                else:
+                    witness["selected_page"] = str(witness["selected_page"])
+                self.witness_row["queue_candidate_front"] = witness
+                with self.assertRaisesRegex(reader.harness.HarnessError, "queue candidate witness changed"):
+                    self.read(native_only=True)
+        self.witness_row["queue_candidate_front"] = original
 
     def test_changed_source_or_sysroot_bytes_are_rejected_before_replay(self):
         for key in ("program", "dep_info"):
@@ -415,8 +605,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
             name = command[-1]
             self.assertEqual(options["env"][self.local.FRESH_TEST_CHILD_ENV], name)
             return next(row for row in self.miri["physical_inputs"]["commands"]["fixture::"] if row["command"][-1] == name)
-        with self.assertRaises(KeyError):
-            self.read(replay)
+        self.assertEqual(self.read(replay), self.report)
         self.assertEqual(len(observed), 3)
         self.assertEqual(json.loads((ROOT / self.authority["program"]["path"]).read_text()), original)
 
@@ -432,9 +621,9 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                 return self.miri["physical_inputs"]["listing"]
             return next(row for rows in self.miri["physical_inputs"]["commands"].values()
                         for row in rows if row["command"][-1] == command[-1])
-        with self.assertRaises(KeyError):
-            self.read(replay)
-        self.assertEqual(len(self.executions), 3)
+        self.assertEqual(self.read(replay), self.report)
+        self.assertEqual(sum(call.args[0][0] == self.authority["tools"]["cargo-miri"]["executable_path"]
+                             for call in self.executions), 3)
 
     def test_wrong_pinned_tool_directory_is_rejected_before_interpretation(self):
         self.authority["tools"]["miri"]["executable_path"] = "/ambient/bin/miri"

@@ -271,7 +271,7 @@ def read_m2(path: Path | None = None) -> dict[str, Any]:
 
 
 @contextmanager
-def receipt_source(source_root: Path):
+def receipt_source(source_root: Path, *, native_only: bool = False):
     """Select a retained producer checkout without changing either source seal."""
     global harness
     receiver = harness
@@ -336,7 +336,8 @@ def receipt_source(source_root: Path):
         if destination:
             receiver.write_json(Path(destination) / "source-identities.json", {
                 "executing_receiver": receiver_identity, "retained_producer": producer_identity,
-                "scope": "local physical components; prerequisite admission unchanged",
+                "scope": ("native-only diagnostic; Miri replay and foundation admission not performed"
+                          if native_only else "local physical components; prerequisite admission unchanged"),
             })
         require(seals.source_seal(receiver_root) == receiver_identity, "executing receiver source changed during replay")
         require(seals.source_seal(source_root) == producer_identity, "retained producer source changed during replay")
@@ -358,10 +359,11 @@ def receipt_source(source_root: Path):
         sys.pycache_prefix = previous_cache_prefix
 
 
-def read_m3_components(path: Path | None = None, *, source_root: Path | None = None) -> dict[str, Any]:
+def read_m3_components(path: Path | None = None, *, source_root: Path | None = None,
+                       native_only: bool = False) -> dict[str, Any]:
     if source_root is not None:
-        with receipt_source(source_root):
-            return read_m3_components(path)
+        with receipt_source(source_root, native_only=native_only):
+            return read_m3_components(path, native_only=native_only)
     import m3_x86_64 as local
     contract = local.load_contract()
     report = harness.read_json(path or local.REPORT_PATH)
@@ -441,46 +443,8 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                         f"{local.FRESH_TEST_CHILD_ENV}={name}\n{row['stdout']}\n{row['stderr']}")
     require((harness.ROOT / physical["log"]["path"]).read_text() == "\n".join(logs),
             "Miri raw compiler and interpreter log differs from its recorded commands")
-    # The interpreter recompiles its test input. Its retained inputs stay read-only;
-    # only the compiler output and incremental cache are redirected to fresh scratch.
     with harness.temporary_directory(prefix="local-receipt-reader-") as directory:
         scratch = Path(directory)
-        private = json.loads(json.dumps(metadata))
-        arguments = private["args"]
-        require(arguments.count("--out-dir") == 1, "Miri compiler output directory is ambiguous")
-        out_index = arguments.index("--out-dir") + 1
-        incremental = [index + 1 for index, value in enumerate(arguments[:-1])
-                       if value == "-C" and arguments[index + 1].startswith("incremental=")]
-        require(len(incremental) == 1, "Miri compiler incremental directory is ambiguous")
-        compiler_output = scratch / "compiler-output"
-        compiler_output.mkdir()
-        transformations = [
-            {"original": arguments[out_index], "private": str(compiler_output)},
-            {"original": arguments[incremental[0]], "private": "incremental=" + str(scratch / "incremental")},
-        ]
-        arguments[out_index] = transformations[0]["private"]
-        arguments[incremental[0]] = transformations[1]["private"]
-        private_program = scratch / "compiler-runner.json"
-        harness.write_json(private_program, private)
-        environment = dict(os.environ, **expected_environment, **authority["phase_environment"])
-        environment.pop(local.FRESH_TEST_CHILD_ENV, None)
-        runner = [tools["cargo-miri"]["executable_path"], "runner", str(private_program)]
-        replay_listing = execute([*runner, "--list", "--format", "terse"], 7200, env=environment)
-        require(local.TEST_LISTING.findall(replay_listing["stdout"]) == local.TEST_LISTING.findall(listing["stdout"]),
-                "Miri retained compiler input selects different tests")
-        for prefix, names in groups.items():
-            for name in names:
-                replay = execute([*runner, "--exact", "--test-threads=1", name], 7200,
-                                 env={**environment, local.FRESH_TEST_CHILD_ENV: name})
-                require(local.TEST_RESULT.findall(output(replay)) == [(name, "ok")]
-                        and harness.parse_rust_test_count(output(replay)) == 1,
-                        "Miri retained interpreter observation changed")
-        destination = os.environ.get("CRABC_RECEIPT_REPLAY_OUTPUT")
-        if destination:
-            harness.write_json(Path(destination) / "miri-private-output-transform.json", {
-                "program": authority["program"], "transformations": transformations,
-                "private_program": private, "phase_environment": authority["phase_environment"],
-            })
         pin = harness.load_pin()
         pinned = harness.safe_extract(harness.fetch_archive(pin, True), scratch / "oracle", pin["archive_root"])
         pinned_names = sorted(file.relative_to(pinned).as_posix()
@@ -594,7 +558,11 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                         parameters = specification["parameters"]
                         witness = local.queue_candidate_front_witness(c_lines, int(parameters["size"]),
                                                                       int(parameters["freed_from_first"]))
-                    require(row["queue_candidate_front"] == witness and (witness is None or not witness["unmet"]),
+                    # Source snapshots use tuples; their retained JSON uses arrays.
+                # Compare JSON values while preserving field names and scalar types.
+                require(json.dumps(row["queue_candidate_front"], sort_keys=True, allow_nan=False)
+                        == json.dumps(witness, sort_keys=True, allow_nan=False)
+                        and (witness is None or not witness["unmet"]),
                             "local queue candidate witness changed")
                 for repeat in range(2):
                     trace = scratch / f"{check_name}-{index}-c-{repeat}.trace"
@@ -683,13 +651,53 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
         require((local.ARTIFACT_ROOT / "queue-retirement.c.trace").read_text().splitlines()
                 == (local.ARTIFACT_ROOT / "queue-retirement.rust.trace").read_text().splitlines(),
                 "queue retirement aggregate observations disagree")
+        if not native_only:
+            # The interpreter recompiles its test input. Retained inputs stay
+            # read-only; compiler outputs and incremental state use fresh scratch.
+            private = json.loads(json.dumps(metadata))
+            arguments = private["args"]
+            require(arguments.count("--out-dir") == 1, "Miri compiler output directory is ambiguous")
+            out_index = arguments.index("--out-dir") + 1
+            incremental = [index + 1 for index, value in enumerate(arguments[:-1])
+                           if value == "-C" and arguments[index + 1].startswith("incremental=")]
+            require(len(incremental) == 1, "Miri compiler incremental directory is ambiguous")
+            compiler_output = scratch / "compiler-output"
+            compiler_output.mkdir()
+            transformations = [
+                {"original": arguments[out_index], "private": str(compiler_output)},
+                {"original": arguments[incremental[0]], "private": "incremental=" + str(scratch / "incremental")},
+            ]
+            arguments[out_index] = transformations[0]["private"]
+            arguments[incremental[0]] = transformations[1]["private"]
+            private_program = scratch / "compiler-runner.json"
+            harness.write_json(private_program, private)
+            environment = dict(os.environ, **expected_environment, **authority["phase_environment"])
+            environment.pop(local.FRESH_TEST_CHILD_ENV, None)
+            runner = [tools["cargo-miri"]["executable_path"], "runner", str(private_program)]
+            replay_listing = execute([*runner, "--list", "--format", "terse"], 7200, env=environment)
+            require(local.TEST_LISTING.findall(replay_listing["stdout"]) == local.TEST_LISTING.findall(listing["stdout"]),
+                    "Miri retained compiler input selects different tests")
+            for prefix, names in groups.items():
+                for name in names:
+                    replay = execute([*runner, "--exact", "--test-threads=1", name], 7200,
+                                     env={**environment, local.FRESH_TEST_CHILD_ENV: name})
+                    require(local.TEST_RESULT.findall(output(replay)) == [(name, "ok")]
+                            and harness.parse_rust_test_count(output(replay)) == 1,
+                            "Miri retained interpreter observation changed")
+            destination = os.environ.get("CRABC_RECEIPT_REPLAY_OUTPUT")
+            if destination:
+                harness.write_json(Path(destination) / "miri-private-output-transform.json", {
+                    "program": authority["program"], "transformations": transformations,
+                    "private_program": private, "phase_environment": authority["phase_environment"],
+                })
         require(local._miri_compiler_inputs(listing, selected) == authority,
                 "Miri retained input authority changed during replay")
         for check in checks.values():
             authenticate_artifacts(check.get("physical_inputs", {}), pinned)
     authenticate_source(report, harness.runtime_ticket_zero_soak_source_state(),
                         harness.runtime_ticket_zero_soak_source_attestation)
-    return report
+    return ({"scope": "native-only-diagnostic", "miri_replayed": False}
+            if native_only else report)
 
 
 def read_m3(path: Path | None = None) -> dict[str, Any]:
@@ -721,15 +729,20 @@ def main() -> int:
     parser.add_argument("--report", type=Path)
     parser.add_argument("--components-only", action="store_true")
     parser.add_argument("--source-root", type=Path)
+    parser.add_argument("--native-only", action="store_true")
     arguments = parser.parse_args()
     try:
         require(not arguments.components_only or arguments.milestone in ("m1", "m3"),
                 "component-only replay supports foundations and local engine only")
         require(arguments.source_root is None or (arguments.components_only and arguments.milestone == "m3"),
                 "retained source selection supports local component replay only")
+        require(not arguments.native_only or (arguments.components_only and arguments.milestone == "m3"),
+                "native-only replay requires local component diagnostic mode")
         if arguments.components_only:
             if arguments.milestone == "m3":
-                if arguments.source_root is None:
+                if arguments.native_only:
+                    read_m3_components(arguments.report, source_root=arguments.source_root, native_only=True)
+                elif arguments.source_root is None:
                     read_m3_components(arguments.report)
                 else:
                     read_m3_components(arguments.report, source_root=arguments.source_root)
@@ -740,7 +753,8 @@ def main() -> int:
     except (harness.HarnessError, OSError, KeyError, TypeError, ValueError) as error:
         print(f"UNMET: {error}")
         return 1
-    print("retained physical receipt replay passed")
+    print("retained native boundaries replay passed; Miri replay not performed"
+          if arguments.native_only else "retained physical receipt replay passed")
     return 0
 
 
