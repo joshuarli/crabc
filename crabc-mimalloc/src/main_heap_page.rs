@@ -2937,6 +2937,35 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         self.engine.begin_deferred_free_guarded_canonical(source_size)
     }
 
+    /// Preserves a canonical-source admission refusal through phase transport.
+    pub(crate) fn begin_deferred_free_guarded_canonical_checked(
+        &mut self, source_size: usize,
+    ) -> crate::single_thread::GuardedCanonicalAllocationPhase {
+        self.engine.begin_deferred_free_guarded_canonical_checked(source_size)
+    }
+
+    pub(crate) fn resume_deferred_free_guarded_canonical_checked(
+        &mut self,
+        collection: crate::single_thread::GenericAllocationCollection,
+        continuation: crate::single_thread::DeferredFreeAllocationContinuation,
+    ) -> crate::single_thread::GuardedCanonicalAllocationPhase {
+        self.engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)
+    }
+
+    /// # Safety
+    /// The actual original allocator admission, selected Theap and backing
+    /// remain retained across the source getter callback. `frequency` is its
+    /// source-clamped value; no issuing image is retired or rebound.
+    pub(crate) unsafe fn resume_guarded_canonical_frequency_checked(
+        &mut self,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+        continuation: crate::single_thread::DeferredFreeAllocationContinuation,
+    ) -> crate::single_thread::GuardedCanonicalAllocationPhase {
+        // SAFETY: the caller retains the exact issuing owner through resume.
+        unsafe { self.engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation) }
+    }
+
     /// Separates the source aligned branch decision from its plain sampler.
     /// The returned token contains no engine or metadata references.
     #[inline]
