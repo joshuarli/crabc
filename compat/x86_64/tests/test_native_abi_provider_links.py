@@ -208,6 +208,15 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                      ('data', 8, 'mov domain_scalar(%rip),%r9; mov %rdx,domain_scalar(%rip)', True),
                      ('bss', 56, 'mov domain_scalar+48(%rip),%r9', True),
                      ('bss', 56, 'mov domain_scalar+49(%rip),%r9', False),
+                     ('rodata', 1, 'movzbl domain_scalar(%rip),%eax', True),
+                     ('rodata', 8, 'mov domain_scalar(%rip),%rax', True),
+                     ('rodata', 9, 'movzbl domain_scalar+8(%rip),%eax', True),
+                     ('rodata', 12, 'mov domain_scalar+8(%rip),%ecx', True),
+                     ('rodata', 14, 'mov domain_scalar+6(%rip),%rax', True),
+                     ('rodata', 8, 'mov %rax,domain_scalar(%rip)', False),
+                     ('rodata', 4, 'movl $0,domain_scalar(%rip)', False),
+                     ('rodata-reloc', 8, 'mov domain_scalar(%rip),%rax', False),
+                     ('rodata-merge', 8, 'mov domain_scalar(%rip),%rax', False),
                      ('bss', 4, 'add domain_scalar(%rip),%eax', False),
                      ('bss', 4, 'movw domain_scalar(%rip),%cx', False),
                      ('bss', 8, 'addr32 mov domain_scalar(%eip),%rcx', False),
@@ -217,10 +226,15 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     (work / 'provider.S').write_text(
                         '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
                         '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
-                        + '.section .' + storage + '.domain_scalar,"aw",@' + ('nobits' if storage == 'bss' else 'progbits')
+                        + '.section .' + storage + '.domain_scalar,"'
+                        + ('aM' if storage == 'rodata-merge' else 'a' if storage.startswith('rodata') else 'aw')
+                        + '",@' + ('nobits' if storage == 'bss' else 'progbits')
+                        + (',8' if storage == 'rodata-merge' else '')
                         + '\n.balign ' + str(min(size, 8))
                         + '\n.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
-                        + 'domain_scalar: .zero ' + str(size) + '\n.size domain_scalar,.-domain_scalar\n'
+                        + 'domain_scalar: ' + ('.fill ' + str(size) + ',1,0x5a' if storage.startswith('rodata') else '.zero ' + str(size))
+                        + '\n.size domain_scalar,.-domain_scalar\n'
+                        + ('.reloc domain_scalar,R_X86_64_NONE,0\n' if storage == 'rodata-reloc' else '')
                         + '.section .note.GNU-stack,"",@progbits\n')
                     (work / 'caller.S').write_text(
                         '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
@@ -265,7 +279,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         self.assertEqual(set(admitted), set(names), proof['failures'])
                         self.assertEqual(proof['failures'], [])
                         for mode in links.MODES:
-                            self.assertTrue(all(site['operand_size'] == (1 if 'movzbl' in read else 4 if size == 4 else 8)
+                            self.assertTrue(all(site['operand_size'] == (1 if 'movzbl' in read else 4 if size == 4 or storage == 'rodata' and size == 12 else 8)
                                 for importer in admitted['domain_scalar']['links'][mode]['importers']
                                 for site in importer['resolved_calls']))
                             self.assertFalse(any(importer['discarded_calls'] for row in proof['identities']
@@ -299,12 +313,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 elf_type=elf_type, name='domain_scalar', source_sections=sections,
                                 provider_object=(source_object, definition))
                             bound = links.final_member_references(image, **reference_arguments)
-                            expected_operations = ({'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load', 'integer-data-store', 'integer-data-or',
+                            expected_operations = ({'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
                                 'integer-immediate-store', 'locked-subtract'} if size == 4 else
                                 {'integer-data-load', 'integer-data-store'} if size == 8 else {'integer-data-load'})
                             self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, expected_operations)
                             self.assertEqual({row['target_address'] for row in bound['resolved_calls']},
-                                             {address + (55 if size == 56 and 'movzbl' in read else 48 if size == 56 else 0)})
+                                             {address + (8 if storage == 'rodata' and size in {9, 12} else 6 if storage == 'rodata' and size == 14 else 55 if size == 56 and 'movzbl' in read else 48 if size == 56 else 0)})
                             wrong = copy.deepcopy(definition)
                             wrong['row']['size_bytes'] += 1
                             wrong_references = copy.deepcopy(references)
@@ -321,6 +335,39 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             program_table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
                             headers = [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)
                                        for index in range(count)]
+                            if storage == 'rodata':
+                                immutable_index = next(index for index, segment in enumerate(headers)
+                                    if segment[0] == 1 and segment[1] == 4
+                                    and segment[3] <= address and address + size <= segment[3] + segment[5])
+                                segment = headers[immutable_index]
+                                changed = bytearray(image)
+                                changed[segment[2] + address - segment[3]] ^= 1
+                                with self.assertRaisesRegex(ValueError, 'immutable payload differs'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                                changed = bytearray(image)
+                                struct.pack_into('<I', changed, program_table + width * immutable_index + 4, 6)
+                                with self.assertRaisesRegex(ValueError, 'read-only load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                                writable_index = next(index for index, segment in enumerate(headers)
+                                    if segment[0] == 1 and segment[1] == 6)
+                                changed = bytearray(image)
+                                struct.pack_into('<Q', changed, program_table + width * writable_index + 16, address)
+                                with self.assertRaisesRegex(ValueError, 'read-only load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                                final = links.static_authority.elf_bytes(image)
+                                for relocation in final.sections:
+                                    if relocation[1] != 4 or not relocation[2] & 2 or not relocation[5]:
+                                        continue
+                                    changed = bytearray(image)
+                                    struct.pack_into('<Q', changed, relocation[4], address)
+                                    with self.assertRaisesRegex(ValueError, 'immutable final relocation footprint differs'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
+                                    section_table = struct.unpack_from('<Q', image, 40)[0]
+                                    section_width = struct.unpack_from('<H', image, 58)[0]
+                                    struct.pack_into('<Q', changed,
+                                        section_table + section_width * final.sections.index(relocation) + 8, 0)
+                                    with self.assertRaisesRegex(ValueError, 'immutable final relocation footprint differs'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
                             for site in bound['resolved_calls']:
                                 code = site['call_address']
                                 executable = next(segment for segment in headers
@@ -339,6 +386,8 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         self.assertEqual(set(admitted), {'domain_body', 'domain_caller'})
                         self.assertEqual([row['identity']['name'] for row in proof['failures']], ['domain_scalar'])
                         self.assertTrue(proof['failures'][0]['reason'])
+                        if storage == 'rodata-reloc':
+                            self.assertIn('immutable source relocation footprint differs', proof['failures'][0]['reason'])
                     wrong_owner = links.project_references(work, static, accounting,
                         **{**arguments, 'mapped_archive': str(work / 'unselected.a')})
                     self.assertEqual(wrong_owner['identities'], [])

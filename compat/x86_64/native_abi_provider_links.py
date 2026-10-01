@@ -453,8 +453,10 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Scalar reads require the exact unrelocated bytes and full extent of the
     selected read-only OBJECT; the caller authenticates its source definition.
     They prove initial operand bytes, not execution or later memory contents.
-    Integer memory operands bind the selected writable object and full access
-    extent. Trailing immediate bytes are part of the instruction, not payload
+    Integer memory operands bind the selected object and full access extent.
+    Ordinary immutable objects also require the complete unrelocated source
+    payload in one final read-only mapping; only loads may reference them.
+    Trailing immediate bytes are part of the instruction, not payload
     bytes at a NOBITS target. No execution or subsequent values are asserted.
     Source instruction spans must come from disassembly checked against the
     complete original section bytes; adjacent instructions are not prefixes.
@@ -494,8 +496,9 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and 0 < symbol['section'] < len(original.sections),
                     f'provider {name} integer source symbol differs')
             header = original.sections[symbol['section']]
+            readonly = header[1] == 1 and header[2] == 2
             require(header[1] in {1, 8} and observed['type'] == ('PROGBITS' if header[1] == 1 else 'NOBITS')
-                    and header[2] == 3 and observed['flags'] == 'WA'
+                    and (header[2], observed['flags']) == ((2, 'A') if readonly else (3, 'WA'))
                     and header[3] == int(observed['address'], 16)
                     and header[4] == int(observed['offset'], 16)
                     and header[5] == int(observed['size'], 16)
@@ -506,6 +509,15 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and (header[1] == 8 or header[4] + header[5] <= len(source_image))
                     and static_authority.section_name(original, header) == observed['name'],
                     f'provider {name} integer source extent differs')
+            if readonly:
+                require(operation in {'integer-data-load', 'integer-zero-extend-load'},
+                        f'provider {name} immutable object reference is not a load')
+                # No relocation table may target this ordinary source section.
+                # Its complete payload, including bytes outside the operand,
+                # must retain an immutable interpretation after linking.
+                require(not any(section[1] in {4, 9, 19} and section[7] == symbol['section']
+                                for section in original.sections),
+                        f'provider {name} immutable source relocation footprint differs')
             require(0 <= provider_offset and provider_offset + operand_size <= symbol['size'],
                     f'provider {name} integer operand leaves provider object')
             require(not operation.startswith('locked-')
@@ -529,19 +541,43 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and 0 < final_symbol['section'] < len(final.sections),
                     f'provider {name} integer final symbol differs')
             output = final.sections[final_symbol['section']]
-            require(output[1] == header[1] and output[2] == 3
+            require(output[1] == header[1] and output[2] == (2 if readonly else 3)
                     and output[3] <= provider_address
                     and provider_address + symbol['size'] <= output[3] + output[5]
                     and (output[1] == 8 or output[4] + output[5] <= len(image)),
                     f'provider {name} integer final extent differs')
-            # NOBITS has memory extent but no source or final file payload.
-            # The operand must lie in one writable, non-executable load image.
             table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
-            require(sum(program[0] == 1 and program[1] == 6
-                        and program[3] <= target and target + operand_size <= program[3] + program[6 if output[1] == 8 else 5]
-                        for program in (struct.unpack_from('<IIQQQQQQ', image, table + width * index)
-                                        for index in range(count))) == 1,
-                    f'provider {name} integer operand lacks a writable load extent')
+            programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
+            if readonly:
+                start = output[4] + provider_address - output[3]
+                extent = symbol['size']
+                mappings = [program for program in programs if program[0] == 1
+                            and program[3] < provider_address + extent and provider_address < program[3] + program[6]]
+                require(len(mappings) == 1 and mappings[0][1] == 4
+                            and mappings[0][3] <= provider_address and provider_address + extent <= mappings[0][3] + mappings[0][5]
+                            and mappings[0][2] + provider_address - mappings[0][3] == start
+                            and mappings[0][2] + mappings[0][5] <= len(image),
+                        f'provider {name} immutable object lacks a read-only load extent')
+                for relocation in final.sections:
+                    if relocation[1] not in {4, 9, 19}:
+                        continue
+                    require(relocation[1] == 4 and relocation[9] == 24 and relocation[5] % 24 == 0
+                            and relocation[4] + relocation[5] <= len(image),
+                            f'provider {name} immutable final relocation encoding is unsupported')
+                    for position in range(relocation[4], relocation[4] + relocation[5], 24):
+                        address, info, _ = final.unpack('<QQq', position)
+                        require(info == 8 and not (address < provider_address + extent and provider_address < address + 8),
+                                f'provider {name} immutable final relocation footprint differs')
+                source_start = header[4] + symbol['value']
+                require(image[start:start + extent] == source_image[source_start:source_start + extent],
+                        f'provider {name} immutable payload differs')
+            else:
+                # NOBITS has memory extent but no source or final file payload.
+                # Writable operands must lie in one non-executable load image.
+                require(sum(program[0] == 1 and program[1] == 6
+                            and program[3] <= target and target + operand_size <= program[3] + program[6 if output[1] == 8 else 5]
+                            for program in programs) == 1,
+                        f'provider {name} integer operand lacks a writable load extent')
             resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
                              'target_address': target, 'operand_size': operand_size, 'branch_kind': operation,
                              **({'provider_offset': provider_offset} if provider_offset else {})})
