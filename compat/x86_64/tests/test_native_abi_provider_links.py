@@ -197,6 +197,13 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                      ('data', 4, 'mov domain_scalar(%rip),%ecx; mov %edx,domain_scalar(%rip); '
                                   'or domain_scalar(%rip),%eax; movl $0,domain_scalar(%rip); '
                                   'lock subl $0x80000001,domain_scalar(%rip)', True),
+                     ('bss', 4, 'mov $0x66000000,%eax; mov domain_scalar(%rip),%ecx; '
+                                  'mov $0x40000000,%eax; mov %edx,domain_scalar(%rip); '
+                                  'or domain_scalar(%rip),%eax; '
+                                  'mov $0xf2000000,%eax; movl $0,domain_scalar(%rip); '
+                                  'mov $0x66000000,%eax; lock subl $0x80000001,domain_scalar(%rip)', True),
+                     ('bss', 8, 'mov $0x66000000,%eax; mov domain_scalar(%rip),%rcx; '
+                                  'mov $0xf3000000,%eax; mov %r9,domain_scalar(%rip)', True),
                      ('bss', 8, 'mov domain_scalar(%rip),%rcx; mov %r9,domain_scalar(%rip)', True),
                      ('data', 8, 'mov domain_scalar(%rip),%r9; mov %rdx,domain_scalar(%rip)', True),
                      ('bss', 56, 'mov domain_scalar+48(%rip),%r9', True),
@@ -268,6 +275,8 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         caller = (work / 'caller.o').read_bytes()
                         references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
                                                               'domain_scalar', image=caller, disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
+                        self.assertTrue(all(row['instruction_start'] < row['offset']
+                            and row['offset'] + 4 <= row['instruction_end'] for row in references))
                         if 'movzbl' in read:
                             with self.assertRaisesRegex(ValueError, 'instruction boundaries are required'):
                                 links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
@@ -300,9 +309,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             wrong['row']['size_bytes'] += 1
                             wrong_references = copy.deepcopy(references)
                             wrong_references[0]['operand_addend'] += 1
+                            wrong_spans = copy.deepcopy(references)
+                            wrong_spans[0]['instruction_end'] += 1
                             for altered, message in [({'provider_object': None}, 'lacks its source object'),
                                     ({'provider_object': (source_object, wrong)}, 'source symbol differs'),
                                     ({'provider_address': address + 1}, 'foreign provider'),
+                                    ({'source_calls': wrong_spans}, 'reference opcode differs'),
                                     ({'source_calls': wrong_references}, 'leaves provider object|foreign provider')]:
                                 with self.assertRaisesRegex(ValueError, message):
                                     links.final_member_references(image, **{**reference_arguments, **altered})
@@ -490,6 +502,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 'domain_scalar: .zero 8\n.size domain_scalar,.-domain_scalar\n'
                 '.section .note.GNU-stack,"",@progbits\n')
             for read in ('lock cmpxchg %rcx,domain_scalar(%rip)', 'lock cmpxchg %rdx,domain_scalar(%rip)',
+                         'mov $0x66000000,%eax; lock cmpxchg %r9,domain_scalar(%rip)',
                          'lock cmpxchg %r9,domain_scalar(%rip)', 'cmpxchg %rcx,domain_scalar(%rip)',
                          'lock cmpxchg %ecx,domain_scalar(%rip)', 'lock cmpxchg %rcx,domain_scalar+1(%rip)'):
                 with self.subTest(read=read):
@@ -533,6 +546,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     proof = links.project_references(work, static, accounting, **arguments)
                     admitted = {row['identity']['name']: row for row in proof['identities']}
                     if read in {'lock cmpxchg %rcx,domain_scalar(%rip)', 'lock cmpxchg %rdx,domain_scalar(%rip)',
+                                'mov $0x66000000,%eax; lock cmpxchg %r9,domain_scalar(%rip)',
                                 'lock cmpxchg %r9,domain_scalar(%rip)'}:
                         self.assertEqual(set(admitted), set(names), proof['failures'])
                         self.assertEqual(proof['failures'], [])
@@ -546,7 +560,8 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                           if row['role'] == 'definition' and row['row']['name'] == 'domain_scalar')
                         caller = (work / 'caller.o').read_bytes()
                         references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
-                                                              'domain_scalar', image=caller)
+                                                              'domain_scalar', image=caller,
+                                                              disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
                         sections = links.calls._ordinary_source_sections(caller, {row['section'] for row in references})
                         source_object = (work / 'provider.o').read_bytes()
                         for mode, elf_type in [('static', 2), ('static-pie', 3)]:

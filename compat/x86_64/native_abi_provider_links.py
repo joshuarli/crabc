@@ -303,6 +303,15 @@ def integer_memory_operand(source: bytes, offset: int, *,
         operation = prefix[1:] if len(prefix) == 4 and prefix[0] == 0x44 else prefix
         if (len(operation) == 3 and operation[:2] == b'\x0f\xb6' and operation[2] & 0xc7 == 0x05):
             return prefix, 1, b'', 'integer-zero-extend-load'
+        # Decode within the authenticated instruction, then require the entire
+        # prefix and immediate. Bytes belonging to adjacent instructions cannot
+        # change this operand's width or supply an ignored extra prefix.
+        decoded = integer_memory_operand(source[start:end], offset - start)
+        if decoded is not None:
+            prefix, _, immediate, _ = decoded
+            if offset - start == len(prefix) and end == offset + 4 + len(immediate):
+                return decoded
+        return None
     locked = locked_cmpxchg_prefix(source, offset)
     if locked and (offset == len(locked) or source[offset - len(locked) - 1] not in legacy_prefixes):
         return locked, 8, b'', 'locked-cmpxchg'
@@ -338,7 +347,7 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
     Non-executable relocations remain outside this proof. Interior LEA addends
     require a separately authenticated object extent during final projection.
     Disassembly boundaries are checked against raw section bytes so a preceding
-    instruction displacement cannot be mistaken for a prefix of a byte load.
+    instruction displacement cannot be mistaken for an operand-size prefix.
     """
     sections = calls._ordinary_relocation_sections(image)
     instruction_spans = {}
@@ -383,13 +392,14 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
         address = (kind == 'R_X86_64_PC32' and len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
                    and prefix[1] == 0x8d and prefix[2] & 0xc7 == 0x05)
         instruction_span = None
-        if (kind == 'R_X86_64_PC32' and offset >= 3
-                and source[offset - 3:offset - 1] == b'\x0f\xb6'):
-            require(disassembly is not None, f'provider import {name} instruction boundaries are required')
+        if kind == 'R_X86_64_PC32' and disassembly is not None:
             containing = [(start, end) for start, end in instruction_spans.get(section, {}).items()
                           if start <= offset and offset + 4 <= end]
             require(len(containing) == 1, f'provider import {name} instruction span is absent or ambiguous')
             instruction_span = containing[0]
+        elif (kind == 'R_X86_64_PC32' and offset >= 3
+                and source[offset - 3:offset - 1] == b'\x0f\xb6'):
+            require(False, f'provider import {name} instruction boundaries are required')
         integer = integer_memory_operand(source, offset, instruction_span=instruction_span) if kind == 'R_X86_64_PC32' else None
         require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
                 and (addend == -4 or scalar or address or integer is not None),
