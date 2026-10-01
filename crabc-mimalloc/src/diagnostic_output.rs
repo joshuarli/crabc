@@ -1222,6 +1222,8 @@ pub(crate) enum SourceErrorReport {
     GuardedAllocationTooLarge { size: usize },
     /// Guarded alignment over-allocation reports both unrounded arguments.
     GuardedAlignedAllocationTooLarge { size: usize, alignment: usize },
+    /// A failed secure metadata guard retains its selected level and range.
+    SecureGuardFailure { level: usize, address: usize, size: usize },
     /// An overflowing count product reports its two original operands before
     /// the public allocation entry returns; release profiles remain quiet.
     #[cfg(feature = "mi-debug-1")]
@@ -1272,7 +1274,8 @@ impl SourceErrorReport {
             | Self::ThreadLocalDataAllocation
             | Self::TheapAllocation
             | Self::PageMapReservation { .. } => Errno::NOMEM,
-            Self::AlignedTooLarge { .. } | Self::BadAlignment { .. } => Errno::INVAL,
+            Self::AlignedTooLarge { .. } | Self::BadAlignment { .. }
+            | Self::SecureGuardFailure { .. } => Errno::INVAL,
             #[cfg(feature = "mi-debug-1")]
             Self::PaddingDoubleFree { .. } => Errno::AGAIN,
             #[cfg(feature = "mi-debug-1")]
@@ -1293,6 +1296,15 @@ impl SourceErrorReport {
                 message.append(b": invalid (unaligned) pointer: ");
                 append_source_pointer(&mut message.bytes, &mut message.length, pointer);
                 message.append(b"\n");
+            }
+            Self::SecureGuardFailure { level, address, size } => {
+                message.append(b"secure level ");
+                decimal(&mut message, level);
+                message.append(b", but failed to commit guard page (at ");
+                append_source_pointer(&mut message.bytes, &mut message.length, address);
+                message.append(b" of size ");
+                decimal(&mut message, size);
+                message.append(b")\n");
             }
             Self::GuardedAlignedAllocationTooLarge { size, alignment } => {
                 message.append(b"(guarded) aligned allocation request is too large (size ");
@@ -3965,6 +3977,19 @@ mod tests {
         // the legacy output primitive finishes its synchronous delivery.
         unsafe { output(message.as_c_str().as_ptr()) };
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), b"retained output\n");
+    }
+
+    #[test]
+    fn secure_guard_failure_preserves_level_pointer_size_and_error() {
+        use super::SourceErrorReport;
+        for (level, address, size) in [(1, 0usize, 4096usize), (2, 0xABCDusize, 65536usize)] {
+            let report = SourceErrorReport::SecureGuardFailure { level, address, size };
+            assert_eq!(report.error(), Errno::INVAL);
+            assert_eq!(report.message().as_c_str().to_bytes(), std::format!(
+                "secure level {level}, but failed to commit guard page (at 0x{address:0width$X} of size {size})\n",
+                width = 8,
+            ).as_bytes());
+        }
     }
 
     #[test]
