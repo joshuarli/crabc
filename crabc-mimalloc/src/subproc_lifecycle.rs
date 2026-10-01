@@ -32,8 +32,9 @@
 //! Theap is already initialized is refused. [`ChildThreadMember::thread_done`]
 //! is the matching `_mi_thread_done`. A member does not borrow its child:
 //! each admitted thread keeps its own page-engine state and runs page
-//! operations without a child or PageMap lock, and destruction refuses while
-//! any member's registration keeps the child's live thread count raised.
+//! operations without a child or PageMap lock. Ordinary owned destruction
+//! refuses while a member is registered; native destruction may instead
+//! destroy a permanently quiescent child and retain its record for member exit.
 //!
 //! [`native_subproc_new`], [`native_subproc_add_current_thread`],
 //! [`native_subproc_visit_heaps`], and [`native_subproc_destroy`] are the
@@ -513,10 +514,11 @@ unsafe fn destroy_non_main_heaps(
 /// thread's default Theap and the main-Heap fast slot.
 ///
 /// The member does not borrow the child, so other threads may use the child
-/// meanwhile; the member's registration keeps the child's live thread count
-/// raised, and destruction refuses until [`Self::thread_done`] completes.
-/// Dropping a member without `thread_done` leaves the roots installed and
-/// the child retained, as dropping its `ChildThreadOwner` does.
+/// meanwhile. Its registration keeps the child's live thread count raised
+/// until [`Self::thread_done`] completes, so ordinary owned destruction
+/// refuses. Native destruction may release a permanently quiescent child
+/// under this member; its later exit then uses only the retained native record.
+/// Dropping a member frees nothing and leaves its roots and registration intact.
 #[must_use = "a child subprocess thread must finish through thread_done"]
 pub(crate) struct ChildThreadMember {
     owner: ChildThreadOwner,
@@ -1064,7 +1066,9 @@ pub(crate) fn current_child_id() -> Option<NativeSubprocessId> {
 pub(crate) fn current_child_main_heap() -> Option<core::ptr::NonNull<crate::types::Heap>> {
     let id = current_child_id()?;
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
-    // SAFETY: a member's child stays live while the member does.
+    // SAFETY: this member retains its native record through exit; its lock
+    // excludes owner teardown during this projection. A destroyed child has
+    // no owner and produces no Heap pointer.
     unsafe { id.with_owner(|owner| owner.as_ref().and_then(|child| child.main_heap_pointer())) }.ok().flatten()
 }
 
@@ -1979,9 +1983,9 @@ unsafe fn destroy_record(
             let live = child
                 .with_child_image(|image| image.get_ref().identity().live_thread_count())
                 .unwrap_or(0);
-            // SAFETY: the record lock excludes thread admission and finish,
-            // the unlink step refuses while a thread belongs to the child,
-            // and the caller never uses a child block again.
+            // SAFETY: the record lock excludes thread admission and finish.
+            // The caller has permanently quiesced every member and ended all
+            // child-block use before the terminal path releases their images.
             match destroy_child_with(
                 child, record.registry, binding, &mut [], metadata, config, release, live != 0,
             ) {
@@ -2815,6 +2819,87 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_thread_teardown_removes_freed_metadata_custody_on_late_release_error() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::child_thread_teardown_removes_freed_metadata_custody_on_late_release_error",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                // Select genuine OS pages so retiring an empty metadata page
+                // reaches the mapping release boundary instead of an arena slice.
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                let id = native_subproc_new().expect("a live child");
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().expect("ready parent");
+                // Ordinary metadata clients fill one real source page. The
+                // next worker's Theap must therefore occupy a separate page.
+                let mut fillers = unsafe { id.with_owner(|owner| {
+                    owner.as_mut().expect("live child").with_metadata_page_engine(binding, |_, engine| {
+                        let first = engine.allocate_zeroed(core::mem::size_of::<Theap>())
+                            .expect("first metadata client");
+                        // SAFETY: this exact current client retains its page
+                        // for the bounded immutable backing-kind observation.
+                        assert!(unsafe { (*engine.page_for_block(first)).memid().is_os() },
+                            "the fault control uses a real OS-backed metadata page");
+                        let reserved = unsafe { engine.current_allocation_page_reserved(first) }
+                            .expect("live page reservation");
+                        let mut clients = std::vec![first];
+                        while clients.len() < reserved {
+                            clients.push(engine.allocate_zeroed(core::mem::size_of::<Theap>())
+                                .expect("same source class metadata client"));
+                        }
+                        clients
+                    }).expect("complete metadata operation")
+                }) }.expect("child lock");
+                let (ready, entered) = std::sync::mpsc::channel();
+                let (finish, resume) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    assert!(unsafe {
+                        crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                            crate::runtime_lifecycle::current_native_allocator_thread_descriptor())
+                    });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    ready.send(()).expect("worker ready");
+                    resume.recv().expect("finish permission");
+                    let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                        crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                    let result = native_child_thread_done();
+                    std::println!("teardown.result={result:?}; unmaps={}", fault.observed());
+                    assert_eq!(fault.observed(), 1, "the real release fault is reached");
+                    assert!(matches!(result, Some(Err(_))));
+                    let current = unsafe { current_child_member() }.as_ref().expect("actual retained member");
+                    std::println!("teardown.theap_custody={}", current.member.owner.theap_pointer().is_some());
+                    assert!(current.member.owner.theap_pointer().is_none(),
+                        "consumed metadata storage is not left as a live TLS block token");
+                    // The failed mapping stays with the retained child. No
+                    // released image or registration is used again.
+                });
+                entered.recv().expect("registered worker");
+                // Return one actual client from the full page. Two ordinary
+                // same-class pages now exist, so source retirement releases
+                // the worker's empty page immediately instead of delaying it.
+                let filler = fillers.remove(0);
+                unsafe { id.with_owner(|owner| {
+                    owner.as_mut().expect("live child").with_metadata_page_engine(binding, |_, engine| {
+                        unsafe { engine.free(filler) }.expect("owned filler returned once");
+                    }).expect("complete metadata operation")
+                }) }.expect("child lock");
+                finish.send(()).expect("worker may finish");
+                worker.join().expect("retained-error control completes");
+                // Remaining clients and their child stay retained; this fault
+                // control does not destroy a context carrying release rights.
+                let _ = fillers;
+            },
+        );
+    }
+
     /// A live Heap of one child cannot become another child's cached Theap.
     /// Both child images remain live during the attempted selection.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -3009,7 +3094,7 @@ pub(crate) mod tests {
     /// free through the ordinary native runtime entry points, which route
     /// them to their own child Theaps: concurrently, with blocks freed across
     /// child threads and between the child and the main subprocess. A child
-    /// thread creates and deletes a non-main Heap. Destruction refuses while
+    /// thread creates and deletes a non-main Heap. Ordinary destruction refuses while
     /// the threads belong to the child; they finish through the runtime's
     /// thread-exit entry, and a runtime worker other than the creator
     /// destroys the child.
