@@ -12758,6 +12758,70 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", not(miri), any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+    fn source_page_map_failure_precedes_fresh_page_key_random_draws() {
+        use crate::os::{MemoryConfig, PageSize, fault};
+        use crate::os_page::OsAlignedPageClaim;
+        use crate::page_map::PageMap;
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 8 * 1024 * 1024, false, false);
+        let fault = fault::install(fault::Plan::disabled());
+        let mut page_map = PageMap::initialize_for_subprocess(config, crate::config::MAX_VABITS, false,
+            PARENT.identity()).unwrap();
+        let claim = OsAlignedPageClaim::allocate(config, 4096, 2 * crate::config::ARENA_SLICE_SIZE)
+            .map_err(|failure| failure.error()).unwrap();
+        let layout = claim.layout();
+        let slice_start = claim.slice_start().unwrap();
+        let metadata = claim.metadata().unwrap();
+        let memory = claim.memory_id().unwrap();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let heap = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let mut tld = std::boxed::Box::new(ThreadLocalData::normal_tld_init_preimage());
+        let tld = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        let mut theap = std::boxed::Box::new(Theap::empty());
+        let theap = NonNull::new(core::ptr::addr_of_mut!(*theap)).unwrap();
+        // Original image and mapping owners retain every allocation through
+        // the real lazy submap failure and its complete unpublished cleanup.
+        unsafe {
+            (*tld.as_ptr()).memid = MemoryId::malloc(tld.as_ptr().cast(), size_of::<ThreadLocalData>(), true);
+            assert!((*tld.as_ptr()).initialize_normal_tld_field_prefix_after_direct_preimage(
+                LiveThreadId::new(12).unwrap(), ThreadSequence::from_previous_total_count(0), 0, PARENT.identity()));
+            let prepared = Theap::prepare_initialization_at(theap, heap, tld,
+                TheapInitializationKind::ProcessStatic).unwrap();
+            let linked = finish_unfaulted_test_random(prepared.apply_source_options_and_attach(
+                SourceTheapOptions::release_defaults_for_test()).unwrap());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 0, sample_seed: 0 })
+                .apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            (*theap.as_ptr()).random.test_stage_buffered_nexts(13, 17);
+            let available_before = (*theap.as_ptr()).random.test_output_available();
+            let page = Page::publish_fresh_exclusive_owner_at_with_pointers(metadata, theap, heap,
+                TheapOwner::Live(LiveThreadId::new(12).unwrap()), layout.block_size(), layout.page_offset(),
+                layout.reserved(), 0, memory.initially_zero(), memory).unwrap();
+            assert!(claim.publish_secondary_metadata(page));
+            fault.set(fault::Plan::at(fault::Point::Map, 1, crabc_core::Errno::NOMEM));
+            let registration = page_map.register_range(slice_start.as_ptr(), layout.page_map_size(), page);
+            let observed = fault.observed();
+            let available_after = (*theap.as_ptr()).random.test_output_available();
+            fault.set(fault::Plan::disabled());
+            assert!(claim.clear_secondary_metadata(page));
+            assert!((*page.as_ptr()).retire_exclusive().is_some());
+            claim.release().map_err(|failure| failure.error()).unwrap();
+            page_map.destroy().unwrap();
+            (*tld.as_ptr()).detach_one_theap_from_heap(&mut *heap.as_ptr(), theap.as_ptr()).unwrap();
+            (*tld.as_ptr()).detach_one_theap_from_tld(theap.as_ptr()).unwrap();
+            assert_eq!(registration, Err(crabc_core::Errno::NOMEM));
+            assert!(observed > 0, "registration reached the armed lazy mapping failure");
+            assert_eq!(available_after, available_before,
+                "a failed arena PageMap registration returns before page initialization draws keys");
+        }
+    }
+
+    #[test]
     fn fresh_page_publication_resets_every_local_lifecycle_field() {
         let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
         let mut heap = Heap::bootstrap_empty();
