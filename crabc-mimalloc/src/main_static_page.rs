@@ -2190,6 +2190,31 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         })
     }
 
+    /// Returns the actual process binding retained by the initial owner.
+    /// This only projects the borrowed carrier; option evaluation belongs
+    /// outside the owner projection while its admission remains held.
+    pub(crate) fn allocation_process(&self) -> Option<crate::os::VmProcess<'static>> {
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.engine.allocation_process(),
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { reservation, .. } => match reservation {
+                MainStaticRuntimeFirstArenaReservation::Process { backing } => Some(backing.process()),
+                #[cfg(any(test, not(target_arch = "x86_64")))]
+                MainStaticRuntimeFirstArenaReservation::Legacy { .. } => None,
+            },
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { route, .. } => match route {
+                MainStaticRuntimeFirstArenaRoute::SourceProcess(backing) => Some(backing.process()),
+                #[cfg(any(test, not(target_arch = "x86_64")))]
+                MainStaticRuntimeFirstArenaRoute::Sidecar => None,
+            },
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => match parked.route {
+                MainStaticRuntimeFirstArenaRoute::SourceProcess(backing) => Some(backing.process()),
+                MainStaticRuntimeFirstArenaRoute::Sidecar => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Compares one selected Theap with the permanent session retained in
     /// this owner state, without consulting compiler-TLS default caches.
     pub(crate) fn owns_theap(&self, selected: NonNull<crate::types::Theap>) -> bool {

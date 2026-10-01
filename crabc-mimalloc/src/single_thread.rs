@@ -37805,6 +37805,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.session.theap() as *const Theap as *mut Theap
     }
 
+    /// Returns the process retained by this allocation backing without
+    /// evaluating options. The outer owner must remain admitted while the
+    /// returned process is used after this engine projection ends.
+    #[inline]
+    pub(crate) fn allocation_process(&self) -> Option<crate::os::VmProcess<'arena>> {
+        self.arena.process()
+    }
+
     /// Compares the selected source identity with the exact session owner.
     /// This does not consult a default cache or project the Theap image.
     #[inline]
