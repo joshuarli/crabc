@@ -184,7 +184,12 @@ mod tests {
             metadata: MaybeUninit::uninit(),
             bytes: [0; 2 * ARENA_SLICE_SIZE - size_of::<Page>()],
         });
-        let page = NonNull::from(&mut storage.metadata).cast::<Page>();
+        // Keep the allocation-wide origin: the page's area lies beyond the
+        // metadata field, so a borrow of that field cannot authorize reads
+        // of the block backing in the next slice.
+        let page = unsafe {
+            NonNull::new_unchecked(core::ptr::addr_of_mut!(*storage).cast::<Page>())
+        };
         let mut heap = Heap::bootstrap_empty();
         let mut tld = ThreadLocalData::detached();
         let id = LiveThreadId::new(12).unwrap();
