@@ -1777,7 +1777,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// Runs one test-only B/C/D interleaving for the opaque group selected by
     /// the mixed regression builder, then resumes the generic ledger drain.
     ///
-    /// The callback is present only in the Gate 5C adapter witness. Its three
+    /// The callback is present only in the post-exit adapter witness. Its three
     /// slots were allocated from either the covered direct-small page or the
     /// separately selected mapped, non-full medium page while A owned the
     /// live engine. B directly frees one; C and D receive only the two opaque
@@ -2360,7 +2360,7 @@ impl TicketZeroOwnerExitReclaimRoute {
     }
 }
 
-/// The adapter-supplied, joined B-side consumer for the private Gate 5C
+/// The adapter-supplied, joined B-side consumer for the private post-exit
 /// witness. Outside this module, the route exposes only
 /// [`TicketZeroOwnerExitFreeRoute::free_remaining_in_fresh_runtime_worker`],
 /// which creates and finishes only B's new no-page attachment. The
@@ -3109,7 +3109,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
         }
     }
 
-    /// Runs the one fixed Gate 5A mixed-local workload through this exact
+    /// Runs the fixed mixed-local workload through this exact
     /// runtime-owned engine. This is intentionally not an allocator escape
     /// hatch: the workload keeps every client private and uses only ordinary
     /// local allocation/free before the operation's typed finish.
@@ -3122,7 +3122,7 @@ impl<'attachment, 'main> RuntimePersistentPageEngine<'attachment, 'main> {
         )
     }
 
-    /// Runs the one fixed Gate 5B live-owner remote-free workload through
+    /// Runs the fixed live-owner remote-free workload through
     /// this exact runtime-owned engine. The publisher receives only the two
     /// opaque remote-free capabilities; it cannot borrow this engine, its
     /// PageMap lease, or any client address.
@@ -17452,7 +17452,7 @@ fn install_current_thread_page_owner(
     OwnerExitMappedRegularPageOwnerInstallResult::Installed
 }
 
-/// Builds the mixed Gate 5C source image through
+/// Builds the mixed post-exit source image through
 /// [`install_current_thread_page_owner`]. The workload remains a regression
 /// fixture; it is not the runtime's page-owner state.
 #[cfg(test)]
@@ -17613,7 +17613,7 @@ fn free_remaining_persistent_worker_blocks(
     Ok(())
 }
 
-/// Exercises one worker-owned page engine for the complete local Gate 5A
+/// Exercises one worker-owned page engine for the complete local
 /// witness. It has no transfer, remote-free, abandonment, or owner-exit
 /// operation: every pointer stays private to this thread and is freed before
 /// its enclosing engine can finish.
@@ -17832,7 +17832,7 @@ fn free_remaining_persistent_remote_worker_blocks(
     Ok(())
 }
 
-/// Exercises the live-owner half of Gate 5B. The first small page becomes full
+/// Exercises live-owner remote frees. The first small page becomes full
 /// before two exact blocks transfer as logical remote publications; the
 /// joined owner's next ordinary allocations perform the source false
 /// collection, receive both exact blocks back, and finish with no client
@@ -18726,7 +18726,7 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
     }
 }
 
-/// Runs the bounded real-lifecycle Gate 5C witness against the dormant
+/// Runs the bounded post-exit lifecycle witness against the dormant
 /// ticket-zero process pair.
 ///
 /// A publishes two clients to joined B/C before it crosses the existing
@@ -18940,7 +18940,7 @@ enum OwnerExitReclaimWorkerResult {
     Poisoned(TicketZeroOwnerExitRoutePoisoned),
 }
 
-/// Runs the source-valid post-exit reclamation half of Gate 5C against the
+/// Runs source-valid post-exit reclamation against the
 /// dormant ticket-zero process pair.
 ///
 /// A owns one initially-nonfull medium page with a returned local free that
@@ -25679,7 +25679,7 @@ mod tests {
         );
     }
 
-    /// A read-only audit of the process-long objects that a completed Gate 5A
+    /// A read-only audit of the process-long objects that a completed local
     /// worker must return to their pre-worker state. `total_thread_count` is
     /// intentionally separate: mimalloc's source sequence is monotonic, while
     /// live TLD, metadata-capability, and shared-later-Theap counts must be
