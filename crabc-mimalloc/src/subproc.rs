@@ -2011,6 +2011,14 @@ impl PendingMainStaticThreadLocalData {
 }
 
 impl MainStaticThreadLocalData {
+    /// Returns the original static TLD capability without a whole-image
+    /// projection. The retaining owner must remain live and exclude retirement
+    /// and overlapping field access throughout any initialization operation.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn source_initialization_pointer(&self) -> core::ptr::NonNull<ThreadLocalData> {
+        self.pointer
+    }
+
     /// Projects the vanished initial TLD under sole-child source authority.
     ///
     /// # Safety
