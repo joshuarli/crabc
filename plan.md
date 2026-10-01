@@ -35,6 +35,12 @@ only its exact source, configuration, image, products, and execution context.
   refs and raw inputs remain retained. Disk exhaustion interrupted initial lane
   edits/builds; source was restored from Git and disposable Cargo incremental
   caches were reclaimed without removing retained products or reports.
+  Original completed corpus APK bytes now share physical storage after exact
+  byte/mode/ownership checks and descendant closure. This recovered 16.14 GiB;
+  the original archived 219-case owning reader passes before and after, and
+  all original reports and seals remain unchanged. Successor agent starts are
+  currently rejected by the agent service thread limit; existing lanes continue
+  and the parent owns the next runtime cohort preparation.
   Historical custody remains under `.work/x86_64/reports/integrated-lanes/`
   in `cleanup-winddown-current70`, `cleanup-winddown-historical70` and
   `cleanup-winddown-admin70`. Parked refs below remain unqualified drafts.
@@ -59,8 +65,9 @@ only its exact source, configuration, image, products, and execution context.
   whole callable-provider closure remain open.
   Fresh `97e63ff67` static preparation and owning replay pass with two independent
   builds and extraction. Dynamic continuation remains pending because the retained
-  reference cohort needs about 21.5 GiB while this checkout has about 5 GiB free;
-  the static receipt remains `prepared-unqualified`.
+  reference cohort exhausted available storage; its static receipt remains
+  `prepared-unqualified`. The completed APK storage repair removes duplicate
+  payload storage but supplies no qualification for a newer runtime source.
 - **Merged compiler and ownership evidence:** all nine Rust compiler profiles
   pass on the composed bootstrap/frequency graph at `27f714e5e`; later composed
   checks through 81 also pass, with raw logs under `.work/tmp`. Live option getters now return descriptor
@@ -84,10 +91,20 @@ only its exact source, configuration, image, products, and execution context.
   receipt regressions pass 84 host tests (one skipped), and the callable-provider
   controls pass fifteen. The private Fresh-Page composition retains original
   tasks across refused session completion and distinguishes persistent retirement
-  refusal from callback admission. It remains unqualified: auxiliary relays and
-  the actual source-attached, pre-READY allocation witness are still being closed.
-  A genuine strict-provenance regression reproduces a shared-reference write to
-  the Heap list head; its interior-mutation repair and GREEN proof are pending.
+  refusal from callback admission. It remains unqualified while the complete
+  source-attached transport and child initializer graph are being composed.
+  The allocated Heap-list regression reproduces a shared-reference write to
+  the list head. The interior-mutation repair is merged at `aa4a989ef`; its
+  native and leak-free strict-provenance GREEN controls pass on the exact lane
+  source. Actual static Theap accounting is observed before Heap publication,
+  with an old-order RED and restored GREEN. The private Fresh-Page graph
+  separately passes genuine source-attached startup allocation and six Task/aux
+  controls. An isolated legacy runtime-ticket control still crashes on both
+  the composed graph and its immediate baseline; it remains unresolved.
+  Child guarded sampler inheritance has a real C/native differential RED;
+  staged child initializer APIs are private until the actual callers qualify.
+  The OS-claim Miri fixture passes assertions but exits on two fixture leaks,
+  so it is not qualified as a successful Miri run.
 - **Allocator verified slices:** exact frozen sources retain independent replay
   for ordinary/auxiliary Theap geometry, public API and Heap/Theap visitors,
   fault controls, queue ownership, abort-on-failure, visitation and statistics.
@@ -127,6 +144,11 @@ only its exact source, configuration, image, products, and execution context.
   retention runs and their owning replay each observe 774 terminal-unmapped
   arena parents; every cycle's residual equals authenticated current ambient
   ownership. These are source/profile-qualified slices, not a whole memory bound.
+  The initial Page commit fault producer authenticates original C and Rust
+  compiler products through the existing physical receipt reader; its 49-field
+  source/native control and relocated replay pass at `eba4ea3b1`. The debug-1
+  exhausted-page second-extension fault and success controls separately pass
+  59 fields each, with owning physical replay at exact `455367754`.
 - **Secure-3:** encoded/padded fast-path eligibility repair is integrated
   at `f66846874` from exact lane source `42a3f7c4f`. The genuine repeated Heap-birth
   regression passes against pinned C and native; the complete public producer
@@ -137,13 +159,20 @@ only its exact source, configuration, image, products, and execution context.
   `.work/allocator-x86_64/reports/allocator/x86_64/secureapi71-43586c271/source`;
   original failures and the earlier incomplete producer remain retained. This
   proves the selected secure-3 public cohort, not complete allocator promotion.
-  Public guarded control setters now relay through the native adapter; sampled
-  allocation routing and the complete guarded profile remain in progress.
+  Public guarded control setters relay through the native adapter. Exact
+  `6dd72d205` public cohorts pass release and four actual guarded profiles:
+  571 C/native comparison fields, 38 native controls, and original plus relocated
+  owning read-only replay. Sampled clients retain their protected tails through
+  refusal and discharge them on consumption/free. Ordinary visitation explicitly
+  selects ordinary clients. Four actual guarded Heap visitation cohorts and
+  their owning replay pass at `de90f662b`; these selected cohorts do not close
+  the whole guarded or allocator qualification gates.
 - **Callable providers:** exact instruction/operand, immutable object,
-  merged-string, atomic, byte-store and MOVDQU proofs are integrated through
-  `83b640552`. Fifteen real-ELF host and pinned controls and all nine compiler
-  profiles pass. Frozen `e9de501dd` diagnostic projection now admits
-  2,907/2,958 references, with 51 refused; its owning read-only replay is
+  merged-string, atomic, byte-store, MOVDQU and ordinary object pointer-table
+  proofs are integrated through `6283b2314`. Sixteen real-ELF host and pinned
+  controls and all nine compiler profiles pass on the exact lane source.
+  Frozen `e9de501dd` diagnostic projection now admits
+  2,916/2,958 references, with 42 refused; its owning read-only replay is
   byte-identical. One-past address formation is distinct from a memory read;
   writable and 16-byte vector references retain full object/mapping extent proof.
   Source-identity admission still rejects the wrong runtime source. Exact source
