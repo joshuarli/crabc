@@ -4269,7 +4269,10 @@ impl Page {
                 reserved,
                 free: core::ptr::addr_of!((*raw).free).read(),
                 local_free: core::ptr::addr_of!((*raw).local_free).read(),
-                remote: core::ptr::with_exposed_provenance_mut(remote),
+                // An empty source head is null without an integer-derived
+                // pointer conversion or any provenance exposure.
+                remote: if remote == 0 { core::ptr::null_mut() }
+                    else { core::ptr::with_exposed_provenance_mut(remote) },
                 initially_zero: core::ptr::addr_of!((*raw).memid.initially_zero).read(),
                 slice_pcommitted: core::ptr::addr_of!((*raw).slice_pcommitted).read(),
                 #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
