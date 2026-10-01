@@ -583,6 +583,10 @@ pub(crate) struct VmPolicy {
     /// The one process descriptor table, when this is the x86 process policy.
     /// When present, every option read goes to it and `options` is unused.
     process_options: Option<&'static OutputOwner>,
+    /// Explicit embedding authority, consulted only by guarded protection
+    /// failure delivery. Ordinary VM paths never use this writer.
+    #[cfg(target_arch = "x86_64")]
+    source_errno_store: Option<crate::process_init::SourceErrnoStore>,
     /// The fixed descriptor image is immutable after ordinary source startup.
     /// A rare `_mi_getenv` failure leaves individual slots lazy-uninitialized,
     /// in which case the retained process reader mutates only that slot under
@@ -1042,6 +1046,16 @@ impl VmPolicy {
         policy
     }
 
+    /// Retains the embedding's current-thread errno writer for guarded
+    /// protection failures; ordinary VM operations leave it unused.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn with_source_errno_store(
+        mut self, store: Option<crate::process_init::SourceErrnoStore>,
+    ) -> Self {
+        self.source_errno_store = store;
+        self
+    }
+
     #[inline]
     fn from_options(
         options: VmOptions,
@@ -1050,6 +1064,8 @@ impl VmPolicy {
         let options_resolved = options.all_resolved();
         Self {
             process_options: None,
+            #[cfg(target_arch = "x86_64")]
+            source_errno_store: None,
             options: UnsafeCell::new(options),
             options_resolved: AtomicBool::new(options_resolved),
             options_access: AtomicBool::new(false),
@@ -3649,6 +3665,23 @@ impl Mapping {
 pub(crate) unsafe fn protect_live_range(
     address: *mut u8, length: usize, protect: bool, process: Option<VmProcess<'_>>,
 ) -> Result<bool> {
+    // SAFETY: the caller supplies the complete live-span and callback exclusions.
+    unsafe { protect_live_range_with_failure_hook(address, length, protect, process, |_| {}) }
+}
+
+/// Executes the one protection syscall and selected captured-error effect
+/// before consulting warning options or entering any output callback.
+///
+/// # Safety
+/// The caller retains the original-provenance complete live aligned span
+/// and its VM owner through the syscall and callbacks, without byte aliases
+/// or Page, Heap or Theap projections. The failure effect cannot invalidate
+/// that mapping or owner, allocate through this engine, or unwind.
+#[inline]
+unsafe fn protect_live_range_with_failure_hook(
+    address: *mut u8, length: usize, protect: bool, process: Option<VmProcess<'_>>,
+    on_failure: impl FnOnce(Errno),
+) -> Result<bool> {
     if length == 0 { return Ok(false); }
     let protection = if protect {
         PROT_NONE
@@ -3667,6 +3700,7 @@ pub(crate) unsafe fn protect_live_range(
         unsafe { crabc_core::mm::mprotect_raw(address, length, protection) }
     });
     if let Err(error) = result {
+        on_failure(error);
         if let Some(process) = process {
             process.policy.source_warning(SourceFormattedMessage::os_protect_failure(
                 error, address.addr(), length, protect));
@@ -3675,6 +3709,25 @@ pub(crate) unsafe fn protect_live_range(
     }
 
     Ok(true)
+}
+
+/// Changes one live guarded span through its retained VM owner.
+/// Captured failure is stored through explicit embedding authority before
+/// warning-option reads and callbacks. No later store or restoration can
+/// overwrite callback effects; an absent writer has no ambient fallback.
+///
+/// # Safety
+/// The complete live-span and ended-projection obligations of
+/// `protect_live_range` apply; `process` is the same owning VM pair.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn protect_guarded_live_range(
+    address: *mut u8, length: usize, protect: bool, process: VmProcess<'_>,
+) -> Result<bool> {
+    let store = process.policy.source_errno_store;
+    // SAFETY: the caller retains the exact live span and owner through callbacks;
+    // the capability's writer cannot allocate or retain a TLS reference.
+    unsafe { protect_live_range_with_failure_hook(address, length, protect, Some(process),
+        |error| { if let Some(store) = store { store.store(error); } }) }
 }
 
 /// One source `MI_MEM_OS_HUGE` allocation assembled from 1-GiB primitive maps.
@@ -15841,6 +15894,135 @@ mod tests {
             capture.commit_calls.store(stats.commit_calls, Ordering::Release);
             capture.mmap_calls.store(stats.mmap_calls, Ordering::Release);
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    std::thread_local! {
+        static GUARDED_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(33) };
+        static GUARDED_ERRNO_STORES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+        static GUARDED_OS_WARNING_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(-1) };
+        static GUARDED_SECOND_WARNING_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(-1) };
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn store_guarded_fixture_errno(error: i32) {
+        GUARDED_ERRNO.with(|slot| slot.set(error));
+        GUARDED_ERRNO_STORES.with(|count| count.set(count.get() + 1));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_guarded_fixture_warning(message: *const c_char, _: *mut c_void) {
+        // SAFETY: the synchronous source callback retains this formatted C string.
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if bytes.windows(b"cannot protect OS memory".len())
+            .any(|part| part == b"cannot protect OS memory") {
+            GUARDED_OS_WARNING_ERRNO.with(|observed| GUARDED_ERRNO.with(|slot| {
+                observed.set(slot.get()); slot.set(4);
+            }));
+        } else if bytes.windows(b"failed to set a guard page".len())
+            .any(|part| part == b"failed to set a guard page") {
+            GUARDED_SECOND_WARNING_ERRNO.with(|observed| GUARDED_ERRNO.with(|slot| {
+                observed.set(slot.get()); slot.set(34);
+            }));
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn guarded_protection_publishes_owned_errno_before_warnings_without_restoring_callbacks() {
+        crate::test_process::run_in_fresh_process(
+            "os::tests::guarded_protection_publishes_owned_errno_before_warnings_without_restoring_callbacks", || {
+                let mut environment = [b"mimalloc_show_errors=1\0".as_ptr().cast(),
+                    b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(), core::ptr::null()];
+                VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+                let output = std::boxed::Box::leak(std::boxed::Box::new(
+                    OutputOwner::new(unexpected_default_diagnostic_output)));
+                // SAFETY: this isolated process retains its environment and
+                // synchronous output callback throughout the owned VM policy.
+                unsafe {
+                    output.initialize_source_options(vm_policy_source_environment_for_test);
+                    output.register_output(Some(capture_guarded_fixture_warning), core::ptr::null_mut());
+                }
+                // SAFETY: the initialized fixture owns this thread's errno
+                // slot; its writer retains no TLS reference and cannot allocate.
+                let store = unsafe { crate::process_init::SourceErrnoStore::new(store_guarded_fixture_errno) };
+                let policy = unsafe { VmPolicy::from_process_options(output) }
+                    .with_source_errno_store(Some(store));
+                policy.finish_preloading();
+                let process = VmProcess::new(&policy, crate::subproc::MainSubprocess::test_static_owner());
+                let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1024 * 1024, false, false);
+                let page = config.page_size().bytes();
+                let mut mapping = Mapping::map_for_process(process, config, 2 * page, 1,
+                    MapAccess::Committed, false, None).unwrap();
+                let guard = mapping.base().unwrap().wrapping_add(page);
+                let fault = fault::install(fault::Plan::at(fault::Point::Protect, 1, Errno::PERM));
+                // SAFETY: the mapping retains this exact tail page and VM
+                // owner through both callbacks, with no byte references alive.
+                assert_eq!(unsafe { protect_guarded_live_range(guard, page, true, process) }, Err(Errno::PERM));
+                policy.source_warning(SourceFormattedMessage::guarded_protect_failure(
+                    mapping.base().unwrap().addr(), 2 * page));
+                fault.set(fault::Plan::disabled());
+                mapping.unmap().unwrap();
+                assert_eq!(GUARDED_OS_WARNING_ERRNO.with(|slot| slot.get()), 1);
+                assert_eq!(GUARDED_SECOND_WARNING_ERRNO.with(|slot| slot.get()), 4);
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 34);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), 1);
+                // SAFETY: this isolated option owner excludes all other
+                // option mutation and callback delivery during the update.
+                unsafe { output.option_set(crate::config::SourceOption::ShowErrors, 0).unwrap(); }
+                let mut mapping = Mapping::map_for_process(process, config, 2 * page, 1,
+                    MapAccess::Committed, false, None).unwrap();
+                let guard = mapping.base().unwrap().wrapping_add(page);
+                GUARDED_ERRNO.with(|slot| slot.set(33));
+                GUARDED_ERRNO_STORES.with(|slot| slot.set(0));
+                // SAFETY: this retained mapping supplies the same live guard
+                // span; success and the empty-span branch have no errno effect.
+                unsafe {
+                    assert_eq!(protect_guarded_live_range(core::ptr::null_mut(), 0, true, process), Ok(false));
+                    assert_eq!(protect_guarded_live_range(guard, page, true, process), Ok(true));
+                    assert_eq!(protect_guarded_live_range(guard, page, false, process), Ok(true));
+                }
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 33);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), 0);
+                fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::PERM));
+                // SAFETY: refusal preserves this mapping's owned writable span;
+                // disabled warnings cannot suppress the captured-error store.
+                assert_eq!(unsafe { protect_guarded_live_range(guard, page, true, process) }, Err(Errno::PERM));
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 1);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), 1);
+                GUARDED_ERRNO.with(|slot| slot.set(33));
+                GUARDED_ERRNO_STORES.with(|slot| slot.set(0));
+                fault.set(fault::Plan::at(fault::Point::Unprotect, 1, Errno::PERM));
+                // SAFETY: the same lifetime and byte-alias exclusions apply
+                // when the captured failure belongs to guard removal.
+                assert_eq!(unsafe { protect_guarded_live_range(guard, page, false, process) }, Err(Errno::PERM));
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 1);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), 1);
+                GUARDED_ERRNO.with(|slot| slot.set(33));
+                GUARDED_ERRNO_STORES.with(|slot| slot.set(0));
+                fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::PERM));
+                // SAFETY: ordinary raw protection uses the same owned span;
+                // a policy capability does not opt ordinary VM operations in.
+                assert_eq!(unsafe { protect_live_range(guard, page, true, Some(process)) }, Err(Errno::PERM));
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 33);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), 0);
+                fault.set(fault::Plan::disabled());
+                mapping.unmap().unwrap();
+                let absent_policy = VmPolicy::defaults_for_test();
+                let absent_process = VmProcess::new(&absent_policy, process.subprocess());
+                let mut mapping = Mapping::map_for_process(absent_process, config, page, 1,
+                    MapAccess::Committed, false, None).unwrap();
+                fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::PERM));
+                // SAFETY: this separate mapping belongs to the explicit
+                // capability-free policy, with no ambient errno fallback.
+                assert_eq!(unsafe { protect_guarded_live_range(mapping.base().unwrap(), page, true,
+                    absent_process) }, Err(Errno::PERM));
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 33);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), 0);
+                fault.set(fault::Plan::disabled());
+                mapping.unmap().unwrap();
+            },
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
