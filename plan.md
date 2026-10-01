@@ -57,19 +57,28 @@ only its exact source, configuration, image, products, and execution context.
   and wrapper failure remain retained. The earlier pinned-musl AIO reuse failure
   and its narrowly proved causal receiver remain separate. Ordered family and
   whole callable-provider closure remain open.
+  Fresh `97e63ff67` static preparation and owning replay pass with two independent
+  builds and extraction. Dynamic continuation remains pending because the retained
+  reference cohort needs about 21.5 GiB while this checkout has about 5 GiB free;
+  the static receipt remains `prepared-unqualified`.
 - **Merged compiler and ownership evidence:** all nine Rust compiler profiles
-  pass on the composed bootstrap/frequency graph at `27f714e5e`; exact checks
-  73 and 74 remain under `.work/tmp`. Live option getters now return descriptor
+  pass on the composed bootstrap/frequency graph at `27f714e5e`; later composed
+  checks through 81 also pass, with raw logs under `.work/tmp`. Live option getters now return descriptor
   changes made by warning callbacks. Staged initializer controls preserve
   prelink reset custody, reject recapture, and retain linked storage on failure;
   focused strict-provenance Miri and guarded draw-order controls pass on their
   exact sources. A pending initial-owner frequency capture survives an ordinary
-  fork and resumes in both images on the lane source; merged native qualification
-  remains in progress. The original seventeen-test Miri receipts remain unchanged.
+  fork and resumes in both images in the actual native owner/fork controls.
+  Exact-source startup recursion passes thirty comparison values and twenty-one
+  lifecycle checks; startup arena controls pass forty-nine values across seven
+  scenarios. The original seventeen-test Miri receipts remain unchanged.
   Current development ownership subsets authenticate eighteen strict tests and
   replay native owner/queue controls from relocated read-only custody under
   `.work/allocator-x86_64/reports/allocator/x86_64/ownership71-0d373c72f`.
-  These subsets do not close the whole ownership gate; fresh Page transport,
+  Separate ordinary eight-test and guarded nine-test strict Miri subsets also
+  pass, with exact feature/program authority and relocated owning replay.
+  An actual TLS membership token now retains the record through child destruction
+  until its last successful TLS finish. These subsets do not close the whole ownership gate; fresh Page transport,
   child control lifetime and complete allocator contracts remain open.
 - **Allocator verified slices:** exact frozen sources retain independent replay
   for ordinary/auxiliary Theap geometry, public API and Heap/Theap visitors,
@@ -99,6 +108,11 @@ only its exact source, configuration, image, products, and execution context.
   reservation release child arenas while process-lived PageMap address coverage
   still grows. Native policy parity and the memory qualification contract remain
   open; no plateau or whole memory gate is claimed.
+  Selected-reservation native retention and actual C PageMap geometry controls
+  pass on their exact sources. The complete observed root and submap extents
+  give a finite 17,215,062,016-byte PageMap ceiling, not a whole allocator bound.
+  Source-default child arenas are checked as actual `os-arena` parents with zero
+  terminal coverage; nonvacuous owning-receiver checks remain in progress.
 - **Secure-3:** encoded/padded fast-path eligibility repair is integrated
   at `f66846874` from exact lane source `42a3f7c4f`. The genuine repeated Heap-birth
   regression passes against pinned C and native; the complete public producer
@@ -112,14 +126,16 @@ only its exact source, configuration, image, products, and execution context.
   Public guarded control setters now relay through the native adapter; sampled
   allocation routing and the complete guarded profile remain in progress.
 - **Callable providers:** exact instruction/operand and ordinary immutable
-  object proofs are integrated through `6bca58f16`. Fifteen real-ELF host and
+  object and merged-string proofs are integrated through `dd4c80fe4`. Fifteen real-ELF host and
   pinned controls and all nine compiler profiles pass. Frozen `e9de501dd`
-  diagnostic projection admits 2,892/2,958 references, with 66 refused; its
+  diagnostic projection admits 2,895/2,958 references, with 63 refused; its
   owning read-only replay is byte-identical. Three ordinary immutable objects
-  are newly admitted, none lost; mergeable source string objects remain refused.
+  and three merged-string references are newly admitted, none lost. One-past
+  address formation is distinct from a memory read; writable atomic references
+  remain under exact instruction and extent proof.
   Source-identity admission still rejects the wrong runtime source. Exact source
   and raw inputs have relocated custody under
-  `.work/x86_64/reports/integrated-lanes/closure73-7828a2137/source`.
+  `.work/x86_64/reports/integrated-lanes/closure74-c3664d531/source`.
   Diagnostic replay cannot qualify newer runtime source; whole closure remains open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
@@ -171,7 +187,13 @@ only its exact source, configuration, image, products, and execution context.
   guarded callback routing and surviving-owner fork continuation. Complete fresh
   OS/Arena Page transport with exact publication order and persistent cleanup
   custody, child control lifetime and footprint parity, and sampled guarded
-  allocation relays. Compare source-default reservation retention controls without
+  allocation relays. The checked canonical engine and main-owner relay now keep
+  internal refusal distinct from completed source-null; actual collector-refusal,
+  exhaustion and original-owner retry controls pass on the exact source.
+  Primary Page publication and later original-owner key draws have separate APIs
+  with genuine PageMap-failure RED/GREEN and strict Miri proofs; production
+  fresh-Page transport and ordering remain private integration work.
+  Compare source-default reservation retention controls without
   converting source-lived roots into a false memory pass. Finish callable-provider
   closure and remaining runtime families, then replay all seven gates on one merged
   source before default/public promotion. Keep sixteen medium `gpt-6.1-sol` lanes
