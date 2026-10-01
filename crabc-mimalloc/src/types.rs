@@ -9144,6 +9144,89 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn source_option_capture_observes_warning_callback_replacement_on_prepared_image() {
+        use crate::diagnostic_output::OutputOwner;
+        use crate::config::SourceOption;
+        struct Observation {
+            output: *const OutputOwner,
+            image: NonNull<Theap>,
+            tld: NonNull<ThreadLocalData>,
+            environment: [*const core::ffi::c_char; 2],
+            calls: core::cell::Cell<usize>,
+        }
+        std::thread_local! {
+            static ACTIVE: core::cell::Cell<*const Observation> = const { core::cell::Cell::new(core::ptr::null()) };
+        }
+        unsafe fn environment() -> *const *const core::ffi::c_char {
+            ACTIVE.with(|slot| {
+                if slot.get().is_null() { core::ptr::null() }
+                else { unsafe { (&*slot.get()).environment.as_ptr() } }
+            })
+        }
+        unsafe extern "C" fn warning(message: *const core::ffi::c_char) {
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"page_reclaim_on_free".len()).any(|part| part == b"page_reclaim_on_free") { return; }
+            ACTIVE.with(|slot| unsafe {
+                // The real output and image owners stay retained throughout
+                // delivery; no image projection or list guard spans reentry.
+                let observation = &*slot.get();
+                assert!((*observation.image.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                assert!((*observation.tld.as_ptr()).theaps.is_null());
+                (&*observation.output).option_set(SourceOption::PageReclaimOnFree, -1).unwrap();
+                observation.calls.set(observation.calls.get() + 1);
+            });
+        }
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let mut tld = ThreadLocalData::detached();
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let mut incoming = Theap::empty();
+        assert!(incoming.set_detached_main_metadata_static_memid());
+        let image = NonNull::new(core::ptr::addr_of_mut!(incoming)).unwrap();
+        let tld = NonNull::new(core::ptr::addr_of_mut!(tld)).unwrap();
+        let heap = NonNull::new(core::ptr::addr_of_mut!(heap)).unwrap();
+        let output = OutputOwner::new(warning);
+        // Initial absence leaves the allocator option UNINIT for its real
+        // lazy retry. Warning gates are installed before the invalid input.
+        unsafe {
+            output.initialize_source_options(environment);
+            output.option_set(SourceOption::ShowErrors, 1).unwrap();
+            output.option_set(SourceOption::Verbose, 0).unwrap();
+            output.post_init();
+        }
+        let observation = Observation {
+            output: core::ptr::from_ref(&output), image, tld,
+            environment: [c"mimalloc_page_reclaim_on_free=invalid".as_ptr(), core::ptr::null()],
+            calls: core::cell::Cell::new(0),
+        };
+        // Exact original storage custody remains with the fixture across the
+        // getter and its registered callback; this phase contains no borrow.
+        unsafe {
+            let prepared = Theap::prepare_initialization_at(image, heap, tld,
+                TheapInitializationKind::MetadataStatic).unwrap();
+            ACTIVE.with(|slot| slot.set(core::ptr::from_ref(&observation)));
+            let options = SourceTheapOptions::capture_from_output(&output);
+            ACTIVE.with(|slot| slot.set(core::ptr::null()));
+            assert_eq!(observation.calls.get(), 1);
+            assert!(!options.allow_page_reclaim);
+            let linked = finish_unfaulted_test_random(prepared.apply_source_options_and_attach(options).unwrap());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions {
+                sample_rate: 0, sample_seed: 0,
+            }).apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            assert!(!(*image.as_ptr()).allow_page_reclaim);
+            (*tld.as_ptr()).detach_one_theap_from_heap(&mut *heap.as_ptr(), image.as_ptr()).unwrap();
+            (*tld.as_ptr()).detach_one_theap_from_tld(image.as_ptr()).unwrap();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn generic_frequency_resume_observes_nested_collection_reset_instead_of_stale_count() {
         let mut image = Theap::empty();
         image.generic_count = 999;
