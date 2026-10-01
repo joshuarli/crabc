@@ -96,10 +96,12 @@ only its exact source, configuration, image, products, and execution context.
   first independent physical replay passes all seventeen strict tests, then
   rejects a cold/cached compiler-record comparison. The authenticated physical
   product comparison is repaired, and omitted original queue inputs are now
-  independently retained. A complete native-first diagnostic replay passes all retained native
+  independently retained. A complete native-first diagnostic replay passes
+  all retained native
   boundaries without running Miri. The corrected full read-only replay is
   running against the unchanged producer, including all seventeen strict
-  tests; the whole gate remains unmet pending M1/M2. Prior full-roster failures remain unqualified
+  tests; the whole gate remains unmet pending M1/M2. Prior full-roster failures
+  remain unqualified
   and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
   statistics, remote ownership and failure evidence remain retained by exact
@@ -136,8 +138,14 @@ only its exact source, configuration, image, products, and execution context.
   pass their independent read-only replays;
   complete secure and guarded profiles, debug applicability and physical
   options remain open.
-  ISA correctness passes separately from deferred throughput. Complete M2/M3/M4
-  and merged-source qualification remain open.
+  Explicit debug-2 and debug-3 public Theap cohorts each pass 111 C/native
+  comparisons and six native controls, with independent read-only replay at
+  `3e17f9559`. Recursive caller-owned arena registration and guarded-free
+  warning reentry repairs are integrated with exact-source replay. Repeated
+  child teardown now attributes the C growth to retained source roots; the
+  native collector still leaves an unexplained interval, and bounded-memory
+  qualification remains open. ISA correctness passes separately from deferred
+  throughput. Complete M2/M3/M4 and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Continue independent
