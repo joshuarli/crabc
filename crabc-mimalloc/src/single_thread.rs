@@ -38066,7 +38066,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(request) = source_size.checked_sub(PADDING_SIZE) else {
             return DeferredFreeAllocationPhase::Complete(None);
         };
-        self.begin_deferred_free_allocation(request, false)
+        if self.is_collection_poisoned() {
+            return DeferredFreeAllocationPhase::Complete(None);
+        }
+        let Some(continuation) = self.generic_allocation_continuation(request, false) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
+        // Guarded allocation enters the counted generic allocator even when
+        // its rounded extent fits the public small direct-page cache. Taking
+        // that cache here would skip source administration and deferred frees.
+        self.begin_deferred_free_generic_allocation(
+            DeferredFreeAllocationContinuation::Generic(continuation),
+            generic_request_searches_before_fallback(request),
+        )
     }
 
     /// Starts one ordinary allocation with explicit source deferred-free
