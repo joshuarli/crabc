@@ -149,9 +149,13 @@ only its exact source, configuration, image, products, and execution context.
   tests. Fresh four-profile production and all eight independent read-only
   executable replays pass at `8d7e8e4e8`: C leaves no unexplained growth and
   each native profile leaves 4,096 bytes. A causal syscall trace ties that
-  residual to the fixture's live Rust channel; the channel-free fixture repair
-  awaits execution after disk exhaustion stopped compilation. Bounded-memory
-  qualification stays open, including the retained source-root growth.
+  residual to the fixture's live Rust channel. The integrated fixture repair
+  retains one thread scope across the baseline and all later observations;
+  its focused development run passes all 33 cycles with zero unexplained bytes,
+  and all 184,330 C/native values match, including six 21-row cross-thread traces.
+  Fresh four-profile qualification remains pending; the original disk-exhaustion
+  failure is retained. Bounded-memory qualification stays open, including the
+  retained source-root growth.
   Secure-3 padding, canonical prefixes, encoded visitation and diagnostic
   repairs are integrated with exact-source focused read-only evidence;
   complete secure-3 production remains pending. The pinned C controls prove
