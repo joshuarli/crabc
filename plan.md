@@ -80,6 +80,14 @@ only its exact source, configuration, image, products, and execution context.
   An actual TLS membership token now retains the record through child destruction
   until its last successful TLS finish. These subsets do not close the whole ownership gate; fresh Page transport,
   child control lifetime and complete allocator contracts remain open.
+  Merged `83b640552` passes all nine compiler profiles; the image/feature
+  receipt regressions pass 84 host tests (one skipped), and the callable-provider
+  controls pass fifteen. The private Fresh-Page composition retains original
+  tasks across refused session completion and distinguishes persistent retirement
+  refusal from callback admission. It remains unqualified: auxiliary relays and
+  the actual source-attached, pre-READY allocation witness are still being closed.
+  A genuine strict-provenance regression reproduces a shared-reference write to
+  the Heap list head; its interior-mutation repair and GREEN proof are pending.
 - **Allocator verified slices:** exact frozen sources retain independent replay
   for ordinary/auxiliary Theap geometry, public API and Heap/Theap visitors,
   fault controls, queue ownership, abort-on-failure, visitation and statistics.
@@ -113,6 +121,12 @@ only its exact source, configuration, image, products, and execution context.
   give a finite 17,215,062,016-byte PageMap ceiling, not a whole allocator bound.
   Source-default child arenas are checked as actual `os-arena` parents with zero
   terminal coverage; nonvacuous owning-receiver checks remain in progress.
+  Fresh exact `0e31a348a` debug-1, stat-1 and stat-2 lifecycle comparisons and
+  relocated read-only replays pass: 184,324 debug fields and 184,330 in each
+  statistics profile. At `e57ec1b1e`, the three extended source-default native
+  retention runs and their owning replay each observe 774 terminal-unmapped
+  arena parents; every cycle's residual equals authenticated current ambient
+  ownership. These are source/profile-qualified slices, not a whole memory bound.
 - **Secure-3:** encoded/padded fast-path eligibility repair is integrated
   at `f66846874` from exact lane source `42a3f7c4f`. The genuine repeated Heap-birth
   regression passes against pinned C and native; the complete public producer
@@ -125,18 +139,22 @@ only its exact source, configuration, image, products, and execution context.
   proves the selected secure-3 public cohort, not complete allocator promotion.
   Public guarded control setters now relay through the native adapter; sampled
   allocation routing and the complete guarded profile remain in progress.
-- **Callable providers:** exact instruction/operand and ordinary immutable
-  object and merged-string proofs are integrated through `dd4c80fe4`. Fifteen real-ELF host and
-  pinned controls and all nine compiler profiles pass. Frozen `e9de501dd`
-  diagnostic projection admits 2,895/2,958 references, with 63 refused; its
-  owning read-only replay is byte-identical. Three ordinary immutable objects
-  and three merged-string references are newly admitted, none lost. One-past
-  address formation is distinct from a memory read; writable atomic references
-  remain under exact instruction and extent proof.
+- **Callable providers:** exact instruction/operand, immutable object,
+  merged-string, atomic, byte-store and MOVDQU proofs are integrated through
+  `83b640552`. Fifteen real-ELF host and pinned controls and all nine compiler
+  profiles pass. Frozen `e9de501dd` diagnostic projection now admits
+  2,907/2,958 references, with 51 refused; its owning read-only replay is
+  byte-identical. One-past address formation is distinct from a memory read;
+  writable and 16-byte vector references retain full object/mapping extent proof.
   Source-identity admission still rejects the wrong runtime source. Exact source
   and raw inputs have relocated custody under
-  `.work/x86_64/reports/integrated-lanes/closure74-c3664d531/source`.
+  `.work/x86_64/reports/integrated-lanes/closure77-567dcb20a/source`.
   Diagnostic replay cannot qualify newer runtime source; whole closure remains open.
+  All five resolver functional components now pass together on exact
+  `0e31a348a`, including all 847 cancellation observations without exceptions.
+  Their joined partial assessment and relocated owning replay pass under
+  `.work/x86_64/reports/integrated-lanes/families77-0e31a348a/source`.
+  Canonical complete-cohort qualification remains missing; no family is promoted.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Keep this requirement unmet.
