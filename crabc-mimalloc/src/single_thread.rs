@@ -38448,6 +38448,28 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
+    /// Publishes a current aligned client's interior flag and ordinary tag.
+    /// The tag follows allocation initialization so debug fill cannot replace
+    /// it with client sentinel bytes. A shorter prefix has no writable tag.
+    ///
+    /// # Safety
+    ///
+    /// `base` must be the live canonical allocation belonging to `page`.
+    /// `adjustment` is its checked client offset; when it covers one word,
+    /// that entire prefix remains exclusively writable by this allocator.
+    unsafe fn publish_ordinary_aligned_interior(
+        page: &Page,
+        base: NonNull<u8>,
+        adjustment: usize,
+    ) {
+        page.set_has_interior_pointers(true);
+        if crate::config::GUARDED && adjustment >= WORD_SIZE {
+            // SAFETY: the checked prefix precedes the client's accessible
+            // bytes and retains the canonical allocation's provenance.
+            unsafe { base.cast::<usize>().as_ptr().write(0) };
+        }
+    }
+
     /// Applies the source aligned allocator's post-base pointer adjustment.
     ///
     /// This runs only under phase C's fresh short owner-local projection. The
@@ -38492,7 +38514,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     let _ = unsafe { self.free(base) };
                     return None;
                 }
-                page.set_has_interior_pointers(true);
+                // SAFETY: this current base and checked adjustment retain
+                // the selected page and the exclusively writable prefix.
+                unsafe { Self::publish_ordinary_aligned_interior(page, base, adjustment) };
                 Some(block)
             }
             DeferredFreeAlignedCompletion::HugeSingleton => Some(base),
@@ -39829,7 +39853,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         let _ = unsafe { self.free(base) };
                         return None;
                     }
-                    page.set_has_interior_pointers(true);
+                    // SAFETY: this current base and checked adjustment
+                    // retain the live page and exclusively writable prefix.
+                    unsafe { Self::publish_ordinary_aligned_interior(page, base, adjustment) };
                 }
                 Some(block)
             }
@@ -44741,6 +44767,35 @@ mod tests {
                 allocator.free(fast).unwrap();
                 allocator.free(adjusted).unwrap();
             }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_ordinary_word_aligned_clients_publish_the_tag_after_initialization() {
+        with_allocator(|allocator| {
+            let warm = allocator.allocate(96, false).unwrap();
+            let plain = match allocator.begin_deferred_free_aligned_admission(33, 64, 8, false) {
+                DeferredFreeAlignedAdmission::Plain(plain) => plain,
+                _ => panic!("the uncached aligned request selects its ordinary base"),
+            };
+            let phased = match allocator.begin_deferred_free_aligned_plain(plain) {
+                DeferredFreeAllocationPhase::Complete(Some(block)) => block,
+                _ => panic!("the retained base page completes without a generic callback"),
+            };
+            let direct = allocator.allocate_aligned_at(33, 64, 8).unwrap();
+            for client in [phased, direct] {
+                assert_eq!((client.as_ptr().addr() + 8) % 64, 0);
+                // SAFETY: the fixture retains both current allocations, their
+                // canonical prefixes and mapped metadata through each check.
+                let page = unsafe { &*allocator.page_for_block(client) };
+                let base = allocator.canonical_block_start(page, client).unwrap();
+                assert!(client.as_ptr().addr() - base.as_ptr().addr() >= WORD_SIZE);
+                assert_eq!(unsafe { base.cast::<usize>().as_ptr().read() }, 0);
+                assert!(unsafe { allocator.usable_size(client) }.unwrap() >= 33);
+                unsafe { allocator.free(client).unwrap(); }
+            }
+            unsafe { allocator.free(warm).unwrap(); }
         });
     }
 
