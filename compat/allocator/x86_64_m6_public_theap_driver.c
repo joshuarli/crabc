@@ -179,7 +179,7 @@ static bool guarded_actual(const char* name, mi_theap_t* base,
   bool refusal = refused == NULL && errno == ENOMEM && mi_usable_size(direct) == usable &&
                  mapping_permission(old_tail, true);
   errno = 91;
-  refused = mi_theap_realloc_aligned(selected, direct, SIZE_MAX, 64);
+  refused = mi_realloc_aligned(direct, SIZE_MAX, 64);
   refusal &= refused == NULL && errno == 91 && mi_heap_of(direct) == heap;
   bool retained = true;
   for (size_t i = 0; i < usable; i++) retained &= direct[i] == 0x6b;
