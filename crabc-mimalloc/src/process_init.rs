@@ -4671,6 +4671,127 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn startup_metadata_output_factory_retains_original_issuer_before_ready() {
+        use crate::meta::SourceInitializationOutputAdmissionError as Error;
+        std::thread_local! {
+            static ISSUER: core::cell::Cell<Option<(core::pin::Pin<&'static MetaAllocator>, &'static MainSubprocess)>> =
+                const { core::cell::Cell::new(None) };
+            static CALLBACKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+            static IN_CALLBACK: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+            static NESTED_CALLBACKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+            static RESULTS: core::cell::Cell<(usize, Option<MetaError>)> = const { core::cell::Cell::new((0, None)) };
+        }
+        unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+        unsafe extern "C" fn reenter(_: *const core::ffi::c_char, _: *mut core::ffi::c_void) {
+            // A first fresh allocation can itself emit mapping warnings. Its
+            // pending candidate must not be recursively reused by this callback.
+            if IN_CALLBACK.with(|active| active.replace(true)) {
+                NESTED_CALLBACKS.with(|count| count.set(count.get() + 1));
+                return;
+            }
+            ISSUER.with(|slot| {
+                if let Some((metadata, subprocess)) = slot.get() {
+                    let result = metadata.zalloc_for_main_subprocess(memory_config(), subprocess, 32)
+                        .and_then(|mut nested| metadata.free(&mut nested));
+                    RESULTS.with(|results| {
+                        let (successes, previous_error) = results.get();
+                        results.set(match result {
+                            Ok(()) => (successes + 1, previous_error),
+                            Err(error) => (successes, previous_error.or(Some(error))),
+                        });
+                    });
+                }
+            });
+            CALLBACKS.with(|count| count.set(count.get() + 1));
+            IN_CALLBACK.with(|active| active.set(false));
+        }
+        thread::spawn(|| {
+            let (storage, completion, diagnostics, process, subprocess) = bootstrap_output_prefix(discard);
+            let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
+            let metadata = MetaAllocator::test_static_owner();
+            let main_static = MainStaticAttachmentStorage::test_static_owner();
+            let mut selection = subprocess.reserve_static_bootstrap().unwrap();
+            let foundation = MainStaticHeapFoundation::initialize(main_static, subprocess, &mut selection).unwrap();
+            // SAFETY: the winning scope and original pinned static images are
+            // retained, and no allocator projection crosses source callbacks.
+            let bound = unsafe { metadata.prepare_for_main_heap_with_bootstrap_output(
+                memory_config(), subprocess, foundation, &scope,
+            ) }.unwrap();
+            assert!(matches!(unsafe { bound.capture_startup_source_initialization_output(&scope) },
+                Err(Error::BackingUnavailable)));
+            let map_storage = ProcessPageMapStorage::test_static_owner();
+            let map = map_storage.initialize_for_process(memory_config(), subprocess, process).unwrap();
+            // SAFETY: the winning completion still exclusively owns these
+            // final slots before any process readiness publication.
+            unsafe { (*storage.config.get()).write(memory_config()) };
+            storage.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
+            storage.page_map_storage.store(core::ptr::from_ref(map_storage).cast_mut(), Ordering::Release);
+            metadata.bind_process_backing(ProcessMainBackingBinding::new(storage, process, map)).unwrap();
+            assert_eq!(storage.state.load(Ordering::Acquire), INITIALIZING);
+            assert_eq!(metadata.test_allocation_audit().high_water_capability_count, 0);
+            // SAFETY: the actual bound issuer and its original winning scope
+            // precede the first candidate and remain retained through delivery.
+            let witness = unsafe { bound.capture_startup_source_initialization_output(&scope) }.unwrap();
+            assert!(core::ptr::eq(witness.process().unwrap(), &process));
+            assert!(core::ptr::eq(witness.page_map().unwrap(), map.page_map().unwrap()));
+            let theap = NonNull::new(subprocess.identity().test_published_metadata_theap()).unwrap();
+            assert!(witness.matches_theap(theap));
+            assert!(!witness.matches_theap(NonNull::dangling()));
+            let (foreign_storage, foreign_completion, foreign_diagnostics, foreign_process, foreign_subprocess) =
+                bootstrap_output_prefix(discard);
+            let foreign_scope = foreign_storage.scoped_bootstrap_output(
+                &foreign_completion, &foreign_diagnostics, &foreign_process, foreign_subprocess,
+            ).unwrap();
+            assert!(matches!(unsafe { bound.capture_startup_source_initialization_output(&foreign_scope) },
+                Err(Error::OriginMismatch)));
+            let foreign_metadata = MetaAllocator::test_static_owner();
+            let mut foreign_selection = foreign_subprocess.reserve_static_bootstrap().unwrap();
+            let foreign_foundation = MainStaticHeapFoundation::initialize(
+                MainStaticAttachmentStorage::test_static_owner(), foreign_subprocess, &mut foreign_selection,
+            ).unwrap();
+            // SAFETY: the independent winning scope retains this different
+            // actual issuer; none of its projections cross source callbacks.
+            let foreign_bound = unsafe { foreign_metadata.prepare_for_main_heap_with_bootstrap_output(
+                memory_config(), foreign_subprocess, foreign_foundation, &foreign_scope,
+            ) }.unwrap();
+            assert!(matches!(unsafe { foreign_bound.capture_startup_source_initialization_output(&scope) },
+                Err(Error::OriginMismatch)));
+            foreign_selection.retain();
+            foreign_storage.publish_terminal_state_and_release(foreign_completion, RETAINED);
+            ISSUER.with(|slot| slot.set(Some((metadata, subprocess))));
+            let output = witness.output().unwrap();
+            // SAFETY: the same thread retains the original issuer and scope,
+            // callback argument is absent, and every image projection ended.
+            unsafe {
+                output.register_output(Some(reenter), core::ptr::null_mut());
+                output.warning_from_source_options(
+                    crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(c"startup issuer reentry\n"),
+                );
+                output.register_output(None, core::ptr::null_mut());
+            }
+            CALLBACKS.with(|count| assert_eq!(count.get(), 3,
+                "source delivery flushes the empty buffer, then sends separate warning prefix and body"));
+            RESULTS.with(|results| assert_eq!(results.get(), (3, None),
+                "factory validation ends its metadata entry before callback reentry"));
+            NESTED_CALLBACKS.with(|count| std::println!("nested source mapping callbacks: {}", count.get()));
+            ISSUER.with(|slot| slot.set(None));
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+            storage.state.store(RETAINED, Ordering::Release);
+            assert!(matches!(witness.output(), Err(Error::OriginMismatch)));
+            assert!(matches!(witness.process(), Err(Error::OriginMismatch)));
+            assert!(matches!(witness.page_map(), Err(Error::OriginMismatch)));
+            assert!(!witness.matches_theap(theap));
+            assert!(matches!(unsafe { bound.capture_startup_source_initialization_output(&scope) },
+                Err(Error::Bootstrap(BootstrapOutputAdmissionError::Invalid))));
+            // The unfinished source initialization retains its actual static
+            // images; completing the once token cannot reopen these owners.
+            selection.retain();
+            storage.publish_terminal_state_and_release(completion, RETAINED);
+        }).join().unwrap();
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn startup_failed_entropy_retry_warns_after_random_projection_ends() {
         std::thread_local! {
             static WARNINGS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
