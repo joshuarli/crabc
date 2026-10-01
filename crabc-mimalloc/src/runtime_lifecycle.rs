@@ -13152,6 +13152,76 @@ fn native_free_claimed_tail_process_page_facts(
     Some((process, main_heap))
 }
 
+/// Copied geometry of one canonical live block, paired with a process view
+/// whose actual owner remains admitted for the complete synchronous callback.
+/// These facts grant no client release or metadata mutation authority.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct GuardedLiveBlockFacts<'scope> {
+    pub(crate) canonical: core::ptr::NonNull<u8>,
+    pub(crate) block_size: usize,
+    pub(crate) is_pinned: bool,
+    pub(crate) os_page_size: usize,
+    pub(crate) process: crate::os::VmProcess<'scope>,
+}
+
+/// Marks a canonical candidate's page for interior clients and supplies its
+/// protection geometry after all page and allocation-engine projections end.
+/// The actual main owner or admitted calling-member child owner remains live
+/// through the callback, including synchronous diagnostic reentry.
+///
+/// # Safety
+/// `block` is the exclusively held canonical live allocation from
+/// `selected_theap`. The caller retains that Theap, Heap, member and client
+/// throughout this call. The callback cannot free its in-flight block, delete
+/// the selected Heap, or finish the selected member. All exclusive engine and
+/// metadata projections ended before entry; nested ordinary allocation is
+/// permitted. A foreign child owner is unavailable through this boundary.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn with_guarded_live_block<R>(
+    selected_theap: core::ptr::NonNull<crate::types::Theap>,
+    block: core::ptr::NonNull<u8>,
+    callback: impl for<'scope> FnOnce(GuardedLiveBlockFacts<'scope>) -> R,
+) -> Option<R> {
+    let _operation = NativeSubprocessOperation::enter()?;
+    // SAFETY: the caller retains the selected Theap and its Heap; this copies
+    // only its published atomic Heap pointer, without a whole-Theap borrow.
+    let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(selected_theap) })?;
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller exclusively holds the exact canonical live client.
+    let mut allocation = unsafe { page_map.lookup_live_allocation(block) }.ok()??;
+    if allocation.canonical_block() != block {
+        return None;
+    }
+    // SAFETY: the live client retains the immutable page header, and the
+    // selected Heap remains live by the caller's operation contract.
+    if unsafe { crate::types::Page::heap_identity_at(allocation.page()) } != heap.as_ptr() {
+        return None;
+    }
+    let canonical = allocation.canonical_block();
+    let block_size = allocation.block_size();
+    // SAFETY: the exact live client retains the published immutable pin flag.
+    let is_pinned = unsafe { crate::types::Page::is_pinned_at(allocation.page()) };
+    let os_page_size = page_map.memory_config().ok()?.page_size().bytes();
+    // SAFETY: the caller retains this Heap; only its immutable identity is read.
+    let identity = unsafe { crate::types::Heap::subprocess_pointer_at(heap) };
+    let invoke = |process: crate::os::VmProcess<'_>| {
+        allocation.mark_page_has_interior_pointers();
+        drop(allocation);
+        callback(GuardedLiveBlockFacts {
+            canonical, block_size, is_pinned, os_page_size, process,
+        })
+    };
+    if identity == crate::subproc::MainSubprocess::global().identity_ptr() {
+        let process = RUNTIME_PROCESS.active_vm_process()?;
+        Some(invoke(process))
+    } else {
+        // SAFETY: the selected Heap and member remain live, all engine and
+        // metadata borrows ended, and the callback obeys the same source-valid
+        // lifetime contract. Child admission failure never selects main authority.
+        unsafe { crate::subproc::lifecycle::with_native_child_callback_owner(heap, invoke) }
+    }
+}
+
 /// Returns the PageMap-derived usable size of one live native allocation.
 ///
 /// This follows pinned `mi_usable_size`'s pointer/page geometry calculation:
@@ -20372,6 +20442,85 @@ mod tests {
     static NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn guarded_live_block_scope_ends_projections_before_nested_main_allocation() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::guarded_live_block_scope_ends_projections_before_nested_main_allocation",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(block) = native_allocate(8192, false) else {
+                    panic!("live guarded candidate allocation");
+                };
+                let theap = default_theap();
+                // SAFETY: this caller owns the exact canonical client and keeps
+                // its selected Heap and member alive throughout both allocations.
+                let result = unsafe { with_guarded_live_block(theap, block, |facts| {
+                    assert_eq!(facts.canonical, block);
+                    assert!(facts.block_size >= 8192);
+                    assert_eq!(facts.os_page_size, native_os_page_size().unwrap());
+                    let _ = facts.is_pinned;
+                    let _ = facts.process;
+                    let NativePageAllocationResult::Allocated(nested) = native_allocate(96, false) else {
+                        panic!("callback must reenter the same parked engine");
+                    };
+                    assert_eq!(native_free(nested), NativePageFreeResult::Freed);
+                    37
+                }) };
+                assert_eq!(result, Some(37));
+                // SAFETY: the original allocation is still exclusively owned.
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn guarded_live_block_scope_retains_child_owner_during_same_theap_reentry() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::guarded_live_block_scope_retains_child_owner_during_same_theap_reentry",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(prepare_native_later_thread_arena());
+                let id = crate::subproc::lifecycle::native_subproc_new().unwrap();
+                thread::spawn(move || {
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its own descriptor through finish.
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                    // SAFETY: the observer keeps the child alive until this worker exits.
+                    assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_add_current_thread(id) },
+                        Ok(crate::subproc::lifecycle::NativeChildThreadAdd::Added));
+                    let heap = crate::subproc::lifecycle::native_child_heap_new().unwrap().unwrap().unwrap();
+                    // SAFETY: the worker owns this selected child Heap and member.
+                    let block = unsafe { crate::subproc::lifecycle::native_child_heap_allocate(heap, 8192) }
+                        .unwrap().unwrap();
+                    // SAFETY: the same member retains its selected Heap.
+                    let theap = unsafe { crate::subproc::lifecycle::native_child_heap_theap(heap) }.unwrap();
+                    // SAFETY: the selected Theap and canonical client remain
+                    // live; the callback never tears down its selected owner.
+                    assert_eq!(unsafe { with_guarded_live_block(theap, block, |facts| {
+                        assert_eq!(facts.canonical, block);
+                        assert_eq!(facts.process.subprocess() as *const _,
+                            crate::types::Heap::subprocess_pointer_at(heap).cast_const());
+                        let nested = crate::subproc::lifecycle::native_child_theap_allocate(theap, 96, false)
+                            .unwrap().expect("same child Theap reenters without a lock or engine projection");
+                        assert_eq!(native_free(nested), NativePageFreeResult::Freed);
+                        71
+                    }) }, Some(71));
+                    // SAFETY: the callback ended and both clients are consumed once.
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert!(unsafe { crate::subproc::lifecycle::native_child_heap_release(heap, false) }
+                        .unwrap().unwrap().is_ok());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().unwrap();
+                // SAFETY: all child clients, Heaps and members ended before destroy.
+                assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
