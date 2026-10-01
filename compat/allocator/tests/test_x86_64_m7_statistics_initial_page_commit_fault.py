@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import x86_64_m7_statistics_initial_page_commit_fault as producer
+import x86_64_foundation_gate_receipts as reader
 
 
 class InitialPageCommitProducts(unittest.TestCase):
@@ -17,7 +18,8 @@ class InitialPageCommitProducts(unittest.TestCase):
             root = Path(name)
             report = root / 'report.json'
             manifest = producer.harness.ROOT / 'crabc-mimalloc/Cargo.toml'
-            emitted = root / 'cargo-emitted-program'
+            emitted = root / 'target/cargo-emitted-program'
+            emitted.parent.mkdir()
             emitted.write_bytes(b'native compiler product')
             (root / 'archive').write_bytes(b'pinned source archive')
             source = root / 'upstream'
@@ -38,6 +40,7 @@ class InitialPageCommitProducts(unittest.TestCase):
                 return {'status': 0, 'stdout': stdout, 'stderr': '', 'command': argv}
 
             replacements = [(producer, 'REPORT', report), (sys, 'argv', ['producer']),
+                (producer.harness, 'WORK_ROOT', root),
                 (producer.harness, 'require_native_x86_64', lambda **kwargs: dict(execution_mode='native', host_architecture='x86_64', image_id='sha256:' + 'a' * 64)),
                 (producer.harness, 'load_pin', lambda: dict(tag='v3.5.0', revision='pin', sha256='hash', archive_root='upstream')),
                 (producer.harness, 'fetch_archive', lambda *args: root / 'archive'),
@@ -65,6 +68,8 @@ class InitialPageCommitProducts(unittest.TestCase):
             artifact = json.loads((report.with_suffix('') / 'compiler-artifact.json').read_text())
             self.assertEqual(artifact['executable'], str(emitted))
             self.assertEqual(artifact['features'], ['mi-stat-1', 'mi-stat-2'])
+            reader.authenticate_artifacts(receipt['physical_inputs'], source)
+            reader.authenticate_unit_program(receipt['physical_inputs']['unit_program'], features=['mi-stat-1', 'mi-stat-2'])
             self.assertIn('--exact', receipt['rust_test']['command'])
             self.assertIn(producer.TEST, receipt['rust_test']['command'])
 
