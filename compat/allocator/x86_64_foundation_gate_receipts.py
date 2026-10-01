@@ -379,70 +379,73 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
     require(set(checks) == required_checks | {"prerequisites"}
             and all(checks[name].get("status") == "passed" and checks[name].get("unmet") == []
                     for name in required_checks), "local selected check remains incomplete")
-    miri = checks["miri"]
-    physical = miri.get("physical_inputs")
-    require(isinstance(physical, Mapping) and isinstance(physical.get("program"), Mapping),
-            "Miri receipt lacks compiler-selected physical inputs")
-    selected = contract["miri"]
-    base = ["cargo", "miri", "test", "--locked", "--target", selected["target"],
-            "-p", "crabc-mimalloc", "--lib", "--no-default-features", "--"]
-    flags = [*selected["miriflags"], f"-Zmiri-env-forward={local.FRESH_TEST_CHILD_ENV}"]
-    listing = physical["listing"]
-    require(listing["command"] == [*base, "--list", "--format", "terse"] and listing["status"] == 0,
-            "Miri compiler listing differs from the source producer")
-    require(miri["miriflags"] == flags and listing["environment"]["MIRIFLAGS"] == " ".join(flags)
-            and local.FRESH_TEST_CHILD_ENV not in listing["environment"], "Miri strict listing environment changed")
-    authority = local._miri_compiler_inputs(listing, selected)
-    require(all(physical.get(key) == value for key, value in authority.items()),
-            "Miri compiler-selected physical input authority changed")
-    authenticate_artifacts(physical, harness.ROOT)
-    probe = physical["probe"]
-    require(probe["command"] == ["cargo", "miri", "--version"] and probe["status"] == 0
-            and miri["version"] == probe["stdout"].strip()
-            == authority["tools"]["cargo-miri"]["version"]["stdout"].strip(), "Miri selected interpreter version changed")
-    metadata = harness.read_json(harness.ROOT / authority["program"]["path"])
-    channel = tomllib.loads((harness.ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
-    tools = authority["tools"]
-    expected_tool_directory = Path("/opt/rustup/toolchains") / f"{channel}-x86_64-unknown-linux-musl" / "bin"
-    require(set(tools) == {"cargo-miri", "miri", "rustc", "cargo"}
-            and all(Path(tool["executable_path"]) == expected_tool_directory / name
-                    for name, tool in tools.items()), "Miri tools differ from the pinned source toolchain")
-    groups = local.select_by_prefix(str(listing["stdout"]), selected["module_prefixes"])
-    require(set(physical["commands"]) == set(groups) and set(miri["groups"]) == set(groups)
-            and set(selected["required_tests"]) <= {name for names in groups.values() for name in names},
-            "Miri selected test roster changed")
-    expected_environment = listing["environment"]
-    require(set(expected_environment) == {"MIRIFLAGS", "TMPDIR", "XDG_CACHE_HOME"},
-            "Miri listing contains an undeclared environment override")
-    require(expected_environment["TMPDIR"] == "/tmp"
-            and expected_environment["XDG_CACHE_HOME"] == "/tmp/crabc-m3-miri-cache",
-            "Miri temporary and cache aliases changed")
-    for prefix, names in groups.items():
-        rows = physical["commands"][prefix]
-        require(names and len(rows) == len(names), "Miri exact-test command roster changed")
-        for name, row in zip(names, rows, strict=True):
-            require(row["command"] == [*base, "--exact", "--test-threads=1", name]
-                    and row["status"] == 0
-                    and row["environment"] == {**expected_environment, local.FRESH_TEST_CHILD_ENV: name},
-                    "Miri exact command or fresh interpreter environment changed")
-            require(local.TEST_RESULT.findall(output(row)) == [(name, "ok")]
-                    and harness.parse_rust_test_count(output(row)) == 1,
-                    "Miri original exact interpreter did not execute its selected test")
-        aggregate = {"status": 0, "stdout": "\n".join(row["stdout"] for row in rows),
-                     "stderr": "\n".join(row["stderr"] for row in rows)}
-        require(local.summarize_group(prefix, names, aggregate) == miri["groups"][prefix],
-                "Miri selected group observations changed")
-    require(miri["passed"] == sum(len(names) for names in groups.values()), "Miri original test total changed")
-    logs = [f"### listing\n{json.dumps(listing['command'])}\n{listing['stdout']}\n{listing['stderr']}"]
-    # JSON key sorting does not preserve the original group execution order.
-    for prefix in groups:
-        for row in physical["commands"][prefix]:
-            name = row["command"][-1]
-            logs.append(f"### {prefix} {name}\n{json.dumps(row['command'])}\n"
-                        f"MIRIFLAGS={row['environment']['MIRIFLAGS']}\n"
-                        f"{local.FRESH_TEST_CHILD_ENV}={name}\n{row['stdout']}\n{row['stderr']}")
-    require((harness.ROOT / physical["log"]["path"]).read_text() == "\n".join(logs),
-            "Miri raw compiler and interpreter log differs from its recorded commands")
+    interpreter_inputs = []
+    for check_name, config_name in (("miri", "miri"), ("miri-ownership", "miri_ownership")):
+        miri = checks[check_name]
+        physical = miri.get("physical_inputs")
+        require(isinstance(physical, Mapping) and isinstance(physical.get("program"), Mapping),
+                "Miri receipt lacks compiler-selected physical inputs")
+        selected = contract[config_name]
+        base = ["cargo", "miri", "test", "--locked", "--target", selected["target"],
+                "-p", "crabc-mimalloc", "--lib", "--no-default-features", "--"]
+        flags = [*selected["miriflags"], f"-Zmiri-env-forward={local.FRESH_TEST_CHILD_ENV}"]
+        listing = physical["listing"]
+        require(listing["command"] == [*base, "--list", "--format", "terse"] and listing["status"] == 0,
+                "Miri compiler listing differs from the source producer")
+        require(miri["miriflags"] == flags and listing["environment"]["MIRIFLAGS"] == " ".join(flags)
+                and local.FRESH_TEST_CHILD_ENV not in listing["environment"], "Miri strict listing environment changed")
+        authority = local._miri_compiler_inputs(listing, selected)
+        require(all(physical.get(key) == value for key, value in authority.items()),
+                "Miri compiler-selected physical input authority changed")
+        authenticate_artifacts(physical, harness.ROOT)
+        probe = physical["probe"]
+        require(probe["command"] == ["cargo", "miri", "--version"] and probe["status"] == 0
+                and miri["version"] == probe["stdout"].strip()
+                == authority["tools"]["cargo-miri"]["version"]["stdout"].strip(), "Miri selected interpreter version changed")
+        metadata = harness.read_json(harness.ROOT / authority["program"]["path"])
+        channel = tomllib.loads((harness.ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+        tools = authority["tools"]
+        expected_tool_directory = Path("/opt/rustup/toolchains") / f"{channel}-x86_64-unknown-linux-musl" / "bin"
+        require(set(tools) == {"cargo-miri", "miri", "rustc", "cargo"}
+                and all(Path(tool["executable_path"]) == expected_tool_directory / name
+                        for name, tool in tools.items()), "Miri tools differ from the pinned source toolchain")
+        groups = local.select_by_prefix(str(listing["stdout"]), selected["module_prefixes"])
+        require(set(physical["commands"]) == set(groups) and set(miri["groups"]) == set(groups)
+                and set(selected["required_tests"]) <= {name for names in groups.values() for name in names},
+                "Miri selected test roster changed")
+        expected_environment = listing["environment"]
+        require(set(expected_environment) == {"MIRIFLAGS", "TMPDIR", "XDG_CACHE_HOME"},
+                "Miri listing contains an undeclared environment override")
+        require(expected_environment["TMPDIR"] == "/tmp"
+                and expected_environment["XDG_CACHE_HOME"] == "/tmp/crabc-m3-miri-cache",
+                "Miri temporary and cache aliases changed")
+        for prefix, names in groups.items():
+            rows = physical["commands"][prefix]
+            require(names and len(rows) == len(names), "Miri exact-test command roster changed")
+            for name, row in zip(names, rows, strict=True):
+                require(row["command"] == [*base, "--exact", "--test-threads=1", name]
+                        and row["status"] == 0
+                        and row["environment"] == {**expected_environment, local.FRESH_TEST_CHILD_ENV: name},
+                        "Miri exact command or fresh interpreter environment changed")
+                require(local.TEST_RESULT.findall(output(row)) == [(name, "ok")]
+                        and harness.parse_rust_test_count(output(row)) == 1,
+                        "Miri original exact interpreter did not execute its selected test")
+            aggregate = {"status": 0, "stdout": "\n".join(row["stdout"] for row in rows),
+                         "stderr": "\n".join(row["stderr"] for row in rows)}
+            require(local.summarize_group(prefix, names, aggregate) == miri["groups"][prefix],
+                    "Miri selected group observations changed")
+        require(miri["passed"] == sum(len(names) for names in groups.values()), "Miri original test total changed")
+        logs = [f"### listing\n{json.dumps(listing['command'])}\n{listing['stdout']}\n{listing['stderr']}"]
+        # JSON key sorting does not preserve the original group execution order.
+        for prefix in groups:
+            for row in physical["commands"][prefix]:
+                name = row["command"][-1]
+                logs.append(f"### {prefix} {name}\n{json.dumps(row['command'])}\n"
+                            f"MIRIFLAGS={row['environment']['MIRIFLAGS']}\n"
+                            f"{local.FRESH_TEST_CHILD_ENV}={name}\n{row['stdout']}\n{row['stderr']}")
+        require((harness.ROOT / physical["log"]["path"]).read_text() == "\n".join(logs),
+                "Miri raw compiler and interpreter log differs from its recorded commands")
+        interpreter_inputs.append((check_name, metadata, expected_environment, authority, tools, listing, groups, selected))
     with harness.temporary_directory(prefix="local-receipt-reader-") as directory:
         scratch = Path(directory)
         pin = harness.load_pin()
@@ -651,47 +654,50 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
         require((local.ARTIFACT_ROOT / "queue-retirement.c.trace").read_text().splitlines()
                 == (local.ARTIFACT_ROOT / "queue-retirement.rust.trace").read_text().splitlines(),
                 "queue retirement aggregate observations disagree")
-        if not native_only:
-            # The interpreter recompiles its test input. Retained inputs stay
-            # read-only; compiler outputs and incremental state use fresh scratch.
-            private = json.loads(json.dumps(metadata))
-            arguments = private["args"]
-            require(arguments.count("--out-dir") == 1, "Miri compiler output directory is ambiguous")
-            out_index = arguments.index("--out-dir") + 1
-            incremental = [index + 1 for index, value in enumerate(arguments[:-1])
-                           if value == "-C" and arguments[index + 1].startswith("incremental=")]
-            require(len(incremental) == 1, "Miri compiler incremental directory is ambiguous")
-            compiler_output = scratch / "compiler-output"
-            compiler_output.mkdir()
-            transformations = [
-                {"original": arguments[out_index], "private": str(compiler_output)},
-                {"original": arguments[incremental[0]], "private": "incremental=" + str(scratch / "incremental")},
-            ]
-            arguments[out_index] = transformations[0]["private"]
-            arguments[incremental[0]] = transformations[1]["private"]
-            private_program = scratch / "compiler-runner.json"
-            harness.write_json(private_program, private)
-            environment = dict(os.environ, **expected_environment, **authority["phase_environment"])
-            environment.pop(local.FRESH_TEST_CHILD_ENV, None)
-            runner = [tools["cargo-miri"]["executable_path"], "runner", str(private_program)]
-            replay_listing = execute([*runner, "--list", "--format", "terse"], 7200, env=environment)
-            require(local.TEST_LISTING.findall(replay_listing["stdout"]) == local.TEST_LISTING.findall(listing["stdout"]),
-                    "Miri retained compiler input selects different tests")
-            for prefix, names in groups.items():
-                for name in names:
-                    replay = execute([*runner, "--exact", "--test-threads=1", name], 7200,
-                                     env={**environment, local.FRESH_TEST_CHILD_ENV: name})
-                    require(local.TEST_RESULT.findall(output(replay)) == [(name, "ok")]
-                            and harness.parse_rust_test_count(output(replay)) == 1,
-                            "Miri retained interpreter observation changed")
-            destination = os.environ.get("CRABC_RECEIPT_REPLAY_OUTPUT")
-            if destination:
-                harness.write_json(Path(destination) / "miri-private-output-transform.json", {
-                    "program": authority["program"], "transformations": transformations,
-                    "private_program": private, "phase_environment": authority["phase_environment"],
-                })
-        require(local._miri_compiler_inputs(listing, selected) == authority,
-                "Miri retained input authority changed during replay")
+        for check_name, metadata, expected_environment, authority, tools, listing, groups, selected in interpreter_inputs:
+            if not native_only:
+                # The interpreter recompiles its test input. Retained inputs stay
+                # read-only; compiler outputs and incremental state use fresh scratch.
+                private = json.loads(json.dumps(metadata))
+                arguments = private["args"]
+                require(arguments.count("--out-dir") == 1, "Miri compiler output directory is ambiguous")
+                out_index = arguments.index("--out-dir") + 1
+                incremental = [index + 1 for index, value in enumerate(arguments[:-1])
+                               if value == "-C" and arguments[index + 1].startswith("incremental=")]
+                require(len(incremental) == 1, "Miri compiler incremental directory is ambiguous")
+                interpreter_scratch = scratch / check_name
+                interpreter_scratch.mkdir()
+                compiler_output = interpreter_scratch / "compiler-output"
+                compiler_output.mkdir()
+                transformations = [
+                    {"original": arguments[out_index], "private": str(compiler_output)},
+                    {"original": arguments[incremental[0]], "private": "incremental=" + str(interpreter_scratch / "incremental")},
+                ]
+                arguments[out_index] = transformations[0]["private"]
+                arguments[incremental[0]] = transformations[1]["private"]
+                private_program = interpreter_scratch / "compiler-runner.json"
+                harness.write_json(private_program, private)
+                environment = dict(os.environ, **expected_environment, **authority["phase_environment"])
+                environment.pop(local.FRESH_TEST_CHILD_ENV, None)
+                runner = [tools["cargo-miri"]["executable_path"], "runner", str(private_program)]
+                replay_listing = execute([*runner, "--list", "--format", "terse"], 7200, env=environment)
+                require(local.TEST_LISTING.findall(replay_listing["stdout"]) == local.TEST_LISTING.findall(listing["stdout"]),
+                        "Miri retained compiler input selects different tests")
+                for prefix, names in groups.items():
+                    for name in names:
+                        replay = execute([*runner, "--exact", "--test-threads=1", name], 7200,
+                                         env={**environment, local.FRESH_TEST_CHILD_ENV: name})
+                        require(local.TEST_RESULT.findall(output(replay)) == [(name, "ok")]
+                                and harness.parse_rust_test_count(output(replay)) == 1,
+                                "Miri retained interpreter observation changed")
+                destination = os.environ.get("CRABC_RECEIPT_REPLAY_OUTPUT")
+                if destination:
+                    harness.write_json(Path(destination) / (check_name + "-private-output-transform.json"), {
+                        "program": authority["program"], "transformations": transformations,
+                        "private_program": private, "phase_environment": authority["phase_environment"],
+                    })
+            require(local._miri_compiler_inputs(listing, selected) == authority,
+                    "Miri retained input authority changed during replay")
         for check in checks.values():
             authenticate_artifacts(check.get("physical_inputs", {}), pinned)
     authenticate_source(report, harness.runtime_ticket_zero_soak_source_state(),

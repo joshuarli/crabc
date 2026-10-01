@@ -339,6 +339,10 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         self.miri, _calls = self.producer.execute()
         self.contract = local.load_contract()
         self.contract["miri"] = self.producer.contract["miri"]
+        self.producer.contract["miri_ownership"] = {**self.producer.contract["miri"],
+            "module_prefixes": ["fixture::second"], "required_tests": ["fixture::second"]}
+        self.contract["miri_ownership"] = self.producer.contract["miri_ownership"]
+        self.ownership, _calls = self.producer.execute(ownership_only=True)
         self.authority = {key: self.miri["physical_inputs"][key] for key in (
             "program", "dep_info", "source_files", "dependencies", "dependency_info",
             "search_directories", "sysroot", "tools", "phase_environment")}
@@ -348,7 +352,9 @@ class MiriPhysicalReaderTests(unittest.TestCase):
             tool["executable_path"] = f"/opt/rustup/toolchains/{channel}-x86_64-unknown-linux-musl/bin/{name}"
         checks = {name: {"status": "passed", "unmet": []}
                   for component in self.contract["components"] for name in component["checks"]}
+        self.ownership["physical_inputs"].update(self.authority)
         checks["miri"] = self.miri
+        checks["miri-ownership"] = self.ownership
         checks["prerequisites"] = {"unmet": ["memory substrate remains incomplete"]}
         self.report = {"source": {}, "checks": checks,
                        "contract_sha256": reader.harness.file_digest(local.CONTRACT_PATH),
@@ -552,6 +558,31 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                     self.read(native_only=True)
         self.witness_row["queue_candidate_front"] = original
 
+    def test_ownership_semantics_are_authenticated_before_native_only_replay(self):
+        for defect in ("program", "roster", "flags", "log"):
+            with self.subTest(defect=defect):
+                original = json.loads(json.dumps(self.ownership))
+                physical = self.ownership["physical_inputs"]
+                log = ROOT / physical["log"]["path"]
+                original_log = log.read_bytes()
+                if defect == "program":
+                    physical["program"] = physical["dep_info"]
+                elif defect == "roster":
+                    physical["commands"].clear()
+                elif defect == "flags":
+                    physical["listing"]["environment"]["MIRIFLAGS"] = "-Zmiri-disable-isolation"
+                else:
+                    log.write_bytes(original_log + b"invented observation\n")
+                    physical["log"] = reader.harness.artifact_record(log)
+                try:
+                    with self.assertRaises(reader.harness.HarnessError):
+                        self.read(native_only=True)
+                    self.assertEqual(self.executions, [])
+                finally:
+                    log.write_bytes(original_log)
+                    self.ownership.clear()
+                    self.ownership.update(original)
+
     def test_changed_source_or_sysroot_bytes_are_rejected_before_replay(self):
         for key in ("program", "dep_info"):
             with self.subTest(key=key):
@@ -616,7 +647,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
             self.assertEqual(options["env"][self.local.FRESH_TEST_CHILD_ENV], name)
             return next(row for row in self.miri["physical_inputs"]["commands"]["fixture::"] if row["command"][-1] == name)
         self.assertEqual(self.read(replay), self.report)
-        self.assertEqual(len(observed), 3)
+        self.assertEqual(len(observed), 5)
         self.assertEqual(json.loads((ROOT / self.authority["program"]["path"]).read_text()), original)
 
     def test_raw_group_order_survives_sorted_json_report_keys(self):
@@ -633,7 +664,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                         for row in rows if row["command"][-1] == command[-1])
         self.assertEqual(self.read(replay), self.report)
         self.assertEqual(sum(call.args[0][0] == self.authority["tools"]["cargo-miri"]["executable_path"]
-                             for call in self.executions), 3)
+                             for call in self.executions), 5)
 
     def test_wrong_pinned_tool_directory_is_rejected_before_interpretation(self):
         self.authority["tools"]["miri"]["executable_path"] = "/ambient/bin/miri"
