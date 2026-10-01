@@ -590,6 +590,51 @@ def native_program(harness: Any, profile: str, artifacts: Path) -> dict[str, Any
     return {"path": binary, "execution": {"test_threads": 1, "timeout_seconds": 180}}
 
 
+def run_rust(harness: Any, profile: str, artifacts: Path, *, repeat_retention: bool = False,
+             last_cycle: int = 32, arena_reserve: int | None = None,
+             observe_ambient_pool: bool = False) -> str:
+    """Build the selected compiler product and execute one exact native test."""
+    program = native_program(harness, profile, artifacts)
+    environment = retention_environment(arena_reserve)
+    if last_cycle != 32:
+        environment = {**environment, "CRABC_MI_RETENTION_LAST_CYCLE": str(last_cycle)}
+    if observe_ambient_pool:
+        try:
+            proof = authenticate_ambient_pool(harness, Path(program["path"]))
+        except (KeyError, IndexError, struct.error, UnicodeDecodeError) as error:
+            raise ValueError("ambient linked product or archive structure differs") from error
+        harness.write_json(artifacts / "ambient-libc-authentication.json", proof)
+        environment = {**(environment or os.environ), "CRABC_MI_AUTHENTICATED_AMBIENT_POOL": "1"}
+    command = harness._x86_64_program_check_command(
+        program, RETENTION_TARGET if repeat_retention else TARGET, nocapture=True, gate_name="native arena lifecycle")
+    rust = harness.command_record(command, cwd=harness.ROOT, env=environment, timeout_seconds=180)
+    harness.write_json(artifacts / "rust-execute.json", rust)
+    (artifacts / "rust.log").write_text(str(rust["stdout"]) + str(rust["stderr"]), encoding="utf-8")
+    harness.require_success(rust, "native arena lifecycle trace")
+    output = str(rust["stdout"]) + "\n" + str(rust["stderr"])
+    if harness.parse_rust_test_count(output) != 1:
+        raise harness.HarnessError("exact arena lifecycle selection did not execute one passing test")
+    return output
+
+
+def run_retention(harness: Any, output: str, artifacts: Path, *, profile: str,
+                  last_cycle: int = 32, arena_reserve: int | None = None,
+                  observe_ambient_pool: bool = False) -> list[dict[str, Any]]:
+    """Receive complete source roots and authenticated current ambient ownership."""
+    native_rows = parse_attributed_retention(output, source="Rust", last_cycle=last_cycle)
+    if arena_reserve is not None:
+        geometry = parse_retention_geometry(output, native_rows, arena_reserve=arena_reserve, source="Rust")
+        harness.write_json(artifacts / "rust-pagemap-geometry.json", geometry)
+    if observe_ambient_pool:
+        ambient = parse_ambient_retention(output, native_rows)
+        harness.write_json(artifacts / "ambient-pool-observation.json", ambient)
+        print(f"arena retention {profile} ambient musl 1.2.5: current live pool classification {ambient[-1]['classification']}; empty bouncing extents {ambient[-1]['empty_bouncing_extents']}")
+        if any(row["classification"]["unexplained_bytes"] != pool["classification"]["attributed_bytes"]
+               for row, pool in zip(native_rows, ambient)):
+            raise ValueError("native source-root residual differs from authenticated current ambient ownership")
+    return native_rows
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=(*PROFILES, "all"), default="release")
@@ -624,35 +669,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
                                    **({"repeat_retention": True} if arguments.repeat_retention else {}),
                                    **({"last_cycle": arguments.retention_last_cycle} if arguments.retention_last_cycle != 32 else {}),
                                    **({"arena_reserve": arguments.retention_arena_reserve} if arguments.retention_arena_reserve is not None else {}))
-            program = native_program(harness, profile, artifacts)
-            environment = retention_environment(arguments.retention_arena_reserve)
-            if arguments.retention_last_cycle != 32:
-                environment = {**environment, "CRABC_MI_RETENTION_LAST_CYCLE": str(arguments.retention_last_cycle)}
-            if arguments.observe_ambient_pool:
-                try:
-                    proof = authenticate_ambient_pool(harness, Path(program["path"]))
-                except (KeyError, IndexError, struct.error, UnicodeDecodeError) as error:
-                    raise ValueError("ambient linked product or archive structure differs") from error
-                harness.write_json(artifacts / "ambient-libc-authentication.json", proof)
-                environment = {**(environment or os.environ), "CRABC_MI_AUTHENTICATED_AMBIENT_POOL": "1"}
-            command = harness._x86_64_program_check_command(
-                program, RETENTION_TARGET if arguments.repeat_retention else TARGET, nocapture=True, gate_name="native arena lifecycle")
-            rust = harness.command_record(command, cwd=harness.ROOT, env=environment, timeout_seconds=180)
-            harness.write_json(artifacts / "rust-execute.json", rust)
-            (artifacts / "rust.log").write_text(str(rust["stdout"]) + str(rust["stderr"]), encoding="utf-8")
-            harness.require_success(rust, "native arena lifecycle trace")
-            output = str(rust["stdout"]) + "\n" + str(rust["stderr"])
-            if harness.parse_rust_test_count(output) != 1:
-                raise harness.HarnessError("exact arena lifecycle selection did not execute one passing test")
+            output = run_rust(harness, profile, artifacts, repeat_retention=arguments.repeat_retention,
+                              last_cycle=arguments.retention_last_cycle, arena_reserve=arguments.retention_arena_reserve,
+                              observe_ambient_pool=arguments.observe_ambient_pool)
             if arguments.repeat_retention:
-                native_rows = parse_attributed_retention(output, source="Rust", last_cycle=arguments.retention_last_cycle)
-                if arguments.retention_arena_reserve is not None:
-                    geometry = parse_retention_geometry(output, native_rows, arena_reserve=arguments.retention_arena_reserve, source="Rust")
-                    harness.write_json(artifacts / "rust-pagemap-geometry.json", geometry)
-                if arguments.observe_ambient_pool:
-                    ambient = parse_ambient_retention(output, native_rows)
-                    harness.write_json(artifacts / "ambient-pool-observation.json", ambient)
-                    print(f"arena retention {profile} ambient musl 1.2.5: current live pool classification {ambient[-1]['classification']}; empty bouncing extents {ambient[-1]['empty_bouncing_extents']}")
+                native_rows = run_retention(harness, output, artifacts, profile=profile,
+                                            last_cycle=arguments.retention_last_cycle, arena_reserve=arguments.retention_arena_reserve,
+                                            observe_ambient_pool=arguments.observe_ambient_pool)
                 for label, rows in (("C", c_trace), ("native", native_rows)):
                     print(f"arena retention {profile} {label}: ranges {rows[0]['ranges']}->{rows[-1]['ranges']}; bytes {rows[0]['bytes']}->{rows[-1]['bytes']}; source-root classification {rows[-1]['classification']}; exact raw snapshots {artifacts}")
                 continue

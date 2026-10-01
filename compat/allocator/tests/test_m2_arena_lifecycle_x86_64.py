@@ -91,6 +91,30 @@ class ArenaLifecycleProfiles(unittest.TestCase):
         direct = raw.replace("os-arena=4194304,5242880,0", "os-page=4194304,5242880,1048576")
         self.assertEqual(receive(direct, reserve=0)["observed_pagemap_bytes"], [131072]*33)
 
+    def test_retention_execution_receiver_requires_current_pool_ownership_of_residual(self):
+        lines = []
+        for cycle in range(33):
+            for child in range(6):
+                lines.extend([f"m2.arena.retention.root.{cycle}.{child}.0.external-raw=100,200,0",
+                              f"m2.arena.retention.child.{cycle}.{child}=1"])
+            lines.append(f"m2.arena.retention.map.{cycle}.0=4096,8192")
+            if cycle:
+                lines.append(f"m2.arena.retention.map.{cycle}.1=8192,12288")
+            lines.extend([f"m2.arena.retention.maps.{cycle}={2 if cycle else 1}",
+                          f"m2.arena.retention.{cycle}.ranges={2 if cycle else 1}",
+                          f"m2.arena.retention.{cycle}.bytes={8192 if cycle else 4096}",
+                          f"m2.arena.ambient.groups.{cycle}=0"])
+        raw = "\n".join(lines)
+        with mock.patch.object(harness, "write_json"):
+            with self.assertRaisesRegex(ValueError, "residual differs"):
+                lifecycle.run_retention(harness, raw, Path("unused"), profile="stat-1", observe_ambient_pool=True)
+            for cycle in range(1, 33):
+                raw = raw.replace(f"m2.arena.ambient.groups.{cycle}=0",
+                                  f"m2.arena.ambient.group.{cycle}.0=7,32792,32792,32792,8192,12288,3,0,1,1,100,2\nm2.arena.ambient.groups.{cycle}=1")
+            rows = lifecycle.run_retention(harness, raw, Path("unused"), profile="stat-1", observe_ambient_pool=True)
+        self.assertEqual(len(rows), 33)
+        self.assertEqual(rows[-1]["classification"]["unexplained_bytes"], 4096)
+
     def test_selected_statistics_caller_uses_matching_native_features(self):
         trace = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
         output = "\n".join(f"m2.arena.lifecycle.{i}={value}" for i, value in enumerate(trace))
