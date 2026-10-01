@@ -282,15 +282,6 @@ def scalar_read_prefix(source: bytes, offset: int) -> bytes:
     return b''
 
 
-def locked_cmpxchg_prefix(source: bytes, offset: int) -> bytes:
-    """Decode only a locked, 64-bit CMPXCHG with a RIP-relative operand."""
-    prefix = source[offset - 5:offset] if offset >= 5 else b''
-    if (len(prefix) == 5 and prefix[0] == 0xf0 and prefix[1] in {0x48, 0x4c}
-            and prefix[2:4] == b'\x0f\xb1' and prefix[4] & 0xc7 == 0x05):
-        return prefix
-    return b''
-
-
 def integer_memory_operand(source: bytes, offset: int, *,
                            instruction_span: tuple[int, int] | None = None) -> tuple[bytes, int, bytes, str] | None:
     """Decode the supported RIP-relative integer operand and trailing immediate."""
@@ -303,6 +294,26 @@ def integer_memory_operand(source: bytes, offset: int, *,
         operation = prefix[1:] if len(prefix) == 4 and prefix[0] == 0x44 else prefix
         if (len(operation) == 3 and operation[:2] == b'\x0f\xb6' and operation[2] & 0xc7 == 0x05):
             return prefix, 1, b'', 'integer-zero-extend-load'
+        # Atomic operands are decoded only from a complete authenticated span.
+        # LOCK is explicit for compare/exchange and increments; memory XCHG
+        # supplies its own lock. Only these observed widths and REX bits belong
+        # to the admitted forms; segment/address/operand-size prefixes do not.
+        atomic = prefix
+        locked = atomic.startswith(b'\xf0')
+        if locked:
+            atomic = atomic[1:]
+        rex = atomic[0] if atomic and atomic[0] in {0x44, 0x48, 0x4c} else None
+        if rex is not None:
+            atomic = atomic[1:]
+        if len(atomic) == 3 and atomic[:2] == b'\x0f\xb1' and atomic[2] & 0xc7 == 0x05 and locked:
+            return prefix, 8 if rex in {0x48, 0x4c} else 4, b'', 'locked-cmpxchg'
+        if len(atomic) == 2 and atomic[1] & 0xc7 == 0x05 and not locked:
+            if atomic[0] == 0x86 and rex is None:
+                return prefix, 1, b'', 'atomic-exchange'
+            if atomic[0] == 0x87:
+                return prefix, 8 if rex in {0x48, 0x4c} else 4, b'', 'atomic-exchange'
+        if locked and rex is None and atomic in {b'\xff\x05', b'\xff\x0d'}:
+            return prefix, 4, b'', 'locked-increment' if atomic[1] == 0x05 else 'locked-decrement'
         # Decode within the authenticated instruction, then require the entire
         # prefix and immediate. Bytes belonging to adjacent instructions cannot
         # change this operand's width or supply an ignored extra prefix.
@@ -312,9 +323,6 @@ def integer_memory_operand(source: bytes, offset: int, *,
             if offset - start == len(prefix) and end == offset + 4 + len(immediate):
                 return decoded
         return None
-    locked = locked_cmpxchg_prefix(source, offset)
-    if locked and (offset == len(locked) or source[offset - len(locked) - 1] not in legacy_prefixes):
-        return locked, 8, b'', 'locked-cmpxchg'
     prefix = source[offset - 3:offset] if offset >= 3 else b''
     if (prefix == b'\xf0\x81\x2d' and offset + 8 <= len(source)
             and (offset == 3 or source[offset - 4] not in legacy_prefixes)):
@@ -590,7 +598,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                         f'provider {name} immutable source relocation footprint differs')
             require(0 <= provider_offset and provider_offset + operand_size <= symbol['size'],
                     f'provider {name} integer operand leaves provider object')
-            require(not operation.startswith('locked-')
+            atomic = operation.startswith('locked-') or operation == 'atomic-exchange'
+            require(not atomic
                     or (header[8] >= operand_size and (symbol['value'] + provider_offset) % operand_size == 0),
                     f'provider {name} locked source alignment differs')
             require(offset + 4 + len(immediate) <= int(parts[2], 16),
@@ -601,7 +610,7 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             require(opcode[:len(prefix)] == prefix and opcode[len(prefix) + 4:] == immediate, f'provider {name} reference opcode differs')
             target = call_address + len(prefix) + 4 + len(immediate) + struct.unpack_from('<i', opcode, len(prefix))[0]
             require(target == provider_address + provider_offset
-                    and (not operation.startswith('locked-') or target % operand_size == 0),
+                    and (not atomic or target % operand_size == 0),
                     f'provider {name} integer operand resolves to a foreign provider')
             final = static_authority.elf_bytes(image)
             final_symbol = final.symbol(name, dynamic=False)
@@ -631,6 +640,21 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                             and program[3] <= target and target + operand_size <= program[3] + program[6 if output[1] == 8 else 5]
                             for program in programs) == 1,
                         f'provider {name} integer operand lacks a writable load extent')
+                if atomic:
+                    # The complete selected object belongs to one writable,
+                    # non-executable mapping. An overlapping LOAD cannot offer
+                    # different permissions or a second interpretation of it.
+                    mappings = [program for program in programs if program[0] == 1
+                                and program[3] < provider_address + symbol['size']
+                                and provider_address < program[3] + program[6]]
+                    require(len(mappings) == 1 and mappings[0][1] == 6
+                            and mappings[0][3] <= provider_address
+                            and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][6]
+                            and (output[1] == 8 or
+                                 (provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
+                                  and mappings[0][2] + provider_address - mappings[0][3]
+                                  == output[4] + provider_address - output[3])),
+                            f'provider {name} atomic object lacks an exclusive writable load extent')
             resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
                              'target_address': target, 'operand_size': operand_size, 'branch_kind': operation,
                              **({'provider_offset': provider_offset} if provider_offset else {})})

@@ -530,7 +530,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     self.assertEqual({row['identity']['name'] for row in wrong_owner['failures']}, set(names))
                     self.assertEqual(list(private.iterdir()), [])
 
-    def test_whole_projection_binds_locked_cmpxchg_to_owned_eight_byte_bss(self):
+    def test_whole_projection_binds_atomic_operands_to_owned_writable_objects(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
         if compiler is None or linker is None:
@@ -545,18 +545,55 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             private.mkdir()
             names = ['domain_body', 'domain_caller', 'domain_scalar']
             (work / 'providers.c').write_text(links.source(names, object_names=['domain_scalar']))
-            (work / 'provider.S').write_text(
-                '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
-                '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
-                '.section .bss.domain_scalar,"aw",@nobits\n.balign 8\n'
-                '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
-                'domain_scalar: .zero 8\n.size domain_scalar,.-domain_scalar\n'
-                '.section .note.GNU-stack,"",@progbits\n')
-            for read in ('lock cmpxchg %rcx,domain_scalar(%rip)', 'lock cmpxchg %rdx,domain_scalar(%rip)',
-                         'mov $0x66000000,%eax; lock cmpxchg %r9,domain_scalar(%rip)',
-                         'lock cmpxchg %r9,domain_scalar(%rip)', 'cmpxchg %rcx,domain_scalar(%rip)',
-                         'lock cmpxchg %ecx,domain_scalar(%rip)', 'lock cmpxchg %rcx,domain_scalar+1(%rip)'):
-                with self.subTest(read=read):
+            cases = [
+                ('bss', 8, 'lock cmpxchg %rcx,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 8, 'lock cmpxchg %rdx,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 8, 'mov $0x66000000,%eax; lock cmpxchg %r9,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('data', 8, 'lock cmpxchg %r9,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 4, 'lock cmpxchg %ecx,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('data', 4, 'lock cmpxchg %r9d,domain_scalar(%rip)', 'locked-cmpxchg'),
+                ('bss', 4, 'mov $0xf0000000,%eax; xchg %eax,domain_scalar(%rip)', 'atomic-exchange'),
+                ('data', 4, 'xchg %r9d,domain_scalar(%rip)', 'atomic-exchange'),
+                ('bss', 8, 'xchg %rdi,domain_scalar(%rip)', 'atomic-exchange'),
+                ('data', 8, 'xchg %r9,domain_scalar(%rip)', 'atomic-exchange'),
+                ('bss', 1, 'xchg %al,domain_scalar(%rip)', 'atomic-exchange'),
+                ('data', 1, 'xchg %cl,domain_scalar(%rip)', 'atomic-exchange'),
+                ('bss', 4, 'lock incl domain_scalar(%rip)', 'locked-increment'),
+                ('data', 4, 'lock decl domain_scalar(%rip)', 'locked-decrement'),
+                ('bss', 4, 'mov $0x66000000,%eax; lock incl domain_scalar(%rip)', 'locked-increment'),
+                ('bss', 8, 'cmpxchg %rcx,domain_scalar(%rip)', None),
+                ('bss', 4, 'cmpxchg %ecx,domain_scalar(%rip)', None),
+                ('bss', 2, 'lock cmpxchg %cx,domain_scalar(%rip)', None),
+                ('bss', 1, 'lock cmpxchg %cl,domain_scalar(%rip)', None),
+                ('bss', 4, 'lock cmpxchg %ecx,%fs:domain_scalar(%rip)', None),
+                ('bss', 4, 'addr32 lock cmpxchg %ecx,domain_scalar(%eip)', None),
+                ('bss', 2, 'xchg %cx,domain_scalar(%rip)', None),
+                ('bss', 4, 'lock xchg %ecx,domain_scalar(%rip)', None),
+                ('bss', 4, 'lock xadd %ecx,domain_scalar(%rip)', None),
+                ('bss', 4, 'incl domain_scalar(%rip)', None),
+                ('bss', 8, 'lock incq domain_scalar(%rip)', None),
+                ('bss', 2, 'lock incw domain_scalar(%rip)', None),
+                ('bss', 4, 'lock cmpxchg %ecx,domain_scalar+1(%rip)', None),
+                ('bss', 8, 'lock cmpxchg %rcx,domain_scalar+1(%rip)', None),
+                ('bss', 4, 'xchg %ecx,domain_scalar+6(%rip)', None),
+                ('bss', 8, 'xchg %rdi,domain_scalar+1(%rip)', None),
+                ('bss', 1, 'xchg %cl,domain_scalar+8(%rip)', None),
+                ('bss', 4, 'lock incl domain_scalar+1(%rip)', None),
+                ('bss', 4, 'lock decl domain_scalar+5(%rip)', None),
+                ('rodata', 4, 'lock cmpxchg %ecx,domain_scalar(%rip)', None),
+                ('rodata', 1, 'xchg %al,domain_scalar(%rip)', None),
+                ('rodata', 4, 'lock incl domain_scalar(%rip)', None),
+            ]
+            for storage, operand_size, read, operation in cases:
+                with self.subTest(storage=storage, read=read):
+                    (work / 'provider.S').write_text(
+                        '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
+                        '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
+                        + '.section .' + storage + '.domain_scalar,"' + ('a' if storage == 'rodata' else 'aw')
+                        + '",@' + ('nobits' if storage == 'bss' else 'progbits') + '\n.balign 8\n'
+                        '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
+                        'domain_scalar: .zero 8\n.size domain_scalar,.-domain_scalar\n'
+                        '.section .note.GNU-stack,"",@progbits\n')
                     (work / 'caller.S').write_text(
                         '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
                         '.hidden domain_body\n.hidden domain_scalar\n.type domain_caller,@function\n'
@@ -596,15 +633,13 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                      temporary_parent=private)
                     proof = links.project_references(work, static, accounting, **arguments)
                     admitted = {row['identity']['name']: row for row in proof['identities']}
-                    if read in {'lock cmpxchg %rcx,domain_scalar(%rip)', 'lock cmpxchg %rdx,domain_scalar(%rip)',
-                                'mov $0x66000000,%eax; lock cmpxchg %r9,domain_scalar(%rip)',
-                                'lock cmpxchg %r9,domain_scalar(%rip)'}:
+                    if operation is not None:
                         self.assertEqual(set(admitted), set(names), proof['failures'])
                         self.assertEqual(proof['failures'], [])
                         for mode in links.MODES:
                             self.assertEqual({site['branch_kind'] for row in proof['identities']
                                 for importer in row['links'][mode]['importers'] for site in importer['resolved_calls']},
-                                {'call', 'locked-cmpxchg'})
+                                {'call', operation})
                             self.assertFalse(any(importer['discarded_calls'] for row in proof['identities']
                                                  for importer in row['links'][mode]['importers']))
                         definition = next(row for row in occurrences
@@ -613,6 +648,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
                                                               'domain_scalar', image=caller,
                                                               disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
+                        disassembly = links.read_tool('objdump', '-dw', work / 'caller.o')
+                        corrupted = '\n'.join(line for line in disassembly.splitlines()
+                                              if not any(word in line for word in ('cmpxchg', 'xchg', ' incl ', ' decl ')))
+                        with self.assertRaisesRegex(ValueError, 'instruction span is absent'):
+                            links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                                     'domain_scalar', image=caller, disassembly=corrupted)
                         sections = links.calls._ordinary_source_sections(caller, {row['section'] for row in references})
                         source_object = (work / 'provider.o').read_bytes()
                         for mode, elf_type in [('static', 2), ('static-pie', 3)]:
@@ -624,7 +665,17 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 elf_type=elf_type, name='domain_scalar', source_sections=sections,
                                 provider_object=(source_object, definition))
                             bound = links.final_member_references(image, **reference_arguments)
-                            self.assertEqual(bound['resolved_calls'][0]['operand_size'], 8)
+                            self.assertEqual(bound['resolved_calls'][0]['operand_size'], operand_size)
+                            missing_spans = [{key: value for key, value in reference.items()
+                                              if key not in {'instruction_start', 'instruction_end'}}
+                                             for reference in references]
+                            extra_byte = copy.deepcopy(references)
+                            extra_byte[0]['instruction_end'] += 1
+                            extended_prefix = copy.deepcopy(references)
+                            extended_prefix[0]['instruction_start'] -= 1
+                            for altered in [missing_spans, extra_byte, extended_prefix]:
+                                with self.assertRaises(ValueError):
+                                    links.final_member_references(image, **{**reference_arguments, 'source_calls': altered})
                             wrong = copy.deepcopy(definition)
                             wrong['row']['size_bytes'] = 4
                             for altered, message in [({'provider_object': None}, 'lacks its source object'),
@@ -636,7 +687,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             source_symbol = original.symbol('domain_scalar', dynamic=False)
                             section_table, section_width = struct.unpack_from('<Q', source_object, 40)[0], struct.unpack_from('<H', source_object, 58)[0]
                             source_header = section_table + section_width * source_symbol['section']
-                            for field, value, encoding in [(4, 1, '<I'), (8, 2, '<Q'), (32, 7, '<Q')]:
+                            for field, value, encoding in [(4, 1 if storage == 'bss' else 8, '<I'), (8, 2, '<Q'), (32, 7, '<Q')]:
                                 changed_source = bytearray(source_object)
                                 struct.pack_into(encoding, changed_source, source_header + field, value)
                                 with self.assertRaisesRegex(ValueError, 'source extent differs'):
@@ -645,27 +696,49 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             elf = links.static_authority.elf_bytes(image)
                             symbol = elf.symbol('domain_scalar', dynamic=False)
                             output = elf.sections[symbol['section']]
-                            self.assertEqual(output[1], 8)
+                            self.assertEqual(output[1], 8 if storage == 'bss' else 1)
                             program_table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
                             load_location, load = next((program_table + width * index, program)
                                 for index in range(count)
                                 for program in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
                                 if program[0] == 1 and program[3] <= address < program[3] + program[6])
-                            self.assertGreater(address + 8, load[3] + load[5])
-                            for flags, memory_size in [(4, load[6]), (7, load[6]), (6, address + 7 - load[3])]:
+                            if storage == 'bss':
+                                self.assertGreater(address + operand_size, load[3] + load[5])
+                            for flags, memory_size in [(4, load[6]), (7, load[6]), (6, address + operand_size - 1 - load[3])]:
                                 changed = bytearray(image)
                                 struct.pack_into('<I', changed, load_location + 4, flags)
-                                struct.pack_into('<Q', changed, load_location + 40, memory_size)
+                                struct.pack_into('<Q', changed, load_location + (40 if storage == 'bss' else 32), memory_size)
                                 with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                            headers = [(program_table + width * index,
+                                        struct.unpack_from('<IIQQQQQQ', image, program_table + width * index))
+                                       for index in range(count)]
+                            readonly_location, _ = next((location, program) for location, program in headers
+                                                        if program[0] == 1 and program[1] == 4)
+                            changed = bytearray(image)
+                            struct.pack_into('<Q', changed, readonly_location + 16, address)
+                            with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
+                                links.final_member_references(bytes(changed), **reference_arguments)
+                            if operand_size < 8:
+                                changed = bytearray(image)
+                                struct.pack_into('<Q', changed, load_location + 40, address + operand_size - load[3])
+                                with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                            if storage == 'data':
+                                changed = bytearray(image)
+                                struct.pack_into('<Q', changed, load_location + 8, load[2] + 1)
+                                with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
                                     links.final_member_references(bytes(changed), **reference_arguments)
                             code = bound['resolved_calls'][0]['call_address']
                             executable = next(segment for index in range(count)
                                 for segment in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
                                 if segment[0] == 1 and segment[3] <= code < segment[3] + segment[5])
-                            changed = bytearray(image)
-                            changed[executable[2] + code - executable[3]] ^= 1
-                            with self.assertRaisesRegex(ValueError, 'opcode differs'):
-                                links.final_member_references(bytes(changed), **reference_arguments)
+                            prefix_size = references[0]['offset'] - references[0]['instruction_start']
+                            for byte in range(prefix_size):
+                                changed = bytearray(image)
+                                changed[executable[2] + code - executable[3] + byte] ^= 1
+                                with self.assertRaisesRegex(ValueError, 'opcode differs'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
                     else:
                         self.assertEqual(set(admitted), {'domain_body', 'domain_caller'})
                         self.assertEqual([row['identity']['name'] for row in proof['failures']], ['domain_scalar'])
