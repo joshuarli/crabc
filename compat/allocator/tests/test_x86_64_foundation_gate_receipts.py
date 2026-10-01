@@ -430,13 +430,22 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                      "profile": {"test": True}, "executable": str(self.owner_binary)}), "stderr": ""}}
         self.contract["persistent_owner_profile"]["coverage_requirements"] = {
             "page_classes": [], "page_class_events": [], "forbidden_events": [], "minimum_admin_mini_collections": 0}
+        owner_workload = self.artifacts / "owner-workload"
+        owner_workload.write_text("fixture owner workload\n")
+        self.owner_workloads = {"fixture-owner": owner_workload.read_text()}
+        owner_rows = [{**row, "id": "fixture-owner", "owner": identity,
+                       "workload_sha256": local.sha256_bytes(owner_workload.read_bytes()),
+                       "physical_inputs": {**row["physical_inputs"], "workload": h.artifact_record(owner_workload)}}
+                      for identity in self.contract["persistent_owner_profile"]["owners"]]
+        for owner_row in owner_rows:
+            del owner_row["queue_candidate_front"]
         for name, program, rows in (("local-trace-differential", unit, [row]),
-                                     ("persistent-owner-trace-differential", owner, [])):
+                                     ("persistent-owner-trace-differential", owner, owner_rows)):
             check = self.report["checks"][name]
             check.update({"archive_sha256": self.pin["sha256"], "c_driver_sha256": h.sha256_file(local.C_DRIVER_PATH),
-                "rust_driver_sha256": h.sha256_file(local.OWNER_RUST_DRIVER_PATH if rows == [] else local.RUST_DRIVER_PATH),
-                "workloads": rows, "coverage_unmet": [], "coverage": local.merge_coverage([coverage]) if rows else {
-                    owner: local.merge_coverage([]) for owner in self.contract["persistent_owner_profile"]["owners"]},
+                "rust_driver_sha256": h.sha256_file(local.OWNER_RUST_DRIVER_PATH if name == "persistent-owner-trace-differential" else local.RUST_DRIVER_PATH),
+                "workloads": rows, "coverage_unmet": [], "coverage": local.merge_coverage([coverage]) if name == "local-trace-differential" else {
+                    owner: local.merge_coverage([coverage]) for owner in self.contract["persistent_owner_profile"]["owners"]},
                 "trace_audit_sha256": h.sha256_file(local.OWNER_TRACE_AUDIT_PATH),
                 "physical_inputs": {"artifact": h.artifact_record(self.c_binary), "source_files": [], "rust_program": program,
                     "build": {"command": local.c_driver_command("musl-gcc", self.oracle, self.c_binary, self.contract),
@@ -483,8 +492,9 @@ class MiriPhysicalReaderTests(unittest.TestCase):
             return {"command": command, "status": 0, "stdout": "\n".join(self.reorder_lines), "stderr": ""}
         if command[0] == str(self.c_binary):
             Path(command[2]).write_text("\n".join(self.c_lines) + "\n")
-        if self.local.OUTPUT_ENV in options.get("env", {}):
-            Path(options["env"][self.local.OUTPUT_ENV]).write_text("\n".join(self.c_lines) + "\n")
+        for key in (self.local.OUTPUT_ENV, self.local.OWNER_OUTPUT_ENV):
+            if key in options.get("env", {}):
+                Path(options["env"][key]).write_text("\n".join(self.c_lines) + "\n")
         return {**self.native_execution, "command": command,
                 "stdout": "\n".join(self.reorder_lines) + "\n" + self.native_execution["stdout"]}
 
@@ -502,7 +512,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
              mock.patch.object(reader.harness, "safe_extract", return_value=self.oracle), \
              mock.patch.object(reader.harness, "source_file_records", return_value=[]), \
              mock.patch.object(reader.harness, "require_tool", return_value="musl-gcc"), \
-             mock.patch.object(self.local, "generate_owner_workloads", return_value={}), \
+             mock.patch.object(self.local, "generate_owner_workloads", return_value=self.owner_workloads), \
              mock.patch.object(self.local, "load_contract", return_value=self.contract), \
              mock.patch.object(self.local, "_miri_compiler_inputs", return_value=self.authority), \
              mock.patch.object(reader, "authenticate_source"), \

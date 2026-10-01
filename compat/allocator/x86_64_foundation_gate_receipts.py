@@ -559,11 +559,11 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                         witness = local.queue_candidate_front_witness(c_lines, int(parameters["size"]),
                                                                       int(parameters["freed_from_first"]))
                     # Source snapshots use tuples; their retained JSON uses arrays.
-                # Compare JSON values while preserving field names and scalar types.
-                require(json.dumps(row["queue_candidate_front"], sort_keys=True, allow_nan=False)
-                        == json.dumps(witness, sort_keys=True, allow_nan=False)
-                        and (witness is None or not witness["unmet"]),
-                            "local queue candidate witness changed")
+                    # Compare JSON values while preserving field names and scalar types.
+                    require(json.dumps(row["queue_candidate_front"], sort_keys=True, allow_nan=False)
+                            == json.dumps(witness, sort_keys=True, allow_nan=False)
+                            and (witness is None or not witness["unmet"]),
+                                "local queue candidate witness changed")
                 for repeat in range(2):
                     trace = scratch / f"{check_name}-{index}-c-{repeat}.trace"
                     execute([str(c_binary), str(workload), str(trace), owner], 1800,
