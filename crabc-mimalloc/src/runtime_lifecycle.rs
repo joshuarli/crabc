@@ -13608,6 +13608,187 @@ pub(crate) struct GuardedLiveBlockFacts<'scope> {
     pub(crate) process: crate::os::VmProcess<'scope>,
 }
 
+/// The original completed engine return retained inside one admitted scope.
+/// Only its actual issuing engine can supply the client ownership obligation;
+/// neither a map lookup nor copied geometry can create this value's rights.
+#[cfg(target_arch = "x86_64")]
+struct NativeGuardedOwnedEngineReturn<'owner, 'scope> {
+    owner: &'owner NativeAllocationOwner<'scope>,
+    block: core::ptr::NonNull<u8>,
+}
+
+/// An original canonical engine client validated against its admitted issuer.
+/// This non-copy token retains the original client obligation, not a release
+/// reconstructed from numeric facts. It has no automatic free or retry path.
+#[cfg(target_arch = "x86_64")]
+#[must_use = "the original client must be transferred or consumed under its actual owner"]
+pub(crate) struct NativeGuardedCanonical<'owner, 'scope> {
+    original: NativeGuardedOwnedEngineReturn<'owner, 'scope>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeGuardedCanonical<'_, '_> {
+    /// Transfers the original live canonical engine client obligation.
+    /// A consuming free has a separate discharge transition.
+    ///
+    /// # Safety
+    /// The caller retains this exact live client and its selected Heap/member
+    /// for the returned client lifetime. Before publishing any derived guarded
+    /// interior client, its source tag/protection/placement must be complete.
+    /// An invariant refusal or failed consuming transition cannot use this
+    /// transfer to discard custody or invent client retry rights.
+    pub(crate) unsafe fn into_canonical_client(self) -> core::ptr::NonNull<u8> {
+        self.original.block
+    }
+}
+
+/// An internal original-client invariant, distinct from valid source geometry
+/// refusal, VM protection failure, completed OOM or process admission failure.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeGuardedCanonicalFactsInvariant {
+    DifferentOwnerScope,
+    MissingMapping,
+    NonCanonicalClient,
+    HeapMismatch,
+}
+
+/// Retains the original engine client and its actual admitted context after
+/// an internal facts refusal. This is terminal custody, not a retry/free claim.
+#[cfg(target_arch = "x86_64")]
+#[must_use = "retain the original client and owner through internal terminal handling"]
+pub(crate) struct NativeGuardedCanonicalFactsFailure<'owner, 'scope> {
+    original: NativeGuardedOwnedEngineReturn<'owner, 'scope>,
+    invariant: NativeGuardedCanonicalFactsInvariant,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeGuardedCanonicalFactsFailure<'_, '_> {
+    pub(crate) fn owner(&self) -> &NativeAllocationOwner<'_> { self.original.owner }
+    pub(crate) fn invariant(&self) -> NativeGuardedCanonicalFactsInvariant { self.invariant }
+
+    /// Terminates a healthy, admitted internal client invariant while keeping
+    /// the original engine return and its actual owner alive through output.
+    /// This is not a source assertion, allocation failure or cleanup operation.
+    ///
+    /// # Safety
+    /// Every engine, Page, Heap, Theap and record projection and lock must have
+    /// successfully ended. The caller retains the original client and selected
+    /// Heap/member through synchronous output; callbacks cannot consume that
+    /// client or tear down its selected owner. Failed or unknown unlock state
+    /// must instead terminate directly without invoking callbacks or destructors.
+    pub(crate) unsafe fn abort_internal_after_projections(self) -> ! {
+        let custody = self;
+        let message = crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+            c"crabc: internal guarded canonical allocation invariant failed\n",
+        );
+        // SAFETY: the original return and enclosing admission stay retained,
+        // and the caller has ended every allocator projection and lock.
+        unsafe { custody.original.owner.output().raw_message(message) };
+        unsafe extern "C" { fn abort() -> !; }
+        // SAFETY: the embedding libc owns this terminal operation. Delivery
+        // has returned, while original custody and owner admission remain live.
+        unsafe { abort() }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn native_guarded_owned_engine_return_facts(
+    original: &NativeGuardedOwnedEngineReturn<'_, '_>,
+) -> Result<crate::process_page_map::LiveAllocationPointer, NativeGuardedCanonicalFactsInvariant> {
+    use NativeGuardedCanonicalFactsInvariant::{HeapMismatch, MissingMapping, NonCanonicalClient};
+    // SAFETY: only a genuine completed engine return supplies this exact live
+    // client. Its actual admitted issuer retains the captured map/config and
+    // metadata lifetime; no overlapping entry or client mutation is permitted.
+    let page_map = original.owner.page_map().map_err(|_| MissingMapping)?;
+    let allocation = unsafe { page_map.lookup_live_allocation(original.block) }
+        .map_err(|_| MissingMapping)?.ok_or(MissingMapping)?;
+    if allocation.canonical_block() != original.block { return Err(NonCanonicalClient); }
+    // SAFETY: the original live client retains this initialized Page. Compare
+    // only its stable scalar Heap association to the actual selected issuer retained
+    // by admission; this does not infer any backing release authority.
+    if unsafe { crate::types::Page::heap_identity_at(allocation.page()) }
+        != original.owner.heap.as_ptr() { return Err(HeapMismatch); }
+    Ok(allocation)
+}
+
+/// Takes custody of a genuine completed canonical allocation before any
+/// placement callback, validating its exact selected issuer without admission
+/// or a global-root lookup. A refusal keeps the original engine return alive.
+///
+/// # Safety
+/// `block` is the original exclusively held canonical client just returned by
+/// the actual selected allocation engine under `owner`'s admission. The engine
+/// has completed, all its projections/locks ended, and the actual Heap/member
+/// and client remain live. This function cannot turn a reconstructed address,
+/// arbitrary pointer, foreign engine return or pending claim into a client.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn native_guarded_canonical_from_owned_engine_return<'owner, 'scope>(
+    owner: &'owner NativeAllocationOwner<'scope>,
+    block: core::ptr::NonNull<u8>,
+) -> Result<NativeGuardedCanonical<'owner, 'scope>, NativeGuardedCanonicalFactsFailure<'owner, 'scope>> {
+    let original = NativeGuardedOwnedEngineReturn { owner, block };
+    // SAFETY: forwarded original engine return and retained issuer contract.
+    match unsafe { native_guarded_owned_engine_return_facts(&original) } {
+        Ok(allocation) => {
+            drop(allocation);
+            Ok(NativeGuardedCanonical { original })
+        }
+        Err(invariant) => Err(NativeGuardedCanonicalFactsFailure { original, invariant }),
+    }
+}
+
+/// Projects one original canonical candidate using only the same captured
+/// admitted context. All geometry projections end before its callback, while
+/// the original token and actual main/child owner remain retained throughout.
+/// An invariant refusal returns original terminal custody without mutation.
+///
+/// # Safety
+/// The caller retains the exact original client and selected Heap/member and
+/// excludes overlapping map, metadata and client mutation. No engine, Page,
+/// Heap, Theap or record projection or lock survives entry. The callback must
+/// not consume the in-flight client or tear down its selected Heap/member.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn with_guarded_live_block_in_owner<'owner, 'scope, R>(
+    owner: &NativeAllocationOwner<'_>,
+    candidate: NativeGuardedCanonical<'owner, 'scope>,
+    callback: impl for<'facts> FnOnce(GuardedLiveBlockFacts<'facts>) -> R,
+) -> Result<(NativeGuardedCanonical<'owner, 'scope>, R), NativeGuardedCanonicalFactsFailure<'owner, 'scope>> {
+    if !core::ptr::eq(owner, candidate.original.owner) {
+        return Err(NativeGuardedCanonicalFactsFailure {
+            original: candidate.original,
+            invariant: NativeGuardedCanonicalFactsInvariant::DifferentOwnerScope,
+        });
+    }
+    // SAFETY: the original token and actual context retain the exact client's
+    // mapping, initialized Page and selected owner through this operation.
+    let mut allocation = match unsafe { native_guarded_owned_engine_return_facts(&candidate.original) } {
+        Ok(allocation) => allocation,
+        Err(invariant) => return Err(NativeGuardedCanonicalFactsFailure {
+            original: candidate.original, invariant,
+        }),
+    };
+    let canonical = allocation.canonical_block();
+    let block_size = allocation.block_size();
+    // SAFETY: the original live client retains the immutable published flag.
+    let is_pinned = unsafe { crate::types::Page::is_pinned_at(allocation.page()) };
+    let os_page_size = match candidate.original.owner.page_map()
+        .ok().and_then(|map| map.memory_config().ok()) {
+        Some(config) => config.page_size().bytes(),
+        None => return Err(NativeGuardedCanonicalFactsFailure {
+            original: candidate.original,
+            invariant: NativeGuardedCanonicalFactsInvariant::MissingMapping,
+        }),
+    };
+    allocation.mark_page_has_interior_pointers();
+    drop(allocation);
+    let result = callback(GuardedLiveBlockFacts {
+        canonical, block_size, is_pinned, os_page_size,
+        process: candidate.original.owner.process(),
+    });
+    Ok((candidate, result))
+}
+
 /// Marks a canonical candidate's page for interior clients and supplies its
 /// protection geometry after all page and allocation-engine projections end.
 /// The actual main owner or admitted registered child owner remains live
@@ -20974,6 +21155,56 @@ mod tests {
         // SAFETY: this synchronous callback exclusively owns the nested client.
         assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
         observed.calls.fetch_add(1, Ordering::AcqRel);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_guarded_candidate_facts_retain_the_captured_owner_through_warning_reentry() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_guarded_candidate_facts_retain_the_captured_owner_through_warning_reentry",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(seed) = native_allocate(32, false)
+                    else { panic!("the fixture publishes its real selected Theap"); };
+                let selected = default_theap();
+                let output = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: this isolated process retains and serializes its callback.
+                unsafe { output.register_output(Some(native_allocation_owner_warning_reentry),
+                    core::ptr::null_mut()); }
+                NATIVE_ALLOCATION_OWNER_WARNING_COUNT.store(0, Ordering::Release);
+                // SAFETY: actual selected Heap/member lifetime remains retained;
+                // every engine projection ends before the facts callback.
+                assert_eq!(unsafe { with_native_allocation_owner(selected, |owner| {
+                    let NativePageAllocationResult::Allocated(block) = native_allocate(
+                        8192 - crate::config::PADDING_SIZE, false)
+                        else { panic!("the genuine selected engine must return its client"); };
+                    block.as_ptr().write_bytes(0x5A, 32);
+                    let candidate = native_guarded_canonical_from_owned_engine_return(&owner, block)
+                        .unwrap_or_else(|_| panic!("the original engine issuer must match its captured context"));
+                    let (candidate, size) = with_guarded_live_block_in_owner(&owner, candidate, |facts| {
+                        assert_eq!(facts.canonical, block);
+                        assert_eq!(facts.os_page_size, owner.page_map().unwrap().memory_config().unwrap().page_size().bytes());
+                        assert_eq!(facts.process.subprocess() as *const _, owner.process().subprocess() as *const _);
+                        assert!(facts.block_size >= 2 * facts.os_page_size);
+                        owner.output().warning(crate::diagnostic_output::DiagnosticOptionSnapshot::new(1, 0, 16),
+                            crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                                c"native allocation owner warning"));
+                        facts.block_size
+                    }).unwrap_or_else(|_| panic!("the same retained scope must preserve its original client"));
+                    assert_eq!(NATIVE_ALLOCATION_OWNER_WARNING_COUNT.load(Ordering::Acquire), 1);
+                    assert_eq!(owner.page_map().unwrap().lookup_live_allocation(block)
+                        .unwrap().unwrap().canonical_block(), block);
+                    assert_eq!(block.as_ptr().read(), 0x5A);
+                    assert_eq!(candidate.into_canonical_client(), block);
+                    assert_eq!(native_free(block), NativePageFreeResult::Freed);
+                    size
+                }) }.map(|_| ()), Ok(()));
+                // SAFETY: synchronous delivery ended before reset and seed free.
+                unsafe { output.register_output(None, core::ptr::null_mut()); }
+                assert_eq!(unsafe { native_free(seed) }, NativePageFreeResult::Freed);
+            },
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
