@@ -70,4 +70,66 @@ fn parked_member_finishes_after_child_destruction_without_reentering_child_stora
     assert!(unsafe { heaps::subproc_destroy(child.pointer()) });
     resume_send.send(()).unwrap();
     worker.join().expect("the parked member finishes after destruction");
+    joined_member_withdraws_before_parked_member_finishes_after_destruction();
+}
+
+fn joined_member_withdraws_before_parked_member_finishes_after_destruction() {
+    let child = SharedChild(NonNull::new(heaps::subproc_new()).expect("a second live child"));
+    let (parked_send, parked_receive) = std::sync::mpsc::channel();
+    let (destroyed_send, destroyed_receive) = std::sync::mpsc::channel();
+    let parked = std::thread::spawn(move || {
+        register_fresh_worker();
+        // SAFETY: the coordinator retains this child while both workers
+        // admit themselves and while this worker creates its own clients.
+        assert_eq!(unsafe { heaps::subproc_add_current_thread(child.pointer()) },
+                   heaps::SubprocAddCurrentThread::Added);
+        assert_eq!(heaps::subproc_current(), child.pointer());
+        let client = api::malloc(200).value.expect("a parked main-Heap client");
+        let heap = heaps::heap_new();
+        assert!(!heap.is_null());
+        // SAFETY: this worker owns its live auxiliary Heap and each client's
+        // writable extent until it parks; neither is used after that point.
+        unsafe {
+            let heap_client = heaps::heap_malloc(heap, 64).value.expect("a parked auxiliary client");
+            client.as_ptr().write_bytes(0x73, 200);
+            heap_client.as_ptr().write_bytes(0x74, 64);
+        }
+        parked_send.send(()).unwrap();
+        destroyed_receive.recv().unwrap();
+        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        // This source identity query reads the current TLS membership only;
+        // it performs no operation on the now-invalid child identity.
+        assert_eq!(heaps::subproc_current(), heaps::subproc_main());
+    });
+    parked_receive.recv().unwrap();
+    let joined = std::thread::spawn(move || {
+        register_fresh_worker();
+        // SAFETY: the coordinator keeps the child live until this worker
+        // finishes and joins; the other admitted worker remains parked.
+        assert_eq!(unsafe { heaps::subproc_add_current_thread(child.pointer()) },
+                   heaps::SubprocAddCurrentThread::Added);
+        assert_eq!(heaps::subproc_current(), child.pointer());
+        let client = api::malloc(200).value.expect("a joined main-Heap client");
+        let heap = heaps::heap_new();
+        assert!(!heap.is_null());
+        // SAFETY: this worker owns both clients and the auxiliary Heap. It
+        // returns every client and deletes that Heap before finishing.
+        unsafe {
+            let heap_client = heaps::heap_malloc(heap, 64).value.expect("a joined auxiliary client");
+            client.as_ptr().write_bytes(0x81, 200);
+            heap_client.as_ptr().write_bytes(0x82, 64);
+            assert_eq!(api::free(heap_client.as_ptr()), api::FreeOutcome::Freed);
+            assert_eq!(api::free(client.as_ptr()), api::FreeOutcome::Freed);
+            assert!(heaps::heap_release(heap, false));
+        }
+        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        assert_eq!(heaps::subproc_current(), heaps::subproc_main());
+    });
+    joined.join().expect("the first member's real TLS lifetime ended");
+    // SAFETY: the joined worker has withdrawn its clients and TLS roots and
+    // cannot be revisited. The other worker is parked outside allocator
+    // operations and makes no later call except its own thread finish.
+    assert!(unsafe { heaps::subproc_destroy(child.pointer()) });
+    destroyed_send.send(()).unwrap();
+    parked.join().expect("the remaining member finishes after child destruction");
 }
