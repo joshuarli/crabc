@@ -3525,6 +3525,35 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
         self.is_current().then_some(self.thread)
     }
 
+    #[cfg(target_arch = "x86_64")]
+    fn begin_generic_allocation_administration(
+        &mut self,
+    ) -> crate::bootstrap::GenericAllocationAdministrationStart {
+        if !self.permits_ordinary_page_operations() {
+            return crate::bootstrap::GenericAllocationAdministrationStart::Denied;
+        }
+        // SAFETY: this admitted owner retains the selected image and owns
+        // only its generic counters during this callback-free projection.
+        match unsafe { Theap::begin_generic_allocation_administration_at(NonNull::new(self.storage.theap.image.get()).expect("the retained process-static Theap has a stable address")) } {
+            None => crate::bootstrap::GenericAllocationAdministrationStart::NotDue,
+            Some(request) => crate::bootstrap::GenericAllocationAdministrationStart::Frequency(request),
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn finish_generic_allocation_administration(
+        &mut self, request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
+    ) -> Option<crate::types::GenericAllocationAdministration> {
+        let pointer = NonNull::new(self.storage.theap.image.get())?;
+        if !self.permits_ordinary_page_operations() || !request.matches_theap(pointer)
+            || !(1..=1_000_000).contains(&frequency) { return None; }
+        // SAFETY: the engine resumes this same retained owner after the
+        // getter callback has ended, restoring exclusive counter authority.
+        Some(unsafe { Theap::finish_generic_allocation_administration_at(
+            NonNull::new(self.storage.theap.image.get()).expect("the retained process-static Theap has a stable address"), request, frequency,
+        ) })
+    }
+
     #[inline]
     fn advance_generic_allocation_administration(
         &mut self,

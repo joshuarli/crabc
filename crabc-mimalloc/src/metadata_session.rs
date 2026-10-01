@@ -279,8 +279,17 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         let identity = subprocess.identity();
         // SAFETY: the caller retains all images for this bounded projection.
         let (tld_ref, theap_ref, heap_ref) = unsafe { (tld.as_ref(), theap.as_ref(), heap.as_ref()) };
+        let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity);
+        // The source recurse marker suppresses another deferred callback;
+        // it does not revoke this same thread's allocation authority. The
+        // caller retains the selected Heap, TLD and member through the
+        // synchronous callback, and this session cannot retire those owners.
+        #[cfg(target_arch = "x86_64")]
+        let attached = attached || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(
+            thread, sequence, identity,
+        );
         if !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
-            || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || !attached
             || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
             || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
             || theap_ref.is_detached()
@@ -585,6 +594,43 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
 unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
     #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
+
+    #[cfg(target_arch = "x86_64")]
+    fn begin_generic_allocation_administration(&mut self) -> crate::bootstrap::GenericAllocationAdministrationStart {
+        use crate::bootstrap::GenericAllocationAdministrationStart;
+        if self.vanished_child_drain || self.pending_os_release.is_some()
+            || *self.page_engine != crate::meta::ChildPageEngineState::Active
+            || !self.theap().matches_thread(self.thread) {
+            return GenericAllocationAdministrationStart::Denied;
+        }
+        // SAFETY: the actual admitted owner retains this session's writable
+        // Theap; no counter reference or owner projection escapes the phase.
+        match unsafe { Theap::begin_generic_allocation_administration_at(self.theap) } {
+            Some(request) => GenericAllocationAdministrationStart::Frequency(request),
+            None => GenericAllocationAdministrationStart::NotDue,
+        }
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn finish_generic_allocation_administration(
+        &mut self,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+    ) -> Option<crate::types::GenericAllocationAdministration> {
+        if self.vanished_child_drain || self.pending_os_release.is_some()
+            || *self.page_engine != crate::meta::ChildPageEngineState::Active
+            || !self.theap().matches_thread(self.thread)
+            || !request.matches_theap(self.theap)
+            || !(1..=1_000_000).contains(&frequency) { return None; }
+        // SAFETY: the caller retained the same ordinary owner across its
+        // getter callbacks; the finish observes current source counters.
+        Some(unsafe { Theap::finish_generic_allocation_administration_at(self.theap, request, frequency) })
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
+        if self.vanished_child_drain || self.pending_os_release.is_some()
+            || *self.page_engine != crate::meta::ChildPageEngineState::Active { return None; }
+        crate::deferred_free::DeferredFreeSource::capture(self.theap, self.thread)
+    }
 
     fn permits_terminal_process_retirement(&self) -> bool {
         self.vanished_child_drain && self.pending_os_release.is_none()

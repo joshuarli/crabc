@@ -282,6 +282,60 @@ impl ExclusiveTheapBootstrap {
         Ok(())
     }
 
+    /// Prepares the original static metadata prefix without reading options
+    /// or retaining a Heap, TLD, or Theap projection across source callbacks.
+    ///
+    /// # Safety
+    /// `pointer` comes directly from the one pinned bootstrap storage owner.
+    /// That owner exclusively claimed its untouched slot and retains both
+    /// the slot and canonical foundation through all initialization phases.
+    /// Every short field projection ends before this method returns.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_source_metadata_at(
+        pointer: NonNull<Self>, heap: crate::main_theap::MainStaticMetadataHeapLease,
+    ) -> Result<crate::types::PreparedTheapInitialization, BootstrapError> {
+        let state = pointer.as_ptr();
+        if unsafe { (*state).bound_owner.is_some() || (*state).session_issued } {
+            return Err(BootstrapError::AlreadyInitialized);
+        }
+        // Each mutable field projection ends before original allocation
+        // pointers are produced for the independent initialization witness.
+        if !unsafe { (&mut *core::ptr::addr_of_mut!((*state).tld)).prepare_detached_static_memid() }
+            || !unsafe { (&mut *core::ptr::addr_of_mut!((*state).tld)).initialize_detached_after_static_memid(heap.subprocess()) }
+            || !unsafe { (&mut *core::ptr::addr_of_mut!((*state).theap)).set_detached_main_metadata_static_memid() } {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        let canonical = unsafe { heap.source_initialization_heap_pointer() }
+            .map_err(|_| BootstrapError::InvalidThreadState)?;
+        unsafe { (*state).canonical_heap = Some(heap); }
+        let theap = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).theap)) };
+        let tld = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).tld)) };
+        unsafe { Theap::prepare_initialization_at(theap, canonical, tld,
+            crate::types::TheapInitializationKind::MetadataStatic) }
+            .map_err(|_| BootstrapError::InvalidThreadState)
+    }
+
+    /// Marks the independently initialized static image available for later
+    /// metadata sessions. No whole-bootstrap projection is created after its
+    /// intrusive pointers have been published.
+    ///
+    /// # Safety
+    /// The same exclusive storage owner completed both source list and Heap
+    /// publication for this exact prefix; no session has yet been issued.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn complete_source_metadata_at(
+        pointer: NonNull<Self>, theap: NonNull<Theap>,
+    ) -> Result<(), BootstrapError> {
+        let state = pointer.as_ptr();
+        let original = unsafe { core::ptr::addr_of_mut!((*state).theap) };
+        if original != theap.as_ptr() || unsafe { (*state).bound_owner.is_some() || (*state).session_issued }
+            || !unsafe { Theap::is_detached_at(theap) } {
+            return Err(BootstrapError::InvalidThreadState);
+        }
+        unsafe { (*state).bound_owner = Some(TheapOwner::Detached); }
+        Ok(())
+    }
+
     /// # Safety
     /// The pointer is this process's pinned initialized canonical metadata
     /// bootstrap. The metadata entry grants unique session issuance and
@@ -414,6 +468,15 @@ pub(crate) mod theap_page_session_sealed {
     pub(crate) trait Sealed {}
 }
 
+/// The selected session's generic threshold boundary. A denied owner must
+/// not mutate counters or be mistaken for a request below the threshold.
+#[cfg(target_arch = "x86_64")]
+pub(crate) enum GenericAllocationAdministrationStart {
+    Denied,
+    NotDue,
+    Frequency(crate::types::GenericAllocationFrequencyRequest),
+}
+
 /// # Safety
 ///
 /// An implementation must retain one stable initialized Theap, Heap, and TLD;
@@ -465,6 +528,20 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     ) -> crate::types::GenericAllocationAdministration {
         crate::types::GenericAllocationAdministration::None
     }
+    /// Ends the source counter prefix before any lazy frequency getter.
+    /// Only actual ordinary owners may request this caller-stack phase.
+    #[cfg(target_arch = "x86_64")]
+    fn begin_generic_allocation_administration(&mut self) -> GenericAllocationAdministrationStart {
+        GenericAllocationAdministrationStart::Denied
+    }
+    /// Resumes on the same retained image after all getter callbacks ended.
+    /// A withdrawn owner refuses instead of applying another image's phase.
+    #[cfg(target_arch = "x86_64")]
+    fn finish_generic_allocation_administration(
+        &mut self,
+        _request: crate::types::GenericAllocationFrequencyRequest,
+        _frequency: isize,
+    ) -> Option<crate::types::GenericAllocationAdministration> { None }
     /// Copies the current source identity for a caller-stack deferred-free
     /// phase. The default deliberately grants no raw source identity to
     /// narrowed, teardown, or fixture sessions.
@@ -906,6 +983,27 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
         // SAFETY: this exclusive session owns both counters, and the frozen
         // default option read inspects no Theap state.
         unsafe { Theap::advance_generic_allocation_administration_at(self.theap_pointer(), || 10_000) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn begin_generic_allocation_administration(&mut self) -> GenericAllocationAdministrationStart {
+        // SAFETY: this session retains the original exclusive counter owner.
+        match unsafe { Theap::begin_generic_allocation_administration_at(self.theap_pointer()) } {
+            Some(request) => GenericAllocationAdministrationStart::Frequency(request),
+            None => GenericAllocationAdministrationStart::NotDue,
+        }
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn finish_generic_allocation_administration(
+        &mut self,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+    ) -> Option<crate::types::GenericAllocationAdministration> {
+        if !request.matches_theap(self.theap_pointer()) || !(1..=1_000_000).contains(&frequency) {
+            return None;
+        }
+        // SAFETY: the issuer matches this retained owner and the frequency
+        // satisfies the source clamp before its counters are projected.
+        Some(unsafe { Theap::finish_generic_allocation_administration_at(self.theap_pointer(), request, frequency) })
     }
     #[inline]
     fn queue(&self, bin: usize) -> Option<&PageQueue> { Self::queue(self, bin) }

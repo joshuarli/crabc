@@ -2900,6 +2900,22 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
 }
 
 impl MainHeapThreadOwnerLocalAllocator<'_> {
+    /// Copies the actual retained backing view without invoking source options.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn allocation_process(&self) -> Option<crate::os::VmProcess<'static>> {
+        self.engine.allocation_process()
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn resume_generic_allocation_frequency(
+        &mut self,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+        continuation: crate::single_thread::DeferredFreeAllocationContinuation,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine.resume_generic_allocation_frequency(request, frequency, continuation)
+    }
+
     /// Compares the explicit selected Theap with this retained session,
     /// without consulting the thread's default allocator cache.
     #[inline]

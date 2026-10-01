@@ -71,6 +71,8 @@ const BOUND: u8 = 1;
 /// allocation/free operations.
 const READY: u8 = 2;
 const FAILED: u8 = 3;
+/// The exact static prefix is held while source callbacks run outside the metadata lock.
+const BINDING: u8 = 6;
 // Both terminal states forbid new entries and safe capability projections.
 // RETAINED preserves an engine whose exact unfinished ownership could not end.
 const CLOSED: u8 = 4;
@@ -148,6 +150,9 @@ pub(crate) enum MetaError {
     /// A prior initialization cleanup could not release a partially owned
     /// mapping, so retrying would overwrite live process state.
     InitializationRetained,
+    /// The actual winning bootstrap output admission refused or changed.
+    #[cfg(target_arch = "x86_64")]
+    BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError),
     /// Direct OS/page-map/arena bootstrap could not complete but left no
     /// published private metadata backing. The detached-Theap identity remains
     /// bound, and a later demand may retry that backing path.
@@ -5164,6 +5169,101 @@ impl<'owner> MetadataEngine<'owner> {
         Ok(MetaAllocatorBound { allocator: self, config, subprocess })
     }
 
+    /// Initializes the canonical static metadata image with its actual
+    /// winning startup output and storage retained across source callbacks.
+    /// The prefix claim is never rolled back to an untouched state.
+    ///
+    /// # Safety
+    /// `output` retains the winning startup transaction, selected output,
+    /// actual VM, subprocess and canonical foundation through this call.
+    /// No Heap/TLD/Theap, allocator session or metadata entry projection
+    /// survives an option getter or entropy-warning delivery.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_for_main_heap_with_bootstrap_output(
+        self: Pin<&'owner Self>, config: MemoryConfig, subprocess: &'static MainSubprocess,
+        foundation: crate::main_theap::MainStaticHeapFoundation,
+        output: &crate::process_init::ScopedBootstrapOutput<'_>,
+    ) -> Result<MetaAllocatorBound<'owner>, MetaError> {
+        if !core::ptr::eq(foundation.subprocess(), subprocess) {
+            return Err(MetaError::SubprocessMismatch);
+        }
+        if !output.matches_subprocess(subprocess) {
+            return Err(MetaError::BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError::Invalid));
+        }
+        let mut binding = {
+            let entry = self.enter()?;
+            if entry.status() != COLD { return Err(MetaError::InitializationRetained); }
+            let this = self.get_ref();
+            let heap = foundation.metadata_heap();
+            // The original UnsafeCell owns the pinned slot. No pointer is
+            // derived from a whole-bootstrap mutable reference.
+            let bootstrap = unsafe { NonNull::new_unchecked(this.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
+            unsafe {
+                bootstrap.as_ptr().write(ExclusiveTheapBootstrap::new());
+                *this.canonical_heap.get() = Some(heap);
+                (*this.config.get()).write(config);
+            }
+            this.subprocess.store(subprocess.identity_ptr(), Ordering::Release);
+            this.status.store(BINDING, Ordering::Release);
+            let binding = SourceMetadataBinding { owner: self, bootstrap, complete: false };
+            let phase = unsafe { ExclusiveTheapBootstrap::prepare_source_metadata_at(bootstrap, heap) }
+                .map_err(|_| MetaError::InitializationRetained)?;
+            // Keep the binding token live before releasing the entry. Failure
+            // retains the exact claimed slot; no second initializer may write it.
+            entry.end_source_prefix_entry();
+            (binding, phase)
+        };
+        let options = unsafe { crate::types::SourceTheapOptions::capture_from_output(
+            output.output().map_err(MetaError::BootstrapOutput)?,
+        ) };
+        if !output.matches_subprocess(subprocess) {
+            return Err(MetaError::BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError::Invalid));
+        }
+        let linked = match unsafe { binding.1.apply_source_options_and_attach(options) }
+            .map_err(|_| MetaError::InitializationRetained)? {
+            crate::types::TheapRandomInitialization::SplitComplete(linked) => linked,
+            crate::types::TheapRandomInitialization::FirstHead(first) => {
+                let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+                let material = unsafe { output.deliver_prepared_random_warning(prepared) }
+                    .map_err(MetaError::BootstrapOutput)?;
+                unsafe { first.finish_random_initialization(material) }
+            }
+        };
+        #[cfg(feature = "mi-guarded")]
+        let ready = {
+            let sample = unsafe { crate::types::GuardedSampleOptions::capture_from_output(
+                output.output().map_err(MetaError::BootstrapOutput)?,
+            ) };
+            if !output.matches_subprocess(subprocess) {
+                return Err(MetaError::BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError::Invalid));
+            }
+            let sampled = unsafe { linked.apply_guarded_sample_options(sample) };
+            let bounds = unsafe { crate::types::GuardedSizeOptions::capture_from_output(
+                output.output().map_err(MetaError::BootstrapOutput)?,
+            ) };
+            if !output.matches_subprocess(subprocess) {
+                return Err(MetaError::BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError::Invalid));
+            }
+            unsafe { sampled.apply_guarded_size_options(bounds) }
+        };
+        #[cfg(not(feature = "mi-guarded"))]
+        let ready = linked.finish_without_guarded_options();
+        if !output.matches_subprocess(subprocess) {
+            return Err(MetaError::BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError::Invalid));
+        }
+        let identity = unsafe { ready.publish_heap() }.map_err(|_| MetaError::InitializationRetained)?;
+        unsafe { ExclusiveTheapBootstrap::complete_source_metadata_at(binding.0.bootstrap, identity) }
+            .map_err(|_| MetaError::InitializationRetained)?;
+        if !unsafe { subprocess.publish_detached_metadata_theap(identity) } {
+            return Err(MetaError::TheapMetaMismatch);
+        }
+        let this = self.get_ref();
+        this.detached_metadata_theap.store(identity.as_ptr(), Ordering::Release);
+        this.status.store(BOUND, Ordering::Release);
+        binding.0.complete = true;
+        Ok(MetaAllocatorBound { allocator: self, config, subprocess })
+    }
+
     /// Permanently seals the metadata allocation boundary and ends the
     /// process engine's exclusive bootstrap and shared PageMap borrows.
     ///
@@ -6237,6 +6337,27 @@ impl<'owner> MetadataEngine<'owner> {
     }
 }
 
+/// Exclusive custody of one original static metadata slot while callback
+/// windows run without a metadata entry. An incomplete slot is retained;
+/// dropping this token never frees or restores an untouched bootstrap image.
+#[cfg(target_arch = "x86_64")]
+struct SourceMetadataBinding<'owner> {
+    owner: Pin<&'owner MetadataEngine<'owner>>,
+    bootstrap: NonNull<ExclusiveTheapBootstrap>,
+    complete: bool,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for SourceMetadataBinding<'_> {
+    fn drop(&mut self) {
+        if !self.complete {
+            let _ = self.owner.get_ref().status.compare_exchange(
+                BINDING, FAILED, Ordering::Release, Ordering::Relaxed,
+            );
+        }
+    }
+}
+
 /// A held metadata private lock and its exclusive initialized-state access.
 struct MetaEntry<'borrow, 'owner> {
     owner: Pin<&'borrow MetadataEngine<'owner>>,
@@ -6249,6 +6370,22 @@ struct MetaEntry<'borrow, 'owner> {
 }
 
 impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
+    /// Ends the prefix entry before callback-producing source operations.
+    /// An unknown unlock result cannot admit user code or release the retained
+    /// prefix custody through ordinary Rust destruction.
+    #[cfg(target_arch = "x86_64")]
+    fn end_source_prefix_entry(mut self) {
+        if let Some(guard) = self.theap_meta_guard.take() {
+            if guard.unlock().is_err() { crabc_core::process::exit_immediately(134); }
+        }
+        if let Some(guard) = self.guard.take() {
+            if guard.unlock().is_err() { crabc_core::process::exit_immediately(134); }
+        }
+        let thread = self.entry_thread;
+        self.entry_thread = 0;
+        clear_entry_thread_after_unlock(&self.owner.get_ref().active_entry_thread, thread);
+    }
+
     /// Ensures the source-static detached metadata image names this exact
     /// process tuple. BOUND deliberately does not make a backing PageMap,
     /// arena, or allocator projection available.
