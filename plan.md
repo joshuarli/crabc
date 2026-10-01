@@ -184,8 +184,10 @@ only its exact source, configuration, image, products, and execution context.
   source ELF sections authenticate all 32 previously refused callable
   definitions; merged read-only object bindings also replay successfully.
   A complete diagnostic projection of the unchanged retained runtime cohort
-  admits 2,838 of 2,958 applicable references, with 120 still refused. Its first
-  remaining form is an atomic RIP-relative binding to owned BSS storage.
+  admits 2,839 of 2,958 applicable references, with 119 still refused. Exact
+  locked atomic bindings to owned BSS storage now pass thirteen real-ELF
+  controls and independent whole diagnostic replay; the remaining forms stay
+  explicit.
   Diagnostic replay does not qualify a newer source: public source-identity
   admission remains strict, and whole callable-provider closure remains open.
   ISA correctness passes separately from deferred throughput. Complete
