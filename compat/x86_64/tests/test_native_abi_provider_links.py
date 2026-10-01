@@ -162,6 +162,149 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     self.assertEqual({row['identity']['name'] for row in wrong_owner['failures']}, set(names))
                     self.assertEqual(list(private.iterdir()), [])
 
+    def test_whole_projection_binds_locked_cmpxchg_to_owned_eight_byte_bss(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            static = work / 'product'
+            (static / 'usr/lib').mkdir(parents=True)
+            private = work / 'private'
+            private.mkdir()
+            names = ['domain_body', 'domain_caller', 'domain_scalar']
+            (work / 'providers.c').write_text(links.source(names, object_names=['domain_scalar']))
+            (work / 'provider.S').write_text(
+                '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
+                '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
+                '.section .bss.domain_scalar,"aw",@nobits\n.balign 8\n'
+                '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
+                'domain_scalar: .zero 8\n.size domain_scalar,.-domain_scalar\n'
+                '.section .note.GNU-stack,"",@progbits\n')
+            for read in ('lock cmpxchg %rcx,domain_scalar(%rip)', 'lock cmpxchg %rdx,domain_scalar(%rip)',
+                         'lock cmpxchg %r9,domain_scalar(%rip)', 'cmpxchg %rcx,domain_scalar(%rip)',
+                         'lock cmpxchg %ecx,domain_scalar(%rip)', 'lock cmpxchg %rcx,domain_scalar+1(%rip)'):
+                with self.subTest(read=read):
+                    (work / 'caller.S').write_text(
+                        '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
+                        '.hidden domain_body\n.hidden domain_scalar\n.type domain_caller,@function\n'
+                        'domain_caller: call domain_body\n' + read + '\nret\n.size domain_caller,.-domain_caller\n'
+                        '.section .note.GNU-stack,"",@progbits\n')
+                    for source, target in [('provider.S', 'provider.o'), ('caller.S', 'caller.o'),
+                                           ('providers.c', 'providers.o')]:
+                        subprocess.run([compiler, '-fPIC', '-c', str(work / source), '-o', str(work / target)],
+                                       check=True, capture_output=True)
+                    archive = static / 'usr/lib/libc.a'
+                    subprocess.run(['ar', 'rcs', str(archive), str(work / 'caller.o'), str(work / 'provider.o')],
+                                   check=True, capture_output=True)
+                    occurrences = []
+                    for member in ('caller.o', 'provider.o'):
+                        symbols = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / member))
+                        sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / member))['sections']
+                        for row in symbols[0]['rows']:
+                            if row['name'] not in names:
+                                continue
+                            role = 'import' if row['section_index'] == 'UND' else 'definition'
+                            occurrence = {'index': len(occurrences), 'artifact_key': 'candidate-static',
+                                          'member_name': member, 'member_occurrence': 0, 'role': role, 'row': row}
+                            if role == 'definition':
+                                occurrence['definition_section'] = next(
+                                    section for section in sections if str(section['index']) == row['section_index'])
+                            occurrences.append(occurrence)
+                    accounting = {'occurrences': occurrences, 'identities': [
+                        {'identity': selection.identity(name), 'selection': {'disposition': 'unresolved'},
+                         'unresolved': []} for name in names]}
+                    for mode, flag in [('static', '-static'), ('static-pie', '-pie')]:
+                        result = subprocess.run([linker, flag, '--no-relax', '-e', 'main', '--trace',
+                                                 '-Map=' + str(work / (mode + '.receipt.map')),
+                                                 str(work / 'providers.o'), str(archive), '-o', str(work / mode)],
+                                                check=True, capture_output=True)
+                        (work / (mode + '.receipt.trace')).write_bytes(result.stdout)
+                    arguments = dict(mapped_archive=str(archive), forcing_owner=str(work / 'providers.o'),
+                                     temporary_parent=private)
+                    proof = links.project_references(work, static, accounting, **arguments)
+                    admitted = {row['identity']['name']: row for row in proof['identities']}
+                    if read in {'lock cmpxchg %rcx,domain_scalar(%rip)', 'lock cmpxchg %rdx,domain_scalar(%rip)',
+                                'lock cmpxchg %r9,domain_scalar(%rip)'}:
+                        self.assertEqual(set(admitted), set(names), proof['failures'])
+                        self.assertEqual(proof['failures'], [])
+                        for mode in links.MODES:
+                            self.assertEqual({site['branch_kind'] for row in proof['identities']
+                                for importer in row['links'][mode]['importers'] for site in importer['resolved_calls']},
+                                {'call', 'locked-cmpxchg'})
+                            self.assertFalse(any(importer['discarded_calls'] for row in proof['identities']
+                                                 for importer in row['links'][mode]['importers']))
+                        definition = next(row for row in occurrences
+                                          if row['role'] == 'definition' and row['row']['name'] == 'domain_scalar')
+                        caller = (work / 'caller.o').read_bytes()
+                        references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                                              'domain_scalar', image=caller)
+                        sections = links.calls._ordinary_source_sections(caller, {row['section'] for row in references})
+                        source_object = (work / 'provider.o').read_bytes()
+                        for mode, elf_type in [('static', 2), ('static-pie', 3)]:
+                            image = (work / mode).read_bytes()
+                            address = admitted['domain_scalar']['links'][mode]['provider_address']
+                            reference_arguments = dict(archive_member=str(archive) + '(caller.o)', source_calls=references,
+                                map_text=(work / (mode + '.receipt.map')).read_text(),
+                                relocation_text=links.read_tool('readelf', '-rW', work / mode), provider_address=address,
+                                elf_type=elf_type, name='domain_scalar', source_sections=sections,
+                                provider_object=(source_object, definition))
+                            bound = links.final_member_references(image, **reference_arguments)
+                            self.assertEqual(bound['resolved_calls'][0]['operand_size'], 8)
+                            wrong = copy.deepcopy(definition)
+                            wrong['row']['size_bytes'] = 4
+                            for altered, message in [({'provider_object': None}, 'lacks its source object'),
+                                    ({'provider_object': (source_object, wrong)}, 'source symbol differs'),
+                                    ({'provider_address': address + 1}, 'foreign provider')]:
+                                with self.assertRaisesRegex(ValueError, message):
+                                    links.final_member_references(image, **{**reference_arguments, **altered})
+                            original = links.static_authority.elf_bytes(source_object)
+                            source_symbol = original.symbol('domain_scalar', dynamic=False)
+                            section_table, section_width = struct.unpack_from('<Q', source_object, 40)[0], struct.unpack_from('<H', source_object, 58)[0]
+                            source_header = section_table + section_width * source_symbol['section']
+                            for field, value, encoding in [(4, 1, '<I'), (8, 2, '<Q'), (32, 7, '<Q')]:
+                                changed_source = bytearray(source_object)
+                                struct.pack_into(encoding, changed_source, source_header + field, value)
+                                with self.assertRaisesRegex(ValueError, 'source extent differs'):
+                                    links.final_member_references(image, **{**reference_arguments,
+                                        'provider_object': (bytes(changed_source), definition)})
+                            elf = links.static_authority.elf_bytes(image)
+                            symbol = elf.symbol('domain_scalar', dynamic=False)
+                            output = elf.sections[symbol['section']]
+                            self.assertEqual(output[1], 8)
+                            program_table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+                            load_location, load = next((program_table + width * index, program)
+                                for index in range(count)
+                                for program in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
+                                if program[0] == 1 and program[3] <= address < program[3] + program[6])
+                            self.assertGreater(address + 8, load[3] + load[5])
+                            for flags, memory_size in [(4, load[6]), (7, load[6]), (6, address + 7 - load[3])]:
+                                changed = bytearray(image)
+                                struct.pack_into('<I', changed, load_location + 4, flags)
+                                struct.pack_into('<Q', changed, load_location + 40, memory_size)
+                                with self.assertRaisesRegex(ValueError, 'writable load extent'):
+                                    links.final_member_references(bytes(changed), **reference_arguments)
+                            code = bound['resolved_calls'][0]['call_address']
+                            executable = next(segment for index in range(count)
+                                for segment in [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)]
+                                if segment[0] == 1 and segment[3] <= code < segment[3] + segment[5])
+                            changed = bytearray(image)
+                            changed[executable[2] + code - executable[3]] ^= 1
+                            with self.assertRaisesRegex(ValueError, 'opcode differs'):
+                                links.final_member_references(bytes(changed), **reference_arguments)
+                    else:
+                        self.assertEqual(set(admitted), {'domain_body', 'domain_caller'})
+                        self.assertEqual([row['identity']['name'] for row in proof['failures']], ['domain_scalar'])
+                        self.assertTrue(proof['failures'][0]['reason'])
+                    wrong_owner = links.project_references(work, static, accounting,
+                        **{**arguments, 'mapped_archive': str(work / 'unselected.a')})
+                    self.assertEqual(wrong_owner['identities'], [])
+                    self.assertEqual({row['identity']['name'] for row in wrong_owner['failures']}, set(names))
+                    self.assertEqual(list(private.iterdir()), [])
+
     def test_real_archive_references_keep_all_register_loads_address_expressions_and_conditional_branches(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('clang') or shutil.which('gcc'), shutil.which('ld.lld')

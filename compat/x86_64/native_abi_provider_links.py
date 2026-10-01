@@ -282,6 +282,15 @@ def scalar_read_prefix(source: bytes, offset: int) -> bytes:
     return b''
 
 
+def locked_cmpxchg_prefix(source: bytes, offset: int) -> bytes:
+    """Decode only a locked, 64-bit CMPXCHG with a RIP-relative operand."""
+    prefix = source[offset - 5:offset] if offset >= 5 else b''
+    if (len(prefix) == 5 and prefix[0] == 0xf0 and prefix[1] in {0x48, 0x4c}
+            and prefix[2:4] == b'\x0f\xb1' and prefix[4] & 0xc7 == 0x05):
+        return prefix
+    return b''
+
+
 def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict[str, Any]]:
     """Retain the complete executable relocation roster for a symbol import.
 
@@ -345,7 +354,8 @@ def symbol_only_import(tables: list[dict[str, Any]], imported: Mapping[str, Any]
 def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
                             map_text: str, relocation_text: str, provider_address: int,
                             elf_type: int, name: str, source_sections: Mapping[str, bytes],
-                            provider_data: bytes | None = None) -> dict[str, Any]:
+                            provider_data: bytes | None = None,
+                            provider_object: tuple[bytes, Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """Bind exact source instruction operands to their final provider address.
 
     Register address loads and GOT comparisons prove address binding only.
@@ -355,6 +365,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Scalar reads require the exact unrelocated bytes and full extent of the
     selected read-only OBJECT; the caller authenticates its source definition.
     They prove initial operand bytes, not execution or later memory contents.
+    Locked eight-byte CMPXCHG operands bind an owned NOBITS object and its
+    writable memory extent, without asserting execution or subsequent values.
     """
     resolved, discarded = [], []
     for reference in source_calls:
@@ -369,6 +381,64 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         require(len(parts) >= 5 and type(offset) is int and offset >= 1
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
                 f'provider {name} reference leaves selected section')
+        atomic = locked_cmpxchg_prefix(source, offset) if kind == 'R_X86_64_PC32' else b''
+        if atomic:
+            require(provider_object is not None and reference.get('addend', -4) == -4,
+                    f'provider {name} locked operand lacks its source object')
+            source_image, definition = provider_object
+            original = static_authority.elf_bytes(source_image)
+            symbol = original.symbol(name, dynamic=False)
+            row, observed = definition['row'], definition['definition_section']
+            require(original.elf_type == 1 and symbol is not None
+                    and symbol['type'] == row['type'] == 'OBJECT'
+                    and symbol['binding'] == row['binding'] == 'GLOBAL'
+                    and symbol['visibility'] == row['visibility'] == 'HIDDEN'
+                    and symbol['section'] == int(row['section_index']) == observed['index']
+                    and symbol['value'] == int(row['value'], 16)
+                    and symbol['size'] == row['size_bytes'] == 8
+                    and 0 < symbol['section'] < len(original.sections),
+                    f'provider {name} locked source symbol differs')
+            header = original.sections[symbol['section']]
+            require(header[1] == 8 and observed['type'] == 'NOBITS'
+                    and header[2] == 3 and observed['flags'] == 'WA'
+                    and header[3] == int(observed['address'], 16)
+                    and header[4] == int(observed['offset'], 16)
+                    and header[5] == int(observed['size'], 16)
+                    and header[6] == observed['link'] and header[7] == observed['info']
+                    and header[8] == observed['alignment'] and header[8] >= 8
+                    and header[9] == int(observed['entry_size'], 16) == 0
+                    and symbol['value'] % 8 == 0 and symbol['value'] + 8 <= header[5]
+                    and static_authority.section_name(original, header) == observed['name'],
+                    f'provider {name} locked source extent differs')
+            call_address = int(parts[0], 16) + offset - len(atomic)
+            opcode = calls._public_weak_virtual_bytes(image, call_address, len(atomic) + 4,
+                                                     elf_type, executable=True)
+            require(opcode[:len(atomic)] == atomic, f'provider {name} reference opcode differs')
+            target = call_address + len(atomic) + 4 + struct.unpack_from('<i', opcode, len(atomic))[0]
+            require(target == provider_address and target % 8 == 0,
+                    f'provider {name} locked operand resolves to a foreign provider')
+            final = static_authority.elf_bytes(image)
+            final_symbol = final.symbol(name, dynamic=False)
+            require(final_symbol is not None and final_symbol['type'] == 'OBJECT'
+                    and final_symbol['binding'] == 'LOCAL' and final_symbol['visibility'] == 'HIDDEN'
+                    and final_symbol['value'] == target and final_symbol['size'] == 8
+                    and 0 < final_symbol['section'] < len(final.sections),
+                    f'provider {name} locked final symbol differs')
+            output = final.sections[final_symbol['section']]
+            require(output[1] == 8 and output[2] == 3
+                    and output[3] <= target and target + 8 <= output[3] + output[5],
+                    f'provider {name} locked final extent differs')
+            # NOBITS has memory extent but no source or final file payload.
+            # The operand must lie in one writable, non-executable load image.
+            table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+            require(sum(program[0] == 1 and program[1] == 6
+                        and program[3] <= target and target + 8 <= program[3] + program[6]
+                        for program in (struct.unpack_from('<IIQQQQQQ', image, table + width * index)
+                                        for index in range(count))) == 1,
+                    f'provider {name} locked operand lacks a writable load extent')
+            resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
+                             'target_address': target, 'operand_size': 8, 'branch_kind': 'locked-cmpxchg'})
+            continue
         scalar = scalar_read_prefix(source, offset) if kind == 'R_X86_64_PC32' else b''
         if scalar:
             # S + A - P encodes a displacement relative to the relocation word;
@@ -679,6 +749,9 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 source_imports.append((row, source_calls, calls._ordinary_source_sections(
                     image, {item['section'] for item in source_calls})))
             provider_data = None
+            atomic_object = any(locked_cmpxchg_prefix(sections[reference['section']], reference['offset'])
+                                for _, references, sections in source_imports for reference in references
+                                if reference['kind'] == 'R_X86_64_PC32')
             if any('addend' in reference for _, references, _ in source_imports for reference in references):
                 section = definition['definition_section']
                 require(definition['row']['type'] == 'OBJECT' and section['type'] == 'PROGBITS'
@@ -695,7 +768,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 selected = mapped_archive + '(' + definition['member_name'] + ')'
                 source_image = None
                 if (definition['row']['type'] in {'FUNC', 'OBJECT'}
-                        and not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')')):
+                        and (atomic_object or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
                     member = definition['member_name']
                     require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
                     if member not in definition_images:
@@ -712,7 +785,8 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                     map_text, relocation_text = _call_transcripts(view, member, source_calls)
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
-                        provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data)
+                        provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data,
+                        provider_object=(source_image, definition) if atomic_object else None)
                     require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':
