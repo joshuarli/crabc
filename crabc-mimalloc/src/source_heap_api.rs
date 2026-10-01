@@ -1072,6 +1072,7 @@ mod heap_membership_tests {
                     let theap = heap_theap(heap);
                     let selected = NonNull::new(theap.cast::<Theap>()).unwrap();
                     theap_guarded_set_sample_rate(theap, 2, 2);
+                    theap_guarded_set_size_bound(theap, 81, 81);
                     for alignment in [crate::config::PAGE_MAX_OVERALLOC_ALIGN, 1usize << (usize::BITS - 1)] {
                         assert!(guarded_sample_source_request(selected, 81, Some((alignment, 0))).is_none());
                     }
