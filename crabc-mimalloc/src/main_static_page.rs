@@ -4214,6 +4214,78 @@ mod tests {
         .expect("the persistent initial OS-list regression remains current-thread local");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn surviving_initial_owner_fork_query_preserves_captured_generic_issuer_and_live_client() {
+        thread::spawn(|| {
+            let subprocess = MainSubprocess::test_static_owner();
+            let owner = process_main_with_first_arena_options(
+                memory_config(), subprocess, 128 * 1024 * 1024, 2, 1,
+            );
+            let binding = owner.ready().unwrap().process_backing().unwrap();
+            let session = owner.begin_process_lifetime_page_session().unwrap();
+            let theap = session.local_field_theap_pointer();
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, binding, ProcessSharedArenaStorage::test_static_owner(),
+            ).unwrap();
+            let client = allocator.allocate_current_initial_thread_local(37, false).unwrap();
+            // SAFETY: this dedicated source owner exclusively holds the
+            // client and its local counter fields; no callback is running.
+            unsafe {
+                core::ptr::write_bytes(client.as_ptr(), 0x5a, 37);
+                crate::types::Theap::test_reset_generic_allocation_administration_at(theap);
+                for _ in 0..999 {
+                    assert!(crate::types::Theap::begin_generic_allocation_administration_at(theap).is_none());
+                }
+            }
+            let phase = allocator.begin_deferred_free_current_initial_thread_local(
+                crate::config::MAX_ALLOC_SIZE + 1, false,
+            ).unwrap();
+            let MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                source, request, continuation,
+            } = phase else { panic!("the source threshold captures the original issuer") };
+            let engine_address = match &allocator.state {
+                MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                    core::ptr::addr_of!(active.engine).addr()
+                }
+                _ => panic!("the captured issuer remains active"),
+            };
+            // SAFETY: only this fixture accesses these source-local fields.
+            let counters = unsafe { theap.as_ref() }.test_generic_administration_image();
+            let page = unsafe { binding.page_map().lookup_live_allocation(client) }
+                .unwrap().unwrap().page();
+            assert!(allocator.permits_surviving_initial_owner_fork());
+            assert_eq!(unsafe { theap.as_ref() }.test_generic_administration_image(), counters);
+            assert_eq!(unsafe { binding.page_map().lookup_live_allocation(client) }
+                .unwrap().unwrap().page(), page);
+            for offset in 0..37 {
+                assert_eq!(unsafe { *client.as_ptr().add(offset) }, 0x5a);
+            }
+            // Removing the last client must not make the scalar fork query
+            // finish and replace the still-captured source engine either.
+            unsafe { allocator.free_current_initial_thread_local(client) }.unwrap();
+            assert!(allocator.permits_surviving_initial_owner_fork());
+            assert_eq!(unsafe { theap.as_ref() }.test_generic_administration_image(), counters);
+            assert_eq!(match &allocator.state {
+                MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                    core::ptr::addr_of!(active.engine).addr()
+                }
+                _ => panic!("the empty engine still owns the captured issuer"),
+            }, engine_address);
+            let frequency = binding.process().policy().generic_collect_frequency();
+            // SAFETY: this exact owner and its process remain retained from
+            // the counter prefix through both queries and option capture.
+            let resumed = unsafe {
+                allocator.resume_generic_allocation_frequency_current_initial_thread_local(
+                    source, request, frequency, continuation,
+                )
+            }.expect("the original issuer can resume after fork readiness observation");
+            assert!(matches!(resumed, MainStaticDeferredFreeAllocationPhase::Collect { .. }));
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        }).join().unwrap();
+    }
+
     /// Pinned `src/page.c:mi_page_to_full` abandons an exhausted ordinary
     /// medium page; it does not place it in `BIN_FULL`. Ticket zero has the
     /// same ordinary Theap option image as a selected initial native owner,
