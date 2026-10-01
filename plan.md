@@ -117,8 +117,12 @@ only its exact source, configuration, image, products, and execution context.
   M7 abort-on-failure passes original C/native production, compiler/provider
   authentication and owning read-only replay at its exact source. Public and
   child visitation pass the four implemented profiles and owning replay.
-  Secure shuffle and free-list primitives pass source controls; complete secure
-  and guarded profiles, debug applicability and physical options remain open.
+  Sixteen initial-worker statistics cases pass their exact-source producer and
+  owning read-only replay, including address-dependent OS-aligned accounting.
+  Secure shuffle, selected-Theap randomness, guarded error publication and local
+  child callback-owner primitives are integrated with focused native evidence;
+  complete secure and guarded profiles, debug applicability and physical
+  options remain open.
   ISA correctness passes separately from deferred throughput. Complete M2/M3/M4
   and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
