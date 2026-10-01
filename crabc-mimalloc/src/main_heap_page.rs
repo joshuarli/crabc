@@ -2900,6 +2900,39 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
 }
 
 impl MainHeapThreadOwnerLocalAllocator<'_> {
+    /// Compares the explicit selected Theap with this retained session,
+    /// without consulting the thread's default allocator cache.
+    #[inline]
+    pub(crate) fn owns_theap(&self, selected: NonNull<crate::types::Theap>) -> bool {
+        self.engine.owns_theap(selected)
+    }
+
+    /// Returns a value-only canonical phase; protection and warnings run
+    /// after this owner-local engine projection has ended.
+    #[inline]
+    pub(crate) fn begin_deferred_free_guarded_canonical(
+        &mut self, source_size: usize,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine.begin_deferred_free_guarded_canonical(source_size)
+    }
+
+    /// Separates the source aligned branch decision from its plain sampler.
+    /// The returned token contains no engine or metadata references.
+    #[inline]
+    pub(crate) fn begin_deferred_free_aligned_admission(
+        &mut self, request: usize, alignment: usize, offset: usize, zero: bool,
+    ) -> crate::single_thread::DeferredFreeAlignedAdmission {
+        self.engine.begin_deferred_free_aligned_admission(request, alignment, offset, zero)
+    }
+
+    /// Resumes the exact plain branch after sampling with the engine parked.
+    #[inline]
+    pub(crate) fn begin_deferred_free_aligned_plain(
+        &mut self, plain: crate::single_thread::DeferredFreeAlignedPlainAllocation,
+    ) -> crate::single_thread::DeferredFreeAllocationPhase {
+        self.engine.begin_deferred_free_aligned_plain(plain)
+    }
+
     /// See [`crate::single_thread::PageAllocatorEngine::merge_theap_statistics_into_heap`].
     #[inline]
     pub(crate) fn merge_theap_statistics_into_heap(&mut self) -> bool {
