@@ -3007,7 +3007,7 @@ fn first_ordinary_fresh_page_size(config: MemoryConfig, request: usize) -> Optio
         PageKind::Small | PageKind::Medium | PageKind::Large => {
             page::regular_page_slice_count(kind)?
         }
-        PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+        PageKind::Singleton => page::singleton_page_slice_count(block_size, config.page_size())?,
     };
     slice_count.checked_mul(ARENA_SLICE_SIZE)
 }
@@ -4532,7 +4532,7 @@ mod tests {
         let singleton_block = config.good_alloc_size(singleton_request);
         assert_eq!(
             first_ordinary_fresh_page_size(config, singleton_request),
-            crate::page::singleton_page_slice_count(singleton_block)
+            crate::page::singleton_page_slice_count(singleton_block, config.page_size())
                 .and_then(|slices| slices.checked_mul(crate::config::ARENA_SLICE_SIZE)),
             "the huge-bin first miss preserves its page-rounded singleton span"
         );

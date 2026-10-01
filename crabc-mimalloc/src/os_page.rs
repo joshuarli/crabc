@@ -175,7 +175,7 @@ impl OsAlignedPageLayout {
         }
         let singleton = block_alignment > PAGE_MAX_OVERALLOC_ALIGN || block_size > LARGE_MAX_OBJ_SIZE;
         let slice_count = if singleton {
-            page::singleton_page_slice_count(block_size)?
+            page::singleton_page_slice_count(block_size, config.page_size())?
         } else {
             page::regular_page_slice_count(crate::size_class::page_kind_for_block_size(block_size)?)?
         };
@@ -2903,6 +2903,31 @@ mod tests {
             }
         }
         assert_eq!(ordinal, 70);
+    }
+
+    #[test]
+    fn secure_singleton_extent_uses_its_actual_os_page_size() {
+        #[cfg(target_arch = "x86_64")]
+        let page_sizes = [4096];
+        #[cfg(target_arch = "aarch64")]
+        let page_sizes = [4096, 16384, 65536];
+        for page_size in page_sizes {
+            for block_size in [(ARENA_SLICE_SIZE - page_size).max(1), ARENA_SLICE_SIZE - page_size + 1,
+                               ARENA_SLICE_SIZE, ARENA_SLICE_SIZE + 1] {
+                let layout = OsAlignedPageLayout::new(config(page_size), block_size, 128 * KIB).unwrap();
+                let expected_slices = if crate::config::SECURE_LEVEL >= 2 {
+                    crate::invariants::slice_count_of_size(
+                        crate::invariants::align_up(block_size, page_size).unwrap() + page_size,
+                    ).unwrap()
+                } else {
+                    crate::invariants::slice_count_of_size(block_size).unwrap()
+                };
+                assert_eq!(layout.slice_count(), expected_slices,
+                    "block={block_size}, OS page={page_size}");
+                assert_eq!(layout.allocation_size(), expected_slices * ARENA_SLICE_SIZE);
+                assert!(layout.page_map_size() <= layout.allocation_size());
+            }
+        }
     }
 
     fn config(page_size: usize) -> MemoryConfig {

@@ -2649,7 +2649,7 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_s
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
     let block_size = page_ref.block_size();
-    let Some(expected_slice_count) = page::singleton_page_slice_count(block_size) else {
+    let Some(expected_slice_count) = page::singleton_page_slice_count(block_size, page_map.memory_config().page_size()) else {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
     let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
@@ -16071,7 +16071,7 @@ impl<'attachment, 'main, 'arena, 'map>
                     ));
                 };
                 let expected_slices = match kind {
-                    PageKind::Singleton => page::singleton_page_slice_count(block_size),
+                    PageKind::Singleton => page::singleton_page_slice_count(block_size, self.page_map.memory_config().page_size()),
                     PageKind::Medium | PageKind::Large => page::regular_page_slice_count(kind),
                     PageKind::Small => None,
                 };
@@ -19415,7 +19415,7 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
         let block_size = page_ref.block_size();
-        let Some(expected_slice_count) = page::singleton_page_slice_count(block_size) else {
+        let Some(expected_slice_count) = page::singleton_page_slice_count(block_size, page_map.memory_config().page_size()) else {
             return false;
         };
         let Some(size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else {
@@ -24293,7 +24293,7 @@ impl<'attach, 'heap, 'arena, 'map>
                     ));
                 };
                 let expected_slices = match kind {
-                    PageKind::Singleton => page::singleton_page_slice_count(block_size),
+                    PageKind::Singleton => page::singleton_page_slice_count(block_size, self.engine.page_map.memory_config().page_size()),
                     PageKind::Medium | PageKind::Large => page::regular_page_slice_count(kind),
                     PageKind::Small => None,
                 };
@@ -32761,7 +32761,7 @@ impl<'attach, 'heap, 'arena, 'map>
             ));
         };
         let expected_slices = match kind {
-            PageKind::Singleton => page::singleton_page_slice_count(block_size),
+            PageKind::Singleton => page::singleton_page_slice_count(block_size, self.drain.engine.page_map.memory_config().page_size()),
             PageKind::Medium | PageKind::Large => page::regular_page_slice_count(kind),
             PageKind::Small => None,
         };
@@ -34483,7 +34483,7 @@ impl<'heap, 'arena, 'map>
         }
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
-        let expected_slice_count = page::singleton_page_slice_count(self.block_size)?;
+        let expected_slice_count = page::singleton_page_slice_count(self.block_size, self.page_map.memory_config().page_size())?;
         if slice_count != expected_slice_count {
             return None;
         }
@@ -41735,7 +41735,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             PageKind::Small | PageKind::Medium | PageKind::Large => {
                 page::regular_page_slice_count(kind)?
             }
-            PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+            PageKind::Singleton => page::singleton_page_slice_count(block_size, self.page_map.memory_config().page_size())?,
         };
         let allocation_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
         let process_commit = self.arena.process().map(|process| {
@@ -43195,7 +43195,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             PageKind::Small | PageKind::Medium | PageKind::Large => {
                 page::regular_page_slice_count(kind)?
             }
-            PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+            PageKind::Singleton => page::singleton_page_slice_count(block_size, page_map.memory_config().page_size())?,
         };
         if slice_count != expected_slice_count {
             return None;
@@ -43747,7 +43747,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             PageKind::Small | PageKind::Medium | PageKind::Large => {
                 page::regular_page_slice_count(kind)?
             }
-            PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
+            PageKind::Singleton => page::singleton_page_slice_count(block_size, self.page_map.memory_config().page_size())?,
         };
         if slice_count != expected_slice_count {
             return None;
@@ -44915,7 +44915,7 @@ mod tests {
         let arena = pair
             .arena()
             .expect("the W03 arena singleton has the paired arena view");
-        let slice_count = page::singleton_page_slice_count(block_size)
+        let slice_count = page::singleton_page_slice_count(block_size, config.page_size())
             .expect("the W03 singleton has one source slice span");
         let span_size = slice_count
             .checked_mul(ARENA_SLICE_SIZE)
@@ -46088,7 +46088,7 @@ mod tests {
                     PageKind::Small | PageKind::Medium | PageKind::Large => {
                         page::regular_page_slice_count(expected_kind).unwrap()
                     }
-                    PageKind::Singleton => page::singleton_page_slice_count(expected_usable).unwrap(),
+                    PageKind::Singleton => page::singleton_page_slice_count(expected_usable, allocator.page_map.memory_config().page_size()).unwrap(),
                 };
                 assert_eq!(unsafe { allocator.usable_size(block) }, Some(expected_usable));
                 let (start, size, block_size) = mapped_span(allocator, block, expected_kind);

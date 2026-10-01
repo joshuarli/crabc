@@ -4114,6 +4114,55 @@ mod tests {
     }
 
     #[test]
+    fn secure_reserved_arena_metadata_leaves_only_the_source_tail_inaccessible() {
+        let fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let (mapping, memory) = mapped(process, MapAccess::Reserved);
+        let base = mapping.base().unwrap();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let protection = fault.capture_protection_ranges();
+        // SAFETY: this isolated owner retains the complete reservation and
+        // actual process pair; no reader or client is published yet.
+        let managed = unsafe { backing.install_owned_os_mapping(
+            process, config(), ARENA_MIN_SIZE, mapping, memory, -1, false,
+        ) }.unwrap_or_else(|failure| panic!("metadata installation: {:?}", failure.error()));
+        let (attempts, count) = protection.attempts().unwrap();
+        let observed_commit = attempts[0];
+        drop(protection);
+        let after = process.subprocess().vm_statistics().snapshot();
+        let info_size = crate::arena::ArenaInfoLayout::for_slice_count(
+            super::super::BCHUNK_BITS, config().page_size().bytes(),
+        ).unwrap().info_size();
+        let guard_size = if crate::config::SECURE_LEVEL > 0 {
+            config().page_size().bytes()
+        } else { 0 };
+        let tail = unsafe { base.add(info_size - 1) };
+        let child = crabc_core::process::fork_raw().unwrap();
+        if child == 0 {
+            // SAFETY: the fork inherits this live reservation. The one
+            // volatile byte store deliberately tests its kernel protection;
+            // the child performs no allocator or non-async-safe operation.
+            unsafe { tail.write_volatile(0x5a) };
+            crabc_core::process::exit_immediately(0);
+        }
+        let mut status = 0;
+        // SAFETY: status is writable and this parent waits for its sole child.
+        assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }.unwrap(), child);
+        let signal = status & 0x7f;
+        std::println!("secure.info.reserved={}:{}:{}:{}", info_size,
+            observed_commit.1, after.committed_current - before.committed_current, signal);
+        assert!(managed.is_complete());
+        // SAFETY: the child is joined and no allocation or metadata view is
+        // live, so this owner may consume its sole mapping release right.
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
+        assert_eq!(count, 1);
+        assert_eq!(observed_commit, (base.addr(), info_size - guard_size, 3));
+        assert_eq!(after.committed_current - before.committed_current, (info_size - guard_size) as i64);
+        assert_eq!(signal, if guard_size == 0 { 0 } else { 11 });
+    }
+
+    #[test]
     fn failed_owned_metadata_commit_returns_the_unpublished_allocation() {
         let fault = fault::install(fault::Plan::disabled());
         let backing = backing();

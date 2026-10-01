@@ -24,6 +24,7 @@ use crate::config::{
 };
 use crate::invariants;
 use crate::types::PageKind;
+use crate::os::PageSize;
 
 const PAGE_BLOCK_START_MAX_OFFSET: usize = 8 * usize::BITS as usize;
 const PAGE_MAX_EXTEND_SIZE: usize = 8 * 1024;
@@ -45,18 +46,30 @@ pub(crate) const fn regular_page_slice_count(kind: PageKind) -> Option<usize> {
     invariants::slice_count_of_size(page_size)
 }
 
-/// Returns the allocation span for a singleton page in the default
-/// `MI_SECURE < 2`, aligned-metadata profile.
+/// Returns the complete aligned-metadata singleton allocation span.
 ///
-/// This is `mi_slice_count_of_size(info_size + block_size)` with the
-/// source-selected `info_size == 0`. `None` represents a zero block size or
-/// rounding overflow, both excluded by the C allocation path's preconditions.
+/// Secure level two aligns the client span to the actual OS guard-page size
+/// and reserves one extra OS page before rounding to arena slices. This tail
+/// remains accessible at secure levels one and two; page protection belongs
+/// to the higher source security levels. `None` rejects zero or overflow.
 #[inline]
-pub(crate) const fn singleton_page_slice_count(block_size: usize) -> Option<usize> {
+pub(crate) const fn singleton_page_slice_count(block_size: usize, os_page_size: PageSize) -> Option<usize> {
     if block_size == 0 {
         return None;
     }
-    invariants::slice_count_of_size(block_size)
+    let allocation_size = if crate::config::SECURE_LEVEL >= 2 {
+        let aligned = match invariants::align_up(block_size, os_page_size.bytes()) {
+            Some(aligned) => aligned,
+            None => return None,
+        };
+        match aligned.checked_add(os_page_size.bytes()) {
+            Some(size) => size,
+            None => return None,
+        }
+    } else {
+        block_size
+    };
+    invariants::slice_count_of_size(allocation_size)
 }
 
 /// Returns `block_start`, the usable-page start relative to the page's first
@@ -409,6 +422,7 @@ mod tests {
         SMALL_PAGE_SIZE, WORD_SIZE,
     };
     use crate::types::PageKind;
+use crate::os::PageSize;
 
     #[test]
     fn regular_page_slice_counts_follow_each_source_page_size_transition() {
@@ -432,13 +446,24 @@ mod tests {
     }
 
     #[test]
-    fn singleton_slice_rounding_changes_only_at_arena_slice_boundaries() {
-        assert_eq!(singleton_page_slice_count(0), None);
-        assert_eq!(singleton_page_slice_count(1), Some(1));
-        assert_eq!(singleton_page_slice_count(ARENA_SLICE_SIZE - 1), Some(1));
-        assert_eq!(singleton_page_slice_count(ARENA_SLICE_SIZE), Some(1));
-        assert_eq!(singleton_page_slice_count(ARENA_SLICE_SIZE + 1), Some(2));
-        assert_eq!(singleton_page_slice_count(usize::MAX), None);
+    fn singleton_slice_rounding_includes_only_the_selected_source_guard_extent() {
+        #[cfg(target_arch = "x86_64")]
+        let page_sizes = [4096];
+        #[cfg(target_arch = "aarch64")]
+        let page_sizes = [4096, 16384, 65536];
+        for page_bytes in page_sizes {
+            let page_size = PageSize::new(page_bytes).unwrap();
+            assert_eq!(singleton_page_slice_count(0, page_size), None);
+            assert_eq!(singleton_page_slice_count(usize::MAX, page_size), None);
+            for block in [1, (ARENA_SLICE_SIZE - page_bytes).max(1), ARENA_SLICE_SIZE - page_bytes + 1,
+                          ARENA_SLICE_SIZE, ARENA_SLICE_SIZE + 1] {
+                let span = if crate::config::SECURE_LEVEL >= 2 {
+                    invariants::align_up(block, page_bytes).unwrap() + page_bytes
+                } else { block };
+                assert_eq!(singleton_page_slice_count(block, page_size),
+                    invariants::slice_count_of_size(span));
+            }
+        }
     }
 
     #[test]

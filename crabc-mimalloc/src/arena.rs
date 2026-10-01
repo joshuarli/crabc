@@ -963,7 +963,8 @@ impl ArenaInfoLayout {
         let bitmaps_end = bitmap_base
             .checked_add(free_bitmap.byte_size())?
             .checked_add(ordinary_bytes)?;
-        let info_size = invariants::align_up(bitmaps_end, page_size)?;
+        let guard_size = if crate::config::SECURE_LEVEL > 0 { page_size } else { 0 };
+        let info_size = invariants::align_up(bitmaps_end, page_size)?.checked_add(guard_size)?;
         let info_slices = invariants::slice_count_of_size(info_size)?;
         Some(Self {
             slice_count,
@@ -981,6 +982,13 @@ impl ArenaInfoLayout {
     pub(crate) const fn slice_count(self) -> usize { self.slice_count }
     #[inline]
     pub(crate) const fn page_size(self) -> usize { self.page_size }
+    /// The source OS guard is one base page whenever security is enabled.
+    /// Its arena-info reservation is independent of whether backing is pinned.
+    #[inline]
+    pub(crate) const fn guard_size(self) -> usize {
+        if crate::config::SECURE_LEVEL > 0 { self.page_size } else { 0 }
+    }
+
     #[inline]
     pub(crate) const fn arena_offset(self) -> usize { self.arena_offset }
     #[inline]
@@ -2081,15 +2089,20 @@ where
         let Some(hook) = metadata_commit_hook else {
             return Err(ManageArenaError::CommitRequired);
         };
+        // Pinned backing commits the whole metadata span; ordinary reserved
+        // backing keeps its final OS guard page inaccessible from birth.
+        let commit_size = layout.info_size() - if memory.is_pinned() { 0 } else { layout.guard_size() };
         let committed = unsafe {
-            (hook.function)(true, start, layout.info_size(), null_mut(), hook.argument)
+            (hook.function)(true, start, commit_size, null_mut(), hook.argument)
         };
         if !committed {
             return Err(ManageArenaError::CommitFailed);
         }
     }
     if !memory.initially_zero() {
-        unsafe { core::ptr::write_bytes(start, 0, layout.info_size()) };
+        // Even pinned backing excludes the guard from metadata zeroing.
+        // No typed header or bitmap extends into that final OS page.
+        unsafe { core::ptr::write_bytes(start, 0, layout.info_size() - layout.guard_size()) };
     }
 
     // Pinned `mi_arena_initialize` invokes `_mi_os_numa_node()` only after
@@ -3283,6 +3296,13 @@ pub(crate) mod tests {
         assert_eq!(info.bitmaps_end(), 537_984);
         assert_eq!(info.info_slices(), 9);
         assert_eq!(info.info_size(), 9 * ARENA_SLICE_SIZE);
+    }
+
+    #[test]
+    fn secure_info_layout_reserves_the_os_guard_at_the_bitmap_slice_boundary() {
+        let layout = ArenaInfoLayout::for_slice_count(13 * BCHUNK_BITS, 4096).unwrap();
+        assert_eq!(layout.info_slices(), if crate::config::SECURE_LEVEL > 0 { 10 } else { 9 });
+        assert!(layout.bitmaps_end() <= layout.info_size());
     }
 
     #[test]
