@@ -78,6 +78,7 @@ def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False) 
 
 
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2")
 RUNNER = "allocator-public-theap"
 DIRECT_TEST = "public_theap_selection_allocation_collection_and_lifetime"
 UNIT_TESTS = (
@@ -186,7 +187,7 @@ def run_profile(profile, guarded_only, cases):
         library = m4.build_adapter_library(output, profile)
         _, logs = command(output, "rust-link", [*common, str(retained_driver), str(library),
                           "-pthread", "-o", str(drivers["rust"])], source)
-        cases.append((f"{profile}-rust-link", 0, logs))
+        cases.append((f"{profile}-rust-link", 0, [*logs, output / "adapter-build.json"]))
         count = observe(drivers, output, profile, guarded_only, cases)
     products = {f"{profile}-{side}": path for side, path in drivers.items()}
     if not guarded_only:
@@ -201,7 +202,8 @@ def run_profile(profile, guarded_only, cases):
 
 
 def run_cohort(profiles, guarded_only=False):
-    if any(profile not in PROFILES for profile in profiles):
+    if (not profiles or len(set(profiles)) != len(profiles)
+            or any(profile not in AVAILABLE_PROFILES for profile in profiles)):
         raise harness.HarnessError("unsupported public Theap profile")
     seal = receipts.source_seal(harness.ROOT)
     cases, products, total = [], {}, 0
@@ -234,14 +236,18 @@ def run_differential() -> int:
 def cli(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     selection = parser.add_mutually_exclusive_group()
-    selection.add_argument("--profile", choices=PROFILES, default="release")
+    selection.add_argument("--profile", choices=AVAILABLE_PROFILES, default="release")
     selection.add_argument("--matrix", action="store_true")
+    selection.add_argument("--profiles", nargs="+", choices=AVAILABLE_PROFILES,
+        help="complete ordered profile cohort for production or retained reading")
     parser.add_argument("--guarded-only", action="store_true")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--read", action="store_true")
     action.add_argument("--replay", action="store_true")
     args = parser.parse_args(argv)
-    profiles = PROFILES if args.matrix else (args.profile,)
+    profiles = tuple(args.profiles) if args.profiles else (PROFILES if args.matrix else (args.profile,))
+    if len(set(profiles)) != len(profiles):
+        parser.error("profile selection cannot contain duplicates")
     if not (args.read or args.replay):
         run_cohort(profiles, args.guarded_only)
         return 0
@@ -251,9 +257,93 @@ def cli(argv=None):
     labels = ["c-build", "rust-link", "c-run", "rust-run"]
     if not args.guarded_only:
         labels += ["native_theap_contract", *(test.rsplit("::", 1)[-1] for test in UNIT_TESTS)]
+    if receipt.case_ids() != [f"{profile}-{label}" for profile in profiles for label in labels]:
+        raise harness.HarnessError("public Theap receipt lacks the exact ordered executed cohort")
+    products = receipt.path.parent / "products"
+    logs = receipt.path.parent / "logs"
+    data = harness.read_json(receipt.path)
+    work_relative = Path(data["work"])
+    if work_relative.is_absolute() or ".." in work_relative.parts or work_relative.parts[:1] != (".work",):
+        raise harness.HarnessError("public Theap receipt work escapes its checkout")
+    work = harness.ROOT / work_relative
+    pin = harness.load_pin()
     for profile in profiles:
-        if receipt.case_ids(f"{profile}-") != [f"{profile}-{label}" for label in labels]:
-            raise harness.HarnessError(f"{profile} public Theap receipt lacks the full executed cohort")
+        output = work if profile == "release" else work / profile
+        if args.guarded_only:
+            output = output / "guarded-configuration"
+        inputs = harness.read_json(products / f"{profile}-inputs.json")
+        if (inputs.get("profile") != profile or inputs.get("guarded_only") is not args.guarded_only
+                or inputs.get("upstream") != pin or inputs.get("archive_sha256") != pin["sha256"]
+                or inputs.get("source") != dict(receipt.source) or inputs.get("workload_assertions") is not True
+                or inputs.get("allocator_flags") != list(m4.api_profile_flags(profile))):
+            raise harness.HarnessError(f"{profile} public Theap retained selector or source inputs differ")
+        if (harness.sha256_file(products / f"{profile}-upstream-archive") != pin["sha256"]
+                or inputs.get("driver_sha256") != harness.sha256_file(products / f"{profile}-driver.c")
+                or (products / f"{profile}-driver.c").read_bytes() != DRIVER.read_bytes()):
+            raise harness.HarnessError(f"{profile} public Theap physical compiler inputs differ")
+        records = {}
+        for label in labels:
+            case = next(case for case in receipt.cases if case["id"] == f"{profile}-{label}")
+            stem = {"c-run": "c", "rust-run": "rust"}.get(label, label)
+            expected = (output / f"{stem}.json").relative_to(work).as_posix()
+            if expected not in case["logs"]:
+                raise harness.HarnessError(f"{profile} public Theap {label} raw path differs")
+            records[label] = harness.read_json(logs / expected)
+            harness.require_success(records[label], f"retained {profile} {label}")
+        # The source extraction was temporary. Authenticate its declared
+        # include/static input structure against the pinned archive and
+        # original builder, without asserting those removed paths are live.
+        c_argv = records["c-build"].get("command", [])
+        if not isinstance(c_argv, list) or len(c_argv) < 5:
+            raise harness.HarnessError(f"{profile} public Theap compiler argv is missing")
+        source = Path(c_argv[-4]).parent.parent
+        temporary = source.parent.parent
+        if (source.name != pin["archive_root"] or source.parent.name != "source"
+                or temporary.parent != harness.TEMP_ROOT
+                or not temporary.name.startswith("crabc-mimalloc-m6-public-theap-")):
+            raise harness.HarnessError(f"{profile} public Theap compiler source path differs")
+        compiler = harness.require_tool("musl-gcc")
+        cargo = harness.require_tool("cargo")
+        client_flags = ("-DCRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY=1",) if args.guarded_only else ()
+        common = [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                  *m4.api_profile_flags(profile), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
+        retained_driver = output / DRIVER.name
+        library = output / "cargo-target" / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
+        expected_commands = {
+            "c-build": [*common, "-DCRABC_M6_SOURCE_INTERNAL=1", "-I", str(source / "src"),
+                        str(retained_driver), str(source / "src/static.c"), "-pthread", "-o", str(output / "public-theap-c")],
+            "rust-link": [*common, str(retained_driver), str(library), "-pthread", "-o", str(output / "public-theap-rust")],
+            "c-run": [str(output / "public-theap-c")],
+            "rust-run": [str(output / "public-theap-rust")],
+        }
+        if not args.guarded_only:
+            for index, test in enumerate((DIRECT_TEST, *UNIT_TESTS)):
+                label = "native_theap_contract" if index == 0 else test.rsplit("::", 1)[-1]
+                expected_commands[label] = [cargo, "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
+                    "-p", "crabc-mimalloc", "--no-default-features", "--message-format=json",
+                    *(("--features", f"mi-{profile}") if profile != "release" else ()),
+                    *(("--test", "native_theap_contract") if index == 0 else ("--lib",)),
+                    test, "--", "--exact", "--nocapture", "--test-threads=1"]
+                require_one_native_test(records[label], f"retained {profile} {label}")
+        for label, expected in expected_commands.items():
+            if records[label].get("command") != expected:
+                raise harness.HarnessError(f"{profile} public Theap {label} compiler/provider argv differs")
+        adapter_path = (output / "adapter-build.json").relative_to(work).as_posix()
+        link_case = next(case for case in receipt.cases if case["id"] == f"{profile}-rust-link")
+        if adapter_path not in link_case["logs"]:
+            raise harness.HarnessError(f"{profile} public Theap native compiler record is missing")
+        adapter = harness.read_json(logs / adapter_path)
+        harness.require_success(adapter, f"retained {profile} native adapter build")
+        expected_adapter = [cargo, "build", "--locked", "--release", "--message-format=json",
+            "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(output / "cargo-target"),
+            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())]
+        artifact = adapter.get("artifact", {})
+        retained_adapter = products / f"{profile}-adapter.a"
+        if (adapter.get("command") != expected_adapter
+                or artifact.get("path") != library.relative_to(harness.ROOT).as_posix()
+                or artifact.get("bytes") != retained_adapter.stat().st_size
+                or artifact.get("sha256") != harness.sha256_file(retained_adapter)):
+            raise harness.HarnessError(f"{profile} public Theap native selector or physical library differs")
     print("public Theap exact-source physical receipt: PASS", flush=True)
     if args.replay:
         execution = harness.require_native_x86_64(require_image_identity=True)
