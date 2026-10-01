@@ -531,6 +531,29 @@ pub(crate) struct MainStaticMetadataHeapLease {
 impl MainStaticMetadataHeapLease {
     pub(crate) fn subprocess(self) -> &'static MainSubprocess { self.subprocess }
 
+    /// Returns the original static-image capability for staged initialization.
+    /// This observes the same ready states as a guarded metadata projection;
+    /// a publishing or withdrawn foundation grants no pointer.
+    ///
+    /// # Safety
+    /// The caller retains the actual static storage/foundation through every
+    /// use. Callback-producing staged initialization using this pointer also
+    /// retains its admitted bootstrap output lifetime. Before using the pointer,
+    /// all temporary Heap references and projection guards have ended.
+    /// Every later field or list operation requires its own source authority;
+    /// this pointer grants neither a whole-Heap borrow nor release authority.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn source_initialization_heap_pointer(
+        self,
+    ) -> Result<NonNull<Heap>, MainStaticHeapLeaseError> {
+        if !matches!(self.storage.state.load(Ordering::Acquire), HEAP_READY | THREAD_READY) {
+            return Err(MainStaticHeapLeaseError::Inactive);
+        }
+        // The UnsafeCell owns the original process-static allocation pointer;
+        // it is not derived from a temporary shared or mutable Heap reference.
+        Ok(unsafe { NonNull::new_unchecked(self.storage.heap.image.get()) })
+    }
+
     pub(crate) fn with_heap<R>(self, operation: impl FnOnce(&mut Heap) -> R)
         -> Result<R, MainStaticHeapLeaseError>
     {
@@ -4094,6 +4117,43 @@ mod tests {
         })
         .join()
         .expect("the current-thread same-TLD terminal trace completes");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn metadata_initialization_pointer_observes_real_foundation_ready_and_withdrawn_phases() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let unavailable = MainStaticMetadataHeapLease { storage, subprocess };
+            // SAFETY: the real fixture storage remains live. Denied phases
+            // return before observing or granting any Heap capability.
+            assert!(matches!(unsafe { unavailable.source_initialization_heap_pointer() },
+                Err(MainStaticHeapLeaseError::Inactive)));
+            MainStaticTheapAttachment::preflight_current_roots().unwrap();
+            let mut selection = subprocess.reserve_static_bootstrap().unwrap();
+            let foundation = MainStaticHeapFoundation::initialize_with_test_publishing_observer(
+                storage, subprocess, &mut selection, |_| {
+                    assert!(matches!(unsafe { unavailable.source_initialization_heap_pointer() },
+                        Err(MainStaticHeapLeaseError::Inactive)));
+                },
+            ).unwrap();
+            let lease = foundation.metadata_heap();
+            // SAFETY: the actual fixture foundation retains this source Heap;
+            // all initialization/projection references have ended.
+            let original = unsafe { lease.source_initialization_heap_pointer() }.unwrap();
+            assert_eq!(original.as_ptr(), storage.heap.image.get());
+            lease.with_heap(|heap| assert!(heap.is_bound_to_main_subprocess(subprocess))).unwrap();
+            // SAFETY: the short guarded Heap reference above has ended; the
+            // original capability remains tied to this same live foundation.
+            assert_eq!(unsafe { Heap::subprocess_pointer_at(original) }, subprocess.identity_ptr());
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_after_heap_foundation(foundation, selection)
+            }.unwrap();
+            assert_eq!(unsafe { lease.source_initialization_heap_pointer() }.unwrap(), original);
+            owner.teardown().unwrap();
+            assert!(matches!(unsafe { lease.source_initialization_heap_pointer() },
+                Err(MainStaticHeapLeaseError::Inactive)));
+        }).join().expect("the source foundation lifecycle completes");
     }
 
     #[test]
