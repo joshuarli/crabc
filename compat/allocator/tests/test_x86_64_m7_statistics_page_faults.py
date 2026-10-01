@@ -64,6 +64,28 @@ class RegularPageReleaseStatisticsTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             comparable_trace(trace, debug=True)
 
+    def test_guarded_debug_release_keeps_failed_mapping_without_replaying_accounting(self):
+        for faulted in (False, True):
+            trace = self.trace(debug=True, faulted=faulted)
+            trace.update({"profile.guarded": "1", "profile.guarded_sample_rate": "0", "profile.theap_guarded_sample_rate": "0",
+                          "allocation.os_backed": "1", "allocated.client_bytes": "1",
+                          "failed_release.mapping_present": str(int(faulted)),
+                          "failed_release.survivor_bytes": "1", "recollect.no_unmap": "1",
+                          "recollect.mapping_present": str(int(faulted)), "recollect.survivor_bytes": "1",
+                          "recollect.counters_unchanged": "1", "recovery.nonnull": "1",
+                          "recovery.distinct_from_survivor": "1", "recovery.client_bytes": "1",
+                          "recovery.survivor_bytes": "1"})
+            comparable_trace(trace, debug=True, faulted=faulted, guarded=True)
+            for key in ("profile.guarded_sample_rate", "profile.theap_guarded_sample_rate", "allocation.os_backed", "allocated.client_bytes",
+                        "failed_release.mapping_present", "failed_release.survivor_bytes",
+                        "recollect.no_unmap", "recollect.mapping_present", "recollect.counters_unchanged",
+                        "recovery.nonnull", "recovery.distinct_from_survivor", "recovery.client_bytes"):
+                with self.subTest(faulted=faulted, key=key):
+                    wrong = dict(trace)
+                    wrong[key] = "1" if wrong[key] == "0" else "0"
+                    with self.assertRaises(harness.HarnessError):
+                        comparable_trace(wrong, debug=True, faulted=faulted, guarded=True)
+
 
 if __name__ == "__main__":
     unittest.main()

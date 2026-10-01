@@ -1294,14 +1294,25 @@ use crate::os::PageSize;
                 // SAFETY: the warmed allocation remains live and local.
                 assert_eq!(unsafe { runtime_lifecycle::native_free(warm) }, runtime_lifecycle::NativePageFreeResult::Freed);
                 runtime_lifecycle::native_collect(true);
+                let matrix = std::env::var_os("CRABC_MI_STATISTICS_MATRIX").is_some();
+                let faulted = std::env::var_os("CRABC_MI_STATISTICS_FAULT_CONTROL") != Some(std::ffi::OsString::from("success"));
+                let guarded_matrix = matrix && crate::config::GUARDED;
+                let survivor = guarded_matrix.then(|| {
+                    let pointer = match runtime_lifecycle::native_allocate(128, false) {
+                        NativePageAllocationResult::Allocated(pointer) => pointer,
+                        _ => panic!("independent live regular client allocation failed"),
+                    };
+                    // SAFETY: this live allocation owns its requested span,
+                    // independent of the page selected for release below.
+                    unsafe { pointer.as_ptr().write_bytes(0x5a, 128) };
+                    pointer
+                });
                 let before = stats();
                 let block = match runtime_lifecycle::native_allocate(64, false) {
                     NativePageAllocationResult::Allocated(pointer) => pointer,
                     _ => panic!("OS-backed regular allocation failed"),
                 };
                 std::println!("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_BEGIN");
-                let matrix = std::env::var_os("CRABC_MI_STATISTICS_MATRIX").is_some();
-                let faulted = std::env::var_os("CRABC_MI_STATISTICS_FAULT_CONTROL") != Some(std::ffi::OsString::from("success"));
                 std::println!("profile.level={}", crate::config::STAT_LEVEL);
                 if matrix {
                     std::println!("profile.debug={}", crate::config::DEBUG_LEVEL);
@@ -1313,6 +1324,32 @@ use crate::os::PageSize;
                     // while the independent scalar reports physical block size.
                     std::println!("geometry.block_size={}", unsafe { runtime_lifecycle::native_block_size(block) }.expect("live regular physical block size"));
                 }
+                if guarded_matrix {
+                    std::println!("profile.guarded={}", usize::from(crate::config::GUARDED));
+                    std::println!("profile.guarded_sample_rate={}", crate::source_options_api::option_get(SourceOption::GuardedSampleRate as c_int));
+                    #[cfg(feature = "mi-guarded")]
+                    {
+                        // SAFETY: allocation initialized this thread's default
+                        // Theap and no sampler mutation overlaps this read.
+                        let rate = unsafe { crate::types::Theap::guarded_sample_rate_at(crate::compiler_tls::default_theap()) };
+                        assert_eq!(rate, 0);
+                        std::println!("profile.theap_guarded_sample_rate={rate}");
+                    }
+                    #[cfg(feature = "native-runtime-test-audit")]
+                    {
+                        // SAFETY: this exact live client keeps its immutable
+                        // memid registered throughout the quiescent sample.
+                        let kind = unsafe { runtime_lifecycle::native_runtime_live_client_memory_kind_test_audit(block) }.unwrap();
+                        assert_eq!(kind, 3);
+                        std::println!("allocation.os_backed={}", usize::from(kind == 3));
+                    }
+                    // SAFETY: the still-live target owns 64 requested bytes;
+                    // these bytes are observed only before consuming its free.
+                    unsafe { block.as_ptr().write_bytes(0xa5, 64) };
+                    let intact = unsafe { core::slice::from_raw_parts(block.as_ptr(), 64) }.iter().all(|byte| *byte == 0xa5);
+                    assert!(intact);
+                    std::println!("allocated.client_bytes={}", usize::from(intact));
+                }
                 std::println!("profile.disallow_arena={}",
                     crate::source_options_api::option_get(SourceOption::DisallowArenaAlloc as c_int));
                 show("allocated", before, 0);
@@ -1320,17 +1357,75 @@ use crate::os::PageSize;
                 // collection later releases its retired page.
                 let free_result = unsafe { runtime_lifecycle::native_free(block) };
                 show("freed", before, 0);
-                let fault = faulted.then(|| fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM)));
-                let unmaps = fault.as_ref().map(|fault| fault.capture_unmap_ranges());
+                let fault = fault::install(fault::Plan::at(fault::Point::Unmap, if faulted { 1 } else { usize::MAX }, crabc_core::Errno::NOMEM));
+                if guarded_matrix { assert_eq!(free_result, runtime_lifecycle::NativePageFreeResult::Freed); }
+                let unmaps = fault.capture_unmap_ranges();
                 runtime_lifecycle::native_collect(true);
-                if let Some(fault) = &fault {
-                    assert_eq!(fault.observed(), 1, "the page release reached the raw unmap");
-                    let (ranges, count) = unmaps.as_ref().unwrap().all().expect("bounded raw unmap capture");
-                    assert!(count > 0 && ranges[0].0 <= block.as_ptr().addr()
+                assert_eq!(fault.observed(), 1, "the page release reached the raw unmap");
+                let (ranges, count) = unmaps.all().expect("bounded raw unmap capture");
+                assert_eq!(count, 1);
+                assert!(ranges[0].0 <= block.as_ptr().addr()
                         && block.as_ptr().addr() - ranges[0].0 < ranges[0].1,
-                        "the failed unmap must contain the released page");
-                }
+                        "the captured OS release must contain the consumed client");
                 show("failed_release", before, usize::from(faulted));
+                if let Some(survivor) = survivor {
+                    let mapping_present = || {
+                        let (base, length) = ranges[0];
+                        assert!(base != 0 && length != 0 && base % 4096 == 0 && length % 4096 == 0);
+                        for offset in (0..length).step_by(4096) {
+                            let mut residency = 0;
+                            // SAFETY: mincore samples the captured OS extent
+                            // without borrowing retired Page or client storage.
+                            let result = unsafe { crabc_core::mm::mincore_raw((base + offset) as *mut u8, 4096, &mut residency) };
+                            assert!(result.is_ok() || result == Err(crabc_core::Errno::NOMEM));
+                            assert_eq!(result.is_ok(), faulted);
+                        }
+                        usize::from(faulted)
+                    };
+                    let survivor_bytes = || {
+                        // SAFETY: this independent live client still owns its
+                        // requested span throughout collection and recovery.
+                        unsafe { core::slice::from_raw_parts(survivor.as_ptr(), 128) }.iter().all(|byte| *byte == 0x5a)
+                    };
+                    std::println!("failed_release.mapping_present={}", mapping_present());
+                    assert!(survivor_bytes());
+                    std::println!("failed_release.survivor_bytes=1");
+                    let released = stats().0;
+                    runtime_lifecycle::native_collect(true);
+                    let recollected = stats().0;
+                    let unchanged = released.pages == recollected.pages && released.reserved == recollected.reserved && released.committed == recollected.committed;
+                    assert!(unchanged);
+                    assert_eq!(unmaps.all().unwrap().1, 1);
+                    assert_eq!(fault.observed(), 1);
+                    std::println!("recollect.no_unmap=1");
+                    std::println!("recollect.mapping_present={}", mapping_present());
+                    assert!(survivor_bytes());
+                    std::println!("recollect.survivor_bytes=1");
+                    std::println!("recollect.counters_unchanged={}", usize::from(unchanged));
+                    let recovery = match runtime_lifecycle::native_allocate(64, false) {
+                        NativePageAllocationResult::Allocated(pointer) => pointer,
+                        _ => panic!("fresh regular allocation after release failed"),
+                    };
+                    // SAFETY: this distinct new live allocation owns its
+                    // requested bytes; the consumed target is never accessed.
+                    unsafe { recovery.as_ptr().write_bytes(0x3c, 64) };
+                    let intact = unsafe { core::slice::from_raw_parts(recovery.as_ptr(), 64) }.iter().all(|byte| *byte == 0x3c);
+                    assert!(intact && survivor_bytes() && recovery != survivor);
+                    std::println!("recovery.nonnull=1");
+                    std::println!("recovery.distinct_from_survivor=1");
+                    std::println!("recovery.client_bytes=1");
+                    std::println!("recovery.survivor_bytes=1");
+                    // SAFETY: these distinct live local clients are each
+                    // consumed exactly once after the final observations.
+                    assert_eq!(unsafe { runtime_lifecycle::native_free(recovery) }, runtime_lifecycle::NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { runtime_lifecycle::native_free(survivor) }, runtime_lifecycle::NativePageFreeResult::Freed);
+                    if faulted {
+                        // SAFETY: the source consumed its page registration
+                        // and left this exact captured range mapped. No client
+                        // or Page capability survives; this is fixture cleanup.
+                        unsafe { crabc_core::mm::munmap_raw(ranges[0].0 as *mut u8, ranges[0].1) }.unwrap();
+                    }
+                }
                 std::println!("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_END");
                 std::println!("release.retained={}", usize::from(free_result == runtime_lifecycle::NativePageFreeResult::Retained));
             },

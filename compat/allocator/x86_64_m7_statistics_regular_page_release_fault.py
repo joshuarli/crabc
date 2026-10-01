@@ -21,7 +21,7 @@ TARGET = "x86_64-unknown-linux-musl"
 VM_FIELDS = ("reserved", "committed")
 
 
-def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False, faulted: bool = True) -> dict[str, str]:
+def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False, faulted: bool = True, guarded: bool = False) -> dict[str, str]:
     """Compare VM transitions while retaining placement-sensitive raw images."""
     normal = (int(raw.get("geometry.block_size", "64")) - (8 if debug else 0)) if level else 0
     bin_index = 9 if debug else 8
@@ -44,6 +44,15 @@ def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False
         "failed_release.warnings": str(int(faulted)),
         "failed_release.failures": str(int(faulted)),
     }
+    if guarded:
+        expected.update({"profile.guarded": "1", "profile.guarded_sample_rate": "0", "profile.theap_guarded_sample_rate": "0",
+                         "allocation.os_backed": "1", "allocated.client_bytes": "1",
+                         "failed_release.mapping_present": str(int(faulted)),
+                         "failed_release.survivor_bytes": "1", "recollect.no_unmap": "1",
+                         "recollect.mapping_present": str(int(faulted)), "recollect.survivor_bytes": "1",
+                         "recollect.counters_unchanged": "1", "recovery.nonnull": "1",
+                         "recovery.distinct_from_survivor": "1", "recovery.client_bytes": "1",
+                         "recovery.survivor_bytes": "1"})
     for key, value in expected.items():
         if raw.get(key) != value:
             raise harness.HarnessError(
