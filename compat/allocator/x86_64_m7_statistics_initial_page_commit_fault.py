@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 
 import run as harness
 import x86_64_m7_gate as m7
+import m2_arena_lifecycle_x86_64 as lifecycle
 
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_initial_page_commit_fault_driver.c"
@@ -17,7 +19,6 @@ TEST = "page::tests::failed_initial_regular_page_commit_recovers_source_statisti
 BEGIN = "CRABC_MI_M7_INITIAL_PAGE_COMMIT_FAULT_TRACE_BEGIN"
 END = "CRABC_MI_M7_INITIAL_PAGE_COMMIT_FAULT_TRACE_END"
 REPORT = m7.ARTIFACTS / "statistics-initial-page-commit-fault.json"
-TARGET = "x86_64-unknown-linux-musl"
 
 
 def require_commit_failure_shape(trace: dict[str, str], side: str) -> None:
@@ -68,31 +69,34 @@ def main() -> int:
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, args.offline)
+    artifacts = REPORT.with_suffix("")
+    artifacts.mkdir(parents=True, exist_ok=True)
+    compiled_input = artifacts / "compiled-input.c"
+    shutil.copy2(DRIVER, compiled_input)
     with harness.temporary_directory("crabc-m7-statistics-initial-page-commit-fault-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
         compiler = harness.require_tool("musl-gcc")
         flags = ["-DMI_STAT=2" if flag == "-DMI_STAT=0" else flag
                  for flag in harness.CONFIGURATION_PROFILES["release"]]
-        c_binary = temporary / "initial-page-commit-fault-c"
+        c_binary = artifacts / "oracle"
         c_build = harness.command_record([
             compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
             *flags, "-Dmprotect=crabc_fault_mprotect",
-            "-I", str(source / "include"), str(DRIVER),
+            "-I", str(source / "include"), str(compiled_input),
             str(source / "src/static.c"), "-pthread", "-o", str(c_binary),
         ], cwd=source)
+        harness.write_json(artifacts / "c-build.json", c_build)
         harness.require_success(c_build, "pinned initial-page commit fault C build")
         c_run = harness.command_record([str(c_binary)], cwd=temporary, env={}, timeout_seconds=60)
+        harness.write_json(artifacts / "c-execute.json", c_run)
         harness.require_success(c_run, "pinned initial-page commit fault C execution")
 
-        cargo = harness.require_tool("cargo")
-        target_dir = harness.WORK_ROOT / "target"
-        rust_run = harness.command_record([
-            cargo, "test", "--locked", "--offline", "--target", TARGET,
-            "-p", "crabc-mimalloc", "--no-default-features", "--features", "mi-stat-2",
-            "--lib", TEST, "--target-dir", str(target_dir),
-            "--", "--exact", "--nocapture", "--test-threads=1",
-        ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=m7.EVIDENCE_TIMEOUT_SECONDS)
+        program = lifecycle.native_program(harness, "stat-2", artifacts)
+        rust_run = harness.command_record(harness._x86_64_program_check_command(
+            program, TEST, nocapture=True, gate_name="initial-page commit fault"),
+            cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=m7.EVIDENCE_TIMEOUT_SECONDS)
+        harness.write_json(artifacts / "rust-execute.json", rust_run)
         report = {
             "status": "failed", "c_build": c_build, "c_run": c_run,
             "rust_test": rust_run,
@@ -110,6 +114,8 @@ def main() -> int:
         REPORT.parent.mkdir(parents=True, exist_ok=True)
         harness.write_json(REPORT, report)
         harness.require_success(rust_run, "native initial-page commit fault test")
+        if harness.parse_rust_test_count(str(rust_run["stdout"]) + str(rust_run["stderr"])) != 1:
+            raise harness.HarnessError("initial-page commit selection did not execute one passing test")
         traces = {
             "c": m7.parse_options_trace(str(c_run["stdout"]), "pinned initial-page commit fault", BEGIN, END),
             "rust": m7.parse_options_trace(str(rust_run["stdout"]), "native initial-page commit fault", BEGIN, END),
