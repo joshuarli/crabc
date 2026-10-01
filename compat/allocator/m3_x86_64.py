@@ -39,6 +39,7 @@ public ``mi_*``, libc integration, backend promotion, or AArch64 behavior.
 from __future__ import annotations
 
 import argparse
+from enum import Enum
 from contextlib import nullcontext
 import hashlib
 import importlib.util
@@ -80,6 +81,7 @@ DIFFERENTIAL_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-trace-latest.json"
 OWNER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-persistent-owner-trace-latest.json"
 MIRI_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-latest.json"
 MIRI_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-ownership-latest.json"
+MIRI_GUARDED_OWNERSHIP_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-guarded-ownership-latest.json"
 QUEUE_REORDER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-queue-reorder-latest.json"
 ARTIFACT_ROOT = run.ARTIFACT_ROOT / "x86_64/m3-local-engine"
 
@@ -1489,6 +1491,21 @@ def run_unit_batch(contract: Mapping[str, Any], binary: Path) -> dict[str, Any]:
     }
 
 
+class MiriProfile(Enum):
+    LOCAL = "miri"
+    OWNERSHIP = "miri_ownership"
+    GUARDED_OWNERSHIP = "miri_guarded_ownership"
+
+
+def miri_command(miri: Mapping[str, Any]) -> list[str]:
+    features = miri.get("features", [])
+    if (not isinstance(features, list) or any(not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", name)
+                                            for name in features) or len(set(features)) != len(features)):
+        raise GateError("Miri selected features must be distinct Cargo feature names")
+    return ["cargo", "miri", "test", "--locked", "--target", miri["target"], "-p", "crabc-mimalloc",
+            "--lib", "--no-default-features", *(["--features", ",".join(features)] if features else []), "--"]
+
+
 def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -> dict[str, Any]:
     # Cargo emits an interpreter descriptor rather than an executable. Retain
     # the descriptor it selected and the physical inputs its compiler args name.
@@ -1508,6 +1525,12 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
             or "--test" not in args or "crabc-mimalloc/src/lib.rs" not in args
             or args[args.index("--target") + 1] != miri["target"]):
         raise GateError("Miri compiler runner does not name the selected source library test")
+    miri_command(miri)
+    cfgs = [args[index + 1] for index, value in enumerate(args[:-1]) if value == "--cfg"]
+    cfgs.extend(value.removeprefix("--cfg=") for value in args if value.startswith("--cfg="))
+    features = [match.group(1) for cfg in cfgs if (match := re.fullmatch(r'feature="([^"]+)"', cfg))]
+    if sorted(features) != sorted(miri.get("features", [])):
+        raise GateError("Miri compiler runner features differ from the selected profile")
     if saved_environment["MIRI_BE_RUSTC"] != "host":
         raise GateError("Miri compiler runner does not preserve the selected host phase")
     dep_info = program.with_suffix(".d")
@@ -1590,9 +1613,9 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
     }
 
 
-def run_miri(contract: Mapping[str, Any], *, ownership_only: bool = False) -> dict[str, Any]:
-    miri = contract["miri_ownership" if ownership_only else "miri"]
-    log_path = ARTIFACT_ROOT / ("miri-ownership.log" if ownership_only else "miri.log")
+def run_miri(contract: Mapping[str, Any], *, profile: MiriProfile = MiriProfile.LOCAL) -> dict[str, Any]:
+    miri = contract[profile.value]
+    log_path = ARTIFACT_ROOT / (profile.value.replace("_", "-") + ".log")
     probe = run.command_record(("cargo", "miri", "--version"), cwd=ROOT, timeout_seconds=600)
     if probe["status"] != 0:
         # The pinned image installs the component; an older image must be
@@ -1605,10 +1628,7 @@ def run_miri(contract: Mapping[str, Any], *, ownership_only: bool = False) -> di
                 "`./compat/allocator/run-x86_64.sh image`"
             ],
         }
-    base = [
-        "cargo", "miri", "test", "--locked", "--target", miri["target"], "-p", "crabc-mimalloc",
-        "--lib", "--no-default-features", "--",
-    ]
+    base = miri_command(miri)
     environment = dict(os.environ)
     miriflags = [*miri["miriflags"], f"-Zmiri-env-forward={FRESH_TEST_CHILD_ENV}"]
     environment["MIRIFLAGS"] = " ".join(miriflags)
@@ -1768,7 +1788,7 @@ def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
 def evaluate_gate(contract: Mapping[str, Any], checks: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     required_checks = {
         "local-trace-differential", "queue-reorder-differential", "queue-retirement-differential",
-        "persistent-owner-trace-differential", "rust-unit-batch", "miri", "miri-ownership",
+        "persistent-owner-trace-differential", "rust-unit-batch", "miri", "miri-ownership", "miri-guarded-ownership",
     }
     declared_checks = {check for component in contract["components"] for check in component["checks"]}
     omitted = required_checks - declared_checks
@@ -1851,6 +1871,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         help="run only strict staged-initializer and generic-frequency ownership controls (development; no gate report)",
     )
     parser.add_argument(
+        "--miri-guarded-ownership-only",
+        action="store_true",
+        help="run only strict guarded staged-ownership controls (development; no gate report)",
+    )
+    parser.add_argument(
         "--queue-reorder-only",
         action="store_true",
         help="run only the pinned C/Rust page-queue reorder differential",
@@ -1861,7 +1886,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         # binds every local-engine observation to clean committed source and
         # the immutable compiler/oracle image selected by the native launcher.
         qualification = not any((
-            options.queue_reorder_only, options.miri_only, options.miri_ownership_only,
+            options.queue_reorder_only, options.miri_only, options.miri_ownership_only, options.miri_guarded_ownership_only,
             options.owner_only, options.differential_only,
         ))
         source_before = run.runtime_ticket_zero_soak_source_state() if qualification else None
@@ -1878,10 +1903,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 print("\n".join(["M3 queue reorder differential failed:", *(f"  - {item}" for item in queue["unmet"])]), file=sys.stderr)
                 return 1
             return 0
-        if options.miri_only or options.miri_ownership_only:
-            miri = (run_miri(contract, ownership_only=True) if options.miri_ownership_only
-                    else run_miri(contract))
-            report_path = MIRI_OWNERSHIP_REPORT_PATH if options.miri_ownership_only else MIRI_REPORT_PATH
+        if options.miri_only or options.miri_ownership_only or options.miri_guarded_ownership_only:
+            profile = (MiriProfile.GUARDED_OWNERSHIP if options.miri_guarded_ownership_only else
+                       MiriProfile.OWNERSHIP if options.miri_ownership_only else MiriProfile.LOCAL)
+            miri = run_miri(contract, profile=profile)
+            report_path = {MiriProfile.LOCAL: MIRI_REPORT_PATH, MiriProfile.OWNERSHIP: MIRI_OWNERSHIP_REPORT_PATH,
+                           MiriProfile.GUARDED_OWNERSHIP: MIRI_GUARDED_OWNERSHIP_REPORT_PATH}[profile]
             run.write_json(report_path, {"miri": miri, "provenance": provenance})
             print(report_path)
             if miri["status"] != "passed":
@@ -1918,7 +1945,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "persistent-owner-trace-differential": run_owner_differential(contract, offline=options.offline),
             "rust-unit-batch": run_unit_batch(contract, rust_binary),
             "miri": run_miri(contract),
-            "miri-ownership": run_miri(contract, ownership_only=True),
+            "miri-ownership": run_miri(contract, profile=MiriProfile.OWNERSHIP),
+            "miri-guarded-ownership": run_miri(contract, profile=MiriProfile.GUARDED_OWNERSHIP),
         }
         if run.sha256_file(LOCKFILE) != lockfile:
             raise GateError("Cargo.lock changed during the --locked M3 gate")

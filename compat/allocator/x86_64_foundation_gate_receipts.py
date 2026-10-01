@@ -380,14 +380,14 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
             and all(checks[name].get("status") == "passed" and checks[name].get("unmet") == []
                     for name in required_checks), "local selected check remains incomplete")
     interpreter_inputs = []
-    for check_name, config_name in (("miri", "miri"), ("miri-ownership", "miri_ownership")):
+    for check_name, config_name in (("miri", "miri"), ("miri-ownership", "miri_ownership"),
+                                    ("miri-guarded-ownership", "miri_guarded_ownership")):
         miri = checks[check_name]
         physical = miri.get("physical_inputs")
         require(isinstance(physical, Mapping) and isinstance(physical.get("program"), Mapping),
                 "Miri receipt lacks compiler-selected physical inputs")
         selected = contract[config_name]
-        base = ["cargo", "miri", "test", "--locked", "--target", selected["target"],
-                "-p", "crabc-mimalloc", "--lib", "--no-default-features", "--"]
+        base = local.miri_command(selected)
         flags = [*selected["miriflags"], f"-Zmiri-env-forward={local.FRESH_TEST_CHILD_ENV}"]
         listing = physical["listing"]
         require(listing["command"] == [*base, "--list", "--format", "terse"] and listing["status"] == 0,

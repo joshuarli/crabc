@@ -215,11 +215,42 @@
       "bootstrap::tests::generic_frequency_completion_rejects_foreign_owner_and_unclamped_values"
     ]
   },
+  "miri_guarded_ownership": {
+    "target": "x86_64-unknown-linux-gnu",
+    "miriflags": [
+      "-Zmiri-strict-provenance"
+    ],
+    "module_prefixes": [
+      "types::tests::source_option_capture_observes_warning_callback_replacement_on_prepared_image",
+      "types::tests::staged_live_owner_kinds_preserve_source_options_random_and_publication_order",
+      "types::tests::staged_child_metadata_preserves_parent_tld_random_order_and_child_options",
+      "types::tests::staged_initializer_contention_distinguishes_unattached_reset_from_published_retention",
+      "types::tests::staged_initializer_rejects_recapturing_prepared_and_linked_unpublished_images",
+      "types::tests::generic_frequency_resume_observes_nested_collection_reset_instead_of_stale_count",
+      "types::tests::prepared_theap_keeps_prefix_custody_and_links_callback_created_head_before_publication",
+      "bootstrap::tests::generic_frequency_completion_rejects_foreign_owner_and_unclamped_values",
+      "types::tests::staged_guarded_zero_seed_draw_precedes_bound_callbacks_on_unpublished_image"
+    ],
+    "required_tests": [
+      "types::tests::source_option_capture_observes_warning_callback_replacement_on_prepared_image",
+      "types::tests::staged_live_owner_kinds_preserve_source_options_random_and_publication_order",
+      "types::tests::staged_child_metadata_preserves_parent_tld_random_order_and_child_options",
+      "types::tests::staged_initializer_contention_distinguishes_unattached_reset_from_published_retention",
+      "types::tests::staged_initializer_rejects_recapturing_prepared_and_linked_unpublished_images",
+      "types::tests::generic_frequency_resume_observes_nested_collection_reset_instead_of_stale_count",
+      "types::tests::prepared_theap_keeps_prefix_custody_and_links_callback_created_head_before_publication",
+      "bootstrap::tests::generic_frequency_completion_rejects_foreign_owner_and_unclamped_values",
+      "types::tests::staged_guarded_zero_seed_draw_precedes_bound_callbacks_on_unpublished_image"
+    ],
+    "features": [
+      "mi-guarded"
+    ]
+  },
   "components": [
     {
       "id": "heap-theap-bootstrap",
       "source_scope": "src/init.c _mi_theap_empty/MI_PAGE_QUEUES_EMPTY images and src/theap.c _mi_theap_init/mi_theap_options_init for the page-bearing local Theap: queue block sizes, empty direct cache, retired bounds, counters, and page-full/abandon/reclaim option image. Selected staged initialization retains the original prefix across warning callbacks, reads the current TLD head after nested creation, rejects recapture, resets only unattached failure, and retains linked storage after publication failure.",
-      "checks": ["local-trace-differential", "rust-unit-batch", "miri-ownership"],
+      "checks": ["local-trace-differential", "rust-unit-batch", "miri-ownership", "miri-guarded-ownership"],
       "remaining_conditions": []
     },
     {
@@ -254,8 +285,8 @@
     },
     {
       "id": "miri-execution",
-      "source_scope": "Strict-provenance Miri (Stacked Borrows) over the complete local trace engine, all reachable bin queue/free-list primitive matrices, and page geometry: arena management, PageMap initialize/register/unregister/destroy, fresh pages, intrusive queue and full-queue transitions, free-list extend/pop/push/collect, retirement and release, with provenance, initialization, pointer arithmetic, and mapping lifetimes through crabc-core's cfg(miri) kernel model beneath the unchanged os.rs. A concurrent foreign-free rejection proves atomic owner identity is checked before borrowing ordinary page metadata. A separate selected ordinary-profile execution proves staged initializer callback/list/token custody and generic-frequency completion after nested counter reset, foreign-issuer refusal, and frequency bound refusal; complete process initialization remains a prerequisite.",
-      "checks": ["miri", "miri-ownership"],
+      "source_scope": "Strict-provenance Miri (Stacked Borrows) over the complete local trace engine, all reachable bin queue/free-list primitive matrices, and page geometry: arena management, PageMap initialize/register/unregister/destroy, fresh pages, intrusive queue and full-queue transitions, free-list extend/pop/push/collect, retirement and release, with provenance, initialization, pointer arithmetic, and mapping lifetimes through crabc-core's cfg(miri) kernel model beneath the unchanged os.rs. A concurrent foreign-free rejection proves atomic owner identity is checked before borrowing ordinary page metadata. A separate selected ordinary-profile execution proves staged initializer callback/list/token custody and generic-frequency completion after nested counter reset, foreign-issuer refusal, and frequency bound refusal; The guarded-profile execution additionally proves zero-seed random draws precede bound-option callbacks on the unpublished image; complete process initialization remains a prerequisite.",
+      "checks": ["miri", "miri-ownership", "miri-guarded-ownership"],
       "remaining_conditions": []
     },
     {

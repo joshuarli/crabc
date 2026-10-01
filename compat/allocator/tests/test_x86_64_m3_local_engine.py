@@ -188,6 +188,15 @@ class LocalEngineSourceTests(unittest.TestCase):
         self.assertIn("miri", reports[0])
         self.assertNotIn("gate", reports[0])
 
+    def test_guarded_ownership_subset_publishes_development_evidence_without_a_gate(self) -> None:
+        self.source.write_text("work in progress\n")
+        status, reports, executed = self.execute(arguments=["--miri-guarded-ownership-only"])
+        self.assertEqual(status, 0)
+        self.assertFalse(executed)
+        self.assertEqual(len(reports), 1)
+        self.assertIn("miri", reports[0])
+        self.assertNotIn("gate", reports[0])
+
     def test_gate_receipt_attests_one_unchanged_clean_source(self) -> None:
         status, reports, executed = self.execute()
         self.assertEqual(status, 0)
@@ -590,16 +599,40 @@ sys.exit(1 if failed else 0)
             "miriflags": ["-Zmiri-strict-provenance"], "module_prefixes": ["fixture::"],
             "required_tests": ["fixture::first", "fixture::second"]}}
 
-    def execute(self, fail=None, *, ownership_only=False):
+    def execute(self, fail=None, *, ownership_only=False, profile=None):
         environment = dict(self.environment)
         if fail is not None:
             environment["MIRI_DISPATCH_FAIL"] = fail
         with mock.patch.dict(os.environ, environment):
             with mock.patch.object(gate, "ARTIFACT_ROOT", self.fixture / "artifacts"):
-                result = (gate.run_miri(self.contract, ownership_only=True) if ownership_only
-                          else gate.run_miri(self.contract))
+                result = gate.run_miri(self.contract, profile=profile or (gate.MiriProfile.OWNERSHIP if ownership_only else gate.MiriProfile.LOCAL))
         calls = [json.loads(line) for line in self.capture.read_text().splitlines()]
         return result, calls
+
+    def test_guarded_feature_must_be_present_in_selected_compiler_program(self) -> None:
+        self.contract["miri"]["features"] = ["mi-guarded"]
+        result, _calls = self.execute()
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("feature" in item for item in result["unmet"]))
+
+    def test_ordinary_profile_rejects_a_guarded_compiler_program(self) -> None:
+        metadata = json.loads(self.program.read_text())
+        metadata["args"].extend(["--cfg", 'feature="mi-guarded"'])
+        self.program.write_text(json.dumps(metadata))
+        result, _calls = self.execute()
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(any("features differ" in item for item in result["unmet"]))
+
+    def test_guarded_feature_reaches_cargo_and_selected_program(self) -> None:
+        self.contract["miri"]["features"] = ["mi-guarded"]
+        metadata = json.loads(self.program.read_text())
+        metadata["args"].extend(["--cfg", 'feature="mi-guarded"'])
+        self.program.write_text(json.dumps(metadata))
+        result, calls = self.execute()
+        self.assertEqual(result["status"], "passed")
+        for call in calls:
+            index = call["arguments"].index("--features")
+            self.assertEqual(call["arguments"][index + 1], "mi-guarded")
 
     def test_ownership_subset_runs_only_its_declared_phase_control(self) -> None:
         self.contract["miri_ownership"] = {**self.contract["miri"],

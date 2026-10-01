@@ -350,11 +350,24 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         channel = reader.tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
         for name, tool in self.authority["tools"].items():
             tool["executable_path"] = f"/opt/rustup/toolchains/{channel}-x86_64-unknown-linux-musl/bin/{name}"
+        guarded_program = self.producer.program.with_name("guarded-compiler")
+        metadata = json.loads(self.producer.program.read_text())
+        metadata["args"].extend(["--cfg", 'feature="mi-guarded"'])
+        guarded_program.write_text(json.dumps(metadata))
+        guarded_program.with_suffix(".d").write_bytes(self.producer.program.with_suffix(".d").read_bytes())
+        self.producer.contract["miri_guarded_ownership"] = {**self.contract["miri_ownership"], "features": ["mi-guarded"]}
+        self.contract["miri_guarded_ownership"] = self.producer.contract["miri_guarded_ownership"]
+        with mock.patch.dict(self.producer.environment, {"MIRI_TEST_PROGRAM": str(guarded_program)}):
+            self.guarded, _calls = self.producer.execute(profile=local.MiriProfile.GUARDED_OWNERSHIP)
+        self.guarded_authority = {key: self.guarded["physical_inputs"][key] for key in self.authority}
+        self.guarded_authority["tools"] = self.authority["tools"]
+        self.guarded["physical_inputs"].update(self.guarded_authority)
         checks = {name: {"status": "passed", "unmet": []}
                   for component in self.contract["components"] for name in component["checks"]}
         self.ownership["physical_inputs"].update(self.authority)
         checks["miri"] = self.miri
         checks["miri-ownership"] = self.ownership
+        checks["miri-guarded-ownership"] = self.guarded
         checks["prerequisites"] = {"unmet": ["memory substrate remains incomplete"]}
         self.report = {"source": {}, "checks": checks,
                        "contract_sha256": reader.harness.file_digest(local.CONTRACT_PATH),
@@ -520,7 +533,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
              mock.patch.object(reader.harness, "require_tool", return_value="musl-gcc"), \
              mock.patch.object(self.local, "generate_owner_workloads", return_value=self.owner_workloads), \
              mock.patch.object(self.local, "load_contract", return_value=self.contract), \
-             mock.patch.object(self.local, "_miri_compiler_inputs", return_value=self.authority), \
+             mock.patch.object(self.local, "_miri_compiler_inputs", side_effect=lambda listing, selected: self.guarded_authority if selected.get("features") else self.authority), \
              mock.patch.object(reader, "authenticate_source"), \
              mock.patch.object(reader.harness, "runtime_ticket_zero_soak_source_state", return_value={}), \
              mock.patch.object(reader.harness, "TEMP_ROOT", self.producer.fixture / "reader-scratch"), \
@@ -583,6 +596,19 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                     self.ownership.clear()
                     self.ownership.update(original)
 
+    def test_guarded_profile_cannot_substitute_an_ordinary_compiler_program(self):
+        self.guarded["physical_inputs"]["program"] = self.authority["program"]
+        with self.assertRaisesRegex(reader.harness.HarnessError, "physical input authority changed"):
+            self.read(native_only=True)
+        self.assertEqual(self.executions, [])
+
+    def test_guarded_profile_cannot_substitute_an_ordinary_command(self):
+        self.contract["miri_guarded_ownership"] = {**self.contract["miri_ownership"], "features": ["mi-guarded"]}
+        self.report["checks"]["miri-guarded-ownership"] = json.loads(json.dumps(self.ownership))
+        with self.assertRaises(reader.harness.HarnessError):
+            self.read(native_only=True)
+        self.assertEqual(self.executions, [])
+
     def test_changed_source_or_sysroot_bytes_are_rejected_before_replay(self):
         for key in ("program", "dep_info"):
             with self.subTest(key=key):
@@ -626,13 +652,15 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         observed = []
         def replay(command, timeout, **options):
             private = json.loads(Path(command[2]).read_text())
-            args = list(original["args"])
+            selected_original = (json.loads((ROOT / self.guarded_authority["program"]["path"]).read_text())
+                                 if 'feature="mi-guarded"' in private["args"] else original)
+            args = list(selected_original["args"])
             out = args.index("--out-dir") + 1
             incremental = next(index + 1 for index, value in enumerate(args[:-1])
                                if value == "-C" and args[index + 1].startswith("incremental="))
             args[out] = private["args"][out]
             args[incremental] = private["args"][incremental]
-            self.assertEqual(private, {**original, "args": args})
+            self.assertEqual(private, {**selected_original, "args": args})
             self.assertTrue(Path(args[out]).is_dir())
             self.assertNotEqual(args[out], original["args"][out])
             self.assertNotEqual(args[incremental], original["args"][incremental])
@@ -647,7 +675,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
             self.assertEqual(options["env"][self.local.FRESH_TEST_CHILD_ENV], name)
             return next(row for row in self.miri["physical_inputs"]["commands"]["fixture::"] if row["command"][-1] == name)
         self.assertEqual(self.read(replay), self.report)
-        self.assertEqual(len(observed), 5)
+        self.assertEqual(len(observed), 7)
         self.assertEqual(json.loads((ROOT / self.authority["program"]["path"]).read_text()), original)
 
     def test_raw_group_order_survives_sorted_json_report_keys(self):
@@ -664,7 +692,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
                         for row in rows if row["command"][-1] == command[-1])
         self.assertEqual(self.read(replay), self.report)
         self.assertEqual(sum(call.args[0][0] == self.authority["tools"]["cargo-miri"]["executable_path"]
-                             for call in self.executions), 5)
+                             for call in self.executions), 7)
 
     def test_wrong_pinned_tool_directory_is_rejected_before_interpretation(self):
         self.authority["tools"]["miri"]["executable_path"] = "/ambient/bin/miri"
