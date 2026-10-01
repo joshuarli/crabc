@@ -3861,11 +3861,17 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     fn prepare_cross_thread_managed_abandoned_lifecycle() {
+        prepare_cross_thread_managed_abandoned_lifecycle_with_reservation(0);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn prepare_cross_thread_managed_abandoned_lifecycle_with_reservation(arena_reserve_kib: usize) {
+        assert!(arena_reserve_kib <= 1048576);
         unsafe extern "C" fn discard_output(_: *const core::ffi::c_char) {}
         assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
             unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard_output) }));
         assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
-        crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+        crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, arena_reserve_kib as core::ffi::c_long);
         crate::source_options_api::option_set(crate::config::SourceOption::PurgeDelay as i32, -1);
     }
 
@@ -4649,7 +4655,10 @@ mod tests {
         // public child operation. Repeating this integration transition after
         // child Heap allocations retires an active initial-owner engine; it is
         // not part of the ordinary C caller's create/destroy cycle.
-        prepare_cross_thread_managed_abandoned_lifecycle();
+        let arena_reserve_kib = std::env::var("CRABC_MI_RETENTION_ARENA_RESERVE_KIB")
+            .map(|value| value.parse::<usize>().expect("retention arena reservation is an integer"))
+            .unwrap_or(0);
+        prepare_cross_thread_managed_abandoned_lifecycle_with_reservation(arena_reserve_kib);
         let control = CrossThreadAbandonedControl::new();
         // A thread scope allocates shared bookkeeping. Keep that observer
         // allocation alive for both the baseline and every later snapshot.

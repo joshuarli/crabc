@@ -410,7 +410,18 @@ def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
     raise ValueError("native x86 arena lifecycle differs from pinned C: " + "; ".join(mismatches))
 
 
-def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_retention: bool = False, last_cycle: int = 32) -> tuple[list[str], Any]:
+def retention_environment(arena_reserve: int | None) -> dict[str, str]:
+    """Select an explicit retention policy without ambient option inheritance."""
+    environment = dict(os.environ)
+    environment.pop("CRABC_MI_RETENTION_ARENA_RESERVE_KIB", None)
+    if arena_reserve is not None:
+        if not 0 <= arena_reserve <= 1048576:
+            raise ValueError("retention arena reservation must be between 0 and 1048576 KiB")
+        environment["CRABC_MI_RETENTION_ARENA_RESERVE_KIB"] = str(arena_reserve)
+    return environment
+
+
+def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_retention: bool = False, last_cycle: int = 32, arena_reserve: int | None = None) -> tuple[list[str], Any]:
     """Build the fixture against the pinned archive and return its trace."""
 
     if profile not in PROFILES:
@@ -427,6 +438,8 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
         artifacts /= "retention"
         if last_cycle != 32:
             artifacts /= f"last-cycle-{last_cycle}"
+        if arena_reserve is not None:
+            artifacts /= f"arena-reserve-{arena_reserve}"
         artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "oracle"
     with harness.temporary_directory(prefix="crabc-mimalloc-m2-arena-lifecycle-") as directory:
@@ -445,7 +458,7 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_
         harness.write_json(artifacts / "c-build.json", build)
         harness.require_success(build, "pinned C native x86 arena lifecycle oracle build")
         options = (["--source-root-bound", str(last_cycle)] if last_cycle != 32 else ["--repeat-retention"]) if repeat_retention else []
-        run = harness.command_record([str(binary)] + options, cwd=source, timeout_seconds=180)
+        run = harness.command_record([str(binary)] + options, cwd=source, env=retention_environment(arena_reserve if repeat_retention else None), timeout_seconds=180)
         harness.write_json(artifacts / "c-execute.json", run)
         (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
         harness.require_success(run, "pinned C native x86 arena lifecycle oracle")
@@ -529,11 +542,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--repeat-retention", action="store_true", help="report 32 post-warmup child cycles; does not qualify bounded memory")
     parser.add_argument("--observe-ambient-pool", action="store_true", help="authenticate and observe the live ambient musl 1.2.5 pool")
     parser.add_argument("--retention-last-cycle", type=int, default=32, help="opt-in extended source-root observation, between 32 and 128; growth remains unbounded unless separately proved")
+    parser.add_argument("--retention-arena-reserve", type=int, default=None, help="retention-only ArenaReserve in KiB, 0 through source default 1048576; unset preserves zero")
     arguments = parser.parse_args(arguments)
     if arguments.observe_ambient_pool and not arguments.repeat_retention:
         parser.error("--observe-ambient-pool requires --repeat-retention")
     if not 32 <= arguments.retention_last_cycle <= 128 or (arguments.retention_last_cycle != 32 and not arguments.repeat_retention):
         parser.error("--retention-last-cycle requires --repeat-retention and a value between 32 and 128")
+    if arguments.retention_arena_reserve is not None and (not arguments.repeat_retention or not 0 <= arguments.retention_arena_reserve <= 1048576):
+        parser.error("--retention-arena-reserve requires --repeat-retention and a value between 0 and 1048576 KiB")
     import run as harness  # this script's directory is first on sys.path
 
     harness.require_native_x86_64()
@@ -546,15 +562,18 @@ def main(arguments: Sequence[str] | None = None) -> int:
             artifacts /= "retention"
             if arguments.retention_last_cycle != 32:
                 artifacts /= f"last-cycle-{arguments.retention_last_cycle}"
+            if arguments.retention_arena_reserve is not None:
+                artifacts /= f"arena-reserve-{arguments.retention_arena_reserve}"
         artifacts.mkdir(parents=True, exist_ok=True)
         try:
             _, c_trace = run_oracle(harness, offline=True, profile=profile,
                                    **({"repeat_retention": True} if arguments.repeat_retention else {}),
-                                   **({"last_cycle": arguments.retention_last_cycle} if arguments.retention_last_cycle != 32 else {}))
+                                   **({"last_cycle": arguments.retention_last_cycle} if arguments.retention_last_cycle != 32 else {}),
+                                   **({"arena_reserve": arguments.retention_arena_reserve} if arguments.retention_arena_reserve is not None else {}))
             program = native_program(harness, profile, artifacts)
-            environment = None
+            environment = retention_environment(arguments.retention_arena_reserve)
             if arguments.retention_last_cycle != 32:
-                environment = {**os.environ, "CRABC_MI_RETENTION_LAST_CYCLE": str(arguments.retention_last_cycle)}
+                environment = {**environment, "CRABC_MI_RETENTION_LAST_CYCLE": str(arguments.retention_last_cycle)}
             if arguments.observe_ambient_pool:
                 try:
                     proof = authenticate_ambient_pool(harness, Path(program["path"]))

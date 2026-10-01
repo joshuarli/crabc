@@ -14,6 +14,20 @@ import run as harness
 
 
 class ArenaLifecycleProfiles(unittest.TestCase):
+    def test_retention_reservation_is_explicit_and_confined_to_retention(self):
+        with mock.patch.dict(lifecycle.os.environ, {"CRABC_MI_RETENTION_ARENA_RESERVE_KIB": "123"}):
+            self.assertNotIn("CRABC_MI_RETENTION_ARENA_RESERVE_KIB", lifecycle.retention_environment(None))
+            for value in (0, 32768, 1048576):
+                self.assertEqual(lifecycle.retention_environment(value)["CRABC_MI_RETENTION_ARENA_RESERVE_KIB"], str(value))
+        for value in (-1, 1048577):
+            with self.assertRaises(ValueError):
+                lifecycle.retention_environment(value)
+        for arguments in (["--retention-arena-reserve", "1048576"],
+                          ["--repeat-retention", "--retention-arena-reserve", "-1"],
+                          ["--repeat-retention", "--retention-arena-reserve", "1048577"]):
+            with self.assertRaises(SystemExit):
+                lifecycle.main(arguments)
+
     def test_selected_statistics_caller_uses_matching_native_features(self):
         trace = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
         output = "\n".join(f"m2.arena.lifecycle.{i}={value}" for i, value in enumerate(trace))
