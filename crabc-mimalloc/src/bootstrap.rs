@@ -1118,6 +1118,39 @@ mod tests {
         assert_eq!(LiveThreadId::new(16).map(LiveThreadId::get), Some(16));
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn generic_frequency_completion_rejects_foreign_owner_and_unclamped_values() {
+        let mut first = core::pin::pin!(ExclusiveTheapBootstrap::new());
+        let mut second = core::pin::pin!(ExclusiveTheapBootstrap::new());
+        let mut first = first.as_mut().activate_live(LiveThreadId::new(12).unwrap()).unwrap();
+        let mut second = second.as_mut().activate_live(LiveThreadId::new(16).unwrap()).unwrap();
+        fn threshold(session: &mut ExclusiveTheapSession<'_>) -> crate::types::GenericAllocationFrequencyRequest {
+            for _ in 0..999 {
+                assert!(matches!(session.begin_generic_allocation_administration(),
+                    GenericAllocationAdministrationStart::NotDue));
+            }
+            match session.begin_generic_allocation_administration() {
+                GenericAllocationAdministrationStart::Frequency(request) => request,
+                _ => panic!("the source threshold issues one completion request"),
+            }
+        }
+        let request = threshold(&mut first);
+        let before = second.theap().test_generic_administration_image();
+        assert!(second.finish_generic_allocation_administration(request, 1).is_none());
+        assert_eq!(second.theap().test_generic_administration_image(), before);
+        for frequency in [0, -1, 1_000_001] {
+            let request = threshold(&mut first);
+            let before = first.theap().test_generic_administration_image();
+            assert!(first.finish_generic_allocation_administration(request, frequency).is_none());
+            assert_eq!(first.theap().test_generic_administration_image(), before);
+        }
+        let request = threshold(&mut first);
+        assert_eq!(first.finish_generic_allocation_administration(request, 1),
+            Some(crate::types::GenericAllocationAdministration::Full));
+        assert_eq!(first.theap().test_generic_administration_image().2, 0);
+    }
+
     #[test]
     fn source_empty_theap_initializes_every_direct_slot_and_queue() {
         let theap = empty_default_theap();
