@@ -93,6 +93,12 @@ pub(crate) struct MainStaticProcessPageAllocator<'main> {
 #[must_use = "an initial deferred-free allocation phase must be completed"]
 pub(crate) enum MainStaticDeferredFreeAllocationPhase {
     Complete(Option<NonNull<u8>>),
+    #[cfg(target_arch = "x86_64")]
+    GenericFrequency {
+        source: crate::deferred_free::DeferredFreeSource,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        continuation: DeferredFreeAllocationContinuation,
+    },
     Collect {
         source: crate::deferred_free::DeferredFreeSource,
         collection: GenericAllocationCollection,
@@ -2179,6 +2185,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                        source: engine.deferred_free_source()?, request, continuation,
+                    })
+                }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::Collect {
                         source: engine.deferred_free_source()?,
@@ -2257,6 +2269,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                        source: engine.deferred_free_source()?, request, continuation,
+                    })
+                }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::Collect {
                         source: engine.deferred_free_source()?,
@@ -2291,6 +2309,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(block)) => {
                     Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Complete(block)))
                 }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::GenericFrequency { request, continuation }) => {
+                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                        source: engine.deferred_free_source()?, request, continuation,
+                    }))
+                }
                 DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Collect { collection, continuation }) => {
                     Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Collect {
                         source: engine.deferred_free_source()?, collection, continuation,
@@ -2308,6 +2332,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         self.allocate_with(plain.requested_size(), |engine| {
             match engine.begin_deferred_free_aligned_plain(plain) {
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                        source: engine.deferred_free_source()?, request, continuation,
+                    })
+                }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::Collect {
                         source: engine.deferred_free_source()?, collection, continuation,
@@ -2357,6 +2387,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             DeferredFreeAllocationPhase::Complete(block) => {
                 Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
             }
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                    source: engine.deferred_free_source()?, request, continuation,
+                })
+            }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 Some(MainStaticDeferredFreeAllocationPhase::Collect {
                     source: engine.deferred_free_source()?,
@@ -2390,6 +2426,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                        source: engine.deferred_free_source()?, request, continuation,
+                    })
+                }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::Collect {
                         source: engine.deferred_free_source()?,
@@ -2397,6 +2439,50 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         continuation,
                     })
                 }
+            }
+        })
+    }
+
+    /// Finishes source administration only for the same retained initial
+    /// owner after the frequency getter returned outside all projections.
+    ///
+    /// # Safety
+    /// The originating initial Theap, Heap and process admission remain
+    /// retained from the counter prefix through the getter and completion.
+    /// No callback may retire, replace or rebind the original source image.
+    /// Address and source matches alone do not prove this retained lifetime.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn resume_generic_allocation_frequency_current_initial_thread_local(
+        &mut self,
+        source: crate::deferred_free::DeferredFreeSource,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Option<MainStaticDeferredFreeAllocationPhase> {
+        use crate::bootstrap::TheapPageSession;
+        if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)) {
+            let session = self.engine_less_session()?;
+            if !source.matches_current(session.deferred_free_source()?) { return None; }
+            // SAFETY: the caller retains the original issuer admission;
+            // the source identity is revalidated before counter completion.
+            let collection = match unsafe { session.finish_generic_allocation_administration(request, frequency) }? {
+                crate::types::GenericAllocationAdministration::Mini => GenericAllocationCollection::Mini,
+                crate::types::GenericAllocationAdministration::Full => GenericAllocationCollection::Full,
+                crate::types::GenericAllocationAdministration::None => return None,
+            };
+            return Some(MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation });
+        }
+        self.allocate_with(WORD_SIZE, |engine| {
+            if !engine.deferred_free_source().is_some_and(|current| source.matches_current(current)) { return None; }
+            // SAFETY: the caller retains the original issuer across the
+            // getter, and this engine still matches the captured source.
+            match unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) } {
+                DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::GenericFrequency { .. } => None,
+                DeferredFreeAllocationPhase::Collect { collection, continuation } => Some(MainStaticDeferredFreeAllocationPhase::Collect {
+                    source: engine.deferred_free_source()?, collection, continuation,
+                }),
             }
         })
     }
@@ -2432,6 +2518,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             match engine.resume_deferred_free_allocation(collection, continuation) {
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
+                }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                    Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                        source: engine.deferred_free_source()?, request, continuation,
+                    })
                 }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     Some(MainStaticDeferredFreeAllocationPhase::Collect {
@@ -2484,6 +2576,18 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     fn begin_engine_less_generic_refusal(&mut self, request: usize) -> Option<MainStaticDeferredFreeAllocationPhase> {
         use crate::bootstrap::TheapPageSession;
         let session = self.engine_less_session()?;
+        #[cfg(target_arch = "x86_64")]
+        let collection = match session.begin_generic_allocation_administration() {
+            crate::bootstrap::GenericAllocationAdministrationStart::Denied => return Some(MainStaticDeferredFreeAllocationPhase::Complete(None)),
+            crate::bootstrap::GenericAllocationAdministrationStart::NotDue => GenericAllocationCollection::Force,
+            crate::bootstrap::GenericAllocationAdministrationStart::Frequency(request_token) => {
+                return Some(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
+                    source: session.deferred_free_source()?, request: request_token,
+                    continuation: DeferredFreeAllocationContinuation::refused_for_size(request),
+                });
+            }
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let collection = match session.advance_generic_allocation_administration() {
             crate::types::GenericAllocationAdministration::None => GenericAllocationCollection::Force,
             crate::types::GenericAllocationAdministration::Mini => GenericAllocationCollection::Mini,

@@ -1002,7 +1002,9 @@ fn allocate_main_heap_image(thread: MainThread, size: usize, alignment: usize) -
             _ => None,
         }
     } else {
-        allocate_on_theap(thread, theap, size, Some((alignment, 0)), true)
+        // SAFETY: native admission retains this thread's fixed main owner
+        // through the complete metadata allocation and its callbacks.
+        unsafe { allocate_on_theap(thread, theap, size, Some((alignment, 0)), true) }
     }
 }
 
@@ -1144,7 +1146,9 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
                 _ => return None,
             }
         } else {
-            allocate_on_theap(thread, theap, size, None, true)?
+            // SAFETY: native admission retains this thread's fixed main
+            // owner while allocating the unpublished Heap image.
+            unsafe { allocate_on_theap(thread, theap, size, None, true) }?
         };
         // SAFETY: this exact new ordinary block remains exclusively owned
         // and unpublished while its source extent is checked.
@@ -1193,7 +1197,9 @@ pub(crate) unsafe fn native_heap_allocate(
         return None;
     }
     let theap = heap_theap(thread, heap)?;
-    allocate_on_theap(thread, theap, size, aligned, zero)
+    // SAFETY: the caller retains the Heap for the full call and native
+    // admission retains the selected thread owner through callbacks.
+    unsafe { allocate_on_theap(thread, theap, size, aligned, zero) }
 }
 
 /// Allocate through one exact current-thread Theap of a non-main Heap.
@@ -1230,7 +1236,9 @@ pub(crate) unsafe fn native_theap_allocate_variant(
         || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
         return None;
     }
-    allocate_on_theap(thread, theap, size, aligned, zero)
+    // SAFETY: the caller retains this exact Theap, Heap and TLD through
+    // callbacks; native admission remains held until allocation completes.
+    unsafe { allocate_on_theap(thread, theap, size, aligned, zero) }
 }
 
 /// Allocate one guarded backing block on the exact auxiliary main Theap.
@@ -1269,10 +1277,15 @@ pub(crate) unsafe fn native_theap_allocate_guarded_canonical(
     let Some(phase) = with_theap_engine(thread, theap, |engine| {
         engine.begin_deferred_free_guarded_canonical(source_size)
     }) else { return Some(None) };
-    Some(finish_allocation_on_theap(thread, theap, phase))
+    // SAFETY: the caller retains this original selected owner through all
+    // callbacks and the native admission remains held beside this phase.
+    Some(unsafe { finish_allocation_on_theap(thread, theap, phase) })
 }
 
-fn allocate_on_theap(
+/// # Safety
+/// The exact Theap, Heap and TLD stay retained under native admission for
+/// every callback and resumed phase; callbacks may not retire these images.
+unsafe fn allocate_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
     size: usize,
@@ -1286,10 +1299,15 @@ fn allocate_on_theap(
         None => engine.begin_deferred_free_allocation(size, zero),
         Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
     })?;
-    finish_allocation_on_theap(thread, theap, phase)
+    // SAFETY: forwarded retained source-owner and admission obligations.
+    unsafe { finish_allocation_on_theap(thread, theap, phase) }
 }
 
-fn finish_allocation_on_theap(
+/// # Safety
+/// The phase's originating Theap, Heap and TLD remain live and admitted
+/// through getter callbacks and completion. Matching addresses alone do not
+/// authorize resuming an image after its originating owner was withdrawn.
+unsafe fn finish_allocation_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
     mut phase: crate::single_thread::DeferredFreeAllocationPhase,
@@ -1298,6 +1316,17 @@ fn finish_allocation_on_theap(
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return block,
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                // The actual process binding and selected owner outlive this
+                // operation; no engine or TLS projection crosses the getter.
+                let frequency = binding()?.process().policy().generic_collect_frequency();
+                phase = with_theap_engine(thread, theap, |engine| {
+                    // SAFETY: the caller retained this original issuer
+                    // across the getter, with native admission still held.
+                    unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) }
+                })?;
+            }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 let force = matches!(collection, GenericAllocationCollection::Force);
                 if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {
