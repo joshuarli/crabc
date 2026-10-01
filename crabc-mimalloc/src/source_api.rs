@@ -1670,6 +1670,87 @@ mod tests {
     use super::SourceErrno;
     use crabc_core::Errno;
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn cold_public_aligned_allocation_samples_only_after_thread_initialization() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::cold_public_aligned_allocation_samples_only_after_thread_initialization",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                std::env::set_var("mimalloc_guarded_sample_rate", "1");
+                // SAFETY: the fresh process retains its live host environment
+                // and the static output callback throughout lazy startup.
+                let facts = unsafe { crate::__crabc_runtime::NativeProcessStartupFacts::new(
+                    4096, crate::runtime_lifecycle::test_host_process_environment,
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(discard),
+                ) }.unwrap();
+                assert!(crate::__crabc_runtime::publish_native_process_startup_facts(facts));
+                let cold = crate::compiler_tls::default_theap();
+                // SAFETY: this is the immutable empty compiler-TLS image.
+                assert!(unsafe { crate::types::Theap::heap_at(cold) }.is_null());
+                let first = super::malloc_aligned_at(81, 64, 0).value.unwrap();
+                let second = super::malloc_aligned_at(81, 64, 0).value.unwrap();
+                let permission = |address| {
+                    std::fs::read_to_string("/proc/self/maps").unwrap().lines().find_map(|line| {
+                        let mut fields = line.split_whitespace();
+                        let (start, end) = fields.next()?.split_once('-')?;
+                        let start = usize::from_str_radix(start, 16).ok()?;
+                        let end = usize::from_str_radix(end, 16).ok()?;
+                        (start <= address && address < end).then(|| std::string::String::from(fields.next().unwrap()))
+                    }).unwrap()
+                };
+                // SAFETY: both successful public clients remain exclusively
+                // owned through usable-size observations and terminal frees.
+                unsafe {
+                    let first_tail = first.as_ptr().addr() + super::usable_size(first.as_ptr());
+                    let second_tail = second.as_ptr().addr() + super::usable_size(second.as_ptr());
+                    assert!(permission(first_tail).starts_with("rw"),
+                        "the empty source Theap cannot sample its initializing allocation");
+                    assert!(permission(second_tail).starts_with("---"),
+                        "the initialized source Theap samples the following allocation");
+                    assert_eq!(super::free(first.as_ptr()), super::FreeOutcome::Freed);
+                    assert_eq!(super::free(second.as_ptr()), super::FreeOutcome::Freed);
+                }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn sampled_guarded_aligned_refusal_precedes_ordinary_size_validation() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::sampled_guarded_aligned_refusal_precedes_ordinary_size_validation",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                assert!(crate::__crabc_runtime::prepare_native_initial_thread_owner());
+                let selected = crate::source_heap_api::theap_get_default();
+                assert!(!selected.is_null());
+                // SAFETY: this fresh-process thread exclusively retains its
+                // initialized Theap and sampler throughout these public calls.
+                unsafe {
+                    crate::source_heap_api::theap_guarded_set_size_bound(selected, 0, usize::MAX);
+                    crate::source_heap_api::theap_guarded_set_sample_rate(selected, 1, 0);
+                }
+                let sampled = super::malloc_aligned_at(usize::MAX, 64, 0);
+                assert!(sampled.value.is_none());
+                assert_eq!(sampled.errno.apply(0), Errno::NOMEM.raw(),
+                    "a sampled guarded overflow must not fall through to ordinary EINVAL");
+                assert_eq!(sampled.errno.apply(29), 29);
+                let invalid = super::malloc_aligned_at(usize::MAX, 3, 0);
+                assert!(invalid.value.is_none());
+                assert_eq!(invalid.errno.apply(0), Errno::INVAL.raw(),
+                    "alignment validity precedes the guarded sampler");
+                let offset = super::malloc_aligned_at(usize::MAX, 64, 1);
+                assert!(offset.value.is_none());
+                assert_eq!(offset.errno.apply(0), Errno::INVAL.raw(),
+                    "offset allocation excludes guarded sampling");
+            },
+        );
+    }
+
     #[cfg(all(feature = "mi-xmalloc", target_arch = "x86_64"))]
     #[test]
     fn xmalloc_oversized_allocation_aborts_in_a_fresh_process() {

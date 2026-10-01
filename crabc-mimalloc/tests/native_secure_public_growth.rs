@@ -1,10 +1,11 @@
-#![cfg(all(target_arch = "x86_64", feature = "mi-secure-3"))]
+#![cfg(all(target_arch = "x86_64", any(feature = "mi-secure-3", feature = "mi-guarded")))]
 
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;
 
 use crabc_mimalloc::{source_api as api, source_heap_api as heaps};
 
+#[cfg(feature = "mi-secure-3")]
 fn repeated_birth_and_growth() {
     let base = heaps::theap_get_default();
     assert!(!base.is_null());
@@ -39,6 +40,7 @@ fn repeated_birth_and_growth() {
 }
 
 #[test]
+#[cfg(feature = "mi-secure-3")]
 fn repeated_secure_heap_birth_and_growth_survive_joined_worker_and_fork() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
@@ -84,4 +86,68 @@ fn repeated_secure_heap_birth_and_growth_survive_joined_worker_and_fork() {
     assert_eq!(status, 0, "the secure growth child exits successfully");
     println!("secure.context=fork-parent");
     repeated_birth_and_growth();
+    #[cfg(feature = "mi-guarded")]
+    guarded_public_aligned_growth();
+}
+
+#[cfg(feature = "mi-guarded")]
+fn permissions(address: usize) -> Option<String> {
+    std::fs::read_to_string("/proc/self/maps").unwrap().lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let (start, end) = fields.next()?.split_once('-')?;
+        let start = usize::from_str_radix(start, 16).ok()?;
+        let end = usize::from_str_radix(end, 16).ok()?;
+        (start <= address && address < end).then(|| fields.next().unwrap().to_owned())
+    })
+}
+
+#[cfg(feature = "mi-guarded")]
+fn guarded_public_aligned_growth() {
+    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
+    let selected = heaps::theap_get_default();
+    assert!(!selected.is_null());
+    // SAFETY: this thread exclusively owns its retained initialized Theap
+    // and does not allocate between the two sampler setters.
+    unsafe {
+        heaps::theap_guarded_set_size_bound(selected, 0, usize::MAX);
+        heaps::theap_guarded_set_sample_rate(selected, 1, 0);
+    }
+    let old = api::malloc_aligned_at(81, 64, 0).value.unwrap();
+    let keeper = api::malloc_aligned_at(81, 64, 0).value.unwrap();
+    // SAFETY: these successful public clients remain exclusively owned.
+    let usable = unsafe { api::usable_size(old.as_ptr()) };
+    assert!(usable >= 81);
+    assert_eq!(old.as_ptr().addr() % 64, 0);
+    let tail = old.as_ptr().addr().checked_add(usable).unwrap();
+    assert!(permissions(tail).unwrap().starts_with("---"), "the actual public client ends at its protected guard");
+    assert_eq!(tail % page_size, 0);
+    // SAFETY: the full reported usable client is writable and owned. Failed
+    // realloc leaves it live; success consumes it, retaining only replacement.
+    unsafe {
+        old.as_ptr().write_bytes(0x63, usable);
+        assert!(api::realloc_aligned_at(old.as_ptr(), usize::MAX, 64, 0).value.is_none());
+        assert!(permissions(tail).unwrap().starts_with("---"));
+        let replacement = api::rezalloc_aligned_at(old.as_ptr(), 1024, 64, 0).value.unwrap();
+        assert_ne!(replacement, old);
+        let new_usable = api::usable_size(replacement.as_ptr());
+        assert!(new_usable >= 1024);
+        let bytes = core::slice::from_raw_parts(replacement.as_ptr(), new_usable);
+        assert!(bytes[..usable].iter().all(|byte| *byte == 0x63));
+        assert!(bytes[usable..].iter().all(|byte| *byte == 0));
+        let new_tail = replacement.as_ptr().addr().checked_add(new_usable).unwrap();
+        assert!(permissions(new_tail).unwrap().starts_with("---"));
+        assert!(permissions(tail).unwrap().starts_with("rw"), "consumed old client has no protected guard");
+        assert_eq!(api::free(replacement.as_ptr()), api::FreeOutcome::Freed);
+        assert_eq!(api::free(keeper.as_ptr()), api::FreeOutcome::Freed);
+        heaps::theap_guarded_set_sample_rate(selected, 0, 0);
+    }
+}
+
+#[cfg(all(feature = "mi-guarded", not(feature = "mi-secure-3")))]
+#[test]
+fn public_guarded_aligned_sampling_protects_reported_tail_and_consumes_on_growth() {
+    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
+    assert!(native_runtime_test_support::initialize(page_size));
+    assert!(crabc_mimalloc::__crabc_runtime::prepare_native_initial_thread_owner());
+    guarded_public_aligned_growth();
 }
