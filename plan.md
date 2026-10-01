@@ -154,10 +154,18 @@ only its exact source, configuration, image, products, and execution context.
   qualification stays open, including the retained source-root growth.
   Secure-3 padding, canonical prefixes, encoded visitation and diagnostic
   repairs are integrated with exact-source focused read-only evidence;
-  complete secure-3 production and merged-source compiler checks remain pending.
-  All nine compiler profiles passed at the earlier observer source. ISA
-  correctness passes separately from deferred throughput. Complete M2/M3/M4
-  and merged-source qualification remain open.
+  complete secure-3 production remains pending. The pinned C controls prove
+  keyed Page geometry; corrected exact layout tests pass all nineteen focused
+  secure-3 cases, five nearby cases and independent read-only replay. The
+  unchanged caller-locked arena fixture requires a 64-MiB memlock budget;
+  original C/native refusals under 8 MiB remain retained. Selected allocation
+  admission now retains the actual main or child owner before candidate creation;
+  exact main, child and foreign-owner controls and owning replay pass.
+  All nine merged compiler profiles pass at `3a2d09895`. Indexed source ELF
+  sections authenticate all 32 previously refused callable definitions in the
+  retained runtime cohort; 309 merged read-only objects still lack complete
+  selected-member proof. ISA correctness passes separately from deferred
+  throughput. Complete M2/M3/M4 and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Continue independent
