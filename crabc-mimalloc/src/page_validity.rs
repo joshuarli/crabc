@@ -397,9 +397,56 @@ mod tests {
         unsafe { map.destroy() }.unwrap();
         match core::mem::ManuallyDrop::into_inner(claim) {
             FreshAssertionTestClaim::Os(claim) => {
+                use crate::os::{fault, VmProcess};
+                use crate::os_page::OsAlignedPageOwner;
+                let fault = fault::install(fault::Plan::disabled());
+                let base = claim.base().unwrap();
+                let metadata = claim.metadata().unwrap();
                 assert!(claim.belongs_to_subprocess(process.subprocess()));
-                unsafe { claim.release_for_process(process) }
-                    .unwrap_or_else(|_| panic!("the original OS claim releases explicitly"));
+                let foreign = VmProcess::new_main(process.policy(),
+                    crate::subproc::MainSubprocess::test_static_owner());
+                let before = process.subprocess().vm_statistics().snapshot();
+                // SAFETY: the admitted owner retains the original issuer and
+                // sole private claim; the foreign view supplies no authority.
+                let mismatch = unsafe { claim.release_for_process(foreign) }
+                    .expect_err("observation refusal cannot change the mapping issuer");
+                assert_eq!(fault.observed(), 0);
+                assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+                let OsAlignedPageOwner::Claim(claim) = mismatch.into_owner()
+                    else { panic!("issuer refusal returns the original fresh claim"); };
+                assert_eq!(claim.base().unwrap(), base);
+                assert_eq!(claim.metadata().unwrap(), metadata);
+                assert!(claim.belongs_to_subprocess(process.subprocess()));
+
+                fault.set(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                // SAFETY: all PageMap and metadata observations have ended;
+                // the original admitted issuer and sole claim remain live.
+                let failure = unsafe { claim.release_for_process(process) }
+                    .expect_err("failed cleanup retains the original fresh mapping");
+                assert_eq!(fault.observed(), 1);
+                let accounted = process.subprocess().vm_statistics().snapshot();
+                assert_ne!(accounted, before);
+                let OsAlignedPageOwner::Claim(claim) = failure.into_owner()
+                    else { panic!("failed cleanup retains a claim, not a published owner"); };
+                assert_eq!(claim.base().unwrap(), base);
+                assert_eq!(claim.metadata().unwrap(), metadata);
+                // SAFETY: the original issuer still lives; presenting a
+                // foreign pair must not bypass the accounted retry boundary.
+                let mismatch = unsafe { claim.release_for_process(foreign) }
+                    .expect_err("a raw retry does not acquire a different issuer");
+                assert_eq!(fault.observed(), 1);
+                assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
+                let OsAlignedPageOwner::Claim(claim) = mismatch.into_owner()
+                    else { panic!("retry refusal preserves the original fresh claim"); };
+                assert!(claim.belongs_to_subprocess(process.subprocess()));
+                assert_eq!(claim.base().unwrap(), base);
+                fault.set(fault::Plan::disabled());
+                // SAFETY: cleanup has already been accounted, and the same
+                // admitted owner retains its identity through this raw retry.
+                unsafe { claim.retry_release() }
+                    .unwrap_or_else(|_| panic!("the original fresh claim retries explicitly"));
+                assert_eq!(fault.observed(), 0);
+                assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
             }
             FreshAssertionTestClaim::Arena(custody) => {
                 let restored = issuer.restore_source_initialization_claim(custody)
@@ -518,6 +565,9 @@ mod tests {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "page_validity::tests::actual_initially_zero_assertion_retains_os_and_arena_backing_until_abort",
                     "--nocapture", "--test-threads=1"])
+                // Native launchers bind temporary storage to checkout-owned
+                // scratch, including any process-terminal core image.
+                .current_dir(std::env::temp_dir())
                 .env(CHILD, kind).output().unwrap();
             assert_eq!(result.status.signal(), Some(6), "{kind}");
             assert_eq!(result.stderr, b"\noriginal backing retained during reentry\nmimalloc: assertion failed: at \"src/page.c\":729, _mi_page_init\n  assertion: \"mi_mem_is_zero(page_start, mi_page_committed(page))\"\n", "{kind}");
