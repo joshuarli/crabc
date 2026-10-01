@@ -5,14 +5,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define MAX_CLIENTS 96
+
+static size_t os_page_size;
 
 typedef struct client_s {
   unsigned char* pointer;
   size_t requested;
   size_t usable;
   bool live;
+  bool guarded;
 } client_t;
 
 typedef struct population_s {
@@ -34,6 +38,7 @@ typedef struct capture_s {
   size_t areas;
   size_t blocks;
   size_t found;
+  size_t guarded;
   size_t used;
   size_t full;
   size_t empty;
@@ -101,6 +106,14 @@ static bool observe(const mi_heap_t* heap, const mi_heap_area_t* area,
       memcpy(capture->geometry[i], geometry, sizeof(geometry));
       capture->valid &= client->requested <= block_size - offset &&
           client->usable <= block_size - offset;
+      if (client->guarded) {
+        uintptr_t tag;
+        memcpy(&tag, block, sizeof(tag));
+        capture->guarded++;
+        capture->valid &= tag == UINTPTR_MAX && offset >= sizeof(uintptr_t) &&
+            area->full_block_size >= offset + os_page_size &&
+            client->usable == area->full_block_size - offset - os_page_size;
+      }
       for (size_t j = 0; j < client->requested; j++) {
         capture->valid &= client->pointer[j] == (unsigned char)(i + 1);
       }
@@ -121,12 +134,19 @@ static bool add(population_t* population, size_t size, size_t alignment) {
   if (usable < size || mi_heap_of(block) != population->heap ||
       (alignment != 0 && (uintptr_t)block % alignment != 0)) return false;
   memset(block, (unsigned char)(index + 1), size);
-  population->clients[index] = (client_t){block, size, usable, true};
+  population->clients[index] = (client_t){block, size, usable, true,
+      MI_GUARDED && (alignment == 0 || alignment == 4096)};
   population->count++;
   return true;
 }
 
 static bool populate(population_t* population) {
+  #if MI_GUARDED
+  mi_theap_t* theap = mi_heap_theap(population->heap);
+  if (theap == NULL) return false;
+  mi_theap_guarded_set_sample_rate(theap, 1, 1);
+  mi_theap_guarded_set_size_bound(theap, 0, SIZE_MAX);
+  #endif
   const size_t groups[][2] = {{73, 5}, {91, 3}, {8192, 32}, {32769, 18}, {200000, 3}};
   for (size_t group = 0; group < sizeof(groups) / sizeof(groups[0]); group++) {
     for (size_t i = 0; i < groups[group][1]; i++) {
@@ -147,12 +167,23 @@ static bool visit(const char* name, population_t* population, mi_heap_t* heap,
       : alias == 1 ? mi_heap_visit_abandoned_blocks(heap, blocks, observe, &capture)
       : alias == 2 ? mi_theap_visit_blocks(theap, blocks, observe, &capture)
       : mi_heap_visit_blocks(NULL, blocks, observe, &capture);
-  size_t live = 0;
-  for (size_t i = 0; i < population->count; i++) live += population->clients[i].live;
+  size_t live = 0, guarded = 0;
+  for (size_t i = 0; i < population->count; i++) {
+    live += population->clients[i].live;
+    guarded += population->clients[i].live && population->clients[i].guarded;
+  }
   bool expected = capture.valid && (stop == 0 ? complete : !complete && capture.calls == stop);
-  if (blocks && all_live && stop == 0) expected &= capture.found == live;
+  if (blocks && all_live && stop == 0) expected &= capture.found == live && capture.guarded == guarded;
   if (!blocks) expected &= capture.blocks == 0;
   if (require_full) expected &= capture.full > 0;
+  // Secure free-list shuffling changes the first visited client. The callback
+  // validates that client's bytes and geometry; stopping exposes cardinality,
+  // while complete visits below retain every client's geometry and identity.
+  if (stop != 0) {
+    printf("%s=%d,%d,%zu,%zu,%zu,%zu\n", name, complete, expected,
+           capture.calls, capture.areas, capture.blocks, capture.found);
+    return expected;
+  }
   uint64_t identities[2] = {0, 0};
   for (size_t i = 0; i < population->count; i++) {
     if (capture.seen[i]) identities[i / 64] |= UINT64_C(1) << (i % 64);
@@ -168,6 +199,9 @@ static bool visit(const char* name, population_t* population, mi_heap_t* heap,
            capture.geometry[i][2], capture.geometry[i][3], capture.geometry[i][4],
            capture.geometry[i][5], capture.geometry[i][6]);
   }
+  #if MI_GUARDED
+  printf("%s.guarded=%zu\n", name, capture.guarded);
+  #endif
   return expected;
 }
 
@@ -194,6 +228,9 @@ static void* owner(void* argument) {
 }
 
 int main(void) {
+  long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) return 8;
+  os_page_size = (size_t)page_size;
   setvbuf(stdout, NULL, _IONBF, 0);
   puts("CRABC_MI_HEAP_VISIT_PROFILES_BEGIN");
   mi_theap_t* initial = mi_theap_get_default();

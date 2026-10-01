@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import sys
@@ -17,7 +18,8 @@ receipts = load_module("heap_visit_profiles_receipts", harness.ROOT / "compat/x8
 RUNNER = "allocator-heap-visit-profiles"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-heap-visit-profiles"
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
-AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2")
+GUARDED_PROFILES = ("guarded", "guarded-debug-1", "guarded-secure-3", "guarded-stat-2")
+AVAILABLE_PROFILES = (*PROFILES, "secure-1", "secure-2", *GUARDED_PROFILES)
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_heap_visit_profiles_driver.c"
 ALIASES = ("mi_heap_visit_blocks", "mi_heap_visit_abandoned_blocks", "mi_theap_visit_blocks")
 
@@ -47,8 +49,9 @@ def run(profiles, *, canonical=False):
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="run-", dir=ARTIFACTS))
     output.chmod(0o755)
-    source = harness.safe_extract(harness.fetch_archive(pin, True), output / "source", pin["archive_root"])
-    products, cases = {}, []
+    archive = harness.fetch_archive(pin, True)
+    source = harness.safe_extract(archive, output / "source", pin["archive_root"])
+    products, cases = {"upstream-archive": archive}, []
     for original in (DRIVER, source / "include/mimalloc.h", source / "LICENSE"):
         retained = output / original.name
         shutil.copy2(original, retained)
@@ -56,6 +59,8 @@ def run(profiles, *, canonical=False):
     inputs = output / "inputs.json"
     inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
         "profiles": profiles, "aliases": ALIASES,
+        "profile_flags": {profile: list(m4.api_profile_flags(profile)) for profile in profiles},
+        "profile_features": {profile: list(m4.api_profile_features(profile)) for profile in profiles},
         "boundary": "explicit mi_* native adapter; pinned musl provides pthreads",
         "callback": "quiescent scalar capture and retained client reads only",
         "runtime_watchdog_seconds": 60}, indent=2) + "\n")
@@ -75,6 +80,7 @@ def run(profiles, *, canonical=False):
                   *m4.api_profile_flags(profile), "-I", str(source / "include")]
         oracle = directory / "oracle.o"
         passed("oracle-build", [compiler, *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
+        products[f"{profile}-oracle.o"] = oracle
         caller = directory / "caller.o"
         passed("caller-build", [compiler, *common, "-c", str(DRIVER), "-o", str(caller)])
         imports = passed("caller-imports", [harness.require_tool("nm"), "-u", str(caller)])
@@ -86,18 +92,28 @@ def run(profiles, *, canonical=False):
         passed("c-link", [compiler, str(caller), str(oracle), "-pthread", "-o", str(c_binary)])
         products[f"{profile}-c"] = c_binary
         c_run = passed("c-run", [str(c_binary)], directory, True)
+        features = m4.api_profile_features(profile)
         passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
             "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
-            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], harness.ROOT)
+            *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in features)) if features else ())], harness.ROOT)
         library = target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
+        retained_library = directory / "adapter.a"
+        shutil.copy2(library, retained_library)
+        products[f"{profile}-adapter.a"] = retained_library
         native_binary = directory / "native"
         passed("native-link", [compiler, str(caller), str(library), "-pthread", "-o", str(native_binary)])
         products[f"{profile}-native"] = native_binary
         products[f"{profile}-caller.o"] = caller
         native_run = passed("native-run", [str(native_binary)], directory, True)
-        if stress.byte_record_payload(c_run["stdout"], profile) != stress.byte_record_payload(native_run["stdout"], profile):
+        trace = stress.byte_record_payload(c_run["stdout"], profile)
+        if trace != stress.byte_record_payload(native_run["stdout"], profile):
             raise harness.HarnessError(f"{profile} C/native visitation traces differ; raw in {output}")
+        if profile in GUARDED_PROFILES and not re.search(rb"^populated\.heap\.guarded=[1-9][0-9]*$", trace, re.MULTILINE):
+            raise harness.HarnessError(f"{profile} did not visit a populated tagged guarded client cohort")
         print(f"Heap visitation {profile}: all public aliases PASS", flush=True)
+        # The compiled library has been transferred to the retained product;
+        # completed per-profile Cargo caches are no longer execution inputs.
+        shutil.rmtree(target)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during Heap visitation")
     canonical = canonical or tuple(profiles) == PROFILES
@@ -131,6 +147,39 @@ def main():
         if (receipt.parameters.get("profiles") != ",".join(profiles)
                 or inputs.get("profiles") != list(profiles) or recorded != wanted):
             raise receipts.ReceiptError("visitation receipt does not cover the exact requested profile cohort")
+        pin = harness.load_pin()
+        products = receipt.path.parent / "products"
+        logs = receipt.path.parent / "logs"
+        if (inputs.get("upstream") != pin
+                or harness.sha256_file(products / "upstream-archive") != pin["sha256"]
+                or (products / DRIVER.name).read_bytes() != DRIVER.read_bytes()
+                or inputs.get("profile_flags") != {profile: list(m4.api_profile_flags(profile)) for profile in profiles}
+                or inputs.get("profile_features") != {profile: list(m4.api_profile_features(profile)) for profile in profiles}):
+            raise receipts.ReceiptError("visitation compiler inputs or selected guarded feature closure differ")
+        for profile in profiles:
+            for backend in ("c", "native"):
+                case = next(case for case in receipt.cases if case["id"] == f"{profile}-{backend}-run")
+                stdout = next(path for path in case["logs"] if path.endswith(".stdout"))
+                if profile in GUARDED_PROFILES and not re.search(rb"^populated\.heap\.guarded=[1-9][0-9]*$",
+                        (logs / stdout).read_bytes(), re.MULTILINE):
+                    raise receipts.ReceiptError("guarded visitation receipt lacks an executed tagged client population")
+            expected_flags = ["-DMI_LIBC_MUSL=1", *[flag for flag in m4.api_profile_flags(profile)
+                if flag.startswith(("-DMI_", "-UMI_"))]]
+            for label in ("oracle-build", "caller-build"):
+                build = next(case for case in receipt.cases if case["id"] == f"{profile}-{label}")
+                record_path = next(path for path in build["logs"] if path.endswith(".json"))
+                argv = harness.read_json(logs / record_path).get("command", [])
+                selected_flags = [arg for arg in argv if arg.startswith(("-DMI_", "-UMI_"))]
+                if selected_flags != expected_flags:
+                    raise receipts.ReceiptError("visitation C compiler configuration differs")
+            build = next(case for case in receipt.cases if case["id"] == f"{profile}-native-build")
+            record_path = next(path for path in build["logs"] if path.endswith(".json"))
+            argv = harness.read_json(logs / record_path).get("command", [])
+            features = m4.api_profile_features(profile)
+            expected_features = ",".join(f"crabc-mimalloc/{feature}" for feature in features)
+            if ((features and ("--features" not in argv or argv[argv.index("--features") + 1:] != [expected_features]))
+                    or (not features and "--features" in argv)):
+                raise receipts.ReceiptError("visitation native compiler feature arguments differ")
         print("Heap visitation exact-source physical receipt: PASS")
         if args.replay:
             execution = harness.require_native_x86_64(require_image_identity=True)
