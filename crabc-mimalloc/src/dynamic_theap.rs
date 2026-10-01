@@ -4071,19 +4071,26 @@ mod tests {
     /// Numeric observations carry no mapping or release capability. The bound
     /// fails explicitly rather than omitting an otherwise live source root.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    struct RetentionRoots { entries: [Option<RetentionRoot>; 1024], len: usize }
+    struct RetentionRoots { entries: [Option<RetentionRoot>; 1024], len: usize, failed: bool }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     impl RetentionRoots {
-        fn new() -> Self { Self { entries: [None; 1024], len: 0 } }
+        fn new() -> Self { Self { entries: [None; 1024], len: 0, failed: false } }
 
         fn add(&mut self, category: RetentionRootCategory, start: usize, end: usize) {
-            assert!(start != 0 && end > start, "a retained source root has a nonempty extent");
-            if self.entries[..self.len].iter().flatten()
+            if start == 0 || end <= start { self.failed = true; return; }
+            if self.entries.iter().take(self.len).flatten()
                 .any(|root| root.category == category && root.start == start && root.end == end) { return; }
-            assert!(self.len < self.entries.len(), "retained source root observation exceeded its bound");
-            self.entries[self.len] = Some(RetentionRoot { category, start, end });
+            let Some(slot) = self.entries.get_mut(self.len) else { self.failed = true; return; };
+            *slot = Some(RetentionRoot { category, start, end });
             self.len += 1;
+        }
+
+        fn extent(&mut self, category: RetentionRootCategory, start: usize, length: usize) {
+            match start.checked_add(length) {
+                Some(end) => self.add(category, start, end),
+                None => self.failed = true,
+            }
         }
 
         /// # Safety
@@ -4093,14 +4100,14 @@ mod tests {
             let mut visited = 0usize;
             while let Some(pointer) = NonNull::new(page) {
                 visited += 1;
-                assert!(visited <= self.entries.len(), "source page list exceeds the observation bound");
+                if visited > self.entries.len() { self.failed = true; return; }
                 // SAFETY: the retained source list supplies this actual Page;
                 // only its MemoryId fields and next link are observed.
                 let state = unsafe { crate::types::Page::abandonment_state_at(pointer) };
                 if state.memid.is_os() {
-                    let memory = state.memid.os_memory().expect("OS Page has its original OS extent");
+                    let Some(memory) = state.memid.os_memory() else { self.failed = true; return; };
                     let start = memory.base.addr();
-                    self.add(category, start, start.checked_add(memory.size).unwrap());
+                    self.extent(category, start, memory.size);
                 }
                 page = unsafe { crate::types::Page::queue_next_at(pointer) };
             }
@@ -4111,7 +4118,7 @@ mod tests {
         /// no queue or Page can change before this numeric projection ends.
         unsafe fn theap(&mut self, theap: NonNull<Theap>, category: RetentionRootCategory) {
             for bin in 0..crate::config::BIN_COUNT {
-                let queue = unsafe { Theap::local_queue_at(theap, bin) }.unwrap();
+                let Some(queue) = (unsafe { Theap::local_queue_at(theap, bin) }) else { self.failed = true; return; };
                 unsafe { self.pages(queue.first(), category) };
             }
         }
@@ -4122,15 +4129,15 @@ mod tests {
         unsafe fn arenas(&mut self, identity: &crate::subproc::SubprocessIdentity) {
             let registry = identity.arena_backing().registry();
             for index in 0..registry.count() {
-                let arena = unsafe { registry.arena_at(index) }.unwrap();
+                let Some(arena) = (unsafe { registry.arena_at(index) }) else { self.failed = true; return; };
                 let category = match arena.memid.kind() {
                     MemoryKind::External => RetentionRootCategory::ExternalArena,
                     kind if kind.is_os() => RetentionRootCategory::OsArena,
                     _ => continue,
                 };
-                let memory = arena.memid.os_memory().expect("registered mapping retains its source extent");
+                let Some(memory) = arena.memid.os_memory() else { self.failed = true; return; };
                 let start = memory.base.addr();
-                self.add(category, start, start.checked_add(memory.size).unwrap());
+                self.extent(category, start, memory.size);
             }
         }
 
@@ -4182,11 +4189,11 @@ mod tests {
             // publication-locked visitor only records bounded scalar extents;
             // it performs no allocation, reentry, or ownership operation.
             unsafe { page_map.test_visit_mapping_extents(|base, length| {
-                roots.add(RetentionRootCategory::ProcessPageMap, base, base.checked_add(length).unwrap());
+                roots.extent(RetentionRootCategory::ProcessPageMap, base, length);
             }) }.unwrap();
             let main = crate::subproc::MainSubprocess::global();
             crate::meta::MetaAllocator::global().test_with_held_backing_entry(|| {
-                let theap = NonNull::new(main.test_published_metadata_theap()).unwrap();
+                let Some(theap) = NonNull::new(main.test_published_metadata_theap()) else { roots.failed = true; return; };
                 // SAFETY: the real metadata entry holds both backing and source
                 // metadata locks. No allocation or callback occurs here.
                 unsafe { roots.theap(theap, RetentionRootCategory::ProcessMetadata) };
@@ -4203,14 +4210,20 @@ mod tests {
             // quiesced. The child record lock retains its actual source owner.
             let id = unsafe { crate::subproc::lifecycle::NativeSubprocessId::from_ptr(pointer) };
             unsafe { id.with_owner(|owner| {
-                owner.as_mut().unwrap().with_child_metadata_entry(|image, heap, theap, _| {
+                let Some(owner) = owner.as_mut() else { roots.failed = true; return; };
+                let result = owner.with_child_metadata_entry(|image, heap, theap, _| {
                     // SAFETY: the child and metadata guards retain these actual
                     // lists and arenas; the closure records scalar extents only.
                     roots.theap(NonNull::from(theap), RetentionRootCategory::OsPage);
                     roots.pages(heap.test_os_abandoned_page_head(), RetentionRootCategory::OsPage);
                     roots.arenas(image.identity());
-                }).unwrap();
+                });
+                if result.is_none() { roots.failed = true; }
             }) }.unwrap();
+            // All source publication and metadata owner locks have ended.
+            // Any incomplete observation fails here without allocating while
+            // the numeric visitor or source projections hold those locks.
+            assert!(!roots.failed, "retained source root observation failed or exceeded its bound");
             *observed.borrow_mut() = Some(roots);
         }, |child_index| {
             observed.borrow_mut().take().unwrap().report_after_destroy(cycle, child_index);
