@@ -1115,10 +1115,10 @@ unsafe fn heap_visit_free_map(
     capacity: usize,
     bitmap: &mut [usize],
 ) -> Option<usize> {
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     // SAFETY: the caller retains the initialized page and its immutable keys.
-    let keys = unsafe { Page::debug_padding_keys_at(page) };
-    #[cfg(not(feature = "mi-debug-1"))]
+    let keys = unsafe { Page::source_page_keys_at(page) };
+    #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
     let _ = page;
     let mut free_count = 0usize;
     while !free.is_null() {
@@ -1129,9 +1129,9 @@ unsafe fn heap_visit_free_map(
         free_count += 1;
         // SAFETY: the validated node is in the caller-retained free block
         // area, whose initialized next word remains stable during visitation.
-        #[cfg(not(feature = "mi-debug-1"))]
+        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
         { free = unsafe { core::ptr::read(free.cast::<*mut crate::types::Block>()) }; }
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         {
             // SAFETY: encoded links occupy the same initialized first word.
             let encoded = unsafe { core::ptr::read(free.cast::<usize>()) };
@@ -1233,12 +1233,12 @@ mod heap_visit_tests {
         let second = blocks.as_mut_ptr().wrapping_add(1);
         let mut page = crate::types::Page::remote_free_test_page(2, 0);
         let page = core::ptr::NonNull::from(&mut page);
-        #[cfg(not(feature = "mi-debug-1"))]
+        #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
         let link = second.addr();
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         // SAFETY: this initialized test page remains exclusive through traversal.
         let link = crate::free_list::encode_page_link(page.as_ptr().addr(),
-            unsafe { crate::types::Page::debug_padding_keys_at(page) }, second.addr());
+            unsafe { crate::types::Page::source_page_keys_at(page) }, second.addr());
         // SAFETY: the second block is retained for this call and its next
         // word deliberately points back to itself to model a malformed list.
         unsafe { second.write(link) };
