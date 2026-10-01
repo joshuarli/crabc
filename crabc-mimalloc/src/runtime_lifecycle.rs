@@ -13440,6 +13440,13 @@ impl NativeAllocationOwner<'_> {
 
     /// Borrows the output selected with this context's ready process binding.
     pub(crate) fn output(&self) -> &crate::diagnostic_output::OutputOwner { self.output }
+
+    /// Copies the PageMap root selected by this still-admitted process.
+    /// The root grants no release or registration rights; this original
+    /// owner and its admission must remain retained throughout observation.
+    pub(crate) fn page_map(&self) -> Result<ProcessPageMapRoot, crate::process_init::ProcessMainInitError> {
+        self._ready.page_map()
+    }
 }
 
 /// Admits an initialized selected Theap before creating an allocation client.
