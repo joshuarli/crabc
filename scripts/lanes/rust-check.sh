@@ -17,7 +17,9 @@ if [ "$identity" != linux/amd64 ]; then
 fi
 mkdir -p "$work/target-check" "$work/tmp"
 in_image() {
+    # Arena tests lock their complete 32-MiB caller-owned reservation.
     docker run --rm --init --platform linux/amd64 --workdir /workspace \
+        --ulimit memlock=67108864:67108864 \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CARGO_TARGET_DIR=/workspace/.work/x86_64/target-check \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
