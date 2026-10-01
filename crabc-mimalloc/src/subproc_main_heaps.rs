@@ -914,23 +914,57 @@ fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap
     // typed administration alongside its concrete memory ID.
     unsafe { (*Theap::main_heap_lifecycle_at(theap)).metadata = MainHeapTheapMetadataOwnership::SourceOwned; }
     let theap = allocation.into_source_retained_theap().ok()?;
-    // SAFETY: the current thread owns the fresh transferred image and TLD;
-    // publication takes the source lists' locks. A partial failure retains the
-    // exact source-owned allocation rather than freeing a listed image.
-    let initialized = unsafe {
-        (*theap.as_ptr()).initialize_dynamic_metadata_on_tld(
-            &mut *heap.as_ptr(), &mut *thread.tld.as_ptr(),
-            crate::types::TheapPageMode::OrdinaryAbandoning, true,
-        ).is_ok()
-    };
-    if !initialized { return None; }
-    MainSubprocess::global().identity().record_statistics_theap_linked();
+    initialize_source_owned_theap(thread, heap, theap)?;
     Some(theap)
 }
 
 #[cfg(not(target_arch = "x86_64"))]
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     create_theap_image(thread, heap)
+}
+
+/// Completes the source initializer through short typed projections. The
+/// transferred metadata reference or retained arena reservation owns this
+/// incoming image; the existing fixed owner retains process/output admission
+/// across ordinary and guarded option getters before Heap publication.
+#[cfg(target_arch = "x86_64")]
+fn initialize_source_owned_theap(
+    thread: MainThread, heap: NonNull<Heap>, theap: NonNull<Theap>,
+) -> Option<()> {
+    // SAFETY: this operation retains the initialized fixed current-thread
+    // owner, and the incoming image's original source allocation remains
+    // held. No image, engine or list projection crosses owner acquisition.
+    unsafe { crate::runtime_lifecycle::with_native_allocation_owner(thread.theap, |owner| {
+        let prepared = unsafe { Theap::prepare_initialization_at(
+            theap, heap, thread.tld, crate::types::TheapInitializationKind::Dynamic {
+                page_mode: crate::types::TheapPageMode::OrdinaryAbandoning,
+                tld_may_have_theaps: true,
+            },
+        ) }.ok()?;
+        // The admitted fixed owner supplies this actual process's output;
+        // all incoming/Heap/TLD projections ended before these lazy reads.
+        let options = unsafe { crate::types::SourceTheapOptions::capture_from_output(owner.output()) };
+        let linked = match unsafe { prepared.apply_source_options_and_attach(options) }.ok()? {
+            crate::types::TheapRandomInitialization::SplitComplete(linked) => linked,
+            // This ordinary current-thread source path already has its main
+            // Theap. Missing that real member retains the partial image.
+            crate::types::TheapRandomInitialization::FirstHead(_) => return None,
+        };
+        #[cfg(feature = "mi-guarded")]
+        let ready = {
+            let sample = unsafe { crate::types::GuardedSampleOptions::capture_from_output(owner.output()) };
+            let sampled = unsafe { linked.apply_guarded_sample_options(sample) };
+            let bounds = unsafe { crate::types::GuardedSizeOptions::capture_from_output(owner.output()) };
+            unsafe { sampled.apply_guarded_size_options(bounds) }
+        };
+        #[cfg(not(feature = "mi-guarded"))]
+        let ready = linked.finish_without_guarded_options();
+        MainSubprocess::global().identity().record_statistics_theap_linked();
+        // SAFETY: original source storage, fixed admission and actual list
+        // members remain retained through this final release publication.
+        unsafe { ready.publish_heap() }.ok()?;
+        Some(())
+    }) }.ok().flatten()
 }
 
 /// The requested arena's source reservation is a minimum-object slice and
@@ -975,20 +1009,20 @@ fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull
         } else {
             theap.set_requested_arena_metadata_memid(memory)
         };
-        provenance
-            && theap
-                .initialize_dynamic_metadata_on_tld(
-                    &mut *heap.as_ptr(),
-                    &mut *thread.tld.as_ptr(),
-                    crate::types::TheapPageMode::OrdinaryAbandoning,
-                    true,
-                )
-                .is_ok()
+        #[cfg(target_arch = "x86_64")]
+        { provenance }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            provenance && theap.initialize_dynamic_metadata_on_tld(
+                &mut *heap.as_ptr(), &mut *thread.tld.as_ptr(),
+                crate::types::TheapPageMode::OrdinaryAbandoning, true,
+            ).is_ok()
+        }
     };
-    if !initialized {
-        return None;
-    }
-    // theap.c:290-292.
+    if !initialized { return None; }
+    #[cfg(target_arch = "x86_64")]
+    initialize_source_owned_theap(thread, heap, block.cast())?;
+    #[cfg(not(target_arch = "x86_64"))]
     MainSubprocess::global().identity().record_statistics_theap_linked();
     Some(block.cast())
 }
@@ -2127,6 +2161,40 @@ pub(crate) fn native_reserve_os_memory(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn auxiliary_theap_initialization_reads_actual_guarded_options_before_publication() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::auxiliary_theap_initialization_reads_actual_guarded_options_before_publication",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                use crate::config::SourceOption;
+                crate::source_options_api::option_set(SourceOption::GuardedSampleRate as i32, 1);
+                let first = native_heap_new().unwrap();
+                let first_theap = native_heap_theap(first).unwrap();
+                // Source's default upper bound includes ordinary large
+                // requests; a zeroed legacy sampler wrongly refuses these.
+                assert!(unsafe { Theap::guarded_sample_at(first_theap, 32 * 1024) });
+                crate::source_options_api::option_set(SourceOption::GuardedMin as i32, 80);
+                crate::source_options_api::option_set(SourceOption::GuardedMax as i32, 96);
+                let second = native_heap_new().unwrap();
+                let second_theap = native_heap_theap(second).unwrap();
+                assert_ne!(first_theap, second_theap);
+                assert!(!unsafe { Theap::guarded_sample_at(second_theap, 79) });
+                assert!(unsafe { Theap::guarded_sample_at(second_theap, 80) });
+                assert!(unsafe { Theap::guarded_sample_at(second_theap, 96) });
+                assert!(!unsafe { Theap::guarded_sample_at(second_theap, 97) });
+                // Each setter initializes its own incoming Theap; changing
+                // process options does not rewrite an existing sampler.
+                assert!(unsafe { Theap::guarded_sample_at(first_theap, 32 * 1024) });
+                assert_eq!(unsafe { native_heap_release(second, true) }, Ok(HeapReleaseOutcome::Released));
+                assert_eq!(unsafe { native_heap_release(first, true) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
     #[test]
