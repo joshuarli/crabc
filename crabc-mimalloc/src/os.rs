@@ -1383,21 +1383,29 @@ impl VmPolicy {
     }
 
     /// Delivers a source error after the owning caller ends allocator
-    /// projections. A registered handler determines the returned disposition;
-    /// an image policy uses the existing source default without hidden errno
-    /// storage. This operation never substitutes the preceding OS error.
+    /// projections. A registered handler owns its errno effects. For the
+    /// default branch, an available embedding writer stores only while its
+    /// current thread's errno is zero; no ambient slot is read here.
+    ///
+    /// The returned disposition describes the source branch, independently
+    /// of optional writer presence or whether that writer changed errno.
     pub(crate) fn source_error(
         &self,
         report: crate::diagnostic_output::SourceErrorReport,
     ) -> crate::diagnostic_output::SourceErrorDisposition {
-        if let Some(output) = self.process_options {
+        let disposition = if let Some(output) = self.process_options {
             // SAFETY: the process-policy constructor accepted this output
             // owner's synchronous callback and lifetime obligations, just
             // as for source option reads and warning delivery.
             unsafe { output.error_message(report.error(), report.message()) }
         } else {
             crate::diagnostic_output::source_default_error_disposition(report.error())
+        };
+        #[cfg(target_arch = "x86_64")]
+        if let crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(error) = disposition {
+            if let Some(writer) = self.source_errno_store { let _ = writer.store_default(error); }
         }
+        disposition
     }
 
     /// Reads a descriptor outside the [`VmOption`] image at its source read
@@ -15331,7 +15339,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     struct ProcessOwnedDecommitWarning {
         expected_error: usize,
-        mutate_errno: bool,
+        warning_errno_replacement: Option<i32>,
         warning_errno: AtomicI64,
         count: AtomicUsize,
         exact: AtomicBool,
@@ -15358,10 +15366,10 @@ mod tests {
         let body = unsafe { CStr::from_ptr(message) }.to_bytes();
         if !body.windows(b"cannot decommit OS memory".len())
             .any(|part| part == b"cannot decommit OS memory") { return; }
-        if capture.mutate_errno {
+        if let Some(replacement) = capture.warning_errno_replacement {
             GUARDED_ERRNO.with(|slot| {
                 capture.warning_errno.store(i64::from(slot.get()), Ordering::Release);
-                slot.set(4);
+                slot.set(replacement);
             });
         }
         capture.count.fetch_add(1, Ordering::AcqRel);
@@ -15404,7 +15412,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_m2_process_owned_decommit_fault_c_rust_trace() {
-        process_owned_decommit_fault_receiver(false, false);
+        process_owned_decommit_fault_receiver(false, DecommitErrnoControl::NoWriter);
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -15412,7 +15420,7 @@ mod tests {
     fn external_arena_decommit_retains_mapping_warning_and_source_accounting() {
         crate::test_process::run_in_fresh_process(
             "os::tests::external_arena_decommit_retains_mapping_warning_and_source_accounting",
-            || process_owned_decommit_fault_receiver(true, false),
+            || process_owned_decommit_fault_receiver(true, DecommitErrnoControl::NoWriter),
         );
     }
 
@@ -15422,14 +15430,34 @@ mod tests {
         crate::test_process::run_in_fresh_process(
             "os::tests::external_arena_decommit_publishes_owned_errno_before_warning_and_handler",
             || {
-                process_owned_decommit_fault_receiver(true, true);
-                process_owned_decommit_fault_receiver(false, true);
+                process_owned_decommit_fault_receiver(true, DecommitErrnoControl::Handler);
+                process_owned_decommit_fault_receiver(false, DecommitErrnoControl::Handler);
             },
         );
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn process_owned_decommit_fault_receiver(external: bool, publish_errno: bool) {
+    #[test]
+    fn external_arena_guard_error_applies_default_only_to_zero_owned_errno() {
+        crate::test_process::run_in_fresh_process(
+            "os::tests::external_arena_guard_error_applies_default_only_to_zero_owned_errno",
+            || {
+                process_owned_decommit_fault_receiver(true, DecommitErrnoControl::DefaultZero);
+                process_owned_decommit_fault_receiver(true, DecommitErrnoControl::DefaultNonzero);
+                process_owned_decommit_fault_receiver(true, DecommitErrnoControl::NoDefaultWriter);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[derive(Clone, Copy)]
+    enum DecommitErrnoControl { NoWriter, Handler, DefaultZero, DefaultNonzero, NoDefaultWriter }
+
+    #[cfg(target_arch = "x86_64")]
+    fn process_owned_decommit_fault_receiver(external: bool, errno_control: DecommitErrnoControl) {
+        let publish_errno = !matches!(errno_control, DecommitErrnoControl::NoWriter);
+        let default_case = matches!(errno_control, DecommitErrnoControl::DefaultZero
+            | DecommitErrnoControl::DefaultNonzero | DecommitErrnoControl::NoDefaultWriter);
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
         let _environment_reset = VmPolicySourceEnvironmentReset;
         let mut environment = [
@@ -15442,7 +15470,10 @@ mod tests {
         VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
         let failure = if publish_errno { Errno::NOMEM } else { Errno::IO };
         let capture = std::boxed::Box::leak(std::boxed::Box::new(ProcessOwnedDecommitWarning {
-            expected_error: failure.raw() as usize, mutate_errno: publish_errno,
+            expected_error: failure.raw() as usize,
+            warning_errno_replacement: if !publish_errno { None }
+                else if matches!(errno_control, DecommitErrnoControl::DefaultZero | DecommitErrnoControl::NoDefaultWriter) { Some(0) }
+                else { Some(4) },
             warning_errno: AtomicI64::new(-1),
             count: AtomicUsize::new(0), exact: AtomicBool::new(false),
             offset: AtomicUsize::new(0), size: AtomicUsize::new(0),
@@ -15468,12 +15499,19 @@ mod tests {
         if publish_errno {
             GUARDED_ERRNO.with(|slot| slot.set(33));
             GUARDED_ERRNO_STORES.with(|slot| slot.set(0));
+            GUARDED_DEFAULT_ERRNO_STORES.with(|slot| slot.set(0));
             GUARDED_SECOND_WARNING_ERRNO.with(|slot| slot.set(-1));
             // SAFETY: the isolated fixture TLS writer is callable for this
             // process and changes only the current test thread's cell.
-            policy = policy.with_source_errno_store(Some(unsafe {
+            let mut writer = unsafe {
                 crate::process_init::SourceErrnoStore::new(store_guarded_fixture_errno)
-            }));
+            };
+            if !matches!(errno_control, DecommitErrnoControl::NoDefaultWriter) {
+                // SAFETY: this process-lived test writer touches only this
+                // thread's cell, stores only at zero, and never unwinds.
+                writer = unsafe { writer.with_default_store(store_guarded_fixture_default_errno) };
+            }
+            policy = policy.with_source_errno_store(Some(writer));
         }
         policy.finish_preloading();
         let subprocess = crate::subproc::MainSubprocess::test_static_owner();
@@ -15522,7 +15560,7 @@ mod tests {
                 assert_eq!(error, Errno::INVAL.raw());
                 assert_eq!(capture.warning.count.load(Ordering::Acquire), 1);
                 assert_eq!(capture.warning.after_attempt.load(Ordering::Acquire), 1);
-                if capture.warning.mutate_errno {
+                if capture.warning.warning_errno_replacement.is_some() {
                     GUARDED_ERRNO.with(|slot| {
                         GUARDED_SECOND_WARNING_ERRNO.with(|observed| observed.set(slot.get()));
                         slot.set(34);
@@ -15533,18 +15571,32 @@ mod tests {
             let error_capture = GuardErrorCapture { warning: capture, calls: AtomicUsize::new(0) };
             // SAFETY: the callback capture is retained through the report;
             // no allocator projection or registration mutation overlaps it.
-            unsafe { output.register_error(Some(error_after_warning),
-                core::ptr::from_ref(&error_capture).cast_mut().cast()) };
-            let disposition = policy.source_error(crate::diagnostic_output::SourceErrorReport::BadAlignment {
-                size: page, alignment: 3, offset: 0,
+            if !default_case {
+                unsafe { output.register_error(Some(error_after_warning),
+                    core::ptr::from_ref(&error_capture).cast_mut().cast()) };
+            }
+            let disposition = policy.source_error(crate::diagnostic_output::SourceErrorReport::SecureGuardFailure {
+                level: 1, address: base.wrapping_add(page).addr(), size: page,
             });
-            assert_eq!(disposition, crate::diagnostic_output::SourceErrorDisposition::Handled);
-            assert_eq!(error_capture.calls.load(Ordering::Acquire), 1);
+            assert_eq!(disposition, if default_case {
+                crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(Errno::INVAL)
+            } else { crate::diagnostic_output::SourceErrorDisposition::Handled });
+            assert_eq!(error_capture.calls.load(Ordering::Acquire), usize::from(!default_case));
             if publish_errno {
                 assert_eq!(capture.warning_errno.load(Ordering::Acquire), if external { 12 } else { 33 });
-                assert_eq!(GUARDED_SECOND_WARNING_ERRNO.with(|slot| slot.get()), 4);
-                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 34);
+                if !default_case {
+                    assert_eq!(GUARDED_SECOND_WARNING_ERRNO.with(|slot| slot.get()), 4);
+                }
+                let expected_errno = match errno_control {
+                    DecommitErrnoControl::DefaultZero => 22,
+                    DecommitErrnoControl::DefaultNonzero => 4,
+                    DecommitErrnoControl::NoDefaultWriter => 0,
+                    _ => 34,
+                };
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), expected_errno);
                 assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), usize::from(external));
+                assert_eq!(GUARDED_DEFAULT_ERRNO_STORES.with(|slot| slot.get()),
+                    usize::from(matches!(errno_control, DecommitErrnoControl::DefaultZero | DecommitErrnoControl::DefaultNonzero)));
             }
             // SAFETY: the synchronous report has ended.
             unsafe { output.register_error(None, core::ptr::null_mut()) };
@@ -16096,6 +16148,7 @@ mod tests {
     std::thread_local! {
         static GUARDED_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(33) };
         static GUARDED_ERRNO_STORES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+        static GUARDED_DEFAULT_ERRNO_STORES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
         static GUARDED_OS_WARNING_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(-1) };
         static GUARDED_SECOND_WARNING_ERRNO: core::cell::Cell<i32> = const { core::cell::Cell::new(-1) };
     }
@@ -16104,6 +16157,12 @@ mod tests {
     unsafe fn store_guarded_fixture_errno(error: i32) {
         GUARDED_ERRNO.with(|slot| slot.set(error));
         GUARDED_ERRNO_STORES.with(|count| count.set(count.get() + 1));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn store_guarded_fixture_default_errno(error: i32) {
+        GUARDED_DEFAULT_ERRNO_STORES.with(|count| count.set(count.get() + 1));
+        GUARDED_ERRNO.with(|slot| { if slot.get() == 0 { slot.set(error); } });
     }
 
     #[cfg(target_arch = "x86_64")]
