@@ -1768,6 +1768,7 @@ unsafe fn run_runtime_startup_tail(
 #[derive(Clone, Copy)]
 pub struct SourceErrnoStore {
     store: unsafe fn(core::ffi::c_int),
+    default_store: Option<unsafe fn(core::ffi::c_int)>,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1780,7 +1781,33 @@ impl SourceErrnoStore {
     /// and neither allocate through this engine nor unwind. Startup must have
     /// installed that thread's TLS before any policy using this capability.
     pub const unsafe fn new(store: unsafe fn(core::ffi::c_int)) -> Self {
-        Self { store }
+        Self { store, default_store: None }
+    }
+
+    /// Adds the embedding's writer for default, unhandled source errors.
+    ///
+    /// # Safety
+    /// The function must remain callable for the process lifetime and write
+    /// the supplied value only when the calling thread's current C errno is
+    /// zero. It must retain no TLS reference and never allocate or unwind.
+    /// Every invoking thread must have installed TLS.
+    pub const unsafe fn with_default_store(mut self, store: unsafe fn(core::ffi::c_int)) -> Self {
+        self.default_store = Some(store);
+        self
+    }
+
+    /// Invokes the optional conditional writer after source diagnostics.
+    ///
+    /// `None` reports that no default writer was supplied. `Some(())` means
+    /// the provider was invoked, not that errno changed: a nonzero value left
+    /// by a warning or error callback must remain authoritative.
+    #[inline]
+    pub fn store_default(self, errno: crabc_core::Errno) -> Option<()> {
+        let store = self.default_store?;
+        // SAFETY: adoption retains a process-lifetime current-thread provider
+        // that checks its own TLS slot without exporting a borrow or value.
+        unsafe { store(errno.raw()) };
+        Some(())
     }
 
     /// Publishes a captured positive Linux error on the calling thread.
@@ -2684,6 +2711,12 @@ mod tests {
             // this immediate store never retains its resolved pointer.
             unsafe { *__errno_location() = value };
         }
+        unsafe fn store_default_errno(value: core::ffi::c_int) {
+            // SAFETY: this immediate projection names only this thread's
+            // installed musl TLS and never escapes the provider call.
+            let slot = unsafe { __errno_location() };
+            unsafe { if *slot == 0 { *slot = value; } };
+        }
         unsafe fn environment() -> *const *const core::ffi::c_char {
             core::ptr::null()
         }
@@ -2696,7 +2729,19 @@ mod tests {
         assert!(facts.source_errno_store().is_none());
         // SAFETY: this process-lifetime writer accesses only calling-thread
         // TLS and cannot allocate, retain its pointer, or unwind.
-        let facts = facts.with_source_errno_store(unsafe { SourceErrnoStore::new(store_errno) });
+        let unconditional = unsafe { SourceErrnoStore::new(store_errno) };
+        // SAFETY: this thread's musl runtime installed its exclusive TLS slot.
+        unsafe { *__errno_location() = 34 };
+        assert_eq!(unconditional.store_default(crabc_core::Errno::INVAL), None);
+        assert_eq!(unsafe { *__errno_location() }, 34);
+        unsafe { *__errno_location() = 0 };
+        assert_eq!(unconditional.store_default(crabc_core::Errno::INVAL), None);
+        assert_eq!(unsafe { *__errno_location() }, 0);
+        // SAFETY: the added provider has the same lifetime and TLS boundary,
+        // and writes its supplied value only when that slot is zero.
+        let facts = facts.with_source_errno_store(unsafe {
+            unconditional.with_default_store(store_default_errno)
+        });
         let cell = std::sync::Arc::new(ProcessStartupFactsCell::new());
         assert!(cell.publish(facts));
         assert!(!cell.publish(facts));
@@ -2705,13 +2750,32 @@ mod tests {
         let other = cell.clone();
         std::thread::spawn(move || {
             // SAFETY: this worker's runtime installed its distinct TLS slot.
-            unsafe { *__errno_location() = 4 };
-            other.published().unwrap().source_errno_store().unwrap().store(crabc_core::Errno::PERM);
+            unsafe { *__errno_location() = 0 };
+            let writer = other.published().unwrap().source_errno_store().unwrap();
+            assert_eq!(writer.store_default(crabc_core::Errno::INVAL), Some(()));
+            assert_eq!(unsafe { *__errno_location() }, 22);
+            writer.store(crabc_core::Errno::PERM);
             assert_eq!(unsafe { *__errno_location() }, 1);
         }).join().unwrap();
         assert_eq!(unsafe { *__errno_location() }, 34);
-        cell.published().unwrap().source_errno_store().unwrap().store(crabc_core::Errno::INTR);
+        let writer = cell.published().unwrap().source_errno_store().unwrap();
+        assert_eq!(writer.store_default(crabc_core::Errno::INVAL), Some(()));
+        assert_eq!(unsafe { *__errno_location() }, 34);
+        writer.store(crabc_core::Errno::NOMEM);
+        assert_eq!(unsafe { *__errno_location() }, 12);
+        assert_eq!(writer.store_default(crabc_core::Errno::INVAL), Some(()));
+        assert_eq!(unsafe { *__errno_location() }, 12);
+        // A warning callback may clear errno; the subsequent default error
+        // then installs EINVAL. Nonzero callback effects remain authoritative.
+        unsafe { *__errno_location() = 0 };
+        assert_eq!(writer.store_default(crabc_core::Errno::INVAL), Some(()));
+        assert_eq!(unsafe { *__errno_location() }, 22);
+        writer.store(crabc_core::Errno::INTR);
+        assert_eq!(writer.store_default(crabc_core::Errno::INVAL), Some(()));
         assert_eq!(unsafe { *__errno_location() }, 4);
+        unsafe { *__errno_location() = 34 };
+        assert_eq!(writer.store_default(crabc_core::Errno::INVAL), Some(()));
+        assert_eq!(unsafe { *__errno_location() }, 34);
     }
 
     // Linux's process-local THP query/set selectors used only by child-isolated

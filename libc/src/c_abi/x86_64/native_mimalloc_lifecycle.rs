@@ -104,6 +104,15 @@ unsafe fn runtime_source_errno_store(value: c_int) {
     unsafe { super::errno::set_errno(value) };
 }
 
+/// Applies an unhandled source error only while libc's current errno is zero.
+unsafe fn runtime_source_errno_default_store(value: c_int) {
+    // SAFETY: selected startup installed calling-thread TLS. Both operations
+    // are immediate libc-owned scalar accesses, without allocation or callbacks.
+    unsafe {
+        if super::errno::get_errno() == 0 { super::errno::set_errno(value); }
+    }
+}
+
 /// Start the selected native process owner after x86 startup has installed
 /// validated `environ`, `AT_PAGESZ`, initial TLS, and permanent `stderr`.
 ///
@@ -125,9 +134,13 @@ pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
     }) else {
         return false;
     };
-    // SAFETY: this permanent libc writer touches only calling-thread TLS,
-    // allocates nothing, and cannot unwind.
-    let facts = facts.with_source_errno_store(unsafe { SourceErrnoStore::new(runtime_source_errno_store) });
+    // SAFETY: both permanent libc writers touch only calling-thread TLS,
+    // allocate nothing, and cannot unwind. The default writer checks zero
+    // before writing, preserving diagnostic callback effects.
+    let facts = facts.with_source_errno_store(unsafe {
+        SourceErrnoStore::new(runtime_source_errno_store)
+            .with_default_store(runtime_source_errno_default_store)
+    });
     let ready = publish_native_process_startup_facts(facts)
         && initialize_process()
         && prepare_native_initial_thread_owner();

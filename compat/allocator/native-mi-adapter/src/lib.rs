@@ -114,6 +114,16 @@ unsafe fn host_source_errno_store(value: c_int) {
     unsafe { *__errno_location() = value };
 }
 
+/// Applies an unhandled source error only while musl's current errno is zero.
+unsafe fn host_source_errno_default_store(value: c_int) {
+    // SAFETY: musl installed TLS before constructors. This immediate raw
+    // projection neither escapes nor runs allocation or foreign callbacks.
+    unsafe {
+        let slot = __errno_location();
+        if *slot == 0 { *slot = value; }
+    }
+}
+
 /// Pinned `mi_process_load`: publish the host facts, start the process, and
 /// install the initial thread owner. With default options, an arena is
 /// reserved later when allocation needs one. Runs before `main`.
@@ -137,9 +147,13 @@ extern "C" fn process_load() {
     };
     let ready = match facts {
         Some(facts) => {
-            // SAFETY: this permanent provider writes only current-thread TLS
-            // without allocation, unwinding, or a retained TLS pointer.
-            let facts = facts.with_source_errno_store(unsafe { SourceErrnoStore::new(host_source_errno_store) });
+            // SAFETY: both permanent providers access only current-thread TLS
+            // without allocation, unwinding, or a retained pointer. The default
+            // provider checks zero before writing any diagnostic error.
+            let facts = facts.with_source_errno_store(unsafe {
+                SourceErrnoStore::new(host_source_errno_store)
+                    .with_default_store(host_source_errno_default_store)
+            });
             publish_native_process_startup_facts(facts) && initialize_process()
                 && prepare_native_initial_thread_owner()
         }
