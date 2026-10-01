@@ -439,11 +439,64 @@ def symbol_only_import(tables: list[dict[str, Any]], imported: Mapping[str, Any]
     return True
 
 
+def merged_string_translation(image: bytes, elf_type: int, source_image: bytes,
+                              definition: Mapping[str, Any], address: int,
+                              pool: tuple[Mapping[str, Any], str] | None) -> None:
+    """Bind a pooled string to its selected definition and exact forcing slot.
+
+    Equal payloads and shared suffix addresses do not identify an archive owner.
+    The complete raw final view authenticates the selected member, pool map,
+    source element, final symbol, and relocation naming that specific definition.
+    """
+    require(pool is not None, 'merged string lacks its owned pool translation')
+    view, member = pool
+    require(view['image'] == image and view['type'] == elf_type
+            and definition['definition_section']['flags'] == 'AMS'
+            and not view['map_rows'].get(member + ':(' + definition['definition_section']['name'] + ')'),
+            'merged string pool translation differs')
+    require(definition_address(view, member, definition, source_image=source_image) == address,
+            'merged string pool resolves to a foreign provider')
+
+
+def immutable_object_payload(image: bytes, source_image: bytes, *, symbol: Mapping[str, Any],
+                             header: tuple[int, ...], output: tuple[int, ...],
+                             address: int, name: str) -> None:
+    """Authenticate the complete payload after source/final ownership admission."""
+    original, final = static_authority.elf_bytes(source_image), static_authority.elf_bytes(image)
+    require(not any(section[1] in {4, 9, 19} and section[7] == symbol['section']
+                    for section in original.sections),
+            f'provider {name} immutable source relocation footprint differs')
+    table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+    programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
+    start, extent = output[4] + address - output[3], symbol['size']
+    mappings = [program for program in programs if program[0] == 1
+                and program[3] < address + extent and address < program[3] + program[6]]
+    require(len(mappings) == 1 and mappings[0][1] == 4
+            and mappings[0][3] <= address and address + extent <= mappings[0][3] + mappings[0][5]
+            and mappings[0][2] + address - mappings[0][3] == start
+            and mappings[0][2] + mappings[0][5] <= len(image),
+            f'provider {name} immutable object lacks a read-only load extent')
+    for relocation in final.sections:
+        if relocation[1] not in {4, 9, 19}:
+            continue
+        require(relocation[1] == 4 and relocation[9] == 24 and relocation[5] % 24 == 0
+                and relocation[4] + relocation[5] <= len(image),
+                f'provider {name} immutable final relocation encoding is unsupported')
+        for position in range(relocation[4], relocation[4] + relocation[5], 24):
+            target, info, _ = final.unpack('<QQq', position)
+            require(info == 8 and not (target < address + extent and address < target + 8),
+                    f'provider {name} immutable final relocation footprint differs')
+    source_start = header[4] + symbol['value']
+    require(image[start:start + extent] == source_image[source_start:source_start + extent],
+            f'provider {name} immutable payload differs')
+
+
 def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
                             map_text: str, relocation_text: str, provider_address: int,
                             elf_type: int, name: str, source_sections: Mapping[str, bytes],
                             provider_data: bytes | None = None,
-                            provider_object: tuple[bytes, Mapping[str, Any]] | None = None) -> dict[str, Any]:
+                            provider_object: tuple[bytes, Mapping[str, Any]] | None = None,
+                            provider_pool: tuple[Mapping[str, Any], str] | None = None) -> dict[str, Any]:
     """Bind exact source instruction operands to their final provider address.
 
     Register address loads and GOT comparisons prove address binding only.
@@ -456,11 +509,14 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Integer memory operands bind the selected object and full access extent.
     Ordinary immutable objects also require the complete unrelocated source
     payload in one final read-only mapping; only loads may reference them.
+    Pooled byte strings require the selected definition's pool and forcing
+    relocation authority before a bounded load or interior address is admitted.
     Trailing immediate bytes are part of the instruction, not payload
     bytes at a NOBITS target. No execution or subsequent values are asserted.
     Source instruction spans must come from disassembly checked against the
     complete original section bytes; adjacent instructions are not prefixes.
     """
+    pooled_string = provider_object is not None and provider_object[1]['definition_section']['flags'] == 'AMS'
     resolved, discarded = [], []
     for reference in source_calls:
         section, offset, kind = reference['section'], reference['offset'], reference['kind']
@@ -477,6 +533,16 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         instruction_span = ((reference['instruction_start'], reference['instruction_end'])
                             if 'instruction_start' in reference else None)
         integer = integer_memory_operand(source, offset, instruction_span=instruction_span) if kind == 'R_X86_64_PC32' else None
+        if provider_pool is not None or pooled_string:
+            require(provider_pool is not None, 'merged string lacks its owned pool translation')
+            require(kind == 'R_X86_64_PC32' and instruction_span is not None,
+                    f'provider {name} merged string reference lacks its instruction span')
+            if integer is None:
+                start, end = instruction_span
+                prefix = source[start:offset]
+                require(start == offset - 3 and end == offset + 4 and prefix[0] in {0x48, 0x4c}
+                        and prefix[1] == 0x8d and prefix[2] & 0xc7 == 0x05,
+                        f'provider {name} merged string reference is not a supported load or address')
         if integer is not None:
             prefix, operand_size, immediate, operation = integer
             provider_offset = reference.get('operand_addend', -4) + 4 + len(immediate)
@@ -496,15 +562,16 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and 0 < symbol['section'] < len(original.sections),
                     f'provider {name} integer source symbol differs')
             header = original.sections[symbol['section']]
-            readonly = header[1] == 1 and header[2] == 2
+            merged = header[1] == 1 and header[2] == 50
+            readonly = header[1] == 1 and header[2] in {2, 50}
             require(header[1] in {1, 8} and observed['type'] == ('PROGBITS' if header[1] == 1 else 'NOBITS')
-                    and (header[2], observed['flags']) == ((2, 'A') if readonly else (3, 'WA'))
+                    and (header[2], observed['flags']) == ((50, 'AMS') if merged else (2, 'A') if readonly else (3, 'WA'))
                     and header[3] == int(observed['address'], 16)
                     and header[4] == int(observed['offset'], 16)
                     and header[5] == int(observed['size'], 16)
                     and header[6] == observed['link'] and header[7] == observed['info']
                     and header[8] == observed['alignment'] and header[8] > 0
-                    and header[9] == int(observed['entry_size'], 16) == 0
+                    and header[9] == int(observed['entry_size'], 16) == (1 if merged else 0)
                     and symbol['value'] + symbol['size'] <= header[5]
                     and (header[1] == 8 or header[4] + header[5] <= len(source_image))
                     and static_authority.section_name(original, header) == observed['name'],
@@ -512,6 +579,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             if readonly:
                 require(operation in {'integer-data-load', 'integer-zero-extend-load'},
                         f'provider {name} immutable object reference is not a load')
+                if merged:
+                    merged_string_translation(image, elf_type, source_image, definition, provider_address, provider_pool)
                 # No relocation table may target this ordinary source section.
                 # Its complete payload, including bytes outside the operand,
                 # must retain an immutable interpretation after linking.
@@ -552,28 +621,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
             programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
             if readonly:
-                start = output[4] + provider_address - output[3]
-                extent = symbol['size']
-                mappings = [program for program in programs if program[0] == 1
-                            and program[3] < provider_address + extent and provider_address < program[3] + program[6]]
-                require(len(mappings) == 1 and mappings[0][1] == 4
-                            and mappings[0][3] <= provider_address and provider_address + extent <= mappings[0][3] + mappings[0][5]
-                            and mappings[0][2] + provider_address - mappings[0][3] == start
-                            and mappings[0][2] + mappings[0][5] <= len(image),
-                        f'provider {name} immutable object lacks a read-only load extent')
-                for relocation in final.sections:
-                    if relocation[1] not in {4, 9, 19}:
-                        continue
-                    require(relocation[1] == 4 and relocation[9] == 24 and relocation[5] % 24 == 0
-                            and relocation[4] + relocation[5] <= len(image),
-                            f'provider {name} immutable final relocation encoding is unsupported')
-                    for position in range(relocation[4], relocation[4] + relocation[5], 24):
-                        address, info, _ = final.unpack('<QQq', position)
-                        require(info == 8 and not (address < provider_address + extent and provider_address < address + 8),
-                                f'provider {name} immutable final relocation footprint differs')
-                source_start = header[4] + symbol['value']
-                require(image[start:start + extent] == source_image[source_start:source_start + extent],
-                        f'provider {name} immutable payload differs')
+                immutable_object_payload(image, source_image, symbol=symbol, header=header,
+                                         output=output, address=provider_address, name=name)
             else:
                 # NOBITS has memory extent but no source or final file payload.
                 # Writable operands must lie in one non-executable load image.
@@ -660,7 +709,7 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             record.update(got_slot=slot, branch_kind='got-address-compare' if address_compare else 'got-address-load')
         else:
             provider_offset = 0
-            if 'address_addend' in reference:
+            if 'address_addend' in reference or pooled_string and address_load:
                 require(address_load and provider_object is not None,
                         f'provider {name} interior address lacks its source object')
                 source_image, definition = provider_object
@@ -677,21 +726,24 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                         and 0 < symbol['section'] < len(original.sections),
                         f'provider {name} interior source symbol differs')
                 header = original.sections[symbol['section']]
+                merged = header[2] == 50
                 require(header[1] == 1 and observed['type'] == 'PROGBITS'
-                        and header[2] == 3 and observed['flags'] == 'WA'
+                        and (header[2], observed['flags']) == ((50, 'AMS') if merged else (3, 'WA'))
                         and header[3] == int(observed['address'], 16)
                         and header[4] == int(observed['offset'], 16)
                         and header[5] == int(observed['size'], 16)
                         and header[6] == observed['link'] and header[7] == observed['info']
                         and header[8] == observed['alignment'] and header[8] > 0
-                        and header[9] == int(observed['entry_size'], 16) == 0
+                        and header[9] == int(observed['entry_size'], 16) == (1 if merged else 0)
                         and header[4] + header[5] <= len(source_image)
                         and symbol['value'] + symbol['size'] <= header[5]
                         and static_authority.section_name(original, header) == observed['name'],
                         f'provider {name} interior source extent differs')
+                if merged:
+                    merged_string_translation(image, elf_type, source_image, definition, provider_address, provider_pool)
                 # PC32 is S + A - P; RIP is four bytes beyond P. LEA forms
                 # an address inside the selected object without reading it.
-                provider_offset = reference['address_addend'] + 4
+                provider_offset = reference.get('address_addend', -4) + 4
                 require(0 <= provider_offset < symbol['size'],
                         f'provider {name} interior address leaves provider object')
                 final = static_authority.elf_bytes(image)
@@ -702,17 +754,21 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                         and 0 < final_symbol['section'] < len(final.sections),
                         f'provider {name} interior final symbol differs')
                 output = final.sections[final_symbol['section']]
-                require(output[1] == 1 and output[2] == 3
+                require(output[1] == 1 and (output[2] in {2, 18, 50} if merged else output[2] == 3)
                         and output[3] <= provider_address
                         and provider_address + symbol['size'] <= output[3] + output[5],
                         f'provider {name} interior final extent differs')
-                table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
-                require(sum(program[0] == 1 and program[1] == 6
+                if merged:
+                    immutable_object_payload(image, source_image, symbol=symbol, header=header,
+                                             output=output, address=provider_address, name=name)
+                if not merged:
+                    table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+                    require(sum(program[0] == 1 and program[1] == 6
                             and program[3] <= provider_address
                             and provider_address + symbol['size'] <= program[3] + program[5]
                             for program in (struct.unpack_from('<IIQQQQQQ', image, table + width * index)
                                             for index in range(count))) == 1,
-                        f'provider {name} interior object lacks a writable load extent')
+                            f'provider {name} interior object lacks a writable load extent')
                 record['provider_offset'] = provider_offset
                 record['target_address'] = provider_address + provider_offset
             require(target == provider_address + provider_offset,
@@ -957,6 +1013,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                                  for _, references, _ in source_imports for reference in references)
             interior_object = any('address_addend' in reference
                                   for _, references, _ in source_imports for reference in references)
+            merged_string = definition['row']['type'] == 'OBJECT' and definition['definition_section']['flags'] == 'AMS'
             if any('addend' in reference for _, references, _ in source_imports for reference in references):
                 section = definition['definition_section']
                 require(definition['row']['type'] == 'OBJECT' and section['type'] == 'PROGBITS'
@@ -973,7 +1030,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 selected = mapped_archive + '(' + definition['member_name'] + ')'
                 source_image = None
                 if (definition['row']['type'] in {'FUNC', 'OBJECT'}
-                        and (integer_object or interior_object or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
+                        and (integer_object or interior_object or merged_string or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
                     member = definition['member_name']
                     require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
                     if member not in definition_images:
@@ -991,7 +1048,8 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
                         provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data,
-                        provider_object=(source_image, definition) if integer_object or interior_object else None)
+                        provider_object=(source_image, definition) if integer_object or interior_object or merged_string else None,
+                        provider_pool=(view, selected) if merged_string else None)
                     require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':

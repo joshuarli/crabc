@@ -745,7 +745,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
-            names = ['domain_scalar', 'domain_string', 'domain_suffix']
+            names = ['domain_duplicate', 'domain_scalar', 'domain_string', 'domain_suffix']
             (work / 'provider.S').write_text(
                 '.section .rodata.cst8,"aM",@progbits,8\n.balign 8\n'
                 '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
@@ -755,12 +755,22 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 'domain_string: .asciz "prefixsuffix"\n.size domain_string,.-domain_string\n'
                 '.globl domain_suffix\n.hidden domain_suffix\n.type domain_suffix,@object\n'
                 'domain_suffix: .asciz "suffix"\n.size domain_suffix,.-domain_suffix\n'
+                '.globl domain_duplicate\n.hidden domain_duplicate\n.type domain_duplicate,@object\n'
+                'domain_duplicate: .asciz "suffix"\n.size domain_duplicate,.-domain_duplicate\n'
                 '.section .note.GNU-stack,"",@progbits\n')
+            (work / 'caller.S').write_text(
+                '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'
+                '.type domain_caller,@function\ndomain_caller:\n'
+                'lea domain_string+2(%rip),%rax\nmov domain_string+4(%rip),%ecx\n'
+                'lea domain_suffix+1(%rip),%rcx\nmovzbl domain_suffix+6(%rip),%eax\n'
+                'lea domain_suffix(%rip),%rax\n'
+                'lea domain_duplicate+2(%rip),%rax\nmov domain_duplicate(%rip),%ecx\n'
+                'ret\n.size domain_caller,.-domain_caller\n.section .note.GNU-stack,"",@progbits\n')
             (work / 'providers.c').write_text(links.source(names, object_names=names))
-            for source, target in [('provider.S', 'provider.o'), ('providers.c', 'providers.o')]:
+            for source, target in [('provider.S', 'provider.o'), ('providers.c', 'providers.o'), ('caller.S', 'caller.o')]:
                 subprocess.run([compiler, '-fPIC', '-c', str(work / source), '-o', str(work / target)],
                                check=True, capture_output=True)
-            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'provider.o')],
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'provider.o'), str(work / 'caller.o')],
                            check=True, capture_output=True)
             image = (work / 'provider.o').read_bytes()
             tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / 'provider.o'))
@@ -769,6 +779,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             member = str(work / 'libdomain.a') + '(provider.o)'
             for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
                 linked = subprocess.run([linker, flag, '-O2', '--no-relax', '-e', 'main', '--trace',
+                                         '--undefined=domain_caller',
                                          '-Map=' + str(work / (mode + '.receipt.map')),
                                          str(work / 'providers.o'), str(work / 'libdomain.a'),
                                          '-o', str(work / mode)], check=True, capture_output=True)
@@ -838,7 +849,103 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             pool_key: [' '.join(pool)]}}, member, definition, source_image=image)
                     addresses[name] = links.definition_address(view, member, definition, source_image=image)
                     self.assertEqual(addresses[name], address)
+                    if name != 'domain_scalar':
+                        caller = (work / 'caller.o').read_bytes()
+                        references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                            name, image=caller, disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
+                        reference_arguments = dict(archive_member=str(work / 'libdomain.a') + '(caller.o)',
+                            source_calls=references, map_text=(work / (mode + '.receipt.map')).read_text(),
+                            relocation_text=links.read_tool('readelf', '-rW', work / mode), provider_address=address,
+                            elf_type=elf_type, name=name,
+                            source_sections=links.calls._ordinary_source_sections(caller, {row['section'] for row in references}),
+                            provider_object=(image, definition), provider_pool=(view, member))
+                        bound = links.final_member_references(view['image'], **reference_arguments)
+                        self.assertEqual(len(bound['resolved_calls']), 3 if name == 'domain_suffix' else 2)
+                        self.assertEqual(bound['discarded_calls'], [])
+                        self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']},
+                            {'rip-relative-address', 'integer-zero-extend-load' if name == 'domain_suffix' else 'integer-data-load'})
+                        wrong = copy.deepcopy(references)
+                        wrong[0]['address_addend'] += row['size_bytes']
+                        wrong_span = copy.deepcopy(references)
+                        wrong_span[0]['instruction_end'] += 1
+                        ambiguous = {**view, 'map_rows': {**view['map_rows'],
+                            pool_key: [*view['map_rows'][pool_key], *view['map_rows'][pool_key]]}}
+                        for altered, message in [({'provider_pool': None}, 'owned pool translation'),
+                                ({'provider_pool': (ambiguous, member)}, 'selected member or pool'),
+                                ({'provider_pool': ({**view, 'forcing_image': b''}, member)}, 'ELF'),
+                                ({'source_calls': wrong}, 'leaves provider object'),
+                                ({'source_calls': wrong_span}, 'supported load or address')]:
+                            with self.assertRaisesRegex(ValueError, message):
+                                links.final_member_references(view['image'], **{**reference_arguments, **altered})
+                        if name == 'domain_suffix':
+                            base = next(reference for reference in references
+                                        if 'address_addend' not in reference and 'operand_addend' not in reference)
+                            with self.assertRaisesRegex(ValueError, 'owned pool translation'):
+                                links.final_member_references(view['image'], **{**reference_arguments,
+                                    'source_calls': [base], 'provider_pool': None})
+                        if name in {'domain_suffix', 'domain_duplicate'}:
+                            other = 'domain_duplicate' if name == 'domain_suffix' else 'domain_suffix'
+                            other_reference = next(r for r in forcing['references'] if r['symbol'] == other)
+                            changed = bytearray(view['forcing_image'])
+                            for rela in source_forcing.sections:
+                                if rela[1] == 4 and rela[7] == holder['section']:
+                                    for offset in range(0, rela[5], 24):
+                                        if source_forcing.unpack('<Q', rela[4] + offset)[0] == reference['offset']:
+                                            struct.pack_into('<Q', changed, rela[4] + offset + 8,
+                                                other_reference['symbol_index'] << 32 | 1)
+                            # The alternative string has the same final address
+                            # and bytes, but cannot supply this definition's slot.
+                            with self.assertRaisesRegex(ValueError, 'exact forcing reference'):
+                                links.final_member_references(view['image'], **{**reference_arguments,
+                                    'provider_pool': ({**view, 'forcing_image': bytes(changed)}, member)})
                 self.assertEqual(addresses['domain_suffix'], addresses['domain_string'] + 6)
+                self.assertEqual(addresses['domain_duplicate'], addresses['domain_suffix'])
+            static = work / 'product'
+            (static / 'usr/lib').mkdir(parents=True)
+            shutil.copyfile(work / 'libdomain.a', static / 'usr/lib/libc.a')
+            occurrences = []
+            for source_member in ('provider.o', 'caller.o'):
+                symbols = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / source_member))
+                source_sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / source_member))['sections']
+                for row in symbols[0]['rows']:
+                    if row['name'] not in names:
+                        continue
+                    role = 'import' if row['section_index'] == 'UND' else 'definition'
+                    occurrence = {'index': len(occurrences), 'artifact_key': 'candidate-static',
+                        'member_name': source_member, 'member_occurrence': 0, 'role': role, 'row': row}
+                    if role == 'definition':
+                        occurrence['definition_section'] = next(section for section in source_sections
+                            if str(section['index']) == row['section_index'])
+                    occurrences.append(occurrence)
+            accounting = {'occurrences': occurrences, 'identities': [
+                {'identity': selection.identity(name), 'selection': {'disposition': 'unresolved'},
+                 'unresolved': []} for name in names]}
+            private = work / 'private'
+            private.mkdir()
+            proof = links.project_references(work, static, accounting,
+                mapped_archive=str(work / 'libdomain.a'), forcing_owner=str(work / 'providers.o'), temporary_parent=private)
+            self.assertEqual({row['identity']['name'] for row in proof['identities']}, set(names), proof['failures'])
+            self.assertEqual(proof['failures'], [])
+            (work / 'ambiguous.S').write_text(
+                '.section .rodata.str1.1,"aMS",@progbits,1\n.globl domain_suffix\n.hidden domain_suffix\n'
+                '.type domain_suffix,@object\ndomain_suffix: .asciz "suffix"\n.size domain_suffix,.-domain_suffix\n'
+                '.section .note.GNU-stack,"",@progbits\n')
+            subprocess.run([compiler, '-c', str(work / 'ambiguous.S'), '-o', str(work / 'ambiguous.o')],
+                           check=True, capture_output=True)
+            subprocess.run(['ar', 'r', str(static / 'usr/lib/libc.a'), str(work / 'ambiguous.o')],
+                           check=True, capture_output=True)
+            ambiguous_symbols = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / 'ambiguous.o'))
+            ambiguous_row = next(row for row in ambiguous_symbols[0]['rows'] if row['name'] == 'domain_suffix')
+            ambiguous_sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / 'ambiguous.o'))['sections']
+            ambiguous_section = next(section for section in ambiguous_sections
+                                     if str(section['index']) == ambiguous_row['section_index'])
+            ambiguous_accounting = copy.deepcopy(accounting)
+            ambiguous_accounting['occurrences'].append({'index': len(occurrences), 'artifact_key': 'candidate-static',
+                'member_name': 'ambiguous.o', 'member_occurrence': 0, 'role': 'definition',
+                'row': ambiguous_row, 'definition_section': ambiguous_section})
+            refused = links.project_references(work, static, ambiguous_accounting,
+                mapped_archive=str(work / 'libdomain.a'), forcing_owner=str(work / 'providers.o'), temporary_parent=private)
+            self.assertNotIn('domain_suffix', {row['identity']['name'] for row in refused['identities']})
 
     def test_long_function_section_display_keeps_exact_indexed_archive_owner(self):
         import native_abi_provider_links as links
