@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import hashlib
 import tarfile
+import tomllib
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,18 @@ class DebugPaddingPageReceiptTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        manifest = page.harness.ROOT / "crabc-mimalloc/Cargo.toml"
+        retained_manifest = self.root / "crabc-mimalloc/Cargo.toml"
+        retained_manifest.parent.mkdir(parents=True)
+        retained_manifest.write_bytes(manifest.read_bytes())
+        selected = set()
+        pending = [page.RUST_FEATURE.split("/", 1)[1]]
+        features = tomllib.loads(manifest.read_text())["features"]
+        while pending:
+            feature = pending.pop()
+            if feature not in selected:
+                selected.add(feature)
+                pending.extend(name for name in features[feature] if name in features)
         self.work = self.root / ".work/allocator-x86_64/target/compat/allocator/x86_64/m7-debug-padding/page-test"
         self.work.mkdir(parents=True)
         mock.patch.object(page, "REPORT", self.work.parent / "page.json").start()
@@ -83,9 +96,11 @@ class DebugPaddingPageReceiptTests(unittest.TestCase):
             "rust-link": [*common, str(self.work / "native-mi-adapter.a"), "-pthread", "-o", str(self.work / "debug-padding-page-rust")],
         }
         release = {"opt_level": "3", "debuginfo": 0, "debug_assertions": False, "overflow_checks": False, "test": False}
-        messages = [{"reason": "compiler-artifact", "target": {"name": "crabc_mimalloc_native_mi_adapter", "kind": ["staticlib"]},
+        messages = [{"reason": "compiler-artifact", "manifest_path": str(self.root / "compat/allocator/native-mi-adapter/Cargo.toml"),
+                     "target": {"name": "crabc_mimalloc_native_mi_adapter", "kind": ["staticlib"], "src_path": str(self.root / "compat/allocator/native-mi-adapter/src/lib.rs")},
                      "filenames": [str(library)], "profile": release, "features": []},
-                    {"reason": "compiler-artifact", "target": {"name": "crabc_mimalloc"}, "features": ["mi-debug-1", "mi-stat-2"], "profile": release}]
+                    {"reason": "compiler-artifact", "manifest_path": str(retained_manifest),
+                     "target": {"name": "crabc_mimalloc", "src_path": str(self.root / "crabc-mimalloc/src/lib.rs")}, "features": sorted(selected), "profile": release}]
         for name, command in self.commands.items():
             product = {"c-build": "c", "rust-build": "native-library", "rust-link": "rust"}[name]
             output = library if name == "rust-build" else Path(command[-1])

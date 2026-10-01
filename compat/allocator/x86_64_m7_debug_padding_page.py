@@ -8,6 +8,7 @@ import contextlib
 import json
 import shutil
 import tempfile
+import tomllib
 import hashlib
 import os
 from pathlib import Path
@@ -107,12 +108,24 @@ def read_and_replay(replay: bool = False) -> None:
                and item.get("target", {}).get("name") == "crabc_mimalloc_native_mi_adapter"]
     allocator = [item for item in emitted if item.get("reason") == "compiler-artifact"
                  and item.get("target", {}).get("name") == "crabc_mimalloc"]
+    manifest = tomllib.loads((harness.ROOT / "crabc-mimalloc/Cargo.toml").read_text())
+    selected_features = set()
+    pending = [RUST_FEATURE.split("/", 1)[1]]
+    while pending:
+        feature = pending.pop()
+        if feature not in selected_features:
+            selected_features.add(feature)
+            pending.extend(name for name in manifest["features"][feature] if name in manifest["features"])
     release = {"opt_level": "3", "debuginfo": 0, "debug_assertions": False, "overflow_checks": False, "test": False}
     if (len(adapter) != 1 or str(library) not in adapter[0].get("filenames", [])
             or adapter[0].get("target", {}).get("kind") != ["staticlib"]
             or adapter[0].get("features") != [] or adapter[0].get("profile") != release
-            or len(allocator) != 1 or allocator[0].get("features") != ["mi-debug-1", "mi-stat-2"]
-            or allocator[0].get("profile") != release):
+            or adapter[0].get("manifest_path") != str(harness.ROOT / "compat/allocator/native-mi-adapter/Cargo.toml")
+            or adapter[0].get("target", {}).get("src_path") != str(harness.ROOT / "compat/allocator/native-mi-adapter/src/lib.rs")
+            or len(allocator) != 1 or allocator[0].get("features") != sorted(selected_features)
+            or allocator[0].get("profile") != release
+            or allocator[0].get("manifest_path") != str(harness.ROOT / "crabc-mimalloc/Cargo.toml")
+            or allocator[0].get("target", {}).get("src_path") != str(harness.ROOT / "crabc-mimalloc/src/lib.rs")):
         raise harness.HarnessError("debug-padding page compiler-emitted native provider configuration differs")
     harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="debug-padding-page-binding-", dir=harness.TEMP_ROOT))
