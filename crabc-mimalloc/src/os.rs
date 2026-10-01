@@ -880,6 +880,9 @@ impl<'a> VmProcess<'a> {
     /// Only a successful transition that requires recommit removes the
     /// source's charged `stat_size`. Advisory failure warns through this
     /// process policy and retains accounting and terminal release ownership.
+    /// An available embedding errno writer receives the captured OS error
+    /// once before the warning; callbacks retain their later errno effects.
+    /// An absent writer creates no hidden thread-local errno authority.
     ///
     /// # Safety
     ///
@@ -898,6 +901,33 @@ impl<'a> VmProcess<'a> {
         length: usize,
         stat_size: usize,
     ) -> Result<Option<DecommitOutcome>> {
+        // SAFETY: the caller's owned-span and process obligations are
+        // forwarded without adding release authority or retaining aliases.
+        unsafe { self.decommit_arena_range_with_failure_hook(
+            page_size, address, length, stat_size,
+            |error| {
+                #[cfg(target_arch = "x86_64")]
+                if let Some(writer) = self.policy.source_errno_store { writer.store(error); }
+                #[cfg(not(target_arch = "x86_64"))]
+                let _ = error;
+            },
+        ) }
+    }
+
+    /// Runs one contained decommit with an explicit pre-warning failure hook.
+    ///
+    /// # Safety
+    /// The live span, accounting, exclusion and process obligations of
+    /// `decommit_external_arena_range` apply unchanged. The hook must not
+    /// retain span aliases or allocator projections across warning delivery.
+    unsafe fn decommit_arena_range_with_failure_hook(
+        self,
+        page_size: PageSize,
+        address: *mut u8,
+        length: usize,
+        stat_size: usize,
+        on_failure: impl FnOnce(Errno),
+    ) -> Result<Option<DecommitOutcome>> {
         let Some((address, length)) = contained_unowned_page_range(page_size, address, length)? else {
             return Ok(None);
         };
@@ -908,6 +938,7 @@ impl<'a> VmProcess<'a> {
             self.subprocess.vm_statistics().committed_decrease(stat_size);
         }
         if let Err(error) = &result {
+            on_failure(*error);
             // Advisory failure keeps accounting even if the debug protection
             // transition removed access; warn before the owning caller returns.
             self.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
@@ -3295,8 +3326,8 @@ impl Mapping {
         };
         // SAFETY: this mapping retains the validated complete-page range;
         // the process binding supplies its accounting and warning authority.
-        unsafe { process.decommit_external_arena_range(
-            self.page_size, range.address, range.length, stat_size,
+        unsafe { process.decommit_arena_range_with_failure_hook(
+            self.page_size, range.address, range.length, stat_size, |_| {},
         ) }
     }
 
@@ -15299,6 +15330,9 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     struct ProcessOwnedDecommitWarning {
+        expected_error: usize,
+        mutate_errno: bool,
+        warning_errno: AtomicI64,
         count: AtomicUsize,
         exact: AtomicBool,
         offset: AtomicUsize,
@@ -15324,6 +15358,12 @@ mod tests {
         let body = unsafe { CStr::from_ptr(message) }.to_bytes();
         if !body.windows(b"cannot decommit OS memory".len())
             .any(|part| part == b"cannot decommit OS memory") { return; }
+        if capture.mutate_errno {
+            GUARDED_ERRNO.with(|slot| {
+                capture.warning_errno.store(i64::from(slot.get()), Ordering::Release);
+                slot.set(4);
+            });
+        }
         capture.count.fetch_add(1, Ordering::AcqRel);
         let text = std::str::from_utf8(body).unwrap();
         let address = text.split("address: ").nth(1)
@@ -15336,8 +15376,8 @@ mod tests {
         let pointer_width = if address <= u32::MAX as usize { 8 }
             else if address >> 16 <= u32::MAX as usize { 12 } else { 16 };
         let expected = std::format!(
-            "cannot decommit OS memory (error: 5 (0x05), address: 0x{:0width$X}, size: 0x{:02X} bytes)\n",
-            address, size, width = pointer_width,
+            "cannot decommit OS memory (error: {} (0x{:02X}), address: 0x{:0width$X}, size: 0x{:02X} bytes)\n",
+            capture.expected_error, capture.expected_error, address, size, width = pointer_width,
         );
         capture.exact.store(text == expected, Ordering::Release);
         capture.offset.store(address.checked_sub(capture.base.load(Ordering::Acquire))
@@ -15364,7 +15404,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_m2_process_owned_decommit_fault_c_rust_trace() {
-        process_owned_decommit_fault_receiver(false);
+        process_owned_decommit_fault_receiver(false, false);
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -15372,12 +15412,24 @@ mod tests {
     fn external_arena_decommit_retains_mapping_warning_and_source_accounting() {
         crate::test_process::run_in_fresh_process(
             "os::tests::external_arena_decommit_retains_mapping_warning_and_source_accounting",
-            || process_owned_decommit_fault_receiver(true),
+            || process_owned_decommit_fault_receiver(true, false),
         );
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn process_owned_decommit_fault_receiver(external: bool) {
+    #[test]
+    fn external_arena_decommit_publishes_owned_errno_before_warning_and_handler() {
+        crate::test_process::run_in_fresh_process(
+            "os::tests::external_arena_decommit_publishes_owned_errno_before_warning_and_handler",
+            || {
+                process_owned_decommit_fault_receiver(true, true);
+                process_owned_decommit_fault_receiver(false, true);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn process_owned_decommit_fault_receiver(external: bool, publish_errno: bool) {
         let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
         let _environment_reset = VmPolicySourceEnvironmentReset;
         let mut environment = [
@@ -15388,7 +15440,10 @@ mod tests {
             core::ptr::null(),
         ];
         VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let failure = if publish_errno { Errno::NOMEM } else { Errno::IO };
         let capture = std::boxed::Box::leak(std::boxed::Box::new(ProcessOwnedDecommitWarning {
+            expected_error: failure.raw() as usize, mutate_errno: publish_errno,
+            warning_errno: AtomicI64::new(-1),
             count: AtomicUsize::new(0), exact: AtomicBool::new(false),
             offset: AtomicUsize::new(0), size: AtomicUsize::new(0),
             after_attempt: AtomicUsize::new(0), reserved: AtomicI64::new(0),
@@ -15409,7 +15464,17 @@ mod tests {
         }
         // SAFETY: the initialized output owner is leaked for this isolated
         // test process policy's lifetime.
-        let policy = unsafe { VmPolicy::from_process_options(output) };
+        let mut policy = unsafe { VmPolicy::from_process_options(output) };
+        if publish_errno {
+            GUARDED_ERRNO.with(|slot| slot.set(33));
+            GUARDED_ERRNO_STORES.with(|slot| slot.set(0));
+            GUARDED_SECOND_WARNING_ERRNO.with(|slot| slot.set(-1));
+            // SAFETY: the isolated fixture TLS writer is callable for this
+            // process and changes only the current test thread's cell.
+            policy = policy.with_source_errno_store(Some(unsafe {
+                crate::process_init::SourceErrnoStore::new(store_guarded_fixture_errno)
+            }));
+        }
         policy.finish_preloading();
         let subprocess = crate::subproc::MainSubprocess::test_static_owner();
         let process = VmProcess::new(&policy, subprocess);
@@ -15430,7 +15495,7 @@ mod tests {
         unsafe { core::ptr::write_volatile(base.wrapping_add(page), 0x51); }
         let request_offset = 19;
         let decommit_size = 2 * page + 5;
-        let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO));
+        let fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, failure));
         capture.fault.store(core::ptr::from_ref(&fault).cast_mut(), Ordering::Release);
         let advice = fault.capture_advice_range();
         let decommit = |mapping: &Mapping| {
@@ -15444,8 +15509,8 @@ mod tests {
                 mapping.decommit_for_process(process, request_offset, decommit_size, decommit_size)
             }
         };
-        let first_failed = decommit(&mapping) == Err(Errno::IO);
-        if external {
+        let first_failed = decommit(&mapping) == Err(failure);
+        if external || publish_errno {
             struct GuardErrorCapture<'a> {
                 warning: &'a ProcessOwnedDecommitWarning,
                 calls: AtomicUsize,
@@ -15457,6 +15522,12 @@ mod tests {
                 assert_eq!(error, Errno::INVAL.raw());
                 assert_eq!(capture.warning.count.load(Ordering::Acquire), 1);
                 assert_eq!(capture.warning.after_attempt.load(Ordering::Acquire), 1);
+                if capture.warning.mutate_errno {
+                    GUARDED_ERRNO.with(|slot| {
+                        GUARDED_SECOND_WARNING_ERRNO.with(|observed| observed.set(slot.get()));
+                        slot.set(34);
+                    });
+                }
                 capture.calls.fetch_add(1, Ordering::AcqRel);
             }
             let error_capture = GuardErrorCapture { warning: capture, calls: AtomicUsize::new(0) };
@@ -15469,6 +15540,12 @@ mod tests {
             });
             assert_eq!(disposition, crate::diagnostic_output::SourceErrorDisposition::Handled);
             assert_eq!(error_capture.calls.load(Ordering::Acquire), 1);
+            if publish_errno {
+                assert_eq!(capture.warning_errno.load(Ordering::Acquire), if external { 12 } else { 33 });
+                assert_eq!(GUARDED_SECOND_WARNING_ERRNO.with(|slot| slot.get()), 4);
+                assert_eq!(GUARDED_ERRNO.with(|slot| slot.get()), 34);
+                assert_eq!(GUARDED_ERRNO_STORES.with(|slot| slot.get()), usize::from(external));
+            }
             // SAFETY: the synchronous report has ended.
             unsafe { output.register_error(None, core::ptr::null_mut()) };
         }
