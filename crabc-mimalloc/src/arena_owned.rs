@@ -23,7 +23,7 @@ use crabc_core::Errno;
 
 use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, MetadataGuardHook, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion};
 use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS};
-use crate::lock::PrivateLock;
+use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, PublishedMappingView, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
 use crate::types::{Arena, MemoryId, MemoryKind};
 
@@ -1210,12 +1210,13 @@ impl ProcessArenaBacking {
         let lease = ProcessExternalOsArenaLease::new(start, size)
             .ok_or(ManageArenaError::InvalidRegion)?;
         let memory = MemoryId::external(start, size, initially_committed, is_pinned, initially_zero);
-        let _guard = self.reserve_lock.lock().map_err(|_| ManageArenaError::RegistryFull)?;
-        // SAFETY: the caller retains external backing and this lock protects
-        // the synchronous owner through first registry publication.
-        unsafe { self.install_owned_allocation_locked(
+        let guard = self.reserve_lock.lock().map_err(|_| ManageArenaError::RegistryFull)?;
+        // SAFETY: the caller retains external backing. Preparation admission
+        // retains the process binding while synchronous warnings can reenter;
+        // registry publication and completion reacquire this lock.
+        unsafe { self.install_owned_allocation_with_public_guard(
             process, stored_process, config, size,
-            ArenaBacking::ExternalOs(lease), memory, numa_node, exclusive,
+            ArenaBacking::ExternalOs(lease), memory, numa_node, exclusive, Some(guard),
         ) }.map_err(|(error, _lease)| error)
     }
 
@@ -1231,6 +1232,31 @@ impl ProcessArenaBacking {
         managed_size: usize, allocation: ArenaBacking, memory: MemoryId,
         numa_node: i32, exclusive: bool,
     ) -> Result<ManagedExternalRegion, (ManageArenaError, ArenaBacking)> {
+        // SAFETY: the caller retains the reserve lock through the entire
+        // source automatic reservation and owner transfer.
+        unsafe { self.install_owned_allocation_with_public_guard(
+            process, stored_process, config, managed_size, allocation, memory,
+            numa_node, exclusive, None,
+        ) }
+    }
+
+    /// Begins with the reserve lock held. Public caller-owned registration
+    /// transfers its guard so metadata warnings can recursively register a
+    /// distinct mapping. Automatic reservation retains its caller's guard.
+    ///
+    /// # Safety
+    /// `process` and `stored_process` name one immutable policy and identity
+    /// retained with this backing through all published arena and callback
+    /// uses and quiescent destruction. The allocation owns the exact live
+    /// range described by `memory`. `public_guard`, when present, owns this
+    /// backing's reserve lock and the allocation is caller-owned external
+    /// memory; otherwise the caller holds that lock until this call returns.
+    unsafe fn install_owned_allocation_with_public_guard(
+        &self, process: VmProcess<'_>, stored_process: StoredVmProcess, config: MemoryConfig,
+        managed_size: usize, allocation: ArenaBacking, memory: MemoryId,
+        numa_node: i32, exclusive: bool, mut public_guard: Option<PrivateLockGuard<'_>>,
+    ) -> Result<ManagedExternalRegion, (ManageArenaError, ArenaBacking)> {
+        let public_preparation = public_guard.is_some();
         let fail = |error, allocation| (error, allocation);
         if !stored_process.matches(process) {
             return Err(fail(ManageArenaError::InvalidRegion, allocation));
@@ -1261,6 +1287,7 @@ impl ProcessArenaBacking {
             // `mi_manage_os_memory_ex2` warns before rejecting a region that
             // cannot hold one aligned minimum arena.
             if let Some(warning) = ExternalArenaPlan::source_rejection_warning(start as usize, managed_size) {
+                drop(public_guard.take());
                 process.policy().source_warning(warning);
                 return Err(fail(ManageArenaError::InvalidRegion, allocation));
             }
@@ -1283,6 +1310,10 @@ impl ProcessArenaBacking {
         if !self.begin_preparation_locked(stored_process, config) {
             return Err(fail(ManageArenaError::RegistryFull, allocation));
         }
+        // The active preparation keeps the immutable binding and excludes
+        // destruction while the actual owner remains on this call's stack.
+        // Public registration has no automatic reserve-count critical section.
+        drop(public_guard);
         let external_os = matches!(allocation, ArenaBacking::ExternalOs(_));
         let owner = OwnedArenaAllocation { allocation, memory, process: stored_process, config };
         let argument = core::ptr::from_ref(&owner).cast_mut().cast();
@@ -1311,10 +1342,13 @@ impl ProcessArenaBacking {
                 },
                 exclusive, hook, metadata_hook, Some(metadata_guard), memory,
                 |arena| {
+                    let _guard = if public_preparation {
+                        Some(self.reserve_lock.lock().map_err(|_| ManageArenaError::RegistryFull)?)
+                    } else { None };
                     // Readers may observe this entry before the synchronous
                     // call returns. The local owner still retains the live
-                    // mapping; reserve_lock and the active preparation prevent
-                    // terminal release until its token transfer below finishes.
+                    // mapping; the active preparation prevents terminal release
+                    // until its token transfer below finishes.
                     if self.registry.insert(arena) {
                         Ok(())
                     } else {
@@ -1323,6 +1357,25 @@ impl ProcessArenaBacking {
                 },
             )
         };
+        // A rejected metadata commit reports after its OS warning and before
+        // owner recovery or mapping release; statistics still include the full
+        // reservation. Public registration permits recursive warnings here.
+        if matches!(result, Err(ManageArenaError::CommitFailed)) {
+            process.policy().source_warning(
+                crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                    c"unable to commit meta-data for OS memory",
+                ),
+            );
+        }
+        let _guard = if public_preparation {
+            match self.reserve_lock.lock() {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    self.preparation_retained.store(true, Ordering::Release);
+                    return Err(fail(ManageArenaError::RegistryFull, owner.allocation));
+                }
+            }
+        } else { None };
         match result {
             Ok(managed) => {
                 match owner.allocation {
@@ -1335,19 +1388,8 @@ impl ProcessArenaBacking {
                 Ok(managed)
             }
             Err(error) => {
-                // manage_in_place returns Err only before its first registry
-                // publication. Its synchronous callback has already returned.
-                // A failed metadata commit reports its arena warning after
-                // the OS commit warning and before the caller frees the
-                // unpublished mapping, while its statistics still include
-                // that complete reservation.
-                if matches!(error, ManageArenaError::CommitFailed) {
-                    process.policy().source_warning(
-                        crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
-                            c"unable to commit meta-data for OS memory",
-                        ),
-                    );
-                }
+                // Failure precedes the first registry publication. Every
+                // synchronous callback has returned before owner recovery.
                 self.finish_preparation_locked();
                 Err(fail(error, owner.allocation))
             }
@@ -4337,6 +4379,107 @@ mod tests {
             assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
             assert_eq!(backing.registry.count(), 0);
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn public_external_os_guard_warning_can_recursively_register_an_arena() {
+        crate::test_process::run_in_fresh_process(
+            "arena::owned::tests::public_external_os_guard_warning_can_recursively_register_an_arena",
+            || {
+                use core::ffi::{c_char, c_void};
+                use core::sync::atomic::{AtomicBool, AtomicUsize};
+                use std::sync::mpsc;
+                use std::time::Duration;
+                struct Capture {
+                    outer: *mut u8, inner: *mut u8, baseline: usize,
+                    entered: AtomicBool, inner_ok: AtomicBool,
+                    warnings: AtomicUsize, before_inner: AtomicUsize,
+                }
+                // Both caller mappings remain live until this isolated
+                // process ends. Only the one warning callback registers the
+                // inner range; concurrent observations are atomic scalars.
+                unsafe impl Sync for Capture {}
+                unsafe extern "C" fn no_output(_: *const c_char) {}
+                unsafe extern "C" fn reenter(message: *const c_char, argument: *mut c_void) {
+                    // SAFETY: registration retains this capture for every
+                    // synchronous report, and the source string is live.
+                    let capture = unsafe { &*argument.cast::<Capture>() };
+                    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if !bytes.windows(b"cannot decommit OS memory".len())
+                        .any(|part| part == b"cannot decommit OS memory") { return; }
+                    capture.warnings.fetch_add(1, Ordering::AcqRel);
+                    if capture.entered.swap(true, Ordering::AcqRel) { return; }
+                    let backing = MainSubprocess::global().arena_backing();
+                    capture.before_inner.store(backing.registry().count() - capture.baseline, Ordering::Release);
+                    let mut id = core::ptr::null_mut();
+                    // SAFETY: this distinct, committed and zero caller-owned
+                    // mapping remains live through publication and process
+                    // exit. No allocator projection crosses this callback.
+                    let ok = unsafe { crate::source_heap_api::manage_os_memory_ex(
+                        capture.inner.cast(), ARENA_MIN_SIZE, true, false, true, -1, true, &mut id,
+                    ) };
+                    capture.inner_ok.store(ok && !id.is_null(), Ordering::Release);
+                }
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(no_output) },
+                ));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                crate::source_options_api::option_set(crate::config::SourceOption::ShowErrors as i32, 1);
+                let reserve = || {
+                    // SAFETY: this caller owns a new anonymous reservation
+                    // and trims only unobserved bytes outside the arena span.
+                    let raw = unsafe { crabc_core::mm::mmap_raw(core::ptr::null_mut(),
+                        ARENA_MIN_SIZE + ARENA_ALIGNMENT, 3, 0x22, -1, 0) }.unwrap();
+                    let aligned = raw.map_addr(|address| (address + ARENA_ALIGNMENT - 1) & !(ARENA_ALIGNMENT - 1));
+                    let prefix = aligned.addr() - raw.addr();
+                    let suffix = ARENA_ALIGNMENT - prefix;
+                    if prefix != 0 { unsafe { crabc_core::mm::munmap_raw(raw, prefix) }.unwrap(); }
+                    if suffix != 0 { unsafe { crabc_core::mm::munmap_raw(aligned.add(ARENA_MIN_SIZE), suffix) }.unwrap(); }
+                    aligned
+                };
+                let backing = MainSubprocess::global().arena_backing();
+                let capture: &'static Capture = Box::leak(Box::new(Capture {
+                    outer: reserve(), inner: reserve(), baseline: backing.registry().count(),
+                    entered: AtomicBool::new(false), inner_ok: AtomicBool::new(false),
+                    warnings: AtomicUsize::new(0), before_inner: AtomicUsize::new(usize::MAX),
+                }));
+                // SAFETY: this is the sole serialized registration and the
+                // capture plus both raw mappings remain process-lived.
+                unsafe { crate::source_options_api::register_output(Some(reenter),
+                    core::ptr::from_ref(capture).cast_mut().cast()) };
+                let (sent, received) = mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: this isolated worker retains its exact TLS
+                    // descriptor through the synchronous registration call.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    let _fault = fault::install(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+                    let mut id = core::ptr::null_mut();
+                    // SAFETY: the outer mapping has the same retained caller
+                    // ownership as the inner mapping in the callback above.
+                    let ok = unsafe { crate::source_heap_api::manage_os_memory_ex(
+                        capture.outer.cast(), ARENA_MIN_SIZE, true, false, true, -1, true, &mut id,
+                    ) };
+                    sent.send(ok && !id.is_null()).unwrap();
+                });
+                let completed = received.recv_timeout(Duration::from_secs(5));
+                std::println!("secure.reentry.progress={}:{}:{}", u8::from(capture.entered.load(Ordering::Acquire)),
+                    u8::from(backing.reserve_lock.test_is_contended()), u8::from(completed.is_ok()));
+                let outer_ok = completed.expect("the source-permitted recursive public registration completes");
+                worker.join().unwrap();
+                let inner_ok = capture.inner_ok.load(Ordering::Acquire);
+                let entered = capture.entered.load(Ordering::Acquire);
+                let warnings = capture.warnings.load(Ordering::Acquire);
+                let before_inner = if entered { capture.before_inner.load(Ordering::Acquire) } else { 0 };
+                let delta = backing.registry().count() - capture.baseline;
+                std::println!("secure.reentry={}:{}:{}:{}:{}:{}", crate::config::SECURE_LEVEL,
+                    u8::from(outer_ok), u8::from(inner_ok), warnings, before_inner, delta);
+                assert!(outer_ok);
+                assert_eq!((inner_ok, entered, warnings, before_inner, delta),
+                    if crate::config::SECURE_LEVEL > 0 { (true, true, 1, 0, 2) } else { (false, false, 0, 0, 1) });
+            },
+        );
     }
 
     #[test]
