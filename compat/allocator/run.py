@@ -3710,8 +3710,26 @@ int main(void) {
   }
   bool commit_zero = true;
   if (_mi_prim_commit(address, page, &commit_zero) != 0) return 11;
+  volatile uint8_t* client = (volatile uint8_t*)address;
+  for (size_t index = 0; index < page; index++) {
+    client[index] = (uint8_t)(index * 29 + 0x37);
+  }
+  for (size_t index = 0; index < page; index++) {
+    if (client[index] != (uint8_t)(index * 29 + 0x37)) return 17;
+  }
   bool needs_recommit = true;
   if (_mi_prim_decommit(address, page, &needs_recommit) != 0) return 12;
+  // Decommit may remove access even when its advisory discard succeeds.
+  // Recommit the same complete owned range before accessing client bytes.
+  bool recommit_zero = true;
+  if (_mi_prim_commit(address, page, &recommit_zero) != 0) return 18;
+  if (recommit_zero) return 19;
+  for (size_t index = 0; index < page; index++) {
+    client[index] = (uint8_t)(index * 29 + 0x6d);
+  }
+  for (size_t index = 0; index < page; index++) {
+    if (client[index] != (uint8_t)(index * 29 + 0x6d)) return 20;
+  }
   if (_mi_prim_reset(address, page) != 0) return 13;
   if (_mi_prim_protect(address, page, true) != 0) return 14;
   if (_mi_prim_protect(address, page, false) != 0) return 15;
