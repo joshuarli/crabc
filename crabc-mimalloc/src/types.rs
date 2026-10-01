@@ -3987,6 +3987,30 @@ pub(super) struct PageLocalCollectState {
     pub(super) free_is_zero: NonNull<bool>,
 }
 
+/// Source facts for a quiescent page and its initialized block area.
+///
+/// This carries no owner claim, memory provenance capability, or release
+/// authority. The committed prefix remains the source page count: its byte
+/// extent also depends on the caller's actual OS page size and area offset.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct PageValiditySnapshot {
+    pub(crate) page: NonNull<Page>,
+    pub(crate) area: NonNull<u8>,
+    pub(crate) area_bytes: usize,
+    pub(crate) block_size: usize,
+    pub(crate) used: usize,
+    pub(crate) capacity: u16,
+    pub(crate) reserved: u16,
+    pub(crate) free: *mut Block,
+    pub(crate) local_free: *mut Block,
+    pub(crate) remote: *mut Block,
+    pub(crate) initially_zero: bool,
+    pub(crate) slice_pcommitted: u16,
+    #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+    pub(crate) keys: [usize; 2],
+}
+
 /// Raw field projection for the bounded abandoned-page state machine.
 ///
 /// This is deliberately not a `&mut Page`: an abandoned-page producer may
@@ -4208,6 +4232,48 @@ impl Page {
                 theap: core::ptr::addr_of!((*raw).theap).read(),
                 thread_id: (&*core::ptr::addr_of!((*raw).xthread_id)).load(core::sync::atomic::Ordering::Relaxed)
                     & !PAGE_FLAG_MASK,
+            }
+        }
+    }
+
+    /// Copies the source page-validity inputs without borrowing the whole page.
+    ///
+    /// Counts are copied without validating their relations, so a predicate
+    /// can diagnose used/capacity errors before reading any list node.
+    ///
+    /// # Safety
+    /// The caller retains initialized, address-stable metadata and its actual
+    /// block backing. `page_offset` and `reserved * block_size` must describe
+    /// that live area without overflow. Ordinary owner mutation, retirement,
+    /// reuse, and every remote producer or collector must be excluded during
+    /// this copy and any subsequent list traversal using its heads. Traversed
+    /// nodes must have initialized links. The Acquire load supplies no such
+    /// exclusion or release permission by itself.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn validity_snapshot_at(page: NonNull<Self>) -> PageValiditySnapshot {
+        let raw = page.as_ptr();
+        // SAFETY: the caller retains each initialized scalar field and the
+        // complete backing, including the independently immutable zero flag.
+        unsafe {
+            let block_size = core::ptr::addr_of!((*raw).block_size).read();
+            let reserved = core::ptr::addr_of!((*raw).reserved).read();
+            let offset = core::ptr::addr_of!((*raw).page_offset).read();
+            let remote = (&*core::ptr::addr_of!((*raw).xthread_free)).load(Ordering::Acquire) & !1;
+            PageValiditySnapshot {
+                page,
+                area: NonNull::new_unchecked(raw.cast::<u8>().add(offset)),
+                area_bytes: usize::from(reserved).unchecked_mul(block_size),
+                block_size,
+                used: core::ptr::addr_of!((*raw).used).read(),
+                capacity: core::ptr::addr_of!((*raw).capacity).read(),
+                reserved,
+                free: core::ptr::addr_of!((*raw).free).read(),
+                local_free: core::ptr::addr_of!((*raw).local_free).read(),
+                remote: core::ptr::with_exposed_provenance_mut(remote),
+                initially_zero: core::ptr::addr_of!((*raw).memid.initially_zero).read(),
+                slice_pcommitted: core::ptr::addr_of!((*raw).slice_pcommitted).read(),
+                #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+                keys: core::ptr::addr_of!((*raw).keys).read(),
             }
         }
     }
@@ -10221,6 +10287,7 @@ mod tests {
         }
         initial.block_size = BLOCK_SIZE;
         initial.page_offset = PAGE_OFFSET;
+        initial.free_is_zero = true;
         initial.xthread_id.store(
             LIVE_THREAD_ID | PAGE_HAS_INTERIOR_POINTERS,
             core::sync::atomic::Ordering::Relaxed,
@@ -10362,6 +10429,18 @@ mod tests {
         // geometry fields were immutable throughout the live page lifetime.
         assert_eq!(unsafe { (*page.as_ptr()).block_size }, BLOCK_SIZE);
         assert_eq!(unsafe { (*page.as_ptr()).page_offset }, PAGE_OFFSET);
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: the producer joined; this owner retains the complete
+            // metadata and block area without mutation through these reads.
+            let facts = unsafe { Page::validity_snapshot_at(page) };
+            assert_eq!(facts.page, page);
+            assert_eq!(facts.area, first_block);
+            assert_eq!(facts.area_bytes, 2 * BLOCK_SIZE);
+            assert_eq!((facts.used, facts.capacity, facts.reserved), (2, 2, 2));
+            assert!(facts.remote.is_null());
+            assert!(!facts.initially_zero, "allocation provenance differs from the local free-zero flag");
+        }
     }
 
     fn producer_count_coexists_with_owner_local_alloc_free_and_quick_collect(
