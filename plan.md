@@ -142,8 +142,9 @@ only its exact source, configuration, image, products, and execution context.
   comparisons and six native controls, with independent read-only replay at
   `3e17f9559`. Recursive caller-owned arena registration and guarded-free
   warning reentry repairs are integrated with exact-source replay. Repeated
-  child teardown now attributes the C growth to retained source roots; the
-  native collector still leaves an unexplained interval, and bounded-memory
+  child teardown at `e6972b244` passes all four profiles and whole read-only
+  replay. It attributes the C growth to retained source roots; every native
+  profile still leaves 270,336 added bytes unexplained. Bounded-memory
   qualification remains open. ISA correctness passes separately from deferred
   throughput. Complete M2/M3/M4 and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
