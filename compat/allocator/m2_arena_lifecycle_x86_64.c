@@ -994,13 +994,23 @@ static void retention_snapshot(size_t cycle) {
 
 int main(int argc, char** argv) {
   _mi_auto_process_init();
-  if (argc == 2 && strcmp(argv[1], "--repeat-retention") == 0) {
+  const bool repeated = argc == 2 && strcmp(argv[1], "--repeat-retention") == 0;
+  const bool source_bound = argc == 3 && strcmp(argv[1], "--source-root-bound") == 0;
+  if (repeated || source_bound) {
+    size_t last_cycle = 32;
+    if (source_bound) {
+      char* end = NULL;
+      require(argv[2][0] >= '0' && argv[2][0] <= '9');
+      const unsigned long requested = strtoul(argv[2], &end, 10);
+      require(end != argv[2] && *end == '\0' && requested >= 32 && requested <= 128);
+      last_cycle = (size_t)requested;
+    }
     emit_enabled = false;
     retention_enabled = true;
     retention_cycle = 0;
     cross_thread_abandoned_lifecycle();
     retention_snapshot(0);
-    for (size_t cycle = 1; cycle <= 32; cycle++) {
+    for (size_t cycle = 1; cycle <= last_cycle; cycle++) {
       retention_cycle = cycle;
       cross_thread_abandoned_lifecycle();
       retention_snapshot(cycle);
