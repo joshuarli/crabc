@@ -34,7 +34,53 @@ pub(crate) enum SourcePageInvariant {
     ObservationGeometry,
 }
 
+/// Identifies only the fresh committed-region assertion at page initialization.
+/// This descriptor carries no Page reference, backing ownership or release
+/// permission; the allocation caller separately retains the original candidate.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct FreshPageInitializationAssertion {
+    _private: (),
+}
+
+impl FreshPageInitializationAssertion {
+    /// Delivers the source assertion after initialization observations end.
+    ///
+    /// # Safety
+    /// The caller must retain the original owned fresh backing and its actual
+    /// registration progress until this nonreturning dispatch terminates the
+    /// process. No Page, Heap, Theap, engine or member projection or allocator
+    /// lock may remain live across output callback reentry. `owner` must be the
+    /// same admitted allocation scope acquired before creating that candidate.
+    /// Its output callback registration and argument lifetime must remain
+    /// serialized and valid throughout delivery. Nested allocation must not
+    /// reuse the retained candidate or observe it as an initialized free list.
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    pub(crate) unsafe fn dispatch(
+        self,
+        owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    ) -> ! {
+        // SAFETY: the caller keeps the preadmitted owner and original backing
+        // live, ends all metadata projections, and retains callback arguments.
+        unsafe { crate::diagnostic_output::source_assert_fail(
+            owner.output(),
+            c"mi_mem_is_zero(page_start, mi_page_committed(page))",
+            c"src/page.c",
+            729,
+            Some(c"_mi_page_init"),
+        ) }
+    }
+}
+
 impl SourcePageInvariant {
+    /// An observation-boundary or list failure belongs to a different caller
+    /// contract and cannot be delivered as the fresh zero assertion.
+    pub(crate) const fn into_fresh_initialization_assertion(self) -> Result<FreshPageInitializationAssertion, Self> {
+        match self {
+            Self::InitiallyZero => Ok(FreshPageInitializationAssertion { _private: () }),
+            failure => Err(failure),
+        }
+    }
+
     /// The exact C expression, for later delivery after observations end.
     /// A Rust observation-boundary failure has no invented source assertion.
     pub(crate) const fn assertion(self) -> Option<&'static CStr> {
@@ -136,10 +182,12 @@ unsafe fn walk_list(
 /// client bytes have been written. Ordinary page validity never calls this.
 ///
 /// # Safety
-/// Above debug level two, the caller exclusively retains the actual fresh committed region from
-/// `area`, with every byte initialized and readable. For on-demand pages the
-/// actual OS page size and source committed-prefix count describe that same
-/// region, which can extend beyond `reserved * block_size`. No concurrent
+/// Above debug level two, the caller exclusively retains the fresh backing
+/// from `area`. If committed-extent validation succeeds, every computed byte
+/// must be initialized and readable, and the actual OS page size and source
+/// committed-prefix count must describe that same region. A malformed extent
+/// rejected before any read provides no permission to inspect bytes. The
+/// accepted region can extend beyond `reserved * block_size`. No concurrent
 /// client, producer, free-list initialization, or protection change is allowed.
 pub(crate) unsafe fn source_initial_page_is_zero(
     state: &PageValiditySnapshot,
@@ -242,6 +290,240 @@ mod tests {
         }
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    unsafe extern "C" fn fresh_assertion_stderr(message: *const core::ffi::c_char) {
+        unsafe extern "C" {
+            fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+            static mut stderr: *mut core::ffi::c_void;
+        }
+        // SAFETY: the pinned native test process retains musl's actual FILE
+        // owner for its lifetime; the synchronous message is terminated.
+        unsafe { let _ = fputs(message, stderr); }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    enum FreshAssertionTestClaim {
+        Os(crate::os_page::OsAlignedPageClaim),
+        Arena(crate::arena::SourceInitializationClaimCustody),
+    }
+
+    /// Creates actual fresh backing inside the already-admitted owner scope.
+    /// Page publication records the real selected Theap; no list or client
+    /// initialization occurs in this backing before the assertion control.
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    fn with_admitted_fresh_page(
+        owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+        arena: bool,
+        test: impl FnOnce(NonNull<Page>, &PageMap),
+    ) {
+        use crate::arena::{ArenaId, ArenaSearch, ProcessArenaBacking};
+        use crate::os::{MapAccess, MemoryConfig, PageSize, StartupInput};
+        use crate::os_page::OsAlignedPageClaim;
+        use crate::types::TheapOwner;
+        let process = owner.process();
+        let issuer = process.subprocess().arena_backing();
+        // The real runtime bound its arena group to these startup observations;
+        // an independently invented configuration cannot reserve in that group.
+        let config = MemoryConfig::detect(StartupInput::new(PageSize::new(4096).unwrap()));
+        let block_size = 32;
+        let (claim, metadata, memory, offset, reserved) = if arena {
+            // SAFETY: actual preadmission and this single-threaded fixture
+            // retain the issuing process and its sole arena backing.
+            let id = unsafe { issuer.reserve_os_memory_reporting_failure(process, config,
+                crate::config::ARENA_MIN_SIZE, MapAccess::Committed, false, true, None) }
+                .unwrap_or_else(|_| panic!("actual admitted arena reservation"));
+            let search = ArenaSearch { heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+                numa_node: -1, requested: id, allow_pinned: false };
+            let claim = unsafe { issuer.try_find_free(search, 1, ARENA_SLICE_SIZE, true) }.unwrap();
+            let start = claim.start();
+            let metadata = claim.page_metadata().unwrap();
+            let memory = claim.memory_id();
+            let block_offset = crate::page::page_usable_start_offset(block_size).unwrap();
+            let offset = (start as usize).checked_sub(metadata.as_ptr() as usize).unwrap() + block_offset;
+            let reserved = crate::page::reserved_object_count(ARENA_SLICE_SIZE, block_offset, block_size).unwrap();
+            // SAFETY: the actual admitted owner retains issuer, arena and
+            // original span independently of this short claim projection.
+            let custody = unsafe { claim.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("actual arena claim has original custody"));
+            let foreign = ProcessArenaBacking::new();
+            let custody = match foreign.restore_source_initialization_claim(custody) {
+                Err((crate::arena::SourceInitializationClaimCustodyError::WrongBacking, custody)) => custody,
+                _ => panic!("wrong issuer must return the original custody"),
+            };
+            let restored = issuer.restore_source_initialization_claim(custody)
+                .unwrap_or_else(|_| panic!("the exact original issuer still restores custody"));
+            assert_eq!(restored.start(), start);
+            assert_eq!(restored.slice_count(), 1);
+            let custody = unsafe { restored.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("the restored original claim retains custody"));
+            (FreshAssertionTestClaim::Arena(custody), metadata, memory, offset, reserved)
+        } else {
+            // SAFETY: actual preadmission retains this original issuing pair
+            // throughout publication, assertion and eventual explicit release.
+            let claim = unsafe { OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
+                process, config, block_size, 1, ArenaId::none(), None) }
+                .unwrap_or_else(|_| panic!("actual admitted OS claim"));
+            let original = claim.metadata().unwrap();
+            assert!(claim.belongs_to_subprocess(process.subprocess()));
+            assert!(!claim.belongs_to_subprocess(crate::subproc::MainSubprocess::test_static_owner().identity()));
+            assert_eq!(claim.metadata().unwrap(), original);
+            let layout = claim.layout();
+            let memory = claim.memory_id().unwrap();
+            (FreshAssertionTestClaim::Os(claim), original, memory, layout.page_offset(), layout.reserved())
+        };
+        assert!(memory.initially_zero());
+        let selected = owner.selected_theap();
+        let heap = NonNull::new(unsafe { Theap::heap_at(selected) }).unwrap();
+        let thread = crate::compiler_tls::current_thread_identity().unwrap();
+        // SAFETY: only this thread owns the selected ordinary fields, while
+        // the admitted scope retains actual Heap/Theap and original backing.
+        // Raw identity projections avoid a whole Heap or Theap reference.
+        let page = unsafe { Page::publish_fresh_exclusive_owner_at_with_pointers(
+            metadata, selected, heap, TheapOwner::Live(thread), block_size,
+            offset, reserved, 0, true, memory) }.unwrap();
+        let state = unsafe { Page::validity_snapshot_at(page) };
+        assert_eq!(state.used, 0);
+        assert_eq!(state.capacity, 0);
+        assert!(state.free.is_null());
+        let area = state.area;
+        let area_bytes = state.area_bytes;
+        let mut map = PageMap::initialize(config, 47, true).unwrap();
+        // SAFETY: original ownership and source publication precede this
+        // isolated map registration; no client or producer sees the page.
+        unsafe { map.register_range(area.as_ptr(), area_bytes, page) }.unwrap();
+        let claim = core::mem::ManuallyDrop::new(claim);
+        test(page, &map);
+        unsafe { map.unregister_range(area.as_ptr(), area_bytes) }.unwrap();
+        unsafe { map.destroy() }.unwrap();
+        match core::mem::ManuallyDrop::into_inner(claim) {
+            FreshAssertionTestClaim::Os(claim) => {
+                assert!(claim.belongs_to_subprocess(process.subprocess()));
+                unsafe { claim.release_for_process(process) }
+                    .unwrap_or_else(|_| panic!("the original OS claim releases explicitly"));
+            }
+            FreshAssertionTestClaim::Arena(custody) => {
+                let restored = issuer.restore_source_initialization_claim(custody)
+                    .unwrap_or_else(|_| panic!("nonfatal control preserves original arena custody"));
+                assert!(restored.release());
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    fn with_fresh_assertion_owner(
+        test: impl for<'scope> FnOnce(crate::runtime_lifecycle::NativeAllocationOwner<'scope>),
+    ) {
+        use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
+        // SAFETY: this callback uses the pinned process's actual FILE output
+        // primitive and remains available throughout the isolated process.
+        let stderr = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(fresh_assertion_stderr) };
+        assert!(runtime::test_initialize_process_from_host_environment(4096, stderr));
+        let NativePageAllocationResult::Allocated(seed) = runtime::native_allocate(32, false)
+            else { panic!("the genuine native client initializes its selected Theap"); };
+        let selected = crate::compiler_tls::default_theap();
+        // SAFETY: the original client retains this initialized selected
+        // owner and member; no metadata projection crosses admission.
+        unsafe { runtime::with_native_allocation_owner(selected, test) }.unwrap();
+        assert_eq!(unsafe { runtime::native_free(seed) }, NativePageFreeResult::Freed);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn actual_os_and_arena_claims_preserve_nonfatal_initialization_errors() {
+        crate::test_process::run_in_fresh_process(
+            "page_validity::tests::actual_os_and_arena_claims_preserve_nonfatal_initialization_errors", || {
+                with_fresh_assertion_owner(|owner| {
+                    for arena in [false, true] {
+                        with_admitted_fresh_page(&owner, arena, |page, map| unsafe {
+                            let mut state = Page::validity_snapshot_at(page);
+                            assert_eq!(source_initial_page_is_zero(&state, 4096), Ok(()));
+                            state.capacity = 1;
+                            let failure = source_page_lists_valid(&state, map).unwrap_err();
+                            assert_eq!(failure, SourcePageInvariant::FreeCount);
+                            assert_eq!(failure.into_fresh_initialization_assertion(), Err(failure));
+                            // This copied observation has malformed OS-page
+                            // geometry. Its rejection precedes any byte read;
+                            // the actual Page and original claim stay intact.
+                            state.slice_pcommitted = 1;
+                            let geometry = source_initial_page_is_zero(&state, 3).unwrap_err();
+                            assert_eq!(geometry, SourcePageInvariant::ObservationGeometry);
+                            assert_eq!(geometry.into_fresh_initialization_assertion(), Err(geometry));
+                            // Rejection has neither changed the retained Page
+                            // nor consumed its independently owned backing.
+                            let restored = Page::validity_snapshot_at(page);
+                            assert_eq!(restored.capacity, 0);
+                            assert_eq!(source_initial_page_is_zero(&restored, 4096), Ok(()));
+                        });
+                    }
+                });
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn actual_initially_zero_assertion_retains_os_and_arena_backing_until_abort() {
+        const CHILD: &str = "CRABC_FRESH_PAGE_ASSERTION_CHILD";
+        struct Capture {
+            area: NonNull<u8>,
+            bytes: usize,
+            delivered: core::sync::atomic::AtomicBool,
+        }
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
+            unsafe extern "C" { fn write(fd: core::ffi::c_int, bytes: *const u8, size: usize) -> isize; }
+            // SAFETY: serialized synchronous registration retains this
+            // capture and the original committed backing through abort.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if bytes.starts_with(b"mimalloc: assertion failed:") {
+                assert!(!capture.delivered.swap(true, core::sync::atomic::Ordering::AcqRel));
+                assert_eq!(unsafe { capture.area.as_ptr().read() }, 0x5a);
+                let NativePageAllocationResult::Allocated(nested) = runtime::native_allocate(96, false)
+                    else { panic!("assertion output may reenter the idle admitted owner"); };
+                assert!(nested.addr().get() < capture.area.addr().get()
+                    || nested.addr().get() >= capture.area.addr().get() + capture.bytes);
+                assert_eq!(unsafe { runtime::native_free(nested) }, NativePageFreeResult::Freed);
+                let marker = b"original backing retained during reentry\n";
+                assert_eq!(unsafe { write(2, marker.as_ptr(), marker.len()) }, marker.len() as isize);
+            }
+            assert_eq!(unsafe { write(2, bytes.as_ptr(), bytes.len()) }, bytes.len() as isize);
+        }
+        if let Some(kind) = std::env::var_os(CHILD) {
+            with_fresh_assertion_owner(|owner| {
+                with_admitted_fresh_page(&owner, kind == "arena", |page, _map| {
+                    // Every snapshot/ordinary field observation ends before
+                    // registering output or entering terminal dispatch.
+                    let (assertion, area, bytes) = unsafe {
+                        let state = Page::validity_snapshot_at(page);
+                        state.area.as_ptr().write(0x5a);
+                        (source_initial_page_is_zero(&state, 4096).unwrap_err()
+                            .into_fresh_initialization_assertion().unwrap(), state.area, state.area_bytes)
+                    };
+                    let capture = Capture { area, bytes,
+                        delivered: core::sync::atomic::AtomicBool::new(false) };
+                    // SAFETY: this fresh process excludes callback replacement
+                    // and retains the argument, admitted owner and original
+                    // claim across reentry until the nonreturning abort.
+                    unsafe {
+                        owner.output().register_output(Some(output), core::ptr::from_ref(&capture).cast_mut().cast());
+                        assertion.dispatch(&owner);
+                    }
+                });
+            });
+            panic!("a genuine source assertion cannot return");
+        }
+        use std::os::unix::process::ExitStatusExt;
+        for kind in ["os", "arena"] {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "page_validity::tests::actual_initially_zero_assertion_retains_os_and_arena_backing_until_abort",
+                    "--nocapture", "--test-threads=1"])
+                .env(CHILD, kind).output().unwrap();
+            assert_eq!(result.status.signal(), Some(6), "{kind}");
+            assert_eq!(result.stderr, b"\noriginal backing retained during reentry\nmimalloc: assertion failed: at \"src/page.c\":729, _mi_page_init\n  assertion: \"mi_mem_is_zero(page_start, mi_page_committed(page))\"\n", "{kind}");
+        }
+    }
+
     #[test]
     fn actual_page_local_lists_preserve_source_equation_after_pop_and_free() {
         with_page(|page, map| unsafe {
@@ -289,6 +571,30 @@ mod tests {
             state.local_free = core::ptr::null_mut();
             state.remote = core::ptr::from_mut(&mut outside).cast::<Block>();
             assert_eq!(source_page_lists_valid(&state, map), Err(SourcePageInvariant::RemoteFreeList));
+        });
+    }
+
+    #[test]
+    fn fresh_initialization_dispatch_accepts_only_the_observed_zero_assertion() {
+        with_page(|page, map| unsafe {
+            let mut state = Page::validity_snapshot_at(page);
+            state.area.as_ptr().write(0x5a);
+            let failure = source_initial_page_is_zero(&state, 4096).err();
+            assert_eq!(failure.map(SourcePageInvariant::into_fresh_initialization_assertion)
+                .is_some_and(|result| result.is_ok()),
+                crate::config::DEBUG_LEVEL > 2);
+
+            // A real list-accounting failure belongs to its own source site,
+            // even when observed in the same retained Page allocation.
+            state.capacity = 1;
+            let failure = source_page_lists_valid(&state, map).unwrap_err();
+            assert_eq!(failure, SourcePageInvariant::FreeCount);
+            assert_eq!(failure.into_fresh_initialization_assertion(), Err(failure));
+
+            // The observation boundary can retain backing without providing
+            // the source assertion needed by this terminal delivery site.
+            assert_eq!(SourcePageInvariant::ObservationGeometry.into_fresh_initialization_assertion(),
+                Err(SourcePageInvariant::ObservationGeometry));
         });
     }
 

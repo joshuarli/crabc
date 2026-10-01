@@ -486,6 +486,16 @@ impl OsAlignedPageAllocationFailure {
 }
 
 impl OsAlignedPageClaim {
+    /// Compares the original issuing subprocess without taking or releasing
+    /// the claim. A processless mapping cannot gain an issuer from this query.
+    #[inline]
+    pub(crate) fn belongs_to_subprocess(
+        &self,
+        subprocess: &crate::subproc::SubprocessIdentity,
+    ) -> bool {
+        self.process_identity == Some(NonNull::from(subprocess))
+    }
+
     fn legacy(mapping: Mapping, layout: OsAlignedPageLayout, ready: bool) -> Self {
         Self {
             mapping,
@@ -1575,7 +1585,7 @@ impl OsAlignedPageOwner {
     ) -> bool {
         let expected = Some(NonNull::from(subprocess));
         match self {
-            Self::Claim(claim) => claim.process_identity == expected,
+            Self::Claim(claim) => claim.belongs_to_subprocess(subprocess),
             Self::Published(page) => page.process_identity == expected,
         }
     }
@@ -1748,6 +1758,24 @@ mod tests {
     }
 
     #[test]
+    fn processless_claim_identity_query_preserves_the_original_mapping() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = process(false);
+        let claim = OsAlignedPageClaim::allocate(config(4 * KIB), 4096, 128 * KIB)
+            .unwrap_or_else(|_| panic!("the processless control owns a real mapping"));
+        let metadata = claim.metadata().unwrap();
+        let base = claim.base().unwrap();
+        assert!(!claim.belongs_to_subprocess(issuer.subprocess()));
+        assert_eq!(claim.metadata().unwrap(), metadata);
+        assert_eq!(claim.base().unwrap(), base);
+        let owner = OsAlignedPageOwner::Claim(claim);
+        assert!(!owner.belongs_to_subprocess(issuer.subprocess()));
+        let OsAlignedPageOwner::Claim(claim) = owner else { unreachable!() };
+        assert_eq!(claim.base().unwrap(), base);
+        claim.release().unwrap_or_else(|_| panic!("identity observation preserves release custody"));
+    }
+
+    #[test]
     fn borrowed_process_claim_rejects_identity_mismatch_and_retries_accounted_unmap_raw() {
         let fault = fault::install(fault::Plan::disabled());
         let parent = process(false);
@@ -1756,6 +1784,10 @@ mod tests {
         let claim = unsafe { OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
             parent, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(), None,
         ) }.unwrap_or_else(|_| panic!("child-style process pair allocates exact claim"));
+        let original_metadata = claim.metadata().unwrap();
+        assert!(claim.belongs_to_subprocess(parent.subprocess()));
+        assert!(!claim.belongs_to_subprocess(foreign.subprocess()));
+        assert_eq!(claim.metadata().unwrap(), original_metadata);
         fault.set(fault::Plan::disabled());
         let owner = OsAlignedPageOwner::Claim(claim);
         assert!(owner.belongs_to_subprocess(parent.subprocess()));
@@ -1771,6 +1803,9 @@ mod tests {
         assert_eq!(parent.subprocess().vm_statistics().snapshot(), before);
         assert_eq!(foreign.subprocess().vm_statistics().snapshot(), other_before);
         let OsAlignedPageOwner::Claim(claim) = mismatch.into_owner() else { panic!("claim retained"); };
+        assert_eq!(claim.metadata().unwrap(), original_metadata);
+        assert!(claim.belongs_to_subprocess(parent.subprocess()));
+        assert!(!claim.belongs_to_subprocess(foreign.subprocess()));
 
         fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
         // SAFETY: the exact captured process image remains live.
