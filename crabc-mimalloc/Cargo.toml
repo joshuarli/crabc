@@ -76,7 +76,7 @@ required-features = ["native-runtime-test-audit"]
 [[test]]
 name = "native_persistent_owner_local_trace"
 path = "tests/native_persistent_owner_local_trace.rs"
-# The M3 persistent-owner local-path differential walks the current owner's
+# The persistent-owner local-path differential walks the current owner's
 # default Theap through an audit-only trace image absent from production.
 required-features = ["native-runtime-test-audit"]
 
@@ -263,6 +263,9 @@ mi-xmalloc = []
 # additionally randomizes page extension; feature ancestry selects the highest level.
 mi-secure-1 = []
 mi-secure-2 = ["mi-secure-1"]
+# Private x86 guarded object configuration keeps debug, secure, and statistics
+# selection independent. Default builds leave guarded sampling disabled.
+mi-guarded = []
 # Selects the pinned AVX2 bitmap searches when the whole crate is built for
 # a Haswell-class x86-64 CPU. The default and arch-only profiles remain scalar.
 mi-opt-simd = []
@@ -304,13 +307,13 @@ zeroize = { version = "=1.9.0", default-features = false }
 [[test]]
 name = "native_error_sites"
 path = "tests/native_error_sites.rs"
-# Rust half of the M7 `_mi_error_message` site differential. The last-report
+# Rust half of the `_mi_error_message` site differential. The last-report
 # audit is absent from the production allocator and libc friend surface.
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
 name = "native_option_profiles"
 path = "tests/native_option_profiles.rs"
-# Rust half of the M7 option-profile differential; its page-kind audit is
+# Rust half of the option-profile differential; its page-kind audit is
 # absent from the production allocator and libc friend surface.
 required-features = ["native-runtime-test-audit"]

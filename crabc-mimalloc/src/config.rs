@@ -79,7 +79,7 @@ pub(crate) const FREE_USE_PAGEMAP: bool = false;
 pub(crate) const OPT_FREE_SMALL: bool = false;
 pub(crate) const ENABLE_LARGE_PAGES: bool = true;
 pub(crate) const ENCODE_FREELIST: bool = DEBUG_LEVEL >= 1;
-pub(crate) const GUARDED: bool = false;
+pub(crate) const GUARDED: bool = cfg!(all(target_arch = "x86_64", feature = "mi-guarded"));
 pub(crate) const OPT_SIMD: bool = false;
 pub(crate) const PADDING_SIZE: usize = if DEBUG_LEVEL >= 1 { 8 } else { 0 };
 pub(crate) const PADDING_WSIZE: usize = PADDING_SIZE / WORD_SIZE;
@@ -348,9 +348,9 @@ impl SourceOption {
 
     /// The initial descriptor value of the selected Linux LP64 profile.
     ///
-    /// No `MI_GUARDED`, non-Android, non-Apple, and `MI_INTPTR_SIZE > 4`
-    /// select these conditional defaults. Debug and `MI_SHOW_ERRORS` both
-    /// enable initial error output.
+    /// The guarded and debug selections retain their independent descriptor
+    /// defaults. Linux LP64 selects the non-Android, non-Apple alternatives;
+    /// debug and `MI_SHOW_ERRORS` enable initial error output.
     pub(crate) const fn default_value(self) -> i64 {
         match self {
             // Source `MI_DEBUG || defined(MI_SHOW_ERRORS)`.
@@ -390,8 +390,9 @@ impl SourceOption {
             Self::GuardedMin => 0,
             Self::GuardedMax => GIB as i64,
             Self::GuardedPrecise => 0,
-            // `MI_DEFAULT_GUARDED_SAMPLE_RATE` without `MI_GUARDED`.
-            Self::GuardedSampleRate => 0,
+            // Guarded release starts sampling by default; debug requires an
+            // explicit sample rate, independently of the guarded selector.
+            Self::GuardedSampleRate => if GUARDED && DEBUG_LEVEL == 0 { 4000 } else { 0 },
             Self::GuardedSampleSeed => 0,
             Self::GenericCollect => 10_000,
             Self::PageReclaimOnFree => 0,
@@ -1089,7 +1090,10 @@ const _: [(); 1] = [(); ENABLE_LARGE_PAGES as usize];
 const _: [(); 1] = [(); (!ENCODE_FREELIST) as usize];
 #[cfg(feature = "mi-debug-1")]
 const _: [(); 1] = [(); ENCODE_FREELIST as usize];
+#[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
 const _: [(); 1] = [(); (!GUARDED) as usize];
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+const _: [(); 1] = [(); GUARDED as usize];
 const _: [(); 1] = [(); (!OPT_SIMD) as usize];
 const _: [(); 1] = [(); PAGE_META_IS_SEPARATED as usize];
 const _: [(); 1] = [(); PAGE_META_IS_ALIGNED as usize];
@@ -1131,7 +1135,7 @@ mod tests {
         assert!(!FREE_USE_PAGEMAP);
         assert!(!OPT_FREE_SMALL);
         assert_eq!(ENCODE_FREELIST, cfg!(feature = "mi-debug-1"));
-        assert!(!GUARDED);
+        assert_eq!(GUARDED, cfg!(all(target_arch = "x86_64", feature = "mi-guarded")));
         assert!(!OPT_SIMD);
         assert_eq!(PADDING_SIZE, if cfg!(feature = "mi-debug-1") { 8 } else { 0 });
         assert_eq!(PADDING_WSIZE, usize::from(cfg!(feature = "mi-debug-1")));
@@ -1182,6 +1186,29 @@ mod tests {
         assert_eq!(LARGE_MAX_OBJ_WSIZE, 65_536);
         assert_eq!(ARENA_MIN_SIZE, 32 * MIB);
         assert_eq!(ARENA_MAX_SIZE, 16 * GIB);
+    }
+
+    #[test]
+    fn selected_guarded_configuration_trace_for_pinned_c_comparison() {
+        std::println!("\nCRABC_GUARDED_CONFIG_BEGIN");
+        for (name, value) in [
+            ("MI_GUARDED", GUARDED as usize), ("MI_DEBUG", DEBUG_LEVEL),
+            ("MI_SECURE", SECURE_LEVEL), ("MI_STAT", STAT_LEVEL),
+            ("MI_PADDING_SIZE", PADDING_SIZE), ("MI_PADDING_WSIZE", PADDING_WSIZE),
+            ("MI_PAGE_KEY_COUNT", PAGE_KEY_COUNT), ("MI_ENCODE_FREELIST", ENCODE_FREELIST as usize),
+            ("MI_FREE_IS_CHECKED", FREE_IS_CHECKED as usize), ("MI_FREE_USE_PAGEMAP", FREE_USE_PAGEMAP as usize),
+            ("MI_OPT_FREE_SMALL", OPT_FREE_SMALL as usize),
+            ("MI_PAGE_META_IS_SEPARATED", PAGE_META_IS_SEPARATED as usize),
+            ("MI_PAGE_META_IS_ALIGNED", PAGE_META_IS_ALIGNED as usize),
+            ("MI_PAGES_DIRECT", PAGES_DIRECT),
+        ] { std::println!("{name}={value}"); }
+        for option in [SourceOption::GuardedMin, SourceOption::GuardedMax,
+                       SourceOption::GuardedPrecise, SourceOption::GuardedSampleRate,
+                       SourceOption::GuardedSampleSeed] {
+            let name = core::str::from_utf8(option.name()).unwrap();
+            std::println!("{name}={}", option.default_value());
+        }
+        std::println!("CRABC_GUARDED_CONFIG_END");
     }
 
     #[test]
