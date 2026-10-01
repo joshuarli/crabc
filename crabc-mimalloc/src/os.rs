@@ -170,11 +170,9 @@ const LARGE_PAGE_FAILED_RETRY_COUNT: usize = 8;
 /// The two compile-time predicates selected by
 /// `src/os.c:_mi_os_get_aligned_hint`.
 ///
-/// The port has one fixed normal-release production profile. This private
-/// value keeps that selection adjacent to the translated function while
-/// letting source-profile tests name the two unselected C preprocessor
-/// branches without turning them into allocator options or a runtime
-/// configuration surface.
+/// Production selects the current source compiler configuration. Private
+/// test values name the other C preprocessor branches without turning
+/// those predicates into runtime allocator options.
 #[derive(Clone, Copy)]
 struct AlignedHintSourceProfile {
     secure: bool,
@@ -182,7 +180,7 @@ struct AlignedHintSourceProfile {
 }
 
 impl AlignedHintSourceProfile {
-    const FIXED_NORMAL_RELEASE: Self = Self {
+    const SELECTED: Self = Self {
         secure: crate::config::SECURE_LEVEL >= 1,
         debug: crate::config::DEBUG_LEVEL != 0,
     };
@@ -1526,13 +1524,13 @@ impl VmPolicy {
             try_alignment,
             size,
             default_random,
-            AlignedHintSourceProfile::FIXED_NORMAL_RELEASE,
+            AlignedHintSourceProfile::SELECTED,
         )
     }
 
     /// Translates the selected source body after its compile-time predicates
     /// have been fixed. The sole production caller supplies
-    /// [`AlignedHintSourceProfile::FIXED_NORMAL_RELEASE`]; test-only source
+    /// [`AlignedHintSourceProfile::SELECTED`]; test-only source
     /// profile records use the same body to compare the debug and secure C
     /// preprocessor branches without creating a mutable runtime setting.
     fn aligned_hint_for_source_profile(
@@ -10336,8 +10334,10 @@ mod tests {
     #[test]
     fn aligned_hint_source_profiles_preserve_debug_and_secure_compile_predicates() {
         assert_eq!(aligned_hint_source_profile_matrix(), [true; 4]);
-        assert!(AlignedHintSourceProfile::FIXED_NORMAL_RELEASE.requires_default_random());
-        assert!(!AlignedHintSourceProfile::FIXED_NORMAL_RELEASE.rejects_request_size(usize::MAX));
+        assert_eq!(AlignedHintSourceProfile::SELECTED.requires_default_random(),
+            crate::config::SECURE_LEVEL >= 1 || crate::config::DEBUG_LEVEL == 0);
+        assert_eq!(AlignedHintSourceProfile::SELECTED.rejects_request_size(usize::MAX),
+            crate::config::SECURE_LEVEL >= 1);
     }
 
     /// A normal typed map admits a page-multiple length whose source hint
