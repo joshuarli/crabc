@@ -3025,6 +3025,181 @@ mod tests {
     }
 
     #[test]
+    fn fresh_arena_registered_page_rollback_retains_progress_through_reentrant_purge() {
+        use crate::bootstrap::{ExclusiveTheapBootstrap, TheapPageSession};
+        use crate::page_map::PageMap;
+        use core::sync::atomic::{AtomicPtr, AtomicUsize};
+        struct Capture {
+            issuer: &'static ProcessArenaBacking,
+            arena: AtomicPtr<Arena>, index: AtomicUsize, armed: AtomicBool,
+            calls: AtomicUsize,
+            nested: std::sync::Mutex<std::vec::Vec<super::super::SourceInitializationClaimCustody>>,
+        }
+        unsafe extern "C" fn callback(commit: bool, _start: *mut u8, _size: usize,
+            zero: *mut bool, argument: *mut c_void) -> bool {
+            // SAFETY: the fixture pins the original caller-owned lease and
+            // capture through every synchronous callback and terminal teardown.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            if !zero.is_null() { unsafe { zero.write(true) }; }
+            if !capture.armed.load(Ordering::Acquire) { return true; }
+            let arena = capture.arena.load(Ordering::Acquire);
+            let index = capture.index.load(Ordering::Acquire);
+            {
+                let view = unsafe { ArenaView::from_ptr(arena) }.unwrap();
+                assert_eq!(unsafe { view.slices_free() }.unwrap().is_clear_range(index, 1), Some(true));
+                if !commit {
+                    // Prefix accounting and the purge preparation have both
+                    // progressed, but original claim release has not happened.
+                    assert_eq!(unsafe { view.slices_committed() }.unwrap().is_set_range(index, 1), Some(true));
+                }
+            }
+            let id = unsafe { ArenaId::from_arena(arena) }.unwrap();
+            let nested = unsafe { capture.issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
+            assert_ne!(nested.slice_index(), index);
+            let custody = unsafe { nested.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("nested original claim"));
+            capture.nested.lock().unwrap().push(custody);
+            capture.calls.fetch_add(1, Ordering::AcqRel);
+            // A custom purge's true response requests recommit; it is not a
+            // failure response and must clear whole committed bits at finish.
+            true
+        }
+        let _fault = fault::install(fault::Plan::disabled());
+        for foreign_finish in [false, true] {
+            let issuer = backing();
+            let foreign = backing();
+            let process = purge_process(0, false);
+            let capture = Box::leak(Box::new(Capture {
+                issuer, arena: AtomicPtr::new(core::ptr::null_mut()), index: AtomicUsize::new(0),
+                armed: AtomicBool::new(false), calls: AtomicUsize::new(0),
+                nested: std::sync::Mutex::new(std::vec::Vec::new()),
+            }));
+            let base = external_storage(process, ARENA_MIN_SIZE);
+            // SAFETY: this real zero-filled writable mapping and callback
+            // capture stay independently live; the lease gains no unmap right.
+            let lease = unsafe { ProcessExternalArenaLease::new(base, ARENA_MIN_SIZE,
+                false, false, true, CommitHook::new(callback, core::ptr::from_ref(capture).cast_mut().cast())) }.unwrap();
+            let id = install_external(issuer, process, ARENA_MIN_SIZE, lease).arena_id();
+            let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }.unwrap();
+            let index = claim.slice_index();
+            capture.arena.store(id.as_ptr(), Ordering::Release);
+            capture.index.store(index, Ordering::Release);
+            capture.armed.store(true, Ordering::Release);
+            let custody = unsafe { claim.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("original fresh custody"));
+            let metadata_task = match issuer.prepare_source_arena_page(custody).unwrap_or_else(|_| panic!("metadata preparation")) {
+                SourceArenaPagePreparation::Commit(task) => task,
+                _ => panic!("source-lazy metadata"),
+            };
+            let completed = unsafe { metadata_task.run() };
+            let pending = match issuer.finish_source_arena_page_commit(completed).unwrap_or_else(|_| panic!("metadata finish")) {
+                SourceArenaPageCommitOutcome::Ready(page) => page,
+                _ => panic!("accessible source metadata"),
+            };
+            let prefix_task = match issuer.prepare_source_arena_page_prefix(pending, 4096).unwrap_or_else(|_| panic!("prefix preparation")) {
+                SourceArenaPagePreparation::Commit(task) => task,
+                _ => panic!("first partial prefix"),
+            };
+            let completed = unsafe { prefix_task.run() };
+            let pending = match issuer.finish_source_arena_page_commit(completed).unwrap_or_else(|_| panic!("prefix finish")) {
+                SourceArenaPageCommitOutcome::Ready(page) => page,
+                _ => panic!("successful first prefix"),
+            };
+            let memory = pending.memory_id();
+            let start = pending.start();
+            let mut bootstrap = Box::pin(ExclusiveTheapBootstrap::new());
+            let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(process.main_subprocess().unwrap()).unwrap();
+            let mut map = PageMap::initialize(config(), 0, true).unwrap();
+            {
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                assert!(session.ensure_arena_pages(&view, config()));
+            }
+            let usable_offset = crate::page::page_usable_start_offset(32).unwrap();
+            let offset = start.addr() - pending.metadata().as_ptr().addr() + usable_offset;
+            let reserved = crate::page::reserved_object_count(ARENA_SLICE_SIZE, usable_offset, 32).unwrap();
+            // SAFETY: pending retains the original exclusive metadata and
+            // successfully committed prefix; this pinned session owns the Page.
+            let page = unsafe { session.publish_fresh_page(pending.metadata(), 32, offset,
+                reserved, 1, memory.initially_zero(), memory) }.unwrap();
+            {
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                assert!(session.set_arena_page(&view, memory));
+            }
+            unsafe { map.register_range(start, ARENA_SLICE_SIZE, page) }.unwrap();
+            let bin = crate::size_class::bin(32).unwrap();
+            let before_pages = session.theap().statistics_snapshot();
+            assert!(session.theap().record_page_registered(bin));
+            assert_eq!(session.theap().statistics_snapshot().pages_current, before_pages.pages_current + 1);
+            assert_eq!(unsafe { map.checked_lookup(start) }, page.as_ptr());
+            let snapshot = unsafe { Page::validity_snapshot_at(page) };
+            assert!(snapshot.initially_zero);
+            assert_eq!(unsafe { crate::page_validity::source_initial_page_is_zero(&snapshot, 4096) }, Ok(()));
+            // This negative assertion control changes one initialized byte in
+            // private backing before any free-list or client is published.
+            unsafe { snapshot.area.as_ptr().write(1); }
+            let observed = unsafe { crate::page_validity::source_initial_page_is_zero(&snapshot, 4096) };
+            if crate::config::DEBUG_LEVEL > 2 {
+                let assertion = observed.unwrap_err().into_fresh_initialization_assertion().unwrap();
+                let _ = assertion;
+            } else { assert_eq!(observed, Ok(())); }
+            unsafe { map.unregister_range(start, ARENA_SLICE_SIZE) }.unwrap();
+            {
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                assert!(session.clear_arena_page(&view, memory));
+            }
+            session.retire_page(unsafe { &mut *page.as_ptr() }).unwrap();
+            assert!(session.theap().record_page_released(bin));
+            assert_eq!(session.theap().statistics_snapshot().pages_current, before_pages.pages_current);
+            // SAFETY: all completed registrations were reversed and the
+            // exact primary was retired. Only original pending custody remains.
+            let cleanup = unsafe { pending.into_cleanup() };
+            let before_vm = process.subprocess().vm_statistics().snapshot();
+            let cleanup = match foreign.prepare_source_arena_page_cleanup(cleanup) {
+                Err((SourceArenaPageInitializationError::Custody(super::super::SourceInitializationClaimCustodyError::WrongBacking), cleanup)) => cleanup,
+                _ => panic!("foreign refusal precedes accounting"),
+            };
+            assert_eq!(process.subprocess().vm_statistics().snapshot().committed_current, before_vm.committed_current);
+            let release = match issuer.prepare_source_arena_page_cleanup(cleanup).unwrap_or_else(|_| panic!("original prefix reconciliation")) {
+                SourceArenaPageCleanupStep::Release(release) => release,
+                _ => panic!("valid cleanup geometry"),
+            };
+            assert_eq!(process.subprocess().vm_statistics().snapshot().committed_current, before_vm.committed_current - 4096);
+            let decision = unsafe { release.read_purge_delay() };
+            let task = match issuer.prepare_purge_or_return(decision).unwrap_or_else(|_| panic!("purge preparation")) {
+                SourceInitializationReleaseStep::Purge(task) => task,
+                _ => panic!("zero delay selects one source purge"),
+            };
+            let completed = match unsafe { task.run() } {
+                SourceInitializationPurgeResult::Complete(done) => done,
+                _ => panic!("retained callback area"),
+            };
+            assert_eq!(capture.calls.load(Ordering::Acquire), 3);
+            assert_eq!(process.subprocess().vm_statistics().snapshot().purge_calls, before_vm.purge_calls + 1);
+            let outcome = if foreign_finish { foreign.finish_release(completed) } else { issuer.finish_release(completed) };
+            {
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                if foreign_finish {
+                    assert!(matches!(outcome, SourceInitializationReleaseOutcome::RetainedAfterProgress(_)));
+                    assert_eq!(unsafe { view.slices_free() }.unwrap().is_clear_range(index, 1), Some(true));
+                    assert_eq!(unsafe { view.slices_committed() }.unwrap().is_set_range(index, 1), Some(true));
+                } else {
+                    assert!(matches!(outcome, SourceInitializationReleaseOutcome::Released));
+                    assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(index, 1), Some(true));
+                    assert_eq!(unsafe { view.slices_committed() }.unwrap().is_clear_range(index, 1), Some(true));
+                }
+            }
+            assert_eq!(process.subprocess().vm_statistics().snapshot().committed_current, before_vm.committed_current - 4096);
+            capture.armed.store(false, Ordering::Release);
+            for custody in capture.nested.lock().unwrap().drain(..) {
+                assert!(issuer.restore_source_initialization_claim(custody).unwrap_or_else(|_| panic!("nested issuer")).release());
+            }
+            drop(session);
+            unsafe { map.destroy() }.unwrap();
+            assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+        }
+    }
+
+    #[test]
     fn fresh_arena_initialization_keeps_successful_prefix_with_original_custody() {
         let _fault = fault::install(fault::Plan::disabled());
         let issuer = backing();
