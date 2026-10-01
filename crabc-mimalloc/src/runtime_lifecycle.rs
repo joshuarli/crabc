@@ -13608,6 +13608,29 @@ pub(crate) struct GuardedLiveBlockFacts<'scope> {
     pub(crate) process: crate::os::VmProcess<'scope>,
 }
 
+/// Outcome of the selected canonical allocator domain before placement.
+/// Only a completed source allocation with no client represents source OOM;
+/// routing and admission refusal carry no client or release obligation.
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum NativeGuardedCanonicalAllocationProgress {
+    OtherDomain,
+    Refused,
+    Complete(Option<core::ptr::NonNull<u8>>),
+}
+
+/// A sampled guarded operation after its original canonical obligation was
+/// transferred to a placed client or successfully consumed by local cleanup.
+/// Admission refusal and short source geometry do not request OOM output.
+#[cfg(target_arch = "x86_64")]
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum NativeGuardedAllocationOutcome {
+    Placed { client: core::ptr::NonNull<u8>, usable_size: usize },
+    ShortGeometry,
+    SourceOutOfMemory,
+    AdmissionRefused,
+}
+
 /// The original completed engine return retained inside one admitted scope.
 /// Only its actual issuing engine can supply the client ownership obligation;
 /// neither a map lookup nor copied geometry can create this value's rights.
