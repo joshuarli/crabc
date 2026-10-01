@@ -603,6 +603,70 @@ pub(crate) enum GuardedAllocationResult {
     Refused(SourceErrno),
 }
 
+/// Samples before admission, then retains one actual selected owner through
+/// geometry, canonical allocation, placement and consuming refusal cleanup.
+/// Only an unsampled request permits the caller's ordinary allocation route.
+///
+/// # Safety
+/// The caller retains the current-thread selected Heap, Theap and member,
+/// excluding teardown and overlapping sampler mutation for the entire call.
+/// An immutable empty compiler-TLS image is permitted on its read-only sampler
+/// path. A supplied alignment is nonzero and a power of two. All allocator
+/// projections and locks have ended; callbacks cannot consume an in-flight
+/// client or tear down its selected owner.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) unsafe fn guarded_allocate_selected(
+    theap: NonNull<Theap>, size: usize, aligned: Option<(usize, usize)>, zero: bool,
+) -> GuardedAllocationResult {
+    let Some(sampled) = (unsafe { guarded_sample_source_request(theap, size, aligned) }) else {
+        return GuardedAllocationResult::NotSampled;
+    };
+    let checked = match sampled.check_size() {
+        Ok(checked) => checked,
+        Err(report) => return GuardedAllocationResult::Refused(crate::source_api::source_error_errno(report)),
+    };
+    // SAFETY: the selected metadata and member remain retained before any
+    // canonical client is created and through synchronous callback delivery.
+    unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+        let Some(page_size) = owner.page_map().ok()
+            .and_then(|map| map.memory_config().ok()).map(|config| config.page_size()) else {
+                return GuardedAllocationResult::Refused(SourceErrno::Unchanged);
+            };
+        // The source's live option table belongs to this same admitted owner;
+        // lazy option warnings run with no engine or metadata projection held.
+        let precise = owner.output().option_value(crate::config::SourceOption::GuardedPrecise) != 0;
+        let report_errno = |report: SourceErrorReport| {
+            match owner.output().error_message(report.error(), report.message()) {
+                crate::diagnostic_output::SourceErrorDisposition::Handled => SourceErrno::Unchanged,
+                crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(errno) => SourceErrno::DefaultIfZero(errno),
+            }
+        };
+        let geometry = match checked.geometry(page_size, precise) {
+            Ok(geometry) => geometry,
+            Err(report) => return GuardedAllocationResult::Refused(report_errno(report)),
+        };
+        use crate::runtime_lifecycle::NativeGuardedAllocationOutcome;
+        match crate::runtime_lifecycle::native_guarded_allocate_in_owner(&owner, geometry.source_size(),
+            |owner, candidate| guarded_place_candidate(owner, candidate, &geometry, zero)) {
+            NativeGuardedAllocationOutcome::Placed { client, .. } => GuardedAllocationResult::Allocated(
+                Sourced { value: client, errno: SourceErrno::Unchanged }),
+            NativeGuardedAllocationOutcome::SourceOutOfMemory => GuardedAllocationResult::Refused(
+                report_errno(SourceErrorReport::OutOfMemory { size: geometry.source_size() })),
+            NativeGuardedAllocationOutcome::ShortGeometry | NativeGuardedAllocationOutcome::AdmissionRefused =>
+                GuardedAllocationResult::Refused(SourceErrno::Unchanged),
+        }
+    }) }.unwrap_or(GuardedAllocationResult::Refused(SourceErrno::Unchanged))
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+fn guarded_public_result(result: GuardedAllocationResult) -> Option<Sourced<Block>> {
+    match result {
+        GuardedAllocationResult::NotSampled => None,
+        GuardedAllocationResult::Allocated(result) => Some(Sourced { value: Some(result.value), errno: result.errno }),
+        GuardedAllocationResult::Refused(errno) => Some(Sourced { value: None, errno }),
+    }
+}
+
 /// Scalar source selection, not an admitted owner or allocation capability.
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
 pub(crate) struct GuardedSampledRequest {
@@ -801,6 +865,16 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
     {
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    if let Some(result) = guarded_public_result(unsafe { guarded_allocate_selected(theap, size, None, zero) }) {
+        return result;
+    }
+    // SAFETY: the selected initialized current-thread Theap was validated above.
+    unsafe { theap_allocate_ordinary(theap, size, zero) }
+}
+
+/// Ordinary continuation after the selected ingress sampler has already run.
+unsafe fn theap_allocate_ordinary(theap: NonNull<Theap>, size: usize, zero: bool) -> Sourced<Block> {
     // The retained fixed Theap uses its runtime engine independently of
     // the default and source fast selector. A main-Heap sibling uses its
     // own allocated engine image.
@@ -823,6 +897,10 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
 /// main-Heap Theap; `None` keeps the existing main-owner fast path.
 pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<Block>> {
     let selected = crate::compiler_tls::default_theap();
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    if let Some(result) = guarded_public_result(unsafe { guarded_allocate_selected(selected, size, None, zero) }) {
+        return Some(result);
+    }
     // The default remains initialized after child destruction clears the
     // fast root. An auxiliary default still selects its own Heap.
     // SAFETY: the calling thread retains its default Theap through routing.
@@ -830,7 +908,7 @@ pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<
     if heap.is_null() || fixed_runtime_theap() == Some(selected) { return None; }
     // SAFETY: only the calling thread changes its default, which must stay
     // live through every allocation until it is restored.
-    Some(unsafe { theap_malloc(selected.as_ptr().cast(), size, zero) })
+    Some(unsafe { theap_allocate_ordinary(selected, size, zero) })
 }
 
 /// `mi_heap_of`: the Heap currently named by the page containing `pointer`.
@@ -977,6 +1055,37 @@ mod heap_membership_tests {
         // stack status word until the synchronous wait returns.
         assert_eq!(unsafe { waitpid(child, &mut status, 0) }, child);
         status & 0x7f == 11
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn aligned_guarded_eligibility_excludes_large_alignment_before_countdown() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::aligned_guarded_eligibility_excludes_large_alignment_before_countdown",
+            || {
+                initialize_test_owner();
+                let heap = heap_new();
+                assert!(!heap.is_null());
+                // SAFETY: this thread retains the initialized selected sampler;
+                // all supplied alignments are valid powers of two.
+                unsafe {
+                    let theap = heap_theap(heap);
+                    let selected = NonNull::new(theap.cast::<Theap>()).unwrap();
+                    theap_guarded_set_sample_rate(theap, 2, 2);
+                    for alignment in [crate::config::PAGE_MAX_OVERALLOC_ALIGN, 1usize << (usize::BITS - 1)] {
+                        assert!(guarded_sample_source_request(selected, 81, Some((alignment, 0))).is_none());
+                    }
+                    assert!(guarded_sample_source_request(selected, 81, Some((64, 1))).is_none());
+                    // The excluded calls did not advance the seed's first
+                    // countdown: this eligible call samples immediately.
+                    let sampled = guarded_sample_source_request(selected, 81, Some((64, 0)))
+                        .expect("eligible alignment retains the first sample");
+                    assert!(sampled.check_size().is_ok());
+                    assert!(guarded_sample_source_request(selected, 81, Some((64, 0))).is_none());
+                    assert!(heap_release(heap, false));
+                }
+            },
+        );
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
@@ -1833,8 +1942,26 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     }
     if let Request::Aligned { alignment, offset } = request {
-        if let Some(report) = SourceErrorReport::aligned_precheck(size, alignment, offset) {
-            return Sourced { value: None, errno: crate::source_api::source_error_errno(report) };
+        if !crate::size_class::alignment_is_valid(alignment) {
+            return Sourced { value: None, errno: crate::source_api::source_error_errno(
+                SourceErrorReport::BadAlignment { size, alignment, offset }) };
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    {
+        let selected_theap = NonNull::new(selected.cast::<Theap>()).unwrap();
+        let aligned = match request {
+            Request::Plain => None,
+            Request::Aligned { alignment, offset } => Some((alignment, offset)),
+        };
+        // Fixed aligned ingress delegates its one sample to the native aligned
+        // entry. Plain and auxiliary aligned ingress sample this exact Theap.
+        let native_aligned = aligned.is_some() && (fixed_runtime_theap() == Some(selected_theap)
+            || crate::subproc::lifecycle::current_child_main_heap() == Some(heap));
+        if !native_aligned {
+            if let Some(result) = guarded_public_result(unsafe {
+                guarded_allocate_selected(selected_theap, size, aligned, zero)
+            }) { return result; }
         }
     }
     if fixed_runtime_theap().is_some_and(|fixed| fixed.as_ptr().cast::<c_void>() == selected) {
@@ -1858,6 +1985,11 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
             (Request::Aligned { alignment, offset }, false) => crate::source_api::malloc_zero_aligned_at_native(size, alignment, offset, false),
             (Request::Aligned { alignment, offset }, true) => crate::source_api::malloc_zero_aligned_at_native(size, alignment, offset, true),
         };
+    }
+    if let Request::Aligned { alignment, offset } = request {
+        if let Some(report) = SourceErrorReport::aligned_precheck(size, alignment, offset) {
+            return Sourced { value: None, errno: crate::source_api::source_error_errno(report) };
+        }
     }
     let child_member = crate::subproc::lifecycle::current_thread_is_child_member();
     let child_page_alignment_refusal = match request {
