@@ -611,7 +611,7 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
         }
     }
     #[cfg(target_arch = "x86_64")]
-    fn finish_generic_allocation_administration(
+    unsafe fn finish_generic_allocation_administration(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize,

@@ -536,8 +536,15 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     }
     /// Resumes on the same retained image after all getter callbacks ended.
     /// A withdrawn owner refuses instead of applying another image's phase.
+    ///
+    /// # Safety
+    /// The caller retains the request's original image and this session's
+    /// actual owner admission from the counter prefix through completion.
+    /// Neither image may be retired, replaced, or rebound during callbacks.
+    /// A foreign issuer is refused; an address match alone does not prove
+    /// that the originating allocation lifetime is still retained.
     #[cfg(target_arch = "x86_64")]
-    fn finish_generic_allocation_administration(
+    unsafe fn finish_generic_allocation_administration(
         &mut self,
         _request: crate::types::GenericAllocationFrequencyRequest,
         _frequency: isize,
@@ -993,7 +1000,7 @@ unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
         }
     }
     #[cfg(target_arch = "x86_64")]
-    fn finish_generic_allocation_administration(
+    unsafe fn finish_generic_allocation_administration(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize,
@@ -1137,16 +1144,21 @@ mod tests {
         }
         let request = threshold(&mut first);
         let before = second.theap().test_generic_administration_image();
-        assert!(second.finish_generic_allocation_administration(request, 1).is_none());
+        // SAFETY: both original pinned session images remain live; the
+        // foreign request is refused before any counter completion.
+        assert!(unsafe { second.finish_generic_allocation_administration(request, 1) }.is_none());
         assert_eq!(second.theap().test_generic_administration_image(), before);
         for frequency in [0, -1, 1_000_001] {
             let request = threshold(&mut first);
             let before = first.theap().test_generic_administration_image();
-            assert!(first.finish_generic_allocation_administration(request, frequency).is_none());
+            // SAFETY: this original session remains retained throughout the
+            // prefix and refusal; no callback or rebinding intervenes.
+            assert!(unsafe { first.finish_generic_allocation_administration(request, frequency) }.is_none());
             assert_eq!(first.theap().test_generic_administration_image(), before);
         }
         let request = threshold(&mut first);
-        assert_eq!(first.finish_generic_allocation_administration(request, 1),
+        // SAFETY: the exact originating pinned owner is still admitted.
+        assert_eq!(unsafe { first.finish_generic_allocation_administration(request, 1) },
             Some(crate::types::GenericAllocationAdministration::Full));
         assert_eq!(first.theap().test_generic_administration_image().2, 0);
     }

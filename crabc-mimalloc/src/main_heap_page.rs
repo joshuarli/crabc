@@ -2906,14 +2906,19 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         self.engine.allocation_process()
     }
 
+    /// # Safety
+    /// The caller retains this exact allocator and original Theap admission
+    /// across the request's getter callbacks, without retirement or rebinding.
+    /// `frequency` is the source-clamped value for this retained request.
     #[cfg(target_arch = "x86_64")]
-    pub(crate) fn resume_generic_allocation_frequency(
+    pub(crate) unsafe fn resume_generic_allocation_frequency(
         &mut self,
         request: crate::types::GenericAllocationFrequencyRequest,
         frequency: isize,
         continuation: crate::single_thread::DeferredFreeAllocationContinuation,
     ) -> crate::single_thread::DeferredFreeAllocationPhase {
-        self.engine.resume_generic_allocation_frequency(request, frequency, continuation)
+        // SAFETY: the caller retains the same owner across the callback phase.
+        unsafe { self.engine.resume_generic_allocation_frequency(request, frequency, continuation) }
     }
 
     /// Compares the explicit selected Theap with this retained session,

@@ -3541,7 +3541,7 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn finish_generic_allocation_administration(
+    unsafe fn finish_generic_allocation_administration(
         &mut self, request: crate::types::GenericAllocationFrequencyRequest, frequency: isize,
     ) -> Option<crate::types::GenericAllocationAdministration> {
         let pointer = NonNull::new(self.storage.theap.image.get())?;
