@@ -824,6 +824,59 @@ impl ProcessArenaBacking {
         }
     }
 
+    /// Restores only an original initialization claim issued by this exact
+    /// retained backing. Every refusal returns the unchanged custody; none
+    /// reads a foreign arena, schedules a purge, or returns a bitmap range.
+    /// A child caller reacquires its original admitted record before this
+    /// short projection. Its independently retained callback lease excludes
+    /// teardown and address reuse throughout restoration and later release.
+    pub(crate) fn restore_source_initialization_claim(
+        &self, custody: super::SourceInitializationClaimCustody,
+    ) -> Result<ArenaSliceClaim<'_>, (super::SourceInitializationClaimCustodyError, super::SourceInitializationClaimCustody)> {
+        use super::SourceInitializationClaimCustodyError as Error;
+        if custody.issuer != NonNull::from(self) { return Err((Error::WrongBacking, custody)); }
+        if self.destroyed.load(Ordering::Acquire) { return Err((Error::TerminalBacking, custody)); }
+        let Some(published) = self.registry.arena_print_pointer(custody.arena_index) else {
+            return Err((Error::UnpublishedArena, custody));
+        };
+        if published != custody.arena { return Err((Error::UnpublishedArena, custody)); }
+        if !self.registry.is_bound_to_subprocess(custody.subprocess.as_ptr()) {
+            return Err((Error::SourceIdentityMismatch, custody));
+        }
+        // SAFETY: the token came only from an actual claim, its original
+        // retained owner excludes teardown/reuse, and the freshly loaded
+        // issuing registry slot matched before projecting any arena fields.
+        let arena = unsafe { published.as_ref() };
+        if arena.arena_index != custody.arena_index || arena.subprocess != custody.subprocess.as_ptr() {
+            return Err((Error::SourceIdentityMismatch, custody));
+        }
+        let Some(memory) = custody.memory.arena_memory() else {
+            return Err((Error::InvalidClaimSpan, custody));
+        };
+        let index = memory.slice_index as usize;
+        let count = memory.slice_count as usize;
+        if memory.arena != published.as_ptr()
+            || !super::arena_slice_range_is_usable(arena, index, count)
+            || super::arena_slice_start(arena, index) != Some(custody.start.as_ptr()) {
+            return Err((Error::InvalidClaimSpan, custody));
+        }
+        // SAFETY: the retained owner and checked issuing slot above make
+        // this short published ownership projection live for validation.
+        if unsafe { self.allocation_for_arena(arena) }.is_none() {
+            return Err((Error::MissingBackingOwner, custody));
+        }
+        // No callback runs while this short bitmap projection validates the
+        // original range. Atomic clear bits still denote its outstanding claim.
+        let outstanding = unsafe { super::ArenaView::from_ptr(published.as_ptr()) }
+            .and_then(|view| unsafe { view.slices_free() })
+            .and_then(|free| free.is_clear_range(index, count));
+        if outstanding != Some(true) { return Err((Error::ClaimNoLongerOutstanding, custody)); }
+        Ok(ArenaSliceClaim {
+            arena: published, start: custody.start, memory: custody.memory,
+            backing: Some(self), _arena: core::marker::PhantomData,
+        })
+    }
+
     /// Publishes one source-sized OS arena and retains its exact mapping.
     /// Failure before publication returns the complete mapping, including a
     /// failed metadata-commit attempt; it does not silently unmap or discard
@@ -2237,6 +2290,179 @@ mod tests {
         assert!(claim.release());
         // SAFETY: the only claim has ended; no arena/header observer survives.
         assert!(unsafe { BACKING.destroy_all(&mut []) }.expect("arena releases").is_released());
+    }
+
+    #[test]
+    fn source_initialization_claim_custody_survives_warning_and_returns_only_to_issuer() {
+        use crate::diagnostic_output::OutputOwner;
+        use crate::config::SourceOption;
+        use core::ffi::c_char;
+        use core::sync::atomic::{AtomicPtr, AtomicUsize};
+        struct Capture {
+            backing: &'static ProcessArenaBacking,
+            arena: AtomicPtr<Arena>, original_start: AtomicPtr<u8>,
+            original_index: AtomicUsize, calls: AtomicUsize, nested_start: AtomicPtr<u8>,
+        }
+        unsafe fn no_environment() -> *const *const c_char { core::ptr::null() }
+        unsafe extern "C" fn no_default_output(_: *const c_char) {}
+        unsafe extern "C" fn nested_allocation(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: the isolated output registration retains this capture
+            // and its actual pinned backing for every synchronous callback;
+            // the source message remains live throughout the call.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            let body = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !body.windows(b"pending initialization claim warning".len())
+                .any(|part| part == b"pending initialization claim warning") { return; }
+            if capture.calls.fetch_add(1, Ordering::AcqRel) != 0 { return; }
+            let id = unsafe { ArenaId::from_arena(capture.arena.load(Ordering::Acquire)) }.unwrap();
+            let index = capture.original_index.load(Ordering::Acquire);
+            {
+                // SAFETY: the actual owner remains retained; this short
+                // bitmap projection ends before the nested allocator call.
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                assert_eq!(unsafe { view.slices_free() }.unwrap().is_clear_range(index, 1), Some(true));
+            }
+            let nested = unsafe { capture.backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+                .expect("the callback can allocate beside the pending initialization claim");
+            assert_ne!(nested.start(), capture.original_start.load(Ordering::Acquire));
+            capture.nested_start.store(nested.start(), Ordering::Release);
+            assert!(nested.release());
+        }
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let capture = Box::leak(Box::new(Capture {
+            backing: issuer, arena: AtomicPtr::new(core::ptr::null_mut()),
+            original_start: AtomicPtr::new(core::ptr::null_mut()),
+            original_index: AtomicUsize::new(0), calls: AtomicUsize::new(0),
+            nested_start: AtomicPtr::new(core::ptr::null_mut()),
+        }));
+        let output = Box::leak(Box::new(OutputOwner::new(no_default_output)));
+        // SAFETY: this fixture alone initializes and registers its own
+        // output owner, whose callback capture and actual backing are pinned.
+        unsafe {
+            output.initialize_source_options(no_environment);
+            output.option_set(SourceOption::ShowErrors, 1).unwrap();
+            output.register_output(Some(nested_allocation), core::ptr::from_ref(capture).cast_mut().cast());
+        }
+        let policy = Box::leak(Box::new(unsafe { VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new_main(policy, MainSubprocess::test_static_owner());
+        let id = install(issuer, process, MapAccess::Committed);
+        capture.arena.store(id.as_ptr(), Ordering::Release);
+        // The actual pinned issuer and its published mapping remain alive
+        // through callback, inverse transition, release and final teardown.
+        // Only the short issuing projection ends when custody is returned.
+        let custody = {
+            let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+            capture.original_start.store(claim.start(), Ordering::Release);
+            capture.original_index.store(claim.slice_index(), Ordering::Release);
+            unsafe { claim.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("an actual process-backed claim has initialization custody"))
+        };
+        let foreign = backing();
+        let custody = match foreign.restore_source_initialization_claim(custody) {
+            Err((super::super::SourceInitializationClaimCustodyError::WrongBacking, custody)) => custody,
+            _ => panic!("a foreign backing cannot consume the issuing claim"),
+        };
+        assert_eq!(foreign.registry().count(), 0);
+        process.policy().source_warning(
+            crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(c"pending initialization claim warning"),
+        );
+        assert_eq!(capture.calls.load(Ordering::Acquire), 1);
+        assert!(!capture.nested_start.load(Ordering::Acquire).is_null());
+        let restored = issuer.restore_source_initialization_claim(custody)
+            .unwrap_or_else(|_| panic!("the retained issuer restores its original claim"));
+        assert_eq!(restored.start(), capture.original_start.load(Ordering::Acquire));
+        let index = restored.slice_index();
+        assert!(restored.release());
+        let returned = {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            unsafe { view.slices_free() }.unwrap().is_set_range(index, 1)
+        };
+        assert_eq!(returned, Some(true));
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+    }
+
+    #[test]
+    fn source_initialization_claim_custody_validation_refusal_preserves_original_span() {
+        use super::super::SourceInitializationClaimCustodyError as Error;
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let process = process();
+        let id = install(issuer, process, MapAccess::Committed);
+        let claim = unsafe { issuer.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
+        let original_start = claim.start();
+        let index = claim.slice_index();
+        // SAFETY: this fixture's actual pinned backing and published mapping
+        // remain live through every refused inverse and the final release.
+        let mut custody = unsafe { claim.into_source_initialization_custody() }
+            .unwrap_or_else(|_| panic!("the actual claim is process-backed"));
+        let slot = custody.arena_index;
+        custody.arena_index = MAX_ARENAS;
+        custody = match issuer.restore_source_initialization_claim(custody) {
+            Err((Error::UnpublishedArena, returned)) => returned,
+            _ => panic!("an unavailable issuing slot cannot return the span"),
+        };
+        custody.arena_index = slot;
+        let subprocess = custody.subprocess;
+        custody.subprocess = NonNull::new(MainSubprocess::test_static_owner().as_ptr()).unwrap();
+        custody = match issuer.restore_source_initialization_claim(custody) {
+            Err((Error::SourceIdentityMismatch, returned)) => returned,
+            _ => panic!("a changed source identity cannot return the span"),
+        };
+        custody.subprocess = subprocess;
+        let start = custody.start;
+        custody.start = NonNull::new(unsafe { start.as_ptr().add(ARENA_SLICE_SIZE) }).unwrap();
+        custody = match issuer.restore_source_initialization_claim(custody) {
+            Err((Error::InvalidClaimSpan, returned)) => returned,
+            _ => panic!("a shifted address cannot replace the original claim"),
+        };
+        custody.start = start;
+        let outstanding = {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            unsafe { view.slices_free() }.unwrap().is_clear_range(index, 2)
+        };
+        assert_eq!(outstanding, Some(true), "every refusal leaves the exact original bitmap claim outstanding");
+        let claim = issuer.restore_source_initialization_claim(custody)
+            .unwrap_or_else(|_| panic!("unchanged custody returns to its retained issuer"));
+        assert_eq!(claim.start(), original_start);
+        assert_eq!(claim.slice_count(), 2);
+        assert!(claim.release());
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+    }
+
+    #[test]
+    fn source_initialization_claim_custody_refuses_unbacked_claim_and_retains_terminal_span() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let process = process();
+        let id = install(issuer, process, MapAccess::Committed);
+        let legacy = {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            view.try_claim_suitable_slices(id, 1, true, 0).unwrap()
+        };
+        let original = legacy.start();
+        // SAFETY: the actual owner retains this whole mapping. Conversion
+        // must still refuse a legacy claim lacking a process-backed issuer.
+        let legacy = match unsafe { legacy.into_source_initialization_custody() } {
+            Err(claim) => claim,
+            Ok(_) => panic!("an unbacked claim cannot acquire process initialization custody"),
+        };
+        assert_eq!(legacy.start(), original);
+        assert!(legacy.release());
+        let claim = unsafe { issuer.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        let index = claim.slice_index();
+        // SAFETY: the fixture retains the actual pinned backing through the
+        // explicit terminal transition and quiescent mapping destruction.
+        let custody = unsafe { claim.into_source_initialization_custody() }
+            .unwrap_or_else(|_| panic!("the actual process-backed claim has custody"));
+        custody.retain_terminal();
+        let retained = {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            unsafe { view.slices_free() }.unwrap().is_clear_range(index, 1)
+        };
+        assert_eq!(retained, Some(true), "terminal retention never invents a bitmap release");
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
     }
 
     fn process() -> VmProcess<'static> {

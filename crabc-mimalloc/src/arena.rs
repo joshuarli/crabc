@@ -1568,7 +1568,85 @@ pub(crate) struct ArenaSliceClaim<'arena> {
     _arena: PhantomData<&'arena Arena>,
 }
 
+/// Original arena-claim custody between short source initialization
+/// projections. Raw issuer facts identify the inverse transition; they never
+/// retain a backing, grant an arena lifetime, or authorize an inferred free.
+/// The actual admitted owner must remain independently pinned until explicit
+/// restoration, transfer to a linked Theap, or terminal retention completes.
+#[must_use = "initialization custody must be restored, transferred, or explicitly retained"]
+pub(crate) struct SourceInitializationClaimCustody {
+    arena: NonNull<Arena>,
+    start: NonNull<u8>,
+    memory: MemoryId,
+    issuer: NonNull<ProcessArenaBacking>,
+    arena_index: usize,
+    subprocess: NonNull<Subprocess>,
+}
+
+/// A refused inverse transition has not returned any slices or consumed the
+/// original custody. The caller retains that token and its actual owner.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceInitializationClaimCustodyError {
+    WrongBacking,
+    TerminalBacking,
+    UnpublishedArena,
+    SourceIdentityMismatch,
+    InvalidClaimSpan,
+    MissingBackingOwner,
+    ClaimNoLongerOutstanding,
+}
+
+impl SourceInitializationClaimCustody {
+    /// Transfers the original release obligation to a source-published Theap.
+    /// This returns the stored observation, never a new release capability.
+    ///
+    /// # Safety
+    /// The actual retained issuer remains alive, the Theap carries this exact
+    /// original memory identity, and its TLD/Heap links now retain its image
+    /// for the complete source lifecycle. No pre-link failure or independent
+    /// claim release may remain. Partial initialization that cannot transfer
+    /// the normal lifecycle must instead retain custody terminally.
+    pub(crate) unsafe fn into_published_memory(self) -> MemoryId { self.memory }
+
+    /// Consumes custody without returning a possibly published span. The
+    /// source owner thereafter retains that span through quiescent teardown;
+    /// no claim, retry, or implicit bitmap release is manufactured here.
+    pub(crate) fn retain_terminal(self) {}
+}
+
 impl ArenaSliceClaim<'_> {
+    /// Consumes the original process-backed claim before ending its short
+    /// issuing projection. An unbacked or foreign claim is returned unchanged.
+    /// The resulting token has no destructor and retains no Rust arena borrow.
+    ///
+    /// # Safety
+    /// An independently pinned actual admitted owner must retain this exact
+    /// backing, source identity, published arena and mapping through every
+    /// callback and subsequent inverse, linked transfer or terminal retention.
+    /// For a child, the original record's callback lease must stay live, and
+    /// its selected Heap and current member must exclude self-teardown. That
+    /// real admission must prevent destruction, replacement and address reuse;
+    /// the copied pointers and an erased projection lifetime prove none of
+    /// those obligations. Custody must not escape the retained owner scope.
+    pub(crate) unsafe fn into_source_initialization_custody(
+        self,
+    ) -> Result<SourceInitializationClaimCustody, Self> {
+        let Some(backing) = self.backing else { return Err(self); };
+        // SAFETY: the original claim still retains its live arena projection.
+        // Only scalar identities survive this read, under the external owner
+        // lifetime obligation required for the consuming transition above.
+        let arena = unsafe { self.arena.as_ref() };
+        let Some(subprocess) = NonNull::new(arena.subprocess) else { return Err(self); };
+        if backing.registry().arena_print_pointer(arena.arena_index) != Some(self.arena)
+            || !backing.registry().is_bound_to_subprocess(subprocess.as_ptr()) {
+            return Err(self);
+        }
+        Ok(SourceInitializationClaimCustody {
+            arena: self.arena, start: self.start, memory: self.memory,
+            issuer: NonNull::from(backing), arena_index: arena.arena_index, subprocess,
+        })
+    }
+
     #[inline]
     pub(crate) const fn start(&self) -> *mut u8 {
         self.start.as_ptr()
