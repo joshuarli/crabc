@@ -295,7 +295,15 @@ def integer_memory_operand(source: bytes, offset: int, *,
         # supply it or turn a wider store into this one-byte operation.
         if (end == offset + 5 and source[start:offset] == b'\xc6\x05'):
             return b'\xc6\x05', 1, source[offset + 4:end], 'integer-immediate-store'
+        # Operand-size 66 makes this C7 store two bytes, including imm16.
+        # No REX, address-size or segment prefix shares this instruction form.
+        if end == offset + 6 and source[start:offset] == b'\x66\xc7\x05':
+            return b'\x66\xc7\x05', 2, source[offset + 4:end], 'integer-immediate-store'
         prefix = source[start:offset] if end == offset + 4 else b''
+        if (len(prefix) == 3 and prefix[:2] in {b'\x0f\xb7', b'\x66\x89'}
+                and prefix[2] & 0xc7 == 0x05):
+            return prefix, 2, b'', ('integer-zero-extend-load' if prefix[:2] == b'\x0f\xb7'
+                                   else 'integer-data-store')
         operation = prefix[1:] if len(prefix) == 4 and prefix[0] == 0x44 else prefix
         if (len(operation) == 3 and operation[:2] == b'\x0f\xb6' and operation[2] & 0xc7 == 0x05):
             return prefix, 1, b'', 'integer-zero-extend-load'
@@ -506,7 +514,10 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
             require(len(containing) == 1, f'provider import {name} instruction span is absent or ambiguous')
             instruction_span = containing[0]
         elif (kind == 'R_X86_64_PC32' and offset >= 3
-                and source[offset - 3:offset - 1] == b'\x0f\xb6'):
+                and (source[offset - 3:offset - 1] in {b'\x0f\xb6', b'\x0f\xb7'}
+                     or source[offset - 3:offset] == b'\x66\xc7\x05'
+                     or (source[offset - 3:offset - 1] == b'\x66\x89'
+                         and source[offset - 1] & 0xc7 == 0x05))):
             require(False, f'provider import {name} instruction boundaries are required')
         integer = integer_memory_operand(source, offset, instruction_span=instruction_span) if kind == 'R_X86_64_PC32' else None
         require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}

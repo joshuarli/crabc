@@ -422,7 +422,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                   '.space 92,0x90; 1:', True),
                      ('bss', 56, 'movzbl domain_scalar+55(%rip),%r9d', True),
                      ('bss', 1, 'movzbl domain_scalar+1(%rip),%eax', False),
-                     ('bss', 2, 'movzwl domain_scalar(%rip),%eax', False),
+                     ('bss', 2, 'movzwl domain_scalar(%rip),%eax', True),
                      ('bss', 1, 'movzbw domain_scalar(%rip),%ax', False),
                      ('bss', 1, 'movzbq domain_scalar(%rip),%rax', False),
                      ('bss', 1, 'test %eax,%eax; jo 1f; movzbl %fs:domain_scalar(%rip),%eax; '
@@ -521,7 +521,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         self.assertEqual(set(admitted), set(names), proof['failures'])
                         self.assertEqual(proof['failures'], [])
                         for mode in links.MODES:
-                            self.assertTrue(all(site['operand_size'] == (16 if vector else 1 if 'movzbl' in read or byte_store else 4 if rex_load or size == 4 or storage == 'rodata' and size == 12 else 8)
+                            self.assertTrue(all(site['operand_size'] == (16 if vector else 2 if 'movzwl' in read else 1 if 'movzbl' in read or byte_store else 4 if rex_load or size == 4 or storage == 'rodata' and size == 12 else 8)
                                 for importer in admitted['domain_scalar']['links'][mode]['importers']
                                 for site in importer['resolved_calls']))
                             self.assertFalse(any(importer['discarded_calls'] for row in proof['identities']
@@ -555,7 +555,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 elf_type=elf_type, name='domain_scalar', source_sections=sections,
                                 provider_object=(source_object, definition))
                             bound = links.final_member_references(image, **reference_arguments)
-                            expected_operations = ({'vector-data-load', 'vector-data-store'} if vector and 'movdqu domain' in read and 'movdqu %' in read else {'vector-data-store'} if vector and 'movdqu %' in read else {'vector-data-load'} if vector else {'integer-data-store'} if byte_store else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
+                            expected_operations = ({'vector-data-load', 'vector-data-store'} if vector and 'movdqu domain' in read and 'movdqu %' in read else {'vector-data-store'} if vector and 'movdqu %' in read else {'vector-data-load'} if vector else {'integer-data-store'} if byte_store else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read or 'movzwl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
                                 'integer-immediate-store', 'locked-subtract'} if size == 4 else
                                 {'integer-data-load', 'integer-data-store'} if size == 8 else {'integer-data-load'})
                             self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, expected_operations)
@@ -837,7 +837,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     self.assertEqual({row['identity']['name'] for row in wrong_owner['failures']}, set(names))
                     self.assertEqual(list(private.iterdir()), [])
 
-    def test_whole_projection_binds_atomic_operands_to_owned_writable_objects(self):
+    def test_whole_projection_binds_integer_state_operands_to_owned_writable_objects(self):
         import native_abi_provider_links as links
         compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
         if compiler is None or linker is None:
@@ -905,7 +905,31 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 ('rodata', 1, 'xchg %al,domain_scalar(%rip)', None),
                 ('rodata', 4, 'lock incl domain_scalar(%rip)', None),
             ]
-            for storage, operand_size, read, operation in cases:
+            cases = [(*case, 1 if case[1] == 1 else 8) for case in cases] + [
+                ('data', 2, 'movzwl domain_scalar(%rip),%eax', 'integer-zero-extend-load', 14),
+                ('bss', 2, 'movzwl domain_scalar+4(%rip),%ecx', 'integer-zero-extend-load', 6),
+                ('bss', 2, 'mov $0x66000000,%eax; movzwl domain_scalar(%rip),%edx', 'integer-zero-extend-load', 2),
+                ('data', 2, 'mov %cx,domain_scalar(%rip)', 'integer-data-store', 14),
+                ('bss', 2, 'mov %ax,domain_scalar+4(%rip)', 'integer-data-store', 6),
+                ('bss', 2, 'mov $0x66000000,%eax; mov %ax,domain_scalar(%rip)', 'integer-data-store', 2),
+                ('data', 2, 'movw $0x330e,domain_scalar(%rip)', 'integer-immediate-store', 14),
+                ('bss', 2, 'movw $0x2a,domain_scalar(%rip)', 'integer-immediate-store', 260),
+                ('bss', 2, 'mov $0x66000000,%eax; movw $0xffff,domain_scalar(%rip)', 'integer-immediate-store', 2),
+                ('bss', 2, 'movzwl domain_scalar(%rip),%eax', None, 1),
+                ('bss', 2, 'mov %ax,domain_scalar+5(%rip)', None, 6),
+                ('bss', 2, 'movw $0x2a,domain_scalar+259(%rip)', None, 260),
+                ('rodata', 2, 'mov %ax,domain_scalar(%rip)', None, 6),
+                ('rodata', 2, 'movw $0x2a,domain_scalar(%rip)', None, 6),
+                ('bss', 2, 'movswl domain_scalar(%rip),%eax', None, 6),
+                ('bss', 2, 'movzwq domain_scalar(%rip),%rax', None, 6),
+                ('bss', 2, 'movzwl domain_scalar(%rip),%r8d', None, 6),
+                ('bss', 2, 'mov %r8w,domain_scalar(%rip)', None, 6),
+                ('bss', 2, 'movw $0x2a,%fs:domain_scalar(%rip)', None, 6),
+                ('bss', 2, 'mov %ax,%fs:domain_scalar(%rip)', None, 6),
+                ('bss', 2, 'movzwl %fs:domain_scalar(%rip),%eax', None, 6),
+                ('bss', 2, 'addr32 movw $0x2a,domain_scalar(%eip)', None, 6),
+            ]
+            for storage, operand_size, read, operation, object_size in cases:
                 with self.subTest(storage=storage, read=read):
                     (work / 'provider.S').write_text(
                         '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
@@ -913,7 +937,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         + '.section .' + storage + '.domain_scalar,"' + ('a' if storage == 'rodata' else 'aw')
                         + '",@' + ('nobits' if storage == 'bss' else 'progbits') + '\n.balign 8\n'
                         '.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
-                        + 'domain_scalar: .zero ' + str(1 if operand_size == 1 else 8)
+                        + 'domain_scalar: .zero ' + str(object_size)
                         + '\n.size domain_scalar,.-domain_scalar\n'
                         '.section .note.GNU-stack,"",@progbits\n')
                     (work / 'caller.S').write_text(
@@ -970,9 +994,13 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
                                                               'domain_scalar', image=caller,
                                                               disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
+                        if operand_size == 2:
+                            with self.assertRaisesRegex(ValueError, 'instruction boundaries are required'):
+                                links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                                         'domain_scalar', image=caller)
                         disassembly = links.read_tool('objdump', '-dw', work / 'caller.o')
                         corrupted = '\n'.join(line for line in disassembly.splitlines()
-                                              if not any(word in line for word in ('cmpxchg', 'xchg', ' incl ', ' decl ', 'movb')))
+                                              if not any(word in line for word in ('cmpxchg', 'xchg', ' incl ', ' decl ', 'movb', '0f b7', '66 89', '66 c7')))
                         with self.assertRaisesRegex(ValueError, 'instruction span is absent'):
                             links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
                                                      'domain_scalar', image=caller, disassembly=corrupted)
@@ -995,6 +1023,11 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             extra_byte[0]['instruction_end'] += 1
                             extended_prefix = copy.deepcopy(references)
                             extended_prefix[0]['instruction_start'] -= 1
+                            if operand_size == 2:
+                                wrong_bias = copy.deepcopy(references)
+                                wrong_bias[0]['operand_addend'] += 1
+                                with self.assertRaisesRegex(ValueError, 'foreign provider|leaves provider object'):
+                                    links.final_member_references(image, **{**reference_arguments, 'source_calls': wrong_bias})
                             for altered in [missing_spans, extra_byte, extended_prefix]:
                                 with self.assertRaises(ValueError):
                                     links.final_member_references(image, **{**reference_arguments, 'source_calls': altered})
@@ -1044,7 +1077,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             if operand_size < definition['row']['size_bytes']:
                                 changed = bytearray(image)
                                 struct.pack_into('<Q', changed, load_location + 40, address + operand_size - load[3])
-                                with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
+                                with self.assertRaisesRegex(ValueError, 'writable load extent'):
                                     links.final_member_references(bytes(changed), **reference_arguments)
                             if storage == 'data':
                                 changed = bytearray(image)
@@ -1057,10 +1090,11 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 if segment[0] == 1 and segment[3] <= code < segment[3] + segment[5])
                             prefix_size = references[0]['offset'] - references[0]['instruction_start']
                             if operation == 'integer-immediate-store':
-                                changed = bytearray(image)
-                                changed[executable[2] + code - executable[3] + prefix_size + 4] ^= 1
-                                with self.assertRaisesRegex(ValueError, 'opcode differs'):
-                                    links.final_member_references(bytes(changed), **reference_arguments)
+                                for immediate_byte in range(operand_size):
+                                    changed = bytearray(image)
+                                    changed[executable[2] + code - executable[3] + prefix_size + 4 + immediate_byte] ^= 1
+                                    with self.assertRaisesRegex(ValueError, 'opcode differs'):
+                                        links.final_member_references(bytes(changed), **reference_arguments)
                             for byte in range(prefix_size):
                                 changed = bytearray(image)
                                 changed[executable[2] + code - executable[3] + byte] ^= 1
