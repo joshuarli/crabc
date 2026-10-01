@@ -13166,7 +13166,7 @@ pub(crate) struct GuardedLiveBlockFacts<'scope> {
 
 /// Marks a canonical candidate's page for interior clients and supplies its
 /// protection geometry after all page and allocation-engine projections end.
-/// The actual main owner or admitted calling-member child owner remains live
+/// The actual main owner or admitted registered child owner remains live
 /// through the callback, including synchronous diagnostic reentry.
 ///
 /// # Safety
@@ -13175,7 +13175,8 @@ pub(crate) struct GuardedLiveBlockFacts<'scope> {
 /// throughout this call. The callback cannot free its in-flight block, delete
 /// the selected Heap, or finish the selected member. All exclusive engine and
 /// metadata projections ended before entry; nested ordinary allocation is
-/// permitted. A foreign child owner is unavailable through this boundary.
+/// permitted. A parked foreign member must retain the selected owner until
+/// this operation ends; its process view comes from actual record admission.
 #[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn with_guarded_live_block<R>(
     selected_theap: core::ptr::NonNull<crate::types::Theap>,
@@ -20517,6 +20518,101 @@ mod tests {
                     assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
                 }).join().unwrap();
                 // SAFETY: all child clients, Heaps and members ended before destroy.
+                assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn guarded_live_block_scope_admits_the_retained_foreign_child_before_remote_free() {
+        struct TransferredClient {
+            heap: NonNull<crate::types::Heap>,
+            theap: NonNull<crate::types::Theap>,
+            block: NonNull<u8>,
+        }
+        // SAFETY: transfer preserves original pointers. The worker parks and
+        // retains its Heap, Theap and member until the receiver frees this
+        // exclusively transferred client and acknowledges completion.
+        unsafe impl Send for TransferredClient {}
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::guarded_live_block_scope_admits_the_retained_foreign_child_before_remote_free",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(prepare_native_later_thread_arena());
+                let id = crate::subproc::lifecycle::native_subproc_new().unwrap();
+                let (send, receive) = mpsc::channel();
+                let (finish_send, finish_receive) = mpsc::channel();
+                let (locked_send, locked_receive) = mpsc::channel();
+                let (unlock_send, unlock_receive) = mpsc::channel();
+                let (unlocked_send, unlocked_receive) = mpsc::channel();
+                let worker = thread::spawn(move || {
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker owns its descriptor through finish.
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                    // SAFETY: the observer retains the child through join.
+                    assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_add_current_thread(id) },
+                        Ok(crate::subproc::lifecycle::NativeChildThreadAdd::Added));
+                    let heap = crate::subproc::lifecycle::native_child_heap_new().unwrap().unwrap().unwrap();
+                    // SAFETY: the worker owns this live Heap and selected member.
+                    let block = unsafe { crate::subproc::lifecycle::native_child_heap_allocate(heap, 8192) }
+                        .unwrap().unwrap();
+                    // SAFETY: the same member retains its selected Heap.
+                    let theap = unsafe { crate::subproc::lifecycle::native_child_heap_theap(heap) }.unwrap();
+                    send.send(TransferredClient { heap, theap, block }).unwrap();
+                    // SAFETY: this member retains the live child. Only its
+                    // record operation is held; no Page/Heap/Theap projection
+                    // is formed while the receiver tests admission refusal.
+                    unsafe { id.with_owner(|_| {
+                        locked_send.send(()).unwrap();
+                        unlock_receive.recv().unwrap();
+                    }) }.unwrap();
+                    unlocked_send.send(()).unwrap();
+                    finish_receive.recv().unwrap();
+                    // SAFETY: the receiver consumed its client and ended all
+                    // owner scopes before allowing selected-owner teardown.
+                    assert!(unsafe { crate::subproc::lifecycle::native_child_heap_release(heap, false) }
+                        .unwrap().unwrap().is_ok());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                let transferred: TransferredClient = receive.recv().unwrap();
+                locked_receive.recv().unwrap();
+                let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                // SAFETY: the receiver exclusively holds the live client;
+                // the parked worker retains the immutable page backing.
+                let before = unsafe { map.lookup_live_allocation(transferred.block) }
+                    .unwrap().unwrap().has_interior_pointers();
+                // SAFETY: owner lifetime remains valid, but the child's
+                // concurrent record operation must refuse this callback.
+                assert!(unsafe { with_guarded_live_block(transferred.theap, transferred.block,
+                    |_| panic!("refused admission cannot invoke the guarded callback")) }.is_none());
+                // SAFETY: the same live client remains held after refusal.
+                assert_eq!(unsafe { map.lookup_live_allocation(transferred.block) }
+                    .unwrap().unwrap().has_interior_pointers(), before,
+                    "owner refusal must leave the source interior flag unchanged");
+                unlock_send.send(()).unwrap();
+                unlocked_receive.recv().unwrap();
+                // SAFETY: the parked worker retains the selected owner and
+                // the receiver exclusively holds the original live client.
+                assert_eq!(unsafe { with_guarded_live_block(transferred.theap, transferred.block, |facts| {
+                    assert_eq!(facts.canonical, transferred.block);
+                    assert_eq!(facts.process.subprocess() as *const _,
+                        crate::types::Heap::subprocess_pointer_at(transferred.heap).cast_const());
+                    assert_ne!(facts.process.subprocess() as *const _,
+                        crate::subproc::MainSubprocess::global().identity_ptr().cast_const());
+                    let NativePageAllocationResult::Allocated(nested) = native_allocate(96, false) else {
+                        panic!("foreign scope holds no current-thread engine borrow");
+                    };
+                    assert_eq!(native_free(nested), NativePageFreeResult::Freed);
+                    89
+                }) }, Some(89));
+                // SAFETY: ownership transferred to this single freer while
+                // the selected foreign owner remains live and parked.
+                assert_eq!(unsafe { native_free(transferred.block) }, NativePageFreeResult::Freed);
+                finish_send.send(()).unwrap();
+                worker.join().unwrap();
+                // SAFETY: all clients and members ended before child destruction.
                 assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_destroy(id) }, Ok(()));
             },
         );
