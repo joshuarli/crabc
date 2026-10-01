@@ -713,6 +713,38 @@ impl PageMap {
         Ok(self.published_submap_count.load(Ordering::Acquire))
     }
 
+    /// Visits numeric `(base_address, byte_length)` spans of this map's
+    /// actual retained mappings. The root owner includes embedded submap zero;
+    /// each separately published lazy submap is reported once under the source
+    /// publication lock. These numbers convey no pointer or release authority.
+    ///
+    /// # Safety
+    /// The caller retains the ready VM owner and excludes terminal destruction
+    /// for the entire visit. The callback may only record bounded stack scalars:
+    /// it cannot allocate, invoke user callbacks, or reenter the allocator or
+    /// map publication while the source publication lock is held.
+    #[cfg(all(target_arch = "x86_64", any(test, feature = "native-runtime-test-audit")))]
+    pub(crate) unsafe fn test_visit_mapping_extents(
+        &self,
+        mut visitor: impl FnMut(usize, usize),
+    ) -> Result<()> {
+        let header = self.header()?;
+        let guard = header.lock.lock()?;
+        visitor(self.mapping.base()?.addr(), self.mapping.length()?);
+        let count = header.committed_count.load(Ordering::Acquire);
+        for index in 1..count {
+            // SAFETY: the Acquire count proves the aligned raw pointer word
+            // committed. The actual source lock excludes submap publication,
+            // and the caller's owner admission excludes mapping retirement.
+            let submap = unsafe { atomic_submap_slot(self.header, index) }.load(Ordering::Acquire);
+            if !submap.is_null() {
+                visitor(submap.addr(), PAGE_MAP_SUB_SIZE);
+            }
+        }
+        guard.unlock()?;
+        Ok(())
+    }
+
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn test_lazy_submap_allocation_count(&self) -> usize {
@@ -1348,6 +1380,51 @@ mod tests {
         assert!(PageMapRange::new(start, 0).is_some());
         assert!(PageMapRange::new(PageMapLocation { map_index: usize::MAX, sub_index: 0 }, 1).is_none());
         assert!(PageMapRange::new(PageMapLocation { map_index: 0, sub_index: PAGE_MAP_SUB_COUNT }, 1).is_none());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn mapping_extent_visit_reports_actual_owner_spans_without_embedded_submap_duplication() {
+        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false).unwrap();
+        let root_span = (page_map.mapping.base().unwrap().addr(), page_map.mapping.length().unwrap());
+        let embedded = page_map.submap_at(0).unwrap().unwrap().as_ptr().addr();
+        assert!(embedded >= root_span.0);
+        assert!(embedded + PAGE_MAP_SUB_SIZE <= root_span.0 + root_span.1);
+        let mut initial = [(0, 0); 4];
+        let mut initial_count = 0;
+        // SAFETY: this fixture retains the actual map, no terminal destroy
+        // runs, and the callback only records bounded stack scalars.
+        unsafe { page_map.test_visit_mapping_extents(|base, length| {
+            if let Some(slot) = initial.get_mut(initial_count) { *slot = (base, length); }
+            initial_count += 1;
+        }) }.unwrap();
+        assert_eq!(initial_count, 1);
+        assert_eq!(initial[0], root_span);
+
+        let first = page_map.ensure_submap_at(1).unwrap().as_ptr().addr();
+        let third = page_map.ensure_submap_at(3).unwrap().as_ptr().addr();
+        assert!(page_map.submap_at(2).unwrap().is_none());
+        let mut captured = [(0, 0); 4];
+        let mut count = 0;
+        let mut publication_locked = true;
+        // SAFETY: the same real owner remains live. Atomic lock observation
+        // and fixed stack writes cannot allocate or reenter publication.
+        unsafe { page_map.test_visit_mapping_extents(|base, length| {
+            publication_locked &= page_map.header().unwrap().lock.try_lock().is_none();
+            if let Some(slot) = captured.get_mut(count) { *slot = (base, length); }
+            count += 1;
+        }) }.unwrap();
+        assert!(publication_locked);
+        assert_eq!(count, 3);
+        assert_eq!(captured[..count], [root_span, (first, PAGE_MAP_SUB_SIZE), (third, PAGE_MAP_SUB_SIZE)]);
+        assert_eq!(page_map.mapping.base().unwrap().addr(), root_span.0);
+        assert_eq!(page_map.mapping.length().unwrap(), root_span.1);
+        // SAFETY: no root, registered entries or observer remains live.
+        unsafe { page_map.destroy() }.unwrap();
+        // SAFETY: the inactive object is retained and no callback can run.
+        assert_eq!(unsafe { page_map.test_visit_mapping_extents(|_, _| {
+            panic!("retired mapping cannot be observed");
+        }) }, Err(Errno::INVAL));
     }
 
     #[test]
