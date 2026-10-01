@@ -6713,9 +6713,10 @@ pub(crate) enum GenericAllocationAdministration {
 
 /// A completed generic threshold step awaiting the source option callback.
 ///
-/// This linear phase witness carries neither a Theap pointer nor cached
-/// counters. The actual selected owner retains lifetime and resumes on the
-/// same image after releasing projections needed by nested allocation.
+/// This linear phase witness carries its issuer identity but no cached
+/// counters or field-access authority. The actual selected owner retains
+/// lifetime and resumes on the same image after releasing projections needed
+/// by nested allocation. Identity equality alone never proves retained custody.
 #[cfg(target_arch = "x86_64")]
 #[must_use]
 pub(crate) struct GenericAllocationFrequencyRequest {
@@ -9080,6 +9081,8 @@ mod tests {
                 unsafe {
                     core::ptr::addr_of_mut!((*theap.as_ptr()).generic_count).write(iteration as isize);
                     core::ptr::addr_of_mut!((*theap.as_ptr()).page_count).write(iteration);
+                    #[cfg(feature = "mi-guarded")]
+                    core::ptr::addr_of_mut!((*theap.as_ptr()).guarded_sample_count).write(iteration);
                 }
                 barrier.wait();
             }
@@ -9107,15 +9110,28 @@ mod tests {
         let image = NonNull::new(core::ptr::addr_of_mut!(incoming)).unwrap();
         let heap = NonNull::new(core::ptr::addr_of_mut!(heap)).unwrap();
         let tld = NonNull::new(core::ptr::addr_of_mut!(tld)).unwrap();
-        // The fixture keeps the original images live, and the outer callback
-        // inspects only the mutex until it releases the contention witness.
+        let published_tld = AtomicPtr::new(tld.as_ptr());
+        let barrier = std::sync::Barrier::new(2);
+        // The fixture keeps the original images live; a foreign observer owns
+        // the actual mutex while prefix preparation checks its availability.
         unsafe {
-            let busy = ThreadLocalData::with_locked_theap_list_for_test_at(tld, || {
-                matches!(Theap::prepare_initialization_at(image, heap, tld,
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    let tld = NonNull::new(published_tld.load(Ordering::Acquire)).unwrap();
+                    assert_eq!(ThreadLocalData::with_locked_theap_list_for_test_at(tld, || {
+                        barrier.wait();
+                        barrier.wait();
+                    }), Some(()));
+                });
+                barrier.wait();
+                let busy = matches!(Theap::prepare_initialization_at(image, heap, tld,
                     TheapInitializationKind::MetadataStatic),
-                    Err(TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy)))
+                    Err(TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy)));
+                // Release the foreign observer before asserting, so a failing
+                // control cannot strand a scoped thread on the second barrier.
+                barrier.wait();
+                assert!(busy);
             });
-            assert_eq!(busy, Some(true));
             assert!((*image.as_ptr()).heap.load(Ordering::Acquire).is_null());
             assert!((*image.as_ptr()).subproc.load(Ordering::Acquire).is_null());
             assert_eq!((*image.as_ptr()).tld, detached_thread_local_ptr());
@@ -9181,8 +9197,10 @@ mod tests {
             assert_eq!(incoming.subproc.load(Ordering::Acquire), heap.subprocess);
             assert!(!incoming.is_initialized());
             assert!(tld.theaps.is_null());
+            // Capture the original pointer, not a reference to the head field:
+            // nested initialization writes that same field during the callback.
             let ordinary = SourceTheapOptions::capture_with(|option| {
-                if tld.theaps.is_null() {
+                if (*tld_pointer.as_ptr()).theaps.is_null() {
                     let sibling = Theap::prepare_initialization_at(
                         callback_pointer, heap_pointer, tld_pointer,
                         TheapInitializationKind::MetadataStatic,
