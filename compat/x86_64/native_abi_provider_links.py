@@ -291,6 +291,35 @@ def locked_cmpxchg_prefix(source: bytes, offset: int) -> bytes:
     return b''
 
 
+def integer_memory_operand(source: bytes, offset: int) -> tuple[bytes, int, bytes, str] | None:
+    """Decode the supported RIP-relative integer operand and trailing immediate."""
+    legacy_prefixes = {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3}
+    locked = locked_cmpxchg_prefix(source, offset)
+    if locked and (offset == len(locked) or source[offset - len(locked) - 1] not in legacy_prefixes):
+        return locked, 8, b'', 'locked-cmpxchg'
+    prefix = source[offset - 3:offset] if offset >= 3 else b''
+    if (prefix == b'\xf0\x81\x2d' and offset + 8 <= len(source)
+            and (offset == 3 or source[offset - 4] not in legacy_prefixes)):
+        return prefix, 4, source[offset + 4:offset + 8], 'locked-subtract'
+    if (len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
+            and prefix[1] in {0x8b, 0x89} and prefix[2] & 0xc7 == 0x05
+            and (offset == 3 or source[offset - 4] not in legacy_prefixes)):
+        return prefix, 8, b'', 'integer-data-load' if prefix[1] == 0x8b else 'integer-data-store'
+    prefix = source[offset - 2:offset] if offset >= 2 else b''
+    if len(prefix) == 2 and prefix[0] in {0x8b, 0x89, 0x0b} and prefix[1] & 0xc7 == 0x05:
+        # Operand-size and register-extension prefixes are not part of these
+        # observed 32-bit forms; do not mistake a wider or narrower access.
+        if offset >= 3 and (source[offset - 3] in legacy_prefixes or 0x40 <= source[offset - 3] <= 0x4f):
+            return None
+        operation = {0x8b: 'integer-data-load', 0x89: 'integer-data-store', 0x0b: 'integer-data-or'}[prefix[0]]
+        return prefix, 4, b'', operation
+    if prefix == b'\xc7\x05' and offset + 8 <= len(source):
+        if offset >= 3 and (source[offset - 3] in legacy_prefixes or 0x40 <= source[offset - 3] <= 0x4f):
+            return None
+        return prefix, 4, source[offset + 4:offset + 8], 'integer-immediate-store'
+    return None
+
+
 def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict[str, Any]]:
     """Retain the complete executable relocation roster for a symbol import.
 
@@ -321,12 +350,14 @@ def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict
         prefix = source[offset - 3:offset] if offset >= 3 else b''
         address = (kind == 'R_X86_64_PC32' and len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
                    and prefix[1] == 0x8d and prefix[2] & 0xc7 == 0x05)
+        integer = integer_memory_operand(source, offset) if kind == 'R_X86_64_PC32' else None
         require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
-                and (addend == -4 or scalar or address),
+                and (addend == -4 or scalar or address or integer is not None),
                 f'provider import {name} relocation is not a supported reference')
         references.append({'section': section, 'offset': offset, 'kind': kind,
                            **({'addend': addend} if scalar else {}),
-                           **({'address_addend': addend} if address and addend != -4 else {})})
+                           **({'address_addend': addend} if address and addend != -4 else {}),
+                           **({'operand_addend': addend} if integer is not None else {})})
     require(len({(row['section'], row['offset']) for row in references}) == len(references),
             f'provider import {name} relocation roster differs')
     return references
@@ -370,8 +401,9 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Scalar reads require the exact unrelocated bytes and full extent of the
     selected read-only OBJECT; the caller authenticates its source definition.
     They prove initial operand bytes, not execution or later memory contents.
-    Locked eight-byte CMPXCHG operands bind an owned NOBITS object and its
-    writable memory extent, without asserting execution or subsequent values.
+    Integer memory operands bind the selected writable object and full access
+    extent. Trailing immediate bytes are part of the instruction, not payload
+    bytes at a NOBITS target. No execution or subsequent values are asserted.
     """
     resolved, discarded = [], []
     for reference in source_calls:
@@ -386,10 +418,12 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         require(len(parts) >= 5 and type(offset) is int and offset >= 1
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
                 f'provider {name} reference leaves selected section')
-        atomic = locked_cmpxchg_prefix(source, offset) if kind == 'R_X86_64_PC32' else b''
-        if atomic:
-            require(provider_object is not None and reference.get('addend', -4) == -4,
-                    f'provider {name} locked operand lacks its source object')
+        integer = integer_memory_operand(source, offset) if kind == 'R_X86_64_PC32' else None
+        if integer is not None:
+            prefix, operand_size, immediate, operation = integer
+            provider_offset = reference.get('operand_addend', -4) + 4 + len(immediate)
+            require(provider_object is not None,
+                    f'provider {name} integer operand lacks its source object')
             source_image, definition = provider_object
             original = static_authority.elf_bytes(source_image)
             symbol = original.symbol(name, dynamic=False)
@@ -400,49 +434,61 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and symbol['visibility'] == row['visibility'] == 'HIDDEN'
                     and symbol['section'] == int(row['section_index']) == observed['index']
                     and symbol['value'] == int(row['value'], 16)
-                    and symbol['size'] == row['size_bytes'] == 8
+                    and symbol['size'] == row['size_bytes'] > 0
                     and 0 < symbol['section'] < len(original.sections),
-                    f'provider {name} locked source symbol differs')
+                    f'provider {name} integer source symbol differs')
             header = original.sections[symbol['section']]
-            require(header[1] == 8 and observed['type'] == 'NOBITS'
+            require(header[1] in {1, 8} and observed['type'] == ('PROGBITS' if header[1] == 1 else 'NOBITS')
                     and header[2] == 3 and observed['flags'] == 'WA'
                     and header[3] == int(observed['address'], 16)
                     and header[4] == int(observed['offset'], 16)
                     and header[5] == int(observed['size'], 16)
                     and header[6] == observed['link'] and header[7] == observed['info']
-                    and header[8] == observed['alignment'] and header[8] >= 8
+                    and header[8] == observed['alignment'] and header[8] > 0
                     and header[9] == int(observed['entry_size'], 16) == 0
-                    and symbol['value'] % 8 == 0 and symbol['value'] + 8 <= header[5]
+                    and symbol['value'] + symbol['size'] <= header[5]
+                    and (header[1] == 8 or header[4] + header[5] <= len(source_image))
                     and static_authority.section_name(original, header) == observed['name'],
-                    f'provider {name} locked source extent differs')
-            call_address = int(parts[0], 16) + offset - len(atomic)
-            opcode = calls._public_weak_virtual_bytes(image, call_address, len(atomic) + 4,
+                    f'provider {name} integer source extent differs')
+            require(0 <= provider_offset and provider_offset + operand_size <= symbol['size'],
+                    f'provider {name} integer operand leaves provider object')
+            require(not operation.startswith('locked-')
+                    or (header[8] >= operand_size and (symbol['value'] + provider_offset) % operand_size == 0),
+                    f'provider {name} locked source alignment differs')
+            require(offset + 4 + len(immediate) <= int(parts[2], 16),
+                    f'provider {name} immediate leaves selected section')
+            call_address = int(parts[0], 16) + offset - len(prefix)
+            opcode = calls._public_weak_virtual_bytes(image, call_address, len(prefix) + 4 + len(immediate),
                                                      elf_type, executable=True)
-            require(opcode[:len(atomic)] == atomic, f'provider {name} reference opcode differs')
-            target = call_address + len(atomic) + 4 + struct.unpack_from('<i', opcode, len(atomic))[0]
-            require(target == provider_address and target % 8 == 0,
-                    f'provider {name} locked operand resolves to a foreign provider')
+            require(opcode[:len(prefix)] == prefix and opcode[len(prefix) + 4:] == immediate, f'provider {name} reference opcode differs')
+            target = call_address + len(prefix) + 4 + len(immediate) + struct.unpack_from('<i', opcode, len(prefix))[0]
+            require(target == provider_address + provider_offset
+                    and (not operation.startswith('locked-') or target % operand_size == 0),
+                    f'provider {name} integer operand resolves to a foreign provider')
             final = static_authority.elf_bytes(image)
             final_symbol = final.symbol(name, dynamic=False)
             require(final_symbol is not None and final_symbol['type'] == 'OBJECT'
                     and final_symbol['binding'] == 'LOCAL' and final_symbol['visibility'] == 'HIDDEN'
-                    and final_symbol['value'] == target and final_symbol['size'] == 8
+                    and final_symbol['value'] == provider_address and final_symbol['size'] == symbol['size']
                     and 0 < final_symbol['section'] < len(final.sections),
-                    f'provider {name} locked final symbol differs')
+                    f'provider {name} integer final symbol differs')
             output = final.sections[final_symbol['section']]
-            require(output[1] == 8 and output[2] == 3
-                    and output[3] <= target and target + 8 <= output[3] + output[5],
-                    f'provider {name} locked final extent differs')
+            require(output[1] == header[1] and output[2] == 3
+                    and output[3] <= provider_address
+                    and provider_address + symbol['size'] <= output[3] + output[5]
+                    and (output[1] == 8 or output[4] + output[5] <= len(image)),
+                    f'provider {name} integer final extent differs')
             # NOBITS has memory extent but no source or final file payload.
             # The operand must lie in one writable, non-executable load image.
             table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
             require(sum(program[0] == 1 and program[1] == 6
-                        and program[3] <= target and target + 8 <= program[3] + program[6]
+                        and program[3] <= target and target + operand_size <= program[3] + program[6 if output[1] == 8 else 5]
                         for program in (struct.unpack_from('<IIQQQQQQ', image, table + width * index)
                                         for index in range(count))) == 1,
-                    f'provider {name} locked operand lacks a writable load extent')
+                    f'provider {name} integer operand lacks a writable load extent')
             resolved.append({'section': section, 'offset': offset, 'call_address': call_address,
-                             'target_address': target, 'operand_size': 8, 'branch_kind': 'locked-cmpxchg'})
+                             'target_address': target, 'operand_size': operand_size, 'branch_kind': operation,
+                             **({'provider_offset': provider_offset} if provider_offset else {})})
             continue
         scalar = scalar_read_prefix(source, offset) if kind == 'R_X86_64_PC32' else b''
         if scalar:
@@ -811,9 +857,8 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 source_imports.append((row, source_calls, calls._ordinary_source_sections(
                     image, {item['section'] for item in source_calls})))
             provider_data = None
-            atomic_object = any(locked_cmpxchg_prefix(sections[reference['section']], reference['offset'])
-                                for _, references, sections in source_imports for reference in references
-                                if reference['kind'] == 'R_X86_64_PC32')
+            integer_object = any('operand_addend' in reference
+                                 for _, references, _ in source_imports for reference in references)
             interior_object = any('address_addend' in reference
                                   for _, references, _ in source_imports for reference in references)
             if any('addend' in reference for _, references, _ in source_imports for reference in references):
@@ -832,7 +877,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 selected = mapped_archive + '(' + definition['member_name'] + ')'
                 source_image = None
                 if (definition['row']['type'] in {'FUNC', 'OBJECT'}
-                        and (atomic_object or interior_object or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
+                        and (integer_object or interior_object or not view['map_rows'].get(selected + ':(' + definition['definition_section']['name'] + ')'))):
                     member = definition['member_name']
                     require(definition['member_occurrence'] == 0, 'provider definition member is ambiguous')
                     if member not in definition_images:
@@ -850,7 +895,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
                         provider_address=address, elf_type=view['type'], name=name, source_sections=sections, provider_data=provider_data,
-                        provider_object=(source_image, definition) if atomic_object or interior_object else None)
+                        provider_object=(source_image, definition) if integer_object or interior_object else None)
                     require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':
