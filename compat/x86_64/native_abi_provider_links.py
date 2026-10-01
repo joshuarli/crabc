@@ -291,9 +291,18 @@ def locked_cmpxchg_prefix(source: bytes, offset: int) -> bytes:
     return b''
 
 
-def integer_memory_operand(source: bytes, offset: int) -> tuple[bytes, int, bytes, str] | None:
+def integer_memory_operand(source: bytes, offset: int, *,
+                           instruction_span: tuple[int, int] | None = None) -> tuple[bytes, int, bytes, str] | None:
     """Decode the supported RIP-relative integer operand and trailing immediate."""
     legacy_prefixes = {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3}
+    if instruction_span is not None:
+        start, end = instruction_span
+        require(0 <= start < offset and offset + 4 <= end <= len(source),
+                'integer operand instruction span differs')
+        prefix = source[start:offset] if end == offset + 4 else b''
+        operation = prefix[1:] if len(prefix) == 4 and prefix[0] == 0x44 else prefix
+        if (len(operation) == 3 and operation[:2] == b'\x0f\xb6' and operation[2] & 0xc7 == 0x05):
+            return prefix, 1, b'', 'integer-zero-extend-load'
     locked = locked_cmpxchg_prefix(source, offset)
     if locked and (offset == len(locked) or source[offset - len(locked) - 1] not in legacy_prefixes):
         return locked, 8, b'', 'locked-cmpxchg'
@@ -320,15 +329,38 @@ def integer_memory_operand(source: bytes, offset: int) -> tuple[bytes, int, byte
     return None
 
 
-def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict[str, Any]]:
+def import_relocations(transcript: str, name: str, *, image: bytes,
+                       disassembly: str | None = None) -> list[dict[str, Any]]:
     """Retain the complete executable relocation roster for a symbol import.
 
     A function reference may load its address without calling it at that site.
     Only the exact PC-relative instruction forms decoded below are accepted.
     Non-executable relocations remain outside this proof. Interior LEA addends
     require a separately authenticated object extent during final projection.
+    Disassembly boundaries are checked against raw section bytes so a preceding
+    instruction displacement cannot be mistaken for a prefix of a byte load.
     """
     sections = calls._ordinary_relocation_sections(image)
+    instruction_spans = {}
+    if disassembly is not None:
+        source_sections = calls._ordinary_source_sections(image, set(sections.values()))
+        current = None
+        for line in disassembly.splitlines():
+            heading = re.match(r'^Disassembly of section (.+):$', line)
+            if heading:
+                current = heading.group(1) if heading.group(1) in source_sections else None
+                continue
+            decoded = re.match(r'^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2}\s+)+)', line)
+            if current is None or decoded is None:
+                continue
+            start = int(decoded.group(1), 16)
+            encoded = bytes.fromhex(decoded.group(2))
+            end = start + len(encoded)
+            require(end <= len(source_sections[current]) and source_sections[current][start:end] == encoded,
+                    'provider source disassembly bytes differ')
+            spans = instruction_spans.setdefault(current, {})
+            require(start not in spans, 'provider source instruction start is ambiguous')
+            spans[start] = end
     section, references = None, []
     for line in transcript.splitlines():
         header = re.match(r"^Relocation section '(\.rela\.text(?:\.[^']+)?)' at offset 0x([0-9a-f]+)", line)
@@ -350,14 +382,24 @@ def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict
         prefix = source[offset - 3:offset] if offset >= 3 else b''
         address = (kind == 'R_X86_64_PC32' and len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
                    and prefix[1] == 0x8d and prefix[2] & 0xc7 == 0x05)
-        integer = integer_memory_operand(source, offset) if kind == 'R_X86_64_PC32' else None
+        instruction_span = None
+        if (kind == 'R_X86_64_PC32' and offset >= 3
+                and source[offset - 3:offset - 1] == b'\x0f\xb6'):
+            require(disassembly is not None, f'provider import {name} instruction boundaries are required')
+            containing = [(start, end) for start, end in instruction_spans.get(section, {}).items()
+                          if start <= offset and offset + 4 <= end]
+            require(len(containing) == 1, f'provider import {name} instruction span is absent or ambiguous')
+            instruction_span = containing[0]
+        integer = integer_memory_operand(source, offset, instruction_span=instruction_span) if kind == 'R_X86_64_PC32' else None
         require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
                 and (addend == -4 or scalar or address or integer is not None),
                 f'provider import {name} relocation is not a supported reference')
         references.append({'section': section, 'offset': offset, 'kind': kind,
                            **({'addend': addend} if scalar else {}),
                            **({'address_addend': addend} if address and addend != -4 else {}),
-                           **({'operand_addend': addend} if integer is not None else {})})
+                           **({'operand_addend': addend} if integer is not None else {}),
+                           **({'instruction_start': instruction_span[0], 'instruction_end': instruction_span[1]}
+                              if instruction_span is not None else {})})
     require(len({(row['section'], row['offset']) for row in references}) == len(references),
             f'provider import {name} relocation roster differs')
     return references
@@ -404,6 +446,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Integer memory operands bind the selected writable object and full access
     extent. Trailing immediate bytes are part of the instruction, not payload
     bytes at a NOBITS target. No execution or subsequent values are asserted.
+    Source instruction spans must come from disassembly checked against the
+    complete original section bytes; adjacent instructions are not prefixes.
     """
     resolved, discarded = [], []
     for reference in source_calls:
@@ -418,7 +462,9 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         require(len(parts) >= 5 and type(offset) is int and offset >= 1
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
                 f'provider {name} reference leaves selected section')
-        integer = integer_memory_operand(source, offset) if kind == 'R_X86_64_PC32' else None
+        instruction_span = ((reference['instruction_start'], reference['instruction_end'])
+                            if 'instruction_start' in reference else None)
+        integer = integer_memory_operand(source, offset, instruction_span=instruction_span) if kind == 'R_X86_64_PC32' else None
         if integer is not None:
             prefix, operand_size, immediate, operation = integer
             provider_offset = reference.get('operand_addend', -4) + 4 + len(immediate)
@@ -847,11 +893,12 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                         path.write_bytes(result.stdout)
                         relocations = read_tool('readelf', '-rW', path)
                         symbols = inventory.parse_elf_symbol_tables(read_tool('readelf', '-Ws', path))
-                    source_members[member] = (result.stdout, relocations, symbols)
-                image, relocations, symbols = source_members[member]
+                        disassembly = read_tool('objdump', '-dw', path)
+                    source_members[member] = (result.stdout, relocations, symbols, disassembly)
+                image, relocations, symbols, disassembly = source_members[member]
                 require(len(symbols) == 1 and symbols[0]['name'] == '.symtab'
                         and row['row'] in symbols[0]['rows'], 'provider source import symbol changed')
-                source_calls = import_relocations(relocations, name, image=image)
+                source_calls = import_relocations(relocations, name, image=image, disassembly=disassembly)
                 if not source_calls:
                     symbol_only_import(symbols, row['row'], relocations)
                 source_imports.append((row, source_calls, calls._ordinary_source_sections(
