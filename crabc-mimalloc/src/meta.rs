@@ -2126,11 +2126,12 @@ impl ChildThreadOwner {
         operation: impl for<'image> FnOnce(Pin<&'image crate::subproc::ChildSubprocessImage>) -> R,
     ) -> Option<R> {
         self.registration.as_ref()?;
-        // SAFETY: the unreleased registration keeps the child's live thread
-        // count raised, and child destruction refuses while it is nonzero, so
-        // the pinned image stays allocated. Every image transition is atomic
-        // or internally synchronized, so this shared projection may overlap
-        // other threads' projections.
+        // SAFETY: the enclosing lifecycle retains this registered member's
+        // child image. Ordinary destruction refuses live members; permanent
+        // quiescent destruction retains the image for orphan completion and
+        // excludes further allocation. Each projected transition is atomic
+        // or internally synchronized; it does not authorize allocation after
+        // terminal destruction.
         Some(operation(unsafe { Pin::new_unchecked(self.image.as_ref()) }))
     }
 
@@ -2354,28 +2355,47 @@ impl ChildThreadOwner {
 
         let mut free_theap = None;
         let mut free_tld = None;
+        let mut theap_consumed = false;
+        let mut tld_consumed = false;
         let release = child.with_metadata_page_engine(binding, |_child, engine| {
             // Both blocks are exact child metadata allocations. No typed
             // projections remain after list removal and invalidation.
-            free_theap = Some(unsafe { engine.free(theap_pointer.cast()) });
+            free_theap = Some(match unsafe { engine.free_with_progress(theap_pointer.cast()) } {
+                crate::single_thread::LocalClientFreeProgress::RefusedBeforeConsumption(error) => Err(error),
+                crate::single_thread::LocalClientFreeProgress::Consumed(result) => {
+                    theap_consumed = true;
+                    result
+                }
+            });
             if matches!(free_theap, Some(Ok(()))) {
-                free_tld = Some(unsafe { engine.free(tld_pointer.cast()) });
-            }
-        });
-        release.map_err(ChildThreadTeardownError::PageEngine)?;
-        match free_theap {
-            Some(Ok(())) => {
-                self.theap = None;
-                // theap.c:350-352 `mi_theap_free_mem` for a non-detached Theap.
-                child.context.with_image(|image| {
-                    image.get_ref().identity().record_statistics_theap_unlinked();
+                free_tld = Some(match unsafe { engine.free_with_progress(tld_pointer.cast()) } {
+                    crate::single_thread::LocalClientFreeProgress::RefusedBeforeConsumption(error) => Err(error),
+                    crate::single_thread::LocalClientFreeProgress::Consumed(result) => {
+                        tld_consumed = true;
+                        result
+                    }
                 });
             }
+        });
+        // Returning a client to the local free list ends its allocation
+        // custody. Later backing or PageMap cleanup may still fail, but its
+        // retained page-engine state never grants a second client release.
+        // Settle both slots before propagating even an outer engine error.
+        if theap_consumed {
+            self.theap = None;
+            child.context.with_image(|image| {
+                image.get_ref().identity().record_statistics_theap_unlinked();
+            });
+        }
+        if tld_consumed { self.tld = None; }
+        release.map_err(ChildThreadTeardownError::PageEngine)?;
+        match free_theap {
+            Some(Ok(())) => {}
             Some(Err(error)) => return Err(ChildThreadTeardownError::TheapRelease(error)),
             None => return Err(ChildThreadTeardownError::InvalidTransition),
         }
         match free_tld {
-            Some(Ok(())) => self.tld = None,
+            Some(Ok(())) => {}
             Some(Err(error)) => return Err(ChildThreadTeardownError::TldRelease(error)),
             None => return Err(ChildThreadTeardownError::InvalidTransition),
         }
@@ -3680,9 +3700,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
 
     /// Creates the first ordinary child-thread TLD and regular Theap from
     /// the child's own metadata-Theap, then attaches that Theap to the child
-    /// main Heap and TLD. The returned owner's registration blocks child
-    /// destruction until its pages and both intrusive memberships have been
-    /// retired.
+    /// main Heap and TLD. Its registration records the live member; ordinary
+    /// destruction refuses it. Permanent quiescent destruction must retain
+    /// the image for orphan completion and forbid further allocation.
     ///
     /// # Safety
     /// The caller owns the current thread's TLD lifecycle, and no other
@@ -5153,8 +5173,9 @@ impl<'owner> MetadataEngine<'owner> {
         (status, config_matches, subprocess_matches, theap)
     }
 
-    /// Binds the actual source static metadata Theap to the startup-selected
-    /// canonical main Heap before metadata allocation can begin.
+    /// Legacy projection-based binding for explicit-configuration fixtures.
+    /// Callback-producing native startup uses the scoped output supplier so
+    /// no metadata entry or whole-image projection crosses a lazy getter.
     pub(crate) fn prepare_for_main_heap(
         self: Pin<&'owner Self>, config: MemoryConfig, subprocess: &'static MainSubprocess,
         foundation: crate::main_theap::MainStaticHeapFoundation,
