@@ -7927,6 +7927,11 @@ enum ThreadLifecycleState {
 struct NativePersistentThreadOwner {
     attachment: MainHeapThreadAttachment<'static>,
     state: NativePersistentThreadOwnerExitState,
+    // A source option getter may allocate through this owner after every
+    // projection ended. Its original counted issuer cannot retire or move
+    // to another lifecycle while any caller-stack capture remains pending.
+    #[cfg(target_arch = "x86_64")]
+    generic_frequency_captures: usize,
 }
 
 /// The only persistent-owner states accepted at its one-way exit boundary.
@@ -7969,11 +7974,27 @@ enum NativePersistentThreadOwnerLocalAccessError {
 #[must_use = "a deferred-free native allocation phase must be invoked and resumed"]
 enum NativeDeferredFreeAllocationPhase {
     Complete(Option<core::ptr::NonNull<u8>>),
+    #[cfg(target_arch = "x86_64")]
+    GenericFrequency {
+        capture: NativeGenericFrequencyCapture,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        continuation: DeferredFreeAllocationContinuation,
+    },
     Callback {
         call: crate::main_heap_thread::MainHeapThreadDeferredFreeCall,
         collection: GenericAllocationCollection,
         continuation: DeferredFreeAllocationContinuation,
     },
+}
+
+/// A caller-stack option capture backed by the originating owner's live
+/// capture count. It grants no engine projection and cannot be copied.
+/// An unsuccessful resume leaves the original owner retained rather than
+/// reopening retirement for an incomplete source administration request.
+#[must_use = "resume the originating counted issuer or retain its owner"]
+#[cfg(target_arch = "x86_64")]
+struct NativeGenericFrequencyCapture {
+    process: crate::os::VmProcess<'static>,
 }
 
 /// One source `_mi_theap_collect_abandon` callback boundary.  Its call holds
@@ -8005,6 +8026,13 @@ impl NativePersistentThreadOwner {
         if !unsafe { self.permits_child_source_retirement() } { return Err(()); }
         #[cfg(target_arch = "x86_64")]
         {
+            // This vanished pthread has no surviving getter stack in the
+            // child. Its copied counter requests own no allocated clients;
+            // child-exclusive retirement cancels those copied captures only.
+            self.generic_frequency_captures = 0;
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
             let (fixed, thread, heap) = unsafe { self.attachment.vanished_child_source() }.map_err(|_| ())?;
             if !unsafe { tls.drain_vanished_auxiliary_theaps(fixed, thread, heap) } { return Err(()); }
         }
@@ -8028,6 +8056,8 @@ impl NativePersistentThreadOwner {
     /// The terminal writer observes only this pinned owner's exact source
     /// capabilities. It never adopts originating-thread TLS identity.
     unsafe fn permits_terminal_transfer(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return false; }
         if !unsafe { self.attachment.permits_terminal_source_transfer() } { return false; }
         match &self.state {
             NativePersistentThreadOwnerExitState::PreDrain(engine) => engine.permits_terminal_process_retirement(&self.attachment),
@@ -8161,6 +8191,16 @@ impl NativePersistentThreadOwner {
             DeferredFreeAllocationPhase::Complete(block) => {
                 Ok(NativeDeferredFreeAllocationPhase::Complete(block))
             }
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                let process = self.with_local_allocator(|allocator| allocator.allocation_process())?
+                    .ok_or(NativePersistentThreadOwnerLocalAccessError::Terminal)?;
+                self.generic_frequency_captures = self.generic_frequency_captures.checked_add(1)
+                    .ok_or(NativePersistentThreadOwnerLocalAccessError::Terminal)?;
+                Ok(NativeDeferredFreeAllocationPhase::GenericFrequency {
+                    capture: NativeGenericFrequencyCapture { process }, request, continuation,
+                })
+            }
             DeferredFreeAllocationPhase::Collect {
                 collection,
                 continuation,
@@ -8180,6 +8220,27 @@ impl NativePersistentThreadOwner {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    fn resume_generic_allocation_frequency(
+        &mut self,
+        _capture: NativeGenericFrequencyCapture,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        if self.generic_frequency_captures == 0 {
+            return Err(NativePersistentThreadOwnerLocalAccessError::Terminal);
+        }
+        let phase = self.with_local_allocator(|allocator| {
+            // SAFETY: the live capture count excludes retirement, transfer,
+            // and replacement of this original issuer. The getter returned
+            // outside every owner/engine projection with its source value.
+            unsafe { allocator.resume_generic_allocation_frequency(request, frequency, continuation) }
+        })?;
+        self.generic_frequency_captures -= 1;
+        self.defer_after_generic_allocation_phase(phase)
+    }
+
     /// Starts the owner-exit source callback prefix after clearing only the
     /// fixed fast root. The returned phase contains no owner, engine,
     /// attachment, Theap, or TLD borrow, while this owner retains the exact
@@ -8188,6 +8249,8 @@ impl NativePersistentThreadOwner {
         &mut self,
         pair: Option<ProcessPageBackingLease>,
     ) -> Result<NativeOwnerExitDeferredFreePhase, ()> {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return Err(()); }
         // `_mi_thread_done` invokes `_mi_theap_collect_abandon` even when the
         // attached source has not allocated a page. Materialize the existing
         // Rust page engine while the normal fast root is still live, so a
@@ -8293,6 +8356,8 @@ impl NativePersistentThreadOwner {
     /// root/list/TLD boundary. Returns `Ok(false)` without effect when a page
     /// engine exists; that owner keeps the ordinary collect-abandon path.
     fn finish_attachment_only_in_retained_process(&mut self) -> Result<bool, ()> {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return Err(()); }
         if !matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly) {
             return Ok(false);
         }
@@ -8301,6 +8366,8 @@ impl NativePersistentThreadOwner {
     }
 
     fn teardown_after_owner_exit_deferred_free_phase(&mut self) -> Result<(), ()> {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return Err(()); }
         if matches!(&self.state, NativePersistentThreadOwnerExitState::AttachmentOnly)
             && self.attachment.is_torn_down_after_owner_exit()
         {
@@ -8316,6 +8383,8 @@ impl NativePersistentThreadOwner {
     /// retained engine is deliberately returned untouched, while an
     /// attachment-only continuation retries no allocator work.
     fn teardown(&mut self) -> Result<(), ()> {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return Err(()); }
         let state = core::mem::replace(
             &mut self.state,
             NativePersistentThreadOwnerExitState::AttachmentOnly,
@@ -8381,6 +8450,8 @@ impl NativePersistentThreadOwner {
     /// TLD/Theap/PageMap state after the pinned process-done boundary deletes
     /// automatic thread cleanup. It neither drains nor drops the owner.
     fn permits_process_done_source_retention(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return false; }
         match &self.state {
             NativePersistentThreadOwnerExitState::PreDrain(engine) => {
                 engine.permits_process_done_source_retention(&self.attachment)
@@ -8508,6 +8579,13 @@ impl NativeInitialDeferredFreeCall {
 #[must_use = "an initial deferred-free allocation phase must be resumed"]
 enum NativeInitialDeferredFreeAllocationPhase {
     Complete(Option<core::ptr::NonNull<u8>>),
+    #[cfg(target_arch = "x86_64")]
+    GenericFrequency {
+        capture: NativeGenericFrequencyCapture,
+        source: crate::deferred_free::DeferredFreeSource,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        continuation: DeferredFreeAllocationContinuation,
+    },
     Callback {
         call: NativeInitialDeferredFreeCall,
         source: crate::deferred_free::DeferredFreeSource,
@@ -8521,17 +8599,36 @@ struct NativeInitialPersistentThreadOwner {
     allocator: MainStaticRuntimeFirstArenaPageAllocator,
     deferred_free_callback_generation: usize,
     deferred_free_callback_active: AtomicUsize,
+    #[cfg(target_arch = "x86_64")]
+    generic_frequency_captures: usize,
 }
 
 impl NativeInitialPersistentThreadOwner {
     /// Only a worker-origin child may retire this initial session. The
     /// process-owned static attachment is detached separately afterward.
     unsafe fn retire_vanished_child_owner(&mut self) -> Result<(), ()> {
-        if !self.permits_terminal_transfer() { return Err(()); }
+        if !unsafe { self.permits_child_source_retirement() } { return Err(()); }
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Only a vanished owner enters here: no copied getter frame can
+            // resume, and a counter request retains no allocation client.
+            self.generic_frequency_captures = 0;
+        }
         if unsafe { self.allocator.collect_abandon_vanished_initial_child() } { Ok(()) } else { Err(()) }
     }
 
+    /// # Safety
+    /// The child-exclusive writer is observing a vanished initial owner,
+    /// whose original getter frames cannot survive in the child. This does
+    /// not authorize retirement of the currently surviving caller's capture.
+    unsafe fn permits_child_source_retirement(&self) -> bool {
+        self.deferred_free_callback_active.load(Ordering::Acquire) == 0
+            && self.allocator.permits_terminal_process_retirement()
+    }
+
     fn permits_terminal_transfer(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return false; }
         self.deferred_free_callback_active.load(Ordering::Acquire) == 0
             && self.allocator.permits_terminal_process_retirement()
     }
@@ -8651,6 +8748,14 @@ impl NativeInitialPersistentThreadOwner {
             MainStaticDeferredFreeAllocationPhase::Complete(block) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
             }
+            #[cfg(target_arch = "x86_64")]
+            MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation } => {
+                let process = self.allocator.allocation_process()?;
+                self.generic_frequency_captures = self.generic_frequency_captures.checked_add(1)?;
+                Some(NativeInitialDeferredFreeAllocationPhase::GenericFrequency {
+                    capture: NativeGenericFrequencyCapture { process }, source, request, continuation,
+                })
+            }
             MainStaticDeferredFreeAllocationPhase::Collect {
                 source,
                 collection,
@@ -8696,6 +8801,26 @@ impl NativeInitialPersistentThreadOwner {
                 }
             }
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn resume_generic_allocation_frequency(
+        &mut self,
+        _capture: NativeGenericFrequencyCapture,
+        source: crate::deferred_free::DeferredFreeSource,
+        request: crate::types::GenericAllocationFrequencyRequest,
+        frequency: isize,
+        continuation: DeferredFreeAllocationContinuation,
+    ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
+        if self.generic_frequency_captures == 0 { return None; }
+        // SAFETY: the live capture count excludes retiring or rebinding the
+        // original static Theap/Heap issuer. Every projection ended before
+        // the getter; this fresh projection also validates its source.
+        let phase = unsafe { self.allocator.resume_generic_allocation_frequency_current_initial_thread_local(
+            source, request, frequency, continuation,
+        ) }?;
+        self.generic_frequency_captures -= 1;
+        self.defer_after_generic_allocation_phase(phase)
     }
 
     /// Reallocates one exact current initial-thread client without entering a
@@ -8757,6 +8882,8 @@ impl NativeInitialPersistentThreadOwner {
     /// of being parked or lent through the former static owner.
     #[inline]
     fn prepare_dormant_page_pair_for_later_thread(&mut self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return false; }
         self.allocator
             .prepare_dormant_page_pair_current_initial_thread_local()
     }
@@ -8772,6 +8899,8 @@ impl NativeInitialPersistentThreadOwner {
     #[cfg(target_arch = "x86_64")]
     #[inline]
     fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 { return None; }
         if self.deferred_free_callback_active.load(Ordering::Acquire) != 0 {
             return None;
         }
@@ -8787,6 +8916,14 @@ impl NativeInitialPersistentThreadOwner {
     /// home of its page engine, to collect/inspect the source state.
     #[inline]
     fn prepare_quiescent_for_held_fork_gate(&mut self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.generic_frequency_captures != 0 {
+            // The pending getter retains this actual issuer in both fork
+            // images. Inspect its source state without collecting or moving
+            // the engine that must resume the copied continuation.
+            return self.deferred_free_callback_active.load(Ordering::Acquire) == 0
+                && self.allocator.permits_surviving_initial_owner_fork();
+        }
         self.deferred_free_callback_active.load(Ordering::Acquire) == 0
             && self.allocator.prepare_quiescent_for_held_fork_gate()
     }
@@ -8947,7 +9084,7 @@ unsafe fn fork_slot_can_repair(pointer: NonNull<ThreadLifecycleSlot>) -> bool {
     if initial {
         if later || attachment.is_some() { return false; }
         let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).initial_native_persistent_owner)) };
-        return unsafe { cell.with_fork_quiescent_owner(|owner| owner.permits_terminal_transfer()) }.unwrap_or(false);
+        return unsafe { cell.with_fork_quiescent_owner(|owner| owner.permits_child_source_retirement()) }.unwrap_or(false);
     }
     if later {
         if attachment.is_some() { return false; }
@@ -9545,6 +9682,8 @@ fn begin_current_thread_native_initial_persistent_owner(
             allocator,
             deferred_free_callback_generation: 0,
             deferred_free_callback_active: AtomicUsize::new(0),
+            #[cfg(target_arch = "x86_64")]
+            generic_frequency_captures: 0,
         };
         match current_thread_native_initial_persistent_owner_cell().initialize(
             owner,
@@ -9801,6 +9940,8 @@ fn install_native_attachment_only_owner(
     let owner = NativePersistentThreadOwner {
         attachment,
         state: NativePersistentThreadOwnerExitState::AttachmentOnly,
+        #[cfg(target_arch = "x86_64")]
+        generic_frequency_captures: 0,
     };
     match owner_cell.initialize(owner, |_| {
         Ok::<(), Infallible>(())
@@ -9808,7 +9949,7 @@ fn install_native_attachment_only_owner(
         Ok(()) => Ok(()),
         Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
         Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
-            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwner { attachment, state, .. } = owner;
             debug_assert!(matches!(
                 state,
                 NativePersistentThreadOwnerExitState::AttachmentOnly
@@ -9846,6 +9987,8 @@ fn begin_current_thread_native_persistent_owner(
     let owner = NativePersistentThreadOwner {
         attachment,
         state: NativePersistentThreadOwnerExitState::AttachmentOnly,
+        #[cfg(target_arch = "x86_64")]
+        generic_frequency_captures: 0,
     };
     let initialized = current_thread_native_persistent_owner_cell().initialize(
         owner,
@@ -9869,7 +10012,7 @@ fn begin_current_thread_native_persistent_owner(
             // its owner state is still attachment-only and the original
             // attachment can be restored as the exact terminal diagnostic
             // owner.
-            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwner { attachment, state, .. } = owner;
             debug_assert!(matches!(
                 state,
                 NativePersistentThreadOwnerExitState::AttachmentOnly
@@ -10040,6 +10183,28 @@ fn resume_current_thread_native_deferred_free_allocation(
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+fn capture_current_thread_native_generic_allocation_frequency(
+    capture: NativeGenericFrequencyCapture,
+    request: crate::types::GenericAllocationFrequencyRequest,
+    continuation: DeferredFreeAllocationContinuation,
+) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerAccessError> {
+    // The original owner's capture count keeps its actual process and Heap
+    // issuer live while a lazy option read may invoke diagnostic callbacks.
+    // No owner-cell, engine, attachment, Theap, or session projection spans
+    // this getter; nested allocation receives a fresh ordinary admission.
+    let frequency = capture.process.policy().generic_collect_frequency();
+    match with_current_thread_native_persistent_owner(|owner| {
+        owner.resume_generic_allocation_frequency(capture, request, frequency, continuation)
+    }) {
+        Ok(Ok(phase)) => Ok(phase),
+        Ok(Err(_)) | Err(_) => {
+            retain_current_thread_native_persistent_owner_for_teardown();
+            Err(NativePersistentThreadOwnerAccessError::Retained)
+        }
+    }
+}
+
 /// Drives the value-only generic allocation continuation through the source
 /// deferred-free callback boundary.
 ///
@@ -10067,6 +10232,10 @@ fn run_current_thread_native_deferred_free_phase(
             NativeDeferredFreeAllocationPhase::Complete(block) => {
                 report_generic_allocation_failure(forced, block.is_none());
                 return Ok(block);
+            }
+            #[cfg(target_arch = "x86_64")]
+            NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
+                capture_current_thread_native_generic_allocation_frequency(capture, request, continuation)?
             }
             NativeDeferredFreeAllocationPhase::Callback {
                 call,
@@ -10267,6 +10436,25 @@ fn run_current_thread_native_initial_deferred_free_allocation(
     run_current_thread_native_initial_deferred_free_phase(phase)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn capture_current_thread_native_initial_generic_allocation_frequency(
+    capture: NativeGenericFrequencyCapture,
+    source: crate::deferred_free::DeferredFreeSource,
+    request: crate::types::GenericAllocationFrequencyRequest,
+    continuation: DeferredFreeAllocationContinuation,
+) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
+    // The counted initial issuer stays retained through source warning
+    // delivery. The getter has no static owner, engine, or metadata borrow;
+    // completion reacquires and validates the same original source owner.
+    let frequency = capture.process.policy().generic_collect_frequency();
+    match with_current_thread_native_initial_persistent_owner(|owner| {
+        owner.resume_generic_allocation_frequency(capture, source, request, frequency, continuation)
+    }) {
+        Ok(Some(phase)) => Ok(phase),
+        Ok(None) | Err(_) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
+    }
+}
+
 /// Drives one already-selected initial-owner phase to completion. Ordinary
 /// and aligned allocation both enter here after their phase-A borrow ended.
 fn run_current_thread_native_initial_deferred_free_phase(
@@ -10278,6 +10466,10 @@ fn run_current_thread_native_initial_deferred_free_phase(
             NativeInitialDeferredFreeAllocationPhase::Complete(block) => {
                 report_generic_allocation_failure(forced, block.is_none());
                 return Ok(block);
+            }
+            #[cfg(target_arch = "x86_64")]
+            NativeInitialDeferredFreeAllocationPhase::GenericFrequency { capture, source, request, continuation } => {
+                capture_current_thread_native_initial_generic_allocation_frequency(capture, source, request, continuation)?
             }
             NativeInitialDeferredFreeAllocationPhase::Callback {
                 call,
@@ -19083,6 +19275,19 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 /// point therefore shares the ordinary finalizer.
 #[doc(hidden)]
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // A lazy source option callback can request thread finish. Its
+        // suspended allocation still owns this exact issuer, so return the
+        // ordinary retention result before auxiliary Theaps are dismantled.
+        let captured_initial = with_current_thread_native_initial_persistent_owner(
+            |owner| owner.generic_frequency_captures != 0,
+        ).unwrap_or(false);
+        let captured_worker = with_current_thread_native_persistent_owner(
+            |owner| owner.generic_frequency_captures != 0,
+        ).unwrap_or(false);
+        if captured_initial || captured_worker { return ThreadFinishResult::Retained; }
+    }
     // A thread admitted to a child subprocess runs that child's
     // `_mi_thread_done`; it holds no main-subprocess attachment.
     if let Some(done) = crate::subproc::lifecycle::native_child_thread_done() {
@@ -22454,6 +22659,19 @@ mod tests {
             // later-thread attachment below, so the observed baseline keeps
             // the process main thread counted.
             subprocess.record_statistics_thread_attached();
+            let mut options = crate::config::VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            options.set(crate::config::VmOption::ArenaReserve,
+                (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+            // SAFETY: these isolated process owners are leaked, the shared
+            // map is already initialized, and this is their sole binding.
+            let binding = unsafe {
+                crate::process_init::ProcessMainInitializationStorage::test_static_owner()
+                    .test_bind_vm_process_to_existing_page_map(
+                        config, options, subprocess, pair.page_map_lease(),
+                    )
+            }.expect("the fixture retains the actual source option policy");
+            assert!(binding.test_publish_ready());
             let main_heap = main
                 .shared_main_heap_lease()
                 .expect("the focused persistent worker borrows the static main Heap");
@@ -22475,11 +22693,13 @@ mod tests {
                             panic!("focused persistent attachment retained: {error:?}")
                         }
                     };
-                    let engine = MainHeapThreadOwnerLocalPageEngine::begin(&mut attachment, pair)
-                        .expect("the focused attachment creates one persistent owner engine");
+                    let engine = MainHeapThreadOwnerLocalPageEngine::begin_for_process(&mut attachment, binding)
+                        .expect("the focused attachment creates one persistent source owner engine");
                     let owner = NativePersistentThreadOwner {
                         attachment,
                         state: NativePersistentThreadOwnerExitState::PreDrain(engine),
+                        #[cfg(target_arch = "x86_64")]
+                        generic_frequency_captures: 0,
                     };
                     operation(owner);
                 });
@@ -22584,16 +22804,25 @@ mod tests {
             let session = main
                 .begin_process_lifetime_page_session()
                 .expect("the focused initial owner receives its permanent source session");
-            let allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
-                session,
-                page_map,
-                arena_storage,
-            )
-            .expect("the focused initial owner opens its lazy first arena");
+            let mut options = crate::config::VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            options.set(crate::config::VmOption::ArenaReserve,
+                (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+            // SAFETY: this isolated leaked coordinator binds exactly once
+            // to the initial fixture's already initialized process PageMap.
+            let binding = unsafe {
+                crate::process_init::ProcessMainInitializationStorage::test_static_owner()
+                    .test_bind_vm_process_to_existing_page_map(config, options, subprocess, page_map)
+            }.expect("the initial fixture retains its real source option policy");
+            let allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, binding, arena_storage,
+            ).expect("the focused initial owner opens its lazy source arena");
             let mut owner = NativeInitialPersistentThreadOwner {
                 allocator,
                 deferred_free_callback_generation: 0,
                 deferred_free_callback_active: AtomicUsize::new(0),
+                #[cfg(target_arch = "x86_64")]
+                generic_frequency_captures: 0,
             };
             operation(&mut owner);
 
@@ -22660,6 +22889,15 @@ mod tests {
         loop {
             phase = match phase {
                 NativeDeferredFreeAllocationPhase::Complete(block) => return (block, selected),
+                #[cfg(target_arch = "x86_64")]
+                NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
+                    let frequency = capture.process.policy().generic_collect_frequency();
+                    cell.with_owner(|owner| owner.get_mut().resume_generic_allocation_frequency(
+                        capture, request, frequency, continuation,
+                    ))
+                    .expect("the same fixture owner survives the source option getter")
+                    .expect("the original fixture continuation resumes")
+                }
                 NativeDeferredFreeAllocationPhase::Callback {
                     call,
                     collection,
@@ -22700,6 +22938,123 @@ mod tests {
         .ok()
         .and_then(Result::ok)
         .is_some()
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_initial_generic_frequency_capture_resumes_in_both_fork_images() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_initial_generic_frequency_capture_resumes_in_both_fork_images",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(prepare_native_initial_thread_owner());
+                let mut captured = false;
+                for _ in 0..1100 {
+                    let operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                    let phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(2048, 16, 0, false)
+                        .expect("the initial owner begins a normal generic allocation");
+                    let NativeInitialDeferredFreeAllocationPhase::GenericFrequency { capture, source, request, continuation } = phase else {
+                        let block = run_current_thread_native_initial_deferred_free_phase(phase).unwrap().unwrap();
+                        // SAFETY: the exact completed client remains current.
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                        drop(operation);
+                        continue;
+                    };
+                    captured = true;
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Retained);
+                    before_fork();
+                    let child = match crabc_core::process::fork_raw() {
+                        Ok(child) => child,
+                        Err(error) => {
+                            after_fork_parent();
+                            panic!("the ordinary single-owner fork succeeds: {error:?}");
+                        }
+                    };
+                    if child == 0 { after_fork_child(true); } else { after_fork_parent(); }
+                    assert!(process_is_active(), "both fork images retain the source issuer");
+                    assert_eq!(with_current_thread_native_initial_persistent_owner(|owner| owner.generic_frequency_captures).unwrap(), 1);
+                    let phase = capture_current_thread_native_initial_generic_allocation_frequency(capture, source, request, continuation)
+                        .expect("each fork image resumes its original copied continuation");
+                    let block = run_current_thread_native_initial_deferred_free_phase(phase).unwrap().unwrap();
+                    // SAFETY: the independently completed client is current
+                    // in this fork image's retained initial source owner.
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert_eq!(with_current_thread_native_initial_persistent_owner(|owner| owner.generic_frequency_captures).unwrap(), 0);
+                    assert!(native_round_trip(89));
+                    drop(operation);
+                    if child == 0 { crabc_core::process::exit_immediately(0); }
+                    let mut status = 0;
+                    let mut reaped = false;
+                    for _ in 0..500 {
+                        // SAFETY: wait4 writes only this live status scalar.
+                        let waited = unsafe { crabc_core::process::wait4_raw(child, &mut status, 1) }.unwrap();
+                        if waited == child {
+                            assert_eq!(status, 0, "the child completed its copied source continuation");
+                            reaped = true;
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    if !reaped {
+                        let _ = crabc_core::process::kill(child, 9);
+                        let _ = unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) };
+                        panic!("the copied source continuation exceeded its five-second deadline");
+                    }
+                    assert!(native_round_trip(97));
+                    break;
+                }
+                assert!(captured, "normal source allocations reach the frequency getter");
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_generic_frequency_capture_retains_worker_until_original_resume() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_generic_frequency_capture_retains_worker_until_original_resume",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(prepare_native_initial_thread_owner());
+                std::thread::spawn(|| {
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its descriptor until its
+                    // ordinary final source teardown completes below.
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let mut captured = false;
+                    for _ in 0..1100 {
+                        let operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                        let phase = begin_current_thread_native_deferred_free_aligned_allocation(2048, 16, 0, false)
+                            .expect("the live worker begins one generic allocation");
+                        let phase = match phase {
+                            NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
+                                captured = true;
+                                assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Retained);
+                                assert!(native_round_trip(37), "a fresh nested allocation uses the still-live issuer");
+                                capture_current_thread_native_generic_allocation_frequency(capture, request, continuation)
+                                    .expect("the original continuation resumes its actual source option")
+                            }
+                            phase => phase,
+                        };
+                        let block = run_current_thread_native_deferred_free_phase(phase)
+                            .expect("the original worker allocation completes")
+                            .expect("the source arena supplies the requested client");
+                        // SAFETY: this worker owns the exact completed client.
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                        drop(operation);
+                        if captured { break; }
+                    }
+                    assert!(captured, "normal generic requests reach the lazy source-option boundary");
+                    assert_eq!(with_current_thread_native_persistent_owner(|owner| owner.generic_frequency_captures).unwrap(), 0);
+                    assert!(native_round_trip(73));
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("the worker finishes after its source capture is consumed");
+                assert!(native_round_trip(81));
+            },
+        );
     }
 
     #[test]
@@ -22744,6 +23099,19 @@ mod tests {
             let phase = owner
                 .begin_deferred_free_aligned_allocation(2048, 16, false)
                 .expect("the threshold generic entry returns a caller-stack phase");
+            #[cfg(target_arch = "x86_64")]
+            let phase = match phase {
+                NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
+                    assert_eq!(owner.generic_frequency_captures, 1);
+                    assert!(owner.begin_owner_exit_deferred_free_phase(None).is_err());
+                    let frequency = capture.process.policy().generic_collect_frequency();
+                    owner.resume_generic_allocation_frequency(capture, request, frequency, continuation)
+                        .expect("the original owner resumes after reading the actual source option")
+                }
+                _ => panic!("the threshold publishes a source-option capture before collection"),
+            };
+            #[cfg(target_arch = "x86_64")]
+            assert_eq!(owner.generic_frequency_captures, 0);
             let NativeDeferredFreeAllocationPhase::Callback {
                 call,
                 collection: GenericAllocationCollection::Mini,
@@ -22826,6 +23194,19 @@ mod tests {
             let phase = owner
                 .begin_deferred_free_aligned_allocation(7, 128 * crate::config::KIB, false)
                 .expect("the threshold aligned singleton starts an initial callback phase");
+            #[cfg(target_arch = "x86_64")]
+            let phase = match phase {
+                NativeInitialDeferredFreeAllocationPhase::GenericFrequency { capture, source, request, continuation } => {
+                    assert_eq!(owner.generic_frequency_captures, 1);
+                    assert!(!owner.permits_terminal_transfer());
+                    let frequency = capture.process.policy().generic_collect_frequency();
+                    owner.resume_generic_allocation_frequency(capture, source, request, frequency, continuation)
+                        .expect("the exact initial owner resumes its source-option capture")
+                }
+                _ => panic!("the initial threshold publishes source-option capture first"),
+            };
+            #[cfg(target_arch = "x86_64")]
+            assert_eq!(owner.generic_frequency_captures, 0);
             let NativeInitialDeferredFreeAllocationPhase::Callback {
                 call,
                 source,
@@ -22838,15 +23219,13 @@ mod tests {
             // this exact caller-stack invocation owns the source recurse bit.
             let (_mini_heartbeat, mini_lease) = unsafe { call.invoke() };
             let mini_lease = mini_lease.expect("the registered Mini callback owns an initial lease");
-            let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+            let fault = fault::install(fault::Plan::every(fault::Point::Map, Errno::NOMEM));
             let phase = owner
                 .resume_deferred_free_allocation(source, GenericAllocationCollection::Mini, continuation, Some(mini_lease))
                 .expect("a valid Mini lease resumes the exact initial source even when its allocation misses");
-            assert_eq!(
-                fault.observed(),
-                1,
-                "the selected initial aligned singleton reaches its first source mapping attempt after Mini collection"
-            );
+            let mini_attempts = fault.observed();
+            assert!(mini_attempts > 0,
+                "Mini reaches real source mapping attempts, all refused by the sustained fault");
             let NativeInitialDeferredFreeAllocationPhase::Callback {
                 call,
                 source,
@@ -22859,14 +23238,14 @@ mod tests {
             // valid lease, so the force token is another caller-stack phase.
             let (_force_heartbeat, force_lease) = unsafe { call.invoke() };
             let force_lease = force_lease.expect("the registered Force callback owns a new initial lease");
-            fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+            fault.set(fault::Plan::every(fault::Point::Map, Errno::NOMEM));
             let phase = owner
                 .resume_deferred_free_allocation(source, GenericAllocationCollection::Force, continuation, Some(force_lease))
                 .expect("a valid Force lease completes its exact initial source retry");
             assert_eq!(
                 fault.observed(),
-                1,
-                "the force retry reaches its own selected source mapping attempt"
+                mini_attempts,
+                "Force retries the same source mapping candidates under sustained unavailability"
             );
             assert!(matches!(
                 phase,
@@ -23814,7 +24193,7 @@ mod tests {
     #[test]
     fn native_persistent_owner_collect_abandon_predrain_retains_the_exact_engine() {
         with_native_persistent_owner_fixture(|owner| {
-            let NativePersistentThreadOwner { attachment: _, state } = owner;
+            let NativePersistentThreadOwner { attachment: _, state, .. } = owner;
             let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
                 panic!("the focused persistent owner starts before its drain boundary");
             };
@@ -23830,7 +24209,7 @@ mod tests {
                 NativePersistentThreadOwnerExitState::PreDrain(_)
             ));
 
-            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwner { attachment, state, .. } = owner;
             let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
                 panic!("the preflight failure restores its exact persistent engine");
             };
@@ -23858,7 +24237,7 @@ mod tests {
     #[test]
     fn native_persistent_owner_collect_abandon_failure_is_terminal_without_retry_or_allocation() {
         with_native_persistent_owner_fixture(|owner| {
-            let NativePersistentThreadOwner { attachment, state } = owner;
+            let NativePersistentThreadOwner { attachment, state, .. } = owner;
             let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
                 panic!("the focused persistent owner starts before its drain boundary");
             };
