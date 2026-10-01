@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0
+// - `src/theap.c:190-205` (the public guarded sampler controls);
+// - `src/alloc.c:868-947` (guarded request geometry and placement) and
+//   `src/alloc-aligned.c:30-49` (guarded alignment adjustment);
 // - `src/heap.c:22-25` (`mi_heap_set_numa_affinity`);
 // - `src/heap.c:149-157` (`mi_heap_new_in_arena`, `mi_heap_new`) and
 //   `src/heap.c:228-261` (`mi_heap_delete`, `mi_heap_destroy`);
@@ -591,9 +594,18 @@ pub unsafe fn theap_guarded_set_size_bound(theap: *mut c_void, minimum: usize, m
     let _ = (theap, minimum, maximum);
 }
 
+/// A source sampling decision never turns a sampled refusal into an ordinary
+/// allocation. Only `NotSampled` permits the caller's ordinary engine route.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) enum GuardedAllocationResult {
+    NotSampled,
+    Allocated(Sourced<NonNull<u8>>),
+    Refused(SourceErrno),
+}
+
 /// Scalar source selection, not an admitted owner or allocation capability.
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
-struct GuardedSampledRequest {
+pub(crate) struct GuardedSampledRequest {
     size: usize,
     alignment: Option<usize>,
 }
@@ -610,7 +622,7 @@ struct GuardedSampledRequest {
 /// A nonempty image has mutable provenance for countdown writes. `aligned`,
 /// when present, contains a validated nonzero power-of-two alignment.
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
-unsafe fn guarded_sample_source_request(
+pub(crate) unsafe fn guarded_sample_source_request(
     theap: NonNull<Theap>,
     size: usize,
     aligned: Option<(usize, usize)>,
@@ -629,16 +641,26 @@ unsafe fn guarded_sample_source_request(
 
 /// Source guarded allocation extents, before any engine client exists.
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
-struct GuardedRequestGeometry {
+pub(crate) struct GuardedRequestGeometry {
     object_size: usize,
     source_size: usize,
     counted_request: usize,
+    alignment: Option<usize>,
+}
+
+/// A sampled request whose source size refusal has already been checked.
+/// It carries no admitted owner, mapping, or release authority.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) struct GuardedCheckedRequest {
+    size: usize,
+    alignment: Option<usize>,
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
 impl GuardedSampledRequest {
-    fn geometry(&self, os_page_size: crate::os::PageSize, precise: bool) -> Result<GuardedRequestGeometry, SourceErrorReport> {
-        let os_page_size = os_page_size.bytes();
+    /// Checks source overflow before acquiring an allocation owner or client.
+    /// The diagnostic retains the original public aligned operands.
+    pub(crate) fn check_size(self) -> Result<GuardedCheckedRequest, SourceErrorReport> {
         let size = if let Some(alignment) = self.alignment {
             if self.size > crate::config::MAX_ALLOC_SIZE - crate::config::PADDING_SIZE - alignment {
                 return Err(SourceErrorReport::GuardedAlignedAllocationTooLarge { size: self.size, alignment });
@@ -650,6 +672,17 @@ impl GuardedSampledRequest {
         if size >= crate::config::MAX_ALLOC_SIZE - crate::config::PADDING_SIZE {
             return Err(SourceErrorReport::GuardedAllocationTooLarge { size });
         }
+        Ok(GuardedCheckedRequest { size, alignment: self.alignment })
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl GuardedCheckedRequest {
+    /// Computes the source canonical extent from the admitted owner's page
+    /// size and the selected precise-guard policy, without allocating a client.
+    pub(crate) fn geometry(self, os_page_size: crate::os::PageSize, precise: bool) -> Result<GuardedRequestGeometry, SourceErrorReport> {
+        let os_page_size = os_page_size.bytes();
+        let size = self.size;
         let round_up = |value: usize, alignment: usize| {
             value.checked_add(alignment - 1).map(|value| value & !(alignment - 1))
         };
@@ -660,8 +693,94 @@ impl GuardedSampledRequest {
             crate::config::MAX_ALIGN_SIZE).ok_or(overflow)?;
         let source_size = round_up(bsize.checked_add(os_page_size).ok_or(overflow)?,
             os_page_size).ok_or(overflow)?;
-        Ok(GuardedRequestGeometry { object_size, source_size, counted_request: size })
+        Ok(GuardedRequestGeometry { object_size, source_size, counted_request: size, alignment: self.alignment })
     }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl GuardedRequestGeometry {
+    /// The raw, already-padded extent received by the source generic engine.
+    pub(crate) fn source_size(&self) -> usize { self.source_size }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) enum GuardedCandidatePlacement {
+    ShortGeometry,
+    Placed { client: NonNull<u8>, usable_size: usize },
+}
+
+/// Places a source guard while retaining the original canonical client under
+/// the same admitted allocation owner. A short block returns that original
+/// token for the issuing engine's consuming cleanup; it never becomes OOM or
+/// admission refusal. Protection refusal still publishes the tagged client.
+/// The returned usable extent includes any source offset-cap slack.
+///
+/// # Safety
+/// `candidate` is the exclusive completed canonical return of `owner`'s
+/// selected engine for `geometry.source_size()`. The caller retains its
+/// Heap/member and excludes overlapping metadata or client mutation and
+/// teardown. All engine and Heap/Theap/Page projections and locks ended before
+/// entry. Warning callbacks cannot consume the in-flight client or change its
+/// selected owner's lifetime. No statistics merge/reset overlaps the final
+/// current-thread accounting projection after those callbacks return.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+pub(crate) unsafe fn guarded_place_candidate<'owner, 'scope>(
+    owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    candidate: crate::runtime_lifecycle::NativeGuardedCanonical<'owner, 'scope>,
+    geometry: &GuardedRequestGeometry,
+    zero: bool,
+) -> Result<
+    (crate::runtime_lifecycle::NativeGuardedCanonical<'owner, 'scope>, GuardedCandidatePlacement),
+    crate::runtime_lifecycle::NativeGuardedCanonicalFactsFailure<'owner, 'scope>,
+> {
+    let object_size = geometry.object_size;
+    // SAFETY: the original token and same admitted issuer remain retained;
+    // the leaf ends geometry projections before synchronous warning callbacks.
+    let result = unsafe { crate::runtime_lifecycle::with_guarded_live_block_in_owner(owner, candidate, |facts| {
+        // Source tags the canonical first word before the short-geometry check.
+        // SAFETY: this exclusively held canonical client contains its first word.
+        facts.canonical.cast::<usize>().as_ptr().write(usize::MAX);
+        let Some(required) = object_size.checked_add(facts.os_page_size)
+            .and_then(|size| size.checked_add(core::mem::size_of::<usize>())) else {
+                return GuardedCandidatePlacement::ShortGeometry;
+            };
+        if facts.block_size < required { return GuardedCandidatePlacement::ShortGeometry; }
+        let tail = facts.canonical.as_ptr().add(facts.block_size - facts.os_page_size);
+        if !facts.is_pinned && tail.addr() % facts.os_page_size == 0 {
+            // The exact original client and admitted owner retain this live
+            // tail; protection failure warns but does not consume the client.
+            let protected = crate::os::protect_guarded_live_range(
+                tail, facts.os_page_size, true, facts.process,
+            );
+            if protected != Ok(true) {
+                owner.output().warning_from_source_options(SourceFormattedMessage::guarded_protect_failure(
+                    facts.canonical.as_ptr().addr(), facts.block_size,
+                ));
+            }
+        } else {
+            owner.output().warning_from_source_options(SourceFormattedMessage::guarded_pinned_memory(
+                facts.canonical.as_ptr().addr(), facts.block_size,
+            ));
+        }
+        let offset = (facts.block_size - facts.os_page_size - object_size)
+            .min(crate::config::PAGE_MAX_OVERALLOC_ALIGN);
+        let base = facts.canonical.as_ptr().add(offset);
+        // Source zeroing follows protection and warning callbacks. The checked
+        // geometry retains a writable object extent before the guard page.
+        if zero { base.write_bytes(0, object_size); }
+        let adjustment = geometry.alignment.map_or(0, |alignment| base.addr().wrapping_neg() & (alignment - 1));
+        let client = NonNull::new_unchecked(base.add(adjustment));
+        let usable_size = facts.block_size - facts.os_page_size - offset - adjustment;
+        GuardedCandidatePlacement::Placed { client, usable_size }
+    }) }?;
+    if matches!(&result.1, GuardedCandidatePlacement::Placed { .. }) {
+        // SAFETY: the selected current-thread statistics tail remains live;
+        // all page/engine projections and warning callbacks have ended.
+        unsafe { Theap::record_guarded_allocation_statistics_at(
+            owner.selected_theap(), geometry.source_size, geometry.counted_request,
+        ) };
+    }
+    Ok(result)
 }
 
 /// Direct allocation from an initialized Theap of the calling thread.
