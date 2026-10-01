@@ -39,7 +39,9 @@ impl SourcePageInvariant {
     /// A Rust observation-boundary failure has no invented source assertion.
     pub(crate) const fn assertion(self) -> Option<&'static CStr> {
         Some(match self {
-            Self::BlockSize => c"mi_page_block_size(page) > 0",
+            // The accessor asserts this field before the outer initialization
+            // predicate can evaluate its returned block size.
+            Self::BlockSize => c"page->block_size > 0",
             Self::UsedCapacity => c"page->used <= page->capacity",
             Self::CapacityReserved => c"page->capacity <= page->reserved",
             Self::FreeList => c"mi_page_list_is_valid(page,page->free)",
@@ -236,6 +238,10 @@ mod tests {
             state.used = 0;
             state.capacity = 9;
             assert_eq!(source_page_lists_valid(&state, map), Err(SourcePageInvariant::CapacityReserved));
+            state.block_size = 0;
+            let failure = source_page_lists_valid(&state, map).unwrap_err();
+            assert_eq!(failure, SourcePageInvariant::BlockSize);
+            std::println!("source_page_assertion={}", failure.assertion().unwrap().to_str().unwrap());
         });
     }
 
