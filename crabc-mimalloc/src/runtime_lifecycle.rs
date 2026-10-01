@@ -9670,6 +9670,9 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn native_local_fast_owner() -> Option<crate::local_fast_path::LocalFastOwner> {
+    // The raw helper requires unencoded links and no trailing padding record;
+    // the complete engine preserves both protocols for other source profiles.
+    if crate::config::ENCODE_FREELIST || crate::config::PADDING_SIZE != 0 { return None; }
     let owner = crate::local_fast_path::published()?;
     let presence = current_thread_native_owner_presence();
     let owner_selected = if presence.initial_installed {
@@ -20680,6 +20683,39 @@ mod tests {
     }
 
     static NATIVE_DEFERRED_FREE_CALLBACK_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(miri)))]
+    #[test]
+    fn encoded_padded_native_owner_preserves_repeated_zeroed_clients() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::encoded_padded_native_owner_preserves_repeated_zeroed_clients",
+            || {
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_initial_thread_owner());
+                let request = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
+                for iteration in 0..3 {
+                    let NativePageAllocationResult::Allocated(client) = native_allocate(request, true)
+                        else { panic!("source zeroed client {iteration}"); };
+                    // SAFETY: the successful native allocation retains its
+                    // exact initialized page and requested client extent.
+                    assert_eq!(unsafe { native_usable_size(client) }, Some(request),
+                        "the reused native client retains its source padding record");
+                    // SAFETY: this test exclusively owns the requested bytes
+                    // until its one terminal free; padding remains untouched.
+                    unsafe {
+                        assert!(core::slice::from_raw_parts(client.as_ptr(), request)
+                            .iter().all(|byte| *byte == 0), "zeroed client {iteration}");
+                        client.as_ptr().write_bytes(0x5a, request);
+                        assert_eq!(native_free(client), NativePageFreeResult::Freed);
+                    }
+                }
+            },
+        );
+    }
+
     static NATIVE_DEFERRED_FREE_CALLBACK_FORCE: AtomicUsize = AtomicUsize::new(usize::MAX);
     static NATIVE_DEFERRED_FREE_CALLBACK_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
