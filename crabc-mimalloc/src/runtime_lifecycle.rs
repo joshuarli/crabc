@@ -11978,6 +11978,20 @@ fn native_reallocate_pointer_first_local(
         core::ptr::copy_nonoverlapping(block.as_ptr(), replacement.as_ptr(), copy_size);
     }
     drop(old);
+    #[cfg(target_arch = "x86_64")]
+    if crate::config::GUARDED {
+        // Source realloc frees only after the replacement and prefix copy
+        // succeed. All old-source projections ended before tail removal can
+        // warn and reenter; ordinary free retains the actual page owner.
+        return match unsafe { native_free(block) } {
+            NativePageFreeResult::Freed => NativePageAllocationResult::Allocated(replacement),
+            _ => {
+                native_reallocate_release_unpublished_replacement(replacement);
+                RUNTIME_PROCESS.retain_page_owner();
+                NativePageAllocationResult::Retained
+            }
+        };
+    }
     if current_is_initial {
         // The old client remains live through the replacement callback and the
         // exact scalar source revalidation above. Only now consume it through
@@ -12087,6 +12101,16 @@ fn native_reallocate_initialize_replacement(
 /// must not describe this fallback as a successful cleanup or return the
 /// replacement while the old source remains live.
 fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::NonNull<u8>) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::config::GUARDED {
+        // SAFETY: this exclusively held unpublished replacement remains a
+        // live client. Its ordinary free includes any sampled tail removal
+        // after the allocating engine projection has ended.
+        if unsafe { native_free(replacement) } != NativePageFreeResult::Freed {
+            RUNTIME_PROCESS.retain_page_owner();
+        }
+        return;
+    }
     // SAFETY: the unpublished replacement was just allocated by this child
     // thread through its own Theap.
     if unsafe { crate::subproc::lifecycle::native_child_thread_free_local(replacement) }.is_some() {
@@ -12185,23 +12209,35 @@ fn native_reallocate_pointer_first_nonlocal(
     // decides local versus nonlocal, because the source page may have been
     // reclaimed by this caller while the replacement was allocated.
     let source = source.into_live_allocation();
-    // SAFETY: the renewed observation keeps the page live for this read.
-    let heap_block = unsafe { crate::subproc::main_heaps::heap_of_page(source.page()) }.is_some();
-    let released = match current_thread_identity() {
-        // A block of a non-main Heap of the process main subprocess is freed
-        // through that Heap's route, as `mi_free` frees it.
-        Some(_) if heap_block => {
-            drop(source);
-            // SAFETY: the exact live old client, freed once.
-            unsafe { native_free(old_block) }
-        }
-        Some(current) if source.is_associated_with(current) => {
-            native_free_pointer_first_local(source, current)
-        }
-        Some(_) => native_free_pointer_first_nonlocal(source),
-        None => {
-            drop(source);
-            NativePageFreeResult::Retained
+    #[cfg(target_arch = "x86_64")]
+    let guarded_free = crate::config::GUARDED;
+    #[cfg(not(target_arch = "x86_64"))]
+    let guarded_free = false;
+    let released = if guarded_free {
+        drop(source);
+        // SAFETY: the exact old client survived the successful replacement
+        // and copy. End its observation before actual owner admission and
+        // guard-removal warnings; generic free decides its renewed owner.
+        unsafe { native_free(old_block) }
+    } else {
+        // SAFETY: the renewed observation keeps the page live for this read.
+        let heap_block = unsafe { crate::subproc::main_heaps::heap_of_page(source.page()) }.is_some();
+        match current_thread_identity() {
+            // A block of a non-main Heap of the process main subprocess is freed
+            // through that Heap's route, as `mi_free` frees it.
+            Some(_) if heap_block => {
+                drop(source);
+                // SAFETY: the exact live old client, freed once.
+                unsafe { native_free(old_block) }
+            }
+            Some(current) if source.is_associated_with(current) => {
+                native_free_pointer_first_local(source, current)
+            }
+            Some(_) => native_free_pointer_first_nonlocal(source),
+            None => {
+                drop(source);
+                NativePageFreeResult::Retained
+            }
         }
     };
     match released {
@@ -12572,6 +12608,14 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return NativePageFreeResult::Retained;
     };
+    #[cfg(target_arch = "x86_64")]
+    if crate::config::GUARDED {
+        // SAFETY: the consumed live client retains its Page and actual owner;
+        // no engine projection exists before this protection/warning phase.
+        if unsafe { unguard_native_live_client(block) }.is_none() {
+            return NativePageFreeResult::Retained;
+        }
+    }
     #[cfg(feature = "mi-debug-1")]
     {
         // SAFETY: forwarded exact live-client requirement. The check has no
@@ -12629,6 +12673,12 @@ unsafe fn debug_check_native_free(
     // SAFETY: the caller retains the exact live native allocation.
     let allocation = unsafe { page_map.lookup_live_allocation(block) }
         .map_err(|_| None)?.ok_or(None)?;
+    if crate::config::GUARDED && allocation.is_guarded() {
+        // Guarded blocks omit ordinary padding records. Keep the canonical
+        // tag until the source free transition consumes the block; poisoning
+        // it here would erase the guarded extent before engine accounting.
+        return Ok(());
+    }
     let page = allocation.page();
     let canonical = allocation.canonical_block();
     let block_size = allocation.block_size();
@@ -13150,6 +13200,87 @@ fn native_free_claimed_tail_process_page_facts(
     // `process` was formed from the same active root immediately above.
     let main_heap = unsafe { RUNTIME_PROCESS.allocation_main_heap() }?;
     Some((process, main_heap))
+}
+
+/// Runs a synchronous VM operation after its allocation engine and metadata
+/// projections ended, retaining the actual main or registered child owner.
+///
+/// # Safety
+/// `heap` is an initialized live Heap retained by its caller, together with
+/// the selected Theap and member, throughout the callback. No engine, Heap,
+/// Theap or Page reference or owner lock survives entry. The callback cannot
+/// delete that Heap, finish that member, or consume an in-flight client whose
+/// lifetime supplies the operation's span. Nested ordinary allocation is
+/// permitted. A deleted Heap's retained Page does not satisfy this contract.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn with_native_heap_callback_owner<R>(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
+) -> Option<R> {
+    let _operation = NativeSubprocessOperation::enter()?;
+    // SAFETY: the caller retains this initialized Heap; copy only its
+    // immutable published identity, without projecting the whole Heap.
+    let identity = unsafe { crate::types::Heap::subprocess_pointer_at(heap) };
+    if identity == crate::subproc::MainSubprocess::global().identity_ptr() {
+        Some(callback(RUNTIME_PROCESS.active_vm_process()?))
+    } else {
+        // SAFETY: caller-held Heap/member lifetime and ended projections
+        // meet the registered child admission contract. Refusal cannot
+        // substitute the main process's VM authority.
+        unsafe { crate::subproc::lifecycle::with_native_child_callback_owner(heap, callback) }
+    }
+}
+
+/// Removes the exact tagged client's tail protection before padding or free
+/// can touch its canonical block. Protection failure reports through the
+/// owning policy but, as in source free, does not cancel the ordinary free.
+///
+/// # Safety
+/// `block` is the exclusively consumed exact live native client. Its source
+/// Page and owner remain live through this operation; no engine or metadata
+/// projections are held. Warning callbacks cannot consume this in-flight
+/// client or tear down its selected Heap/member.
+#[cfg(target_arch = "x86_64")]
+unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()> {
+    let _operation = NativeSubprocessOperation::enter()?;
+    let map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller exclusively holds the exact live native client.
+    let allocation = match unsafe { map.lookup_live_allocation(block) }.ok()? {
+        Some(allocation) => allocation,
+        None => return Some(()),
+    };
+    if !allocation.is_guarded() {
+        return Some(());
+    }
+    let page_size = map.memory_config().ok()?.page_size().bytes();
+    let tail = allocation.guarded_tail_page(page_size)?;
+    // A deleted main Heap can leave an OS Page and retained Theap alive.
+    // Classify that actual retained registry before following Page.heap.
+    // SAFETY: the exact client keeps the Page and its immutable identities live.
+    let deleted_main = unsafe {
+        crate::subproc::main_heaps::retained_deleted_heap_os_page(allocation.page())
+    }?;
+    let heap = if deleted_main { None } else {
+        // SAFETY: the preceding retained-deleted classification excludes the
+        // stale main-Heap field; the live client retains its remaining owner.
+        core::ptr::NonNull::new(unsafe { crate::types::Page::heap_identity_at(allocation.page()) })
+    };
+    drop(allocation);
+    let remove = |process: crate::os::VmProcess<'_>| {
+        // SAFETY: the original block provenance supplied this complete tail
+        // page. Its live client and actual VM owner remain retained; all
+        // metadata and engine projections ended before warnings can reenter.
+        let _ = unsafe { crate::os::protect_guarded_live_range(
+            tail.as_ptr(), page_size, false, process,
+        ) };
+    };
+    if deleted_main {
+        Some(remove(RUNTIME_PROCESS.active_vm_process()?))
+    } else {
+        // SAFETY: the live owner and ended-projection contract above hold;
+        // child admission failure leaves protection and the client unchanged.
+        unsafe { with_native_heap_callback_owner(heap?, remove) }
+    }
 }
 
 /// Copied geometry of one canonical live block, paired with a process view
@@ -20443,6 +20574,101 @@ mod tests {
     static NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_reallocation_keeps_old_guard_until_replacement_then_unprotects_its_tail() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::guarded_reallocation_keeps_old_guard_until_replacement_then_unprotects_its_tail",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(block) = native_allocate(8192 - crate::config::PADDING_SIZE, false) else { panic!("old block"); };
+                let NativePageAllocationResult::Allocated(keeper) = native_allocate(8192 - crate::config::PADDING_SIZE, false) else { panic!("Page keeper"); };
+                let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                // SAFETY: the two exclusively held clients retain one Page.
+                assert_eq!(unsafe { map.lookup_live_allocation(block) }.unwrap().unwrap().page(),
+                    unsafe { map.lookup_live_allocation(keeper) }.unwrap().unwrap().page());
+                // SAFETY: this fixture owns the canonical block and performs
+                // source guarded placement under its retained Heap/member.
+                let (client, tail) = unsafe { with_guarded_live_block(default_theap(), block, |facts| {
+                    let tail = facts.canonical.as_ptr().add(facts.block_size - facts.os_page_size);
+                    facts.canonical.cast::<usize>().as_ptr().write(usize::MAX);
+                    let client = NonNull::new_unchecked(facts.canonical.as_ptr().add(core::mem::size_of::<usize>()));
+                    core::ptr::write_bytes(client.as_ptr(), 0x63, 81);
+                    assert_eq!(crate::os::protect_guarded_live_range(tail, facts.os_page_size, true, facts.process), Ok(true));
+                    (client, tail.addr())
+                }) }.unwrap();
+                // SAFETY: source-valid exclusive old-client lifetime extends
+                // across both replacement attempts; failure must keep it live.
+                assert!(matches!(unsafe { native_reallocate(Some(client), usize::MAX) }, NativePageAllocationResult::AllocationFailed));
+                assert!(native_mapping_permissions_for_test(tail).starts_with("---"));
+                let NativePageAllocationResult::Allocated(replacement) = (unsafe { native_reallocate(Some(client), 16384) }) else {
+                    panic!("successful replacement");
+                };
+                assert_ne!(replacement, client);
+                // SAFETY: the successful replacement owns the copied prefix.
+                assert!(unsafe { core::slice::from_raw_parts(replacement.as_ptr(), 81) }.iter().all(|byte| *byte == 0x63));
+                assert!(native_mapping_permissions_for_test(tail).starts_with("rw"), "captured free must unprotect the old guard");
+                assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_free(keeper) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    fn native_mapping_permissions_for_test(address: usize) -> std::string::String {
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        for line in maps.lines() {
+            let mut fields = line.split_whitespace();
+            let (start, end) = fields.next().unwrap().split_once('-').unwrap();
+            if (usize::from_str_radix(start, 16).unwrap()..usize::from_str_radix(end, 16).unwrap()).contains(&address) {
+                return fields.next().unwrap().into();
+            }
+        }
+        panic!("the keeper client retains this Page mapping");
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_client_free_unprotects_only_its_tail_before_releasing_the_block() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::guarded_client_free_unprotects_only_its_tail_before_releasing_the_block",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let NativePageAllocationResult::Allocated(first) = native_allocate(8192 - crate::config::PADDING_SIZE, false) else { panic!("first canonical block"); };
+                let NativePageAllocationResult::Allocated(second) = native_allocate(8192 - crate::config::PADDING_SIZE, false) else { panic!("second canonical block"); };
+                let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                // SAFETY: both independently owned live clients retain their Page.
+                assert_eq!(unsafe { map.lookup_live_allocation(first) }.unwrap().unwrap().page(),
+                    unsafe { map.lookup_live_allocation(second) }.unwrap().unwrap().page());
+                let theap = default_theap();
+                let mut tails = [0usize; 2];
+                let mut clients = [first; 2];
+                for (index, block) in [first, second].into_iter().enumerate() {
+                    // SAFETY: the test performs the source guarded placement on
+                    // its exclusively owned canonical block, with the actual
+                    // Heap and member retained and no engine projection held.
+                    clients[index] = unsafe { with_guarded_live_block(theap, block, |facts| {
+                        let tail = facts.canonical.as_ptr().add(facts.block_size - facts.os_page_size);
+                        assert_eq!(tail.addr() % facts.os_page_size, 0);
+                        facts.canonical.cast::<usize>().as_ptr().write(usize::MAX);
+                        assert_eq!(crate::os::protect_guarded_live_range(tail, facts.os_page_size, true, facts.process), Ok(true));
+                        tails[index] = tail.addr();
+                        NonNull::new_unchecked(facts.canonical.as_ptr().add(core::mem::size_of::<usize>()))
+                    }) }.unwrap();
+                    assert!(native_mapping_permissions_for_test(tails[index]).starts_with("---"));
+                }
+                // SAFETY: each pointer is the exact exclusively owned source
+                // guarded client; the second keeps the common Page live.
+                assert_eq!(unsafe { native_free(clients[0]) }, NativePageFreeResult::Freed);
+                assert!(native_mapping_permissions_for_test(tails[0]).starts_with("rw"), "the released client's tail must be unprotected");
+                assert!(native_mapping_permissions_for_test(tails[1]).starts_with("---"), "another live client's guard must remain protected");
+                assert_eq!(unsafe { native_free(clients[1]) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
