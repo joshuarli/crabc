@@ -1153,7 +1153,7 @@ impl MainStaticTheapAttachment {
                 // unpublished. The short provenance write ends before any
                 // prepared phase or callback exists.
                 if !unsafe { (&mut *theap.as_ptr()).set_main_static_memid(
-                    MemoryId::static_allocation(theap.cast(), size_of::<Theap>())) } {
+                    MemoryId::static_allocation(theap.as_ptr().cast(), size_of::<Theap>())) } {
                     return Err(MainStaticTheapError::TheapInit(TheapMainStaticInitError::InvalidInput));
                 }
                 let phase = unsafe { Theap::prepare_initialization_at(theap, heap, tld_pointer,
