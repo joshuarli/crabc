@@ -6474,6 +6474,8 @@ pub(crate) struct PreparedTheapInitialization {
 /// Attachment failure with its exact list disposition. Only a failed lock
 /// acquisition preserves the unattached phase; an unlock failure occurs after
 /// the incoming image has been linked and must retain its storage terminally.
+/// An unattached phase does not prove its TLD mutex is quiescent: a foreign
+/// guard or waiter may still retain that exact lock and its containing image.
 #[cfg(target_arch = "x86_64")]
 #[must_use]
 pub(crate) struct TheapAttachmentFailure {
@@ -6599,6 +6601,8 @@ impl PreparedTheapInitialization {
     /// The real allocation owner still retains exclusive authority over this
     /// original image and excludes every projection and retirement. The
     /// returned pointer does not grant allocation or release authority.
+    /// This resets only the Theap. It does not permit resetting or replacing
+    /// the containing TLD or its mutex while a guard or waiter remains live.
     pub(crate) unsafe fn reset_unattached(self) -> NonNull<Theap> {
         let image = unsafe { &mut *self.theap.as_ptr() };
         let memory_id = image.memid;
@@ -9213,6 +9217,165 @@ mod tests {
             assert!((*tld.as_ptr()).theaps.is_null());
             assert!(Theap::prepare_initialization_at(image, heap, tld,
                 TheapInitializationKind::MetadataStatic).is_ok());
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn unattached_reset_preserves_live_tld_mutex_and_original_owner_image() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let heap = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let mut tld = std::boxed::Box::new(ThreadLocalData::detached());
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let tld = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        let mut image = std::boxed::Box::new(Theap::empty());
+        assert!(image.set_detached_main_metadata_static_memid());
+        let image = NonNull::new(core::ptr::addr_of_mut!(*image)).unwrap();
+        // The fixture keeps both original allocations retained. Resetting
+        // the unattached Theap must not reset the live mutex in its TLD;
+        // another initializer remains refused until the real guard ends.
+        unsafe {
+            let prepared = Theap::prepare_initialization_at(image, heap, tld,
+                TheapInitializationKind::MetadataStatic).unwrap();
+            assert_eq!(ThreadLocalData::with_locked_theap_list_for_test_at(tld, || {
+                let failure = match prepared.apply_source_options_and_attach_with_failure_owner(
+                    SourceTheapOptions::release_defaults_for_test()) {
+                    Err(failure) => failure,
+                    Ok(_) => panic!("held mutex permitted attachment"),
+                };
+                assert_eq!(failure.into_unattached().unwrap().reset_unattached(), image);
+                assert!((*image.as_ptr()).subproc.load(Ordering::Acquire).is_null());
+                assert_eq!((*image.as_ptr()).tld, detached_thread_local_ptr());
+                assert_eq!((*image.as_ptr()).memid.kind(), MemoryKind::Static);
+                assert_eq!((*tld.as_ptr()).subprocess, PARENT.identity_ptr());
+                assert_eq!((*tld.as_ptr()).memid.kind(), MemoryKind::Static);
+                assert!(ThreadLocalData::with_locked_theap_list_for_test_at(tld, || ()).is_none());
+                assert!(matches!(Theap::prepare_initialization_at(image, heap, tld,
+                    TheapInitializationKind::MetadataStatic),
+                    Err(TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy))));
+                23
+            }), Some(23));
+            let prepared = Theap::prepare_initialization_at(image, heap, tld,
+                TheapInitializationKind::MetadataStatic).unwrap();
+            assert_eq!(prepared.reset_unattached(), image);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn unattached_phase_resume_splits_callback_published_head_after_real_mutex_failure() {
+        use crate::config::SourceOption;
+        use crate::diagnostic_output::OutputOwner;
+        struct Observation {
+            output: *const OutputOwner,
+            incoming: NonNull<Theap>,
+            callback_image: NonNull<Theap>,
+            heap: NonNull<Heap>,
+            tld: NonNull<ThreadLocalData>,
+            environment: [*const core::ffi::c_char; 2],
+            calls: core::cell::Cell<usize>,
+        }
+        std::thread_local! {
+            static ACTIVE: core::cell::Cell<*const Observation> = const { core::cell::Cell::new(core::ptr::null()) };
+        }
+        unsafe fn environment() -> *const *const core::ffi::c_char {
+            ACTIVE.with(|slot| if slot.get().is_null() { core::ptr::null() }
+                else { unsafe { (&*slot.get()).environment.as_ptr() } })
+        }
+        unsafe extern "C" fn warning(message: *const core::ffi::c_char) {
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"page_reclaim_on_free".len()).any(|part| part == b"page_reclaim_on_free") { return; }
+            ACTIVE.with(|slot| unsafe {
+                // The allocating fixture retains these original capabilities;
+                // no list guard or owner-field borrow spans warning delivery.
+                let observation = &*slot.get();
+                assert!((*observation.tld.as_ptr()).theaps.is_null());
+                assert!((*observation.incoming.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                let sibling = Theap::prepare_initialization_at(observation.callback_image,
+                    observation.heap, observation.tld, TheapInitializationKind::MetadataStatic).unwrap();
+                let linked = finish_unfaulted_test_random(sibling.apply_source_options_and_attach(
+                    SourceTheapOptions::release_defaults_for_test()).unwrap());
+                #[cfg(feature = "mi-guarded")]
+                let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 0, sample_seed: 0 })
+                    .apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+                #[cfg(not(feature = "mi-guarded"))]
+                let ready = linked.finish_without_guarded_options();
+                ready.publish_heap().unwrap();
+                (*observation.callback_image.as_ptr()).random.test_stage_buffered_nexts(13, 17);
+                (&*observation.output).option_set(SourceOption::PageReclaimOnFree, -1).unwrap();
+                observation.calls.set(observation.calls.get() + 1);
+            });
+        }
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let heap = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let mut tld = std::boxed::Box::new(ThreadLocalData::detached());
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let tld = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        let mut incoming = std::boxed::Box::new(Theap::empty());
+        let mut callback_image = std::boxed::Box::new(Theap::empty());
+        assert!(incoming.set_detached_main_metadata_static_memid());
+        assert!(callback_image.set_detached_main_metadata_static_memid());
+        let incoming = NonNull::new(core::ptr::addr_of_mut!(*incoming)).unwrap();
+        let callback_image = NonNull::new(core::ptr::addr_of_mut!(*callback_image)).unwrap();
+        let output = OutputOwner::new(warning);
+        unsafe {
+            output.initialize_source_options(environment);
+            output.option_set(SourceOption::ShowErrors, 1).unwrap();
+            output.option_set(SourceOption::Verbose, 0).unwrap();
+            output.option_set(SourceOption::PageFullRetain, 32).unwrap();
+            output.post_init();
+        }
+        let observation = Observation {
+            output: core::ptr::from_ref(&output), incoming, callback_image, heap, tld,
+            environment: [c"mimalloc_page_reclaim_on_free=invalid".as_ptr(), core::ptr::null()],
+            calls: core::cell::Cell::new(0),
+        };
+        // The real source mutex first refuses attachment without consuming
+        // allocation custody. Its returned phase survives a real option
+        // warning that publishes another head, then snapshots that new head.
+        unsafe {
+            let prepared = Theap::prepare_initialization_at(incoming, heap, tld,
+                TheapInitializationKind::MetadataStatic).unwrap();
+            let result = ThreadLocalData::with_locked_theap_list_for_test_at(tld, ||
+                prepared.apply_source_options_and_attach_with_failure_owner(SourceTheapOptions::release_defaults_for_test())).unwrap();
+            let failure = match result { Err(failure) => failure, Ok(_) => panic!("held mutex permitted attachment") };
+            assert_eq!(failure.error(), TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Busy));
+            let prepared = failure.into_unattached().unwrap();
+            ACTIVE.with(|slot| slot.set(core::ptr::from_ref(&observation)));
+            let options = SourceTheapOptions::capture_from_output(&output);
+            ACTIVE.with(|slot| slot.set(core::ptr::null()));
+            assert_eq!(observation.calls.get(), 1);
+            assert_eq!((*tld.as_ptr()).theaps, callback_image.as_ptr());
+            let available = (*callback_image.as_ptr()).random.test_output_available();
+            let linked = match prepared.apply_source_options_and_attach(options).unwrap() {
+                TheapRandomInitialization::SplitComplete(linked) => linked,
+                TheapRandomInitialization::FirstHead(_) => panic!("resume lost callback-published head"),
+            };
+            assert_eq!((*callback_image.as_ptr()).random.test_output_available(), available);
+            assert_eq!((*incoming.as_ptr()).refcount.load(Ordering::Acquire), 1);
+            assert_eq!((*incoming.as_ptr()).tnext, callback_image.as_ptr());
+            assert_eq!((*callback_image.as_ptr()).tprev, incoming.as_ptr());
+            assert!((*incoming.as_ptr()).random.is_initialized());
+            assert_eq!((*incoming.as_ptr()).cookie & 1, 1);
+            assert!((*incoming.as_ptr()).heap.load(Ordering::Acquire).is_null());
+            assert!(!(*incoming.as_ptr()).allow_page_reclaim);
+            assert_eq!((*incoming.as_ptr()).page_full_retain, 32);
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions { sample_rate: 0, sample_seed: 0 })
+                .apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            for pointer in [incoming, callback_image] {
+                (*tld.as_ptr()).detach_one_theap_from_heap(&mut *heap.as_ptr(), pointer.as_ptr()).unwrap();
+                (*tld.as_ptr()).detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
+            }
         }
     }
 
