@@ -39,8 +39,102 @@
 #include <wchar.h>
 
 #include "mimalloc.h"
-#ifdef CRABC_MI_M4_SOURCE_CANARY
+#if defined(CRABC_MI_M4_SOURCE_CANARY) || defined(CRABC_MI_M4_SOURCE_FRESH_PAGE_ORDER)
 #include "mimalloc/internal.h"
+#endif
+
+#ifdef CRABC_MI_M4_SOURCE_FRESH_PAGE_ORDER
+#if MI_DEBUG < 3 || MI_GUARDED != 0
+#error "Fresh-page observation requires the ordinary source path and its expensive zero assertion"
+#endif
+/* Only the selected source build includes this translation unit. The link
+ * closure omits its ordinary page.c member so every definition stays singular.
+ * The inline predicate is already defined above; interposition here observes
+ * the actual page initializer's call and preserves its bytes and result. */
+static bool fresh_page_zero_observe(const void* start, size_t size);
+#define mi_mem_is_zero(start, size) fresh_page_zero_observe(start, size)
+#include "page.c"
+#undef mi_mem_is_zero
+
+static bool fresh_page_armed;
+static mi_page_t* fresh_page;
+static size_t fresh_page_register_calls;
+static size_t fresh_page_zero_calls;
+static bool fresh_page_register_succeeded;
+static bool fresh_page_primary_before_register;
+static size_t fresh_page_aliases_before_register;
+static bool fresh_page_aliases_match_before_register;
+static bool fresh_page_counted;
+static bool fresh_page_bin_counted;
+static bool fresh_page_zero_after_registration;
+static bool fresh_page_zero_after_statistics;
+static bool fresh_page_zero_before_free_list;
+static bool fresh_page_zero_before_queue;
+static bool fresh_page_zero_result;
+
+bool __real__mi_page_map_register(mi_page_t* page);
+void __real___mi_stat_increase(mi_stat_count_t* stat, size_t amount);
+
+bool __wrap__mi_page_map_register(mi_page_t* page) {
+  const bool selected = fresh_page_armed && page->memid.memkind == MI_MEM_OS
+      && mi_page_theap(page) == _mi_theap_default()
+      && page->block_size >= 64 * 1024 && page->block_size <= 128 * 1024;
+  if (selected) {
+    fresh_page = page;
+    fresh_page_register_calls++;
+    fresh_page_primary_before_register =
+        mi_atomic_load_ptr_acquire(mi_page_t, &page->self) == page;
+    size_t area_size;
+    uint8_t* const area = mi_page_area(page, &area_size);
+    fresh_page_aliases_match_before_register = true;
+    for (size_t offset = 0; offset < area_size; offset += MI_ARENA_SLICE_SIZE) {
+      mi_page_t* const alias = _mi_aligned_ptr_page0(area + offset);
+      if (alias != page) {
+        fresh_page_aliases_before_register++;
+        fresh_page_aliases_match_before_register =
+            fresh_page_aliases_match_before_register
+            && mi_atomic_load_ptr_acquire(mi_page_t, &alias->self) == page;
+      }
+    }
+  }
+  const bool result = __real__mi_page_map_register(page);
+  if (selected) { fresh_page_register_succeeded = result; }
+  return result;
+}
+
+void __wrap___mi_stat_increase(mi_stat_count_t* stat, size_t amount) {
+  __real___mi_stat_increase(stat, amount);
+  if (fresh_page != NULL && fresh_page_armed) {
+    mi_theap_t* const theap = mi_page_theap(fresh_page);
+    if (stat == &theap->stats.pages) {
+      fresh_page_counted = amount == 1 && stat->current > 0;
+    }
+    if (stat == &theap->stats.page_bins[_mi_page_stats_bin(fresh_page)]) {
+      fresh_page_bin_counted = amount == 1 && stat->current > 0;
+    }
+  }
+}
+
+static bool fresh_page_zero_observe(const void* start, size_t size) {
+  /* This calls the original inline byte predicate. In particular, the earlier
+   * backing-memory check in arena.c remains outside this translation unit. */
+  const bool result = mi_mem_is_zero(start, size);
+  if (fresh_page_armed && fresh_page != NULL
+      && start == mi_page_start(fresh_page) && fresh_page->capacity == 0) {
+    fresh_page_zero_calls++;
+    fresh_page_zero_after_registration = fresh_page_register_succeeded
+        && _mi_checked_ptr_page(start) == fresh_page
+        && _mi_checked_ptr_page((const uint8_t*)start + size - 1) == fresh_page;
+    fresh_page_zero_after_statistics = fresh_page_counted && fresh_page_bin_counted;
+    fresh_page_zero_before_free_list = fresh_page->free == NULL
+        && fresh_page->local_free == NULL && fresh_page->used == 0;
+    mi_page_queue_t* const queue = mi_page_queue(mi_page_theap(fresh_page), fresh_page->block_size);
+    fresh_page_zero_before_queue = queue->first != fresh_page
+        && queue->last != fresh_page && fresh_page->next == NULL && fresh_page->prev == NULL;
+    fresh_page_zero_result = result;
+  }
+  return result;
+}
 #endif
 
 #define TRACE_BEGIN "CRABC_MI_M4_OPERATIONS_TRACE_BEGIN"
@@ -1486,7 +1580,57 @@ static int run_precondition_control(const char* name) {
   return 0;
 }
 
+#ifdef CRABC_MI_M4_SOURCE_FRESH_PAGE_ORDER
+static int run_fresh_page_order(void) {
+  mi_option_set(mi_option_arena_reserve, 0);
+  mi_option_set(mi_option_page_commit_on_demand, 0);
+  mi_option_set_enabled(mi_option_allow_large_os_pages, false);
+  mi_option_set_enabled(mi_option_allow_thp, false);
+  mi_process_init();
+  fresh_page_armed = true;
+  void* const allocation = mi_calloc(1, 64 * KiB);
+  fresh_page_armed = false;
+  const bool fresh_os_page = allocation != NULL && fresh_page != NULL
+      && fresh_page->memid.memkind == MI_MEM_OS
+      && _mi_checked_ptr_page(allocation) == fresh_page;
+  const bool source_assertion_observed = fresh_page_zero_calls == 1;
+  const bool published_free_list = fresh_os_page && fresh_page->capacity > 0
+      && fresh_page->used == 1;
+  const bool published_queue = fresh_os_page
+      && mi_page_queue(mi_page_theap(fresh_page), fresh_page->block_size)->first == fresh_page;
+  const bool client_zero = allocation != NULL && is_zero(allocation, 64 * KiB);
+  puts("CRABC_MI_SOURCE_FRESH_PAGE_ORDER_TRACE_BEGIN");
+  line("fresh_os_page", "%d", fresh_os_page);
+  line("registration_calls", "%zu", fresh_page_register_calls);
+  line("primary_before_registration", "%d", fresh_page_primary_before_register);
+  line("alias_count_before_registration", "%zu", fresh_page_aliases_before_register);
+  line("aliases_before_registration", "%d", fresh_page_aliases_match_before_register);
+  line("source_zero_calls", "%zu", fresh_page_zero_calls);
+  line("zero_after_registration", "%d", fresh_page_zero_after_registration);
+  line("zero_after_statistics", "%d", fresh_page_zero_after_statistics);
+  line("zero_before_free_list", "%d", fresh_page_zero_before_free_list);
+  line("zero_before_queue", "%d", fresh_page_zero_before_queue);
+  line("source_zero_result", "%d", fresh_page_zero_result);
+  line("published_free_list", "%d", published_free_list);
+  line("published_queue", "%d", published_queue);
+  line("client_zero", "%d", client_zero);
+  puts("CRABC_MI_SOURCE_FRESH_PAGE_ORDER_TRACE_END");
+  mi_free(allocation);
+  return fresh_os_page && fresh_page_register_calls == 1
+      && fresh_page_primary_before_register && fresh_page_aliases_before_register > 0
+      && fresh_page_aliases_match_before_register && source_assertion_observed
+      && fresh_page_zero_after_registration && fresh_page_zero_after_statistics
+      && fresh_page_zero_before_free_list && fresh_page_zero_before_queue
+      && fresh_page_zero_result && published_free_list && published_queue && client_zero ? 0 : 3;
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef CRABC_MI_M4_SOURCE_FRESH_PAGE_ORDER
+  if (argc == 2 && strcmp(argv[1], "source-fresh-page-order") == 0) {
+    return run_fresh_page_order();
+  }
+#endif
   setvbuf(stdout, NULL, _IOLBF, 0);
   if (argc != 2 && argc != 3) { return 2; }
   valid_domain = argc == 3 && strcmp(argv[2], "--valid-domain") == 0;
