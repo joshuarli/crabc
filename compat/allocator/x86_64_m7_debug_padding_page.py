@@ -27,6 +27,10 @@ REPORT = harness.ARTIFACT_ROOT / "x86_64/m7-debug-padding/page.json"
 TARGET = "x86_64-unknown-linux-musl"
 STATICLIB = "libcrabc_mimalloc_native_mi_adapter.a"
 RUNNER = "allocator-debug-padding-page"
+C_FLAGS = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
+                if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))) + (
+                    "-DMI_DEBUG=1", "-DMI_PADDING=1", "-DMI_STAT=2")
+RUST_FEATURE = "crabc-mimalloc/mi-debug-1"
 
 
 def read_and_replay(replay: bool = False) -> None:
@@ -35,7 +39,7 @@ def read_and_replay(replay: bool = False) -> None:
                       "rust-clean", "rust-corrupt", "comparison"]
     if receipt.case_ids() != expected_cases:
         raise harness.HarnessError("debug-padding page build, runtime and comparison phases differ")
-    if set(receipt.products) != {"c", "rust", FIXTURE.name, "mimalloc-3.5.0.tar.gz", "inputs.json", "page.json"}:
+    if set(receipt.products) != {"c", "rust", FIXTURE.name, "mimalloc-3.5.0.tar.gz", "inputs.json", "page.json", "native-library"}:
         raise harness.HarnessError("debug-padding page source inputs and caller products differ")
     if receipt.parameters != {"debug": "1", "padding": "1", "stat": "2"}:
         raise harness.HarnessError("debug-padding page selected configuration differs")
@@ -53,6 +57,83 @@ def read_and_replay(replay: bool = False) -> None:
     execution = harness.require_native_x86_64(require_image_identity=True)
     inputs = json.loads((products / "inputs.json").read_text())
     harness.validate_native_execution_provenance(inputs["execution"], expected_image_id=execution["image_id"])
+    pin = harness.load_pin()
+    compiler = harness.require_tool("musl-gcc")
+    cargo = harness.require_tool("cargo")
+    if (inputs["source"] != receipts.source_seal(harness.ROOT) or inputs["upstream"] != pin
+            or inputs["compiler"] != engine.file_record(Path(compiler))
+            or inputs["cargo"] != engine.file_record(Path(cargo))
+            or inputs["fixture"] != engine.file_record(FIXTURE)
+            or inputs["c-flags"] != list(C_FLAGS) or inputs["rust-feature"] != RUST_FEATURE):
+        raise harness.HarnessError("debug-padding page source, compiler or selected configuration differs")
+    if hashlib.sha256((products / FIXTURE.name).read_bytes()).hexdigest() != hashlib.sha256(FIXTURE.read_bytes()).hexdigest():
+        raise harness.HarnessError("debug-padding page retained caller differs from the selected source")
+    if hashlib.sha256((products / "mimalloc-3.5.0.tar.gz").read_bytes()).hexdigest() != pin["sha256"]:
+        raise harness.HarnessError("debug-padding page retained oracle archive differs from the pin")
+    relative = Path(json.loads(receipt.path.read_text())["work"])
+    original = harness.ROOT / relative
+    if (relative.is_absolute() or ".." in relative.parts or original.parent != REPORT.parent
+            or not original.name.startswith("page-") or not original.resolve().is_relative_to(harness.ROOT / ".work")):
+        raise harness.HarnessError("debug-padding page original output escaped its owned namespace")
+    source = original / "source" / pin["archive_root"]
+    target = harness.WORK_ROOT / "cargo-target/m7-debug-padding-page"
+    library = target / TARGET / "release" / STATICLIB
+    common = [compiler, "-std=c11", "-O2", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+              *C_FLAGS, "-I", str(source / "include"), str(FIXTURE)]
+    commands = {
+        "c-build": [*common, str(source / "src/static.c"), "-pthread", "-o", str(original / "debug-padding-page-c")],
+        "rust-build": [cargo, "build", "--locked", "--offline", "--release", "--message-format=json",
+            "--target", TARGET, "-p", "crabc-mimalloc-native-mi-adapter", "--no-default-features",
+            "--features", RUST_FEATURE, "--target-dir", str(target)],
+        "rust-link": [*common, str(original / "native-mi-adapter.a"), "-pthread", "-o", str(original / "debug-padding-page-rust")],
+    }
+    records = {}
+    for case in receipt.cases[:3]:
+        name = case["id"]
+        if list(case["logs"]) != [name + ".json"]:
+            raise harness.HarnessError("debug-padding page original build record roster differs")
+        record = json.loads((receipt.path.parent / "logs" / (name + ".json")).read_text())
+        product = {"c-build": "c", "rust-build": "native-library", "rust-link": "rust"}[name]
+        output = library if name == "rust-build" else Path(commands[name][-1])
+        expected_artifact = {"path": harness.relative(output), "sha256": receipt.products[product]["sha256"],
+                             "bytes": receipt.products[product]["size"]}
+        if (record.get("command") != commands[name] or record.get("status") != 0
+                or record.get("artifact") != expected_artifact
+                or report[{"c-build": "c_build_command", "rust-build": "rust_build_command", "rust-link": "rust_link_command"}[name]] != commands[name]):
+            raise harness.HarnessError("debug-padding page original compiler or provider link binding differs")
+        records[name] = record
+    emitted = [json.loads(line) for line in str(records["rust-build"]["stdout"]).splitlines() if line.startswith("{")]
+    adapter = [item for item in emitted if item.get("reason") == "compiler-artifact"
+               and item.get("target", {}).get("name") == "crabc_mimalloc_native_mi_adapter"]
+    allocator = [item for item in emitted if item.get("reason") == "compiler-artifact"
+                 and item.get("target", {}).get("name") == "crabc_mimalloc"]
+    release = {"opt_level": "3", "debuginfo": 0, "debug_assertions": False, "overflow_checks": False, "test": False}
+    if (len(adapter) != 1 or str(library) not in adapter[0].get("filenames", [])
+            or adapter[0].get("target", {}).get("kind") != ["staticlib"]
+            or adapter[0].get("features") != [] or adapter[0].get("profile") != release
+            or len(allocator) != 1 or allocator[0].get("features") != ["mi-debug-1", "mi-stat-2"]
+            or allocator[0].get("profile") != release):
+        raise harness.HarnessError("debug-padding page compiler-emitted native provider configuration differs")
+    harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="debug-padding-page-binding-", dir=harness.TEMP_ROOT))
+    pinned = harness.safe_extract(products / "mimalloc-3.5.0.tar.gz", scratch / "source", pin["archive_root"])
+    for directory in ("src", "include"):
+        expected_files = {path.relative_to(pinned).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                          for path in (pinned / directory).rglob("*") if path.is_file()}
+        actual_files = {path.relative_to(source).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in (source / directory).rglob("*") if path.is_file()}
+        if actual_files != expected_files:
+            raise harness.HarnessError("debug-padding page original compiler source differs from the pinned archive")
+    for side, phase in (("c", "c-build"), ("rust", "rust-link")):
+        command = commands[phase][:]
+        command[-1] = str(scratch / side)
+        if side == "rust":
+            command[-4] = str(products / "native-library")
+        linked = harness.command_record(command, cwd=source, timeout_seconds=300)
+        harness.write_json(scratch / (side + "-binding.json"), linked)
+        harness.require_success(linked, f"debug-padding page {side} retained provider link")
+        if hashlib.sha256((scratch / side).read_bytes()).hexdigest() != receipt.products[side]["sha256"]:
+            raise harness.HarnessError(f"debug-padding page {side} caller differs from its selected provider link")
     print("debug-padding page exact-source physical receipt: PASS")
     if not replay:
         return
@@ -106,9 +187,7 @@ def main() -> int:
         return result
     with contextlib.nullcontext(output) as temporary:
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        profile = [flag for flag in harness.CONFIGURATION_PROFILES["release"]
-                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))]
-        profile.extend(("-DMI_DEBUG=1", "-DMI_PADDING=1", "-DMI_STAT=2"))
+        profile = C_FLAGS
         common = [compiler, "-std=c11", "-O2", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
                   *profile, "-I", str(source / "include"), str(FIXTURE)]
         c_binary = temporary / "debug-padding-page-c"
@@ -116,19 +195,28 @@ def main() -> int:
             *common, str(source / "src/static.c"), "-pthread", "-o", str(c_binary),
         ], cwd=source)
         harness.require_success(c_build, "pinned debug-padding page C build")
+        c_build["artifact"] = engine.file_record(c_binary)
+        harness.write_json(output / "c-build.json", c_build)
         target = harness.WORK_ROOT / "cargo-target/m7-debug-padding-page"
         rust_build = record("rust-build", [
-            cargo, "build", "--locked", "--offline", "--release", "--target", TARGET,
+            cargo, "build", "--locked", "--offline", "--release", "--message-format=json", "--target", TARGET,
             "-p", "crabc-mimalloc-native-mi-adapter", "--no-default-features",
-            "--features", "crabc-mimalloc/mi-debug-1", "--target-dir", str(target),
+            "--features", RUST_FEATURE, "--target-dir", str(target),
         ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=3600)
         harness.require_success(rust_build, "native debug-padding page adapter build")
+        library = target / TARGET / "release" / STATICLIB
+        rust_build["artifact"] = engine.file_record(library)
+        harness.write_json(output / "rust-build.json", rust_build)
+        retained_library = output / "native-mi-adapter.a"
+        shutil.copy2(library, retained_library)
         rust_binary = temporary / "debug-padding-page-rust"
         rust_link = record("rust-link", [
-            *common, str(target / TARGET / "release" / STATICLIB),
+            *common, str(retained_library),
             "-pthread", "-o", str(rust_binary),
         ], cwd=source)
         harness.require_success(rust_link, "native debug-padding page driver link")
+        rust_link["artifact"] = engine.file_record(rust_binary)
+        harness.write_json(output / "rust-link.json", rust_link)
         traces = {}
         executions = {}
         expected_keys = {
@@ -212,12 +300,14 @@ def main() -> int:
     retained_report = output / "page.json"
     harness.write_json(retained_report, report)
     inputs = output / "inputs.json"
-    harness.write_json(inputs, {"source": seal, "execution": execution_provenance, "upstream": pin})
+    harness.write_json(inputs, {"source": seal, "execution": execution_provenance, "upstream": pin,
+        "compiler": engine.file_record(Path(compiler)), "cargo": engine.file_record(Path(cargo)),
+        "fixture": engine.file_record(FIXTURE), "c-flags": list(C_FLAGS), "rust-feature": RUST_FEATURE})
     comparison = output / "comparison.json"
     harness.write_json(comparison, {"mismatch_keys": mismatch})
     cases.append(("comparison", int(any(mismatch.values())), [comparison]))
     receipts.write_receipt(harness.ROOT, RUNNER, output,
-        {"c": c_binary, "rust": rust_binary, FIXTURE.name: FIXTURE,
+        {"c": c_binary, "rust": rust_binary, "native-library": retained_library, FIXTURE.name: FIXTURE,
          "mimalloc-3.5.0.tar.gz": archive, "inputs.json": inputs, "page.json": retained_report},
         cases, {"debug": "1", "padding": "1", "stat": "2"}, True)
     for case, values in mismatch.items():
