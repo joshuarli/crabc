@@ -235,6 +235,8 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         + 'domain_scalar: ' + ('.fill ' + str(size) + ',1,0x5a' if storage.startswith('rodata') else '.zero ' + str(size))
                         + '\n.size domain_scalar,.-domain_scalar\n'
                         + ('.reloc domain_scalar,R_X86_64_NONE,0\n' if storage == 'rodata-reloc' else '')
+                        + ('.section .rodata.str1.1,"aMS",@progbits,1\n.asciz "merged companion"\n'
+                           if storage == 'rodata' else '')
                         + '.section .note.GNU-stack,"",@progbits\n')
                     (work / 'caller.S').write_text(
                         '.section .text.domain_caller,"ax",@progbits\n.globl domain_caller\n.hidden domain_caller\n'

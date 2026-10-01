@@ -541,7 +541,10 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and 0 < final_symbol['section'] < len(final.sections),
                     f'provider {name} integer final symbol differs')
             output = final.sections[final_symbol['section']]
-            require(output[1] == header[1] and output[2] == (2 if readonly else 3)
+            # A linker may combine ordinary constants and mergeable constants
+            # in one immutable output section. The source object remains
+            # ordinary and its selected member map supplies ownership.
+            require(output[1] == header[1] and (output[2] in {2, 18, 50} if readonly else output[2] == 3)
                     and output[3] <= provider_address
                     and provider_address + symbol['size'] <= output[3] + output[5]
                     and (output[1] == 8 or output[4] + output[5] <= len(image)),
