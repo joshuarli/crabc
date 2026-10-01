@@ -818,6 +818,7 @@ static size_t retention_cycle;
    destruction releases those complete parents after all workers have joined.
    PageMap submaps remain process-owned for every newly covered address range. */
 static long retention_arena_reserve_kib;
+static bool retention_geometry_selected, retention_geometry_emitted;
 
 static void retention_add_root(const char* category, const void* base, size_t size) {
   const uintptr_t start = (uintptr_t)base;
@@ -852,15 +853,30 @@ static void retention_process_page_map_roots(void) {
 #else
   mi_page_map_t* pmap = _mi_page_map();
   require(pmap != NULL && pmap != &mi_page_map_empty);
+  size_t root_bytes = 0, slots = 0;
   mi_lock(&pmap->lock) {
     require(mi_memid_is_os(pmap->memid));
     retention_add_root("process-pagemap", pmap->memid.mem.os.base, pmap->memid.mem.os.size);
     const size_t count = mi_atomic_load_acquire(&pmap->committed_count);
     require(count <= mi_page_map_count_of_size(pmap->reserved_size));
+    if (retention_geometry_selected && !retention_geometry_emitted) {
+      root_bytes = pmap->memid.mem.os.size;
+      slots = mi_page_map_count_of_size(pmap->reserved_size);
+    }
     for (size_t idx = 1; idx < count; idx++) {
       mi_submap_t sub = mi_atomic_load_ptr_acquire(mi_page_t*, &pmap->submaps[idx]);
       if (sub != NULL) retention_add_root("process-pagemap", sub, MI_PAGE_MAP_SUB_SIZE);
     }
+  }
+  if (root_bytes != 0) {
+    require(slots > 0 && slots - 1 <= (SIZE_MAX - root_bytes) / MI_PAGE_MAP_SUB_SIZE);
+    /* Slot zero is embedded in the observed root allocation. Each remaining
+       reserved slot can publish one process-lived submap, independently of
+       child metadata lifetime. Print copied geometry after releasing the lock. */
+    fprintf(stderr, "source_root_bound arena_reserve_kib=%ld pagemap_root_bytes=%zu pagemap_slots=%zu submap_bytes=%zu maximum_pagemap_bytes=%zu\n",
+      retention_arena_reserve_kib, root_bytes, slots, (size_t)MI_PAGE_MAP_SUB_SIZE,
+      root_bytes + (slots - 1) * MI_PAGE_MAP_SUB_SIZE);
+    retention_geometry_emitted = true;
   }
 #endif
 }
@@ -939,6 +955,13 @@ static void retention_child_coverage(size_t child) {
     const retention_root_t* root = &retention_roots[i];
     require(root->covered <= root->end - root->start);
     if (strcmp(root->category, "external-raw") == 0) require(root->covered == 0);
+    if (retention_geometry_selected) {
+      if (strcmp(root->category, "process-pagemap") == 0) require(root->covered == root->end - root->start);
+      /* Selected automatic arenas own complete OS parents. After joined
+         child destruction their mappings must be gone; direct OS metadata
+         pages under zero reservation keep their separate source lifetime. */
+      if (retention_arena_reserve_kib > 0 && strcmp(root->category, "os-arena") == 0) require(root->covered == 0);
+    }
     printf("m2.arena.retention.root.%zu.%zu.%zu.%s=%zu,%zu,%zu\n",
       retention_cycle, child, i, root->category, (size_t)root->start, (size_t)root->end, root->covered);
   }
@@ -1010,19 +1033,7 @@ int main(int argc, char** argv) {
       const unsigned long requested = strtoul(selected_reserve, &end, 10);
       require(end != selected_reserve && *end == '\0' && requested <= 1024 * 1024);
       retention_arena_reserve_kib = (long)requested;
-#if !MI_PAGE_MAP_FLAT
-      mi_page_map_t* pmap = _mi_page_map();
-      require(pmap != NULL && pmap != &mi_page_map_empty && mi_memid_is_os(pmap->memid));
-      const size_t slots = mi_page_map_count_of_size(pmap->reserved_size);
-      const size_t root_bytes = pmap->memid.mem.os.size;
-      require(slots > 0 && slots - 1 <= (SIZE_MAX - root_bytes) / MI_PAGE_MAP_SUB_SIZE);
-      /* The zero-address submap is embedded in the root; each other slot can
-         publish one process-lived submap. This bounds PageMap storage, while
-         direct OS pages have their separate main-Heap destruction lifetime. */
-      fprintf(stderr, "source_root_bound arena_reserve_kib=%ld pagemap_reserved_bytes=%zu pagemap_slots=%zu submap_bytes=%zu maximum_pagemap_bytes=%zu\n",
-        retention_arena_reserve_kib, pmap->reserved_size, slots, (size_t)MI_PAGE_MAP_SUB_SIZE,
-        root_bytes + (slots - 1) * MI_PAGE_MAP_SUB_SIZE);
-#endif
+      retention_geometry_selected = true;
     }
     size_t last_cycle = 32;
     if (source_bound) {
