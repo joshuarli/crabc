@@ -6794,6 +6794,23 @@ impl Theap {
         theap: NonNull<Theap>, heap: NonNull<Heap>, tld: NonNull<ThreadLocalData>,
         kind: TheapInitializationKind,
     ) -> Result<PreparedTheapInitialization, TheapMainStaticInitError> {
+        // An unpublished Heap alone does not mean this image is available:
+        // an existing phase may already own its prefix or its TLD membership.
+        // These scalar checks reject reentry without resetting that phase.
+        let raw = theap.as_ptr();
+        let incoming = unsafe {
+            (&*core::ptr::addr_of!((*raw).heap)).load(Ordering::Acquire).is_null()
+                && (&*core::ptr::addr_of!((*raw).subproc)).load(Ordering::Acquire).is_null()
+                && core::ptr::addr_of!((*raw).tld).read() == detached_thread_local_ptr()
+                && core::ptr::addr_of!((*raw).tprev).read().is_null()
+                && core::ptr::addr_of!((*raw).tnext).read().is_null()
+                && (*core::ptr::addr_of!((*raw).hprev)).get().read().is_null()
+                && (*core::ptr::addr_of!((*raw).hnext)).get().read().is_null()
+                && (&*core::ptr::addr_of!((*raw).refcount)).load(Ordering::Acquire) == 1
+        };
+        if !incoming {
+            return Err(TheapMainStaticInitError::InvalidInput);
+        }
         // SAFETY: only pre-callback, caller-exclusive scalar/image projections
         // occur here. No reference is retained in the returned witness.
         let image = unsafe { &mut *theap.as_ptr() };
@@ -9222,6 +9239,55 @@ mod tests {
             assert!(!(*image.as_ptr()).allow_page_reclaim);
             (*tld.as_ptr()).detach_one_theap_from_heap(&mut *heap.as_ptr(), image.as_ptr()).unwrap();
             (*tld.as_ptr()).detach_one_theap_from_tld(image.as_ptr()).unwrap();
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn staged_initializer_rejects_recapturing_prepared_and_linked_unpublished_images() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+        // The actual caller-owned regular Heap remains pinned until both lists
+        // are empty; its memory ID deliberately grants no metadata release.
+        assert!(unsafe { heap.initialize_dynamic_binding(&PARENT, 2) });
+        let mut tld = std::boxed::Box::new(ThreadLocalData::normal_tld_init_preimage());
+        let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+        tld.memid = MemoryId::malloc(tld_pointer.as_ptr().cast(), size_of::<ThreadLocalData>(), true);
+        assert!(tld.initialize_normal_tld_field_prefix_after_direct_preimage(
+            LiveThreadId::new(12).unwrap(), ThreadSequence::from_previous_total_count(1), 0, PARENT.identity(),
+        ));
+        let mut incoming = std::boxed::Box::new(Theap::empty());
+        let image = NonNull::new(core::ptr::addr_of_mut!(*incoming)).unwrap();
+        assert!(incoming.set_dynamic_metadata_memid(MemoryId::malloc(image.as_ptr().cast(), size_of::<Theap>(), true)));
+        let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+        let kind = TheapInitializationKind::Dynamic {
+            page_mode: TheapPageMode::OrdinaryAbandoning, tld_may_have_theaps: true,
+        };
+        // All three original writable allocations stay retained through the
+        // complete transition; no image reference or lock spans an option read.
+        unsafe {
+            let prepared = Theap::prepare_initialization_at(image, heap_pointer, tld_pointer, kind).unwrap();
+            assert!(matches!(Theap::prepare_initialization_at(image, heap_pointer, tld_pointer, kind),
+                Err(TheapMainStaticInitError::InvalidInput)));
+            assert!((*tld_pointer.as_ptr()).theaps.is_null());
+            let branch = prepared.apply_source_options_and_attach(SourceTheapOptions::release_defaults_for_test()).unwrap();
+            let linked = finish_unfaulted_test_random(branch);
+            assert!((*image.as_ptr()).heap.load(Ordering::Acquire).is_null());
+            assert_eq!((*tld_pointer.as_ptr()).theaps, image.as_ptr());
+            assert!(matches!(Theap::prepare_initialization_at(image, heap_pointer, tld_pointer, kind),
+                Err(TheapMainStaticInitError::InvalidInput)));
+            assert_eq!((*tld_pointer.as_ptr()).theaps, image.as_ptr());
+            #[cfg(feature = "mi-guarded")]
+            let ready = linked.apply_guarded_sample_options(GuardedSampleOptions {
+                sample_rate: 0, sample_seed: 0,
+            }).apply_guarded_size_options(GuardedSizeOptions { size_min: 0, size_max: 0 });
+            #[cfg(not(feature = "mi-guarded"))]
+            let ready = linked.finish_without_guarded_options();
+            ready.publish_heap().unwrap();
+            (*tld_pointer.as_ptr()).detach_one_theap_from_heap(&mut *heap_pointer.as_ptr(), image.as_ptr()).unwrap();
+            (*tld_pointer.as_ptr()).detach_one_theap_from_tld(image.as_ptr()).unwrap();
+            assert!((*image.as_ptr()).clear_dynamic_metadata_after_detach());
+            assert!((*heap_pointer.as_ptr()).retire_dynamic_binding_after_detach());
         }
     }
 
