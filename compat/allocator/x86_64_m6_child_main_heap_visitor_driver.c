@@ -8,6 +8,9 @@
 #include "mimalloc.h"
 #ifdef CRABC_M6_SOURCE_INTERNAL
 #include "mimalloc/internal.h"
+#if defined(CRABC_VISIT_SECURE) && MI_SECURE != CRABC_VISIT_SECURE
+#error "visitor capture must match the allocator source secure profile"
+#endif
 #endif
 
 typedef struct fixture_s {
@@ -60,6 +63,14 @@ static void geometry(const visit_t* visit, const mi_heap_area_t* area,
   fprintf(stderr, "geometry.%s=%c,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",
           visit->stage, kind, area->reserved, area->committed, area->used,
           area->block_size, area->full_block_size, block_size, usable);
+#if defined(CRABC_VISIT_SECURE) && CRABC_VISIT_SECURE == 2
+  // These numeric offsets describe the offered area; they confer no access
+  // to metadata and are checked against clients captured before traversal.
+  uintptr_t origin = (uintptr_t)area->blocks;
+  uintptr_t offset = block == NULL ? 0 : (uintptr_t)block - origin;
+  fprintf(stderr, "placement.%s=%c,%zu,%zu\n", visit->stage, kind,
+          (size_t)origin, (size_t)offset);
+#endif
 }
 
 static bool observe(const mi_heap_t* heap, const mi_heap_area_t* area,
@@ -156,6 +167,17 @@ static void* owner(void* argument) {
   memset((void*)fixture->os, 0x71, 10 * 1024 + 1);
   fixture->usable[3] = mi_usable_size((void*)fixture->os);
   mi_free((void*)fixture->regular[1]);
+#if defined(CRABC_VISIT_SECURE) && CRABC_VISIT_SECURE == 2
+  // Retained numeric client facts precede all selected visitor callbacks.
+  // The freed client is recorded for exclusion, without reading its storage.
+  fprintf(stderr, "visitation.secure=%d\n", CRABC_VISIT_SECURE);
+  for (unsigned index = 0; index < 3; index++) {
+    fprintf(stderr, "client.%u=%zu,128,%zu,%u\n", index + 1,
+            (size_t)fixture->regular[index], fixture->usable[index], index != 1);
+  }
+  fprintf(stderr, "client.S=%zu,10241,%zu,1\n",
+          (size_t)fixture->os, fixture->usable[3]);
+#endif
   print_visit("owner_ordinary", fixture, false, true, 0, false);
   print_visit("owner_abandoned", fixture, true, true, 0, false);
   fixture->ready = true;

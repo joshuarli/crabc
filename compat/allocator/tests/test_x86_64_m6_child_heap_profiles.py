@@ -2,6 +2,7 @@
 
 from contextlib import ExitStack
 import json
+import hashlib
 from pathlib import Path
 import sys
 import tempfile
@@ -180,11 +181,23 @@ class VisitationProfileSelectionTests(unittest.TestCase):
                     self.assertEqual(stopped.exception.code, 2)
                     run.assert_not_called()
 
-    def receipt(self, root, profiles, parameters=None, cases=None):
+    def receipt(self, root, profiles, parameters=None, cases=None, runner=None):
         (root / 'products').mkdir()
         (root / 'products/inputs.json').write_text(json.dumps({'profiles': list(profiles)}))
         case_ids = [f'{profile}-{backend}-run' for profile in profiles for backend in ('c', 'native')]
-        return SimpleNamespace(path=root / 'receipt.json',
+        physical_cases = []
+        if runner in (child_visit, abandoned_visit) and 'secure-2' in profiles:
+            (root / 'logs').mkdir()
+            for backend, order in (('c','13'), ('native','31')):
+                trace, stderr = SecureVisitationPhysicalOrderTests().fixture(runner, order)
+                stem = f'secure-2-{backend}-run'
+                stdout = runner.BEGIN + '\n' + '\n'.join(f'{key}={value}' for key,value in trace.items()) + '\n' + runner.END + '\n'
+                (root / 'logs' / (stem + '.stdout')).write_text(stdout)
+                if backend == 'c':
+                    stderr += ('source.child_main=1,1,1,1\n' if runner is child_visit else 'source.transfer=1,1,1,1,1\n')
+                (root / 'logs' / (stem + '.stderr')).write_text(stderr)
+                physical_cases.append({'id':stem,'logs':[stem+'.stdout',stem+'.stderr']})
+        return SimpleNamespace(path=root / 'receipt.json', cases=physical_cases,
             parameters={'profiles': ','.join(profiles) if parameters is None else parameters},
             case_ids=lambda: case_ids if cases is None else cases)
 
@@ -203,7 +216,7 @@ class VisitationProfileSelectionTests(unittest.TestCase):
             work = runner.harness.ROOT / '.work/tmp'
             with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=work) as name:
                 root = Path(name)
-                receipt = self.receipt(root, self.defaults)
+                receipt = self.receipt(root, self.defaults, runner=runner)
                 (root / 'products/inputs.json').write_text(json.dumps({'profiles': ['secure-1', 'secure-2']}))
                 with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
                      self.assertRaises(runner.receipts.ReceiptError):
@@ -214,7 +227,7 @@ class VisitationProfileSelectionTests(unittest.TestCase):
             work = runner.harness.ROOT / '.work/tmp'
             with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=work) as name:
                 root = Path(name)
-                receipt = self.receipt(root, ('secure-1', 'secure-2'))
+                receipt = self.receipt(root, ('secure-1', 'secure-2'), runner=runner)
                 prior = {'execution_mode': 'native', 'host_architecture': 'x86_64', 'image_id': 'sha256:' + '0' * 64}
                 (root / 'products/inputs.json').write_text(json.dumps({'profiles': ['secure-1', 'secure-2'], 'execution': prior}))
                 current = dict(prior, image_id='sha256:' + '1' * 64)
@@ -231,7 +244,7 @@ class VisitationProfileSelectionTests(unittest.TestCase):
             work.mkdir(parents=True, exist_ok=True)
             for selector in (None, 'secure-1', ','.join(reversed(self.defaults))):
                 with self.subTest(runner=runner.__name__, selector=selector), tempfile.TemporaryDirectory(dir=work) as name:
-                    receipt = self.receipt(Path(name), self.defaults)
+                    receipt = self.receipt(Path(name), self.defaults, runner=runner)
                     receipt.parameters = {} if selector is None else {'profiles': selector}
                     with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
                          self.assertRaises(runner.receipts.ReceiptError):
@@ -244,7 +257,7 @@ class VisitationProfileSelectionTests(unittest.TestCase):
             for cases in ([f'{profile}-{backend}-run' for profile in self.defaults for backend in ('c', 'native')],
                           ['secure-1-c-run', 'secure-1-native-run', 'secure-2-c-run']):
                 with self.subTest(runner=runner.__name__, cases=cases), tempfile.TemporaryDirectory(dir=work) as name:
-                    receipt = self.receipt(Path(name), profiles, cases=cases)
+                    receipt = self.receipt(Path(name), profiles, cases=cases, runner=runner)
                     with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
                          self.assertRaises(runner.receipts.ReceiptError):
                         self.execute(runner, ['--profiles', *profiles, '--read'])
@@ -256,7 +269,7 @@ class VisitationProfileSelectionTests(unittest.TestCase):
             cases = [f'{profile}-{backend}-run' for profile in profiles for backend in ('c', 'native')]
             cases[0], cases[1] = cases[1], cases[0]
             with self.subTest(runner=runner.__name__), tempfile.TemporaryDirectory(dir=work) as name:
-                receipt = self.receipt(Path(name), profiles, cases=cases)
+                receipt = self.receipt(Path(name), profiles, cases=cases, runner=runner)
                 with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
                      self.assertRaises(runner.receipts.ReceiptError):
                     self.execute(runner, ['--profiles', *profiles, '--read'])
@@ -266,9 +279,115 @@ class VisitationProfileSelectionTests(unittest.TestCase):
             work = runner.harness.ROOT / '.work/tmp'
             for profiles in (self.defaults, ('secure-1', 'secure-2')):
                 with self.subTest(runner=runner.__name__, profiles=profiles), tempfile.TemporaryDirectory(dir=work) as name:
-                    receipt = self.receipt(Path(name), profiles)
+                    receipt = self.receipt(Path(name), profiles, runner=runner)
                     with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt):
                         self.execute(runner, ['--profiles', *profiles, '--read'])
+
+
+class SecureVisitationPhysicalOrderTests(unittest.TestCase):
+    def fixture(self, runner, order):
+        main = runner is child_visit
+        trace = dict(runner.SOURCE_CHILD_MAIN if main else runner.SOURCE_CHILD_ABANDONED_PAGES)
+        base, os_start = 65536, 262144
+        addresses = {'1': base + (128 if order == '13' else 384),
+                     '2': base + 256, '3': base + (384 if order == '13' else 128),
+                     'S': os_start}
+        lines = ['visitation.secure=2']
+        for tag in '123S':
+            lines.append(f'client.{tag}={addresses[tag]},{10241 if tag == "S" else 128},{12288 if tag == "S" else 128},{int(tag != "2")}')
+        for stage in runner.STAGES:
+            key = ('child_main.' if main else 'child.') + stage
+            value = trace[key].replace('R13', 'R' + order)
+            if stage == 'stop_block' and order == '31':
+                value = '0,1,2,2,R31'
+            if stage == 'stop_regular_block' and order == '31':
+                value = '0,1,0,1,0,0,2,0,R3'
+            trace[key] = value
+            events = value.rsplit(',', 1)[1]
+            for tag in events:
+                regular = tag in 'R13'
+                start = base if regular else os_start
+                fields = (65408,8192,2,128,128,128) if regular else (12288,12288,1,12288,12288,12288)
+                usable = 0 if tag in 'RO' else fields[-1]
+                lines.append(f'geometry.{stage}={tag},' + ','.join(map(str, (*fields, usable))))
+                offset = 0 if tag in 'RO' else addresses[tag] - start
+                lines.append(f'placement.{stage}={tag},{start},{offset}')
+        return trace, '\n'.join(lines) + '\n'
+
+    def test_source_orders_follow_independent_client_addresses(self):
+        for runner in (child_visit, abandoned_visit):
+            models = []
+            for order in ('13', '31'):
+                trace, stderr = self.fixture(runner, order)
+                models.append(runner.require_trace(trace, 'c', profile='secure-2', stderr=stderr))
+            self.assertEqual(models[0], models[1])
+
+    def test_false_traversal_or_geometry_is_rejected(self):
+        for runner in (child_visit, abandoned_visit):
+            trace, stderr = self.fixture(runner, '31')
+            key = 'child_main.blocks' if runner is child_visit else 'child.blocks'
+            stop = 'child_main.stop_block' if runner is child_visit else 'child.stop_regular_block'
+            bad = []
+            for order in ('R13OS', 'R3OS', 'R331OS', 'R321OS', 'R31OSS'):
+                changed = dict(trace); changed[key] = changed[key].rsplit(',',1)[0] + ',' + order
+                bad.append((changed, stderr))
+            changed = dict(trace); changed[stop] = changed[stop].rsplit(',',1)[0] + ',R1'
+            bad.append((changed, stderr))
+            for old, new in (('visitation.secure=2','visitation.secure=1'),
+                             ('client.1=65920,128,128,1','client.1=65921,128,128,1'),
+                             ('R,65408,8192,2,128,128,128,0','R,65408,128,2,128,128,128,0'),
+                             ('R,65408,8192,2,128,128,128,0','R,65408,8192,2,128,64,128,0'),
+                             ('placement.blocks=3,65536,128','placement.blocks=3,65536,384')):
+                bad.append((trace, stderr.replace(old,new)))
+            reordered = '\n'.join([line for line in stderr.splitlines() if not line.startswith('client.')] + [line for line in stderr.splitlines() if line.startswith('client.')]) + '\n'
+            bad.extend(((trace,reordered), (trace,''), (trace,stderr + 'client.1=65920,128,128,1\n'),
+                        (trace,stderr.replace('client.2=65792,128,128,0\n',''))))
+            for wrong_trace, wrong_stderr in bad:
+                with self.subTest(runner=runner.__name__, stderr=wrong_stderr), self.assertRaises(runner.harness.HarnessError):
+                    runner.require_trace(wrong_trace, 'c', profile='secure-2', stderr=wrong_stderr)
+
+    def test_owning_reader_rejects_corrupt_retained_physical_order(self):
+        for runner in (child_visit, abandoned_visit):
+            work = runner.harness.ROOT / '.work/tmp'
+            with tempfile.TemporaryDirectory(dir=work) as name:
+                root = Path(name)
+                receipt = VisitationProfileSelectionTests().receipt(root, ('secure-2',), runner=runner)
+                stderr = root / 'logs/secure-2-c-run.stderr'
+                stderr.write_text(stderr.read_text().replace('placement.blocks=1,65536,128', 'placement.blocks=1,65536,384'))
+                with mock.patch.object(runner.receipts,'read_receipt',return_value=receipt), self.assertRaises(runner.harness.HarnessError):
+                    VisitationProfileSelectionTests().execute(runner,['--profiles','secure-2','--read'])
+
+    def test_replay_validates_new_physical_order_without_requiring_old_random_order(self):
+        for runner in (child_visit, abandoned_visit):
+            work = runner.harness.ROOT / '.work/tmp'
+            with tempfile.TemporaryDirectory(dir=work) as name:
+                root = Path(name)
+                receipt = VisitationProfileSelectionTests().receipt(root, ('secure-2',), runner=runner)
+                for backend in ('c','native'):
+                    (root / 'products' / ('secure-2-' + backend)).write_bytes(b'fixture product')
+                def replay(output, name, argv, cwd, runtime):
+                    backend = name.rsplit('-',1)[1]
+                    trace, stderr = self.fixture(runner,'31' if backend == 'c' else '13')
+                    if backend == 'c':
+                        stderr += ('source.child_main=1,1,1,1\n' if runner is child_visit else 'source.transfer=1,1,1,1,1\n')
+                    stdout = runner.BEGIN + '\n' + '\n'.join(f'{key}={value}' for key,value in trace.items()) + '\n' + runner.END + '\n'
+                    streams = {}
+                    for key,payload in (('stdout',stdout.encode()),('stderr',stderr.encode())):
+                        streams[key] = {'bytes':len(payload),'sha256':hashlib.sha256(payload).hexdigest(),'hex':payload.hex()}
+                    return streams, []
+                with mock.patch.object(runner.receipts,'read_receipt',return_value=receipt), \
+                     mock.patch.object(runner.harness,'require_native_x86_64',return_value={}), \
+                     mock.patch.object(runner.harness,'native_execution_attestation'), \
+                     mock.patch.object(runner.harness,'TEMP_ROOT',root / 'private'), \
+                     mock.patch.object(runner,'record',side_effect=replay) as executed:
+                    VisitationProfileSelectionTests().execute(runner,['--profiles','secure-2','--replay'])
+                    self.assertEqual(executed.call_count,2)
+
+    def test_historical_profile_keeps_fixed_order_judge(self):
+        for runner in (child_visit, abandoned_visit):
+            trace, stderr = self.fixture(runner, '31')
+            with self.assertRaises(runner.harness.HarnessError):
+                runner.require_trace(trace, 'c')
 
 
 if __name__ == '__main__':
