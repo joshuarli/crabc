@@ -6394,6 +6394,82 @@ mod tests {
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_attached_deferred_callback_allocates_on_fixed_and_auxiliary_heaps() {
+        use crate::subproc::lifecycle::*;
+        use crate::runtime_lifecycle::{self, NativePageFreeResult};
+        use core::ffi::c_void;
+        use core::sync::atomic::AtomicBool;
+        unsafe fn environment() -> *const *const core::ffi::c_char { core::ptr::null() }
+        unsafe extern "C" fn stderr(_: *const core::ffi::c_char) {}
+        struct Context { heap: NonNull<Heap>, fixed: bool, calls: AtomicUsize, nested: AtomicBool }
+        unsafe extern "C" fn callback(_: bool, _: u64, argument: *mut c_void) {
+            // The synchronous invocation retains the selected Heap/member and
+            // the stack argument. Its recursion guard excludes redispatch,
+            // while an ordinary allocation on that owner remains valid.
+            let context = unsafe { &*argument.cast::<Context>() };
+            context.calls.fetch_add(1, Ordering::AcqRel);
+            let block = if context.fixed {
+                match native_child_thread_allocate(33, None, false) {
+                    Some(runtime_lifecycle::NativePageAllocationResult::Allocated(block)) => Some(block),
+                    _ => None,
+                }
+            } else { unsafe { native_child_heap_allocate(context.heap, 33) }.flatten() };
+            if let Some(block) = block {
+                context.nested.store(unsafe { runtime_lifecycle::native_free(block) }
+                    == NativePageFreeResult::Freed, Ordering::Release);
+            }
+        }
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::child_attached_deferred_callback_allocates_on_fixed_and_auxiliary_heaps",
+            || {
+                let facts = unsafe { runtime_lifecycle::NativeProcessStartupFacts::new(
+                    4096, environment, crate::__crabc_runtime::RuntimeStderrOutput::new(stderr),
+                ) }.unwrap();
+                assert!(runtime_lifecycle::publish_native_process_startup_facts(facts));
+                assert!(runtime_lifecycle::initialize_process());
+                assert!(runtime_lifecycle::prepare_native_later_thread_arena());
+                let child = native_subproc_new().unwrap();
+                let observations = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert!(unsafe { native_subproc_add_current_thread(child) }.is_ok());
+                    let fixed = crate::compiler_tls::default_theap();
+                    let fixed_heap = NonNull::new(unsafe { Theap::heap_at(fixed) }).unwrap();
+                    let auxiliary = native_child_heap_new().unwrap().unwrap().unwrap();
+                    let client = unsafe { native_child_heap_allocate(auxiliary, 80) }.flatten().unwrap();
+                    let auxiliary_theap = unsafe { native_child_heap_theap(auxiliary) }.unwrap();
+                    let mut observations = std::vec::Vec::new();
+                    for (heap, theap) in [(fixed_heap, fixed), (auxiliary, auxiliary_theap)] {
+                        let mut context = Context { heap, fixed: heap == fixed_heap,
+                            calls: AtomicUsize::new(0), nested: AtomicBool::new(false) };
+                        unsafe { crate::deferred_free::register_process_callback(Some(callback),
+                            core::ptr::from_mut(&mut context).cast()) };
+                        let tld = NonNull::new(unsafe { Theap::tld_at(theap) }).unwrap();
+                        let _operation = runtime_lifecycle::NativeSubprocessOperation::enter().unwrap();
+                        // The production source primitive owns the real TLD
+                        // recursion guard for this entire callback window.
+                        let invocation = unsafe { crate::deferred_free::begin_process(theap, tld, false) }.unwrap();
+                        assert!(unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| {
+                            invocation.invoke()
+                        }) }.is_ok());
+                        unsafe { crate::deferred_free::register_process_callback(None, core::ptr::null_mut()) };
+                        observations.push((context.calls.load(Ordering::Acquire), context.nested.load(Ordering::Acquire)));
+                    }
+                    assert_eq!(unsafe { runtime_lifecycle::native_free(client) }, NativePageFreeResult::Freed);
+                    assert!(unsafe { native_child_heap_release(auxiliary, false) }.unwrap().unwrap().is_ok());
+                    assert_eq!(runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        runtime_lifecycle::ThreadFinishResult::Finished);
+                    observations
+                }).join().unwrap();
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()));
+                assert_eq!(observations, [(1, true), (1, true)]);
+            },
+        );
+    }
+
+
     #[test]
     fn requested_child_theap_prepublication_errors_return_exact_arena_slice() {
         let layout = std::alloc::Layout::from_size_align(ARENA_MIN_SIZE, ARENA_ALIGNMENT).unwrap();

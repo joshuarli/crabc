@@ -221,9 +221,17 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         // SAFETY: caller's block owners retain both exact images for this
         // bounded projection, and no image reference escapes the session.
         let (tld_ref, theap_ref) = unsafe { (tld.as_ref(), theap.as_ref()) };
+        let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity);
+        // An admitted synchronous callback still owns this same initialized
+        // child member. Its recurse marker suppresses nested callback delivery,
+        // not ordinary allocation on the live selected Heap.
+        #[cfg(target_arch = "x86_64")]
+        let attached = attached || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(
+            thread, sequence, identity,
+        );
         if !identity.is_registered()
             || !identity.matches_ready_main_heap(heap)
-            || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || !attached
             || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
             || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
             || theap_ref.is_detached()
@@ -368,10 +376,18 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         let identity = child.get_ref().identity();
         // SAFETY: the caller retains all images for this bounded projection.
         let (tld_ref, theap_ref, heap_ref) = unsafe { (tld.as_ref(), theap.as_ref(), heap.as_ref()) };
+        // A source deferred callback keeps the recursion flag set to
+        // suppress another callback, while ordinary same-owner allocation
+        // remains eligible on this exact attached thread and subprocess.
+        #[cfg(target_arch = "x86_64")]
+        let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || tld_ref.matches_subprocess_attached_deferred_callback_lifecycle(thread, sequence, identity);
+        #[cfg(not(target_arch = "x86_64"))]
+        let attached = tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity);
         if !identity.is_registered()
             || heap_ref.is_subprocess_main()
             || !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
-            || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || !attached
             || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
             || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
             || theap_ref.is_detached()
