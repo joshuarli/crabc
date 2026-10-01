@@ -1040,6 +1040,21 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Inspects the surviving initial owner while the native fork gate
+    /// excludes other allocator operations. The healthy source-bound
+    /// session and engine remain in place, including any generic allocation
+    /// counter prefix retained across an option-getter callback. Live clients
+    /// stay attached to that same engine in the parent and copied child.
+    ///
+    /// The shared readiness check observes pending release, collection and
+    /// commit failure state and the retained source session. It performs no
+    /// collection, source-count update, engine finish or state transition.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) fn permits_surviving_initial_owner_fork(&self) -> bool {
+        self.permits_terminal_process_retirement()
+    }
+
     /// Ends the initial engine/session borrows while preserving every live
     /// source page for the following source Heap/arena destruction pass.
     ///
