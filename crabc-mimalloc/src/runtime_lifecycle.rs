@@ -511,9 +511,9 @@ pub enum NativePageFreeResult {
     Unavailable,
     InvalidPointer,
     Retained,
-    /// Debug padding rejected the free after reporting its source error; the
+    /// Source padding rejected the free after reporting its error; the
     /// allocation remains owned and the caller may continue as in pinned C.
-    #[cfg(feature = "mi-debug-1")]
+    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     RejectedCorruption,
 }
 
@@ -12008,7 +12008,7 @@ fn native_reallocate_pointer_first_local(
                 RUNTIME_PROCESS.retain_page_owner();
                 NativePageAllocationResult::Retained
             }
-            #[cfg(feature = "mi-debug-1")]
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             NativePageFreeResult::RejectedCorruption => {
                 native_reallocate_release_unpublished_replacement(replacement);
                 NativePageAllocationResult::Retained
@@ -12255,7 +12255,7 @@ fn native_reallocate_pointer_first_nonlocal(
             RUNTIME_PROCESS.retain_page_owner();
             NativePageAllocationResult::Retained
         }
-        #[cfg(feature = "mi-debug-1")]
+        #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         NativePageFreeResult::RejectedCorruption => {
             native_reallocate_release_unpublished_replacement(replacement);
             NativePageAllocationResult::Retained
