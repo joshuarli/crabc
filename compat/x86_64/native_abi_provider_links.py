@@ -284,7 +284,7 @@ def scalar_read_prefix(source: bytes, offset: int) -> bytes:
 
 def integer_memory_operand(source: bytes, offset: int, *,
                            instruction_span: tuple[int, int] | None = None) -> tuple[bytes, int, bytes, str] | None:
-    """Decode the supported RIP-relative integer operand and trailing immediate."""
+    """Decode supported RIP-relative integer or packed-vector memory operands."""
     legacy_prefixes = {0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65, 0x66, 0x67, 0xf0, 0xf2, 0xf3}
     if instruction_span is not None:
         start, end = instruction_span
@@ -300,6 +300,12 @@ def integer_memory_operand(source: bytes, offset: int, *,
             return prefix, 4, b'', 'integer-data-load'
         if len(prefix) == 2 and prefix[0] == 0x88 and prefix[1] & 0xc7 == 0x05:
             return prefix, 1, b'', 'integer-data-store'
+        # MOVDQU uses its mandatory F3 prefix and a 16-byte operand. Only
+        # these complete legacy encodings are admitted; REX/VEX, additional
+        # prefixes and aligned or narrower vector moves are separate forms.
+        if (len(prefix) == 4 and prefix[:2] == b'\xf3\x0f'
+                and prefix[2] in {0x6f, 0x7f} and prefix[3] & 0xc7 == 0x05):
+            return prefix, 16, b'', 'vector-data-load' if prefix[2] == 0x6f else 'vector-data-store'
         # Atomic operands are decoded only from a complete authenticated span.
         # LOCK is explicit for compare/exchange and increments; memory XCHG
         # supplies its own lock. Only these observed widths and REX bits belong
@@ -520,7 +526,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     Scalar reads require the exact unrelocated bytes and full extent of the
     selected read-only OBJECT; the caller authenticates its source definition.
     They prove initial operand bytes, not execution or later memory contents.
-    Integer memory operands bind the selected object and full access extent.
+    Integer and packed-vector operands bind the selected object and full
+    access extent.
     Ordinary immutable objects also require the complete unrelocated source
     payload in one final read-only mapping; only loads may reference them.
     Pooled byte strings require the selected definition's pool and forcing
@@ -592,8 +599,11 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                     and static_authority.section_name(original, header) == observed['name'],
                     f'provider {name} integer source extent differs')
             if readonly:
-                require(operation in {'integer-data-load', 'integer-zero-extend-load'},
-                        f'provider {name} immutable object reference is not a load')
+                # Packed-vector loads cover ordinary constants. Pooled string
+                # ownership retains its separately bounded scalar-load scope.
+                require(operation in {'integer-data-load', 'integer-zero-extend-load', 'vector-data-load'}
+                        and (not merged or operation != 'vector-data-load'),
+                        f'provider {name} immutable object reference is not a supported load')
                 if merged:
                     merged_string_translation(image, elf_type, source_image, definition, provider_address, provider_pool)
                 # No relocation table may target this ordinary source section.

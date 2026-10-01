@@ -177,7 +177,27 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             private.mkdir()
             names = ['domain_body', 'domain_caller', 'domain_scalar']
             (work / 'providers.c').write_text(links.source(names, object_names=['domain_scalar']))
-            cases = [('bss', 1, 'mov %al,domain_scalar(%rip)', True),
+            cases = [('bss', 17, 'movdqu domain_scalar(%rip),%xmm0; movdqu %xmm0,domain_scalar(%rip)', True),
+                     ('data', 16, 'movdqu domain_scalar(%rip),%xmm7; movdqu %xmm7,domain_scalar(%rip)', True),
+                     ('bss', 17, 'movdqu domain_scalar+1(%rip),%xmm1', True),
+                     ('data', 17, 'mov $0x66000000,%eax; movdqu %xmm1,domain_scalar(%rip)', True),
+                     ('bss', 16, 'mov $0xf3000000,%eax; movdqu domain_scalar(%rip),%xmm0', True),
+                     ('rodata', 17, 'movdqu domain_scalar(%rip),%xmm0', True),
+                     ('rodata', 17, 'movdqu domain_scalar+1(%rip),%xmm7', True),
+                     ('rodata', 16, 'movdqu %xmm0,domain_scalar(%rip)', False),
+                     ('bss', 15, 'movdqu domain_scalar(%rip),%xmm0', False),
+                     ('bss', 17, 'movdqu domain_scalar+2(%rip),%xmm0', False),
+                     ('bss', 16, 'movdqa domain_scalar(%rip),%xmm0', False),
+                     ('bss', 16, 'movdqu %fs:domain_scalar(%rip),%xmm0', False),
+                     ('bss', 16, 'addr32 movdqu domain_scalar(%eip),%xmm0', False),
+                     ('bss', 16, 'movdqu domain_scalar(%rip),%xmm8', False),
+                     ('bss', 16, 'vmovdqu domain_scalar(%rip),%xmm0', False),
+                     ('bss', 32, 'vmovdqu domain_scalar(%rip),%ymm0', False),
+                     ('bss', 8, 'movq domain_scalar(%rip),%xmm0', False),
+                     ('rodata-reloc', 16, 'movdqu domain_scalar(%rip),%xmm0', False),
+                     ('rodata-merge', 16, 'movdqu domain_scalar(%rip),%xmm0', False),
+                     ('rodata-string', 16, 'movdqu domain_scalar(%rip),%xmm0', False),
+                     ('bss', 1, 'mov %al,domain_scalar(%rip)', True),
                      ('bss', 8, 'mov %al,domain_scalar(%rip)', True),
                      ('data', 1, 'mov %cl,domain_scalar(%rip)', True),
                      ('bss', 1, 'mov $0x66000000,%eax; mov %al,domain_scalar(%rip)', True),
@@ -245,12 +265,12 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
                         '.type domain_body,@function\ndomain_body: mov $7,%eax; ret\n.size domain_body,.-domain_body\n'
                         + '.section .' + storage + '.domain_scalar,"'
-                        + ('aM' if storage == 'rodata-merge' else 'a' if storage.startswith('rodata') else 'aw')
+                        + ('aMS' if storage == 'rodata-string' else 'aM' if storage == 'rodata-merge' else 'a' if storage.startswith('rodata') else 'aw')
                         + '",@' + ('nobits' if storage == 'bss' else 'progbits')
-                        + (',8' if storage == 'rodata-merge' else '')
+                        + (',1' if storage == 'rodata-string' else ',8' if storage == 'rodata-merge' else '')
                         + '\n.balign ' + str(min(size, 8))
                         + '\n.globl domain_scalar\n.hidden domain_scalar\n.type domain_scalar,@object\n'
-                        + 'domain_scalar: ' + ('.fill ' + str(size) + ',1,0x5a' if storage.startswith('rodata') else '.zero ' + str(size))
+                        + 'domain_scalar: ' + ('.fill ' + str(size - 1) + ',1,0x5a; .byte 0' if storage == 'rodata-string' else '.fill ' + str(size) + ',1,0x5a' if storage.startswith('rodata') else '.zero ' + str(size))
                         + '\n.size domain_scalar,.-domain_scalar\n'
                         + ('.reloc domain_scalar,R_X86_64_NONE,0\n' if storage == 'rodata-reloc' else '')
                         + ('.section .rodata.str1.1,"aMS",@progbits,1\n.asciz "merged companion"\n'
@@ -296,12 +316,13 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                     proof = links.project_references(work, static, accounting, **arguments)
                     admitted = {row['identity']['name']: row for row in proof['identities']}
                     if supported:
+                        vector = 'movdqu' in read
                         byte_store = 'mov %al,' in read or 'mov %cl,' in read
                         rex_load = any(register in read for register in ('%r8d', '%r9d', '%r12d'))
                         self.assertEqual(set(admitted), set(names), proof['failures'])
                         self.assertEqual(proof['failures'], [])
                         for mode in links.MODES:
-                            self.assertTrue(all(site['operand_size'] == (1 if 'movzbl' in read or byte_store else 4 if rex_load or size == 4 or storage == 'rodata' and size == 12 else 8)
+                            self.assertTrue(all(site['operand_size'] == (16 if vector else 1 if 'movzbl' in read or byte_store else 4 if rex_load or size == 4 or storage == 'rodata' and size == 12 else 8)
                                 for importer in admitted['domain_scalar']['links'][mode]['importers']
                                 for site in importer['resolved_calls']))
                             self.assertFalse(any(importer['discarded_calls'] for row in proof['identities']
@@ -335,13 +356,13 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 elf_type=elf_type, name='domain_scalar', source_sections=sections,
                                 provider_object=(source_object, definition))
                             bound = links.final_member_references(image, **reference_arguments)
-                            expected_operations = ({'integer-data-store'} if byte_store else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
+                            expected_operations = ({'vector-data-load', 'vector-data-store'} if vector and 'movdqu domain' in read and 'movdqu %' in read else {'vector-data-store'} if vector and 'movdqu %' in read else {'vector-data-load'} if vector else {'integer-data-store'} if byte_store else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
                                 'integer-immediate-store', 'locked-subtract'} if size == 4 else
                                 {'integer-data-load', 'integer-data-store'} if size == 8 else {'integer-data-load'})
                             self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, expected_operations)
                             self.assertEqual({row['target_address'] for row in bound['resolved_calls']},
-                                             {address + (4 if 'domain_scalar+4(' in read else 8 if storage == 'rodata' and size in {9, 12} else 6 if storage == 'rodata' and size == 14 else 55 if size == 56 and 'movzbl' in read else 48 if size == 56 else 0)})
-                            if byte_store or rex_load and 'movzbl' not in read:
+                                             {address + (1 if vector and 'domain_scalar+1(' in read else 4 if 'domain_scalar+4(' in read else 8 if storage == 'rodata' and size in {9, 12} else 6 if storage == 'rodata' and size == 14 else 55 if size == 56 and 'movzbl' in read else 48 if size == 56 else 0)})
+                            if vector or byte_store or rex_load and 'movzbl' not in read:
                                 missing_spans = [{key: value for key, value in reference.items()
                                                   if key not in {'instruction_start', 'instruction_end'}}
                                                  for reference in references]
@@ -364,7 +385,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             program_table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
                             headers = [struct.unpack_from('<IIQQQQQQ', image, program_table + width * index)
                                        for index in range(count)]
-                            if storage != 'rodata' and (byte_store or rex_load and 'movzbl' not in read):
+                            if storage != 'rodata' and (vector or byte_store or rex_load and 'movzbl' not in read):
                                 writable_index = next(index for index, segment in enumerate(headers)
                                     if segment[0] == 1 and segment[1] == 6
                                     and segment[3] <= address < segment[3] + segment[6])
@@ -380,10 +401,10 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 struct.pack_into('<Q', changed, program_table + width * readonly_index + 16, address)
                                 with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
                                     links.final_member_references(bytes(changed), **reference_arguments)
-                                if byte_store and size == 8:
+                                if byte_store and size == 8 or vector and size == 17 and 'domain_scalar+1(' not in read:
                                     changed = bytearray(image)
                                     struct.pack_into('<Q', changed, program_table + width * writable_index + 40,
-                                                     address + 1 - writable[3])
+                                                     address + (16 if vector else 1) - writable[3])
                                     with self.assertRaisesRegex(ValueError, 'exclusive writable load extent'):
                                         links.final_member_references(bytes(changed), **reference_arguments)
                                 if storage == 'data':
@@ -398,7 +419,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                     and segment[3] <= address and address + size <= segment[3] + segment[5])
                                 segment = headers[immutable_index]
                                 changed = bytearray(image)
-                                changed[segment[2] + address - segment[3]] ^= 1
+                                changed[segment[2] + address - segment[3] + (16 if vector and size == 17 and 'domain_scalar+1(' not in read else 0)] ^= 1
                                 with self.assertRaisesRegex(ValueError, 'immutable payload differs'):
                                     links.final_member_references(bytes(changed), **reference_arguments)
                                 changed = bytearray(image)
@@ -445,6 +466,8 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         self.assertEqual(set(admitted), {'domain_body', 'domain_caller'})
                         self.assertEqual([row['identity']['name'] for row in proof['failures']], ['domain_scalar'])
                         self.assertTrue(proof['failures'][0]['reason'])
+                        if storage == 'rodata-string':
+                            self.assertIn('immutable object reference is not a supported load', proof['failures'][0]['reason'])
                         if storage == 'rodata-reloc':
                             self.assertIn('immutable source relocation footprint differs', proof['failures'][0]['reason'])
                     wrong_owner = links.project_references(work, static, accounting,
