@@ -1537,19 +1537,22 @@ unsafe fn native_child_theap_allocate_request(
     request: NativeChildAllocationRequest,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeChildAllocationRefusal> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
+    #[cfg(target_arch = "x86_64")]
+    let canonical = matches!(&request, NativeChildAllocationRequest::GuardedCanonical { .. });
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
         .ok_or(NativeChildAllocationRefusal::Retained)?;
     // SAFETY: forwarded exact current-thread Theap lifetime. Each engine
     // projection ends before a deferred-free callback can reenter allocation.
     let mut phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| match request {
-        NativeChildAllocationRequest::Ordinary { size, aligned, zero } => match aligned {
+        NativeChildAllocationRequest::Ordinary { size, aligned, zero } => Ok::<_, NativeChildAllocationRefusal>(match aligned {
             None => engine.begin_deferred_free_allocation(size, zero),
             Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
-        },
+        }),
         #[cfg(target_arch = "x86_64")]
         NativeChildAllocationRequest::GuardedCanonical { source_size } =>
-            engine.begin_deferred_free_guarded_canonical(source_size),
-    }) }.ok_or(NativeChildAllocationRefusal::Unavailable)?;
+            engine.begin_deferred_free_guarded_canonical_checked(source_size)
+                .map_err(|_| NativeChildAllocationRefusal::Retained),
+    }) }.ok_or(NativeChildAllocationRefusal::Unavailable)??;
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
@@ -1577,8 +1580,14 @@ unsafe fn native_child_theap_allocate_request(
                 // caller retained its selected Heap/Theap throughout the getter.
                 // A fresh short engine resumes the originating request only.
                 let Some(resumed) = (unsafe { with_native_child_heap_theap_engine(capture.theap, |engine| {
-                    unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) }
+                    if canonical {
+                        unsafe { engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation) }
+                            .map_err(|_| NativeChildAllocationRefusal::Retained)
+                    } else {
+                        Ok(unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) })
+                    }
                 }) }) else { return Err(NativeChildAllocationRefusal::Retained); };
+                let resumed = resumed?;
                 // SAFETY: the getter and fresh engine projection both ended;
                 // the request was consumed by that exact admitted issuer.
                 if !unsafe { capture.complete() } { return Err(NativeChildAllocationRefusal::Retained); }
@@ -1593,8 +1602,13 @@ unsafe fn native_child_theap_allocate_request(
                     let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
                 }
                 phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
-                    engine.resume_deferred_free_allocation(collection, continuation)
-                }) }.ok_or(NativeChildAllocationRefusal::Unavailable)?;
+                    #[cfg(target_arch = "x86_64")]
+                    if canonical {
+                        return engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)
+                            .map_err(|_| NativeChildAllocationRefusal::Retained);
+                    }
+                    Ok::<_, NativeChildAllocationRefusal>(engine.resume_deferred_free_allocation(collection, continuation))
+                }) }.ok_or(NativeChildAllocationRefusal::Unavailable)??;
             }
         }
     }
