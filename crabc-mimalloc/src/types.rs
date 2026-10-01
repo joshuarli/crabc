@@ -9360,6 +9360,62 @@ mod tests {
         }
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn staged_guarded_zero_seed_draw_precedes_bound_callbacks_on_unpublished_image() {
+        use crate::config::SourceOption;
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        for rate in [0, 1, 3] {
+            let mut heap = std::boxed::Box::new(Heap::bootstrap_empty());
+            heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+            let heap_pointer = NonNull::new(core::ptr::addr_of_mut!(*heap)).unwrap();
+            let mut tld = std::boxed::Box::new(ThreadLocalData::detached());
+            assert!(tld.prepare_detached_static_memid());
+            assert!(tld.initialize_detached_after_static_memid(&PARENT));
+            let tld_pointer = NonNull::new(core::ptr::addr_of_mut!(*tld)).unwrap();
+            let mut image = std::boxed::Box::new(Theap::empty());
+            assert!(image.set_detached_main_metadata_static_memid());
+            let pointer = NonNull::new(core::ptr::addr_of_mut!(*image)).unwrap();
+            // Original allocations remain retained across every option
+            // callback. Buffered outputs make the exact draw count visible
+            // while retaining the actual initialized source random image.
+            unsafe {
+                let prepared = Theap::prepare_initialization_at(pointer, heap_pointer, tld_pointer,
+                    TheapInitializationKind::MetadataStatic).unwrap();
+                let linked = finish_unfaulted_test_random(prepared.apply_source_options_and_attach(
+                    SourceTheapOptions::release_defaults_for_test()).unwrap());
+                (*pointer.as_ptr()).random.test_stage_buffered_nexts(9, 11);
+                let available = (*pointer.as_ptr()).random.test_output_available();
+                let mut reads = std::vec::Vec::new();
+                let sample = GuardedSampleOptions::capture_with(|option| {
+                    assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                    assert_eq!((*tld_pointer.as_ptr()).theaps, pointer.as_ptr());
+                    assert_eq!((*pointer.as_ptr()).random.test_output_available(), available);
+                    reads.push(option);
+                    match option { SourceOption::GuardedSampleRate => rate, SourceOption::GuardedSampleSeed => 0, _ => panic!("unexpected sample option") }
+                });
+                let sampled = linked.apply_guarded_sample_options(sample);
+                let bounds = GuardedSizeOptions::capture_with(|option| {
+                    assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                    assert_eq!((*pointer.as_ptr()).guarded_sample_rate, rate as usize);
+                    assert_eq!((*pointer.as_ptr()).guarded_sample_count, if rate > 1 { 1 } else { rate as usize });
+                    assert_eq!((*pointer.as_ptr()).random.test_output_available(), available - if rate > 1 { 2 } else { 0 });
+                    reads.push(option);
+                    match option { SourceOption::GuardedMin => 80, SourceOption::GuardedMax => 96, _ => panic!("unexpected bound option") }
+                });
+                assert_eq!(reads, [SourceOption::GuardedSampleRate, SourceOption::GuardedSampleSeed,
+                    SourceOption::GuardedMin, SourceOption::GuardedMax]);
+                let ready = sampled.apply_guarded_size_options(bounds);
+                assert!((*pointer.as_ptr()).heap.load(Ordering::Acquire).is_null());
+                assert_eq!(((*pointer.as_ptr()).guarded_size_min, (*pointer.as_ptr()).guarded_size_max), (80, 96));
+                ready.publish_heap().unwrap();
+                assert_eq!((*pointer.as_ptr()).heap.load(Ordering::Acquire), heap_pointer.as_ptr());
+                (*tld_pointer.as_ptr()).detach_one_theap_from_heap(&mut *heap_pointer.as_ptr(), pointer.as_ptr()).unwrap();
+                (*tld_pointer.as_ptr()).detach_one_theap_from_tld(pointer.as_ptr()).unwrap();
+            }
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn staged_child_metadata_preserves_parent_tld_random_order_and_child_options() {
