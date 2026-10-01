@@ -6136,6 +6136,75 @@ const fn detached_thread_local_ptr() -> *mut ThreadLocalData {
     core::ptr::addr_of!(DETACHED_THREAD_LOCAL.0).cast_mut()
 }
 
+/// Callback-producing source options captured before allocator projections.
+///
+/// Lazy option initialization can deliver a registered output callback. The
+/// resulting scalar image is therefore passed into Theap initialization rather
+/// than reading the process table while its Heap, TLD, or Theap is borrowed.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct SourceTheapOptions {
+    allow_page_reclaim: bool,
+    allow_page_abandon: bool,
+    page_full_retain: isize,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[derive(Clone, Copy)]
+pub(crate) struct GuardedTheapOptions {
+    sample_rate: usize,
+    sample_seed: usize,
+    size_min: usize,
+    size_max: usize,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl SourceTheapOptions {
+    /// Captures the scalar inputs of `mi_theap_options_init`.
+    ///
+    /// # Safety
+    /// The caller holds no Heap, TLD, Theap, page-engine, or allocator-owner
+    /// projection or lock that a registered output callback could access.
+    /// Option initialization may invoke that callback and reenter allocation.
+    pub(crate) unsafe fn capture_source() -> Self {
+        Self::capture_with(crate::process_init::process_source_option)
+    }
+
+    fn capture_with(mut get: impl FnMut(crate::config::SourceOption) -> i64) -> Self {
+        use crate::config::SourceOption;
+        // Preserve the two distinct full-retain reads: a warning callback
+        // may change the option between the abandonment and retain snapshots.
+        let allow_page_reclaim = get(SourceOption::PageReclaimOnFree) >= 0;
+        let allow_page_abandon = get(SourceOption::PageFullRetain) >= 0;
+        let page_full_retain = get(SourceOption::PageFullRetain).clamp(-1, 32) as isize;
+        Self { allow_page_reclaim, allow_page_abandon, page_full_retain }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+impl GuardedTheapOptions {
+    /// Captures guarded options after the selected Theap's random split and
+    /// cookie initialization, preserving callback effects on the source RNG.
+    ///
+    /// # Safety
+    /// The actual initialization owner remains live, with no Heap, TLD,
+    /// Theap, page-engine, or allocator-owner projection or lock held across
+    /// the reads. Output callbacks may reenter the already admitted allocator;
+    /// the unpublished image must not be available as an allocation owner.
+    pub(crate) unsafe fn capture_source() -> Self {
+        Self::capture_with(crate::process_init::process_source_option)
+    }
+
+    fn capture_with(mut get: impl FnMut(crate::config::SourceOption) -> i64) -> Self {
+        use crate::config::SourceOption;
+        let sample_rate = get(SourceOption::GuardedSampleRate).max(0) as usize;
+        let sample_seed = get(SourceOption::GuardedSampleSeed) as usize;
+        let size_min = get(SourceOption::GuardedMin).max(0) as usize;
+        let size_max = (get(SourceOption::GuardedMax).max(0) as usize).max(size_min);
+        Self { sample_rate, sample_seed, size_min, size_max }
+    }
+}
+
 /// Source-layout prefix of `mi_theap_t` through `memid`.
 ///
 /// This private image contains every source field through the `mi_stats_t`
