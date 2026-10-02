@@ -57,11 +57,14 @@
 //! select the source's own branches: `MI_SMALL_SIZE_MAX` partial collection,
 //! `mi_page_is_full` mapping, and `mi_page_is_mostly_used` reabandonment.
 //!
-//! Every modeled producer is a foreign thread without a Theap for the page's
-//! Heap, so `_mi_page_associated_theap_peek` returns `NULL` and
-//! `mi_abandoned_page_try_reclaim` returns before any state change; it is not
-//! modeled. Fault injection after an irreversible transition is not an atomic
-//! interleaving; the deterministic unit and native tests keep that evidence.
+//! Ordinary modeled producers have no Theap for the page's Heap, so
+//! `mi_abandoned_page_try_reclaim` declines. The reclaim-on-free scenario
+//! instead supplies an eligible current Theap: it runs the mapped-page
+//! unabandon, identity replacement, and second collection before that owner
+//! exits with a foreign publication still pending. The source's eligibility
+//! policy and queue append remain outside the atomic model. Fault injection
+//! after an irreversible transition is not an atomic interleaving; the
+//! deterministic unit and native tests keep that evidence.
 //!
 //! The model is only evidence if its plain cells can observe a missing
 //! ordering. [`loom_model_rejects_a_head_without_source_acq_rel_ordering`]
@@ -713,6 +716,18 @@ impl<H: ModelHead> ModelPage<H> {
         self.page_free_collect();
     }
 
+    /// The page-side half of successful `mi_abandoned_page_try_reclaim` for
+    /// an eligible current Theap, after a remote free claimed the low bit.
+    /// Its caller already collected that free and proved a client remains.
+    fn reclaim_on_free(&self, thread_id: usize) {
+        assert!(is_owned(self.xthread_free.load_relaxed()));
+        assert!(is_abandoned(self.identity()));
+        assert!(self.used() > 0, "try-free precedes reclaim-on-free");
+        self.arenas_page_unabandon();
+        self.set_thread_identity(thread_id);
+        self.page_free_collect();
+    }
+
     // ----- quiescent audit ----------------------------------------------------
 
     /// Audits the page after every model thread joined. `remote` names the
@@ -947,6 +962,71 @@ fn loom_full_page_owner_exit_reabandons_to_mapped_then_releases_once() {
         }
         page.assert_quiescent(&[0, 1], 0);
     });
+}
+
+/// The original owner exits with three legal clients. One survivor reads
+/// its PageMap entry but postpones publication across successful reclaim by
+/// a second survivor and that survivor's own exit. A third survivor races
+/// the second exit. The unpublished block remains counted throughout both
+/// exits, and the final publication reaches exactly one terminal release.
+#[test]
+fn loom_reclaim_on_free_then_owner_exit_retains_an_unpublished_client() {
+    for (block_size, reserved) in [(SMALL_BLOCK_SIZE, 16), (REGULAR_BLOCK_SIZE, 4)] {
+        model(move || {
+            let page = Arc::new(SourcePage::new(PageImage::live(block_size, reserved, 3)));
+            let exiting_page = Arc::clone(&page);
+            thread::spawn(move || exiting_page.owner_exit())
+                .join().expect("the original owner exits before survivor frees");
+
+            let stage = Arc::new(AtomicUsize::new(0));
+            let pending_page = Arc::clone(&page);
+            let pending_stage = Arc::clone(&stage);
+            let pending = thread::spawn(move || {
+                let size = pending_page.read_live_client(1);
+                pending_stage.store(1, Ordering::Release);
+                while pending_stage.load(Ordering::Acquire) != 2 {
+                    thread::yield_now();
+                }
+                pending_page.publish_remote_block(1, size);
+            });
+            while stage.load(Ordering::Acquire) != 1 {
+                thread::yield_now();
+            }
+
+            let reclaiming_page = Arc::clone(&page);
+            let reclaimer = thread::spawn(move || {
+                // An eligible current Theap takes the source claim and then
+                // mi_free_try_collect_mt's try-free/reclaim decision in order.
+                let size = reclaiming_page.read_live_client(0);
+                let was_owned = publish_to_head_with_owner(
+                    &reclaiming_page.xthread_free, block_address(0), |_| true,
+                    |previous| reclaiming_page.block_next[0]
+                        .with_mut(|next| unsafe { *next = previous }),
+                ).expect("the survivor publishes its aligned source block");
+                assert!(!was_owned, "the exited owner's page is unowned");
+                if size <= SMALL_SIZE_MAX {
+                    reclaiming_page.page_free_collect_partly(0);
+                } else {
+                    reclaiming_page.page_free_collect();
+                }
+                assert!(!reclaiming_page.abandoned_page_try_free(), "the other clients remain live");
+                reclaiming_page.reclaim_on_free(READER_THREAD_ID);
+                assert_eq!(reclaiming_page.identity(), READER_THREAD_ID);
+                assert_eq!(reclaiming_page.used(), 2);
+
+                let other = spawn_remote_free(&reclaiming_page, 2);
+                reclaiming_page.owner_exit();
+                other.join().expect("the independent survivor completes its free");
+            });
+            reclaimer.join().expect("the reclaiming survivor exits before delayed publication");
+            assert_eq!(page.releases.load(Ordering::Relaxed), 0);
+            assert!(page.page_map_entry.with(|entry| unsafe { *entry }));
+            assert!(!page.metadata.with(|metadata| unsafe { (*metadata).released }));
+            stage.store(2, Ordering::Release);
+            pending.join().expect("the delayed valid client completes its publication");
+            page.assert_quiescent(&[0, 1, 2], 0);
+        });
+    }
 }
 
 /// An arena reader clears a mapped page's bit and claims its low owner bit
