@@ -1010,11 +1010,15 @@ unsafe fn prepare_read(stream: *mut StandardStream) -> bool {
         // a fresh buffer region while the error indicator remains set.
         if is_writable(stream) && flush_output_held(stream) == EOF { return false; }
         let inactive = (*stream).direction != BufferDirection::Read;
-        (*stream).direction = BufferDirection::Read;
         if !is_readable(stream) {
+            // __toread clears writing state before rejecting F_NORD, but
+            // establishes no readable region. Extension queries must therefore
+            // continue to report this write-only stream as not reading.
+            (*stream).direction = BufferDirection::Neutral;
             mark_error(stream);
             return false;
         }
+        (*stream).direction = BufferDirection::Read;
         if inactive {
             // musl __toread starts an empty region at the configured buffer end.
             // Until refill, this unused storage is also available for pushback.
