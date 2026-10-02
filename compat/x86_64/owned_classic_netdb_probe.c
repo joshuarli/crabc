@@ -61,7 +61,41 @@ static void contained(struct hostent *h,char *b,size_t n) {
     for(char **p=h->h_aliases;*p;p++) CHECK(*p>=b && *p<b+n && memchr(*p,0,b+n-*p));
     for(char **p=h->h_addr_list;*p;p++) CHECK(*p>=b && *p+h->h_length<=b+n);
 }
+static void query_domain_construction(void) {
+    unsigned char answer[512];
+    char maximum[255];memset(maximum,'a',254);maximum[254]=0;
+    maximum[63]=maximum[127]=maximum[191]='.';maximum[253]=0;
+    errno=EDOM;h_errno=96;
+    CHECK(res_mkquery(QUERY,maximum,C_IN,T_A,0,0,0,answer,sizeof answer)==271&&errno==EDOM&&h_errno==96);
+    maximum[253]='.';
+    CHECK(res_mkquery(QUERY,maximum,C_IN,T_A,0,0,0,answer,sizeof answer)==271&&errno==EDOM&&h_errno==96);
+    maximum[253]='a';memset(answer,0xa5,sizeof answer);
+    CHECK(res_mkquery(QUERY,maximum,C_IN,T_A,0,0,0,answer,sizeof answer)==-1&&errno==EDOM&&h_errno==96);
+    for(unsigned i=0;i<sizeof answer;i++)CHECK(answer[i]==0xa5);
+    char name[128],domain[128];
+    memset(name,'a',sizeof name-1);name[63]='.';name[sizeof name-1]=0;
+    memset(domain,'b',sizeof domain-1);domain[63]='.';domain[sizeof domain-1]=0;
+    errno=EDOM;h_errno=96;
+    CHECK(res_querydomain(name,domain,C_IN,T_A,answer,sizeof answer)==-1&&errno==EDOM&&h_errno==96);
+    for(unsigned i=0;i<sizeof answer;i++)CHECK(answer[i]==0xa5);
+    domain[126]=0;errno=EDOM;h_errno=96;
+    CHECK(res_querydomain(name,domain,C_IN,T_A,answer,sizeof answer)==-1&&errno==EDOM&&h_errno==96);
+    for(unsigned i=0;i<sizeof answer;i++)CHECK(answer[i]==0xa5);
+    /* Joining always contributes a dot, even when the supplied name already
+       ends in one. Query construction then rejects the empty interior label. */
+    const char *names[]={"a.","a.",""};
+    const char *domains[]={"example.test","","example.test"};
+    for(unsigned n=0;n<3;n++) {
+        errno=EDOM;h_errno=96;
+        CHECK(res_querydomain(names[n],domains[n],C_IN,T_A,answer,sizeof answer)==-1&&errno==EDOM&&h_errno==96);
+        for(unsigned i=0;i<sizeof answer;i++)CHECK(answer[i]==0xa5);
+    }
+    errno=EDOM;h_errno=96;
+    CHECK(res_query("a..example.test",C_IN,T_A,answer,sizeof answer)==-1&&errno==EDOM&&h_errno==96);
+    for(unsigned i=0;i<sizeof answer;i++)CHECK(answer[i]==0xa5);
+}
 static void host_numeric(void) {
+    query_domain_construction();
     struct hostent h,*r;_Alignas(16) char b[2048];int error;
     const char *names[]={"127.0.0.1","127.1","0x7f000001","0177.0.0.1"};
     for(unsigned i=0;i<4;i++) {
@@ -113,7 +147,53 @@ static void host_many(void) {
     address(&h,0,AF_INET,"192.0.2.1");address(&h,47,AF_INET,"192.0.2.48");
     struct hostent *p=gethostbyname("many.test");CHECK(p);count=0;while(p->h_addr_list[count])count++;CHECK(count==48);
 }
+static void query_domain_answers(void) {
+    unsigned char answer[512];
+    const struct {const char *name,*domain,*address;int type,family,answers;} cases[]={
+        {"a","example.test","198.51.100.42",T_A,AF_INET,1},
+        {"a.example.test","","198.51.100.42",T_A,AF_INET,1},
+        {"aaaa","example.test","2001:db8::42",T_AAAA,AF_INET6,1},
+        {"alias","example.test","198.51.100.44",T_A,AF_INET,2},
+        {"tc","example.test","198.51.100.45",T_A,AF_INET,1},
+        {"fallback","example.test","198.51.100.18",T_A,AF_INET,1},
+    };
+    for(unsigned i=0;i<sizeof cases/sizeof cases[0];i++) {
+        h_errno=96;
+        int length=res_querydomain(cases[i].name,cases[i].domain,C_IN,cases[i].type,answer,sizeof answer);
+        CHECK(length>12&&length<=(int)sizeof answer&&h_errno==96);
+        CHECK((answer[3]&15)==0&&answer[6]==0&&answer[7]==cases[i].answers);
+        unsigned char expected[16];int size=cases[i].family==AF_INET?4:16;
+        CHECK(inet_pton(cases[i].family,cases[i].address,expected)==1);
+        CHECK(!memcmp(answer+length-size,expected,size));
+    }
+    struct addrinfo hints={.ai_family=AF_INET,.ai_socktype=SOCK_STREAM,.ai_flags=AI_CANONNAME},*alias=0,*batch=0,*search=0;
+    CHECK(!getaddrinfo("alias.example.test","80",&hints,&alias)&&alias&&!alias->ai_next);
+    CHECK(!strcmp(alias->ai_canonname,"target.example.test"));
+    hints.ai_family=AF_UNSPEC;
+    CHECK(!getaddrinfo("batch.example.test","80",&hints,&batch)&&batch);
+    int v4=0,v6=0;
+    for(struct addrinfo *p=batch;p;p=p->ai_next) {
+        if(p->ai_family==AF_INET) {CHECK(((struct sockaddr_in*)p->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.48"));v4++;}
+        else if(p->ai_family==AF_INET6) {
+            unsigned char expected[16];CHECK(inet_pton(AF_INET6,"2001:db8::48",expected)==1);
+            CHECK(!memcmp(&((struct sockaddr_in6*)p->ai_addr)->sin6_addr,expected,16));v6++;
+        } else CHECK(0);
+    }
+    CHECK(v4==1&&v6==1);freeaddrinfo(batch);
+    hints.ai_family=AF_INET;
+    CHECK(!getaddrinfo("searchhost","80",&hints,&search)&&search&&!search->ai_next);
+    CHECK(!strcmp(search->ai_canonname,"searchhost.search.test"));
+    CHECK(((struct sockaddr_in*)search->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.17"));
+    freeaddrinfo(search);
+    /* Later lookups and freeing their results do not retire the earlier
+       caller-owned canonical name or address list. */
+    CHECK(!strcmp(alias->ai_canonname,"target.example.test"));
+    CHECK(((struct sockaddr_in*)alias->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.44"));
+    freeaddrinfo(alias);
+}
+
 static void host_dns(void) {
+    query_domain_answers();
     struct hostent h,*r;char b[2048];int error=97;
     CHECK(!gethostbyname_r("a.example.test.",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);address(&h,0,AF_INET,"198.51.100.42");CHECK(!strcmp(h.h_name,"a.example.test"));
     CHECK(!gethostbyname2_r("aaaa.example.test",AF_INET6,&h,b,sizeof b,&r,&error)&&r==&h);address(&h,0,AF_INET6,"2001:db8::42");
@@ -454,7 +534,7 @@ static void allocation_failure(void) {
 }
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
-    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
+    if(!strcmp(s,"query-domain")){query_domain_construction();query_domain_answers();}else if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
     else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services")){services();protocols();}else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }

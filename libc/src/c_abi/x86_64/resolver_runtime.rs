@@ -692,6 +692,14 @@ unsafe fn make_query(
     unsafe { ensure_initialized() };
     let mut text = [0u8; 256];
     let length = unsafe { c_name_bytes(name, &mut text) }.ok_or(EINVAL)?;
+    #[cfg(crabc_x86_owned_runtime)]
+    {
+        // The C query builder caps the textual name after removing one final
+        // dot. Core's wire scratch also represents a longer diagnostic name,
+        // which does not widen the public resolver's admitted name length.
+        let textual_length = length - usize::from(text[length - 1] == b'.');
+        if textual_length > 253 { return Err(EINVAL); }
+    }
     let output = unsafe { core::slice::from_raw_parts_mut(answer, capacity) };
     let query_id = unsafe { RESOLVER_RES_STATE.id };
     let written = resolver::encode_query(&text[..length], type_ as u16, query_id, output)
@@ -731,7 +739,9 @@ static_archive_member! { res_mkquery_source {
     /// 256-byte scratch array before it forms the output slice, so the two ranges
     /// may overlap. `_data` and `_new_record` are ignored by this selected ABI and
     /// need not designate readable storage. Invalid operation, class, type, or
-    /// output arguments return the existing `EINVAL` result before `name` is read.
+    /// output arguments return -1 before `name` is read. The owned C runtime
+    /// preserves errno on construction failure; the staged transport reports
+    /// its validation error through errno.
     #[inline(never)]
     #[no_mangle]
     pub unsafe extern "C" fn __res_mkquery(
@@ -746,13 +756,19 @@ static_archive_member! { res_mkquery_source {
         answer_length: c_int,
     ) -> c_int {
         if answer_length < 0 {
+            #[cfg(not(crabc_x86_owned_runtime))]
             unsafe { set_errno(EINVAL) };
             return -1;
         }
+        #[cfg(crabc_x86_owned_runtime)]
+        let prior_errno = unsafe { errno::get_errno() };
         match unsafe { make_query(operation, name, class, type_, answer, answer_length as usize) } {
             Ok(length) => length,
             Err(error) => {
+                #[cfg(not(crabc_x86_owned_runtime))]
                 unsafe { set_errno(error) };
+                #[cfg(crabc_x86_owned_runtime)]
+                unsafe { let _ = error; set_errno(prior_errno) };
                 -1
             }
         }
@@ -1034,6 +1050,10 @@ static_archive_member! { res_query_source {
 
 // Musl's `src/network/res_querydomain.c` object.
 static_archive_member! { res_querydomain_source {
+    /// Join a name and domain with the source's unconditional separator.
+    /// # Safety
+    /// name and domain must point to readable NUL-terminated strings. answer
+    /// must designate answer_length exclusive writable bytes when nonnegative.
     #[no_mangle]
     pub unsafe extern "C" fn res_querydomain(
         name: *const c_char,
@@ -1043,29 +1063,17 @@ static_archive_member! { res_querydomain_source {
         answer: *mut u8,
         answer_length: c_int,
     ) -> c_int {
-        if domain.is_null() || unsafe { domain.read() } == 0 {
-            return unsafe { query_response(name, class, type_, answer, answer_length) };
-        }
-        let mut combined = [0 as c_char; 256];
-        let Some(name_length) = (unsafe { c_string_length(name, 254) }) else {
-            unsafe { set_errno(EINVAL) };
-            return -1;
-        };
-        let Some(domain_length) = (unsafe { c_string_length(domain, 254) }) else {
-            unsafe { set_errno(EINVAL) };
-            return -1;
-        };
-        let separator = usize::from(name_length != 0 && unsafe { name.add(name_length - 1).read() } != b'.' as c_char);
-        if name_length.saturating_add(separator).saturating_add(domain_length) >= combined.len() {
-            unsafe { set_errno(EMSGSIZE) };
-            return -1;
-        }
+        let mut combined = [0 as c_char; 255];
+        let Some(name_length) = (unsafe { c_string_length(name, 255) }) else { return -1; };
+        let Some(domain_length) = (unsafe { c_string_length(domain, 255) }) else { return -1; };
+        // The separator counts toward the 254-byte textual limit even for
+        // an empty domain or an already absolute name. Rejection precedes
+        // query construction and leaves the caller's resolver status intact.
+        if name_length + domain_length + 1 > 254 { return -1; }
         unsafe {
             core::ptr::copy_nonoverlapping(name, combined.as_mut_ptr(), name_length);
-            if separator != 0 {
-                combined[name_length] = b'.' as c_char;
-            }
-            core::ptr::copy_nonoverlapping(domain, combined.as_mut_ptr().add(name_length + separator), domain_length + 1);
+            combined[name_length] = b'.' as c_char;
+            core::ptr::copy_nonoverlapping(domain, combined.as_mut_ptr().add(name_length + 1), domain_length + 1);
         }
         unsafe { query_response(combined.as_ptr(), class, type_, answer, answer_length) }
     }
