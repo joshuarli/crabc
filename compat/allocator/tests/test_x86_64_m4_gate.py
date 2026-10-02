@@ -24,6 +24,75 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
+    def test_private_realloc_keeps_the_source_mandated_live_identity(self) -> None:
+        trace = {"realloc.source.0.100": "id:0,reuse:-,usable:100,align:4,slice:12",
+                 "realloc.source.0.100.contract": "requested:100,alignment:16,offset:0,upper:160,success:1,aligned:1,distinct:1",
+                 "realloc.source.0.100.payload": "1", "realloc.source.0.100.natural": "112",
+                 "realloc.0.1": "id:1,reuse:0,usable:100,align:4,slice:12",
+                 "realloc.0.1.contract": "requested:50,alignment:8,offset:0,upper:100,success:1,aligned:1,distinct:1",
+                 "realloc.0.1.realloc": "old:100,old_id:0,dynamic:0,identity:1,payload:1,zero:1"}
+        gate.compare_operations_traces(trace, trace, private_source_profile="secure-5")
+        for key, before, after in (("realloc.0.1", "reuse:0", "reuse:-"),
+                                  ("realloc.0.1.realloc", "old:100", "old:99"),
+                                  ("realloc.0.1.realloc", "identity:1", "identity:0"),
+                                  ("realloc.0.1.realloc", "payload:1", "payload:0"),
+                                  ("realloc.0.1.realloc", "zero:1", "zero:0"),
+                                  ("realloc.source.0.100", "usable:100", "usable:110")):
+            invalid = {**trace, key: trace[key].replace(before, after)}
+            with self.subTest(field=after), self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(invalid, invalid, private_source_profile="secure-5")
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces({**trace, "expand.fit.0.100": "1"},
+                {**trace, "expand.fit.0.100": "1"}, private_source_profile="secure-5")
+
+    def test_private_offset_rezalloc_validates_capacity_chain_and_required_identity(self) -> None:
+        def trace(initial, grown, replacement):
+            base = "offset_rezalloc.0.0.0"
+            return {f"{base}.grow": f"grow:1,copy:1,tail:1,odd:1,old_usable:{initial},new_usable:{grown}",
+                    f"{base}.reuse": "reuse:1,copy:1",
+                    f"{base}.replace": f"replace:1,copy:1,tail:1,aligned:1,new_usable:{replacement}",
+                    f"{base}.basis": f"requested:33,alignment:256,offset:1,initial:{initial},initial_upper:320,grown:{grown},grown_upper:512,replacement:{replacement},replacement_upper:512,initial_aligned:1,grown_aligned:1"}
+        c, native = trace(103, 126, 68), trace(231, 254, 216)
+        gate.compare_operations_traces(c, native, private_source_profile="secure-5")
+        for key in ("grow", "reuse", "replace"):
+            invalid = {**native, f"offset_rezalloc.0.0.0.{key}": native[f"offset_rezalloc.0.0.0.{key}"].replace("copy:1", "copy:0")}
+            with self.subTest(key=key), self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(invalid, invalid, private_source_profile="secure-5")
+        for invalid in (trace(31, 126, 68), trace(103, 119, 68), trace(103, 126, 61), trace(103, 126, 513)):
+            with self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(invalid, invalid, private_source_profile="secure-5")
+
+    def test_private_request_context_checks_each_randomized_allocation(self) -> None:
+        contract = "requested:33,alignment:256,offset:1,upper:320,success:1,aligned:1,distinct:1"
+        c = {"malloc_aligned_at.8.1": "id:12,reuse:-,usable:33,align:0,slice:20",
+             "malloc_aligned_at.8.1.contract": contract, "malloc_aligned_at.ok.8.1": "1,0"}
+        native = {**c, "malloc_aligned_at.8.1": "id:12,reuse:2,usable:289,align:0,slice:27"}
+        gate.compare_operations_traces(c, native, private_source_profile="secure-5")
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces(c, native)
+        for field, bad in (("usable:289", "usable:32"), ("usable:289", "usable:321"),
+                           ("reuse:2", "reuse:12"), ("align:0", "align:1"),
+                           ("slice:27", "slice:4096")):
+            with self.subTest(field=bad), self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(c, {**native,
+                    "malloc_aligned_at.8.1": native["malloc_aligned_at.8.1"].replace(field, bad)},
+                    private_source_profile="secure-5")
+        for flag in ("success", "aligned", "distinct"):
+            invalid = {**c, "malloc_aligned_at.8.1.contract": contract.replace(f"{flag}:1", f"{flag}:0")}
+            with self.subTest(flag=flag), self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(invalid, invalid, private_source_profile="secure-5")
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces(c, {**native,
+                "malloc_aligned_at.8.1.contract": contract.replace("requested:33", "requested:34")},
+                private_source_profile="secure-5")
+        invalid = {**c, "malloc_aligned_at.ok.8.1": "0,0"}
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces(invalid, invalid, private_source_profile="secure-5")
+        singleton = {"umalloc_aligned": "id:0,reuse:-,usable:100,align:8,slice:12",
+                     "umalloc_aligned.contract": "requested:100,alignment:256,offset:0,upper:512,success:1,aligned:1,distinct:1",
+                     "umalloc_aligned.payload": "1"}
+        gate.compare_operations_traces(singleton, singleton, private_source_profile="secure-5")
+
     def test_private_secure_class_allocations_allow_only_surplus_alignment(self) -> None:
         c = {"malloc.11.33": "id:11,reuse:-,usable:33,align:5,slice:14",
              "malloc.keep.11.33": "1"}

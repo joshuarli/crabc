@@ -199,6 +199,22 @@ static int note(const char* key, const void* p) {
   return id;
 }
 
+/* Aligned allocation can select an already aligned free block or allocate
+   max(size,16)+alignment-1 bytes and adjust within that block. Record the
+   request and its capacity bound, without equating random block placement.
+   `distinct` checks concurrently live clients where the caller has them. */
+static void note_request(const char* key, const void* p, size_t size,
+                         size_t alignment, size_t offset, bool distinct) {
+  note(key, p);
+  if (!valid_domain) { return; }
+  char contract_key[128];
+  snprintf(contract_key, sizeof contract_key, "%s.contract", key);
+  const size_t oversize = (size < 16 ? 16 : size) + alignment - 1;
+  line(contract_key, "requested:%zu,alignment:%zu,offset:%zu,upper:%zu,success:%d,aligned:%d,distinct:%d",
+       size, alignment, offset, mi_good_size(oversize), p != NULL,
+       p != NULL && (((uintptr_t)p + offset) & (alignment - 1)) == 0, distinct);
+}
+
 static void note_errno(const char* key) {
   char name[128];
   snprintf(name, sizeof name, "%s.errno", key);
@@ -226,6 +242,70 @@ static bool is_zero(const void* p, size_t size) {
   return true;
 }
 
+/* Private clients check the requested extent, retaining the raw allocation
+   observation. Never write the extent if the allocator reports it too small. */
+static void note_client_request(const char* key, void* p, size_t size,
+                                size_t alignment, size_t offset, bool zero) {
+  if (!valid_domain) { note(key, p); return; }
+  note_request(key, p, size, alignment, offset, true);
+  char payload_key[128];
+  snprintf(payload_key, sizeof payload_key, "%s.payload", key);
+  bool correct = p != NULL && mi_usable_size(p) >= size;
+  if (correct && zero) { correct = is_zero(p, size); }
+  if (correct && !zero) { fill(p, size, 0x47); correct = has_fill(p, size, 0x47); }
+  line(payload_key, "%d", correct);
+}
+
+static void note_plain_request(const char* key, void* p, size_t size, bool zero) {
+  note_client_request(key, p, size, size <= 8 ? 8 : 16, 0, zero);
+  if (valid_domain) {
+    char context[128];
+    snprintf(context, sizeof context, "%s.natural", key);
+    line(context, "%zu", mi_good_size(size));
+  }
+}
+
+static void note_text_request(const char* key, const void* p, const void* expected, size_t size) {
+  if (!valid_domain) { note(key, p); return; }
+  note_request(key, p, size, size <= 8 ? 8 : 16, 0, true);
+  char payload_key[128];
+  snprintf(payload_key, sizeof payload_key, "%s.payload", key);
+  line(payload_key, "%d", p != NULL && mi_usable_size(p) >= size && memcmp(p, expected, size) == 0);
+}
+
+/* These clients use the default heap. Ordinary realloc delegates through a
+   word alignment and keeps the floor-half extent; aligned realloc keeps the
+   ceil-half extent only when the old pointer meets the requested alignment. */
+static void note_realloc_request(const char* key, void* p, uintptr_t old,
+                                 size_t old_size, size_t size, size_t alignment,
+                                 size_t offset, size_t keep, unsigned char seed,
+                                 bool zero, bool dynamic) {
+  if (!valid_domain) { note(key, p); return; }
+  int old_id = -1;
+  for (int i = id_count - 1; i >= 0; i--) {
+    if (id_address[i] == old) { old_id = i; break; }
+  }
+  note(key, p);
+  const size_t half = alignment <= sizeof(uintptr_t) && offset == 0
+      ? old_size / 2 : old_size - old_size / 2;
+  const bool reuse = old != 0 && size > 0 && size <= old_size && size >= half
+      && ((old + offset) & (alignment - 1)) == 0;
+  size_t upper = mi_good_size((size < 16 ? 16 : size) + alignment - 1);
+  if (reuse && upper < old_size) { upper = old_size; }
+  char context[128];
+  snprintf(context, sizeof context, "%s.contract", key);
+  line(context, "requested:%zu,alignment:%zu,offset:%zu,upper:%zu,success:%d,aligned:%d,distinct:1",
+       size, alignment, offset, upper, p != NULL,
+       p != NULL && (((uintptr_t)p + offset) & (alignment - 1)) == 0);
+  snprintf(context, sizeof context, "%s.realloc", key);
+  const size_t copy = size < old_size ? size : old_size;
+  line(context, "old:%zu,old_id:%d,dynamic:%d,identity:%d,payload:%d,zero:%d",
+       old_size, old_id, dynamic, p != NULL && (((uintptr_t)p == old) == reuse),
+       p != NULL && mi_usable_size(p) >= keep && has_fill(p, keep, seed),
+       !zero || reuse || (p != NULL && mi_usable_size(p) >= copy
+           && is_zero((char*)p + copy, mi_usable_size(p) - copy)));
+}
+
 static void key_name(char* out, size_t out_size, const char* prefix, size_t a, size_t b) {
   snprintf(out, out_size, "%s.%zu.%zu", prefix, a, b);
 }
@@ -248,7 +328,15 @@ static void section_allocation(void) {
     key_name(key, sizeof key, "malloc", i, class_sizes[i]);
     errno = 0;
     blocks[i] = mi_malloc(class_sizes[i]);
-    note(key, blocks[i]);
+    bool distinct = true;
+    if (valid_domain) {
+      for (size_t j = 0; j < i; j++) { distinct &= blocks[i] != blocks[j]; }
+    }
+    note_request(key, blocks[i], class_sizes[i], class_sizes[i] <= 8 ? 8 : 16, 0, distinct);
+    if (valid_domain) {
+      char context[128]; snprintf(context, sizeof context, "%s.natural", key);
+      line(context, "%zu", mi_good_size(class_sizes[i]));
+    }
     if (blocks[i] != NULL) { fill(blocks[i], mi_usable_size(blocks[i]), (unsigned char)i); }
   }
   for (size_t i = 0; i < CLASS_SIZE_COUNT; i++) {
@@ -260,14 +348,22 @@ static void section_allocation(void) {
   for (size_t i = 0; i < CLASS_SIZE_COUNT; i++) {
     key_name(key, sizeof key, "zalloc", i, class_sizes[i]);
     void* p = mi_zalloc(class_sizes[i]);
-    note(key, p);
+    note_request(key, p, class_sizes[i], class_sizes[i] <= 8 ? 8 : 16, 0, true);
+    if (valid_domain) {
+      char context[128]; snprintf(context, sizeof context, "%s.natural", key);
+      line(context, "%zu", mi_good_size(class_sizes[i]));
+    }
     key_name(key, sizeof key, "zalloc.zero", i, class_sizes[i]);
     line(key, "%d", p != NULL && is_zero(p, mi_usable_size(p)));
     if (p != NULL) { fill(p, mi_usable_size(p), 0x5a); }
     mi_free(p);
     key_name(key, sizeof key, "calloc", i, class_sizes[i]);
     p = mi_calloc(1, class_sizes[i]);
-    note(key, p);
+    note_request(key, p, class_sizes[i], class_sizes[i] <= 8 ? 8 : 16, 0, true);
+    if (valid_domain) {
+      char context[128]; snprintf(context, sizeof context, "%s.natural", key);
+      line(context, "%zu", mi_good_size(class_sizes[i]));
+    }
     key_name(key, sizeof key, "calloc.zero", i, class_sizes[i]);
     line(key, "%d", p != NULL && is_zero(p, mi_usable_size(p)));
     mi_free(p);
@@ -279,10 +375,10 @@ static void section_allocation(void) {
   note("mallocn.overflow", mi_mallocn(SIZE_MAX / 4, 8));
   note_errno("mallocn.overflow");
   void* p = mi_calloc(0, 1000);
-  note("calloc.zero_count", p);
+  note_plain_request("calloc.zero_count", p, 0, true);
   mi_free(p);
   p = mi_mallocn(3, 40);
-  note("mallocn.3x40", p);
+  note_plain_request("mallocn.3x40", p, 120, false);
   mi_free(p);
   errno = 0;
   note("malloc.too_large", mi_malloc((size_t)PTRDIFF_MAX + 1));
@@ -293,11 +389,11 @@ static void section_allocation(void) {
   for (size_t size = 0; size <= MI_SMALL_SIZE_MAX; size += 120) {
     key_name(key, sizeof key, "malloc_small", size, 0);
     p = mi_malloc_small(size);
-    note(key, p);
+    note_plain_request(key, p, size, false);
     mi_free(p);
     key_name(key, sizeof key, "zalloc_small", size, 0);
     p = mi_zalloc_small(size);
-    note(key, p);
+    note_plain_request(key, p, size, true);
     key_name(key, sizeof key, "zalloc_small.zero", size, 0);
     line(key, "%d", p != NULL && is_zero(p, mi_usable_size(p)));
     mi_free(p);
@@ -307,7 +403,7 @@ static void section_allocation(void) {
     size_t block_size = 12345;
     key_name(key, sizeof key, "umalloc", i, u_sizes[i]);
     p = mi_umalloc(u_sizes[i], &block_size);
-    note(key, p);
+    note_plain_request(key, p, u_sizes[i], false);
     key_name(key, sizeof key, "umalloc.block", i, u_sizes[i]);
     line(key, "%zu", block_size);
     size_t freed = 777;
@@ -317,7 +413,7 @@ static void section_allocation(void) {
     block_size = 12345;
     key_name(key, sizeof key, "ucalloc", i, u_sizes[i]);
     p = mi_ucalloc(2, u_sizes[i] / 2, &block_size);
-    note(key, p);
+    note_plain_request(key, p, 2 * (u_sizes[i] / 2), true);
     key_name(key, sizeof key, "ucalloc.block", i, u_sizes[i]);
     line(key, "%zu,%d", block_size, p != NULL && is_zero(p, mi_usable_size(p)));
     mi_free(p);
@@ -325,14 +421,14 @@ static void section_allocation(void) {
       block_size = 12345;
       key_name(key, sizeof key, "umalloc_small", i, u_sizes[i]);
       p = mi_umalloc_small(u_sizes[i], &block_size);
-      note(key, p);
+      note_plain_request(key, p, u_sizes[i], false);
       key_name(key, sizeof key, "umalloc_small.block", i, u_sizes[i]);
       line(key, "%zu", block_size);
       mi_free(p);
       block_size = 12345;
       key_name(key, sizeof key, "uzalloc_small", i, u_sizes[i]);
       p = mi_uzalloc_small(u_sizes[i], &block_size);
-      note(key, p);
+      note_plain_request(key, p, u_sizes[i], true);
       key_name(key, sizeof key, "uzalloc_small.block", i, u_sizes[i]);
       line(key, "%zu,%d", block_size, p != NULL && is_zero(p, mi_usable_size(p)));
       mi_free(p);
@@ -342,16 +438,16 @@ static void section_allocation(void) {
   mi_ufree(NULL, &freed);
   line("ufree.null", "%zu", freed);
   p = mi_new(100);
-  note("new.100", p);
+  note_plain_request("new.100", p, 100, false);
   mi_free(p);
   p = mi_new_n(10, 10);
-  note("new_n.10x10", p);
+  note_plain_request("new_n.10x10", p, 100, false);
   mi_free(p);
   errno = 0;
   note("new_nothrow.too_large", mi_new_nothrow(SIZE_MAX / 2));
   note_errno("new_nothrow.too_large");
   p = mi_new_nothrow(64);
-  note("new_nothrow.64", p);
+  note_plain_request("new_nothrow.64", p, 64, false);
   mi_free(p);
 }
 
@@ -370,26 +466,28 @@ static void section_free(void) {
   mi_free(NULL);
   line("free.null", "1");
   line("cfree.null", "%d", mi_cfree(NULL));
-  line("cfree.invalid_low", "%d", mi_cfree((void*)(uintptr_t)0x0000000003990080));
   int on_stack = 0;
-  line("cfree.stack", "%d", mi_cfree(&on_stack));
+  if (!valid_domain) {
+    line("cfree.invalid_low", "%d", mi_cfree((void*)(uintptr_t)0x0000000003990080));
+    line("cfree.stack", "%d", mi_cfree(&on_stack));
+  }
   void* p = mi_malloc(48);
-  note("cfree.block", p);
+  note_plain_request("cfree.block", p, 48, false);
   line("cfree.valid", "%d", mi_cfree(p));
   p = mi_malloc(48);
-  note("cfree.block.again", p);
+  note_plain_request("cfree.block.again", p, 48, false);
   mi_free_size(p, 48);
   p = mi_malloc_small(64);
-  note("free_small.block", p);
+  note_plain_request("free_small.block", p, 64, false);
   mi_free_small(p);
   p = mi_malloc_aligned(100, 64);
-  note("free_aligned.block", p);
+  note_client_request("free_aligned.block", p, 100, 64, 0, false);
   mi_free_aligned(p, 64);
   p = mi_malloc_aligned(100, 64);
-  note("free_size_aligned.block", p);
+  note_client_request("free_size_aligned.block", p, 100, 64, 0, false);
   mi_free_size_aligned(p, 100, 64);
   line("usable_size.null", "%zu", mi_usable_size(NULL));
-  line("check_owned.stack", "%d", mi_check_owned(&on_stack));
+  if (!valid_domain) { line("check_owned.stack", "%d", mi_check_owned(&on_stack)); }
   line("check_owned.null", "%d", mi_check_owned(NULL));
   p = mi_malloc(200);
   line("check_owned.block", "%d", mi_check_owned(p));
@@ -402,52 +500,63 @@ static void section_realloc(void) {
   char key[96];
   errno = 0;
   void* p = mi_realloc(NULL, 4);
-  note("realloc.null", p);
+  note_plain_request("realloc.null", p, 4, false);
   note_errno("realloc.null");
   mi_free(p);
   p = mi_realloc(NULL, 0);
-  note("realloc.null_zero", p);
+  note_plain_request("realloc.null_zero", p, 0, false);
   line("realloc.null_zero.byte", "%d", p == NULL ? -1 : ((unsigned char*)p)[0]);
   mi_free(p);
   p = mi_malloc(4);
-  note("realloc.sized_zero.source", p);
+  note_plain_request("realloc.sized_zero.source", p, 4, false);
   fill(p, 4, 9);
+  const uintptr_t old_zero = (uintptr_t)p;
+  const size_t old_zero_size = valid_domain ? mi_usable_size(p) : 0;
   p = mi_realloc(p, 0);
-  note("realloc.sized_zero", p);
+  note_realloc_request("realloc.sized_zero", p, old_zero, old_zero_size, 0, 8, 0, 0, 9, false, false);
   line("realloc.sized_zero.byte", "%d", p == NULL ? -1 : ((unsigned char*)p)[0]);
   mi_free(p);
   static const size_t sources[] = { 1, 24, 100, 1000, 5000, 20000, 100000, 600000, 5 * MiB };
   for (size_t s = 0; s < sizeof sources / sizeof sources[0]; s++) {
     void* source = mi_malloc(sources[s]);
     key_name(key, sizeof key, "realloc.source", s, sources[s]);
-    note(key, source);
+    note_plain_request(key, source, sources[s], false);
     const size_t usable = mi_usable_size(source);
+    size_t initialized = 0;
     const size_t targets[] = { usable, usable / 2 + usable % 2, usable / 2, usable / 2 - (usable > 1), usable + 1, usable * 3 };
     for (size_t t = 0; t < sizeof targets / sizeof targets[0]; t++) {
       const size_t current = mi_usable_size(source);
+      initialized = current;
       fill(source, current, (unsigned char)(s * 16 + t));
       const size_t keep = targets[t] < current ? targets[t] : current;
       errno = 0;
+      const uintptr_t old = (uintptr_t)source;
       void* q = mi_realloc(source, targets[t]);
       key_name(key, sizeof key, "realloc", s, t);
-      note(key, q);
+      note_realloc_request(key, q, old, current, targets[t], 8, 0, keep,
+                           (unsigned char)(s * 16 + t), false, true);
       key_name(key, sizeof key, "realloc.kept", s, t);
       line(key, "%d", q != NULL && has_fill(q, keep, (unsigned char)(s * 16 + t)));
       if (q != NULL) { source = q; }
     }
     /* Pinned-C `mi_urealloc` reports the pre and post page block sizes. */
     size_t pre = 1, post = 1;
+    const uintptr_t old_urealloc = (uintptr_t)source;
+    const size_t old_usable = valid_domain ? mi_usable_size(source) : 0;
     void* q = mi_urealloc(source, sources[s] * 2 + 1, &pre, &post);
     key_name(key, sizeof key, "urealloc", s, sources[s]);
-    note(key, q);
+    const size_t kept = initialized < sources[s] * 2 + 1 ? initialized : sources[s] * 2 + 1;
+    note_realloc_request(key, q, old_urealloc, old_usable, sources[s] * 2 + 1, 8, 0, kept,
+                         (unsigned char)(s * 16 + 5), false, false);
     key_name(key, sizeof key, "urealloc.sizes", s, sources[s]);
     line(key, "%zu,%zu", pre, post);
     if (q != NULL) { source = q; }
     const size_t grow = mi_usable_size(source);
     fill(source, grow, 0x33);
+    const uintptr_t old_rezalloc = (uintptr_t)source;
     q = mi_rezalloc(source, grow * 2 + 17);
     key_name(key, sizeof key, "rezalloc", s, sources[s]);
-    note(key, q);
+    note_realloc_request(key, q, old_rezalloc, grow, grow * 2 + 17, 8, 0, grow, 0x33, true, true);
     key_name(key, sizeof key, "rezalloc.content", s, sources[s]);
     line(key, "%d,%d", q != NULL && has_fill(q, grow, 0x33),
          q != NULL && is_zero((char*)q + grow, mi_usable_size(q) - grow));
@@ -470,11 +579,12 @@ static void section_realloc(void) {
   line("expand.null", "%d", mi_expand(NULL, 10) == NULL);
   size_t pre = 1, post = 1;
   p = mi_urealloc(NULL, 50, &pre, &post);
-  note("urealloc.null", p);
+  note_plain_request("urealloc.null", p, 50, false);
   line("urealloc.null.sizes", "%zu,%zu", pre, post);
   mi_free(p);
 
   p = mi_malloc(64);
+  if (valid_domain) { note_plain_request("reallocn.source", p, 64, false); }
   fill(p, 64, 1);
   errno = 0;
   void* q = mi_realloc(p, (size_t)PTRDIFF_MAX + 1);
@@ -486,8 +596,10 @@ static void section_realloc(void) {
   note("reallocn.overflow", q);
   note_errno("reallocn.overflow");
   line("reallocn.overflow.kept", "%d", has_fill(p, 64, 1));
+  uintptr_t old_client = (uintptr_t)p;
+  size_t old_client_size = valid_domain ? mi_usable_size(p) : 0;
   q = mi_reallocn(p, 10, 20);
-  note("reallocn.10x20", q);
+  note_realloc_request("reallocn.10x20", q, old_client, old_client_size, 200, 8, 0, 64, 1, false, false);
   line("reallocn.10x20.kept", "%d", q != NULL && has_fill(q, 64, 1));
   p = q;
   errno = 0;
@@ -495,14 +607,14 @@ static void section_realloc(void) {
   note("reallocf.too_large", q);
   note_errno("reallocf.too_large");
   /* The source freed `p`; a same-size request reuses its block. */
-  note("reallocf.reuse_probe", mi_malloc(200));
+  note_plain_request("reallocf.reuse_probe", mi_malloc(200), 200, false);
   p = mi_reallocf(NULL, 30);
-  note("reallocf.null", p);
+  note_plain_request("reallocf.null", p, 30, false);
   mi_free(p);
 
   errno = 0;
   p = mi_reallocarray(NULL, 0, 16);
-  note("reallocarray.null_zero", p);
+  note_plain_request("reallocarray.null_zero", p, 0, false);
   note_errno("reallocarray.null_zero");
   errno = 0;
   q = mi_reallocarray(p, SIZE_MAX / 2, 3);
@@ -512,8 +624,10 @@ static void section_realloc(void) {
   q = mi_reallocarray(p, (size_t)PTRDIFF_MAX / 2 + 1, 2);
   note("reallocarray.too_large", q);
   note_errno("reallocarray.too_large");
+  old_client = (uintptr_t)p;
+  old_client_size = valid_domain ? mi_usable_size(p) : 0;
   q = mi_reallocarray(p, 7, 9);
-  note("reallocarray.7x9", q);
+  note_realloc_request("reallocarray.7x9", q, old_client, old_client_size, 63, 8, 0, 0, 0, false, false);
   p = q;
   if (!valid_domain) {
     errno = 0;
@@ -529,21 +643,26 @@ static void section_realloc(void) {
   errno = 0;
   line("reallocarr.too_large", "%d", mi_reallocarr(&p, (size_t)PTRDIFF_MAX / 2 + 1, 2));
   note_errno("reallocarr.too_large");
+  if (valid_domain) { fill(p, mi_usable_size(p), 0x58); }
+  old_client = (uintptr_t)p;
+  old_client_size = valid_domain ? mi_usable_size(p) : 0;
   line("reallocarr.grow", "%d", mi_reallocarr(&p, 20, 20));
-  note("reallocarr.grow.block", p);
+  note_realloc_request("reallocarr.grow.block", p, old_client, old_client_size, 400, 8, 0, old_client_size, 0x58, false, false);
   const int zero_count = mi_reallocarr(&p, 0, 8);
   line("reallocarr.zero_count", "%d,%d", zero_count, p == NULL);
   void* none = NULL;
   line("reallocarr.from_null", "%d", mi_reallocarr(&none, 3, 5));
-  note("reallocarr.from_null.block", none);
+  note_plain_request("reallocarr.from_null.block", none, 15, false);
   mi_free(none);
 
   p = mi_recalloc(NULL, 5, 7);
-  note("recalloc.null", p);
+  note_plain_request("recalloc.null", p, 35, true);
   line("recalloc.null.zero", "%d", p != NULL && is_zero(p, mi_usable_size(p)));
   fill(p, 35, 3);
+  old_client = (uintptr_t)p;
+  old_client_size = valid_domain ? mi_usable_size(p) : 0;
   q = mi_recalloc(p, 50, 7);
-  note("recalloc.grow", q);
+  note_realloc_request("recalloc.grow", q, old_client, old_client_size, 350, 8, 0, 35, 3, true, false);
   line("recalloc.grow.content", "%d,%d", q != NULL && has_fill(q, 35, 3),
        q != NULL && is_zero((char*)q + 40, mi_usable_size(q) - 40));
   if (q != NULL) { p = q; }
@@ -553,21 +672,38 @@ static void section_realloc(void) {
   note_errno("recalloc.overflow");
   mi_free(p);
   p = mi_rezalloc(NULL, 90);
-  note("rezalloc.null", p);
+  note_plain_request("rezalloc.null", p, 90, true);
   line("rezalloc.null.zero", "%d", p != NULL && is_zero(p, mi_usable_size(p)));
   mi_free(p);
   p = mi_malloc(40);
+  if (valid_domain) { note_plain_request("new_realloc.source", p, 40, false); fill(p, 40, 0x58); }
+  old_client = (uintptr_t)p;
+  old_client_size = valid_domain ? mi_usable_size(p) : 0;
   q = mi_new_realloc(p, 400);
-  note("new_realloc", q);
+  note_realloc_request("new_realloc", q, old_client, old_client_size, 400, 8, 0, 40, 0x58, false, false);
+  old_client = (uintptr_t)q;
+  old_client_size = valid_domain ? mi_usable_size(q) : 0;
   q = mi_new_reallocn(q, 30, 30);
-  note("new_reallocn", q);
+  note_realloc_request("new_reallocn", q, old_client, old_client_size, 900, 8, 0, 40, 0x58, false, false);
   mi_free(q);
   /* issue #1304: the source's zero-to-64 KiB realloc ladder */
   void* shared = NULL;
+  bool ladder_identity = true;
   for (int iteration = 0; iteration < 4; iteration++) {
-    for (int i = 0; i < 1024; i++) { shared = mi_realloc(shared, (size_t)i * 64); }
+    for (int i = 0; i < 1024; i++) {
+      const size_t request = (size_t)i * 64;
+      if (!valid_domain) { shared = mi_realloc(shared, request); continue; }
+      const uintptr_t previous = (uintptr_t)shared;
+      const size_t extent = mi_usable_size(shared);
+      shared = mi_realloc(shared, request);
+      if (valid_domain) {
+        const bool reuse = previous != 0 && request > 0 && request <= extent && request >= extent / 2;
+        ladder_identity &= shared != NULL && (((uintptr_t)shared == previous) == reuse);
+      }
+    }
   }
-  note("realloc.ladder", shared);
+  note_plain_request("realloc.ladder", shared, 1023 * 64, false);
+  if (valid_domain) { line("realloc.ladder.identity", "%d", ladder_identity); }
   mi_free(shared);
 }
 
@@ -581,13 +717,13 @@ static void section_aligned(void) {
       key_name(key, sizeof key, "malloc_aligned", shift, s);
       errno = 0;
       void* p = mi_malloc_aligned(sizes[s], alignment);
-      note(key, p);
+      note_request(key, p, sizes[s], alignment, 0, true);
       key_name(key, sizeof key, "malloc_aligned.ok", shift, s);
       line(key, "%d,%d", p != NULL && ((uintptr_t)p % alignment) == 0, errno);
       if (p != NULL) { fill(p, sizes[s], 0x44); }
       key_name(key, sizeof key, "zalloc_aligned", shift, s);
       void* z = mi_zalloc_aligned(sizes[s], alignment);
-      note(key, z);
+      note_request(key, z, sizes[s], alignment, 0, z != p);
       key_name(key, sizeof key, "zalloc_aligned.ok", shift, s);
       line(key, "%d,%d", z != NULL && ((uintptr_t)z % alignment) == 0,
            z != NULL && is_zero(z, mi_usable_size(z)));
@@ -599,37 +735,46 @@ static void section_aligned(void) {
   for (size_t shift = 3; shift <= 17; shift += 2) {
     const size_t alignment = (size_t)1 << shift;
     for (size_t o = 0; o < sizeof offsets / sizeof offsets[0]; o++) {
+      if (valid_domain && alignment > 64 * KiB && offsets[o] != 0) { continue; }
       key_name(key, sizeof key, "malloc_aligned_at", shift, o);
       errno = 0;
       void* p = mi_malloc_aligned_at(50, alignment, offsets[o]);
-      note(key, p);
+      note_request(key, p, 50, alignment, offsets[o], true);
       key_name(key, sizeof key, "malloc_aligned_at.ok", shift, o);
       line(key, "%d,%d", p != NULL && (((uintptr_t)p + offsets[o]) % alignment) == 0, errno);
       key_name(key, sizeof key, "zalloc_aligned_at", shift, o);
       void* z = mi_zalloc_aligned_at(3000, alignment, offsets[o]);
-      note(key, z);
+      note_request(key, z, 3000, alignment, offsets[o], z != p);
       key_name(key, sizeof key, "zalloc_aligned_at.ok", shift, o);
       line(key, "%d", z != NULL && (((uintptr_t)z + offsets[o]) % alignment) == 0 && is_zero(z, mi_usable_size(z)));
       key_name(key, sizeof key, "calloc_aligned_at", shift, o);
       void* c = mi_calloc_aligned_at(3, 70, alignment, offsets[o]);
-      note(key, c);
+      note_request(key, c, 210, alignment, offsets[o], c != p && c != z);
+      if (valid_domain) {
+        key_name(key, sizeof key, "calloc_aligned_at.zero", shift, o);
+        line(key, "%d", c != NULL && is_zero(c, mi_usable_size(c)));
+      }
       mi_free(c);
       mi_free(z);
       mi_free(p);
     }
   }
+  if (!valid_domain) {
   errno = 0;
   note("malloc_aligned.bad_alignment", mi_malloc_aligned(32, 3));
   note_errno("malloc_aligned.bad_alignment");
   errno = 0;
   note("malloc_aligned.zero_alignment", mi_malloc_aligned(32, 0));
   note_errno("malloc_aligned.zero_alignment");
+  }
   errno = 0;
   note("malloc_aligned.too_large", mi_malloc_aligned((size_t)PTRDIFF_MAX, 64));
   note_errno("malloc_aligned.too_large");
+  if (!valid_domain) {
   errno = 0;
   note("malloc_aligned_at.huge_offset", mi_malloc_aligned_at(100, 1 * MiB, 8));
   note_errno("malloc_aligned_at.huge_offset");
+  }
   errno = 0;
   note("malloc_aligned.meta_alignment", mi_malloc_aligned(100, 256 * MiB));
   note_errno("malloc_aligned.meta_alignment");
@@ -637,17 +782,17 @@ static void section_aligned(void) {
   note("calloc_aligned.overflow", mi_calloc_aligned(SIZE_MAX / 2, 3, 64));
   note_errno("calloc_aligned.overflow");
   void* p = mi_calloc_aligned(10, 10, 128);
-  note("calloc_aligned.10x10", p);
+  note_client_request("calloc_aligned.10x10", p, 100, 128, 0, true);
   line("calloc_aligned.10x10.zero", "%d", p != NULL && is_zero(p, 100));
   mi_free(p);
   size_t block_size = 1;
   p = mi_umalloc_aligned(100, 256, &block_size);
-  note("umalloc_aligned", p);
+  note_client_request("umalloc_aligned", p, 100, 256, 0, false);
   line("umalloc_aligned.block", "%zu", block_size);
   mi_free(p);
   block_size = 1;
   p = mi_uzalloc_aligned(3000, 4096, &block_size);
-  note("uzalloc_aligned", p);
+  note_client_request("uzalloc_aligned", p, 3000, 4096, 0, true);
   line("uzalloc_aligned.block", "%zu,%d", block_size, p != NULL && is_zero(p, 3000));
   mi_free(p);
 
@@ -658,16 +803,19 @@ static void section_aligned(void) {
     const size_t alignment = realign[a];
     void* source = mi_malloc_aligned(300, alignment);
     key_name(key, sizeof key, "realloc_aligned.source", a, alignment);
-    note(key, source);
+    note_client_request(key, source, 300, alignment, 0, false);
     const size_t usable = mi_usable_size(source);
     const size_t targets[] = { usable, usable - usable / 2, usable - usable / 2 - 1, usable + 1, 5000 };
     for (size_t t = 0; t < sizeof targets / sizeof targets[0]; t++) {
       const size_t current = mi_usable_size(source) < 300 ? mi_usable_size(source) : 300;
       fill(source, current, (unsigned char)(a + t));
       const size_t keep = targets[t] < current ? targets[t] : current;
+      const uintptr_t old = (uintptr_t)source;
+      const size_t old_size = valid_domain ? mi_usable_size(source) : 0;
       void* q = mi_realloc_aligned(source, targets[t], alignment);
       key_name(key, sizeof key, "realloc_aligned", a, t);
-      note(key, q);
+      note_realloc_request(key, q, old, old_size, targets[t], alignment, 0, keep,
+                           (unsigned char)(a + t), false, true);
       key_name(key, sizeof key, "realloc_aligned.ok", a, t);
       line(key, "%d,%d", q != NULL && ((uintptr_t)q % alignment) == 0,
            q != NULL && has_fill(q, keep, (unsigned char)(a + t)));
@@ -675,47 +823,61 @@ static void section_aligned(void) {
     }
     const size_t grow = mi_usable_size(source);
     fill(source, grow, 0x21);
+    const uintptr_t old_rezalloc = (uintptr_t)source;
     void* q = mi_rezalloc_aligned(source, grow * 2 + 3, alignment);
     key_name(key, sizeof key, "rezalloc_aligned", a, alignment);
-    note(key, q);
+    note_realloc_request(key, q, old_rezalloc, grow, grow * 2 + 3, alignment, 0, grow, 0x21, true, true);
     key_name(key, sizeof key, "rezalloc_aligned.content", a, alignment);
     line(key, "%d,%d", q != NULL && has_fill(q, grow, 0x21),
          q != NULL && is_zero((char*)q + grow, mi_usable_size(q) - grow));
     if (q != NULL) { source = q; }
+    uintptr_t old_recalloc = (uintptr_t)source;
+    size_t old_size = valid_domain ? mi_usable_size(source) : 0;
     q = mi_recalloc_aligned(source, 3, grow * 2, alignment);
     key_name(key, sizeof key, "recalloc_aligned", a, alignment);
-    note(key, q);
+    note_realloc_request(key, q, old_recalloc, old_size, grow * 6, alignment, 0, grow, 0x21, true, true);
     if (q != NULL) { source = q; }
+    old_recalloc = (uintptr_t)source;
+    old_size = valid_domain ? mi_usable_size(source) : 0;
     q = mi_aligned_recalloc(source, 2, grow * 4, alignment);
     key_name(key, sizeof key, "aligned_recalloc", a, alignment);
-    note(key, q);
+    note_realloc_request(key, q, old_recalloc, old_size, grow * 8, alignment, 0, grow, 0x21, true, true);
     if (q != NULL) { source = q; }
     mi_free(source);
   }
   for (size_t o = 0; o < sizeof offsets / sizeof offsets[0]; o++) {
     void* source = mi_malloc_aligned_at(90, 256, offsets[o]);
     key_name(key, sizeof key, "realloc_aligned_at.source", o, offsets[o]);
-    note(key, source);
+    note_client_request(key, source, 90, 256, offsets[o], false);
     fill(source, 90, 0x61);
+    uintptr_t old = (uintptr_t)source;
+    size_t old_size = valid_domain ? mi_usable_size(source) : 0;
     void* q = mi_realloc_aligned_at(source, 900, 256, offsets[o]);
     key_name(key, sizeof key, "realloc_aligned_at", o, offsets[o]);
-    note(key, q);
+    note_realloc_request(key, q, old, old_size, 900, 256, offsets[o], 90, 0x61, false, false);
     key_name(key, sizeof key, "realloc_aligned_at.ok", o, offsets[o]);
     line(key, "%d,%d", q != NULL && (((uintptr_t)q + offsets[o]) % 256) == 0, q != NULL && has_fill(q, 90, 0x61));
+    old = (uintptr_t)q;
+    old_size = valid_domain ? mi_usable_size(q) : 0;
     q = mi_rezalloc_aligned_at(q, 1900, 256, offsets[o]);
     key_name(key, sizeof key, "rezalloc_aligned_at", o, offsets[o]);
-    note(key, q);
+    note_realloc_request(key, q, old, old_size, 1900, 256, offsets[o], 90, 0x61, true, false);
     key_name(key, sizeof key, "rezalloc_aligned_at.ok", o, offsets[o]);
     line(key, "%d,%d", q != NULL && has_fill(q, 90, 0x61), q != NULL && is_zero((char*)q + 900, 1000));
+    old = (uintptr_t)q;
+    old_size = valid_domain ? mi_usable_size(q) : 0;
     q = mi_recalloc_aligned_at(q, 4, 700, 256, offsets[o]);
     key_name(key, sizeof key, "recalloc_aligned_at", o, offsets[o]);
-    note(key, q);
+    note_realloc_request(key, q, old, old_size, 2800, 256, offsets[o], 90, 0x61, true, false);
+    old = (uintptr_t)q;
+    old_size = valid_domain ? mi_usable_size(q) : 0;
     q = mi_aligned_offset_recalloc(q, 5, 700, 256, offsets[o]);
     key_name(key, sizeof key, "aligned_offset_recalloc", o, offsets[o]);
-    note(key, q);
+    note_realloc_request(key, q, old, old_size, 3500, 256, offsets[o], 90, 0x61, true, false);
     mi_free(q);
   }
   p = mi_malloc_aligned(100, 64);
+  if (valid_domain) { note_client_request("realloc_aligned.word_source", p, 100, 64, 0, false); }
   fill(p, 100, 5);
   errno = 0;
   void* q = mi_realloc_aligned(p, (size_t)PTRDIFF_MAX, 64);
@@ -730,12 +892,14 @@ static void section_aligned(void) {
   }
   /* An alignment of at most one word is ordinary realloc, which consumes p. */
   errno = 0;
+  const uintptr_t word_old = (uintptr_t)p;
+  const size_t word_old_size = valid_domain ? mi_usable_size(p) : 0;
   q = mi_realloc_aligned(p, 200, 3);
-  note("realloc_aligned.word_alignment", q);
+  note_realloc_request("realloc_aligned.word_alignment", q, word_old, word_old_size, 200, 8, 0, 100, 5, false, false);
   note_errno("realloc_aligned.word_alignment");
   mi_free(q == NULL ? p : q);
   p = mi_realloc_aligned(NULL, 0, 8);
-  note("realloc_aligned.null_zero", p);
+  note_plain_request("realloc_aligned.null_zero", p, 0, false);
   line("realloc_aligned.null_zero.byte", "%d", p == NULL ? -1 : ((unsigned char*)p)[0]);
   mi_free(p);
 
@@ -744,6 +908,9 @@ static void section_aligned(void) {
   static const size_t posix_sizes[] = { 0, 32, 5000, SIZE_MAX };
   for (size_t a = 0; a < sizeof posix_alignments / sizeof posix_alignments[0]; a++) {
     for (size_t s = 0; s < sizeof posix_sizes / sizeof posix_sizes[0]; s++) {
+      if (valid_domain && (posix_alignments[a] < sizeof(void*)
+          || (posix_alignments[a] & (posix_alignments[a] - 1)) != 0
+          || posix_sizes[s] % posix_alignments[a] != 0)) { continue; }
       void* out = &out;
       errno = 0;
       const int result = mi_posix_memalign(&out, posix_alignments[a], posix_sizes[s]);
@@ -751,47 +918,47 @@ static void section_aligned(void) {
       line(key, "%d,%d,%d", result, out == (void*)&out, errno);
       if (result == 0 && out != (void*)&out) {
         key_name(key, sizeof key, "posix_memalign.block", a, s);
-        note(key, out);
+        note_client_request(key, out, posix_sizes[s], posix_alignments[a], 0, false);
         mi_free(out);
       }
       errno = 0;
       p = mi_memalign(posix_alignments[a], posix_sizes[s]);
       key_name(key, sizeof key, "memalign", a, s);
-      note(key, p);
+      note_client_request(key, p, posix_sizes[s], posix_alignments[a], 0, false);
       note_errno(key);
       mi_free(p);
       errno = 0;
       p = mi_aligned_alloc(posix_alignments[a], posix_sizes[s]);
       key_name(key, sizeof key, "aligned_alloc", a, s);
-      note(key, p);
+      note_client_request(key, p, posix_sizes[s], posix_alignments[a], 0, false);
       note_errno(key);
       mi_free(p);
     }
   }
-  line("posix_memalign.null_out", "%d", mi_posix_memalign(NULL, 16, 16));
+  if (!valid_domain) { line("posix_memalign.null_out", "%d", mi_posix_memalign(NULL, 16, 16)); }
   static const size_t page_sizes[] = { 0, 1, 4095, 4096, 4097, 100000 };
   for (size_t s = 0; s < sizeof page_sizes / sizeof page_sizes[0]; s++) {
     key_name(key, sizeof key, "valloc", s, page_sizes[s]);
     p = mi_valloc(page_sizes[s]);
-    note(key, p);
+    note_client_request(key, p, page_sizes[s], 4096, 0, false);
     mi_free(p);
     key_name(key, sizeof key, "pvalloc", s, page_sizes[s]);
     p = mi_pvalloc(page_sizes[s]);
-    note(key, p);
+    note_client_request(key, p, ((page_sizes[s] + 4095) & ~(size_t)4095), 4096, 0, false);
     mi_free(p);
   }
   errno = 0;
   note("pvalloc.overflow", mi_pvalloc(SIZE_MAX - 100));
   note_errno("pvalloc.overflow");
   p = mi_new_aligned(100, 128);
-  note("new_aligned", p);
+  note_client_request("new_aligned", p, 100, 128, 0, false);
   mi_free(p);
   errno = 0;
   note("new_aligned_nothrow.too_large", mi_new_aligned_nothrow(SIZE_MAX / 2, 64));
   note_errno("new_aligned_nothrow.too_large");
   /* test-api.c zero_aligned_first, here on the initial thread */
   p = mi_malloc_aligned(0, 16);
-  note("malloc_aligned.zero16", p);
+  note_client_request("malloc_aligned.zero16", p, 0, 16, 0, false);
   mi_free(p);
   /* test-api.c mimalloc-aligned13: every small size and alignment */
   int bad = 0;
@@ -1150,43 +1317,45 @@ static void section_padding_canary(void) {
 
 static void section_conveniences(void) {
   char* s = mi_strdup("mimalloc");
-  note("strdup", s);
+  note_text_request("strdup", s, "mimalloc", 9);
   line("strdup.text", "%s", s == NULL ? "(null)" : s);
   mi_free(s);
-  line("strdup.null", "%d", mi_strdup(NULL) == NULL);
+  if (!valid_domain) { line("strdup.null", "%d", mi_strdup(NULL) == NULL); }
   s = mi_strndup("mimalloc", 3);
-  note("strndup.short", s);
+  note_text_request("strndup.short", s, "mim", 4);
   line("strndup.short.text", "%s", s == NULL ? "(null)" : s);
   mi_free(s);
   s = mi_strndup("abc", 100);
-  note("strndup.long", s);
+  note_text_request("strndup.long", s, "abc", 4);
   line("strndup.long.text", "%s", s == NULL ? "(null)" : s);
   mi_free(s);
-  line("strndup.null", "%d", mi_strndup(NULL, 4) == NULL);
+  if (!valid_domain) { line("strndup.null", "%d", mi_strndup(NULL, 4) == NULL); }
   unsigned char* m = mi_mbsdup((const unsigned char*)"bytes");
-  note("mbsdup", m);
+  note_text_request("mbsdup", m, "bytes", 6);
   line("mbsdup.text", "%s", m == NULL ? "(null)" : (const char*)m);
   mi_free(m);
   wchar_t* w = mi_wcsdup(L"wide");
-  note("wcsdup", w);
+  note_text_request("wcsdup", w, L"wide", 5 * sizeof(wchar_t));
   line("wcsdup.equal", "%d", w != NULL && wcscmp(w, L"wide") == 0);
   mi_free(w);
-  line("wcsdup.null", "%d", mi_wcsdup(NULL) == NULL);
+  if (!valid_domain) { line("wcsdup.null", "%d", mi_wcsdup(NULL) == NULL); }
   setenv("CRABC_M4_DUPENV", "value-1", 1);
   char* buffer = (char*)&buffer;
   size_t size = 99;
   int result = mi_dupenv_s(&buffer, &size, "CRABC_M4_DUPENV");
   line("dupenv_s.present", "%d,%zu,%s", result, size, buffer == NULL ? "(null)" : buffer);
-  note("dupenv_s.present.block", buffer);
+  note_text_request("dupenv_s.present.block", buffer, "value-1", 8);
   mi_free(buffer);
   size = 99;
   buffer = (char*)&buffer;
   result = mi_dupenv_s(&buffer, &size, "CRABC_M4_DUPENV_ABSENT");
   line("dupenv_s.absent", "%d,%zu,%d", result, size, buffer == NULL);
   size = 99;
+  if (!valid_domain) {
   result = mi_dupenv_s(NULL, &size, "PATH");
   line("dupenv_s.null_buffer", "%d,%zu", result, size);
   line("dupenv_s.null_name", "%d", mi_dupenv_s(&buffer, NULL, NULL));
+  }
   wchar_t* wide_buffer = (wchar_t*)&wide_buffer;
   size = 99;
   result = mi_wdupenv_s(&wide_buffer, &size, L"PATH");
@@ -1195,7 +1364,7 @@ static void section_conveniences(void) {
   const bool resolved = realpath(".", expected) != NULL;
   errno = 0;
   s = mi_realpath(".", NULL);
-  note("realpath.allocated", s);
+  note_text_request("realpath.allocated", s, expected, valid_domain && resolved ? strlen(expected) + 1 : 0);
   line("realpath.allocated.equal", "%d,%d", resolved, s != NULL && strcmp(s, expected) == 0);
   note_errno("realpath.allocated");
   mi_free(s);
@@ -1228,6 +1397,7 @@ static void section_offset_rezalloc_boundaries(void) {
           continue;
         }
         const size_t initial_usable = mi_usable_size(p);
+        const bool initial_aligned = (((uintptr_t)p + offsets[o]) & (alignments[a] - 1)) == 0;
         fill(p, initial_usable, 0x36);
         void* grown = mi_rezalloc_aligned_at(p, initial_usable + 17, alignments[a], offsets[o]);
         snprintf(key, sizeof key, "%s.grow", base);
@@ -1240,6 +1410,7 @@ static void section_offset_rezalloc_boundaries(void) {
              grown == NULL ? 0 : mi_usable_size(grown));
         if (grown == NULL) { mi_free(p); continue; }
         const size_t grown_usable = mi_usable_size(grown);
+        const bool grown_aligned = (((uintptr_t)grown + offsets[o]) & (alignments[a] - 1)) == 0;
         const size_t reuse_size = grown_usable - grown_usable / 2;
         fill(grown, grown_usable, 0x59);
         void* reused = mi_rezalloc_aligned_at(grown, reuse_size, alignments[a], offsets[o]);
@@ -1260,6 +1431,16 @@ static void section_offset_rezalloc_boundaries(void) {
              replaced != NULL &&
                (((uintptr_t)replaced + offsets[o]) & (alignments[a] - 1)) == 0,
              replaced == NULL ? 0 : mi_usable_size(replaced));
+        if (valid_domain) {
+          snprintf(key, sizeof key, "%s.basis", base);
+          line(key, "requested:%zu,alignment:%zu,offset:%zu,initial:%zu,initial_upper:%zu,grown:%zu,grown_upper:%zu,replacement:%zu,replacement_upper:%zu,initial_aligned:%d,grown_aligned:%d",
+               sizes[s], alignments[a], offsets[o], initial_usable,
+               mi_good_size((sizes[s] < 16 ? 16 : sizes[s]) + alignments[a] - 1),
+               grown_usable, mi_good_size(initial_usable + 17 + alignments[a] - 1),
+               replaced == NULL ? 0 : mi_usable_size(replaced),
+               mi_good_size((replacement_size < 16 ? 16 : replacement_size) + alignments[a] - 1),
+               initial_aligned, grown_aligned);
+        }
         mi_free(replaced == NULL ? reused : replaced);
       }
     }
@@ -1640,6 +1821,9 @@ int main(int argc, char** argv) {
     fprintf(stderr, "valid-domain guarded_precise=%ld\n", mi_option_get(mi_option_guarded_precise));
   }
   const char* scenario = argv[1];
+  if (valid_domain && (strncmp(scenario, "source-client:", 14) == 0
+      || strncmp(scenario, "precondition:", 13) == 0
+      || strncmp(scenario, "abort:", 6) == 0)) { return 2; }
   if (strncmp(scenario, "source-client:", 14) == 0) { return run_source_client_control(scenario + 14); }
   if (strncmp(scenario, "precondition:", 13) == 0) { return run_precondition_control(scenario + 13); }
   if (strncmp(scenario, "abort:", 6) == 0) { return run_abort_scenario(scenario + 6); }

@@ -428,20 +428,149 @@ def parse_operations_trace(output: str, description: str) -> dict[str, str]:
 
 def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str], *,
                               private_source_profile: str | None = None) -> None:
-    """Require equal traces, reporting differences in C trace order.
+    """Validate private secure request context, then compare observations exactly.
 
-    Allocation ids and reuse relations cascade, so the first differing key
-    is the one that locates a divergence.
+    Canonical traces retain every original field. Private secure traces first
+    prove allocation bounds, live identity and client contents independently;
+    only source-permitted placement and capacity observations are canonicalized.
+    Differences are reported in C trace order.
     """
 
-    # Secure allocation randomizes block selection. For the ordinary class
-    # allocation matrix, only alignment beyond the word/block guarantee is
-    # incidental. Keep all other observations exact, including usable size,
-    # reuse and page placement, until their operation-specific bounds are known.
+    # Secure allocation randomizes block selection and aligned capacity.
+    # Validate request context independently before comparing permitted
+    # observations. Operations without such context retain exact comparison.
     if private_source_profile in {f"secure-{level}" for level in range(1, 6)}:
-        def bounded_alignment(trace: Mapping[str, str]) -> dict[str, str]:
+        def validated_private_trace(trace: Mapping[str, str]) -> dict[str, str]:
             result = dict(trace)
             for key, value in trace.items():
+                expected_identity = "1"
+                if re.fullmatch(r"expand\.(?:fit|shrink)\.\d+\.\d+", key):
+                    expected_identity = "0" if int(private_source_profile.rsplit("-", 1)[1]) >= 3 else "1"
+                elif not (re.fullmatch(r"(?:expand\.grow|_expand\.grow)\.\d+\.\d+", key)
+                          or key in {"cfree.valid", "realloc.ladder.identity"}):
+                    continue
+                if value != expected_identity:
+                    raise harness.HarnessError(f"private secure operation {key} failed source identity behavior")
+            for key in trace:
+                if not re.fullmatch(r"offset_rezalloc\.\d+\.\d+\.\d+\.grow", key):
+                    continue
+                base = key.removesuffix(".grow")
+                basis = re.fullmatch(
+                    r"requested:(\d+),alignment:(\d+),offset:(\d+),initial:(\d+),initial_upper:(\d+),grown:(\d+),grown_upper:(\d+),replacement:(\d+),replacement_upper:(\d+),initial_aligned:1,grown_aligned:1",
+                    trace.get(f"{base}.basis", ""))
+                if basis is None:
+                    raise harness.HarnessError(f"private secure reallocation {base} lacks its capacity basis")
+                requested, alignment, offset, initial, initial_upper, grown, grown_upper, replacement, replacement_upper = map(int, basis.groups())
+                replacement_request = (grown + 1) // 2 - 1
+                if not (0 < alignment <= 65536 and alignment & (alignment - 1) == 0 and offset & 1
+                        and requested <= initial <= initial_upper and initial + 17 <= grown <= grown_upper
+                        and replacement_request <= replacement <= replacement_upper):
+                    raise harness.HarnessError(f"private secure reallocation {base} violates request capacity bounds")
+                # Aligned realloc keeps the ceil-half extent in place, replaces
+                # below that boundary, and copies/zeroes the requested bytes.
+                expected_grow = f"grow:1,copy:1,tail:1,odd:{initial & 1},old_usable:{initial},new_usable:{grown}"
+                expected_replace = f"replace:1,copy:1,tail:1,aligned:1,new_usable:{replacement}"
+                if (trace[key] != expected_grow or trace.get(f"{base}.reuse") != "reuse:1,copy:1"
+                        or trace.get(f"{base}.replace") != expected_replace):
+                    raise harness.HarnessError(f"private secure reallocation {base} failed identity/payload/zeroing")
+                result[key] = "grow:1,copy:1,tail:1"
+                result[f"{base}.replace"] = "replace:1,copy:1,tail:1,aligned:1"
+                result[f"{base}.basis"] = f"requested:{requested},alignment:{alignment},offset:{offset}"
+            for context_key, context in trace.items():
+                if not context_key.endswith(".contract"):
+                    continue
+                key = context_key.removesuffix(".contract")
+                matrix = re.fullmatch(r"(?:malloc|zalloc|calloc|malloc_aligned|zalloc_aligned|malloc_aligned_at|zalloc_aligned_at|calloc_aligned_at)\.\d+\.\d+", key)
+                plain = f"{key}.payload" in trace
+                reallocation = f"{key}.realloc" in trace
+                if not matrix and not plain and not reallocation:
+                    raise harness.HarnessError(f"private secure allocation {key} has no supported request context")
+                contract = re.fullmatch(
+                    r"requested:(\d+),alignment:(\d+),offset:(\d+),upper:(\d+),success:([01]),aligned:([01]),distinct:([01])", context)
+                allocation = re.fullmatch(
+                    r"id:(\d+),reuse:(-|\d+),usable:(\d+),align:(\d+),slice:(\d+)", trace.get(key, ""))
+                if contract is None:
+                    raise harness.HarnessError(f"private secure allocation {key} failed its request contract")
+                requested, alignment, offset, upper, success, aligned, distinct = map(int, contract.groups())
+                # Large aligned singleton requests cannot carry an offset.
+                # Their expected failure remains an exact observation.
+                if alignment > 65536 and offset != 0:
+                    if trace.get(key) != "null" or success != 0 or aligned != 0:
+                        raise harness.HarnessError(f"private secure allocation {key} accepted unsupported singleton offset")
+                    continue
+                if allocation is None or (success, aligned, distinct) != (1, 1, 1):
+                    raise harness.HarnessError(f"private secure allocation {key} failed its request contract")
+                identity, reuse, usable, bits, slice_index = allocation.groups()
+                if alignment == 0 or alignment & (alignment - 1) or not requested <= int(usable) <= upper:
+                    raise harness.HarnessError(f"private secure allocation {key} violates capacity/alignment bounds")
+                if f"{key}.natural" in trace:
+                    natural = trace[f"{key}.natural"]
+                    if not natural.isdecimal():
+                        raise harness.HarnessError(f"private secure allocation {key} lacks its natural class extent")
+                    expected_extent = (requested or 8) if int(private_source_profile.rsplit("-", 1)[1]) >= 3 else int(natural)
+                    if int(usable) != expected_extent:
+                        raise harness.HarnessError(f"private secure allocation {key} violates natural allocation extent")
+                if not 0 <= int(slice_index) < 4096 or (reuse != "-" and int(reuse) >= int(identity)):
+                    raise harness.HarnessError(f"private secure allocation {key} has invalid placement/reuse")
+                shift = alignment.bit_length() - 1
+                residue = offset % alignment
+                required = min(shift, 16) if residue == 0 else (residue & -residue).bit_length() - 1
+                if offset == 0 and alignment <= 8:
+                    required = max(required, 3 if requested <= 8 else 4)
+                if not 0 <= int(bits) <= 16 or (int(bits) < required if residue == 0 else int(bits) != required):
+                    raise harness.HarnessError(f"private secure allocation {key} violates requested alignment")
+                family, _, indexes = key.partition(".")
+                observation = None
+                expected = None
+                if reallocation:
+                    history = re.fullmatch(r"old:(\d+),old_id:(-1|\d+),dynamic:([01]),identity:1,payload:1,zero:1",
+                                           trace.get(f"{key}.realloc", ""))
+                    if history is None:
+                        raise harness.HarnessError(f"private secure reallocation {key} failed identity/payload/zeroing")
+                    old_size, old_id, dynamic = map(int, history.groups())
+                    if old_id >= 0:
+                        previous = [(prior_key, value) for prior_key, value in trace.items()
+                                    if prior_key != key and value.startswith(f"id:{old_id},")]
+                        if old_id >= int(identity) or len(previous) != 1 or f",usable:{old_size}," not in previous[0][1]:
+                            raise harness.HarnessError(f"private secure reallocation {key} has inconsistent live extent")
+                        # These clients retain their alignment along each chain,
+                        # or delegate to word-aligned ordinary realloc. The old
+                        # declared alignment therefore proves this condition;
+                        # surplus random address alignment is unnecessary.
+                        old_context = re.search(r",alignment:(\d+),offset:(\d+),",
+                                                trace.get(f"{previous[0][0]}.contract", ""))
+                        if old_context is None:
+                            raise harness.HarnessError(f"private secure reallocation {key} lacks old alignment context")
+                        old_alignment, old_offset = map(int, old_context.groups())
+                        fits_alignment = old_alignment >= alignment and old_offset % alignment == offset % alignment
+                        half = old_size // 2 if alignment <= 8 and offset == 0 else (old_size + 1) // 2
+                        must_reuse = requested > 0 and half <= requested <= old_size and fits_alignment
+                        if (reuse == str(old_id)) != must_reuse:
+                            raise harness.HarnessError(f"private secure reallocation {key} contradicts mandatory identity")
+                    result[context_key] = f"alignment:{alignment},offset:{offset},requested:{'dynamic' if dynamic else requested}"
+                    result[f"{key}.realloc"] = "identity:1,payload:1,zero:1"
+                    result[key] = f"id:{identity}"
+                    continue
+                if plain:
+                    observation, expected = f"{key}.payload", "1"
+                elif family in {"malloc", "zalloc", "calloc"}:
+                    observation = f"{family}.{'keep' if family == 'malloc' else 'zero'}.{indexes}"
+                    expected = "1"
+                elif family == "calloc_aligned_at":
+                    observation, expected = f"{family}.zero.{indexes}", "1"
+                else:
+                    observation = f"{family}.ok.{indexes}"
+                    expected = {"malloc_aligned": "1,0", "zalloc_aligned": "1,1",
+                                "malloc_aligned_at": "1,0", "zalloc_aligned_at": "1"}[family]
+                if trace.get(observation) != expected:
+                    raise harness.HarnessError(f"private secure allocation {key} failed payload/zeroing/alignment observation")
+                # Each side has proved its request, placement and live-client
+                # separation. Logical ids remain ordered; exact free-list
+                # choices and surplus capacity need not agree across entropy.
+                result[key] = f"id:{identity},requested:{requested}"
+            for key, value in trace.items():
+                if f"{key}.contract" in trace:
+                    continue
                 request = re.fullmatch(r"(?:malloc|zalloc|calloc)\.\d+\.(\d+)", key)
                 allocation = re.fullmatch(
                     r"(id:\d+,reuse:(?:-|\d+),usable:\d+,align:)(\d+)(,slice:\d+)", value)
@@ -452,8 +581,8 @@ def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[st
                     raise harness.HarnessError(f"private secure allocation {key} violates malloc alignment: {value}")
                 result[key] = f"{allocation[1]}{minimum}{allocation[3]}"
             return result
-        c_trace = bounded_alignment(c_trace)
-        rust_trace = bounded_alignment(rust_trace)
+        c_trace = validated_private_trace(c_trace)
+        rust_trace = validated_private_trace(rust_trace)
     if list(c_trace) == list(rust_trace) and dict(c_trace) == dict(rust_trace):
         return
     missing = [key for key in c_trace if key not in rust_trace]
