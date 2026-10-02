@@ -7,6 +7,10 @@ The source pin is defined in
 
 ## Current status
 
+The trace baselines below describe retained historical evidence, including the
+paused AArch64 implementation. They do not describe the current native x86
+implementation frontier.
+
 No successful ordinary pinned-mimalloc engine allocation-trace difference is
 recorded. One public-C ABI backend known red is recorded below. It is not a
 pinned-engine parity claim; it is deliberately visible in the paired
@@ -86,6 +90,30 @@ This state
 is not a valid C-program observable difference and has no C differential
 entry; the selected arena witness is source-level safety evidence over C's
 assertion-invalid input, not C/Rust invalid-input parity.
+
+### `CRABC-MI-LIVE-PAGE-ASSERTION-CUSTODY` — failure ownership boundary
+
+Pinned `src/theap.c:62,100` validates each queued Page before collection while
+the source owner-exit traversal retains its TLD list lock. The Rust engine
+observes the same Page in source order and transports a failed assertion as an
+exact typed task. Before releasing the list lock, it marks that task's actual
+Heap/Theap graph against retirement. It tries the Heap lock without waiting
+under the TLD lock, so a concurrent Heap destroyer cannot create a lock cycle.
+An unpublishable refusal retains terminal state and stops the process.
+
+Diagnostic delivery begins only after Page, engine, member and source-list
+projections and locks end. The original issuer, PageMap and backing remain
+retained throughout delivery; a callback may use an independently valid Heap,
+but cannot reopen the failed owner. Successful collection instead returns a
+linear thread/sequence completion token. Its original diagnostic admission
+ends before the token authorizes attachment metadata teardown. Source fast-TLS
+clearing still precedes traversal.
+
+This strengthens Rust failure ownership without changing ordinary legal
+allocation or collection algorithms. Focused debug checks use copied scalar
+assertion observations and legal callback/auxiliary-Heap clients; they do not
+claim invalid-memory behavior parity with C. The paused AArch64 integration is
+unchanged.
 
 ### `CRABC-MI-DEBUG-ALIGNED-OFFSET-LIVE-CLIENT` — accepted valid-program correction
 

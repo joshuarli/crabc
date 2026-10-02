@@ -1,36 +1,20 @@
-//! Linux/AArch64 allocator-engine port of the pinned mimalloc upstream.
+//! Linux allocator-engine port of the pinned mimalloc upstream.
 //!
-//! Linux/x86-64 compilation exists only for private, native C/Rust allocator
-//! differential evidence. It neither selects nor exposes a public x86 crabc,
-//! libc, loader, facade, or allocator backend.
+//! AArch64 retains its selected integration. Native x86-64 has an explicit
+//! private backend with source-owned process, thread, Heap and Theap lifetimes.
+//! Compiling this crate does not select that backend or enable public x86
+//! support; libc owns compile-time backend selection.
 //!
-//! The crate contains source-mapped allocator foundations and one private,
-//! explicit single-thread ordinary-allocation lifecycle over a caller-managed
-//! external arena and page map. That lifecycle covers small, medium, large,
-//! and singleton pages, checked counted allocation, ordinary reallocation,
-//! arena-bounded aligned operations, and the separately owned OS-aligned
-//! singleton path below the metadata-alignment limit. The crate deliberately
-//! exposes no production allocator API; a default-off test-adapter feature
-//! owns the only public operation context. Private static ticket-zero and
-//! regular-key dynamic Theap attachments exist. One bounded source-order
-//! process-main coordinator establishes the static Heap, detached metadata
-//! readiness, global PageMap, and ticket-zero roots. The selected-static
-//! process-done finalizer additionally clears the cached Theap root and
-//! restores terminal VM preloading so a later no-callback purge selects reset;
-//! it retains the physical process pair, PageMap, and live allocations. It
-//! does not choose options, reserve the process-shared arena, initialize
-//! pthread/TLS keys, or own physical process destruction. A paired sidecar can
-//! retain one caller-selected
-//! source-managed arena mapping. One crate-private ticket-zero static owner or
-//! one complete later-thread operation at a time may bind that exact pair to
-//! the arena's embedded `pages_main` bitmap; several later-thread engines may
-//! remain independently parked while the runtime serializes every mutation.
-//! General later-thread page routing, owner exit, and runtime allocation
-//! routing remain incomplete.
-//! Remote-free and one-page abandonment protocols are bounded substrates;
-//! allocation routing and terminal abandoned-page release remain incomplete.
-//! The public C allocator ABI, including `errno`, remains owned by
-//! `crabc-libc`; this crate must not depend on it.
+//! The native engine retains independent thread owners, routes clients through
+//! the process PageMap, and uses page-local atomic remote publication. Source
+//! collection coordinates retirement, abandonment, reclamation and owner exit.
+//! The source APIs expose allocation, options and Heap operations without
+//! depending on libc. The hidden runtime interface carries startup facts and
+//! thread/fork/process lifecycle transitions from libc. Test-only operation
+//! contexts remain separate from that runtime route.
+//!
+//! The public C allocator ABI, including `errno` and symbol interposition,
+//! remains owned by `crabc-libc`; this crate must not depend on it.
 
 #![no_std]
 #![deny(unsafe_op_in_unsafe_fn)]
@@ -42,9 +26,10 @@ extern crate alloc as rust_alloc;
 extern crate std;
 
 // These are the explicit allocator-engine target profiles. The AArch64
-// profile is the production-integration target; the x86-64 profile is native
-// parity evidence only. `cfg(miri)` selects `crabc-core`'s private Miri
-// kernel model as a test instrument: it never makes another target supported
+// profile retains its selected integration; the x86-64 profile also supports
+// the explicitly selected private runtime backend. `cfg(miri)` selects the
+// private `crabc-core` kernel model as a test instrument: it never makes
+// another target supported
 // by the allocator engine or a public production build.
 #[cfg(all(
     not(miri),
@@ -54,7 +39,7 @@ extern crate std;
         target_endian = "little"
     ))
 ))]
-compile_error!("crabc-mimalloc supports Linux/AArch64 production and private Linux/x86-64 allocator evidence only");
+compile_error!("crabc-mimalloc supports Linux/AArch64 and private Linux/x86-64 allocator integration only");
 
 mod bits;
 mod aligned;
