@@ -110,7 +110,14 @@ static void registered_exit(void)
 
 __attribute__((destructor)) static void finalize(void)
 {
+#ifdef FEATURE110_STATIC_FINI_AFTER_ALLOCATOR
+    // The static executable walks its combined array in reverse link order;
+    // the allocator entry precedes this application entry during teardown.
+    check_native_phase(2);
+#else
+    // The dynamic main image finalizes before its libc dependency.
     check_native_phase(1);
+#endif
     check(constructor_client[256] == 0x39);
     free(constructor_client);
     callback_allocation();
