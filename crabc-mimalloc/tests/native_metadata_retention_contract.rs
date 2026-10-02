@@ -198,7 +198,8 @@ fn churn(workers: usize, seed: u64, panic_control: PanicControl) {
         live_releasers.threads.push(std::thread::spawn(move || {
             assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             let _attachment = NativeWorker;
-            drop(live);
+            let mut live = live;
+            while let Some(client) = live.0.pop() { free_client(client); }
         }));
     }
     live_releasers.finish();
@@ -269,7 +270,7 @@ fn source_default_initial_and_worker_churn_bounds_retained_metadata() {
             assert_eq!(now.page_map_published_submap_count, warm.page_map_published_submap_count);
             assert_eq!(now.page_map_lazy_submap_allocation_count, warm.page_map_lazy_submap_allocation_count);
             std::println!("metadata_retention seed={seed} epoch={epoch} workers={workers} clients={} live={} metadata_high_water={} arenas={} arena_bytes={} registered_slices={} submaps={}",
-                workers * CLIENTS, now.metadata_live_capability_count,
+                (workers + 1) * CLIENTS, now.metadata_live_capability_count,
                 now.metadata_high_water_capability_count, now.arena_registry_count,
                 now.process_arena_size, now.page_map_registered_entry_count,
                 now.page_map_published_submap_count);
