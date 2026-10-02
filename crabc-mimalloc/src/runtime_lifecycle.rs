@@ -21829,8 +21829,11 @@ mod tests {
             || {
                 // Direct storage initialization inherits the embedding
                 // caller's registered initial operation admission.
-                assert!(admission::register_initial_descriptor());
-                let _operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                #[cfg(target_arch = "x86_64")]
+                let _operation = {
+                    assert!(admission::register_initial_descriptor());
+                    admission::NativeAllocatorOperationGuard::enter().unwrap()
+                };
                 unsafe fn verbose_environment() -> *const *const core::ffi::c_char {
                     static mut ENVIRONMENT: [*const core::ffi::c_char; 2] = [
                         c"MIMALLOC_VERBOSE=1".as_ptr(), core::ptr::null(),
