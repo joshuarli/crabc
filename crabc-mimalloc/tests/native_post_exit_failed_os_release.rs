@@ -163,14 +163,11 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
             1,
             "the consumed source does not manufacture a second worker admission"
         );
-        // The failed unmap leaves its raw range after consuming PageMap removal, so
-        // this stale client can neither resolve a page nor retry the tail.
-        assert_eq!(
-            unsafe { native_free(os_singleton) },
-            NativePageFreeResult::InvalidPointer,
-            "the completed PageMap removal rejects a retry through the old pointer"
-        );
+        let before_finish = vm_current();
         let finish = finish_current_thread_native_after_user_destructors();
+        assert_eq!(vm_current(), before_finish);
+        assert_eq!(capture.single(), Some(failed_range),
+            "worker finish cannot retry the consumed source release");
         (unmap_failure.observed(), finish, failed_range)
     });
     let (unmap_attempts, consumer_finish, failed_range) = consumer
@@ -179,7 +176,7 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
     assert_eq!(
         unmap_attempts,
         1,
-        "neither the repeated pointer free nor B's teardown retries the failed terminal unmap"
+        "B's teardown cannot retry the failed terminal unmap"
     );
     assert_eq!(
         consumer_finish,
@@ -204,4 +201,18 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
         "the independent owner still releases its local client"
     );
     assert_failed_range_stays_mapped(failed_range);
+    let before_raw_cleanup = vm_current();
+    // SAFETY: both workers joined and source Page ownership was consumed.
+    // Only the exact failed syscall range remains; no client is reused.
+    assert!(unsafe { crabc_core::mm::munmap_raw(
+        failed_range.0 as *mut u8, failed_range.1,
+    ) }.is_ok());
+    assert_eq!(vm_current(), before_raw_cleanup);
+    for offset in (0..failed_range.1).step_by(current_page_size()) {
+        let mut residency = 0u8;
+        // SAFETY: this kernel query does not dereference the unmapped bytes.
+        assert_eq!(unsafe { crabc_core::mm::mincore_raw(
+            (failed_range.0 + offset) as *mut u8, current_page_size(), &mut residency,
+        ) }, Err(crabc_core::Errno::NOMEM));
+    }
 }

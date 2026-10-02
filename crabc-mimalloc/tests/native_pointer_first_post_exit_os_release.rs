@@ -203,21 +203,14 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
             1,
             "the terminal PageMap-owned tail attempts exactly one injected munmap"
         );
-        // PageMap removal completed before the failed unmap. The refused
-        // raw range has no live client registration or automatic retry owner.
-        assert_eq!(
-            unsafe { native_free(os_singleton) },
-            NativePageFreeResult::InvalidPointer,
-            "the completed PageMap removal rejects a second source publication"
-        );
-        assert_eq!(
-            unmap_failure.observed(),
-            1,
-            "a second pointer free does not retry the failed terminal unmap"
-        );
+        let before_finish = vm_current();
+        let finish = finish_current_thread_native_after_user_destructors();
+        assert_eq!(vm_current(), before_finish);
+        assert_eq!(capture.single(), Some(failed_range),
+            "worker finish cannot retry the consumed source release");
         (
             unmap_failure.observed(),
-            finish_current_thread_native_after_user_destructors(),
+            finish,
             failed_range,
         )
     });
@@ -240,4 +233,18 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
         "B's finished teardown releases its own admission without reviving A's consumed Page"
     );
     assert_failed_range_stays_mapped(failed_range);
+    let before_raw_cleanup = vm_current();
+    // SAFETY: both workers joined and source Page ownership was consumed.
+    // Only the exact failed syscall range remains; no client is reused.
+    assert!(unsafe { crabc_core::mm::munmap_raw(
+        failed_range.0 as *mut u8, failed_range.1,
+    ) }.is_ok());
+    assert_eq!(vm_current(), before_raw_cleanup);
+    for offset in (0..failed_range.1).step_by(current_page_size()) {
+        let mut residency = 0u8;
+        // SAFETY: this kernel query does not dereference the unmapped bytes.
+        assert_eq!(unsafe { crabc_core::mm::mincore_raw(
+            (failed_range.0 + offset) as *mut u8, current_page_size(), &mut residency,
+        ) }, Err(crabc_core::Errno::NOMEM));
+    }
 }
