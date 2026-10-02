@@ -912,8 +912,10 @@ impl NativeChildArenaAdmission {
 
     /// # Safety
     /// This actual admission must remain retained until every returned view,
-    /// reservation owner and cleanup continuation has ended. The static
-    /// spelling cannot itself establish the reclaimable child's lifetime.
+    /// unpublished reservation and cleanup continuation has ended. Successful
+    /// publication transfers lifetime custody to the exact child's owned
+    /// arena registry, whose teardown releases the arena before its identity.
+    /// The static spelling cannot establish the reclaimable child's lifetime.
     pub(crate) unsafe fn process(&self) -> crate::os::VmProcess<'static> {
         // SAFETY: the counted admission prevents original child retirement;
         // the caller additionally retains it through every derived owner.
@@ -921,8 +923,9 @@ impl NativeChildArenaAdmission {
     }
 
     /// # Safety
-    /// As for `process`: every derived arena or cleanup owner must retain
-    /// this admission until its final child-image access has ended.
+    /// As for `process`: unpublished owners and cleanup continuations retain
+    /// this admission until final child-image access. A successfully published
+    /// arena transfers that custody to this exact child's owned registry.
     pub(crate) unsafe fn backing(&self) -> &'static crate::arena::ProcessArenaBacking {
         // SAFETY: this is the original admitted identity, never TLS reselected.
         unsafe { self.identity.as_ref() }.arena_backing()
