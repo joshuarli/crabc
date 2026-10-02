@@ -14835,6 +14835,9 @@ struct OwnerExitMappedRegularWorkload<Client> {
     full_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
     unmapped_full_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
     initially_mapped_medium: [Option<Client>; OWNER_EXIT_FULL_MEDIUM_MAX_CLIENT_SLOTS],
+    full_medium_reserved: usize,
+    unmapped_full_medium_reserved: usize,
+    initially_mapped_medium_reserved: usize,
     force_empty_large: Option<Client>,
     large: [Option<Client>; OWNER_EXIT_LIVE_LARGE_CLIENT_SLOTS],
     arena_singleton: Option<Client>,
@@ -14872,6 +14875,9 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             full_medium: core::array::from_fn(|_| None),
             unmapped_full_medium: core::array::from_fn(|_| None),
             initially_mapped_medium: core::array::from_fn(|_| None),
+            full_medium_reserved: 0,
+            unmapped_full_medium_reserved: 0,
+            initially_mapped_medium_reserved: 0,
             force_empty_large: None,
             large: core::array::from_fn(|_| None),
             arena_singleton: None,
@@ -14915,6 +14921,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             let _ = workload.free_locals(allocator);
             return Err(OwnerExitMappedRegularWorkloadError::FullMediumCapacity);
         };
+        workload.full_medium_reserved = capacity;
         for slot in workload.full_medium.iter_mut().take(capacity).skip(1) {
             let Ok(block) = allocator.allocate_client(OWNER_EXIT_FULL_MEDIUM_REQUEST, false) else {
                 let _ = workload.free_locals(allocator);
@@ -14945,6 +14952,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             let _ = workload.free_locals(allocator);
             return Err(OwnerExitMappedRegularWorkloadError::UnmappedFullMediumCapacity);
         };
+        workload.unmapped_full_medium_reserved = unmapped_capacity;
         for slot in workload
             .unmapped_full_medium
             .iter_mut()
@@ -14984,6 +14992,7 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             let _ = workload.free_locals(allocator);
             return Err(OwnerExitMappedRegularWorkloadError::InitiallyMappedMediumCapacity);
         };
+        workload.initially_mapped_medium_reserved = initially_mapped_capacity;
         for slot in workload
             .initially_mapped_medium
             .iter_mut()
@@ -15071,9 +15080,9 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
             || self.force_empty_large.is_some()
             || !self.direct_small.iter().all(Option::is_some)
             || !self.non_direct_small.iter().all(Option::is_some)
-            || !self.full_medium[1..].iter().all(Option::is_some)
-            || !self.unmapped_full_medium.iter().all(Option::is_some)
-            || !self.initially_mapped_medium[1..].iter().all(Option::is_some)
+            || !Self::medium_population_is_complete(&self.full_medium, self.full_medium_reserved, 1)
+            || !Self::medium_population_is_complete(&self.unmapped_full_medium, self.unmapped_full_medium_reserved, 0)
+            || !Self::medium_population_is_complete(&self.initially_mapped_medium, self.initially_mapped_medium_reserved, 1)
             || !self.large.iter().all(Option::is_some)
             || self.arena_singleton.is_none()
             || self.os_singleton.is_none()
@@ -15122,6 +15131,16 @@ impl<Client> OwnerExitMappedRegularWorkload<Client> {
         blocks[OWNER_EXIT_ARENA_SINGLETON_INDEX] = self.arena_singleton.take();
         blocks[OWNER_EXIT_OS_SINGLETON_INDEX] = self.os_singleton.take();
         Some(blocks)
+    }
+
+    // Debug padding can reduce the actual source reservation below the
+    // array's release-profile upper bound. Every real slot must remain live
+    // except the explicitly moved prefix; unused tail slots must stay empty.
+    fn medium_population_is_complete(clients: &[Option<Client>], reserved: usize, moved: usize) -> bool {
+        reserved > moved && reserved <= clients.len()
+            && clients[..moved].iter().all(Option::is_none)
+            && clients[moved..reserved].iter().all(Option::is_some)
+            && clients[reserved..].iter().all(Option::is_none)
     }
 
     fn free_locals(
@@ -28423,7 +28442,8 @@ mod tests {
                             workload.initially_mapped_medium[0].is_none(),
                             "the A-local medium client has left the private ledger before owner exit"
                         );
-                        for (index, block) in workload.initially_mapped_medium[1..].iter().enumerate() {
+                        assert_eq!(usize::from(initially_mapped_medium_page.reserved()), workload.initially_mapped_medium_reserved);
+                        for (index, block) in workload.initially_mapped_medium[1..workload.initially_mapped_medium_reserved].iter().enumerate() {
                             let block = block.expect(
                                 "the owner-exit workload retains every remaining initially mapped medium client",
                             );
@@ -29119,8 +29139,17 @@ mod tests {
                                     panic!("two live inherited clients cannot become an empty source drain");
                                 }
                                 Err(failure) => {
+                                    use crate::main_heap_page::MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure as Failure;
+                                    let reason = match &failure {
+                                        Failure::Rejected { error, .. } => std::format!("source preflight: {error:?}"),
+                                        Failure::RetainedDrain { error, .. } => std::format!("source collection: {error:?}"),
+                                        Failure::Teardown { .. } => std::string::String::from("aggregate Theap teardown"),
+                                        Failure::SoleImmediateMediumTeardown { .. } => std::string::String::from("sole-medium Theap teardown"),
+                                        Failure::PageMap { error, .. } => std::format!("aggregate PageMap release: {error:?}"),
+                                        Failure::SoleImmediateMediumPageMap { error, .. } => std::format!("sole-medium PageMap release: {error:?}"),
+                                    };
                                     core::mem::forget(failure);
-                                    panic!("the source-shaped sole medium completes A's owner exit");
+                                    panic!("the source-shaped sole medium completes A's owner exit: {reason}");
                                 }
                             },
                             MappedRegularReclaimPredecessor::DirectSmall => match unsafe {
