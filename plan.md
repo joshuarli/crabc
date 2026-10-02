@@ -38,18 +38,24 @@ Update this small section in place when the implementation frontier changes.
   attachment failure on a legal 16-KiB pthread stack; accepted-C products and
   larger native worker stacks pass. Constructor admission, metadata activation
   and aggregate-copy reductions are integrated and pass focused unit/compiler
-  checks, but do not establish that this failure is repaired. Correctness comes
+  checks, but do not establish that this failure is repaired. The ordinary
+  opt0 native public-Theap consumer also terminates during its child-subprocess
+  phase; its compiler/link closure is repaired and the actual failure retained.
+  Correctness comes
   before performance, release qualification, allocator-default and public-support
   transitions. C remains selected; public x86 support remains disabled.
 - **Integration:** every open lane's coherent source changes are integrated on
-  `main`, including the reviewed initializer increment. Completed and interrupted
-  lane worktrees are retired; their source branches remain in Git. No running
+  `main`, including the reviewed initializer and diagnostic fixes. The redundant
+  lifecycle case catalog was discarded under the user's simpler-process direction.
+  Completed and interrupted lane worktrees are retired; their source branches
+  remain in Git. No running
   lane or uncommitted source is left from this milestone. New work uses fresh
   trees under `.work/worktrees/`.
 - **Cleanup:** the expanded milestone cleanup removed obsolete allocator build
   roots and historical report snapshots, then retired 20 settled worktrees and
   removed 18 redundant intermediate build directories. Free disk is about
-  1.1 TiB. Retain source history, exact reusable input archives and compact
+  1.1 TiB. The subsequent 12 preparation worktrees are also retired.
+  Retain source history, exact reusable input archives and compact
   regression programs/raw evidence in the existing ignored report locations.
   Deliberately deleted reports are not retained qualification. Other projects'
   Docker containers and volumes remain outside this cleanup.
@@ -62,12 +68,18 @@ Update this small section in place when the implementation frontier changes.
   and backend. Installed pthread compiler provenance, nested C++ header linkage,
   static-PIE LTO roots, clean dynamic text environments, POSIX interruption cleanup,
   resolver cancellation network observations, and legal loader graph entries are
-  repaired. Frozen ABI/header/coverage digests are unchanged.
+  repaired. Current resolver/netdb, pthread, locale, syscall, utmpx and allocator
+  visibility tool authorities authenticate the restored image. Resolver and C
+  performance launches execute the inspected immutable ID; the C reader rejects
+  extra unsealed compiler inputs. Frozen ABI/header/coverage digests are unchanged.
 - **Allocator readiness:** M4 has isolated opt0 valid-client source-core builds;
   M5 names all positive Loom outcomes and keeps controls separate; M6 rereads
   original C ownership witnesses after relocation; M7 parses and replays the
   three source configuration probes. Native source closure now selects the
   actual feature graph and admits the already-reviewed pinned rand dependencies.
+  Secure/guarded option printing now matches pinned C, including encoded-list
+  keys and the selected guarded state. The private diagnostic context maps retained
+  page-validity failures and again compiles/runs in its ordinary/debug profiles.
   These focused results do not close full milestone or physical requirements.
 - **Retained evidence:** main-checkout read-only replay passes the original Lua,
   text, pthread/ABI six-entry consumers and loader TLS programs. M4 original
@@ -83,10 +95,12 @@ Update this small section in place when the implementation frontier changes.
   checkouts are restored. Historical image-qualified claims are not transferred.
   Development image `5b43da01b755` and Miri image `40a5aff94eab` remain available
   for their original focused scopes.
-- **Qualification frontier:** reconcile remaining current-image input manifests
-  and producer/reader boundaries, then investigate performance on an uncontended
-  host and qualify the final merged-source release cohort. The architecture
-  promotion benchmark producer still needs a reviewed executable contract.
+- **Qualification frontier:** fix the remaining actual allocator/bootstrap and
+  child-subprocess failures before performance on an uncontended host and final
+  merged-source release qualification. Architecture throughput now uses the
+  existing qualified perf-engine measurements; metadata/route observations remain
+  unavailable and do not become passes through claims in a report. Keep preparation
+  minimal and use existing source runners/results rather than new case catalogs.
   Full M10, the default switch with post-switch reruns and public promotion remain
   open. No qualifying timing or full release-family pass is claimed.
 - **Physical environment:** the host lacks two allowed NUMA nodes and free 1-GiB
