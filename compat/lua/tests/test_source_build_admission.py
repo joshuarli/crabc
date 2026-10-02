@@ -89,6 +89,42 @@ class SourceBuildAdmissionTests(unittest.TestCase):
             ):
                 yield work, static_report, dynamic_report
 
+    def test_supplied_receipt_rechecks_cohort_and_raw_artifacts(self) -> None:
+        import run_x86_static_dispatch as static_runner
+        import run_x86_dynamic_supplied as dynamic_runner
+        with self.selected_reports() as (work, static, dynamic):
+            roots = {"primary": str(work / "static/sysroot"), "reproduction": str(work / "static/sysroot"),
+                     "extracted": str(work / "static/sysroot")}
+            context = {"checkout": str(ROOT), "preparation": {"path": str(static)}, "roots": roots,
+                       "archive_seed": {"path": str(static)}}
+            static.write_text(json.dumps({"supplied": context}))
+            report = json.loads(dynamic.read_text())
+            report["runner"] = "crabc-lua-native-x86-dynamic-supplied-cohort"
+            report["consumer_source_before"] = report["consumer_source_after"] = {"revision": "1" * 40}
+            report["dispatcher"]["state_root"] = str(dynamic.parent)
+            report["dispatcher"]["authoritative_report"] = str(dynamic)
+            cohort = {"checkout": str(ROOT), "receipt": {"path": str(static)},
+                      "roots": {label: {"path": str(work / "dynamic" / directory)}
+                                for label, directory in (("installed", "sysroot"), ("extracted", "extracted"))}}
+            report["dispatcher"]["cohort"] = cohort
+            report["reproducibility"]["contract"] = "identical Lua source artifacts through supplied installed and extracted dynamic roots"
+            for label in ("installed", "extracted"):
+                report[label]["environment"]["sysroot"] = cohort["roots"][label]["path"]
+            dynamic.write_text(json.dumps(report))
+            with (mock.patch.object(static_runner, "read_supplied"),
+                  mock.patch.object(dynamic_runner, "consumer_source_seal", return_value=report["consumer_source_before"]),
+                  mock.patch.object(dynamic_runner, "validate_cohort", return_value=(cohort, {})) as reader):
+                receipt = ADMISSION.write_receipt(work / "supplied-admission", static_report=static, dynamic_report=dynamic)
+                ADMISSION.validate_receipt(ROOT, receipt)
+                self.assertEqual(reader.call_count, 2)
+                reader.return_value = ({**cohort, "changed": True}, {})
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "cohort changed"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+                reader.return_value = (cohort, {})
+                (work / "program").write_bytes(b"replaced")
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "artifact bytes differ"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+
     def test_nondefault_dispatcher_report_selection_replays_without_global_changes(self) -> None:
         with self.selected_reports() as (work, static, dynamic):
             receipt = ADMISSION.write_receipt(work / "admission", static_report=static, dynamic_report=dynamic)

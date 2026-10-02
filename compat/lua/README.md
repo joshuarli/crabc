@@ -90,7 +90,19 @@ edit invalidates it.
 `compat/x86_64/qualification_source_build.json` for the ordered
 `consumer.source-build` qualification gate, selected with
 `./scripts/dev-x86_64.sh qualification-manifest --through consumer.source-build`
-after every predecessor gate is ready. That frozen roster is exactly the
+after every predecessor gate is ready. The caller must supply
+`--cohort-checkout`, `--static-preparation`, `--static-installed-sysroot`,
+`--static-rebuilt-sysroot`, `--static-extracted-sysroot`,
+`--dynamic-cohort-receipt`, `--dynamic-installed-sysroot`,
+`--dynamic-extracted-sysroot`, and `--archive-seed`. These paths select the
+already prepared owned cohort and pinned Lua 5.4.8 archive. The case never
+builds, packages, or extracts runtime products. Every supplied root must use
+the current source digest, release profile, and the same allocator backend.
+The static consumer exercises all three prepared roots; the dynamic consumer
+exercises installed and extracted roots. Their private reports can be selected
+with `source_build_admission.py --static-report ... --dynamic-report ...
+--output ...`; the existing receipt reader authenticates them against the
+original cohort again. That frozen roster is exactly the
 AArch64 `lua` gate: static ET_EXEC and static-PIE `lua`/`luac` with linked
 preload modules, and the dynamic `liblua.so.5.4`, `lua`, `luac`, success,
 failure, and missing-symbol modules through installed and package-extracted

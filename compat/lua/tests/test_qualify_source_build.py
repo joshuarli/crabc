@@ -22,6 +22,11 @@ QUALIFY = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = QUALIFY
 SPEC.loader.exec_module(QUALIFY)
 
+ARGV = [value for name in ("cohort-checkout", "static-preparation", "static-installed-sysroot",
+    "static-rebuilt-sysroot", "static-extracted-sysroot", "dynamic-cohort-receipt",
+    "dynamic-installed-sysroot", "dynamic-extracted-sysroot", "archive-seed")
+    for value in ("--" + name, "/cohort/" + name)]
+
 SOURCE = {"revision": "a" * 40, "source_sha256": "b" * 64}
 
 
@@ -50,20 +55,37 @@ class QualificationCaseTests(unittest.TestCase):
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            status = QUALIFY.main([])
+            status = QUALIFY.main(ARGV)
         return status, stdout.getvalue(), stderr.getvalue()
 
     def forbid_execution(self) -> contextlib.ExitStack:
         stack = contextlib.ExitStack()
         for owner, name in (
-            (QUALIFY.LUA, "run_x86_static_dispatch"),
-            (QUALIFY.DYNAMIC, "run_dynamic_dispatch"),
+            (QUALIFY.STATIC, "run_supplied"),
+            (QUALIFY.SUPPLIED_DYNAMIC, "run_supplied_dynamic"),
             (QUALIFY.ADMISSION, "validate"),
         ):
             stack.enter_context(mock.patch.object(
                 owner, name, side_effect=AssertionError(f"{name} must not start")
             ))
         return stack
+
+    def test_product_source_backend_and_profile_are_admitted_before_consumption(self) -> None:
+        import argparse
+        args = argparse.Namespace(**{name.replace("-", "_"): Path("/cohort/" + name)
+            for name in ("static-installed-sysroot", "static-rebuilt-sysroot", "static-extracted-sysroot",
+                         "dynamic-installed-sysroot", "dynamic-extracted-sysroot")})
+        good = {"source_sha256": SOURCE["source_sha256"], "allocator_backend": "accepted-c", "build_profile": "release"}
+        for bad, message in (({**good, "source_sha256": "c" * 64}, "different source"),
+                             ({**good, "allocator_backend": "native-shadow"}, "different or invalid"),
+                             ({**good, "build_profile": "debug"}, "release products")):
+            with (self.subTest(message=message),
+                  mock.patch.object(QUALIFY.LUA, "owned_static_sysroot", return_value=(None, None, None, good)),
+                  mock.patch.object(QUALIFY.DYNAMIC, "owned_dynamic_sysroot", return_value=(None, None, None, bad)),
+                  mock.patch.object(QUALIFY.PRODUCT, "product_identity"),
+                  mock.patch.object(QUALIFY.PRODUCT, "read", return_value=bad)):
+                with self.assertRaisesRegex(QUALIFY.LUA.RunnerError, message):
+                    QUALIFY.require_current_products(args, SOURCE)
 
     def test_open_transitive_prerequisites_refuse_before_any_lua_build(self) -> None:
         report = campaign({"sysroot.owned-artifact": "planned", "compat.loader-corpus": "planned"})
@@ -99,28 +121,32 @@ class QualificationCaseTests(unittest.TestCase):
     def closed_run(self, *, after: dict[str, str] = SOURCE, admitted: dict[str, str] = SOURCE):
         calls: list[str] = []
 
-        def static(**arguments: object):
+        def static(arguments: object):
             calls.append("static")
-            self.assertEqual(arguments, {"jobs": QUALIFY.JOBS, "timeout": QUALIFY.COMMAND_TIMEOUT})
-            return {"passed": True, "result": "pass"}, Path("/state/static/report.json"), Path("/latest/static.json")
+            self.assertEqual(arguments.static_preparation, Path("/cohort/static-preparation"))
+            self.assertEqual(arguments.installed_sysroot, Path("/cohort/static-installed-sysroot"))
+            return {"passed": True, "result": "pass"}, Path("/state/static/report.json")
 
         def dynamic(**arguments: object):
             calls.append("dynamic")
             self.assertEqual(
-                arguments, {"jobs": QUALIFY.JOBS, "timeout": QUALIFY.COMMAND_TIMEOUT, "offline": False}
+                arguments["cohort_receipt"], Path("/cohort/dynamic-cohort-receipt")
             )
-            return {"passed": True, "result": "pass"}, Path("/state/dynamic/report.json"), Path("/latest/dynamic.json")
+            return {"passed": True, "result": "pass"}, Path("/state/dynamic/report.json")
 
-        def admission():
+        def admission(**arguments):
+            self.assertEqual(arguments, {"static_report": Path("/state/static/report.json"),
+                                         "dynamic_report": Path("/state/dynamic/report.json")})
             calls.append("admission")
             return {"source_identity": admitted, "static": {}, "dynamic": {}}
 
         identities = iter((SOURCE, after))
         stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(QUALIFY, "require_current_products"))
         stack.enter_context(mock.patch.object(QUALIFY.CASE, "clean_source_identity", side_effect=lambda: next(identities)))
         stack.enter_context(mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=campaign({})))
-        stack.enter_context(mock.patch.object(QUALIFY.LUA, "run_x86_static_dispatch", side_effect=static))
-        stack.enter_context(mock.patch.object(QUALIFY.DYNAMIC, "run_dynamic_dispatch", side_effect=dynamic))
+        stack.enter_context(mock.patch.object(QUALIFY.STATIC, "run_supplied", side_effect=static))
+        stack.enter_context(mock.patch.object(QUALIFY.SUPPLIED_DYNAMIC, "run_supplied_dynamic", side_effect=dynamic))
         stack.enter_context(mock.patch.object(QUALIFY.ADMISSION, "validate", side_effect=admission))
         return stack, calls
 
@@ -153,9 +179,9 @@ class QualificationCaseTests(unittest.TestCase):
     def test_failed_lane_stops_before_later_lanes(self) -> None:
         stack, calls = self.closed_run()
         with stack, mock.patch.object(
-            QUALIFY.LUA,
-            "run_x86_static_dispatch",
-            return_value=({"passed": False, "result": "fail"}, Path("/state/static/report.json"), None),
+            QUALIFY.STATIC,
+            "run_supplied",
+            return_value=({"passed": False, "result": "fail"}, Path("/state/static/report.json")),
         ):
             status, stdout, stderr = self.run_main()
         self.assertEqual(status, 1)

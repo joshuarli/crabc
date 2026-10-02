@@ -291,9 +291,79 @@ def admit_dynamic(report_path: Path | None = None) -> dict[str, str]:
     return admission
 
 
+def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, object]:
+    """Authenticate retained consumer reports against their original owned cohort."""
+    import run_x86_static_dispatch as STATIC
+    import run_x86_dynamic_supplied as SUPPLIED
+
+    static_path = physical_file(static_report, "supplied static Lua report")
+    dynamic_path = physical_file(dynamic_report, "supplied dynamic Lua report")
+    static = json.loads(static_path.read_text())
+    dynamic = json.loads(dynamic_path.read_text())
+    context = static["supplied"]
+    state_parent = WORK / "lua-supplied-admission"
+    args = argparse.Namespace(
+        read=static_path, replay=False, work_root=state_parent / "static",
+        cohort_checkout=Path(context["checkout"]), static_preparation=Path(context["preparation"]["path"]),
+        installed_sysroot=Path(context["roots"]["primary"]),
+        rebuilt_sysroot=Path(context["roots"]["reproduction"]),
+        extracted_sysroot=Path(context["roots"]["extracted"]),
+        archive_seed=Path(context["archive_seed"]["path"]), timeout=300.0,
+    )
+    STATIC.read_supplied(args)
+    require(dynamic.get("runner") == "crabc-lua-native-x86-dynamic-supplied-cohort"
+            and dynamic.get("passed") is True and dynamic.get("result") == "pass",
+            "supplied dynamic Lua report did not pass")
+    seal = SUPPLIED.consumer_source_seal()
+    require(dynamic.get("consumer_source_before") == seal and dynamic.get("consumer_source_after") == seal,
+            "supplied dynamic Lua consumer source changed")
+    dispatcher = dynamic["dispatcher"]
+    require(dispatcher.get("authoritative_report") == str(dynamic_path)
+            and dispatcher.get("state_root") == str(dynamic_path.parent),
+            "supplied dynamic Lua authoritative report moved")
+    validate_report_records(dynamic)
+    cohort = dispatcher["cohort"]
+    require(cohort["checkout"] == context["checkout"], "Lua consumers use different cohort checkouts")
+    state = LUA.allocate_x86_static_dispatch_state(state_parent / "dynamic")
+    current, _validation = SUPPLIED.validate_cohort(
+        checkout=Path(cohort["checkout"]), receipt=Path(cohort["receipt"]["path"]),
+        installed=Path(cohort["roots"]["installed"]["path"]),
+        extracted=Path(cohort["roots"]["extracted"]["path"]), state=state, timeout=300.0,
+    )
+    require(current == cohort, "supplied dynamic Lua cohort changed")
+    artifacts = {}
+    for label in ("installed", "extracted"):
+        lane = dynamic[label]
+        validate_pinned_input(lane)
+        root = Path(cohort["roots"][label]["path"])
+        require(lane.get("passed") is True and lane["environment"]["sysroot"] == str(root)
+                and lane["environment"]["sysroot_manifest"] == DYNAMIC.owned_dynamic_sysroot(root)[3],
+                "supplied dynamic Lua product differs from report")
+        for name in ("source", "bytecode"):
+            require(lane["workloads"][name].get("passed") is True,
+                    "supplied dynamic Lua source or bytecode comparison failed")
+        artifacts[label] = DYNAMIC.source_artifact_hashes(lane)
+    require(dynamic["reproducibility"] == {
+        "status": "passed", "installed_artifacts": artifacts["installed"],
+        "extracted_artifacts": artifacts["extracted"],
+        "contract": "identical Lua source artifacts through supplied installed and extracted dynamic roots",
+    } and artifacts["installed"] == artifacts["extracted"], "supplied Lua artifact reproducibility differs")
+    return {"source_identity": LUA.current_source_identity(),
+            "static": {"report_path": str(static_path.relative_to(ROOT)), "report_sha256": LUA.sha256_file(static_path)},
+            "dynamic": {"report_path": str(dynamic_path.relative_to(ROOT)), "report_sha256": LUA.sha256_file(dynamic_path)}}
+
+
 def validate(*, static_report: Path | None = None, dynamic_report: Path | None = None) -> dict[str, object]:
     """Require physical, passing, current-source receipts for both lanes."""
 
+    if static_report is not None and dynamic_report is not None:
+        selected = physical_file(ROOT / static_report, "Lua selected static report")
+        payload = json.loads(selected.read_text())
+        if isinstance(payload, dict) and "supplied" in payload:
+            try:
+                return admit_supplied(selected, ROOT / dynamic_report)
+            except (KeyError, TypeError) as error:
+                raise LUA.RunnerError(f"supplied Lua report is incomplete: {error}") from error
     source = LUA.current_source_identity()
     return {"source_identity": source, "static": admit_static(static_report), "dynamic": admit_dynamic(dynamic_report)}
 

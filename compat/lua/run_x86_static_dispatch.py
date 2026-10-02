@@ -77,7 +77,10 @@ def run_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
         report["consumer_source"] = source
         payload, roots, validation = supplied_products(args, state)
         report["supplied"].update({"preparation": LUA.artifact_record(args.static_preparation),
-                                  "source": payload["source"], "validation_before": validation})
+                                  "source": payload["source"], "validation_before": validation,
+                                  "checkout": str(args.cohort_checkout.absolute()),
+                                  "roots": {label: str(root) for label, root in roots.items()},
+                                  "archive_seed": LUA.artifact_record(args.archive_seed)})
         manifest = LUA.load_manifest(LUA.MANIFEST)
         seed = LUA.require_physical_regular_file(args.archive_seed, "Lua static archive seed")
         if LUA.sha256_file(seed) != manifest["lua"]["sha256"]:

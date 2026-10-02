@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run the frozen Lua roster as the `consumer.source-build` qualification case.
 
-The ordered qualification manifest names this file as the gate's only case.
+The caller supplies one authenticated current-source static/dynamic cohort.
+This case compiles Lua only; it never builds or packages runtime products.
 It reproduces the frozen AArch64 `lua` source-build gate on native x86-64:
 static ET_EXEC and static-PIE programs through the installed static driver,
 then the dynamic `liblua`/`lua`/`luac`/C-module graph through both the
@@ -34,6 +35,8 @@ for directory in (X86_DIRECTORY, LUA_DIRECTORY):
         sys.path.insert(0, str(directory))
 
 import run as LUA  # noqa: E402
+import run_x86_static_dispatch as STATIC
+import run_x86_dynamic_supplied as SUPPLIED_DYNAMIC
 import run_x86_dynamic as DYNAMIC  # noqa: E402
 import source_build_admission as ADMISSION  # noqa: E402
 import qualification_case as CASE  # noqa: E402
@@ -52,25 +55,59 @@ def require(condition: bool, message: str) -> None:
         raise LUA.RunnerError(message)
 
 
-def require_lane(result: tuple[Mapping[str, Any], Path, Path | None], lane: str) -> dict[str, str]:
-    report, report_path, latest = result
+def require_lane(result: tuple[Mapping[str, Any], Path], lane: str) -> dict[str, str]:
+    report, report_path = result
     require(
-        report.get("passed") is True and report.get("result") == "pass" and latest is not None,
+        report.get("passed") is True and report.get("result") == "pass",
         f"Lua {lane} lane did not pass; retained report: {report_path}",
     )
-    return {"report": str(report_path), "latest_report": str(latest)}
+    return {"report": str(report_path)}
 
 
-def qualify() -> dict[str, object]:
+def require_current_products(args: argparse.Namespace, source: Mapping[str, str]) -> None:
+    """Bind every supplied runtime root to this source and one release backend."""
+    backends = set()
+    for root, reader in (
+        (args.static_installed_sysroot, LUA.owned_static_sysroot),
+        (args.static_rebuilt_sysroot, LUA.owned_static_sysroot),
+        (args.static_extracted_sysroot, LUA.owned_static_sysroot),
+        (args.dynamic_installed_sysroot, DYNAMIC.owned_dynamic_sysroot),
+        (args.dynamic_extracted_sysroot, DYNAMIC.owned_dynamic_sysroot),
+    ):
+        manifest = reader(root)[3]
+        if reader is DYNAMIC.owned_dynamic_sysroot:
+            PRODUCT.product_identity(root)
+            manifest = {**manifest, **PRODUCT.read(root / "share/crabc/dynamic-product-state.json")}
+        require(manifest.get("source_sha256") == source["source_sha256"],
+                "Lua qualification product uses different source")
+        require(manifest.get("build_profile", "release") == "release",
+                "Lua qualification requires release products")
+        backends.add(manifest.get("allocator_backend"))
+    require(len(backends) == 1 and backends <= {"accepted-c", "native-shadow"},
+            "Lua qualification products use different or invalid allocator backends")
+
+
+def qualify(args: argparse.Namespace) -> dict[str, object]:
     source = CASE.clean_source_identity()
     CASE.require_prerequisites_closed(FAMILY)
+    require_current_products(args, source)
     static = require_lane(
-        LUA.run_x86_static_dispatch(jobs=JOBS, timeout=COMMAND_TIMEOUT), "static"
+        STATIC.run_supplied(argparse.Namespace(
+            cohort_checkout=args.cohort_checkout, static_preparation=args.static_preparation,
+            installed_sysroot=args.static_installed_sysroot, rebuilt_sysroot=args.static_rebuilt_sysroot,
+            extracted_sysroot=args.static_extracted_sysroot, archive_seed=args.archive_seed,
+            work_root=args.work_root / "static", jobs=JOBS, timeout=COMMAND_TIMEOUT,
+        )), "static"
     )
     dynamic = require_lane(
-        DYNAMIC.run_dynamic_dispatch(jobs=JOBS, timeout=COMMAND_TIMEOUT, offline=False), "dynamic"
+        SUPPLIED_DYNAMIC.run_supplied_dynamic(
+            cohort_checkout=args.cohort_checkout, cohort_receipt=args.dynamic_cohort_receipt,
+            installed_sysroot=args.dynamic_installed_sysroot, extracted_sysroot=args.dynamic_extracted_sysroot,
+            archive_seed=args.archive_seed, state_parent=args.work_root / "dynamic",
+            jobs=JOBS, timeout=COMMAND_TIMEOUT,
+        ), "dynamic"
     )
-    admission = ADMISSION.validate()
+    admission = ADMISSION.validate(static_report=Path(static["report"]), dynamic_report=Path(dynamic["report"]))
     require(
         admission.get("source_identity") == source,
         "Lua admission is bound to a different source than this case",
@@ -86,11 +123,17 @@ def qualify() -> dict[str, object]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("cohort-checkout", "static-preparation", "static-installed-sysroot",
+                 "static-rebuilt-sysroot", "static-extracted-sysroot", "dynamic-cohort-receipt",
+                 "dynamic-installed-sysroot", "dynamic-extracted-sysroot", "archive-seed"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--work-root", type=Path, default=LUA.ROOT / ".work/x86_64/lua-source-build-supplied")
+    args = parser.parse_args(argv)
     # Source sealing reads Git state; never let it take an optional index lock.
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     try:
-        summary = qualify()
+        summary = qualify(args)
     except (LUA.RunnerError, CASE.QualificationCaseError, PRODUCT.QualificationError, OSError, ValueError) as error:
         print(f"x86 consumer.source-build Lua roster: FAIL: {error}", file=sys.stderr)
         return 1
