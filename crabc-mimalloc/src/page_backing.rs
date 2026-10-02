@@ -38,6 +38,8 @@ pub(crate) unsafe fn set_source_page_guard(
 }
 
 /// Restores a detached Page's tail before metadata or backing is released.
+/// Returns the exact successful tail commitment size, or zero when skipped
+/// or refused, so an OS owner can debit an originally uncommitted tail once.
 /// Larger later claims may cover this same address, so even an originally
 /// uncommitted Page follows the source reset once its publication is gone.
 ///
@@ -48,18 +50,22 @@ pub(crate) unsafe fn set_source_page_guard(
 pub(crate) unsafe fn reset_source_page_guard(
     config: MemoryConfig, process: Option<VmProcess<'_>>, memory: MemoryId,
     slice_start: *mut u8, size: usize,
-) {
+) -> usize {
     #[cfg(target_arch = "x86_64")]
     if crate::config::SECURE_LEVEL >= 5 && !memory.is_pinned() {
-        let Some(offset) = crate::page::page_noguard_size(size, config.page_size()) else { return; };
-        // The source page-free tail ignores the reset result and keeps its
-        // terminal release sequence under this exact backing owner.
-        let _ = unsafe { crate::arena::secure_page_guard_reset_at(
+        let Some(offset) = crate::page::page_noguard_size(size, config.page_size()) else { return 0; };
+        // Backing release remains best effort, but an actual successful tail
+        // commitment must stay visible to the original OS release owner.
+        return match unsafe { crate::arena::secure_page_guard_reset_at(
             process, config.page_size(), slice_start.wrapping_add(offset), memory,
-        ) };
+        ) } {
+            Ok(true) => config.page_size().bytes(),
+            Ok(false) | Err(_) => 0,
+        };
     }
     #[cfg(not(target_arch = "x86_64"))]
     let _ = (config, process, memory, slice_start, size);
+    0
 }
 
 mod sealed {
