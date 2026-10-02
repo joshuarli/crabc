@@ -426,13 +426,34 @@ def parse_operations_trace(output: str, description: str) -> dict[str, str]:
     return trace
 
 
-def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str]) -> None:
+def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, str], *,
+                              private_source_profile: str | None = None) -> None:
     """Require equal traces, reporting differences in C trace order.
 
     Allocation ids and reuse relations cascade, so the first differing key
     is the one that locates a divergence.
     """
 
+    # Secure allocation randomizes block selection. For the ordinary class
+    # allocation matrix, only alignment beyond the word/block guarantee is
+    # incidental. Keep all other observations exact, including usable size,
+    # reuse and page placement, until their operation-specific bounds are known.
+    if private_source_profile in {f"secure-{level}" for level in range(1, 6)}:
+        def bounded_alignment(trace: Mapping[str, str]) -> dict[str, str]:
+            result = dict(trace)
+            for key, value in trace.items():
+                request = re.fullmatch(r"(?:malloc|zalloc|calloc)\.\d+\.(\d+)", key)
+                allocation = re.fullmatch(
+                    r"(id:\d+,reuse:(?:-|\d+),usable:\d+,align:)(\d+)(,slice:\d+)", value)
+                if request is None or allocation is None:
+                    continue
+                minimum = 3 if int(request[1]) <= 8 else 4
+                if not minimum <= int(allocation[2]) <= 16:
+                    raise harness.HarnessError(f"private secure allocation {key} violates malloc alignment: {value}")
+                result[key] = f"{allocation[1]}{minimum}{allocation[3]}"
+            return result
+        c_trace = bounded_alignment(c_trace)
+        rust_trace = bounded_alignment(rust_trace)
     if list(c_trace) == list(rust_trace) and dict(c_trace) == dict(rust_trace):
         return
     missing = [key for key in c_trace if key not in rust_trace]
@@ -781,7 +802,8 @@ def run_operations_differential(offline: bool, scenario: str, *, build_profile: 
         )
     for profile in ("release", "stat-1", "stat-2", "debug-1") if mode_traces else ():
         compare_operations_traces(mode_traces[f"{profile}.c"], mode_traces[f"{profile}.rust"])
-    compare_operations_traces(traces["c"], traces["rust"])
+    compare_operations_traces(traces["c"], traces["rust"],
+                              private_source_profile=source_profile if valid_clients_only else None)
     unequal = {name: status for name, status in terminations.items() if status["c"] != status["rust"]}
     if unequal:
         raise harness.HarnessError(f"C/Rust operations termination mismatch: {unequal}")

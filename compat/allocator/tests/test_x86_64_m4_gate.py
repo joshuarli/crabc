@@ -24,6 +24,33 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
+    def test_private_secure_class_allocations_allow_only_surplus_alignment(self) -> None:
+        c = {"malloc.11.33": "id:11,reuse:-,usable:33,align:5,slice:14",
+             "malloc.keep.11.33": "1"}
+        native = {**c, "malloc.11.33": c["malloc.11.33"].replace("align:5", "align:7")}
+        gate.compare_operations_traces(c, native, private_source_profile="secure-5")
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces(c, native)
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces(c, native, private_source_profile="release")
+        for before, after in (("align:7", "align:3"), ("usable:33", "usable:32"),
+                              ("reuse:-", "reuse:2"), ("slice:14", "slice:15"),
+                              ("id:11", "id:12")):
+            with self.subTest(field=before), self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(c, {**native,
+                    "malloc.11.33": native["malloc.11.33"].replace(before, after)},
+                    private_source_profile="secure-5")
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces(c, {**native, "malloc.keep.11.33": "0"},
+                                           private_source_profile="secure-5")
+        for value in ("null", c["malloc.11.33"].replace("align:5", "align:17")):
+            with self.subTest(value=value), self.assertRaises(harness.HarnessError):
+                gate.compare_operations_traces(c, {**c, "malloc.11.33": value},
+                                               private_source_profile="secure-5")
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_operations_traces({"malloc_aligned.5.1": c["malloc.11.33"]},
+                {"malloc_aligned.5.1": native["malloc.11.33"]}, private_source_profile="secure-5")
+
     def test_debug_build_uses_opt0_without_selecting_release_or_changing_source_features(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
             output = Path(directory)
