@@ -2290,6 +2290,118 @@ mod tests {
     }
 
     #[test]
+    fn retained_live_client_lookup_overlaps_disjoint_page_publication_and_removal() {
+        use core::mem::MaybeUninit;
+        use crate::free_list::LocalFreeList;
+
+        #[repr(C, align(65536))]
+        struct Storage {
+            first: MaybeUninit<Page>,
+            bytes: [u8; 4 * ARENA_SLICE_SIZE - size_of::<Page>()],
+        }
+        struct Client(NonNull<u8>);
+        // SAFETY: the reader owns this one current client until it returns
+        // the wrapper after joining. The owner cannot free or unregister it.
+        unsafe impl Send for Client {}
+        impl Client {
+            unsafe fn observe(&self, root: ProcessPageMapRoot) -> (usize, usize) {
+                // SAFETY: the retained current client pins its source-plain
+                // entry and immutable Page geometry through this observation.
+                let facts = unsafe { root.lookup_live_allocation(self.0) }.unwrap().unwrap();
+                (facts.page().as_ptr().addr(), facts.block_size())
+            }
+        }
+        let storage_origin = std::boxed::Box::into_raw(std::boxed::Box::new(ProcessPageMapStorage::new()));
+        let subprocess_origin = std::boxed::Box::into_raw(std::boxed::Box::new(MainSubprocess::new()));
+        // SAFETY: these pinned owners outlive every source root, Page and
+        // reader. The fixture reclaims them only after terminal quiescence;
+        // no source-static observation escapes this test process lifetime.
+        let storage: &'static ProcessPageMapStorage = unsafe { &*storage_origin };
+        let subprocess: &'static MainSubprocess = unsafe { &*subprocess_origin };
+        let root = storage.initialize(memory_config(), subprocess).unwrap();
+        let mut backing = std::boxed::Box::new(Storage {
+            first: MaybeUninit::uninit(),
+            bytes: [0; 4 * ARENA_SLICE_SIZE - size_of::<Page>()],
+        });
+        // Preserve the whole backing allocation for both metadata images and
+        // both aligned block areas, rather than borrowing the first field.
+        let base = core::ptr::addr_of_mut!(*backing).cast::<u8>();
+        let pages = [unsafe { NonNull::new_unchecked(base.cast::<Page>()) },
+            unsafe { NonNull::new_unchecked(base.add(2 * ARENA_SLICE_SIZE).cast::<Page>()) }];
+        let starts = [unsafe { base.add(ARENA_SLICE_SIZE) }, unsafe { base.add(3 * ARENA_SLICE_SIZE) }];
+        let id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_bootstrap_exclusive(id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        for (page, start) in pages.into_iter().zip([base, unsafe { base.add(2 * ARENA_SLICE_SIZE) }]) {
+            // SAFETY: exclusive publication initializes nonoverlapping Page
+            // metadata and source block ranges before either becomes visible.
+            unsafe { Page::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
+                48, ARENA_SLICE_SIZE, 4, 0, true,
+                MemoryId::external(start, 2 * ARENA_SLICE_SIZE, true, false, true)) }.unwrap();
+        }
+        {
+            // SAFETY: this owner serializes all entry writes. Each reader's
+            // exact live client excludes writes to its separate Page slice.
+            let map = unsafe { root.page_map_for_owned_ranges() }.unwrap();
+            unsafe { map.register_range(starts[0], ARENA_SLICE_SIZE, pages[0]) }.unwrap();
+            let mut first = unsafe { LocalFreeList::from_page_at(pages[0]) }.unwrap();
+            first.extend_count(4).unwrap();
+            let client = Client(first.pop(false).unwrap().unwrap());
+            drop(first);
+            let rendezvous = Arc::new(Barrier::new(2));
+            let reader_barrier = rendezvous.clone();
+            let expected_page = pages[0].as_ptr().addr();
+            let reader = thread::spawn(move || {
+                for _ in 0..2 {
+                    reader_barrier.wait();
+                    assert_eq!(unsafe { client.observe(root) }, (expected_page, 48));
+                    reader_barrier.wait();
+                }
+                client
+            });
+
+            // The reader and each disjoint entry mutation begin together;
+            // neither a copied Page observation nor a map mutation lease
+            // crosses into the foreign client's source lifetime.
+            rendezvous.wait();
+            unsafe { map.register_range(starts[1], ARENA_SLICE_SIZE, pages[1]) }.unwrap();
+            rendezvous.wait();
+            let mut second = unsafe { LocalFreeList::from_page_at(pages[1]) }.unwrap();
+            second.extend_count(4).unwrap();
+            let second_client = second.pop(false).unwrap().unwrap();
+            // SAFETY: this owner returns its distinct local client exactly
+            // once before any removal of that Page's source registration.
+            unsafe { second.push_local(second_client) }.unwrap();
+            drop(second);
+            rendezvous.wait();
+            unsafe { map.unregister_range(starts[1], ARENA_SLICE_SIZE) }.unwrap();
+            rendezvous.wait();
+            let client = reader.join().unwrap();
+            let mut first = unsafe { LocalFreeList::from_page_at(pages[0]) }.unwrap();
+            // SAFETY: the reader returned its still-live exact allocation;
+            // joining ended every lookup before local free and removal.
+            unsafe { first.push_local(client.0) }.unwrap();
+            drop(first);
+            unsafe { map.unregister_range(starts[0], ARENA_SLICE_SIZE) }.unwrap();
+            assert_eq!(map.test_registered_entry_count(), Ok(0));
+        }
+        // SAFETY: every client was consumed, all readers joined and every
+        // owned range cleared. No map reference or Page observation is used
+        // after terminal root removal or backing destruction.
+        unsafe { storage.destroy_terminal_quiescent() }.unwrap();
+        // SAFETY: terminal quiescence closed the last root and every retained
+        // reference is now inaccessible. Recover each original allocation
+        // origin rather than attempting to deallocate through a shared view.
+        unsafe {
+            drop(std::boxed::Box::from_raw(storage_origin));
+            drop(std::boxed::Box::from_raw(subprocess_origin));
+        }
+    }
+
+    #[test]
     fn live_reallocation_copy_source_keeps_an_interior_client_prefix_bounded() {
         with_live_pointer_remote_fixture(|lease, mut page, block| {
             const INTERIOR_ADJUSTMENT: usize = 5;
