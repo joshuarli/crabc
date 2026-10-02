@@ -11,6 +11,10 @@ ulimit -c 0
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly CHROOT=/usr/sbin/chroot
+# Keep the initial locale and timezone identical in every entry mode. Use the
+# absolute host chroot tool so the consumer does not need an added PATH.
+readonly -a EXECUTION_ENVIRONMENT=(env -i LC_ALL=C LANG=C TZ=UTC)
 readonly RECEIPT="$ROOT/compat/x86_64/owned_text_locale_numeric_component_receipt.py"
 readonly PROVIDER="$ROOT/compat/x86_64/owned_text_locale_numeric_component_evidence.py"
 readonly CONTRACT="$ROOT/compat/x86_64/owned_text_locale_numeric_component_contract.py"
@@ -81,7 +85,7 @@ provided_dynamic="$(realpath -e -- "$provided_dynamic")"
 readonly STATIC_PRODUCT="$provided_static"
 readonly DYNAMIC_PRODUCT="$provided_dynamic"
 
-for tool in chroot cmp cp mkdir mktemp python3 realpath sha256sum timeout "$NM" "$READELF"; do
+for tool in "$CHROOT" cmp cp mkdir mktemp python3 realpath sha256sum timeout "$NM" "$READELF"; do
     command -v "$tool" >/dev/null 2>&1 || fail "requires $tool"
 done
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl oracle compiler'
@@ -287,7 +291,7 @@ capture component-preflight "${provider_arguments[@]}"
 for workload in normal alias; do
     if [ "$workload" = normal ]; then object="$WORK/normal-workload.o"; else object="$WORK/locale-alias-contract.o"; fi
     capture "oracle-$workload-link" "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie "$object" -lm -o "$WORK/oracle-$workload"
-    capture "oracle-$workload-run" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle-$workload"
+    capture "oracle-$workload-run" "${EXECUTION_ENVIRONMENT[@]}" "$WORK/oracle-$workload"
     [ ! -s "$WORK/oracle-$workload-run.stderr" ] || fail "pinned musl $workload oracle emitted stderr"
     for linkage in static static-pie; do
         executable="$WORK/$workload-$linkage"
@@ -298,7 +302,7 @@ for workload in normal alias; do
                 "$(basename "$receipt")" "$object" -o "$executable"
         )
         validate_link "$workload-$linkage" "$STATIC_PRODUCT" "$object" "$executable" "$receipt" "$linkage" 0
-        capture "$workload-$linkage-run" env -i LC_ALL=C LANG=C TZ=UTC "$executable"
+        capture "$workload-$linkage-run" "${EXECUTION_ENVIRONMENT[@]}" "$executable"
         compare_oracle "$workload" "$workload-$linkage-run"
     done
     for mode in pie non-pie; do
@@ -322,9 +326,9 @@ for workload in normal alias; do
         capture "$workload-$linkage-copy-audit-before" python3 -B "$COPIES" audit --product "$DYNAMIC_PRODUCT" \
             --execution-root "$root_copy" --source-consumer "$executable" --execution-consumer "$root_copy/consumer" \
             --record "$record"
-        capture "$workload-$linkage-kernel" chroot "$root_copy" /consumer
+        capture "$workload-$linkage-kernel" "${EXECUTION_ENVIRONMENT[@]}" "$CHROOT" "$root_copy" /consumer
         compare_oracle "$workload" "$workload-$linkage-kernel"
-        capture "$workload-$linkage-direct" chroot "$root_copy" "$INTERPRETER" /consumer
+        capture "$workload-$linkage-direct" "${EXECUTION_ENVIRONMENT[@]}" "$CHROOT" "$root_copy" "$INTERPRETER" /consumer
         compare_oracle "$workload" "$workload-$linkage-direct"
         capture "$workload-$linkage-copy-audit-after" python3 -B "$COPIES" audit --product "$DYNAMIC_PRODUCT" \
             --execution-root "$root_copy" --source-consumer "$executable" --execution-consumer "$root_copy/consumer" \
@@ -347,7 +351,7 @@ for linkage in static static-pie; do
             "$(basename "$receipt")" "$object" -o "$executable"
     )
     validate_link "$workload-$linkage" "$STATIC_PRODUCT" "$object" "$executable" "$receipt" "$linkage" 0
-    capture "$workload-$linkage-run" env -i LC_ALL=C LANG=C TZ=UTC "$executable"
+    capture "$workload-$linkage-run" "${EXECUTION_ENVIRONMENT[@]}" "$executable"
     [ ! -s "$WORK/$workload-$linkage-run.stderr" ] || fail "$workload $linkage emitted stderr"
     if [ "$linkage" = static-pie ]; then compare_source_specific "$workload-$linkage-run"; fi
 done
@@ -369,9 +373,9 @@ for mode in pie non-pie; do
     capture "$workload-$linkage-copy-audit-before" python3 -B "$COPIES" audit --product "$DYNAMIC_PRODUCT" \
         --execution-root "$root_copy" --source-consumer "$executable" --execution-consumer "$root_copy/consumer" \
         --record "$record"
-    capture "$workload-$linkage-kernel" chroot "$root_copy" /consumer
+    capture "$workload-$linkage-kernel" "${EXECUTION_ENVIRONMENT[@]}" "$CHROOT" "$root_copy" /consumer
     compare_source_specific "$workload-$linkage-kernel"
-    capture "$workload-$linkage-direct" chroot "$root_copy" "$INTERPRETER" /consumer
+    capture "$workload-$linkage-direct" "${EXECUTION_ENVIRONMENT[@]}" "$CHROOT" "$root_copy" "$INTERPRETER" /consumer
     compare_source_specific "$workload-$linkage-direct"
     capture "$workload-$linkage-copy-audit-after" python3 -B "$COPIES" audit --product "$DYNAMIC_PRODUCT" \
         --execution-root "$root_copy" --source-consumer "$executable" --execution-consumer "$root_copy/consumer" \

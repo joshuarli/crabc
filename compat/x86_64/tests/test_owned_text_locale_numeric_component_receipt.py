@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,34 @@ import owned_text_locale_numeric_component_receipt as receipt
 
 
 class OwnedTextLocaleNumericComponentReceiptTests(unittest.TestCase):
+    def test_all_execution_modes_discard_ambient_locale_and_loader_environment(self) -> None:
+        work = ROOT / ".work/text-environment-fixture"
+        static = work / "static"
+        dynamic = work / "dynamic"
+        tools = {name: {"path": f"/usr/bin/{name}"}
+                 for name in ("linker", "oracle", "static_driver", "dynamic_driver")}
+        with mock.patch.object(receipt.providers, "compiler_path", return_value=Path("/usr/bin/gcc")), \
+             mock.patch.object(receipt.providers.translation_contract, "hosted_translation_flags", return_value=()):
+            plan = receipt.command_plan(ROOT, work, static, dynamic, tools)
+        # Replace only the executable boundary, preserving the planned launch
+        # environment. The observer stands in for the already linked consumer.
+        observer = [sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ), sort_keys=True))"]
+        ambient = {"PATH": "/usr/bin:/bin", "LC_ALL": "unsupported-locale", "LANG": "POSIX",
+                   "TZ": "EST5EDT", "LC_CTYPE": "C.UTF-8", "LD_LIBRARY_PATH": "/ambient/provider",
+                   "CRABC_TEXT_ENVIRONMENT_SENTINEL": "inherited"}
+        expected = {"LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
+        for stem, command in plan.items():
+            if not stem.endswith(("-run", "-kernel", "-direct")):
+                continue
+            with self.subTest(stem=stem):
+                launch = next((index for index, item in enumerate(command)
+                               if Path(item).name == "chroot"), len(command) - 1)
+                result = subprocess.run([*command[:launch], *observer], env=ambient,
+                                        capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                observed = json.loads(result.stdout)
+                self.assertEqual(observed, expected)
+
     def test_rehashed_transplanted_product_source_cannot_reseal(self) -> None:
         (ROOT / ".work").mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:

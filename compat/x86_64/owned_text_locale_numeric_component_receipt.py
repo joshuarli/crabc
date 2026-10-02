@@ -40,6 +40,10 @@ PAIR_NAMES = tuple(family.PAIRS)
 EXECUTION_CELLS = contract.EXECUTION_CELLS
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+# Every consumer starts with the same locale and timezone, including chroot
+# launches. An absolute host tool path avoids adding PATH to that environment.
+EXECUTION_ENVIRONMENT = ("env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC")
+CHROOT = "/usr/sbin/chroot"
 RUNNER = Path("compat/x86_64/run_owned_text_locale_numeric_component.sh")
 RECEIPT = Path("compat/x86_64/owned_text_locale_numeric_component_receipt.py")
 PROVIDER = Path("compat/x86_64/owned_text_locale_numeric_component_evidence.py")
@@ -458,7 +462,7 @@ def command_plan(root: Path, work: Path, static: Path, dynamic: Path,
         oracle = work / f"oracle-{workload}"
         plan[f"oracle-{workload}-link"] = [tool("oracle"), "-std=c11", "-static", "-fno-pie", "-no-pie",
                                                  mounted(root, object_pathname), "-lm", "-o", mounted(root, oracle)]
-        plan[f"oracle-{workload}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", mounted(root, oracle)]
+        plan[f"oracle-{workload}-run"] = [*EXECUTION_ENVIRONMENT, mounted(root, oracle)]
         for linkage in ("static", "static-pie"):
             executable = executable_path(work, workload, linkage)
             receipt = link_receipt_path(work, workload, linkage)
@@ -467,7 +471,7 @@ def command_plan(root: Path, work: Path, static: Path, dynamic: Path,
                                                    mounted(root, executable)]
             plan[f"{workload}-{linkage}-validate"] = _link_validation_command(
                 root, static, object_pathname, executable, receipt, linkage, export_dynamic=False)
-            plan[f"{workload}-{linkage}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC",
+            plan[f"{workload}-{linkage}-run"] = [*EXECUTION_ENVIRONMENT,
                                                    mounted(root, executable)]
         for mode in ("pie", "non-pie"):
             linkage = f"dynamic-{mode}"
@@ -485,8 +489,8 @@ def command_plan(root: Path, work: Path, static: Path, dynamic: Path,
                 "record", root, dynamic, root_copy, executable, record)
             plan[f"{workload}-{linkage}-copy-audit-before"] = _payload_command(
                 "audit", root, dynamic, root_copy, executable, record)
-            plan[f"{workload}-{linkage}-kernel"] = ["chroot", mounted(root, root_copy), "/consumer"]
-            plan[f"{workload}-{linkage}-direct"] = ["chroot", mounted(root, root_copy), INTERPRETER, "/consumer"]
+            plan[f"{workload}-{linkage}-kernel"] = [*EXECUTION_ENVIRONMENT, CHROOT, mounted(root, root_copy), "/consumer"]
+            plan[f"{workload}-{linkage}-direct"] = [*EXECUTION_ENVIRONMENT, CHROOT, mounted(root, root_copy), INTERPRETER, "/consumer"]
             plan[f"{workload}-{linkage}-copy-audit-after"] = _payload_command(
                 "audit", root, dynamic, root_copy, executable, record)
     object_pathname = workload_object(work, SOURCE_SPECIFIC_WORKLOAD)
@@ -500,7 +504,7 @@ def command_plan(root: Path, work: Path, static: Path, dynamic: Path,
         plan[f"{SOURCE_SPECIFIC_WORKLOAD}-{linkage}-validate"] = _link_validation_command(
             root, static, object_pathname, executable, receipt, linkage, export_dynamic=False)
         plan[f"{SOURCE_SPECIFIC_WORKLOAD}-{linkage}-run"] = [
-            "env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", mounted(root, executable),
+            *EXECUTION_ENVIRONMENT, mounted(root, executable),
         ]
     for mode in ("pie", "non-pie"):
         linkage = f"dynamic-{mode}"
@@ -519,10 +523,10 @@ def command_plan(root: Path, work: Path, static: Path, dynamic: Path,
         plan[f"{SOURCE_SPECIFIC_WORKLOAD}-{linkage}-copy-audit-before"] = _payload_command(
             "audit", root, dynamic, root_copy, executable, record)
         plan[f"{SOURCE_SPECIFIC_WORKLOAD}-{linkage}-kernel"] = [
-            "chroot", mounted(root, root_copy), "/consumer",
+            *EXECUTION_ENVIRONMENT, CHROOT, mounted(root, root_copy), "/consumer",
         ]
         plan[f"{SOURCE_SPECIFIC_WORKLOAD}-{linkage}-direct"] = [
-            "chroot", mounted(root, root_copy), INTERPRETER, "/consumer",
+            *EXECUTION_ENVIRONMENT, CHROOT, mounted(root, root_copy), INTERPRETER, "/consumer",
         ]
         plan[f"{SOURCE_SPECIFIC_WORKLOAD}-{linkage}-copy-audit-after"] = _payload_command(
             "audit", root, dynamic, root_copy, executable, record)
