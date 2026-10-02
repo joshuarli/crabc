@@ -46237,6 +46237,11 @@ mod tests {
                             unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
                             panic!("fresh initialization unexpectedly refused");
                         }
+                        #[cfg(target_arch = "x86_64")]
+                        DeferredFreeAllocationPhase::LiveValidity(pending) => {
+                            assert!(allocator.retain_live_page_validity(pending).is_ok());
+                            panic!("live Page validity unexpectedly refused");
+                        }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                         #[cfg(target_arch = "x86_64")]
                         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
@@ -46294,6 +46299,11 @@ mod tests {
                             unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
                             panic!("fresh initialization unexpectedly refused");
                         }
+                        #[cfg(target_arch = "x86_64")]
+                        DeferredFreeAllocationPhase::LiveValidity(pending) => {
+                            assert!(allocator.retain_live_page_validity(pending).is_ok());
+                            panic!("live Page validity unexpectedly refused");
+                        }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
@@ -46324,6 +46334,11 @@ mod tests {
                             // backing continuously through the unfinished attempt.
                             unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
                             panic!("fresh initialization unexpectedly refused");
+                        }
+                        #[cfg(target_arch = "x86_64")]
+                        DeferredFreeAllocationPhase::LiveValidity(pending) => {
+                            assert!(allocator.retain_live_page_validity(pending).is_ok());
+                            panic!("live Page validity unexpectedly refused");
                         }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                     #[cfg(target_arch = "x86_64")]
