@@ -1,6 +1,6 @@
 # Private native Linux/x86-64 image for fixed-mimalloc evidence only.
 #
-# `compat/allocator/run-x86_64.sh` is the sole supported launcher. This image
+# The private allocator launcher is the sole supported entry point. This image
 # deliberately contains no crabc runtime/sysroot tooling and is not a second
 # project platform image. It supplies only the pinned C oracle, Rust toolchain,
 # and inspection tools used by the private allocator evidence commands.
@@ -45,14 +45,14 @@ RUN apk add --no-cache \
     && rustup-init -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
     && rustup component add rust-src llvm-tools miri
 
-# `miri` is a component of the same pinned nightly; the M3 allocator gate runs
+# `miri` is a component of the same pinned nightly; allocator ownership tests run
 # its local-engine tests under strict-provenance Miri. It is never a build
 # input for allocator or runtime artifacts.
 
 # Alpine's system musl is not the oracle. Build the pinned upstream release
 # under /opt so the evidence commands select it explicitly through musl-gcc.
 RUN set -eu \
-    && if curl --fail --location --retry 3 --output /tmp/musl.tar.gz \
+    && if curl --fail --location --connect-timeout 20 --max-time 120 --retry 3 --output /tmp/musl.tar.gz \
             "https://musl.libc.org/releases/musl-${MUSL_VERSION}.tar.gz"; then \
         echo "${MUSL_SHA256}  /tmp/musl.tar.gz" | sha256sum -c - \
         && tar -C /tmp -xzf /tmp/musl.tar.gz; \
@@ -75,12 +75,40 @@ RUN set -eu \
         "/opt/musl-${MUSL_VERSION}/lib" \
         "/opt/musl-${MUSL_VERSION}/lib/ld-musl-x86_64.so.1" \
         > "/opt/musl-${MUSL_VERSION}/lib/musl-gcc.specs" \
-    && test -f "/opt/musl-${MUSL_VERSION}/lib/ld-musl-x86_64.so.1" \
+    && test "$(readlink -f "/opt/musl-${MUSL_VERSION}/lib/ld-musl-x86_64.so.1")" = \
+        "/opt/musl-${MUSL_VERSION}/lib/libc.so" \
+    && printf '%s\n' \
+        'format=crabc-pinned-musl-oracle-v1' \
+        "version=${MUSL_VERSION}" \
+        "source_sha256=${MUSL_SHA256}" \
+        "fallback_revision=${MUSL_REV}" \
+        'architecture=x86_64' \
+        > "/opt/musl-${MUSL_VERSION}/.crabc-oracle" \
     && cp /usr/lib/libssp_nonshared.a "/opt/musl-${MUSL_VERSION}/lib/" \
     && rm -rf /tmp/musl.tar.gz "/tmp/musl-${MUSL_VERSION}"
 
 COPY docker/musl-gcc /usr/local/bin/musl-gcc
 RUN chmod 0755 /usr/local/bin/musl-gcc
+
+# Check the actual native compiler boundary while the source-authenticated
+# oracle is installed. The executable must select that loader and run against
+# its libc; the bootstrap Alpine libc is never the comparison oracle.
+RUN set -eu \
+    && printf '%s\n' '#include <stdio.h>' 'int main(void) { puts("allocator-oracle-ok"); return 0; }' \
+        > /tmp/allocator-oracle.c \
+    && musl-gcc /tmp/allocator-oracle.c -o /tmp/allocator-oracle \
+    && readelf -l /tmp/allocator-oracle | grep -F '/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1' \
+    && test "$(/tmp/allocator-oracle)" = allocator-oracle-ok \
+    && test "$(rustc -vV | sed -n 's/^host: //p')" = x86_64-unknown-linux-musl \
+    && test -f "$(rustc --print target-libdir)/self-contained/libunwind.a" \
+    && cmake --version \
+    && cargo miri --version \
+    && mkdir -p /usr/local/share \
+    && sha256sum /usr/local/bin/musl-gcc /opt/musl-1.2.6/lib/musl-gcc.specs \
+        /opt/musl-1.2.6/lib/libc.so /usr/bin/gcc /usr/bin/cmake /usr/bin/readelf \
+        > /usr/local/share/crabc-allocator-image-tools.sha256 \
+    && chmod 0444 /usr/local/share/crabc-allocator-image-tools.sha256 \
+    && rm -f /tmp/allocator-oracle.c /tmp/allocator-oracle
 
 WORKDIR /workspace
 CMD ["bash"]

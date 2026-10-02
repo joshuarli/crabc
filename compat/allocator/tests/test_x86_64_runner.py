@@ -28,6 +28,7 @@ class X86AllocatorWorkspaceTests(unittest.TestCase):
         self.launcher = self.checkout / "compat/allocator/run-x86_64.sh"
         self.launcher.parent.mkdir(parents=True)
         self.launcher.write_text(RUNNER.read_text())
+        (self.checkout / "rust-toolchain.toml").write_text((ROOT / "rust-toolchain.toml").read_text())
         core_module = self.checkout / "compat/x86_64/core_image.py"
         core_module.parent.mkdir(parents=True)
         core_module.write_text((ROOT / "compat/x86_64/core_image.py").read_text())
@@ -52,6 +53,10 @@ if [ "$1" = image ]; then
         fi
     fi
 elif [ "$1" = run ]; then
+    if [[ " $* " == *' --entrypoint /bin/sh '* ]]; then
+        printf '%s\\0' "$@" > "$DOCKER_CAPTURE.authentication"
+        exit "${DOCKER_AUTHENTICATION_STATUS:-0}"
+    fi
     printf '%s\\0' "$@" > "$DOCKER_CAPTURE"
 fi
 ''')
@@ -117,6 +122,25 @@ fi
                 self.assertIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=" + identity, args)
                 self.assertIn(identity, args)
                 self.assertNotIn(b"crabc-allocator-evidence:x86_64", args)
+
+    def test_allocator_image_authentication_is_immutable_and_has_no_mutable_inputs(self):
+        result = self.launch("allocator-unit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        authentication = Path(str(self.capture) + ".authentication").read_bytes().split(b"\0")
+        self.assertIn(b"--read-only", authentication)
+        self.assertEqual(authentication[authentication.index(b"--network") + 1], b"none")
+        self.assertNotIn(b"--volume", authentication)
+        identity = b"sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        self.assertIn(identity, authentication)
+        self.assertIn(identity, self.capture.read_bytes().split(b"\0"))
+
+    def test_unauthenticated_allocator_image_never_executes_a_producer(self):
+        os.environ["DOCKER_AUTHENTICATION_STATUS"] = "1"
+        self.addCleanup(os.environ.pop, "DOCKER_AUTHENTICATION_STATUS", None)
+        result = self.launch("allocator-unit")
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("allocator image authentication failed", result.stderr)
+        self.assertFalse(self.capture.exists())
 
     def test_allocator_unit_selects_one_exact_test_inside_the_pinned_container(self):
         name = "os::tests::native_large_page_retry_suppression"
@@ -309,6 +333,7 @@ fi
         launcher = linked / "compat/allocator/run-x86_64.sh"
         launcher.parent.mkdir(parents=True)
         launcher.write_text(RUNNER.read_text(encoding="utf-8"), encoding="utf-8")
+        (linked / "rust-toolchain.toml").write_text((ROOT / "rust-toolchain.toml").read_text())
         environment = os.environ.copy()
         environment.update(PATH=f"{self.bin}:{environment['PATH']}", DOCKER_CAPTURE=str(self.capture))
         result = subprocess.run(

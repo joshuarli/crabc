@@ -270,6 +270,33 @@ ensure_image() {
     if [ "$identity" != "linux/amd64" ]; then
         fail "$IMAGE is $identity; rebuild it with ./compat/allocator/run-x86_64.sh image"
     fi
+    ALLOCATOR_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+        || fail "cannot resolve allocator image identity"
+    [[ "$ALLOCATOR_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        || fail "allocator image did not provide an immutable image identity"
+    local rust_channel
+    rust_channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$ROOT_DIR/rust-toolchain.toml")"
+    [[ "$rust_channel" =~ ^nightly-[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+        || fail "allocator Rust channel is not a dated nightly"
+    # Authenticate the same immutable bytes that the producer will execute.
+    # No checkout, cache, network or mutable filesystem can supply these tools.
+    docker run --rm --read-only --network none --platform "$PLATFORM" \
+        --entrypoint /bin/sh "$ALLOCATOR_IMAGE_ID" -ec '
+            test "$(uname -m)" = x86_64
+            test "$(rustup show active-toolchain)" = "$1-x86_64-unknown-linux-musl (default)"
+            test "$(rustc -vV | sed -n "s/^host: //p")" = x86_64-unknown-linux-musl
+            test -f "$(rustc --print target-libdir)/self-contained/libunwind.a"
+            test "$(cat /opt/musl-1.2.6/.crabc-oracle)" = "format=crabc-pinned-musl-oracle-v1
+version=1.2.6
+source_sha256=d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a
+fallback_revision=9fa28ece75d8a2191de7c5bb53bed224c5947417
+architecture=x86_64"
+            sha256sum -c /usr/local/share/crabc-allocator-image-tools.sha256 >/dev/null
+            /opt/musl-1.2.6/lib/libc.so 2>&1 | grep -F "Version 1.2.6" >/dev/null
+            cmake --version >/dev/null
+            cargo miri --version >/dev/null
+        ' allocator-image-authentication "$rust_channel" \
+        || fail "allocator image authentication failed; rebuild with ./compat/allocator/run-x86_64.sh image"
 }
 
 linked_worktree_git_mounts() {
@@ -325,7 +352,7 @@ run_in_container() {
         reader_args=(--read-only --network none --user "$(id -u):$(id -g)")
     fi
     local -a capability_args=()
-    local execution_image="$IMAGE"
+    local execution_image="$ALLOCATOR_IMAGE_ID"
     if [ "${1:-}" = --with-pinned-core-image ]; then
         shift
         local core_image_id
@@ -687,6 +714,8 @@ case "$command" in
         run_in_container python3 compat/allocator/x86_64_m2_concurrent_init.py --offline
         ;;
     allocator-initialization-tld)
+        [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; } \
+            || fail "allocator-initialization-tld accepts only --reader-tests"
         ensure_image
         if [ "$#" -eq 0 ]; then
             run_in_container python3 compat/allocator/x86_64_initialization_tld_evidence.py --offline
