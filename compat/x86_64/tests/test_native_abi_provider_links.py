@@ -179,16 +179,16 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             (work / 'providers.c').write_text(links.source(names, object_names=['domain_target']))
             for storage, addend, supported in [('data', 0, True), ('data', 8, True),
                     ('rodata', 0, True), ('rodata', 8, True), ('retained-output', 0, True), ('data', 16, False), ('data', -1, False),
-                    ('function', 0, True), ('function', 1, False), ('wrong-import-type', 0, False), ('table-gap', 0, True), ('mixed-table', 0, True), ('retained-holder', 0, True), ('got-table', 0, False)]:
+                    ('function', 0, True), ('function', 1, False), ('wrong-import-type', 0, False), ('table-gap', 0, True), ('mixed-table', 0, True), ('mixed-defined', 0, True), ('mixed-defined-offset', 0, True), ('retained-holder', 0, True), ('got-table', 0, False)]:
                 with self.subTest(storage=storage, addend=addend):
                     (work / 'provider.S').write_text(
                         '.section .text.domain_body,"ax",@progbits\n.globl domain_body\n.hidden domain_body\n'
                         '.type domain_body,@function\ndomain_body: ret\n.size domain_body,.-domain_body\n'
-                        + '.section .' + ('text' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type'} else 'data.rel.ro' if storage == 'retained-output' else 'data' if storage in {'table-gap', 'got-table'} else storage)
-                        + '.domain_target,"' + ('ax' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type'} else 'a' if storage == 'rodata' else 'aw')
+                        + '.section .' + ('text' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type', 'mixed-defined', 'mixed-defined-offset'} else 'data.rel.ro' if storage == 'retained-output' else 'data' if storage in {'table-gap', 'got-table'} else storage)
+                        + '.domain_target,"' + ('ax' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type', 'mixed-defined', 'mixed-defined-offset'} else 'a' if storage == 'rodata' else 'aw')
                         + '",@progbits\n.balign 8\n.globl domain_target\n.hidden domain_target\n'
-                        + '.type domain_target,@' + ('function' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type'} else 'object') + '\ndomain_target:\n'
-                        + ('ret\n' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type'} else '.quad .Lbytes; .quad 8\n'
+                        + '.type domain_target,@' + ('function' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type', 'mixed-defined', 'mixed-defined-offset'} else 'object') + '\ndomain_target:\n'
+                        + ('ret\n' if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type', 'mixed-defined', 'mixed-defined-offset'} else '.quad .Lbytes; .quad 8\n'
                            if storage in {'data', 'table-gap', 'got-table', 'retained-output'} else '.quad 0x1234; .quad 0x5678\n')
                         + '.size domain_target,.-domain_target\n.section .rodata.bytes,"a",@progbits\n.Lbytes: .quad 7\n'
                         + ('.section .data.rel.ro.retained_companion,"awR",@progbits\n.quad 0\n'
@@ -200,10 +200,16 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         + ('.type domain_target,@object\n' if storage == 'wrong-import-type' else '')
                         + '.type domain_caller,@function\n'
                         'domain_caller: call domain_body; ret\n.size domain_caller,.-domain_caller\n'
-                        + ('.section .text.local_drop,"ax",@progbits\n.Ldrop: ret\n' if storage == 'mixed-table' else '')
+                        + ('.section .text.local_drop,"ax",@progbits\n.Ldrop: ret\n' if storage == 'mixed-table' else
+                           '.section .text.local_drop,"ax",@progbits\n'
+                           + ('.byte 0x90\n' if storage == 'mixed-defined-offset' else '')
+                           + '.globl domain_drop\n.hidden domain_drop\n.type domain_drop,@function\n'
+                           'domain_drop: nop; nop; ret\n.size domain_drop,.-domain_drop\n'
+                           if storage in {'mixed-defined', 'mixed-defined-offset'} else '')
                         + '.section ' + ('.got' if storage == 'got-table' else '.data.rel.ro.pointer_table') + ',"'
                         + ('awR' if storage == 'retained-holder' else 'aw') + '",@progbits\n.balign 8\n'
-                        + ('.quad .Ldrop; .quad 96; .quad 8\n' if storage == 'mixed-table' else '')
+                        + ('.quad .Ldrop; .quad 96; .quad 8\n' if storage == 'mixed-table' else
+                           '.quad domain_drop; .quad 96; .quad 8\n' if storage in {'mixed-defined', 'mixed-defined-offset'} else '')
                         + f'.quad domain_target+({addend}); ' + ('.quad 0\n' if storage == 'table-gap'
                                                                   else f'.quad domain_target+({addend})\n')
                         + '.section .note.GNU-stack,"",@progbits\n')
@@ -269,7 +275,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                             provider_object=(source_object, definition), importer_image=caller)
                         bound = links.final_member_references(image, **reference_arguments)
                         self.assertEqual(len(bound['resolved_calls']), len(references))
-                        self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, {'data-function-pointer'} if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type'} else {'data-object-pointer'})
+                        self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, {'data-function-pointer'} if storage in {'function', 'mixed-table', 'retained-holder', 'wrong-import-type', 'mixed-defined', 'mixed-defined-offset'} else {'data-object-pointer'})
                         self.assertEqual({row['operand_size'] for row in bound['resolved_calls']}, {8})
                         self.assertEqual({row['target_address'] for row in bound['resolved_calls']}, {address + addend})
                         wrong = copy.deepcopy(definition)
@@ -301,6 +307,14 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         for altered_source in [changed_source, changed_addend, changed_symbol, changed_extent]:
                             with self.assertRaises(ValueError):
                                 links.final_member_references(image, **{**reference_arguments, 'importer_image': bytes(altered_source)})
+                        if storage in {'mixed-defined', 'mixed-defined-offset'}:
+                            table = next(header for header in source.sections if header[1] == 2)
+                            drop_index = next(index for index in range(table[5] // 24)
+                                if source.symbol_row(relocation[6], index)['name'] == 'domain_drop')
+                            changed = bytearray(caller)
+                            struct.pack_into('<Q', changed, table[4] + 24 * drop_index + 16, 2)
+                            with self.assertRaisesRegex(ValueError, 'same-member function identity differs'):
+                                links.final_member_references(image, **{**reference_arguments, 'importer_image': bytes(changed)})
                         changed_references = links.data_pointer_relocations(bytes(changed_addend), 'domain_target')
                         with self.assertRaisesRegex(ValueError, 'slot or relocation footprint differs|addend leaves target definition'):
                             links.final_member_references(image, **{**reference_arguments,
@@ -327,7 +341,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                          address + symbol['size'] - 1 - final.sections[symbol['section']][3])
                         with self.assertRaisesRegex(ValueError, 'target final extent differs'):
                             links.final_member_references(bytes(changed), **reference_arguments)
-                        if storage == 'mixed-table':
+                        if storage in {'mixed-table', 'mixed-defined', 'mixed-defined-offset'}:
                             local_line = next(line for line in reference_arguments['map_text'].splitlines()
                                               if line.rstrip().endswith(':(.text.local_drop)'))
                             for changed_map in [reference_arguments['map_text'].replace(local_line, ''),
@@ -340,7 +354,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                     for index in range(count)]
                         holder_location, holder_load = next((location, program) for location, program in programs
                             if program[0] == 1 and program[3] <= slot < program[3] + program[5])
-                        if storage == 'mixed-table':
+                        if storage in {'mixed-table', 'mixed-defined', 'mixed-defined-offset'}:
                             changed = bytearray(image)
                             holder_base = slot - references[0]['offset']
                             changed[holder_load[2] + holder_base + 8 - holder_load[3]] ^= 1

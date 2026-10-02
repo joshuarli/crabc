@@ -408,7 +408,7 @@ def data_holder_relocations(image: bytes, section_name: str) -> tuple[static_aut
 
     Unrelocated bytes are literal payload, including zero words. Relocated
     slots must be zero-filled R64 operands naming strong hidden imports or
-    exact local sections. GNU retain changes collection policy, not ownership.
+    exact same-member sections or defined functions. GNU retain changes collection policy, not ownership.
     No constructor, GOT, TLS or merge-pool storage acquires this authority.
     """
     original = static_authority.elf_bytes(image)
@@ -441,16 +441,23 @@ def data_holder_relocations(image: bytes, section_name: str) -> tuple[static_aut
         local = (target['type'] == '3' and target['binding'] == 'LOCAL' and target['visibility'] == 'DEFAULT'
                  and target['name'] == '' and target['value'] == target['size'] == 0
                  and 0 < target['section'] < len(original.sections))
-        require(info & 0xffffffff == 1 and (imported or local) and target['version_index'] == 1
+        # A defined callback owns a measured function in this same member.
+        # Its symbol size and offset remain distinct from the full section.
+        defined_function = (target['name'] and target['type'] == 'FUNC'
+                            and target['binding'] == 'GLOBAL' and target['visibility'] == 'HIDDEN'
+                            and 0 < target['section'] < len(original.sections) and target['size'] > 0)
+        require(info & 0xffffffff == 1 and (imported or local or defined_function) and target['version_index'] == 1
                 and offset % 8 == 0 and 0 <= offset and offset + 8 <= section[5]
                 and image[section[4] + offset:section[4] + offset + 8] == bytes(8),
                 'data pointer holder relocation footprint differs')
-        if local:
+        if local or defined_function:
             destination = original.sections[target['section']]
             require(destination[1] == 1 and destination[2] in {2, 3, 6}
                     and destination[3] == 0 and destination[8] > 0 and destination[9] == 0
                     and destination[4] + destination[5] <= len(image)
-                    and 0 <= addend < destination[5],
+                    and (destination[2] == 6 and addend == 0
+                         and target['value'] + target['size'] <= destination[5]
+                         if defined_function else 0 <= addend < destination[5]),
                     'data pointer local source extent differs')
         positions.append(offset)
         entries.append((offset, target, addend))
@@ -684,6 +691,22 @@ def writable_object_mapping(image: bytes, *, address: int, extent: int,
             f'{label} lacks an exclusive writable load extent')
 
 
+def executable_function_mapping(image: bytes, *, address: int, extent: int,
+                                output: tuple[int, ...], label: str) -> None:
+    """Bind a measured function extent to one exclusive executable mapping."""
+    table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+    programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
+    mappings = [program for program in programs if program[0] == 1
+                and program[3] < address + extent
+                and address < program[3] + program[6]]
+    require(len(mappings) == 1 and mappings[0][1] == 5
+            and mappings[0][3] <= address
+            and address + extent <= mappings[0][3] + mappings[0][5]
+            and mappings[0][2] + address - mappings[0][3] == output[4] + address - output[3]
+            and mappings[0][2] + mappings[0][5] <= len(image),
+            f'{label} lacks an exclusive executable load extent')
+
+
 def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement: list[str],
                        importer_image: bytes | None, source_payload: bytes,
                        provider_object: tuple[bytes, Mapping[str, Any]] | None,
@@ -759,17 +782,8 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
             and output[3] <= provider_address and provider_address + symbol['size'] <= output[3] + output[5]
             and output[4] + output[5] <= len(image), 'data pointer target final extent differs')
     if function:
-        table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
-        programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
-        mappings = [program for program in programs if program[0] == 1
-                    and program[3] < provider_address + symbol['size']
-                    and provider_address < program[3] + program[6]]
-        require(len(mappings) == 1 and mappings[0][1] == 5
-                and mappings[0][3] <= provider_address
-                and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
-                and mappings[0][2] + provider_address - mappings[0][3] == output[4] + provider_address - output[3]
-                and mappings[0][2] + mappings[0][5] <= len(image),
-                'data pointer function lacks an exclusive executable load extent')
+        executable_function_mapping(image, address=provider_address, extent=symbol['size'], output=output,
+                                    label='data pointer function')
     elif readonly:
         immutable_object_payload(image, source_image, symbol=symbol, header=header, output=output,
                                  address=provider_address, name=name)
@@ -819,7 +833,17 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
                              and local_base + source_section[5] <= section[3] + section[5]
                              and section[4] + section[5] <= len(image)]
             require(len(local_outputs) == 1, 'data pointer local target final extent differs')
-            expected = local_base + peer_addend
+            expected = local_base + imported['value'] + peer_addend
+            if imported['type'] == 'FUNC':
+                peer = final.symbol(imported['name'], dynamic=False)
+                require(peer is not None and peer['type'] == 'FUNC' and peer['binding'] == 'LOCAL'
+                        and peer['visibility'] == 'HIDDEN' and peer['value'] == expected
+                        and peer['size'] == imported['size']
+                        and 0 < peer['section'] < len(final.sections)
+                        and final.sections[peer['section']] == local_outputs[0],
+                        'data pointer same-member function identity differs')
+                executable_function_mapping(image, address=expected, extent=imported['size'],
+                                            output=local_outputs[0], label='data pointer same-member function')
         expected_slots.append((base + position, 8, expected))
     positions = [position for position, _, _ in footprint]
     require((elf_type == 2 and not footprint)
