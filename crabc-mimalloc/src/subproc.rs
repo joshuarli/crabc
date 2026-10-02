@@ -108,7 +108,7 @@ impl MainStaticTldSlot {
 /// Shared address-stable identity embedded in either the process-main owner
 /// or one parent-allocated child image. Intrusive Heap/TLD/Theap links point
 /// at this field, never at either surrounding role-specific image; the
-/// `repr(transparent)` child wrapper preserves the identity at allocation
+/// `repr(C)` child wrapper preserves the identity at allocation
 /// base for the exact source `mi_memid_t` membership check.
 pub(crate) struct SubprocessIdentity {
     role: SubprocessRole,
@@ -237,6 +237,30 @@ impl ChildSubprocessImage {
             #[cfg(target_arch = "x86_64")]
             native_control: NativeChildControlSlot(core::cell::UnsafeCell::new(MaybeUninit::uninit())),
             _pin: PhantomPinned,
+        }
+    }
+
+    /// Writes the complete cold child image directly into its final storage.
+    ///
+    /// # Safety
+    /// `destination` owns exclusive, aligned, writable storage for `Self` and
+    /// contains no live initialized value. Nothing may observe the image until
+    /// this write completes. Once pinned or published into an intrusive list,
+    /// the destination must remain at this address until its owner releases it.
+    pub(crate) unsafe fn write_at(destination: NonNull<Self>) {
+        // This template never joins a registry, acquires a resource, or mutates.
+        // Every intrusive edge and published identity in new() is null; its
+        // locks/counters are cold, and its control slot remains uninitialized.
+        // Copying these bytes preserves the statistics header and enum/pointer
+        // representations without building a full child aggregate on the stack.
+        // The template is private to this initializer and is never projected.
+        static INITIAL_IMAGE: ChildSubprocessImage = ChildSubprocessImage::new();
+        // SAFETY: the static source is permanently readable and never modified.
+        // The caller's fresh exclusive extent cannot overlap it. Raw copying
+        // also preserves the control slot's uninitialized bytes without reading
+        // them as an initialized NativeChildSubprocess value.
+        unsafe {
+            core::ptr::copy_nonoverlapping(core::ptr::addr_of!(INITIAL_IMAGE), destination.as_ptr(), 1);
         }
     }
 
@@ -2088,6 +2112,67 @@ mod tests {
     extern crate std;
 
     use super::*;
+
+    #[test]
+    fn child_in_place_initialization_preserves_extent_and_unpublished_ownership() {
+        #[repr(C)]
+        struct Storage {
+            before: [u8; 32],
+            image: MaybeUninit<ChildSubprocessImage>,
+            after: [u8; 32],
+        }
+        fn storage() -> std::boxed::Box<Storage> {
+            let mut storage = std::boxed::Box::<Storage>::new_uninit();
+            let pointer = storage.as_mut_ptr();
+            // SAFETY: the allocation exclusively owns aligned, writable storage
+            // for every field. The complete child image stays at this address.
+            unsafe {
+                core::ptr::addr_of_mut!((*pointer).before).write([0x3c; 32]);
+                core::ptr::addr_of_mut!((*pointer).after).write([0x7a; 32]);
+                let image = NonNull::new_unchecked(core::ptr::addr_of_mut!((*pointer).image).cast());
+                ChildSubprocessImage::write_at(image);
+                storage.assume_init()
+            }
+        }
+        let first = storage();
+        let second = storage();
+        let expected = ChildSubprocessImage::new();
+        for storage in [&first, &second] {
+            assert_eq!(storage.before, [0x3c; 32]);
+            assert_eq!(storage.after, [0x7a; 32]);
+            // SAFETY: the exclusive initializer wrote the complete child;
+            // the Box keeps its final address stable through these observations.
+            let child = unsafe { storage.image.assume_init_ref() };
+            assert!(core::ptr::eq(child.identity(), core::ptr::from_ref(child).cast()));
+            assert!(!child.is_process_main());
+            assert!(!child.is_registered());
+            assert_eq!(child.main_heap_publication_state(), MainHeapPublicationState::Absent);
+            assert!(!child.has_published_metadata_theap());
+            assert!(child.native_record().is_none());
+            assert_eq!(child.live_thread_count(), 0);
+            assert_eq!(child.total_thread_count(), 0);
+            assert_eq!(child.statistics().source_snapshot(), expected.statistics().source_snapshot());
+            assert_eq!(child.statistics().snapshot(), expected.statistics().snapshot());
+            #[cfg(target_arch = "x86_64")]
+            {
+                let start = core::ptr::from_ref(child).addr();
+                let control = child.native_control_pointer().as_ptr().addr();
+                assert!(control >= start);
+                assert!(control + size_of::<lifecycle::NativeChildSubprocess>() <= start + size_of::<ChildSubprocessImage>());
+            }
+        }
+        // SAFETY: both complete images remain in their exclusive final storage.
+        // Only the first image's independent counter is changed.
+        let first_image = unsafe { first.image.assume_init_ref() };
+        let second_image = unsafe { second.image.assume_init_ref() };
+        first_image.identity.thread_total_count.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(first_image.total_thread_count(), 1);
+        assert_eq!(second_image.total_thread_count(), 0);
+        assert_eq!(expected.total_thread_count(), 0);
+        let third = storage();
+        // SAFETY: the third allocation was completely initialized above.
+        assert_eq!(unsafe { third.image.assume_init_ref() }.total_thread_count(), 0);
+    }
 
     #[test]
     fn process_metadata_allocator_is_owned_by_the_static_main_subprocess() {
