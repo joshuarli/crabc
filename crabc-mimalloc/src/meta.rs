@@ -308,12 +308,14 @@ impl<'owner> MetaAllocation<'owner> {
         })
     }
 
-    /// Short mutable projection of an initialized child image. Its external
-    /// `MetaAllocation` must remain live for the complete borrow.
+    /// Short shared projection of an initialized child image. Source state
+    /// uses its own synchronization; the embedded native control can retain
+    /// an independent mutable owner borrow in its interior mutable slot.
+    /// The exact allocation capability stays live for the complete borrow.
     #[inline]
-    pub(crate) fn child_subprocess_image_mut(
-        &mut self,
-    ) -> Option<Pin<&mut crate::subproc::ChildSubprocessImage>> {
+    pub(crate) fn child_subprocess_image(
+        &self,
+    ) -> Option<Pin<&crate::subproc::ChildSubprocessImage>> {
         type Image = crate::subproc::ChildSubprocessImage;
         if !self.is_live()
             || !self.child_subprocess_image_initialized
@@ -324,9 +326,10 @@ impl<'owner> MetaAllocation<'owner> {
         {
             return None;
         }
-        // SAFETY: only the exact initializer sets this marker; `&mut self`
-        // uniquely borrows the capability and its bytes.
-        Some(unsafe { Pin::new_unchecked(&mut *self.pointer.as_ptr().cast::<Image>()) })
+        // SAFETY: only the exact initializer sets this marker. The live
+        // capability pins the source identity; its control slot remains
+        // interior mutable and is never covered by an exclusive image borrow.
+        Some(unsafe { Pin::new_unchecked(&*self.pointer.as_ptr().cast::<Image>()) })
     }
 
     /// Whether `memory` is the exact Malloc provenance recorded by this
@@ -1319,13 +1322,14 @@ impl ChildMetadataAllocation {
         }
     }
 
-    fn child_subprocess_image_mut(&mut self) -> Option<Pin<&mut crate::subproc::ChildSubprocessImage>> {
+    fn child_subprocess_image(&self) -> Option<Pin<&crate::subproc::ChildSubprocessImage>> {
         match self {
-            Self::Process(block) => block.child_subprocess_image_mut(),
+            Self::Process(block) => block.child_subprocess_image(),
             Self::Child { pointer, role: ChildMetadataRole::Context, .. } => {
-                // SAFETY: only the initializer above assigns this role, and
-                // this mutable token retains its one image allocation.
-                Some(unsafe { Pin::new_unchecked(&mut *pointer.as_ptr().cast()) })
+                // SAFETY: only the initializer above assigns this role. The
+                // exact token retains the image through this shared projection,
+                // including independent borrows in its interior mutable control.
+                Some(unsafe { Pin::new_unchecked(&*pointer.as_ptr().cast()) })
             }
             Self::Child { .. } => None,
         }
@@ -1674,7 +1678,7 @@ impl ChildContextOwner {
     ) -> Option<R> {
         if self.terminal || !self.image_initialized { return None; }
         let Self { context, metadata_theap, .. } = self;
-        let image = context.child_subprocess_image_mut()?;
+        let image = context.child_subprocess_image()?;
         let child = image.as_ref();
         let identity = child.get_ref().identity();
         let _metadata_lock = identity.lock_metadata_theap().ok()?;
@@ -1807,7 +1811,7 @@ impl ChildContextOwner {
         if let Err(_error) = unsafe {
             registry.unlink_child_terminal(
                 self.context
-                    .child_subprocess_image_mut()
+                    .child_subprocess_image()
                     .expect("the retained context image remains initialized")
                     .as_ref()
                     .get_ref(),
@@ -5133,8 +5137,8 @@ impl ChildContextLease<'_> {
         let image = self
             .owner
             .context
-            .child_subprocess_image_mut()?;
-        Some(operation(image.into_ref()))
+            .child_subprocess_image()?;
+        Some(operation(image))
     }
 
     #[inline]
@@ -7188,6 +7192,39 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn child_image_projection_preserves_embedded_control_borrow() {
+        let mut storage = std::boxed::Box::new(core::mem::MaybeUninit::<crate::subproc::ChildSubprocessImage>::uninit());
+        let pointer = NonNull::from(storage.as_mut()).cast::<u8>();
+        let mut allocation = ChildMetadataAllocation::Child {
+            pointer, size: size_of::<crate::subproc::ChildSubprocessImage>(), role: ChildMetadataRole::Fresh,
+        };
+        let control = allocation.initialize_child_subprocess_image().unwrap()
+            .native_control_pointer().cast::<core::mem::MaybeUninit<crate::subproc::lifecycle::NativeChildSubprocess>>();
+        let control_size = size_of::<crate::subproc::lifecycle::NativeChildSubprocess>();
+        // SAFETY: the initialized source image owns this aligned interior
+        // mutable slot. Its MaybeUninit representation permits arbitrary
+        // bytes, and no initialized record projection exists.
+        unsafe { control.as_ptr().cast::<u8>().write_bytes(0, control_size); }
+        // SAFETY: every byte in the exclusive slot was initialized above;
+        // the source allocation stays live through this short projection.
+        let control = unsafe { core::slice::from_raw_parts_mut(control.as_ptr().cast::<u8>(), control_size) };
+        fn child_is_registered<P: core::ops::Deref<Target = crate::subproc::ChildSubprocessImage>>(
+            image: Pin<P>,
+        ) -> bool { image.identity().is_registered() }
+        fn project_with_control_borrow(control: &mut [u8], allocation: &mut ChildMetadataAllocation) {
+            let image = allocation.child_subprocess_image().unwrap();
+            assert!(!child_is_registered(image));
+            // The real native owner lives in this same interior mutable slot.
+            // A source identity projection must preserve its independent borrow.
+            control[0] = 1;
+        }
+        project_with_control_borrow(control, &mut allocation);
+        drop(allocation);
+        drop(storage);
+    }
 
     #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
     #[test]
