@@ -280,7 +280,7 @@ def _verify_dns_fixture(work: Path) -> None:
     etc = physical_directory(root / "etc", "cancellation isolated etc directory")
     config = physical_file(etc / "resolv.conf", "cancellation isolated resolver configuration")
     hosts = physical_file(etc / "hosts", "cancellation isolated hosts fixture")
-    require(config.read_bytes() == b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n"
+    require(config.read_bytes() == b"nameserver 127.0.0.2\nnameserver 127.0.0.1\noptions timeout:1 attempts:1\n"
             and stat.S_IMODE(config.stat().st_mode) == 0o600,
             "cancellation isolated resolver configuration differs")
     require(hosts.read_bytes() == b"" and stat.S_IMODE(hosts.stat().st_mode) == 0o600,
@@ -420,6 +420,36 @@ def _replay_observations(work: Path, cancellation: Any) -> tuple[list[dict[str, 
     return ordinary, source_later
 
 
+def _replay_network_observations(work: Path) -> None:
+    """Require the real loopback matrix independently of injected wait observations."""
+
+    import owned_resolver_cancellation_network as network
+
+    status = read_json(work / "network-execution-status.json", "cancellation network execution status")
+    expected_status = [
+        {"entry": entry, "api": api, "scenario": scenario, "exit_status": 0}
+        for entry in ENTRY_LABELS for scenario in network.SCENARIOS for api in network.APIS
+    ]
+    require(status == expected_status, "cancellation network execution status matrix differs")
+    oracle: dict[tuple[str, str], tuple[dict[str, int], bytes]] = {}
+    for row in expected_status:
+        entry, api, scenario = row["entry"], row["api"], row["scenario"]
+        label = f"network-{entry}-{api}-{scenario}"
+        stdout = _raw(work, label + ".stdout", label + " stdout").read_bytes()
+        stderr = _raw(work, label + ".stderr", label + " stderr").read_bytes()
+        try:
+            current = network.observe(stdout)
+        except (RuntimeError, ValueError, UnicodeDecodeError) as error:
+            raise ReceiptError(f"invalid cancellation network observation: {label}") from error
+        if entry == "oracle":
+            oracle[(api, scenario)] = current, stderr
+        else:
+            require((current, stderr) == oracle[(api, scenario)],
+                    f"cancellation network observation differs: {label}")
+    require(read_json(work / "network-differences.json", "cancellation network differences") == [],
+            "cancellation network differences remain")
+
+
 def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_product: Path,
                     require_static: bool = True) -> dict[str, object]:
     """Authenticate a complete, same-source six-entry cancellation receipt."""
@@ -448,6 +478,7 @@ def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_pro
     _recompile_workload(root, work, static)
     _replay_provider_symbols(work, dynamic, cancellation)
     namespace = _verify_namespace(work)
+    _replay_network_observations(work)
     _verify_dns_fixture(work)
     _verify_transition(work, cancellation, fallback=False)
     _verify_transition(work, cancellation, fallback=True)

@@ -18,8 +18,9 @@ FIELDS = frozenset(("canceled", "returned", "cleanup", "leaked", "success",
 
 
 def observe(raw: bytes) -> dict[str, int]:
-    fields = dict(part.split("=", 1) for part in raw.decode("ascii").split())
-    if fields.keys() != FIELDS:
+    parts = [part.split("=", 1) for part in raw.decode("ascii").split()]
+    fields = dict(parts)
+    if fields.keys() != FIELDS or len(parts) != len(FIELDS):
         raise RuntimeError(f"unexpected network observation: {fields}")
     return {key: int(value) for key, value in fields.items()}
 
@@ -68,10 +69,10 @@ def main() -> None:
                 current = observe(stdout)
                 key = (api, scenario)
                 if label == "oracle":
-                    oracle[key] = current
-                elif current != oracle[key]:
+                    oracle[key] = current, stderr
+                elif (current, stderr) != oracle[key]:
                     differences.append({"entry": label, "api": api, "scenario": scenario,
-                                        "owned": current, "musl": oracle[key]})
+                                        "owned": current, "musl": oracle[key][0]})
                     print(f"{name}: DIFFER", flush=True)
                     continue
                 print(f"{name}: PASS", flush=True)

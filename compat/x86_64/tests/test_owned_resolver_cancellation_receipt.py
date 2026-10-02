@@ -15,6 +15,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_resolver_cancellation as cancellation  # noqa: E402
+import owned_resolver_cancellation_network as network  # noqa: E402
 import owned_resolver_cancellation_receipt as receipt  # noqa: E402
 from owned_dynamic_qualification import source_digest  # noqa: E402
 
@@ -120,7 +121,7 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         self._write("oracle", b"oracle\n")
         dns = self.work / "execution-root/etc"
         dns.mkdir(parents=True)
-        (dns / "resolv.conf").write_bytes(b"nameserver 127.0.0.1\noptions timeout:1 attempts:1\n")
+        (dns / "resolv.conf").write_bytes(b"nameserver 127.0.0.2\nnameserver 127.0.0.1\noptions timeout:1 attempts:1\n")
         (dns / "hosts").write_bytes(b"")
         (dns / "resolv.conf").chmod(0o600)
         (dns / "hosts").chmod(0o600)
@@ -163,6 +164,17 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         self._write(receipt.STATUS, json.dumps(receipt._expected_status(cancellation)).encode())
         self._write(receipt.ORDINARY_DIFFERENCES, b"[]")
         self._write(receipt.SOURCE_LATER_DIFFERENCES, b"[]")
+        rows = []
+        observation = (" ".join(f"{key}=0" for key in sorted(network.FIELDS)) + "\n").encode()
+        for entry in receipt.ENTRY_LABELS:
+            for scenario in network.SCENARIOS:
+                for api in network.APIS:
+                    label = f"network-{entry}-{api}-{scenario}"
+                    self._write(label + ".stdout", observation)
+                    self._write(label + ".stderr", b"")
+                    rows.append({"entry": entry, "api": api, "scenario": scenario, "exit_status": 0})
+        self._write("network-execution-status.json", json.dumps(rows).encode())
+        self._write("network-differences.json", b"[]")
 
     def _validate(self) -> dict[str, object]:
         with patch.object(receipt, "_fixture", return_value=self.fixture), \
@@ -180,6 +192,35 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         self.assertEqual(report["execution_count"], len(cancellation.CASES) * len(receipt.ENTRY_LABELS))
         self.assertEqual(report["ordinary_errno_differences"], [])
         self.assertEqual(report["source_later_errno_differences"], [])
+
+    def test_rejects_receipt_without_actual_loopback_observations(self) -> None:
+        (self.work / "network-execution-status.json").unlink()
+        with self.assertRaisesRegex(receipt.ReceiptError, "network execution status"):
+            self._validate()
+
+    def test_rejects_loopback_lifetime_or_error_drift_with_zero_status(self) -> None:
+        label = "network-static-pie-classic-network-failover.stdout"
+        original = (self.work / label).read_bytes()
+        for field in network.FIELDS:
+            with self.subTest(field=field):
+                self._write(label, original.replace(f"{field}=0".encode(), f"{field}=1".encode()))
+                with self.assertRaisesRegex(receipt.ReceiptError, "network observation differs"):
+                    self._validate()
+        self._write(label, original)
+
+    def test_rejects_missing_loopback_raw_output_and_stderr_drift(self) -> None:
+        label = "network-dynamic-pie-direct-query-network-tcp-wait"
+        self._write(label + ".stderr", b"unexpected diagnostic\n")
+        with self.assertRaisesRegex(receipt.ReceiptError, "network observation differs"):
+            self._validate()
+        (self.work / (label + ".stdout")).unlink()
+        with self.assertRaisesRegex(receipt.ReceiptError, "stdout"):
+            self._validate()
+
+    def test_network_observation_rejects_duplicate_fields(self) -> None:
+        raw = (" ".join(f"{key}=0" for key in network.FIELDS) + " errno=0\n").encode()
+        with self.assertRaisesRegex(RuntimeError, "unexpected network observation"):
+            network.observe(raw)
 
     def test_source_digest_matches_the_cancellation_producer(self) -> None:
         self.assertEqual(receipt._source_digest(ROOT), source_digest())
