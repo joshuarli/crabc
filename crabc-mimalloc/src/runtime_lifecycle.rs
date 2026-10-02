@@ -21827,6 +21827,10 @@ mod tests {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::runtime_loader_tail_releases_once_before_delayed_output",
             || {
+                // Direct storage initialization inherits the embedding
+                // caller's registered initial operation admission.
+                assert!(admission::register_initial_descriptor());
+                let _operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
                 unsafe fn verbose_environment() -> *const *const core::ffi::c_char {
                     static mut ENVIRONMENT: [*const core::ffi::c_char; 2] = [
                         c"MIMALLOC_VERBOSE=1".as_ptr(), core::ptr::null(),
@@ -25836,45 +25840,62 @@ mod tests {
 
     #[test]
     fn dynamic_session_exit_ledger_keeps_metadata_until_its_last_detached_client() {
-        // The normal native session must not inherit the fixed-preparation
-        // client ceiling. Once it grows past the inline source witness, its
-        // exact client facts move as one typed route-owned registry. Releasing
-        // that metadata before the final exact post-exit free would destroy
-        // the only private membership proof while A's admission remains live.
-        let mut clients = PreparedOwnerExitClients::new(Some(memory_config()));
-        let client_count = RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS + 3;
-        for index in 0..client_count {
-            let _ = ledger_test_client(&mut clients, 0x10_000 + index * 0x100);
-        }
+        let operation = |config| {
+            // The normal native session must not inherit the fixed-preparation
+            // client ceiling. Once it grows past the inline source witness, its
+            // exact client facts move as one typed route-owned registry. Releasing
+            // that metadata before the final exact post-exit free would destroy
+            // the only private membership proof while A's admission remains live.
+            let mut clients = PreparedOwnerExitClients::new(Some(config));
+            let client_count = RUNTIME_PAGE_OWNER_PREPARATION_CLIENT_SLOTS + 3;
+            for index in 0..client_count {
+                let _ = ledger_test_client(&mut clients, 0x10_000 + index * 0x100);
+            }
 
-        let mut ledger = clients
-            .transfer_all_live()
-            .expect("the session moves every inline and overflow client into its typed route");
-        assert!(matches!(
-            &ledger,
-            DetachedOwnerExitClientLedger::Session(_)
-        ), "an overflow-backed session moves its storage instead of truncating to the fixed preparation array");
+            let mut ledger = clients
+                .transfer_all_live()
+                .expect("the session moves every inline and overflow client into its typed route");
+            assert!(matches!(
+                &ledger,
+                DetachedOwnerExitClientLedger::Session(_)
+            ), "an overflow-backed session moves its storage instead of truncating to the fixed preparation array");
 
-        for _ in 1..client_count {
+            for _ in 1..client_count {
+                assert!(
+                    ledger.take_next().is_some(),
+                    "each nonfinal detached client remains privately routable"
+                );
+            }
             assert!(
-                ledger.take_next().is_some(),
-                "each nonfinal detached client remains privately routable"
+                matches!(
+                    ledger.release_overflow_when_empty(),
+                    Err(CurrentThreadPageOwnerPreparationError::OmittedClient)
+                ),
+                "the metadata capability cannot release while one typed route client remains"
             );
-        }
-        assert!(
-            matches!(
+            assert!(ledger.take_next().is_some(), "the final private client remains available");
+            assert!(ledger.is_empty());
+            assert_eq!(
                 ledger.release_overflow_when_empty(),
-                Err(CurrentThreadPageOwnerPreparationError::OmittedClient)
-            ),
-            "the metadata capability cannot release while one typed route client remains"
+                Ok(()),
+                "only the terminal empty route may return its metadata capability"
+            );
+        };
+        #[cfg(target_arch = "x86_64")]
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::dynamic_session_exit_ledger_keeps_metadata_until_its_last_detached_client",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                // SAFETY: completed startup retains the actual global owner;
+                // this short ready projection ends before ledger allocation.
+                let config = unsafe { RUNTIME_PROCESS.active_owner() }.unwrap()
+                    .ready().unwrap().memory_config().unwrap();
+                operation(config);
+            },
         );
-        assert!(ledger.take_next().is_some(), "the final private client remains available");
-        assert!(ledger.is_empty());
-        assert_eq!(
-            ledger.release_overflow_when_empty(),
-            Ok(()),
-            "only the terminal empty route may return its metadata capability"
-        );
+        #[cfg(not(target_arch = "x86_64"))]
+        operation(memory_config());
     }
 
     #[test]
