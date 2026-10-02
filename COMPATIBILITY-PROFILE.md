@@ -37,7 +37,7 @@ hidden process-CWD traversal policy.
 | Time zones | `TZ`, POSIX TZ syntax, tzfile and system zoneinfo. No bundled tzdata. |
 | Localization | At most small gettext-compatible ABI entries; no catalog/resource framework. |
 | Regex and frameworks | Selected POSIX regex/glob/fnmatch compatibility, not a competing Rust regex ecosystem. Synchronous OS mechanisms, not an async runtime, process supervisor, security-policy language, plugin registry or portability emulation. |
-| Allocation | Faithful fixed mimalloc v3.5.0 Rust port; no allocator invention. Native x86 integration and default promotion require the plan's gates. Rust APIs use normal Rust allocation. AArch64's selected backend stays unchanged. |
+| Allocation | Faithful fixed mimalloc v3.5.0 Rust port; no allocator invention. Native x86 feature integration is active; default promotion waits for the later release phase. Rust APIs use normal Rust allocation. AArch64's selected backend stays unchanged. |
 | Cryptography | OS entropy and surrounding state machines are allowed. Cryptographic primitives come from reviewed focused dependencies, never local implementations; otherwise the feature is explicitly limited. The bounded C crypt profile is recorded in [crypt-profile.md](compat/crabc-rs/crypt-profile.md). |
 | Legacy PRNG | Only the provenance-preserving musl 1.2.6 `random`/`srandom`/`initstate`/`setstate` semantic port, including recurrence, seeding and state switching. Never security-sensitive randomness, entropy or allocator hardening. |
 

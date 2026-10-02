@@ -80,3 +80,16 @@ transcript is a project-profile assertion, not a pinned-musl comparison. All
 common and profile runs receive the same explicit initial environment. See
 [`owned-locale-environment.md`](owned-locale-environment.md) for precedence and
 category/base semantics.
+
+For native x86 `mbsrtowcs`, a non-null destination with zero capacity returns
+zero without changing the source cursor, pending conversion state, destination
+or errno. This includes a caller-owned partial UTF-8 state. POSIX stops conversion
+when the requested number of wide characters has been stored; zero capacity
+must not resume and emit a pending character.
+
+This deliberately corrects a pinned musl 1.2.6 source defect: its saved-state
+branch clears the state and jumps to the resume path before checking destination
+capacity. The resume path writes a character and decrements the zero capacity.
+The regression uses legal candidate buffers; the unsafe zero-capacity musl path
+is established from source rather than executed. Positive-capacity continuation,
+count-only conversion and invalid-sequence rewind retain the musl contract.

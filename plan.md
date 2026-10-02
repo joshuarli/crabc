@@ -45,39 +45,25 @@ Update this small section in place when the implementation frontier changes.
 - **Runtime accounting:** frozen inventory remains 223 capabilities and 26 families;
   25 families have functional scope. Historical release labels do not establish
   feature completion. Inspect actual source paths and focused behavior.
-- **Integrated implementation:** all coherent 106 repairs are on `main`, including
-  direct-cache exit validation, entropy-warning ordering, child control coallocation,
-  provider ownership, remote provenance, lifecycle regressions and DNS fixture order.
-  Successor fixes add native facade synchronization, nullable unsigned divmod,
-  signal errno ordering, bounded resolver replies, canonical PLT lookup, public huge
-  reservation variants and partial-success errno, and secure Page geometry/guards.
-  Child-owned huge reservation, real Heap clients, exact failed-page teardown retry
-  and nested parent-custody teardown are integrated. Facade path components,
-  record locks and openat2, allocated loader COMMON symbols, and configured FILE
-  pushback storage are integrated too. Focused merged debug checks pass: six public
-  huge API cases, ten arena huge cases, two nested-child cases, two post-exit release
-  cases and ten facade cases. Merged prepared-child action/wait checks and two
-  loader COMMON checks also pass, as do 31 actual owned FILE pushback cases.
-  The earlier lifecycle check passed 72 tests. Loader COMMON uses its standalone
-  source test root; the interpreter Cargo unit harness is unsuitable for that check.
-- **Feature frontier:** retained live-Page assertion transport is integrated across
-  the engine, initial/auxiliary owners and child custody. Merged native debug
-  compilation, ordinary/child output reentry and child metadata Drop checks pass.
-  Outcome-sensitive partial-commit OS release now records actual
-  reset progress on the original claim/token and passes its merged lifecycle test.
-  The test independently identifies persistent PageMap submap charges instead of
-  assuming that every allocation changes only its client mapping. Fully committed
-  OS release already balances its guard debit/reset
-  credit and must not be changed to satisfy a guard-unaware counter expectation.
-  The reproduced final medium-client refusal (42nd
-  client of 42) is fixed by respecting the Theap abandonment policy; both isolated
-  and small-history cases pass focused debug checks. Successor work covers remaining
-  selected runtime composition and source operations. Native prepared-child action
-  replacement/interrupted wait, nested-child Heap visitation and cross-codegen-unit
-  private pthread aliases are repaired. The alias fix preserves private providers
-  and weak public aliases; independent focused debug applications exercise all four
-  owned entry modes. Stale retry expectations must follow the existing source free
-  contract: failed terminal unmaps consume accounting and are not automatically retried.
+- **Integrated implementation:** restored coherent source work is integrated on
+  `main`. Recent fixes cover C11 once/TSS exit, write-only FILE read state,
+  zero-capacity multibyte conversion, iconv reset, word expansion, binary64 power
+  identity, interrupted interface dumps, allocator child statistics reset,
+  debug OS reset, regular reservation callback/diagnostic ordering, and live-Page
+  assertion ownership. Compact original failures and focused proving programs
+  are retained in the existing ignored reports.
+- **Feature frontier:** owned opt0 debug sysroots now support all four entry
+  modes with sealed Linux UAPI headers. Installed header checks and actual
+  loader graph/finalization consumers pass. Rust std's duplicate private panic
+  and allocator-symbol link failure is fixed; legitimate static cleanup and
+  dynamic cross-DSO panic clients still abort with unwind error 5. Diagnose that
+  actual unwinder failure next. Remaining allocator free/unfull/retire/reclaim
+  assertion placements and selected runtime composition still need source and
+  behavior completion. No release or full-family qualification is claimed.
+- **Merged correctness:** debug-2 reset checks pass 28/28 after correcting fixture
+  metadata geometry against pinned C. Retained stdio programs pass all 42 cases
+  with exact musl transcripts; multibyte original/fixed programs and the positive
+  remote reclaim/second-owner-exit Loom model replay from read-only reports.
 - **Active work recovery:** a container-path mismatch during Git worktree pruning
   removed the active registrations. All 16 registrations were reconstructed from
   their preserved branch refs without changing working files; expected edits were
@@ -97,9 +83,10 @@ Update this small section in place when the implementation frontier changes.
 ## Parallel lanes
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
-lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
+lane instructions. Keep 16 `gpt-6.1-sol` high lanes occupied while useful
 feature work remains, with one difficult deliverable and an exclusive file
-boundary per lane. The parent alone integrates to `main` and updates this file.
+boundary per lane. New assignments use high thinking as authorized by the user;
+existing assignments may finish their current increment. The parent alone integrates to `main` and updates this file.
 Each lane works in `.work/worktrees/lane-<id>`, owns its mutable build state and
 uses focused debug checks. The user's feature-first instruction overrides skill
 requirements to repeat broad qualification or release checks before handoff.
