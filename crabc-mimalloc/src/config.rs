@@ -86,7 +86,10 @@ pub(crate) const OPT_FREE_SMALL: bool = false;
 pub(crate) const ENABLE_LARGE_PAGES: bool = true;
 pub(crate) const ENCODE_FREELIST: bool = SECURE_LEVEL >= 3 || DEBUG_LEVEL >= 1;
 pub(crate) const GUARDED: bool = cfg!(all(target_arch = "x86_64", feature = "mi-guarded"));
-pub(crate) const OPT_SIMD: bool = false;
+/// Selects the pinned vector bitmap searches independently of CPU tuning.
+/// The bitmap module rejects this opt-in without x86-64 AVX2 target support;
+/// enabling AVX2 alone retains the scalar bitmap implementation.
+pub(crate) const OPT_SIMD: bool = cfg!(all(target_arch = "x86_64", feature = "mi-opt-simd"));
 pub(crate) const PADDING_SIZE: usize = if SECURE_LEVEL >= 3 || DEBUG_LEVEL >= 1 { 8 } else { 0 };
 pub(crate) const PADDING_WSIZE: usize = PADDING_SIZE / WORD_SIZE;
 pub(crate) const PAGE_KEY_COUNT: usize = if PADDING_SIZE != 0 { 2 } else { 1 };
@@ -1100,7 +1103,10 @@ const _: [(); 1] = [(); ENCODE_FREELIST as usize];
 const _: [(); 1] = [(); (!GUARDED) as usize];
 #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
 const _: [(); 1] = [(); GUARDED as usize];
+#[cfg(not(all(target_arch = "x86_64", feature = "mi-opt-simd")))]
 const _: [(); 1] = [(); (!OPT_SIMD) as usize];
+#[cfg(all(target_arch = "x86_64", feature = "mi-opt-simd"))]
+const _: [(); 1] = [(); OPT_SIMD as usize];
 const _: [(); 1] = [(); PAGE_META_IS_SEPARATED as usize];
 const _: [(); 1] = [(); PAGE_META_IS_ALIGNED as usize];
 const _: [(); 75] = [(); BIN_COUNT];
@@ -1120,6 +1126,64 @@ mod tests {
         assert!(ENCODE_FREELIST);
         assert_eq!((PADDING_SIZE, PADDING_WSIZE, PAGE_KEY_COUNT, PAGES_DIRECT), (8, 1, 2, 130));
         assert!(!GUARDED);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn selected_modes_preserve_live_zeroed_clients_through_growth() {
+        crate::test_process::run_in_fresh_process(
+            "config::tests::selected_modes_preserve_live_zeroed_clients_through_growth",
+            || {
+                assert_eq!(OPT_SIMD, cfg!(feature = "mi-opt-simd"),
+                    "the configuration identity must name the selected bitmap implementation");
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                std::env::set_var("mimalloc_guarded_sample_rate", "1");
+                std::env::set_var("mimalloc_guarded_precise", "1");
+                std::env::set_var("mimalloc_guarded_min", "64");
+                // SAFETY: this fresh test process retains its environment and
+                // static output callback for the complete allocator lifetime.
+                let facts = unsafe { crate::__crabc_runtime::NativeProcessStartupFacts::new(
+                    4096, crate::runtime_lifecycle::test_host_process_environment,
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(discard),
+                ) }.unwrap();
+                assert!(crate::__crabc_runtime::publish_native_process_startup_facts(facts));
+                let warm = crate::source_api::malloc(16).value.unwrap();
+                // SAFETY: this is the exact initializing client, consumed once.
+                assert_eq!(unsafe { crate::source_api::free(warm.as_ptr()) },
+                    crate::source_api::FreeOutcome::Freed);
+                for size in [31, 81, 4097] {
+                    let block = crate::source_api::zalloc(size).value.unwrap();
+                    // SAFETY: this live exact client retains its registered
+                    // Page. Only a scalar tag leaves the short owner projection;
+                    // allocation, growth and free run after that projection ends.
+                    let sampled = unsafe { crate::runtime_lifecycle::with_native_allocation_owner(
+                        crate::compiler_tls::default_theap(), |owner| {
+                            owner.page_map().ok().and_then(|map| {
+                                map.lookup_live_allocation(block).ok().flatten()
+                                    .map(|allocation| allocation.is_guarded())
+                            })
+                        }) }.ok().flatten().unwrap();
+                    assert_eq!(sampled, GUARDED && size >= 64);
+                    // SAFETY: each source client is exclusively owned here.
+                    // Observations stay within its reported usable extent;
+                    // no tail protection or allocator metadata is accessed.
+                    unsafe {
+                        let usable = crate::source_api::usable_size(block.as_ptr());
+                        assert!(usable >= size);
+                        let client = core::slice::from_raw_parts_mut(block.as_ptr(), usable);
+                        assert!(client.iter().all(|byte| *byte == 0));
+                        client.fill(0x6b);
+                        let grown = crate::source_api::rezalloc(block.as_ptr(), usable + 4096).value.unwrap();
+                        let preserved = core::slice::from_raw_parts(grown.as_ptr(), usable);
+                        assert!(preserved.iter().all(|byte| *byte == 0x6b));
+                        let added = core::slice::from_raw_parts(grown.as_ptr().add(usable), 4096);
+                        assert!(added.iter().all(|byte| *byte == 0));
+                        assert_eq!(crate::source_api::free(grown.as_ptr()),
+                            crate::source_api::FreeOutcome::Freed);
+                    }
+                }
+            },
+        );
     }
 
     #[test]
@@ -1160,7 +1224,7 @@ mod tests {
         let padded = cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")));
         assert_eq!(ENCODE_FREELIST, padded);
         assert_eq!(GUARDED, cfg!(all(target_arch = "x86_64", feature = "mi-guarded")));
-        assert!(!OPT_SIMD);
+        assert_eq!(OPT_SIMD, cfg!(all(target_arch = "x86_64", feature = "mi-opt-simd")));
         assert_eq!(PADDING_SIZE, if padded { 8 } else { 0 });
         assert_eq!(PADDING_WSIZE, usize::from(padded));
         assert_eq!(PAGE_KEY_COUNT, if padded { 2 } else { 1 });
