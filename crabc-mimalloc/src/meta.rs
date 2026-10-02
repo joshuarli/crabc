@@ -7304,6 +7304,60 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
     #[test]
+    fn child_metadata_engine_drop_retains_original_live_page_assertion() {
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        unsafe fn observe(snapshot: &crate::types::PageValiditySnapshot, argument: *mut core::ffi::c_void) -> Option<usize> {
+            let area = unsafe { &*argument.cast::<usize>() };
+            if snapshot.area.as_ptr().addr() == *area {
+                assert_eq!((snapshot.capacity, snapshot.used), (1, 1));
+                return Some(usize::from(snapshot.capacity) + 1);
+            }
+            None
+        }
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::child_metadata_engine_drop_retains_original_live_page_assertion", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let id = crate::subproc::lifecycle::native_subproc_new().unwrap();
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                unsafe { id.with_owner(|owner| {
+                    let owner = owner.as_mut().unwrap();
+                    let (client, page, theap, area) = owner.with_metadata_page_engine(binding, |_, engine| {
+                        let client = engine.allocate_zeroed(12280).unwrap();
+                        client.as_ptr().write(0x5a);
+                        let page = NonNull::new(engine.page_for_block(client)).unwrap();
+                        let snapshot = crate::types::Page::validity_snapshot_at(page);
+                        assert_eq!((snapshot.capacity, snapshot.used), (1, 1));
+                        (client, page, engine.allocation_theap(), snapshot.area.as_ptr().addr())
+                    }).unwrap();
+                    // This observer overrides only a copied scalar. The actual
+                    // client, registered Page and live lists remain unchanged.
+                    let result = crate::page_validity::with_live_page_validity_observer_for_test(
+                        observe, core::ptr::from_ref(&area).cast_mut().cast(), || {
+                            owner.with_metadata_page_engine(binding, |_, engine| {
+                                assert!(engine.allocate_zeroed(12280).is_none());
+                            })
+                        });
+                    assert!(matches!(result, Err(ChildMetadataPageEngineError::EngineRetained)));
+                    let task = owner.pending_live_page_validity.as_ref().expect("the exact detached Page task survives Engine Drop");
+                    assert!(task.matches_theap(theap));
+                    assert!(task.has_retirement_refusal_marker());
+                    assert_eq!(owner.page_engine, ChildPageEngineState::Poisoned);
+                    assert_eq!(owner.stage(), ChildMainHeapStage::HeapReady);
+                    assert_eq!(binding.page_map().lookup_registered_page(client.as_ptr()).unwrap(), Some(page));
+                    assert_eq!(client.as_ptr().read(), 0x5a);
+                    assert!(owner.with_metadata_page_engine(binding, |_, _| ()).is_err(),
+                        "the retained issuing engine cannot reopen or retire its live Page");
+                }) }.unwrap();
+                // The actual context retains the task's Page and backing until
+                // process exit; diagnostic witness refusal grants no cleanup.
+            });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
     fn child_metadata_engine_drop_retains_original_fresh_os_claim() {
         use crate::subproc::lifecycle::*;
         unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}

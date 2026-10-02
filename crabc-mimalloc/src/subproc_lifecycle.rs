@@ -4766,6 +4766,97 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn child_live_page_assertion_retains_original_page_during_output_reentry() {
+        use core::ptr::NonNull;
+        use crate::types::Page;
+        const CHILD: &str = "CRABC_CHILD_LIVE_PAGE_ASSERTION";
+        struct Probe {
+            id: NativeSubprocessId,
+            theap: NonNull<Theap>,
+            page: NonNull<Page>,
+            client: NonNull<u8>,
+            area: usize,
+            map: crate::process_page_map::ProcessPageMapRoot,
+            observed: core::cell::Cell<bool>,
+        }
+        unsafe fn observe(state: &crate::types::PageValiditySnapshot, argument: *mut core::ffi::c_void) -> Option<usize> {
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            if state.area.as_ptr().addr() == probe.area
+                && !probe.observed.replace(true) {
+                assert_eq!((state.capacity, state.used), (1, 1));
+                assert!(state.free.is_null());
+                return Some(usize::from(state.capacity) + 1);
+            }
+            None
+        }
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            unsafe extern "C" { fn write(fd: i32, bytes: *const u8, size: usize) -> isize; }
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if message.windows(b"used <= capacity".len()).any(|bytes| bytes == b"used <= capacity") {
+                assert_eq!(current_child_id(), Some(probe.id));
+                assert!(unsafe { probe.id.record() }.lock.try_lock().is_some(), "record projection ended before delivery");
+                assert_eq!(unsafe { probe.map.lookup_registered_page(probe.client.as_ptr()) }.unwrap(), Some(probe.page));
+                assert_eq!(unsafe { probe.client.as_ptr().read() }, 0x5a);
+                assert_eq!(unsafe { probe.client.as_ptr().add(12279).read() }, 0xa5);
+                assert!(matches!(native_child_thread_done(), Some(Err(
+                    NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)))));
+                let nested = unsafe { native_child_theap_allocate(probe.theap, 12280, false) }.unwrap().unwrap();
+                assert_ne!(unsafe { probe.map.lookup_registered_page(nested.as_ptr()) }.unwrap(), Some(probe.page),
+                    "nested selection excludes the original retained live Page");
+                assert_eq!(unsafe { crate::runtime_lifecycle::native_free(nested) }, crate::runtime_lifecycle::NativePageFreeResult::Freed);
+                let marker = b"original child live Page retained during native reentry\n";
+                assert_eq!(unsafe { write(2, marker.as_ptr(), marker.len()) }, marker.len() as isize);
+            }
+            assert_eq!(unsafe { write(2, message.as_ptr(), message.len()) }, message.len() as isize);
+        }
+        if let Some(selected) = std::env::var_os(CHILD) {
+            assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(no_output) }));
+            assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+            let id = native_subproc_new().unwrap();
+            std::thread::spawn(move || {
+                assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                    crate::runtime_lifecycle::current_native_allocator_thread_descriptor()) });
+                assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                let heap = if selected == "auxiliary" { native_child_heap_new().unwrap().unwrap().unwrap() }
+                    else { current_child_main_heap().unwrap() };
+                let theap = unsafe { native_child_heap_theap(heap) }.unwrap();
+                let client = unsafe { native_child_theap_allocate(theap, 12280, false) }.unwrap().unwrap();
+                unsafe { client.as_ptr().write(0x5a); client.as_ptr().add(12279).write(0xa5); }
+                unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+                    let map = owner.page_map().unwrap();
+                    let page = map.lookup_registered_page(client.as_ptr()).unwrap().unwrap();
+                    let snapshot = Page::validity_snapshot_at(page);
+                    assert_eq!((snapshot.capacity, snapshot.used), (1, 1));
+                    let probe = Probe { id, theap, page, client, area: snapshot.area.as_ptr().addr(), map, observed: core::cell::Cell::new(false) };
+                    owner.output().register_output(Some(output), core::ptr::from_ref(&probe).cast_mut().cast());
+                    // Only a copied scalar is overridden. Every real Page,
+                    // client, queue link and backing remains valid and retained.
+                    crate::page_validity::with_live_page_validity_observer_for_test(
+                        observe, core::ptr::from_ref(&probe).cast_mut().cast(), || {
+                            let _ = native_child_theap_allocate(theap, 12280, false);
+                            panic!("actual source live Page assertion cannot return");
+                        });
+                }) }.unwrap();
+            }).join().unwrap();
+            return;
+        }
+        use std::os::unix::process::ExitStatusExt;
+        for selected in ["main", "auxiliary"] {
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "subproc::lifecycle::tests::child_live_page_assertion_retains_original_page_during_output_reentry",
+                "--nocapture", "--test-threads=1"])
+            .current_dir(std::env::temp_dir()).env(CHILD, selected).output().unwrap();
+        let stderr = std::string::String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.status.signal(), Some(6), "{stderr}");
+        assert!(stderr.contains("original child live Page retained during native reentry"), "{stderr}");
+        assert!(stderr.contains("used <= capacity"), "{stderr}");
+        }
+    }
+
     /// A live Heap of one child cannot become another child's cached Theap.
     /// Both child images remain live during the attempted selection.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
