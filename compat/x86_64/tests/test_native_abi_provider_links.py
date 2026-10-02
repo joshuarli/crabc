@@ -411,7 +411,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                      ('bss', 8, 'mov domain_scalar+4(%rip),%r9d', True),
                      ('bss', 8, 'mov domain_scalar+5(%rip),%r9d', False),
                      ('rodata', 4, 'mov domain_scalar(%rip),%r9d', True),
-                     ('bss', 4, 'mov %r9d,domain_scalar(%rip)', False),
+                     ('bss', 4, 'mov %r9d,domain_scalar(%rip)', True),
                      ('bss', 4, 'mov %fs:domain_scalar(%rip),%r9d', False),
                      ('bss', 4, 'addr32 mov domain_scalar(%eip),%r9d', False),
                      ('bss', 1, 'movzbl domain_scalar(%rip),%eax; movzbl domain_scalar(%rip),%r9d', True),
@@ -555,7 +555,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 elf_type=elf_type, name='domain_scalar', source_sections=sections,
                                 provider_object=(source_object, definition))
                             bound = links.final_member_references(image, **reference_arguments)
-                            expected_operations = ({'vector-data-load', 'vector-data-store'} if vector and 'movdqu domain' in read and 'movdqu %' in read else {'vector-data-store'} if vector and 'movdqu %' in read else {'vector-data-load'} if vector else {'integer-data-store'} if byte_store else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read or 'movzwl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
+                            expected_operations = ({'vector-data-load', 'vector-data-store'} if vector and 'movdqu domain' in read and 'movdqu %' in read else {'vector-data-store'} if vector and 'movdqu %' in read else {'vector-data-load'} if vector else {'integer-data-store'} if byte_store else {'integer-data-store'} if 'mov %r9d,' in read else {'integer-data-load'} if rex_load and 'movzbl' not in read else {'integer-zero-extend-load'} if 'movzbl' in read or 'movzwl' in read else {'integer-data-load'} if storage == 'rodata' else {'integer-data-load', 'integer-data-store', 'integer-data-or',
                                 'integer-immediate-store', 'locked-subtract'} if size == 4 else
                                 {'integer-data-load', 'integer-data-store'} if size == 8 else {'integer-data-load'})
                             self.assertEqual({row['branch_kind'] for row in bound['resolved_calls']}, expected_operations)
@@ -929,6 +929,27 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 ('bss', 2, 'movzwl %fs:domain_scalar(%rip),%eax', None, 6),
                 ('bss', 2, 'addr32 movw $0x2a,domain_scalar(%eip)', None, 6),
             ]
+            cases += [
+                ('bss', 8, 'movq $0,domain_scalar(%rip)', 'integer-immediate-store', 24),
+                ('data', 8, 'movq $-1,domain_scalar+8(%rip)', 'integer-immediate-store', 24),
+                ('bss', 8, 'mov $0x48000000,%eax; movq $0,domain_scalar(%rip)', 'integer-immediate-store', 24),
+                ('bss', 4, 'movslq domain_scalar(%rip),%rbx', 'integer-sign-extend-load', 8),
+                ('data', 4, 'mov %r9d,domain_scalar+4(%rip)', 'integer-data-store', 8),
+                ('bss', 1, 'mov %sil,domain_scalar+7(%rip)', 'integer-data-store', 8),
+                ('data', 4, 'cmpl $0,domain_scalar(%rip)', 'integer-immediate-compare', 8),
+                ('bss', 8, 'cmpq $-1,domain_scalar+8(%rip)', 'integer-immediate-compare', 24),
+                ('bss', 16, 'movups %xmm1,domain_scalar+16(%rip)', 'vector-data-store', 48),
+                ('data', 16, 'movups domain_scalar+16(%rip),%xmm2', 'vector-data-load', 48),
+                ('bss', 8, 'movq $0,domain_scalar+17(%rip)', None, 24),
+                ('bss', 16, 'movups %xmm1,domain_scalar+33(%rip)', None, 48),
+                ('rodata', 8, 'movq $0,domain_scalar(%rip)', None, 24),
+                ('rodata', 16, 'movups %xmm1,domain_scalar(%rip)', None, 48),
+                ('bss', 4, 'movslq %fs:domain_scalar(%rip),%rbx', None, 8),
+                ('bss', 8, 'cmpq $0,%fs:domain_scalar(%rip)', None, 24),
+                ('bss', 8, 'addr32 movq $0,domain_scalar(%eip)', None, 24),
+                ('bss', 16, 'movups %xmm1,%fs:domain_scalar(%rip)', None, 48),
+                ('bss', 4, 'addl $1,domain_scalar(%rip)', None, 8),
+            ]
             for storage, operand_size, read, operation, object_size in cases:
                 with self.subTest(storage=storage, read=read):
                     (work / 'provider.S').write_text(
@@ -1000,7 +1021,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                                          'domain_scalar', image=caller)
                         disassembly = links.read_tool('objdump', '-dw', work / 'caller.o')
                         corrupted = '\n'.join(line for line in disassembly.splitlines()
-                                              if not any(word in line for word in ('cmpxchg', 'xchg', ' incl ', ' decl ', 'movb', '0f b7', '66 89', '66 c7')))
+                                              if '(%rip)' not in line)
                         with self.assertRaisesRegex(ValueError, 'instruction span is absent'):
                             links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
                                                      'domain_scalar', image=caller, disassembly=corrupted)
@@ -1090,7 +1111,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                 if segment[0] == 1 and segment[3] <= code < segment[3] + segment[5])
                             prefix_size = references[0]['offset'] - references[0]['instruction_start']
                             if operation == 'integer-immediate-store':
-                                for immediate_byte in range(operand_size):
+                                for immediate_byte in range(references[0]['instruction_end'] - references[0]['offset'] - 4):
                                     changed = bytearray(image)
                                     changed[executable[2] + code - executable[3] + prefix_size + 4 + immediate_byte] ^= 1
                                     with self.assertRaisesRegex(ValueError, 'opcode differs'):

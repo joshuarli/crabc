@@ -299,6 +299,14 @@ def integer_memory_operand(source: bytes, offset: int, *,
         # No REX, address-size or segment prefix shares this instruction form.
         if end == offset + 6 and source[start:offset] == b'\x66\xc7\x05':
             return b'\x66\xc7\x05', 2, source[offset + 4:end], 'integer-immediate-store'
+        # Sign-extended imm32 stores still access eight bytes. Compare imm8
+        # changes the PC bias but retains the encoded four/eight-byte access.
+        # Require the complete instruction before interpreting either suffix.
+        complete_prefix = source[start:offset]
+        if end == offset + 8 and complete_prefix == b'\x48\xc7\x05':
+            return complete_prefix, 8, source[offset + 4:end], 'integer-immediate-store'
+        if (end == offset + 5 and complete_prefix in {b'\x83\x3d', b'\x48\x83\x3d'}):
+            return complete_prefix, 8 if complete_prefix[0] == 0x48 else 4, source[offset + 4:end], 'integer-immediate-compare'
         prefix = source[start:offset] if end == offset + 4 else b''
         if (len(prefix) == 3 and prefix[:2] in {b'\x0f\xb7', b'\x66\x89'}
                 and prefix[2] & 0xc7 == 0x05):
@@ -313,6 +321,18 @@ def integer_memory_operand(source: bytes, offset: int, *,
             return prefix, 4, b'', 'integer-data-load'
         if len(prefix) == 2 and prefix[0] == 0x88 and prefix[1] & 0xc7 == 0x05:
             return prefix, 1, b'', 'integer-data-store'
+        # These REX forms extend a byte source or dword register without
+        # changing the memory width; MOVSXD reads a dword into a qword register.
+        if len(prefix) == 3 and prefix[:2] == b'\x40\x88' and prefix[2] & 0xc7 == 0x05:
+            return prefix, 1, b'', 'integer-data-store'
+        if len(prefix) == 3 and prefix[:2] == b'\x44\x89' and prefix[2] & 0xc7 == 0x05:
+            return prefix, 4, b'', 'integer-data-store'
+        if len(prefix) == 3 and prefix[:2] == b'\x48\x63' and prefix[2] & 0xc7 == 0x05:
+            return prefix, 4, b'', 'integer-sign-extend-load'
+        # Unaligned packed-single moves access sixteen bytes. Their complete
+        # legacy encoding has no mandatory prefix, REX, VEX or segment override.
+        if len(prefix) == 3 and prefix[:2] in {b'\x0f\x10', b'\x0f\x11'} and prefix[2] & 0xc7 == 0x05:
+            return prefix, 16, b'', 'vector-data-load' if prefix[1] == 0x10 else 'vector-data-store'
         # MOVDQU uses its mandatory F3 prefix and a 16-byte operand. Only
         # these complete legacy encodings are admitted; REX/VEX, additional
         # prefixes and aligned or narrower vector moves are separate forms.
