@@ -1375,7 +1375,7 @@ impl ProcessPageArenaLease {
     ///
     /// This is only the short source `lookup -> bitmap -> low-owner` claim
     /// boundary. It does not begin an ordinary page-engine lifecycle or enter
-    /// W03's blocking terminal-mutation path. The closure receives one scoped
+    /// The process owner's blocking terminal-mutation path. The closure receives one scoped
     /// map capability and must return its concrete no-candidate, claimed-range,
     /// or terminal-retained completion. A competing normal lifecycle returns
     /// clean [`MappedAbandonedClaimOutcome::Busy`] before the closure runs.
@@ -1406,7 +1406,7 @@ impl ProcessPageArenaLease {
         }
     }
 
-    /// Blocks only for W03's one exact post-owner-exit terminal mutation
+    /// Blocks only for the process owner's exact post-owner-exit terminal mutation
     /// after this pair's map/arena identity has already been proven.
     ///
     /// This delegates the PageMap's deliberately exceptional blocking
@@ -1417,13 +1417,13 @@ impl ProcessPageArenaLease {
     ///
     /// The caller must satisfy
     /// [`ProcessPageMapRoot::begin_blocking_exact_post_owner_exit_mutation`]'s
-    /// W07-claim, exact-terminal-tail, and explicit-release-or-retention
+    /// remote-free claim, exact terminal tail, and explicit release or retention
     /// contract.
     #[inline]
     pub(crate) unsafe fn begin_blocking_exact_post_owner_exit_mutation(
         self,
     ) -> Result<ProcessPageMapMutationLease, ProcessPageArenaLeaseError> {
-        // SAFETY: the caller supplies the delegated W03 exact-terminal
+        // SAFETY: the caller supplies the delegated process terminal
         // mutation contract; this pairing only preserves map/arena identity.
         unsafe { self.page_map.begin_blocking_exact_post_owner_exit_mutation() }
             .map_err(ProcessPageArenaLeaseError::PageMap)
@@ -1663,7 +1663,7 @@ impl ProcessPageBackingLease {
     }
 
     /// # Safety
-    /// The caller has the exact W03 post-CAS terminal page claim. Only its
+    /// The caller has the exact process post-CAS terminal page claim. Only its
     /// unregister/release tail may wait for this exceptional map boundary.
     pub(crate) unsafe fn begin_blocking_exact_post_owner_exit_mutation(self)
         -> Result<ProcessPageMapMutationLease, ProcessPageBackingError>
