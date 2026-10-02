@@ -2935,6 +2935,11 @@ def attach_provider_links(accounting: Mapping[str, Any], proof: Mapping[str, Any
     members = set(strings(list(rust_members), 'provider Rust members', empty=False))
     joins = []
     for observed in proof['identities']:
+        # Composed CRT labels have a strong direct-object winner and a
+        # shadowed weak archive occurrence. Their startup imports belong to
+        # the complete executable lifecycle join, never this archive-only join.
+        if observed.get('provider_kind') == 'composed-crt':
+            continue
         key = identity_key(observed['identity'])
         record = records.get(key)
         if (record is None or observed.get('static_modes') != ['static', 'static-pie']

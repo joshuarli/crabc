@@ -67,6 +67,20 @@ class ProviderLinkAttachmentTests(unittest.TestCase):
                 self.assertEqual(self.attach(accounting, proof), [])
                 self.assertTrue(accounting['blockers'])
 
+    def test_composed_crt_receipt_cannot_discharge_startup_object_imports(self):
+        accounting = self.accounting()
+        accounting['identities'][0]['selection'].update(owner='crt-init-fini', group='crt-defaults-and-fragments')
+        accounting['occurrences'][0]['row']['binding'] = 'WEAK'
+        accounting['occurrences'][1]['artifact_key'] = 'static-crt1.o'
+        proof = self.proof(accounting)
+        observed = proof['identities'][0]
+        observed.update(provider_kind='composed-crt', shadowed_definition_index=observed.pop('definition_index'),
+                        actual_definition_index=2)
+        # The complete lifecycle join also needs source startup relocations,
+        # every product role, and actual static and dynamic execution links.
+        self.assertEqual(self.attach(accounting, proof), [])
+        self.assertTrue(accounting['blockers'])
+
     def test_shared_public_exposure_does_not_acquire_private_owner(self):
         for symbol_type in ('FUNC', 'OBJECT'):
             with self.subTest(symbol_type=symbol_type):
@@ -1746,6 +1760,144 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                      work / (mode + '.receipt.map'))
         finally:
             os.chdir(previous)
+
+    def test_crt_winner_is_distinct_from_shadowed_weak_archive_provider(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            static = work / 'product'
+            library = static / 'usr/lib'
+            library.mkdir(parents=True)
+            private = work / 'private'
+            private.mkdir()
+            names = ['_fini', '_init', 'domain_caller']
+            (work / 'providers.c').write_text(links.source(names))
+            (work / 'caller.S').write_text(
+                '.text\n.globl domain_caller\n.hidden domain_caller\n.type domain_caller,@function\n'
+                'domain_caller: call _init; call _fini; ret\n.size domain_caller,.-domain_caller\n')
+            (work / 'weak.S').write_text(''.join(
+                f'.section .text.{name},"ax",@progbits\n.weak {name}\n.type {name},@function\n'
+                f'{name}: ret\n.size {name},.-{name}\n' for name in names[:2]))
+            (work / 'crti.S').write_text(''.join(
+                f'.section {section},"ax",@progbits\n.globl {name}\n.type {name},@function\n'
+                f'{name}: push %rbp; mov %rsp,%rbp\n' for name, section in [('_init', '.init'), ('_fini', '.fini')]))
+            (work / 'crtn.S').write_text('.file "crt_epilogue"\n' + ''.join(
+                f'.section {section},"ax",@progbits\npop %rbp; ret\n' for section in ['.init', '.fini']))
+            for source, target in [('providers.c', work / 'providers.o'), ('caller.S', work / 'caller.o'),
+                                   ('weak.S', work / 'weak.o'), ('crti.S', library / 'crti.o'),
+                                   ('crtn.S', library / 'crtn.o')]:
+                subprocess.run([compiler, '-fPIC', '-c', str(work / source), '-o', str(target)],
+                               check=True, capture_output=True)
+            archive = library / 'libc.a'
+            subprocess.run(['ar', 'rcs', str(archive), str(work / 'caller.o'), str(work / 'weak.o')],
+                           check=True, capture_output=True)
+            occurrences = []
+            for member in ['caller.o', 'weak.o']:
+                tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / member))
+                sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', work / member))['sections']
+                for row in tables[0]['rows']:
+                    if row['name'] not in names:
+                        continue
+                    role = 'import' if row['section_index'] == 'UND' else 'definition'
+                    occurrence = {'index': len(occurrences), 'artifact_key': 'candidate-static', 'table': '.symtab',
+                                  'member_name': member, 'member_occurrence': 0, 'role': role, 'row': row}
+                    if role == 'definition':
+                        occurrence['definition_section'] = next(
+                            section for section in sections if str(section['index']) == row['section_index'])
+                    occurrences.append(occurrence)
+            for artifact, path in [('static-crti.o', library / 'crti.o'), ('static-crtn.o', library / 'crtn.o')]:
+                tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', path))
+                sections = links.inventory.parse_elf_sections(links.read_tool('readelf', '-SW', path))['sections']
+                for row in tables[0]['rows']:
+                    if row['name'] not in names[:2] and row['row_index'] != 0:
+                        continue
+                    occurrence = {'index': len(occurrences), 'artifact_key': artifact, 'table': '.symtab',
+                                  'member_name': None, 'member_occurrence': None, 'row': row,
+                                  'artifact_sha256': links.identity(path)['sha256'],
+                                  'role': 'definition' if row['name'] else 'unnamed'}
+                    if row['name']:
+                        occurrence['definition_section'] = next(
+                            section for section in sections if str(section['index']) == row['section_index'])
+                    occurrences.append(occurrence)
+            accounting = {'occurrences': occurrences, 'identities': [
+                {'identity': selection.identity(name), 'selection': {'disposition': 'unresolved'},
+                 'unresolved': []} for name in names]}
+            for mode, flag in [('static', '-static'), ('static-pie', '-pie')]:
+                result = subprocess.run([linker, flag, '-e', 'main', '--trace',
+                    '-Map=' + str(work / (mode + '.receipt.map')), str(library / 'crti.o'),
+                    str(work / 'providers.o'), str(archive), str(library / 'crtn.o'), '-o', str(work / mode)],
+                    check=True, capture_output=True)
+                (work / (mode + '.receipt.trace')).write_bytes(result.stdout)
+            arguments = dict(mapped_archive=str(archive), forcing_owner=str(work / 'providers.o'), temporary_parent=private)
+            proof = links.project_references(work, static, accounting, **arguments)
+            self.assertEqual(proof['failures'], [])
+            admitted = {row['identity']['name']: row for row in proof['identities']}
+            self.assertEqual(set(admitted), set(names))
+            for name in names[:2]:
+                observed = admitted[name]
+                self.assertNotIn('definition_index', observed)
+                self.assertEqual(observed['provider_kind'], 'composed-crt')
+                self.assertEqual(observed['shadowed_definition_index'], next(
+                    row['index'] for row in occurrences if row['role'] == 'definition' and row['row']['name'] == name))
+                for mode in links.MODES:
+                    owner = observed['links'][mode]['provider']
+                    self.assertEqual(owner['definition']['binding'], 'GLOBAL')
+                    self.assertEqual(owner['extent'], 6)
+                    self.assertEqual([fragment['role'] for fragment in owner['fragments']],
+                                     ['crt-prologue', 'crt-epilogue'])
+                    self.assertEqual([fragment['size'] for fragment in owner['fragments']], [4, 2])
+                    self.assertTrue(observed['links'][mode]['importers'][0]['resolved_calls'])
+            for change in ['wrong prologue accounting hash', 'wrong epilogue accounting hash',
+                           'wrong strong accounting symbol', 'missing strong accounting occurrence']:
+                with self.subTest(change=change):
+                    altered = copy.deepcopy(accounting)
+                    if change == 'missing strong accounting occurrence':
+                        altered['occurrences'] = [row for row in altered['occurrences']
+                                                  if row['artifact_key'] != 'static-crti.o']
+                    else:
+                        for row in altered['occurrences']:
+                            if change == 'wrong prologue accounting hash' and row['artifact_key'] == 'static-crti.o':
+                                row['artifact_sha256'] = 'f' * 64
+                            elif change == 'wrong epilogue accounting hash' and row['artifact_key'] == 'static-crtn.o':
+                                row['artifact_sha256'] = 'f' * 64
+                            elif change == 'wrong strong accounting symbol' and row['artifact_key'] == 'static-crti.o' and row['role'] == 'definition':
+                                row['row']['size_bytes'] = 1
+                    refused = links.project_references(work, static, altered, **arguments)
+                    self.assertEqual({row['identity']['name'] for row in refused['failures']}, set(names[:2]))
+                    self.assertEqual([row['identity']['name'] for row in refused['identities']], ['domain_caller'])
+            # A filename or a final symbol is insufficient without the exact
+            # direct-object trace, measured fragments, and complete final bytes.
+            view = links._indexed_view(work, 'static', 2)
+            definition = next(row for row in occurrences if row['role'] == 'definition' and row['row']['name'] == '_init')
+            arguments = dict(mapped_crti=str(library / 'crti.o'), mapped_crtn=str(library / 'crtn.o'),
+                             crti_image=(library / 'crti.o').read_bytes(), crtn_image=(library / 'crtn.o').read_bytes(),
+                             shadowed_member=str(archive) + '(weak.o)', shadowed_definition=definition,
+                             shadowed_image=(work / 'weak.o').read_bytes())
+            for change in ['foreign trace', 'missing epilogue', 'duplicate map', 'foreign bytes', 'strong archive', 'weak winner']:
+                with self.subTest(change=change):
+                    altered = copy.deepcopy(view)
+                    kwargs = copy.deepcopy(arguments)
+                    if change == 'foreign trace':
+                        altered['trace_counts'][str(library / 'crti.o')] = 0
+                    elif change == 'missing epilogue':
+                        del altered['map_rows'][str(library / 'crtn.o') + ':(.init)']
+                    elif change == 'duplicate map':
+                        altered['map_rows'][str(library / 'crti.o') + ':(.init)'] *= 2
+                    elif change == 'foreign bytes':
+                        image = links.static_authority.elf_bytes(kwargs['crtn_image'])
+                        header = next(header for header in image.sections if links.static_authority.section_name(image, header) == '.init')
+                        raw = bytearray(kwargs['crtn_image']); raw[header[4]] ^= 1; kwargs['crtn_image'] = bytes(raw)
+                    elif change == 'strong archive':
+                        kwargs['shadowed_definition']['row']['binding'] = 'GLOBAL'
+                    else:
+                        altered['symbol_rows']['_init'][0][4] = 'WEAK'
+                    with self.assertRaises(ValueError):
+                        links.composed_crt_provider(altered, '_init', **kwargs)
 
     def test_real_object_forces_exact_complete_function_addresses(self):
         import native_abi_provider_links as links

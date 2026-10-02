@@ -1350,6 +1350,106 @@ def definition_address(view: Mapping[str, Any], archive_member: str, definition:
     return address
 
 
+def composed_crt_provider(view: Mapping[str, Any], name: str, *, mapped_crti: str,
+                          mapped_crtn: str, crti_image: bytes, crtn_image: bytes,
+                          shadowed_member: str, shadowed_definition: Mapping[str, Any],
+                          shadowed_image: bytes) -> dict[str, Any]:
+    """Bind a strong zero-size CRT label to its complete measured fragments.
+
+    The archive fallback remains a shadowed weak definition. Its occurrence is
+    never presented as the final winner. The extent comes from authenticated
+    prologue and epilogue sections, their contiguous placements, and exact final
+    bytes; a zero-size label or a linker map alone cannot establish that extent.
+    """
+    require(name in {'_init', '_fini'}, 'composed CRT identity differs')
+    section_name = '.init' if name == '_init' else '.fini'
+    row = shadowed_definition['row']
+    weak = static_authority.elf_bytes(shadowed_image)
+    symbol = weak.symbol(name, dynamic=False)
+    require(weak.elf_type == 1 and row['name'] == name and row['type'] == 'FUNC'
+            and row['binding'] == 'WEAK' and row['visibility'] == 'DEFAULT'
+            and shadowed_definition['member_occurrence'] == 0
+            and symbol is not None and symbol['type'] == row['type']
+            and symbol['binding'] == row['binding'] and symbol['visibility'] == row['visibility']
+            and symbol['value'] == int(row['value'], 16) and symbol['size'] == row['size_bytes'] > 0
+            and symbol['section'] == int(row['section_index']), 'CRT shadowed archive definition differs')
+    header = weak.sections[symbol['section']]
+    observed = shadowed_definition['definition_section']
+    require(header[1] == 1 and header[2] == 6 and observed['type'] == 'PROGBITS'
+            and observed['flags'] == 'AX' and observed['index'] == symbol['section']
+            and observed['name'] == static_authority.section_name(weak, header)
+            and int(observed['address'], 16) == header[3]
+            and int(observed['offset'], 16) == header[4] and int(observed['size'], 16) == header[5]
+            and int(observed['entry_size'], 16) == header[9]
+            and observed['link'] == header[6] and observed['info'] == header[7]
+            and observed['alignment'] == header[8] and header[4] + header[5] <= len(shadowed_image)
+            and symbol['value'] + symbol['size'] <= header[5]
+            and not view['map_rows'].get(shadowed_member + ':(' + observed['name'] + ')'),
+            'CRT weak fallback is not an exact discarded archive section')
+    final = static_authority.elf_bytes(view['image'])
+    require(final.elf_type == view['type'], 'CRT final ELF type differs')
+    symbols = view['symbol_rows'].get(name, [])
+    require(len(symbols) == 1 and symbols[0][2:6] == ['0', 'FUNC', 'GLOBAL', 'DEFAULT']
+            and symbols[0][6].isdigit(), 'CRT final strong symbol differs')
+    address = int(symbols[0][1], 16)
+    final_symbol = final.symbol(name, dynamic=False)
+    require(final_symbol is not None and final_symbol['type'] == 'FUNC'
+            and final_symbol['binding'] == 'GLOBAL' and final_symbol['visibility'] == 'DEFAULT'
+            and final_symbol['size'] == 0 and final_symbol['value'] == address
+            and final_symbol['section'] == int(symbols[0][6]), 'CRT final symbol bytes differ')
+    fragments, payload, definition = [], b'', None
+    for role, owner, image in [('crt-prologue', mapped_crti, crti_image),
+                               ('crt-epilogue', mapped_crtn, crtn_image)]:
+        source = static_authority.elf_bytes(image)
+        require(source.elf_type == 1, 'CRT fragment is not a relocatable ELF')
+        headers = [(index, header) for index, header in enumerate(source.sections)
+                   if static_authority.section_name(source, header) == section_name]
+        require(len(headers) == 1, 'CRT source fragment section differs')
+        index, header = headers[0]
+        require(header[1] == 1 and header[2] == 6 and header[3] == header[9] == 0
+                and header[5] > 0 and header[8] > 0 and header[4] + header[5] <= len(image)
+                and not any(entry[1] in {4, 9, 19} and entry[7] == index for entry in source.sections),
+                'CRT source fragment geometry or relocations differ')
+        provider = source.symbol(name, dynamic=False, required=False)
+        if role == 'crt-prologue':
+            require(provider is not None and provider['type'] == 'FUNC' and provider['binding'] == 'GLOBAL'
+                    and provider['visibility'] == 'DEFAULT' and provider['section'] == index
+                    and provider['value'] == provider['size'] == 0, 'CRT source strong definition differs')
+            definition = provider
+        else:
+            require(provider is None, 'CRT epilogue defines a competing provider')
+        maps = view['map_rows'].get(owner + ':(' + section_name + ')', [])
+        require(view['trace_counts'].get(owner) == 1 and len(maps) == 1,
+                'CRT fragment lacks its exact direct-object trace and placement')
+        parts = maps[0].split()
+        base = address + len(payload)
+        require(int(parts[0], 16) == int(parts[1], 16) == base
+                and int(parts[2], 16) == header[5] and int(parts[3], 10) == header[8]
+                and base % header[8] == 0, 'CRT fragment placement differs')
+        payload += image[header[4]:header[4] + header[5]]
+        fragments.append({'role': role, 'path': owner, 'sha256': hashlib.sha256(image).hexdigest(),
+                          'section_index': index, 'section': section_name, 'address': base,
+                          'size': header[5], 'alignment': header[8]})
+    output = final.sections[final_symbol['section']]
+    require(output[1] == 1 and output[2] == 6 and output[3] == address and output[5] == len(payload)
+            and static_authority.section_name(final, output) == section_name
+            and output[4] + output[5] <= len(view['image']), 'CRT complete output section differs')
+    executable_function_mapping(view['image'], address=address, extent=len(payload), output=output,
+                                label='composed CRT provider')
+    require(calls._public_weak_virtual_bytes(view['image'], address, len(payload), view['type'], executable=True)
+            == payload, 'CRT final fragment bytes differ')
+    for relocation in final.sections:
+        require(not (relocation[1] in {9, 19} and relocation[2] & 2), 'CRT final relocation encoding differs')
+        if relocation[1] == 4:
+            require(relocation[9] == 24 and relocation[5] % 24 == 0, 'CRT final relocation table differs')
+            for offset in range(0, relocation[5], 24):
+                position, _, _ = final.unpack('<QQq', relocation[4] + offset)
+                require(not (position < address + len(payload) and address < position + 8),
+                        'CRT fragments contain a final relocation')
+    return {'artifact_key': 'static-crti.o', 'definition': definition, 'address': address,
+            'extent': len(payload), 'fragments': fragments}
+
+
 def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapping[str, Any]) -> dict[str, Any]:
     retained = validate(work, static, facts)
     proof = project_references(work, static, accounting,
@@ -1364,7 +1464,7 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
     """Replay the complete reference roster after independent input admission.
 
     The caller authenticates the accounting/facts, archive, forcing object,
-    maps, executables and exact original trace names as one immutable tuple.
+    maps, executables, CRT objects and exact original trace names as one immutable tuple.
     This stage does not admit that tuple or qualify a different receiver source.
     Tool input copies belong to the caller's private temporary directory.
     """
@@ -1393,9 +1493,13 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                 or definitions[0]['row']['size_bytes'] <= 0):
             continue
         definition = definitions[0]
+        composed_crt = name in {'_init', '_fini'} and definition['row']['binding'] == 'WEAK'
         proof = {'identity': record['identity'], 'definition_index': definition['index'],
                  'import_indices': sorted(row['index'] for row in imports), 'static_modes': list(MODES),
                  'physical_provider_and_calls': True, 'links': {}}
+        if composed_crt:
+            proof['provider_kind'] = 'composed-crt'
+            proof['shadowed_definition_index'] = proof.pop('definition_index')
         try:
             source_imports = []
             for row in imports:
@@ -1451,7 +1555,35 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                         require(result.returncode == 0 and result.stdout, 'provider definition member is unreadable')
                         definition_images[member] = result.stdout
                     source_image = definition_images[member]
-                address = definition_address(view, selected, definition, source_image=source_image)
+                crt_provider = None
+                if composed_crt:
+                    crt_provider = composed_crt_provider(view, name,
+                        mapped_crti=str(Path(mapped_archive).parent / 'crti.o'),
+                        mapped_crtn=str(Path(mapped_archive).parent / 'crtn.o'),
+                        crti_image=(static / 'usr/lib/crti.o').read_bytes(),
+                        crtn_image=(static / 'usr/lib/crtn.o').read_bytes(),
+                        shadowed_member=selected, shadowed_definition=definition, shadowed_image=source_image)
+                    actual = [row for row in accounting['occurrences']
+                              if row['artifact_key'] == 'static-crti.o' and row['role'] == 'definition'
+                              and row['row']['name'] == name]
+                    require(len(actual) == 1 and actual[0]['table'] == '.symtab'
+                            and actual[0]['member_name'] is None
+                            and actual[0]['artifact_sha256'] == crt_provider['fragments'][0]['sha256'],
+                            'CRT final winner lacks its exact accounting occurrence')
+                    source, row = crt_provider['definition'], actual[0]['row']
+                    require(source['type'] == row['type'] and source['binding'] == row['binding']
+                            and source['visibility'] == row['visibility'] and source['size'] == row['size_bytes']
+                            and source['value'] == int(row['value'], 16)
+                            and source['section'] == int(row['section_index']),
+                            'CRT winner accounting symbol differs')
+                    epilogue_hashes = {row['artifact_sha256'] for row in accounting['occurrences']
+                                       if row['artifact_key'] == 'static-crtn.o'}
+                    require(epilogue_hashes == {crt_provider['fragments'][1]['sha256']},
+                            'CRT epilogue lacks its exact accounting artifact')
+                    proof['actual_definition_index'] = actual[0]['index']
+                    address = crt_provider['address']
+                else:
+                    address = definition_address(view, selected, definition, source_image=source_image)
                 linked = []
                 for imported, source_calls, sections in source_imports:
                     member = mapped_archive + '(' + imported['member_name'] + ')'
@@ -1470,8 +1602,10 @@ def project_references(work: Path, static: Path, accounting: Mapping[str, Any], 
                                    hashlib.sha256(source_members[imported['member_name']][0]).hexdigest(), **result,
                                    **({'symbol_only_reference': True} if not source_calls else {})})
                 proof['links'][mode] = {'provider_address': address, 'importers': linked}
+                if crt_provider is not None:
+                    proof['links'][mode]['provider'] = crt_provider
             admitted.append(proof)
-        except (ValueError, KeyError, calls.AllocatorBoundaryError) as error:
+        except (ValueError, KeyError, OSError, calls.AllocatorBoundaryError) as error:
             failures.append({'identity': record['identity'], 'reason': str(error)})
     return {'identities': admitted, 'failures': failures}
 
