@@ -3151,9 +3151,14 @@ unsafe fn destroy_record(
                 return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
             }
             #[cfg(target_arch = "x86_64")]
-            let pending = unsafe { (*record.destroy_state.get()).as_ref().and_then(|allocation| {
-                (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending.take()
-            }) };
+            let pending = unsafe { match (*record.destroy_state.get()).as_ref() {
+                // A prior parent return may have ended this scratch capability
+                // after source teardown. Its retained record grants no access
+                // to the former header, even when no child owner remains.
+                Some(allocation) if !allocation.is_live() => return Err(NativeSubprocessError::Retained),
+                Some(allocation) => (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending.take(),
+                None => None,
+            } };
             let mut child = match owner.take() {
                 Some(child) => child,
                 None if unsafe { (*record.storage.get()).is_some() } => {
@@ -3983,6 +3988,60 @@ pub(crate) mod tests {
                 });
                 worker.join().expect("child reservation metadata controls");
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_destroy_retry_rejects_terminal_scratch_return_before_header_projection() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::child_destroy_retry_rejects_terminal_scratch_return_before_header_projection",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let child = native_subproc_new().unwrap();
+                let (ready_send, ready_receive) = std::sync::mpsc::channel();
+                let (finish_send, finish_receive) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                    let admission = NativeChildArenaAdmission::acquire_current().unwrap().unwrap();
+                    let allocation = crate::os::HugeOsAllocation::test_registry_allocation(
+                        unsafe { admission.process() }, admission.config(), 1);
+                    unsafe { admission.backing().install_owned_huge_allocation_for_retained_process(
+                        admission.config(), allocation, -1, false) }.unwrap_or_else(|_| panic!("child publication"));
+                    drop(admission);
+                    ready_send.send(()).unwrap();
+                    finish_receive.recv().unwrap();
+                    // The source child is gone. Only the enclosing record and
+                    // its exact parent-issued destruction scratch remain live.
+                    // A same-thread backing entry refusal makes general metadata
+                    // release terminal before the orphan token returns the record.
+                    crate::meta::MetaAllocator::global().test_with_held_backing_entry(|| {
+                        assert_eq!(native_child_thread_done(), Some(Ok(())));
+                    }).unwrap();
+                });
+                ready_receive.recv().unwrap();
+                // SAFETY: the sole member is parked and never accesses its
+                // child images or published mappings again.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()));
+                finish_send.send(()).unwrap();
+                worker.join().unwrap();
+                unsafe { child.with_owner(|owner| {
+                    assert!(owner.is_none(), "source teardown already finished");
+                    let scratch = &*child.record().destroy_state.get();
+                    assert!(!scratch.as_ref().unwrap().is_live(), "the exact parent return failed terminally");
+                }) }.unwrap();
+                // SAFETY: the retained enclosing record still owns this id;
+                // no TLS member or source child projection can run again.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Retained));
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Retained));
             },
         );
     }

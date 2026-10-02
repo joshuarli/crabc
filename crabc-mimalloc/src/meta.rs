@@ -1295,6 +1295,7 @@ pub(crate) enum ChildMetadataAllocation {
 
 impl ChildMetadataAllocation {
     pub(crate) fn pointer(&self) -> NonNull<u8> {
+        assert!(self.is_live(), "released child metadata grants no byte projection");
         match self { Self::Process(block) => block.pointer(), Self::Child { pointer, .. } => *pointer }
     }
 
