@@ -452,6 +452,26 @@ impl OsAlignedPageReleaseFailure {
     pub(crate) fn into_owner(self) -> OsAlignedPageOwner {
         self.owner
     }
+
+    /// Consumes a failed source Page free after its one release attempt.
+    ///
+    /// Source Page free has already removed publication and debited its
+    /// statistics. The OS warning leaves the refused range mapped; later
+    /// collection or allocation must not invent another release attempt.
+    /// Private claims and failures before accounting retain their owner.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn forget_consumed_source_page(self) -> Result<(), Self> {
+        match &self.owner {
+            OsAlignedPageOwner::Published(page) if page.release_accounted => {
+                // No destructor performs a syscall. Consume the sole release
+                // capability deliberately, leaving the source-refused range
+                // mapped without a future allocator cleanup owner.
+                core::mem::forget(self.owner);
+                Ok(())
+            }
+            _ => Err(self),
+        }
+    }
 }
 
 /// A fresh OS-aligned claim failure which may retain a live rollback owner.
@@ -1505,6 +1525,10 @@ impl PublishedOsAlignedPage {
             unsafe { Mapping::reclaim_published_for_process(process, self.base.as_ptr(),
                 self.layout.mapping_length(), self.release_commit_size, false) }
         } else {
+            // Processless publications have no statistics edge, but their
+            // first terminal release attempt still consumes source ownership.
+            #[cfg(target_arch = "x86_64")]
+            { self.release_accounted = true; }
             unsafe { Mapping::reclaim_published(self.base.as_ptr(), self.layout.mapping_length()) }
         };
         match result {

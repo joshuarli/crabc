@@ -3382,10 +3382,16 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
             // right after every PageMap/metadata predecessor completed.
             match unsafe { published.reclaim() } {
                 Ok(()) => ClaimedProcessNonArenaPageRelease::Released,
-                Err(failure) => retain(
-                    failure.into_owner(),
-                    ProcessPostOwnerExitNonArenaTerminalStage::PrimaryRetired,
-                ),
+                Err(failure) => {
+                    // This is the same consumed source Page free after list,
+                    // PageMap, alias, primary, and statistics retirement.
+                    #[cfg(target_arch = "x86_64")]
+                    let Err(failure) = failure.forget_consumed_source_page() else {
+                        return ClaimedProcessNonArenaPageRelease::Released;
+                    };
+                    retain(failure.into_owner(),
+                        ProcessPostOwnerExitNonArenaTerminalStage::PrimaryRetired)
+                }
             }
         }
         ProcessNonArenaPagePreflight::External(facts) => {
@@ -41349,7 +41355,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     /// Retries the one detached OS mapping which could not be unmapped during
-    /// an earlier fresh rollback or terminal free.
+    /// an earlier fresh rollback or an explicitly retained release operation.
     fn retry_pending_os_release(&mut self) -> bool {
         let Some(owner) = self.pending_os_release.take() else {
             return true;
@@ -44014,10 +44020,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 match reclaimed {
                     Ok(()) => true,
                     Err(failure) => {
-                        // The caller's block is already semantically free:
-                        // queue, map, aliases, and primary are detached. Keep
-                        // its sole raw mapping owner for collection/shutdown
-                        // retry and still report this local free as accepted.
+                        // Source free consumed the Page and its statistics;
+                        // a refused OS release leaks the range after warning.
+                        // Preserve ownership only if that release edge did
+                        // not complete, rather than retrying a consumed free.
+                        #[cfg(target_arch = "x86_64")]
+                        if let Err(failure) = failure.forget_consumed_source_page() {
+                            self.park_pending_os_release(failure.into_owner());
+                            return false;
+                        }
+                        #[cfg(not(target_arch = "x86_64"))]
                         self.park_pending_os_release(failure.into_owner());
                         true
                     }
@@ -44170,6 +44182,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         match reclaimed {
             Ok(()) => true,
             Err(failure) => {
+                #[cfg(target_arch = "x86_64")]
+                if let Err(failure) = failure.forget_consumed_source_page() {
+                    self.park_pending_os_release(failure.into_owner());
+                    return false;
+                }
+                #[cfg(not(target_arch = "x86_64"))]
                 self.park_pending_os_release(failure.into_owner());
                 true
             }
@@ -44973,6 +44991,10 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         match reclaimed {
             Ok(()) => true,
             Err(failure) => {
+                #[cfg(target_arch = "x86_64")]
+                let Err(failure) = failure.forget_consumed_source_page() else {
+                    return true;
+                };
                 if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
                     return false;
                 }
@@ -46800,18 +46822,18 @@ mod tests {
     }
 
     #[test]
-    fn post_owner_exit_pointer_os_aligned_singleton_failed_unmap_retains_once() {
+    fn post_owner_exit_pointer_os_aligned_singleton_failed_unmap_consumes_source_free_once() {
         with_w03_process_page_fixture(|config, page_map, pair, main_heap, session| {
             // The fault plan is process-global test instrumentation. Install
             // it disabled while this source-valid 7-byte request / 128 KiB
             // aligned singleton is published and abandoned; only the final
-            // W03 mapping reclaim is allowed to observe `Unmap` failure.
+            // terminal mapping reclaim is allowed to observe `Unmap` failure.
             let fault = fault::install(fault::Plan::disabled());
             let (page, block, slice_start, page_map_size) =
                 w03_publish_os_singleton(config, pair, session);
             // SAFETY: the one current client is registered and keeps the
             // alignment-forced source singleton/page metadata live through
-            // the claimed W07 continuation below.
+            // the claimed source continuation below.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
                 .expect("the OS-aligned singleton PageMap remains ready")
                 .expect("the OS-aligned singleton pointer resolves");
@@ -46829,14 +46851,14 @@ mod tests {
                 Some(PageKind::Small),
                 "the 128 KiB alignment—not a size-forced huge bin—selects this singleton"
             );
+            let span = unsafe { page.as_ref() }.memid().os_memory().unwrap();
             w03_abandon_non_arena_singleton(page, main_heap);
             fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
 
             let marker = ProcessPostOwnerExitTerminalMarker::new();
-            // SAFETY: W03 must claim this source current allocation once,
-            // remove its non-arena list/map/metadata predecessors, then
-            // retain the exact W07 wrapper and mapping owner when reclaim
-            // reports this injected one-way failure.
+            // SAFETY: claim this current allocation exactly once and remove
+            // its source list/map/metadata predecessors before OS release.
+            // A refused primitive still consumes the source Page free.
             assert_eq!(
                 unsafe {
                     continue_post_owner_exit_live_allocation_with_terminal_marker(
@@ -46844,22 +46866,27 @@ mod tests {
                         declined_reclaim_on_free,
                     )
                 },
-                Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                Ok(if cfg!(target_arch = "x86_64") {
+                    ProcessPostOwnerExitPointerFreeDisposition::Released
+                } else {
+                    ProcessPostOwnerExitPointerFreeDisposition::Retained
+                })
             );
             assert!(!marker.is_retained(), "the failed OS unmap completed its PageMap mutation");
             assert_eq!(
                 marker.test_audit_snapshot(),
                 ProcessPostOwnerExitTerminalAuditSnapshot {
-                    terminalizations: 1,
-                    categories: ProcessPostOwnerExitTerminalAuditCategory::NonArenaSingleton
-                        .bit(),
+                    terminalizations: if cfg!(target_arch = "x86_64") { 0 } else { 1 },
+                    categories: if cfg!(target_arch = "x86_64") { 0 } else {
+                        ProcessPostOwnerExitTerminalAuditCategory::NonArenaSingleton.bit()
+                    },
                 },
-                "the failed mapping reclaim seals the exact non-arena W07 owner"
+                "a consumed source free leaves no opaque retained-release owner"
             );
             assert_eq!(
                 fault.observed(),
                 1,
-                "the sole W03 terminal continuation reaches mapping reclaim exactly once"
+                "the sole terminal continuation reaches mapping reclaim exactly once"
             );
             for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
                 assert!(
@@ -46887,10 +46914,21 @@ mod tests {
                 "the source OS-list member detached before its failed mapping reclaim"
             );
 
-            // `set` resets the test-only observed counter. Disable the global
-            // plan after the single assertion and deliberately do not invoke
-            // a second continuation/reclaim: the opaque terminal owner has no
-            // retry or extraction surface.
+            #[cfg(target_arch = "x86_64")]
+            {
+                for offset in (0..span.size).step_by(4096) {
+                    let mut residency = 0;
+                    // SAFETY: sample the refused extent without projecting
+                    // through the retired Page or consumed client pointer.
+                    assert!(unsafe { crabc_core::mm::mincore_raw(
+                        span.base.wrapping_add(offset), 4096, &mut residency) }.is_ok());
+                }
+                fault.set(fault::Plan::disabled());
+                // SAFETY: no client or release capability survives the
+                // consumed source free; this is fixture-only leak cleanup.
+                unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
+            }
+            #[cfg(not(target_arch = "x86_64"))]
             fault.set(fault::Plan::disabled());
         });
     }
@@ -49439,6 +49477,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     #[test]
     fn generic_forced_collection_stops_at_one_pending_os_release() {
         let fault = fault::install(fault::Plan::disabled());
@@ -49518,6 +49557,79 @@ mod tests {
         });
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn generic_forced_collection_consumes_each_source_page_release_once() {
+        let fault = fault::install(fault::Plan::disabled());
+        for request in [7, SMALL_MAX_OBJ_SIZE + 1] {
+            with_allocator(|allocator| {
+                let blocks = [
+                    allocator.allocate_aligned(request, 128 * KIB).unwrap(),
+                    allocator.allocate_aligned(request, 128 * KIB).unwrap(),
+                ];
+                let spans = blocks.map(|block| unsafe {
+                    (&*allocator.page_for_block(block)).memid().os_memory().unwrap()
+                });
+                let bin = if request == 7 { BIN_HUGE } else { BIN_FULL };
+                assert_eq!(allocator.queue_count(bin), Some(2));
+                for block in blocks {
+                    let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+                    // The new force visitor supplies the singleton collection
+                    // route. Keep this exact source producer scoped and joined;
+                    // the older public preparation helper admits regular pages
+                    // only, so construct its atomic projection here explicitly.
+                    let producer = RemoteFreeProducer {
+                        producer: unsafe { Page::remote_free_producer_state_at(page) },
+                        canonical_block: unsafe {
+                            Page::canonical_remote_block_for_live_client_at(page, block)
+                        }.unwrap(),
+                        client_block: block,
+                        _owner: PhantomData,
+                        _not_sync: PhantomData,
+                    };
+                    thread::scope(|scope| {
+                        assert!(scope.spawn(move || producer.publish()).join().unwrap().is_ok());
+                    });
+                }
+                fault.set(fault::Plan::at_pair(
+                    fault::Point::Unmap, 1, fault::Point::Unmap, 1, Errno::NOMEM,
+                ));
+                assert!(allocator.collect_all_pages_for_allocation_retry());
+                assert!(!allocator.has_pending_os_release());
+                assert_eq!(fault.observed(), 2, "one release for each of the two consumed Pages");
+                assert_eq!(fault.secondary_observed(), 1, "the second Page receives the second refusal");
+                assert_eq!(allocator.queue_count(bin), Some(0));
+                assert_eq!(allocator.session.theap().page_count(), 0);
+                for block in blocks {
+                    assert!(unsafe { allocator.page_map.checked_lookup(block.as_ptr()) }.is_null());
+                }
+                let statistics = allocator.session.theap().statistics_snapshot();
+                assert!(allocator.collect_all_pages_for_allocation_retry());
+                assert_eq!(fault.observed(), 2, "later collection performs no retry");
+                assert_eq!(fault.secondary_observed(), 1);
+                assert_eq!(allocator.session.theap().statistics_snapshot(), statistics);
+                for span in spans {
+                    for offset in (0..span.size).step_by(4096) {
+                        let mut residency = 0;
+                        assert!(unsafe { crabc_core::mm::mincore_raw(
+                            span.base.wrapping_add(offset), 4096, &mut residency) }.is_ok());
+                    }
+                }
+                fault.set(fault::Plan::disabled());
+                let recovery = allocator.allocate_aligned(request, 128 * KIB).unwrap();
+                unsafe { recovery.as_ptr().write_bytes(0x3c, request); }
+                assert!(unsafe { core::slice::from_raw_parts(recovery.as_ptr(), request) }
+                    .iter().all(|byte| *byte == 0x3c));
+                unsafe { allocator.free(recovery).unwrap(); }
+                for span in spans {
+                    // SAFETY: no client, metadata, or release capability
+                    // survives; reclaim these source leaks only in the fixture.
+                    unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
+                }
+            });
+        }
+    }
+
     #[test]
     fn captured_local_free_refusal_preserves_the_live_client_and_local_list() {
         for captured_entry in [false, true] {
@@ -49551,6 +49663,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     #[test]
     fn captured_local_free_lifecycle_failure_discharges_the_consumed_client() {
         let fault = fault::install(fault::Plan::disabled());
@@ -49574,6 +49687,45 @@ mod tests {
                 }, LocalClientFreeProgress::Consumed(Err(FreeError::Lifecycle)));
                 // The second page remains linked because the first detached
                 // mapping is still retained. Its client has nevertheless become
+                // the local free-list head, and must never be freed a second time.
+                assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
+                assert_eq!(unsafe { allocator.page_map.checked_lookup(client.as_ptr()) }, page.as_ptr());
+                assert_eq!(unsafe { page.as_ref().used() }, 0);
+                assert_eq!(unsafe { page.as_ref().remote_free_test_local_free() }, canonical.cast().as_ptr());
+                fault.set(fault::Plan::disabled());
+                assert!(allocator.collect_all_pages_for_allocation_retry());
+                assert!(!allocator.has_pending_os_release());
+                assert_eq!(allocator.session.theap().page_count(), 0);
+            });
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn captured_local_free_lifecycle_failure_discharges_the_consumed_client() {
+        let fault = fault::install(fault::Plan::disabled());
+        for captured_entry in [false, true] {
+            with_allocator(|allocator| {
+                let claim = OsAlignedPageClaim::allocate(
+                    allocator.page_map.memory_config(), 128 * KIB, 128 * KIB,
+                ).ok().unwrap();
+                let client = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+                let page = NonNull::new(unsafe { allocator.page_for_block(client) }).unwrap();
+                // SAFETY: this isolated owner retains the exact live aligned
+                // client and its published source page until local consumption.
+                let captured = unsafe {
+                    crate::process_page_map::classify_live_allocation_in_page(page, client)
+                }.unwrap();
+                let canonical = captured.canonical_block();
+                fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                allocator.release_unpublished_claim_or_park(claim);
+                assert!(allocator.has_pending_os_release());
+                assert_eq!(unsafe {
+                    if captured_entry { allocator.free_captured_live_allocation_with_progress(captured) }
+                    else { allocator.free_with_progress(client) }
+                }, LocalClientFreeProgress::Consumed(Err(FreeError::Lifecycle)));
+                // The client Page remains linked because an unpublished
+                // claim's actual cleanup ownership is still retained. Its client has nevertheless become
                 // the local free-list head, and must never be freed a second time.
                 assert_eq!(allocator.queue_count(BIN_HUGE), Some(1));
                 assert_eq!(unsafe { allocator.page_map.checked_lookup(client.as_ptr()) }, page.as_ptr());
@@ -50739,6 +50891,7 @@ mod tests {
         });
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     #[test]
     fn os_aligned_reclaim_failure_parks_the_detached_owner_for_retry() {
         let fault = fault::install(fault::Plan::disabled());
@@ -50786,6 +50939,58 @@ mod tests {
             fault.set(fault::Plan::disabled());
             assert!(allocator.collect_retired(true));
             assert!(!allocator.has_pending_os_release());
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn os_aligned_source_page_free_consumes_refused_release_once() {
+        let fault = fault::install(fault::Plan::disabled());
+        with_allocator(|allocator| {
+            let survivor = allocator.allocate(37, false).unwrap();
+            unsafe { survivor.as_ptr().write_bytes(0x5a, 37) };
+            let block = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+            let page = unsafe { allocator.page_map.checked_lookup(block.as_ptr()) };
+            let span = unsafe { &*page }.memid().os_memory().unwrap();
+            let mapping_present = || {
+                (0..span.size).step_by(4096).all(|offset| {
+                    let mut residency = 0;
+                    // SAFETY: query the exact mapping without accessing the
+                    // consumed client's storage or retired Page metadata.
+                    unsafe { crabc_core::mm::mincore_raw(span.base.wrapping_add(offset),
+                        4096, &mut residency) }.is_ok()
+                })
+            };
+            fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            // SAFETY: this sole live singleton client is consumed exactly
+            // once; its refused mapping release cannot republish the Page.
+            unsafe { allocator.free(block).unwrap() };
+            assert_eq!(fault.observed(), 1);
+            assert!(!allocator.has_pending_os_release());
+            assert!(mapping_present());
+            let page_count = allocator.session.theap().page_count();
+            let released_statistics = allocator.session.theap().statistics_snapshot();
+            assert_eq!(unsafe { allocator.free(block) }, Err(FreeError::Unmapped));
+            assert!(allocator.collect_retired(true));
+            assert_eq!(fault.observed(), 1, "collection cannot retry a consumed source free");
+            assert_eq!(allocator.session.theap().page_count(), page_count);
+            assert_eq!(allocator.session.theap().statistics_snapshot(), released_statistics);
+            assert!(mapping_present());
+            // A consumed free must not block admission of another OS client.
+            let recovery = allocator.allocate_aligned(7, 128 * KIB).unwrap();
+            unsafe { recovery.as_ptr().write_bytes(0x3c, 7) };
+            assert!(unsafe { core::slice::from_raw_parts(recovery.as_ptr(), 7) }
+                .iter().all(|byte| *byte == 0x3c));
+            assert!(unsafe { core::slice::from_raw_parts(survivor.as_ptr(), 37) }
+                .iter().all(|byte| *byte == 0x5a));
+            assert!(mapping_present());
+            fault.set(fault::Plan::disabled());
+            unsafe { allocator.free(recovery).unwrap(); allocator.free(survivor).unwrap(); }
+            assert!(allocator.collect_retired(true));
+            assert!(mapping_present());
+            // SAFETY: the source Page is consumed and no capability survives;
+            // this exact intentionally leaked range is fixture-only cleanup.
+            unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
         });
     }
 

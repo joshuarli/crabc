@@ -3117,16 +3117,19 @@ impl Mapping {
     /// [`Self::unmap_for_process`]. The source syscall runs before its named
     /// statistics transition, including when it fails. A failed primitive
     /// warns before that transition. An error therefore
-    /// leaves the published range live but already accounted; its exact owner
-    /// must use [`Self::reclaim_published`] for an explicit raw retry instead
-    /// of applying the process accounting edge twice.
+    /// leaves the published range live but already accounted. A consumed
+    /// source Page free forgets that release capability and leaves the range
+    /// mapped after its warning. A caller explicitly retaining cleanup
+    /// ownership may use [`Self::reclaim_published`] for a raw retry without
+    /// applying the process accounting edge twice.
     ///
     /// # Safety
     ///
     /// `address` and `length` must name the exact current extent transferred
     /// by [`Self::into_published`]. The caller must hold that token's unique
     /// release right, have quiesced every raw access and derived capability,
-    /// and retain the token after an error. `commit_size` is the source
+    /// and either retain explicit cleanup ownership or consume the source
+    /// Page free after an error. `commit_size` is the source
     /// caller's exact still-committed extent and cannot exceed `length`.
     pub(crate) unsafe fn reclaim_published_for_process(
         process: VmProcess<'_>,
