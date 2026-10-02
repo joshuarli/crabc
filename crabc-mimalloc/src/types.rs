@@ -449,6 +449,28 @@ impl Heap {
         }
     }
 
+    /// Writes the cold bootstrap Heap directly into its final storage.
+    ///
+    /// # Safety
+    /// `destination` owns exclusive aligned writable storage for `Self` and
+    /// contains no live initialized value. The image remains unpublished until
+    /// this write completes, and address-stable after pinning or list publication.
+    pub(crate) unsafe fn write_bootstrap_empty_at(destination: NonNull<Self>) {
+        struct BootstrapEmptyHeap(Heap);
+        // SAFETY: this private template is never projected, activated, or
+        // mutated. Its links/arena pointers are null, its locks/counters are
+        // cold, and it owns no live resource. Heap itself remains non-Sync.
+        unsafe impl Sync for BootstrapEmptyHeap {}
+        static INITIAL_IMAGE: BootstrapEmptyHeap = BootstrapEmptyHeap(Heap::bootstrap_empty());
+        // SAFETY: the caller's fresh exclusive extent cannot overlap this
+        // permanently readable template. Raw copying preserves the exact
+        // source enum, atomic, statistics-header and pointer representations
+        // without constructing registry/statistics aggregates on the stack.
+        unsafe {
+            core::ptr::copy_nonoverlapping(core::ptr::addr_of!(INITIAL_IMAGE.0), destination.as_ptr(), 1);
+        }
+    }
+
     /// Merges a detached Theap's source statistics into this owning Heap.
     ///
     /// This is only the `heap.c:173-181` statistics transition. The caller
@@ -7231,6 +7253,25 @@ impl Theap {
         }
     }
 
+    /// Copies the immutable source empty-Theap prototype into final storage.
+    ///
+    /// # Safety
+    /// `destination` owns exclusive aligned writable storage for `Self` and
+    /// contains no live initialized value. The image remains unpublished until
+    /// this write completes, and address-stable after pinning or list publication.
+    pub(crate) unsafe fn write_empty_at(destination: NonNull<Self>) {
+        // SAFETY: the bootstrap prototype is never activated or mutated. Its
+        // only non-null edges name the actual process-static empty Page and
+        // detached TLD sentinels; copying preserves their pointer provenance.
+        // The caller's fresh exclusive storage cannot overlap the prototype,
+        // and no live ownership or mutable image is duplicated.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                core::ptr::from_ref(crate::bootstrap::empty_default_theap()), destination.as_ptr(), 1,
+            );
+        }
+    }
+
     /// Records the kind-only static provenance that
     /// `mi_heap_main_init_once` assigns to `mi_process_theap_meta` before
     /// `_mi_theap_init` copies the immutable empty image.
@@ -9474,6 +9515,62 @@ mod tests {
                 unsafe { first.finish_random_initialization(material.after_warning()) }
             }
         }
+    }
+
+    #[test]
+    fn cold_in_place_heap_and_theap_preserve_extent_state_and_static_sentinels() {
+        #[repr(C)]
+        struct Storage {
+            before: [u8; 32],
+            heap: core::mem::MaybeUninit<Heap>,
+            between: [u8; 32],
+            theap: core::mem::MaybeUninit<Theap>,
+            after: [u8; 32],
+        }
+        let mut storage = std::boxed::Box::<Storage>::new_uninit();
+        let pointer = storage.as_mut_ptr();
+        // SAFETY: the fresh allocation exclusively owns every aligned field;
+        // no heap or theap has been pinned, published, or activated.
+        let storage = unsafe {
+            core::ptr::addr_of_mut!((*pointer).before).write([0x31; 32]);
+            core::ptr::addr_of_mut!((*pointer).between).write([0x52; 32]);
+            core::ptr::addr_of_mut!((*pointer).after).write([0x73; 32]);
+            Heap::write_bootstrap_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*pointer).heap).cast()));
+            Theap::write_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*pointer).theap).cast()));
+            storage.assume_init()
+        };
+        assert_eq!(storage.before, [0x31; 32]);
+        assert_eq!(storage.between, [0x52; 32]);
+        assert_eq!(storage.after, [0x73; 32]);
+        // SAFETY: both complete cold images were written in their final Box.
+        let heap = unsafe { storage.heap.assume_init_ref() };
+        let theap = unsafe { storage.theap.assume_init_ref() };
+        assert!(heap.subprocess.is_null() && heap.next.is_null() && heap.prev.is_null());
+        assert_eq!(heap.heap_seq, 0);
+        assert_eq!(heap.memid.kind(), MemoryKind::None);
+        assert!(heap.arena_pages.iter().all(|slot| slot.load(Ordering::Relaxed).is_null()));
+        assert!(heap.abandoned_count.iter().all(|count| count.load(Ordering::Relaxed) == 0));
+        assert_eq!(heap.statistics_snapshot(), Heap::bootstrap_empty().statistics_snapshot());
+        assert!(!theap.is_initialized());
+        assert!(theap.is_detached());
+        assert_eq!(theap.refcount(), 1);
+        assert_eq!(theap.page_count(), 0);
+        assert_eq!(theap.tld, detached_thread_local_ptr());
+        assert!(theap.heap.load(Ordering::Relaxed).is_null());
+        assert!(theap.subproc.load(Ordering::Relaxed).is_null());
+        assert_eq!(theap.memid.kind(), MemoryKind::Static);
+        assert_eq!(theap.statistics_snapshot(), Theap::empty().statistics_snapshot());
+        for index in 0..PAGES_DIRECT {
+            assert_eq!(theap.direct_page(index), Some(EMPTY_PAGE.as_ptr()));
+        }
+        for index in 0..BIN_COUNT {
+            let queue = theap.queue(index).unwrap();
+            assert!(queue.is_empty());
+            assert_eq!(queue.count(), 0);
+            assert_eq!(queue.block_size(), BIN_BLOCK_SIZES[index]);
+        }
+        theap.refcount.store(2, Ordering::Relaxed);
+        assert_eq!(crate::bootstrap::empty_default_theap().refcount(), 1);
     }
 
     #[cfg(target_arch = "x86_64")]
