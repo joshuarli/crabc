@@ -3502,19 +3502,15 @@ def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int
         require(mode == expected_mode, f"attempt {index} object mode differs")
         command = item["compile_command"]
         require(isinstance(command, list) and all(isinstance(value, str) for value in command), f"attempt {index} compile command is absent")
-        require(command[:2] == [driver_path, mode], f"attempt {index} object did not use the installed dynamic driver")
-        for flag in FIXED_COMPILE_FLAGS:
-            require(command.count(flag) == 1, f"attempt {index} object compile policy differs")
-        prefix = [driver_path, mode, *FIXED_COMPILE_FLAGS, "--application-quote-include-dir", f"{SOURCE_MOUNT}/compat/perf/fixtures"]
-        require(command[:len(prefix)] == prefix and command.count("--application-quote-include-dir") == 1,
-                f"attempt {index} object did not use the installed performance headers")
-        require(command.count("-c") == 1 and command.count("-o") == 1
-                and command[command.index("-c") + 1] == item["source"]["path"]
-                and command[command.index("-o") + 1] == item["object"]["path"],
-                f"attempt {index} object compile input/output differs")
-        extras = command[len(prefix):command.index("-c")]
-        require(extras == _expected_object_defines(checkout, name),
-                f"attempt {index} object compile defines differ")
+        expected_command = [
+            driver_path, mode, *FIXED_COMPILE_FLAGS,
+            "--application-quote-include-dir", f"{SOURCE_MOUNT}/compat/perf/fixtures",
+            *_expected_object_defines(checkout, name),
+            "-c", item["source"]["path"], "-o", item["object"]["path"],
+        ]
+        # Compiler inputs and overrides can follow the output operand.  Compare
+        # the complete invocation so retained objects have one sealed recipe.
+        require(command == expected_command, f"attempt {index} object compile command differs")
         _verify_identity_tree(checkout, item["raw"], f"attempt {index} compile raw {name}")
         object_paths[str(item["object"]["path"])] = item["object"]
     links = build["links"]

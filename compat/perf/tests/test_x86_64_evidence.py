@@ -40,6 +40,52 @@ def resources(value: int) -> dict[str, int]:
     return {name: value for name in RESOURCE_FIELDS}
 
 
+class ObjectCompileClosureTests(unittest.TestCase):
+    def test_object_reader_accepts_exact_compile_and_rejects_unsealed_trailing_input(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            source = directory / "workload.c"
+            output = directory / "workload.o"
+            proof_path = directory / "same-object.json"
+            stdout, stderr = directory / "compile.stdout", directory / "compile.stderr"
+            stdout.write_bytes(b"")
+            stderr.write_bytes(b"")
+            source.write_bytes(b"int workload(void) { return 1; }\n")
+            output.write_bytes(b"retained object fixture\n")
+            source_record, output_record = identity(source), identity(output)
+            driver = "/workspace/product/bin/crabc-cc-dynamic"
+            command = [driver, "--dynamic-pie", *evidence.FIXED_COMPILE_FLAGS,
+                       "--application-quote-include-dir", "/workspace/compat/perf/fixtures",
+                       "-c", source_record["path"], "-o", output_record["path"]]
+            proof = {"objects": {"workload": output_record["sha256"]},
+                     "inputs": {"io_fixture": hashlib.sha256(bytes(range(256)) * 16).hexdigest()}}
+            proof_path.write_text(json.dumps(proof), encoding="utf-8")
+            attempt = {
+                "source": {"before": {"source:workload": source_record}},
+                "tools": {"before": {"candidate_driver": {"path": driver}}},
+                "build": {
+                    "objects": {"workload": {"source": source_record, "object": output_record,
+                        "mode": "--dynamic-pie", "compile_command": command,
+                        "raw": {"stdout": identity(stdout), "stderr": identity(stderr)}}},
+                    "links": {}, "harness": {}, "same_object_input_proof": proof,
+                    "same_object_input_proof_file": identity(proof_path),
+                    "companion_same_object_input_proof": None,
+                },
+            }
+            # Isolate the object receipt boundary from unrelated link and
+            # supervisor fixtures; real retained file seals still replay.
+            with patch.object(evidence, "FULL_OBJECT_NAMES", {"workload"}), \
+                 patch.object(evidence, "FULL_LINK_NAMES", set()), \
+                 patch.object(evidence, "_verify_timing_launcher_harness"):
+                evidence._verify_attempt_build(ROOT, attempt, 1)
+                for suffix in (["-include", "/unsealed/header.h"], ["-O0"], ["extra.c"]):
+                    with self.subTest(suffix=suffix):
+                        altered = copy.deepcopy(attempt)
+                        altered["build"]["objects"]["workload"]["compile_command"].extend(suffix)
+                        with self.assertRaisesRegex(evidence.EvidenceError, "compile command differs"):
+                            evidence._verify_attempt_build(ROOT, altered, 1)
+
+
 class CanonicalProfileInvocationTests(unittest.TestCase):
     def test_host_reader_reconstructs_all_114_timed_invocations(self) -> None:
         invocations = evidence.canonical_workload_invocations(ROOT)

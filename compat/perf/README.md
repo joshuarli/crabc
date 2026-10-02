@@ -77,11 +77,12 @@ only direct roots reach either executable's `DT_NEEDED`; the installed-driver
 receipt records the complete schema-3 closure and the musl link resolves it
 only through `-Wl,-rpath-link`.
 
-Use the dedicated image tag, which is deliberately separate from the ordinary
-core-evidence image:
+Use the restored immutable native image. Its performance-tool manifest binds
+the pinned musl compiler, loader and libc, readelf and strace; changing an image
+identity does not transfer historical qualification:
 
 ```bash
-CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf \
+CRABC_X86_64_CORE_IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
   ./scripts/dev-x86_64.sh perf-c-test
 ```
 
@@ -126,7 +127,7 @@ owned-dynamic-qualification receipt binds the supplied product; its absence is
 also a named blocker.
 
 ```bash
-IMAGE=crabc-core-evidence:x86_64-native-perf
+IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a
 P=$PWD/.work/x86_64/<dynamic-product>
 W=$PWD/.work/x86_64/<fresh-roster>
 CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c plan \
@@ -140,6 +141,37 @@ CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c collect \
   --dynamic-product "$P" --work-dir "$W/collector" --attempt-roster "$W/attempt-roster.json"
 ./scripts/dev-x86_64.sh perf-c check "$W/collector/collector.json"
 ```
+
+For final qualification, use the same `plan`, ordered three `run` commands,
+`collect`, and `check` commands above with `--implementation-smoke` removed
+and fresh work paths. Supply the current cohort's installed dynamic product
+and its `--dynamic-qualification` receipt to `plan`; the collector replays
+that prerequisite from the immutable roster.
+The predecessor gates and full-budget host admission must pass first; smoke
+reports cannot satisfy these prerequisites. Keep the image identity, supplied
+product, source revision and ordered roster unchanged across all three attempts.
+
+The final sequence, with `P` and `Q` set to that cohort's product and validated
+dynamic qualification receipt, is:
+
+```bash
+IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a
+W=$PWD/.work/x86_64/runtime-c-performance-final
+CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c plan \
+  --dynamic-product "$P" --dynamic-qualification "$Q" --work-dir "$W"
+for i in 1 2 3; do
+  CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c run \
+    --dynamic-product "$P" --work-dir "$W/attempt-$i" \
+    --attempt-roster "$W/attempt-roster.json" --attempt-index "$i"
+done
+CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c collect \
+  --dynamic-product "$P" --work-dir "$W/collector" --attempt-roster "$W/attempt-roster.json"
+./scripts/dev-x86_64.sh perf-c check "$W/collector/collector.json"
+```
+
+Object receipt replay compares the complete compile invocation with the fixed
+profile, including its final input/output operands. Additional compiler inputs
+or overriding flags cannot be appended to an otherwise matching recipe.
 
 The native profile defines the full 114-row roster: the unchanged 74 rows plus
 supported clock selections, 4-MiB/32-MiB live sets, free/refill/reuse,
@@ -174,7 +206,7 @@ raw proc snapshots, and ordered R/C checkpoints. It is implementation-only
 and never produces a scorecard or promotion claim:
 
 ```bash
-CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf \
+CRABC_X86_64_CORE_IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
   ./scripts/dev-x86_64.sh perf-c-memory-smoke \
   /workspace/.work/x86_64/<dynamic-product> \
   /workspace/.work/x86_64/<fresh-memory-smoke-work>
