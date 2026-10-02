@@ -726,6 +726,120 @@ impl PendingFreshOsPageInitialization {
     }
 }
 
+/// A live source Page assertion retained after queue selection has ended.
+/// The exact Page and its backing remain published in the PageMap, but no
+/// queue or direct cache can select it during diagnostic callback reentry.
+/// This task never reconstructs an arena claim or OS mapping release right.
+#[must_use = "a retained live Page assertion must reach its original output owner"]
+#[derive(Debug)]
+pub(crate) struct PendingLivePageValidity {
+    page: NonNull<Page>,
+    theap: NonNull<Theap>,
+    heap: NonNull<Heap>,
+    subprocess: NonNull<crate::subproc::SubprocessIdentity>,
+    assertion: crate::page_validity::LivePageValidityAssertion,
+    #[cfg(target_arch = "x86_64")]
+    retirement_marker: FreshTaskRetirementMarker,
+}
+
+impl PendingLivePageValidity {
+    #[cfg(test)]
+    pub(crate) fn page(&self) -> NonNull<Page> { self.page }
+
+    pub(crate) fn matches_theap(&self, theap: NonNull<Theap>) -> bool { self.theap == theap }
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.subprocess.as_ptr() == core::ptr::from_ref(subprocess).cast_mut()
+    }
+
+    /// # Safety
+    /// The actual original issuer and admission remain pinned through this
+    /// marker publication and later task settlement. All metadata projections
+    /// and locks have ended; identities only reject a foreign admission.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn ensure_retirement_refusal(&mut self, theap: NonNull<Theap>, heap: NonNull<Heap>)
+        -> Result<(), crate::types::HeapTheapListError>
+    {
+        use crate::types::{HeapTheapListError, RetainedFreshTaskMarkerOutcome};
+        if self.theap != theap || self.heap != heap { return Err(HeapTheapListError::Membership); }
+        if let FreshTaskRetirementMarker::Marked { theap: issuer, heap: original_heap } = self.retirement_marker {
+            return if issuer == theap && original_heap == heap { Ok(()) }
+                else { Err(HeapTheapListError::Membership) };
+        }
+        // SAFETY: the caller retains the original issuer independently of
+        // these address guards, while the producer owns its Heap-list lock.
+        match unsafe { Theap::mark_retained_fresh_task_at_with_progress(theap, heap) } {
+            RetainedFreshTaskMarkerOutcome::Unchanged(error) => Err(error),
+            RetainedFreshTaskMarkerOutcome::Changed(result) => {
+                self.retirement_marker = FreshTaskRetirementMarker::Marked { theap, heap };
+                result.map_err(HeapTheapListError::Lock)
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn has_retirement_refusal_marker(&self) -> bool {
+        matches!(self.retirement_marker, FreshTaskRetirementMarker::Marked { .. })
+    }
+
+    /// # Safety
+    /// `owner` is the original admission acquired before observation. Its
+    /// issuer, PageMap, backing and output binding remain continuously live;
+    /// all projections and allocator locks have ended. The retained Page is
+    /// unselectable and output callback arguments remain valid and serialized.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn dispatch(self, owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>)
+        -> Result<core::convert::Infallible, Self>
+    {
+        if !self.matches_theap(owner.selected_theap()) || self.heap != owner.heap()
+            || !self.belongs_to_subprocess(owner.process().subprocess()) { return Err(self); }
+        // SAFETY: original admission and exact detached Page are retained
+        // independently of the refusal guards, with no projection remaining.
+        unsafe { self.assertion.dispatch(owner) }
+    }
+
+    /// # Safety
+    /// This is the original winning startup and ordinary attachment captured
+    /// before observation. The exact issuer and detached Page backing remain
+    /// live; every projection and lock ends before callback delivery.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn dispatch_source_attached(self,
+        owner: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>)
+        -> Result<core::convert::Infallible, Self>
+    {
+        if !owner.matches_theap(self.theap) || owner.heap() != self.heap { return Err(self); }
+        let process = match owner.process() { Ok(process) => process, Err(_) => return Err(self) };
+        if !self.belongs_to_subprocess(process.subprocess()) { return Err(self); }
+        let Self { page, theap, heap, subprocess, assertion, retirement_marker } = self;
+        // SAFETY: the original attachment retains the exact unselectable Page
+        // and its VM/metadata after every projection has ended.
+        match unsafe { assertion.dispatch_source_attached(owner) } {
+            Ok(never) => match never {},
+            Err(assertion) => Err(Self { page, theap, heap, subprocess, assertion, retirement_marker }),
+        }
+    }
+
+    /// # Safety
+    /// The original metadata startup scope predates observation and retains
+    /// the exact issuer, PageMap, VM and detached Page until terminal delivery
+    /// or refusal. Every metadata projection and lock has ended.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn dispatch_source_initialization(self,
+        owner: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>)
+        -> Result<core::convert::Infallible, Self>
+    {
+        if !owner.matches_theap(self.theap) { return Err(self); }
+        let process = match owner.process() { Ok(process) => process, Err(_) => return Err(self) };
+        if !self.belongs_to_subprocess(process.subprocess()) { return Err(self); }
+        let Self { page, theap, heap, subprocess, assertion, retirement_marker } = self;
+        // SAFETY: the original startup issuer retains the exact Page and
+        // backing after all allocation and metadata projections have ended.
+        match unsafe { assertion.dispatch_source_initialization(owner) } {
+            Ok(never) => match never {},
+            Err(assertion) => Err(Self { page, theap, heap, subprocess, assertion, retirement_marker }),
+        }
+    }
+}
+
 /// One completed native generic allocation attempt or its source collection
 /// continuation. A force continuation is emitted only after the first exact
 /// page lookup returned the source no-page result; resuming it performs the
@@ -3728,6 +3842,7 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession,
     // `munmap` retryable without inventing arena/page-map provenance.
     pending_os_release: Option<OsAlignedPageOwner>,
     pending_fresh_initialization: Option<PendingFreshOsPageInitialization>,
+    pending_live_page_validity: Option<PendingLivePageValidity>,
     // A failed false-force collection may have detached remote state. This is
     // permanent in production: the retained record prevents every later
     // public allocator operation from crossing that ownership boundary.
@@ -3794,6 +3909,7 @@ pub(crate) struct PageAllocatorEngineFinishAudit {
     pub(crate) collection_poisoned: bool,
     pub(crate) pending_os_release: bool,
     pub(crate) pending_fresh_initialization: bool,
+    pub(crate) pending_live_page_validity: bool,
     collection_poison: Option<PageAllocatorEngineCollectionPoisonAudit>,
     page_commit_poisoned: bool,
     static_main_mapped_regular_claim_terminal: bool,
@@ -3859,6 +3975,7 @@ pub(crate) struct PageAllocatorEngineState<'arena, 'map,
     thread_sequence: usize,
     pending_os_release: Option<OsAlignedPageOwner>,
     pending_fresh_initialization: Option<PendingFreshOsPageInitialization>,
+    pending_live_page_validity: Option<PendingLivePageValidity>,
     collection_poison: Option<RetainedPageCollectPoison>,
     page_commit_poison: bool,
     #[cfg(test)]
@@ -3932,6 +4049,7 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
             thread_sequence: 0,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -3957,7 +4075,7 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
     /// or page poison returns the engine so its Drop path can transfer/latch
     /// that ownership in the child context.
     pub(crate) fn finish_operation(mut self) -> Result<(), Self> {
-        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.collection_poison.is_some()
             || self.page_commit_poison
         {
@@ -4012,7 +4130,7 @@ impl<'child, 'map, Session: TheapPageSession>
     /// caller destroys the child arenas next and never reuses this Theap's
     /// page state.
     pub(crate) unsafe fn detach_pages_for_subprocess_destroy(&mut self) -> bool {
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.page_commit_poison {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.page_commit_poison {
             return false;
         }
         for bin in 0..BIN_COUNT {
@@ -4153,6 +4271,7 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
             thread_sequence: sequence.get(),
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -4174,7 +4293,7 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
     }
 
     pub(crate) fn finish_operation(mut self) -> Result<(), Self> {
-        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.collection_poison.is_some()
             || self.page_commit_poison
         {
@@ -4322,7 +4441,7 @@ impl<'map, Session: TheapPageSession> PageAllocatorEngine<
     /// backing until the surrounding source destruction finishes. No external
     /// reference is revoked by consuming this engine.
     pub(crate) unsafe fn retire_process_metadata_quiescent(self) -> Result<(), Self> {
-        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.collection_poison.is_some()
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.collection_poison.is_some()
             || self.page_commit_poison
         {
             return Err(self);
@@ -4344,6 +4463,7 @@ impl<'map, Session: TheapPageSession> PageAllocatorEngine<
             thread_sequence: 0,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -5242,6 +5362,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Sou
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -5268,7 +5389,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Sou
     /// it does not release the retained TLD, Theap, registration, or a source
     /// queue. A failed free leaves its process boundary terminal instead.
     pub(crate) fn finish_source_retained_local_free(mut self) -> Result<(), Self> {
-        if self.is_captured_local_free_unavailable() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_captured_local_free_unavailable() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(self);
         }
         self.shutdown_complete = true;
@@ -7110,6 +7231,7 @@ pub(crate) struct ThreadExitFullOsSingletonPagesPostExitParts<'main> {
     remaining_pages: usize,
     pending_os_release: Option<OsAlignedPageOwner>,
     pending_fresh_initialization: Option<PendingFreshOsPageInitialization>,
+    pending_live_page_validity: Option<PendingLivePageValidity>,
     terminal: bool,
     // The route is movable but intentionally not shareable. Its consuming
     // free API plus the post-exit PageMap guard serialize each source low-bit
@@ -10258,6 +10380,7 @@ impl<'bootstrap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10301,6 +10424,7 @@ impl<'bootstrap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             forced_collect_retired_call_count: 0,
@@ -10374,6 +10498,7 @@ impl<'bootstrap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10418,6 +10543,7 @@ impl<'attach, 'heap, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10505,7 +10631,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // terminally retained.
         let resuming_backing_release = self.session.is_awaiting_backing_release();
         if self.has_retained_collection_poison()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || (!resuming_backing_release && !self.session.permits_ordinary_page_operations())
         {
             return Err(DynamicThreadExitDrainFailure::Retained {
@@ -10546,7 +10672,7 @@ impl<'attach, 'heap, 'arena, 'map>
         block: NonNull<u8>,
     ) -> Result<DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>, DynamicMappedAbandonFailure<'attach, 'heap, 'arena, 'map>> {
         let reject = |engine, error| DynamicMappedAbandonFailure::Rejected { engine, error };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(self, DynamicMappedAbandonError::Collection));
         }
         // SAFETY: the consuming engine retains the exclusive PageMap borrow.
@@ -10780,6 +10906,7 @@ where
             thread_sequence: 0,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10832,6 +10959,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10978,7 +11106,7 @@ impl<'attachment, 'main, 'arena, 'map>
             MainHeapThreadAttachmentError,
         ),
     > {
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err((self, MainHeapThreadAttachmentError::Poisoned));
         }
         let (session, state) = self.into_session_and_state();
@@ -11027,6 +11155,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Own
             thread_sequence,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -11198,7 +11327,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
     pub(crate) fn collect_abandon_owner_exit(mut self) -> Result<Self, Self> {
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
         {
             return Err(self);
         }
@@ -11230,6 +11359,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 heap,
                 pending_os_release: &mut self.pending_os_release,
                 pending_fresh_initialization: &mut self.pending_fresh_initialization,
+                pending_live_page_validity: &mut self.pending_live_page_validity,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
                 #[cfg(test)]
@@ -11271,7 +11401,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 && (0..PAGES_DIRECT)
                     .all(|index| theap.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
         };
-        if !complete || self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if !complete || self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             self.retain_terminal_thread_exit_route();
             return Err(self);
         }
@@ -11317,6 +11447,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -11331,12 +11462,14 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         debug_assert!(shutdown_complete);
         drop(arena);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let attachment = unsafe { session.into_attachment_after_process_page_route() };
         unsafe { attachment.finish_after_detached_process_page_route() }
     }
@@ -11361,7 +11494,7 @@ impl<'attachment, 'main, 'arena, 'map>
     pub(crate) fn finish_after_all_free_thread_exit(mut self) -> Result<(), Self> {
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
         {
             return Err(self);
         }
@@ -11448,7 +11581,7 @@ impl<'attachment, 'main, 'arena, 'map>
 
         if retained_live_page
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(self);
@@ -11659,7 +11792,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
         {
             return Err(reject(
                 self,
@@ -12089,7 +12222,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // abandoned page has no queue/direct/page-count ownership left, while
         // the returned `parts` retain the independent map/arena/heap facts.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -12128,6 +12261,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -12142,10 +12276,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -12203,7 +12339,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -12435,7 +12571,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -12474,6 +12610,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -12488,10 +12625,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -12549,7 +12688,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -12781,7 +12920,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -12820,6 +12959,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -12834,10 +12974,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -12897,7 +13039,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -13137,7 +13279,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -13176,6 +13318,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -13190,10 +13333,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -13254,7 +13399,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -13504,7 +13649,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -13543,6 +13688,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -13557,10 +13703,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -13619,7 +13767,7 @@ impl<'attachment, 'main, 'arena, 'map>
             ThreadExitFullRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
         let expected_kind = expected_class.page_kind();
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullRegularPostExitAbandonError::Collection,
@@ -13870,7 +14018,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // attachment can tear down. The typed parts retain only the static
         // arena/Heap/span facts and the unmapped state machine.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -13909,6 +14057,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -13923,10 +14072,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -14064,7 +14215,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullNonDirectSmallPagesPostExitAbandonError::Collection,
@@ -14369,7 +14520,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -14408,6 +14559,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -14422,10 +14574,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -14476,7 +14630,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullDirectSmallPagesPostExitAbandonError::Collection,
@@ -14783,7 +14937,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -14822,6 +14976,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -14836,10 +14991,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -14889,7 +15046,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullSingletonPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullSingletonPagesPostExitAbandonError::Collection,
@@ -15151,7 +15308,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -15189,6 +15346,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -15203,10 +15361,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -15255,7 +15415,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullOsSingletonPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullOsSingletonPagesPostExitAbandonError::Collection,
@@ -15525,7 +15685,7 @@ impl<'attachment, 'main, 'arena, 'map>
             || detached_pages != expected_page_count
             || !list_has_members
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
             || (0..BIN_COUNT).any(|bin| {
                 !self
@@ -15555,6 +15715,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -15569,10 +15730,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -15583,6 +15746,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 remaining_pages: detached_pages,
                 pending_os_release: None,
                 pending_fresh_initialization: None,
+                pending_live_page_validity: None,
                 terminal: false,
                 _not_sync: PhantomData,
             },
@@ -15626,7 +15790,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullMediumPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullMediumPagesPostExitAbandonError::Collection,
@@ -15907,7 +16071,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -15946,6 +16110,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -15960,10 +16125,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -16012,7 +16179,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullMediumOrLargePagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullMediumOrLargePagesPostExitAbandonError::Collection,
@@ -16317,7 +16484,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -16356,6 +16523,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
@@ -16368,9 +16536,11 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
 
         Ok(ThreadExitFullMediumOrLargePagesPostExitDetach {
@@ -16428,7 +16598,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullSingletonOrRegularPagesPostExitAbandonError::Collection,
@@ -16770,7 +16940,7 @@ impl<'attachment, 'main, 'arena, 'map>
             || detached_singletons == 0
             || detached_regulars == 0
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
             || (0..BIN_COUNT).any(|queue_bin| {
                 !self
@@ -16797,6 +16967,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
@@ -16809,9 +16980,11 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         // SAFETY: `singleton_arena_ptr` came from the engine's still-live
         // registry-published `ArenaView`; the detached route owns the same
@@ -16877,7 +17050,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullLargePagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullLargePagesPostExitAbandonError::Collection,
@@ -17173,7 +17346,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -17212,6 +17385,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -17226,10 +17400,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -17331,7 +17507,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // it owns the one failed raw release. Preserve that distinct terminal
         // outcome instead of reporting the source page release as failed.
         if !allows_page_abandon && !self.collect_full_pages_non_abandoning() {
-            return if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+            return if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
                 Ok(ThreadExitRetiredPagePrepassOutcome::PendingOsRelease)
             } else {
                 Err(ThreadExitRetiredPagePrepassError::Release)
@@ -17436,7 +17612,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
         {
             return Err(reject(
                 self,
@@ -18101,7 +18277,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // direct cache, or Theap page count may remain before attachment
         // teardown becomes sound.
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -18186,6 +18362,7 @@ impl<'attachment, 'main, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -18200,10 +18377,12 @@ impl<'attachment, 'main, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
         drop(pending_fresh_initialization);
+        drop(pending_live_page_validity);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -18260,6 +18439,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 remaining_pages: detached_os_singletons,
                 pending_os_release: None,
                 pending_fresh_initialization: None,
+                pending_live_page_validity: None,
                 terminal: false,
                 _not_sync: PhantomData,
             })
@@ -20041,7 +20221,7 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
         ThreadExitFullOsSingletonPagesPostExitFreeOutcome,
         ThreadExitFullOsSingletonPagesPostExitFreeError,
     > {
-        if self.terminal || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.terminal || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(ThreadExitFullOsSingletonPagesPostExitFreeError::Terminal);
         }
         if self.remaining_pages == 0 {
@@ -34628,6 +34808,7 @@ impl<'attach, 'heap, 'arena, 'map>
             thread_sequence: _,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -34642,6 +34823,7 @@ impl<'attach, 'heap, 'arena, 'map>
         } = state;
         debug_assert!(pending_os_release.is_none());
         debug_assert!(pending_fresh_initialization.is_none());
+        debug_assert!(pending_live_page_validity.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         debug_assert!(!shutdown_complete);
@@ -37875,6 +38057,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             thread_sequence: sequence.get(),
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -37898,7 +38081,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Ends an operation of an engine from [`Self::activate_owned_session`];
     /// a failed one returns the engine, whose Drop retains its state.
     pub(crate) fn finish_owned_session(mut self) -> Result<(), Self> {
-        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
             return Err(self);
         }
         self.shutdown_complete = true;
@@ -37932,7 +38115,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Declined;
         }
         if self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.session.permits_ordinary_page_operations()
         {
             return Declined;
@@ -38063,6 +38246,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 page_map: self.page_map, main_heap: Some(main_heap), heap,
                 pending_os_release: &mut self.pending_os_release,
                 pending_fresh_initialization: &mut self.pending_fresh_initialization,
+                pending_live_page_validity: &mut self.pending_live_page_validity,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
                 #[cfg(test)]
@@ -38111,7 +38295,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         theap: NonNull<Theap>,
         thread: LiveThreadId,
     ) -> bool {
-        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
             return false;
         }
         // SAFETY: forwarded ownership of the live Theap.
@@ -38128,6 +38312,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 page_map: self.page_map, main_heap: None, heap,
                 pending_os_release: &mut self.pending_os_release,
                 pending_fresh_initialization: &mut self.pending_fresh_initialization,
+                pending_live_page_validity: &mut self.pending_live_page_validity,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
                 #[cfg(test)]
@@ -38215,6 +38400,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     thread_sequence: core::ptr::read(core::ptr::addr_of!((*this_ptr).thread_sequence)),
                     pending_os_release: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_os_release)),
                     pending_fresh_initialization: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_fresh_initialization)),
+                    pending_live_page_validity: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_live_page_validity)),
                     collection_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).collection_poison)),
                     page_commit_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_commit_poison)),
                     #[cfg(test)]
@@ -38247,6 +38433,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             thread_sequence: state.thread_sequence,
             pending_os_release: state.pending_os_release,
             pending_fresh_initialization: state.pending_fresh_initialization,
+            pending_live_page_validity: state.pending_live_page_validity,
             collection_poison: state.collection_poison,
             page_commit_poison: state.page_commit_poison,
             #[cfg(test)]
@@ -38315,12 +38502,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// session, releases the artificial process PageMap exclusion, and may
     /// later reactivate only against the already-published first arena.
     pub(crate) fn finish_quiescent_in_place(&mut self) -> bool {
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return false;
         }
         if !self.collect_retired(true)
             || self.is_collection_poisoned()
-            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.session.theap().page_count() != 0
         {
             return false;
@@ -41585,7 +41772,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 }
                 // Preserve a detached OS release owner exactly as the forced
                 // visitor does; the remaining pages keep their ownership.
-                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
                     return false;
                 }
                 page = next;
@@ -41639,7 +41826,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // A successful semantic free can still retain its detached
                 // OS mapping after failed unmap. Stop without another release
                 // or allocation retry; the next page keeps all its ownership.
-                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
                     return false;
                 }
                 page = next;
@@ -41762,7 +41949,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     }
                     // As with the force visitor, preserve the one detached
                     // OS release owner and leave the next page queue-linked.
-                    if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+                    if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
                         return false;
                     }
                 } else {
@@ -41891,7 +42078,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[cfg(target_arch = "x86_64")]
     #[inline]
     pub(crate) fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
-        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return None;
         }
         Some(crate::local_fast_path::LocalFastOwner {
@@ -41910,6 +42097,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // from crossing the already-cleared regular heap-key boundary.
         self.has_retained_collection_poison()
             || self.pending_fresh_initialization.is_some()
+            || self.pending_live_page_validity.is_some()
             || !self.session.permits_ordinary_page_operations()
     }
 
@@ -42175,6 +42363,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             collection_poisoned: self.is_collection_poisoned(),
             pending_os_release: self.pending_os_release.is_some(),
             pending_fresh_initialization: self.pending_fresh_initialization.is_some(),
+            pending_live_page_validity: self.pending_live_page_validity.is_some(),
             collection_poison,
             page_commit_poisoned: self.page_commit_poison,
             static_main_mapped_regular_claim_terminal: self
@@ -42358,7 +42547,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // A failed earlier OS-aligned release owns the sole pending slot. It
         // must be retried before claiming another mapping; ordinary arena
         // pages intentionally do not depend on this token.
-        if self.pending_fresh_initialization.is_some() || !self.retry_pending_os_release() {
+        if self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some() || !self.retry_pending_os_release() {
             return Ok(None);
         }
         let config = self.page_map.memory_config();
@@ -42667,6 +42856,26 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Ok(())
     }
 
+    /// Retains the exact detached live Page task on its original issuer.
+    /// This terminal slot has no cleanup or allocation-retry operation.
+    pub(crate) fn retain_live_page_validity(&mut self, pending: PendingLivePageValidity)
+        -> Result<(), PendingLivePageValidity>
+    {
+        if pending.theap.as_ptr() != self.theap_identity()
+            || self.pending_live_page_validity.is_some() || self.pending_fresh_initialization.is_some() {
+            return Err(pending);
+        }
+        if let Some(process) = self.arena.process() {
+            if !pending.belongs_to_subprocess(process.subprocess()) { return Err(pending); }
+        }
+        self.pending_live_page_validity = Some(pending);
+        Ok(())
+    }
+
+    pub(crate) fn take_pending_live_page_validity(&mut self) -> Option<PendingLivePageValidity> {
+        self.pending_live_page_validity.take()
+    }
+
     /// Transfers the exact original candidate retained by an unphased adapter.
     pub(crate) fn take_pending_fresh_initialization(&mut self) -> Option<PendingFreshOsPageInitialization> {
         self.pending_fresh_initialization.take()
@@ -42695,7 +42904,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // that completed refusal or reinterpret it as fresh admission.
             return Err(pending);
         }
-        if pending.theap != self.theap_identity() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if pending.theap != self.theap_identity() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return Err(pending);
         }
         if let Some(process) = self.arena.process() {
@@ -43996,7 +44205,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // not detach another OS page or discard its PageMap/metadata while
         // that owner exists. The current empty page remains fully linked for
         // a later explicit collection after the pending release succeeds.
-        if matches!(&span, ReleaseSpan::Os(_)) && (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+        if matches!(&span, ReleaseSpan::Os(_)) && (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             return false;
         }
         let queue = match self.session.queue_mut(bin) {
@@ -44641,6 +44850,7 @@ struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<
     heap: NonNull<Heap>,
     pending_os_release: &'state mut Option<OsAlignedPageOwner>,
     pending_fresh_initialization: &'state mut Option<PendingFreshOsPageInitialization>,
+    pending_live_page_validity: &'state mut Option<PendingLivePageValidity>,
     collection_poison: &'state mut Option<RetainedPageCollectPoison>,
     page_commit_poison: bool,
     #[cfg(test)]
@@ -44665,6 +44875,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
     #[inline]
     fn is_collection_poisoned(&self) -> bool {
         self.collection_poison.is_some() || self.page_commit_poison || self.pending_fresh_initialization.is_some()
+            || self.pending_live_page_validity.is_some()
     }
 
     /// Records the one non-retryable source collection boundary.  The outer
@@ -45148,7 +45359,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
                 let Err(failure) = failure.forget_consumed_source_page() else {
                     return true;
                 };
-                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
                     return false;
                 }
                 *self.pending_os_release = Some(failure.into_owner());
@@ -45405,6 +45616,7 @@ where
             thread_sequence: 0,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]

@@ -14017,6 +14017,8 @@ impl NativeAllocationOwner<'_> {
         self.selected_theap
     }
 
+    pub(crate) fn heap(&self) -> core::ptr::NonNull<crate::types::Heap> { self.heap }
+
     /// Returns a process view borrowed from this still-admitted context.
     pub(crate) fn process(&self) -> crate::os::VmProcess<'_> { self.process }
 
