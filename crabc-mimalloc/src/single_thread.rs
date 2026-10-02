@@ -39634,7 +39634,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.find_generic_queue_page_with_first_try(bin, block_size, kind, true)
     }
 
-    /// The recursive false-mode retry from `mi_page_queue_find_free_ex`.
+    /// The bounded false-mode retry from `mi_page_queue_find_free_ex`.
     ///
     /// A mapped page that was successfully claimed and then reabandoned after
     /// the source's final direct mapping failure may not fall straight through
@@ -39646,191 +39646,193 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         bin: usize,
         block_size: usize,
         kind: PageKind,
-        first_try: bool,
+        mut first_try: bool,
     ) -> Result<Option<NonNull<Page>>, GenericPathError> {
-        let first = self
-            .session
-            .queue(bin)
-            .ok_or(GenericPathError::Lifecycle)?
-            .first();
-        if let Some(first) = NonNull::new(first) {
-            match self.page_quick_collect(first) {
-                Ok(true) => {
-                    #[cfg(target_arch = "x86_64")]
-                    if crate::config::SECURE_LEVEL >= 2
-                        && unsafe { first.as_ref().capacity() < first.as_ref().reserved() }
-                    {
-                        // The selected session owns its random field and the
-                        // available head. Source extension refusal keeps that
-                        // existing list usable; poisoned publication does not.
-                        let word = // SAFETY: this engine retains the selected source Theap.
-                        unsafe { Theap::next_os_reservation_random_at(
-                            self.session.local_field_theap_pointer(),
-                        ) }.map(|word| word as usize).ok_or(GenericPathError::Local(FreeListError::RandomSourceUnavailable))?;
-                        if word & 1 != 0 {
-                            let extension = self.extend_page_before_allocation(first);
-                            // A retained assertion owns this Page and cannot
-                            // be discarded as a recoverable commitment miss.
-                            #[cfg(target_arch = "x86_64")]
-                            let retained_assertion = matches!(&extension, Err(GenericPathError::LiveValidity(_)));
-                            #[cfg(not(target_arch = "x86_64"))]
-                            let retained_assertion = false;
-                            if self.page_commit_poison || retained_assertion {
-                                extension?;
+        // The source false-mode search restarts with fresh scan locals and
+        // the same queue/collection ordering. Keep that one retry in this
+        // frame so retrying cannot nest another result-owning call frame.
+        loop {
+            let first = self
+                .session
+                .queue(bin)
+                .ok_or(GenericPathError::Lifecycle)?
+                .first();
+            if let Some(first) = NonNull::new(first) {
+                match self.page_quick_collect(first) {
+                    Ok(true) => {
+                        #[cfg(target_arch = "x86_64")]
+                        if crate::config::SECURE_LEVEL >= 2
+                            && unsafe { first.as_ref().capacity() < first.as_ref().reserved() }
+                        {
+                            // The selected session owns its random field and the
+                            // available head. Source extension refusal keeps that
+                            // existing list usable; poisoned publication does not.
+                            let word = // SAFETY: this engine retains the selected source Theap.
+                            unsafe { Theap::next_os_reservation_random_at(
+                                self.session.local_field_theap_pointer(),
+                            ) }.map(|word| word as usize).ok_or(GenericPathError::Local(FreeListError::RandomSourceUnavailable))?;
+                            if word & 1 != 0 {
+                                let extension = self.extend_page_before_allocation(first);
+                                // A retained assertion owns this Page and cannot
+                                // be discarded as a recoverable commitment miss.
+                                #[cfg(target_arch = "x86_64")]
+                                let retained_assertion = matches!(&extension, Err(GenericPathError::LiveValidity(_)));
+                                #[cfg(not(target_arch = "x86_64"))]
+                                let retained_assertion = false;
+                                if self.page_commit_poison || retained_assertion {
+                                    extension?;
+                                }
+                            }
+                        }
+                        // `mi_page_queue_lookup_free_first` leaves its head in
+                        // place and clears retirement only after choosing it.
+                        // SAFETY: this active session owns the candidate's
+                        // ordinary retirement byte. Producer atomics are disjoint.
+                        unsafe { Page::set_retire_expire_at(first, 0) };
+                        return Ok(Some(first));
+                    }
+                    Ok(false) => {}
+                    Err(error) => return Err(GenericPathError::Local(error)),
+                }
+            }
+
+            let mut page = first;
+            let mut search_count = 0usize;
+            let mut candidate: *mut Page = core::ptr::null_mut();
+            let mut candidate_limit = 0isize;
+            let mut page_full_retain = if block_size > SMALL_MAX_OBJ_SIZE {
+                0
+            } else {
+                self.session.theap().page_full_retain()
+            };
+
+            while !page.is_null() {
+                // SAFETY: `page` is a current queue member. Save its successor
+                // before a source transition can move either current or an older
+                // candidate to the full queue or release that candidate.
+                let next = unsafe { (*page).next() };
+                search_count = search_count.wrapping_add(1);
+                candidate_limit -= 1;
+                let page_nonnull = match NonNull::new(page) {
+                    Some(page) => page,
+                    None => return Err(GenericPathError::Lifecycle),
+                };
+                // Unlike the separate head fast path above, the source candidate
+                // scan only observes the immediate `free` head here. It must not
+                // move an existing `local_free` before the false-force operation
+                // has first detached the producer-owned remote list.
+                let mut immediate_available = unsafe { !(*page).free_list_head().is_null() };
+                if !immediate_available {
+                    // `mi_page_queue_find_free_ex` performs full false-force
+                    // collection before deciding this regular page is full or
+                    // expandable. `page_quick_collect` stays local-only above;
+                    // this is the exact remote detach then local transfer path.
+                    if let Err(error) = self.page_free_collect_false(page_nonnull) {
+                        self.retain_page_collect_poison(page_nonnull, error, None);
+                        return Err(GenericPathError::Collection(error));
+                    }
+                    immediate_available = unsafe { !(*page).free_list_head().is_null() };
+                }
+                // SAFETY: this source-plain lifecycle has exclusive queue/page
+                // ownership for the duration of the candidate scan.
+                let expandable = unsafe { (*page).capacity() < (*page).reserved() };
+
+                if !immediate_available && !expandable {
+                    page_full_retain -= 1;
+                    if page_full_retain < 0 {
+                        self.move_regular_to_full(bin, page, None)
+                            .map_err(GenericPathError::from)?;
+                    }
+                } else {
+                    if candidate.is_null() {
+                        candidate = page;
+                        // `_mi_option_get_fast(mi_option_page_max_candidates)`.
+                        candidate_limit = crate::process_init::process_source_option_fast(
+                            crate::config::SourceOption::PageMaxCandidates,
+                        ) as isize;
+                    } else {
+                        // SAFETY: candidate remains queue-linked until either the
+                        // explicit all-free release below or its final move.
+                        let candidate_is_all_free = unsafe { (*candidate).used() == 0 };
+                        if candidate_is_all_free {
+                            if !self.release_page(bin, candidate) {
+                                return Err(GenericPathError::Lifecycle);
+                            }
+                            candidate = page;
+                        } else {
+                            // `mi_page_is_mostly_used`: avoid preferring a page
+                            // whose remaining capacity is within its final eighth.
+                            let page_reserved = unsafe { (*page).reserved() as usize };
+                            let page_used = unsafe { (*page).used() };
+                            let mostly_used = page_used >= page_reserved - page_reserved / 8;
+                            if page_used >= unsafe { (*candidate).used() } && !mostly_used {
+                                candidate = page;
                             }
                         }
                     }
-                    // `mi_page_queue_lookup_free_first` leaves its head in
-                    // place and clears retirement only after choosing it.
-                    // SAFETY: this active session owns the candidate's
-                    // ordinary retirement byte. Producer atomics are disjoint.
-                    unsafe { Page::set_retire_expire_at(first, 0) };
-                    return Ok(Some(first));
-                }
-                Ok(false) => {}
-                Err(error) => return Err(GenericPathError::Local(error)),
-            }
-        }
-
-        let mut page = first;
-        let mut search_count = 0usize;
-        let mut candidate: *mut Page = core::ptr::null_mut();
-        let mut candidate_limit = 0isize;
-        let mut page_full_retain = if block_size > SMALL_MAX_OBJ_SIZE {
-            0
-        } else {
-            self.session.theap().page_full_retain()
-        };
-
-        while !page.is_null() {
-            // SAFETY: `page` is a current queue member. Save its successor
-            // before a source transition can move either current or an older
-            // candidate to the full queue or release that candidate.
-            let next = unsafe { (*page).next() };
-            search_count = search_count.wrapping_add(1);
-            candidate_limit -= 1;
-            let page_nonnull = match NonNull::new(page) {
-                Some(page) => page,
-                None => return Err(GenericPathError::Lifecycle),
-            };
-            // Unlike the separate head fast path above, the source candidate
-            // scan only observes the immediate `free` head here. It must not
-            // move an existing `local_free` before the false-force operation
-            // has first detached the producer-owned remote list.
-            let mut immediate_available = unsafe { !(*page).free_list_head().is_null() };
-            if !immediate_available {
-                // `mi_page_queue_find_free_ex` performs full false-force
-                // collection before deciding this regular page is full or
-                // expandable. `page_quick_collect` stays local-only above;
-                // this is the exact remote detach then local transfer path.
-                if let Err(error) = self.page_free_collect_false(page_nonnull) {
-                    self.retain_page_collect_poison(page_nonnull, error, None);
-                    return Err(GenericPathError::Collection(error));
-                }
-                immediate_available = unsafe { !(*page).free_list_head().is_null() };
-            }
-            // SAFETY: this source-plain lifecycle has exclusive queue/page
-            // ownership for the duration of the candidate scan.
-            let expandable = unsafe { (*page).capacity() < (*page).reserved() };
-
-            if !immediate_available && !expandable {
-                page_full_retain -= 1;
-                if page_full_retain < 0 {
-                    self.move_regular_to_full(bin, page, None)
-                        .map_err(GenericPathError::from)?;
-                }
-            } else {
-                if candidate.is_null() {
-                    candidate = page;
-                    // `_mi_option_get_fast(mi_option_page_max_candidates)`.
-                    candidate_limit = crate::process_init::process_source_option_fast(
-                        crate::config::SourceOption::PageMaxCandidates,
-                    ) as isize;
-                } else {
-                    // SAFETY: candidate remains queue-linked until either the
-                    // explicit all-free release below or its final move.
-                    let candidate_is_all_free = unsafe { (*candidate).used() == 0 };
-                    if candidate_is_all_free {
-                        if !self.release_page(bin, candidate) {
-                            return Err(GenericPathError::Lifecycle);
-                        }
-                        candidate = page;
-                    } else {
-                        // `mi_page_is_mostly_used`: avoid preferring a page
-                        // whose remaining capacity is within its final eighth.
-                        let page_reserved = unsafe { (*page).reserved() as usize };
-                        let page_used = unsafe { (*page).used() };
-                        let mostly_used = page_used >= page_reserved - page_reserved / 8;
-                        if page_used >= unsafe { (*candidate).used() } && !mostly_used {
-                            candidate = page;
-                        }
+                    if immediate_available || candidate_limit <= 0 {
+                        break;
                     }
                 }
-                if immediate_available || candidate_limit <= 0 {
-                    break;
+                page = next;
+            }
+
+            // `mi_page_queue_find_free_ex` records both fields after its scan,
+            // including the zero-visit invocation case, before it selects or
+            // extends the best candidate.
+            self.session.theap().record_page_search(search_count);
+
+            if let Some(candidate) = NonNull::new(candidate) {
+                match self.page_make_immediate(candidate) {
+                    Ok(true) => {
+                        let queue = self
+                            .session
+                            .queue_mut(bin)
+                            .ok_or(GenericPathError::Lifecycle)? as *mut _;
+                        // SAFETY: the candidate remains a member of this exclusively
+                        // owned regular queue; moving it changes no page-count state.
+                        unsafe { page_queue_move_to_front_metadata(&mut *queue, candidate.as_ptr()) };
+                        self.update_direct_cache(bin);
+                        // SAFETY: choosing this valid live candidate mirrors the source
+                        // post-search owner-only retirement reset without borrowing Page.
+                        unsafe { Page::set_retire_expire_at(candidate, 0) };
+                        return Ok(Some(candidate));
+                    }
+                    Err(error) if Self::direct_page_commit_mapping_miss(&error) => {}
+                    Ok(false) => return Err(GenericPathError::Lifecycle),
+                    Err(error) => return Err(error),
                 }
             }
-            page = next;
-        }
 
-        // `mi_page_queue_find_free_ex` records both fields after its scan,
-        // including the zero-visit invocation case, before it selects or
-        // extends the best candidate.
-        self.session.theap().record_page_search(search_count);
-
-        if let Some(candidate) = NonNull::new(candidate) {
-            match self.page_make_immediate(candidate) {
-                Ok(true) => {
-                    let queue = self
-                        .session
-                        .queue_mut(bin)
-                        .ok_or(GenericPathError::Lifecycle)? as *mut _;
-                    // SAFETY: the candidate remains a member of this exclusively
-                    // owned regular queue; moving it changes no page-count state.
-                    unsafe { page_queue_move_to_front_metadata(&mut *queue, candidate.as_ptr()) };
-                    self.update_direct_cache(bin);
-                    // SAFETY: choosing this valid live candidate mirrors the source
-                    // post-search owner-only retirement reset without borrowing Page.
-                    unsafe { Page::set_retire_expire_at(candidate, 0) };
-                    return Ok(Some(candidate));
-                }
-                Err(error) if Self::direct_page_commit_mapping_miss(&error) => {}
-                Ok(false) => return Err(GenericPathError::Lifecycle),
-                Err(error) => return Err(error),
+            if !self.collect_retired(false) {
+                return Err(GenericPathError::Lifecycle);
             }
-        }
 
-        if !self.collect_retired(false) {
-            return Err(GenericPathError::Lifecycle);
-        }
-
-        match self.reclaim_selected_mapped_regular_before_fresh(bin, block_size, kind)? {
-            MappedRegularReclaimBeforeFresh::NoCandidate => {}
-            MappedRegularReclaimBeforeFresh::Reclaimed(page) => return Ok(Some(page)),
-            MappedRegularReclaimBeforeFresh::RetryAfterReabandon => {
-                if first_try {
-                    return self.find_generic_queue_page_with_first_try(
-                        bin,
-                        block_size,
-                        kind,
-                        false,
-                    );
+            match self.reclaim_selected_mapped_regular_before_fresh(bin, block_size, kind)? {
+                MappedRegularReclaimBeforeFresh::NoCandidate => {}
+                MappedRegularReclaimBeforeFresh::Reclaimed(page) => return Ok(Some(page)),
+                MappedRegularReclaimBeforeFresh::RetryAfterReabandon => {
+                    if first_try {
+                        first_try = false;
+                        continue;
+                    }
+                    // The source's second `mi_page_fresh` failure is the ordinary
+                    // no-page result.  Only now may `allocate_generic_with_retry`
+                    // decide whether its separate forced collection is warranted.
+                    return Ok(None);
                 }
-                // The source's second `mi_page_fresh` failure is the ordinary
-                // no-page result.  Only now may `allocate_generic_with_retry`
-                // decide whether its separate forced collection is warranted.
+            }
+
+            let Some(fresh) = self.allocate_fresh_page(block_size, kind)? else {
+                if first_try && self.arena.process().is_some() {
+                    first_try = false;
+                    continue;
+                }
                 return Ok(None);
-            }
+            };
+            self.push_regular_page(bin, fresh);
+            return Ok(Some(fresh));
         }
-
-        let Some(fresh) = self.allocate_fresh_page(block_size, kind)? else {
-            if first_try && self.arena.process().is_some() {
-                return self.find_generic_queue_page_with_first_try(bin, block_size, kind, false);
-            }
-            return Ok(None);
-        };
-        self.push_regular_page(bin, fresh);
-        Ok(Some(fresh))
     }
 
     /// Ports the selected-arena, ordinary regular-kind part of
