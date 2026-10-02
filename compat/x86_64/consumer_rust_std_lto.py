@@ -1034,6 +1034,12 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
                 require(backend == arguments.allocator_evidence,
                         f"allocator evidence {mode} product records allocator backend {backend!r}")
         consumer_label, unwind_labels = label, (label,)
+    if arguments.debug:
+        for mode in ("static", "dynamic"):
+            root = Path(products[consumer_label][mode]["root"])
+            manifest = json.loads((root / "share/crabc/manifest.json").read_text(encoding="utf-8"))
+            require(manifest.get("build_profile", "release") == "debug",
+                    f"debug consumers require a recorded debug {mode} product")
     toolchain = toolchain_identity(retained)
 
     # One fresh provider for every frozen consumer, built from the same
