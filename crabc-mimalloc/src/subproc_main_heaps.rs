@@ -1118,7 +1118,7 @@ fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull
     // whole before the Theap is published. The TLD is this thread's and the
     // Heap's lists take their own locks.
     let initialized = unsafe {
-        core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
+        Theap::write_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*image).theap)));
         core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
         core::ptr::addr_of_mut!((*image).allocation).write(Some(allocation));
         core::ptr::addr_of_mut!((*image).retained_deleted_next).write(core::ptr::null_mut());

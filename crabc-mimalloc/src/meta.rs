@@ -765,7 +765,7 @@ impl<'owner> MetaAllocation<'owner> {
         // Theap request size/alignment and is exclusively retained here. A
         // complete empty source image is written before its typed projection
         // can escape.
-        unsafe { self.pointer.as_ptr().cast::<Theap>().write(Theap::empty()) };
+        unsafe { Theap::write_empty_at(self.pointer.cast()) };
         let theap = unsafe { &mut *self.pointer.as_ptr().cast::<Theap>() };
         if !theap.set_dynamic_metadata_memid(self.memory) {
             return None;
@@ -1353,7 +1353,7 @@ impl ChildMetadataAllocation {
                     || pointer.as_ptr().addr() % align_of::<Theap>() != 0 { return None; }
                 // SAFETY: the fresh exact block is uniquely retained and
                 // receives a complete empty source image before projection.
-                unsafe { pointer.as_ptr().cast::<Theap>().write(Theap::empty()) };
+                unsafe { Theap::write_empty_at(pointer.cast()) };
                 let theap = unsafe { &mut *pointer.as_ptr().cast::<Theap>() };
                 if !theap.set_dynamic_metadata_memid(MemoryId::malloc(pointer.as_ptr(), *size, true)) {
                     return None;
@@ -1985,7 +1985,7 @@ impl NativeChildHeapImage {
         }
         // SAFETY: the token was minted from one successful sufficiently large zeroed
         // allocation, is uniquely borrowed, and keeps its stable address.
-        unsafe { self.pointer.as_ptr().write(Heap::bootstrap_empty()) };
+        unsafe { Heap::write_bootstrap_empty_at(self.pointer) };
         self.initialized = true;
         true
     }
@@ -3053,7 +3053,7 @@ impl ChildThreadOwner {
             // SAFETY: this exact fresh zeroed allocation is exclusively
             // owned. Both Rust fields precede any source list publication.
             unsafe {
-                core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
+                Theap::write_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*image).theap)));
                 core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
                 let incoming = &mut (*image).theap;
                 if requested.as_ptr().is_null() {
@@ -3135,7 +3135,7 @@ impl ChildThreadOwner {
             // fields are written whole before the Theap is published. The TLD
             // is this thread's and the Heap's lists take their own locks.
             unsafe {
-                core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
+                Theap::write_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*image).theap)));
                 core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
                 let theap = &mut (*image).theap;
                 let provenance = if requested.as_ptr().is_null() {

@@ -346,7 +346,7 @@ impl ParentHeapAllocation<'_> {
         // SAFETY: the token was minted only from a successful exact-size
         // zeroed allocation, is uniquely borrowed, and preserves its stable
         // address. The complete Rust image is written before projection.
-        unsafe { self.pointer.as_ptr().write(Heap::bootstrap_empty()) };
+        unsafe { Heap::write_bootstrap_empty_at(self.pointer) };
         self.initialized = true;
         true
     }
@@ -2845,8 +2845,8 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         self.lifecycle.begin_thread_exit_deferred_free_phase(attachment)
     }
 
-    /// Runs the post-callback source collector.  Phase C must already have
-    /// consumed the exact active attachment generation; this method forms the
+    /// Runs the post-callback source collector. Callback completion must already
+    /// have consumed the exact active attachment generation; this method forms the
     /// non-allocating drain only afterward, preserving the source order
     /// `_mi_deferred_free` -> retired collection -> page traversal.
     pub(crate) fn finish_after_owner_exit_deferred_free_phase(
