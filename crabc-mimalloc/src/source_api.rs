@@ -39,6 +39,10 @@
 //! and `ENOMEM` for every other site only while errno is zero. Error and
 //! warning messages are not rendered here.
 
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[path = "source_page_assertion_tests.rs"]
+mod source_page_assertion_tests;
+
 use core::ffi::{c_char, c_int, c_long};
 use core::ptr::{null_mut, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
