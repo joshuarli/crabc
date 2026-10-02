@@ -55,12 +55,19 @@ Update this small section in place when the implementation frontier changes.
 - **Feature frontier:** owned opt0 debug sysroots now support all four entry
   modes with sealed Linux UAPI headers. Installed header checks and actual
   loader graph/finalization consumers pass. Rust std's duplicate private panic
-  and allocator-symbol link failure is fixed; legitimate static cleanup and
-  dynamic cross-DSO panic clients still abort with unwind error 5. Diagnose that
-  actual unwinder failure next. Remaining allocator free/unfull/retire/reclaim
-  assertion placements and selected runtime composition still need source and
-  behavior completion. No release or full-family qualification is claimed.
-- **Merged correctness:** debug-2 reset checks pass 28/28 after correcting fixture
+  and allocator-symbol link failure is fixed. The debug provider packaging now
+  preserves live unwind records; static/dynamic cleanup, cross-DSO panic and
+  source-built backtrace pass, including 12 retained consumers replayed read-only.
+  Lua source/bytecode consumption passes through explicit opt0 static and dynamic
+  interfaces. Free/unfull/retire/reclaim assertions and entry delivery are
+  integrated; outer owner-exit delivery still needs its typed completion split.
+  Audit the loader's unnecessary abort-personality definition next. No release
+  or full-family qualification is claimed.
+- **Merged correctness:** allocator early options, guarded initialization,
+  false-force reclaim transfers, aligned null realloc and resolver construction
+  boundaries are repaired. Native spawn needs only two free pipe descriptors;
+  filesystem/readiness callers now use the selected native typed APIs. Debug-2
+  reset checks pass 28/28 after correcting fixture
   metadata geometry against pinned C. Retained stdio programs pass all 42 cases
   with exact musl transcripts; multibyte original/fixed programs and the positive
   remote reclaim/second-owner-exit Loom model replay from read-only reports.
