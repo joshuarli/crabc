@@ -545,7 +545,7 @@ impl Condvar {
 
     /// Unlocks `guard`, waits up to `timeout`, and reacquires its mutex.
     ///
-    /// `timeout` is a relative Linux/AArch64 timespec. A timeout is reported
+    /// `timeout` is a relative Linux 64-bit timespec. A timeout is reported
     /// through [`WaitTimeoutResult`], not as an `ETIMEDOUT` error.
     pub fn wait_timeout<'a, T: ?Sized>(
         &self,
@@ -557,7 +557,7 @@ impl Condvar {
         drop(guard);
 
         let wait_result = {
-            // SAFETY: `timeout` is a live Linux/AArch64 timespec and
+            // SAFETY: `timeout` is a live Linux 64-bit timespec and
             // `sequence` is a live aligned atomic futex word.
             unsafe {
                 crabc_core::thread::futex_wait(

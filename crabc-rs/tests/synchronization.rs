@@ -63,6 +63,45 @@ fn condvar_timeout_is_reported_after_relock() {
 }
 
 #[test]
+fn condvar_broadcast_releases_every_waiter_and_publishes_the_predicate() {
+    const WAITERS: usize = 8;
+    let pair = Arc::new((Mutex::new(false), Condvar::new()));
+    let (arrived, arrivals) = std::sync::mpsc::channel();
+    let mut workers = Vec::new();
+    for _ in 0..WAITERS {
+        let pair = Arc::clone(&pair);
+        let arrived = arrived.clone();
+        workers.push(std::thread::spawn(move || {
+            let (lock, changed) = &*pair;
+            let mut released = lock.lock().expect("waiter lock");
+            arrived.send(()).expect("report waiter arrival");
+            while !*released {
+                let (guard, result) = changed.wait_timeout(released, &Timespec {
+                    tv_sec: 5,
+                    tv_nsec: 0,
+                }).expect("wait for broadcast");
+                released = guard;
+                assert!(!result.timed_out(), "broadcast left a waiter asleep");
+            }
+            assert!(*released, "wait returns with the published predicate under its mutex");
+        }));
+    }
+    drop(arrived);
+    for _ in 0..WAITERS {
+        arrivals.recv_timeout(std::time::Duration::from_secs(5))
+            .expect("every waiter reaches the mutex-protected predicate");
+    }
+    let (lock, changed) = &*pair;
+    // Each arrival was sent while owning the mutex. Acquiring it after the
+    // last arrival observes every waiter's unlock-before-wait boundary.
+    *lock.lock().expect("publish broadcast predicate") = true;
+    changed.notify_all().expect("broadcast");
+    for worker in workers {
+        worker.join().expect("every waiter reacquires and finishes");
+    }
+}
+
+#[test]
 fn once_initializes_once_under_contention() {
     let once = Arc::new(Once::new());
     let calls = Arc::new(AtomicUsize::new(0));

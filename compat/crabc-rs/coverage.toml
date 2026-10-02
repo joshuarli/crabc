@@ -2850,8 +2850,8 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Pthread/C11 object layouts, cancellation, cleanup scopes, atfork registries, and process-shared synchronization are C runtime contracts. Rust applications use std synchronization or the already selected direct process-private primitives rather than a parallel pthread facade."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["AGENTS.md", "crabc-rs/src/sync.rs", "crabc-rs/src/runtime_thread.rs"]
-rationale = "The C pthread/C11 ABI remains compatibility work, while crabc-rs keeps its bounded mutex, condition, once, semaphore, rwlock, barrier, futex, and runtime-TLS seams. It deliberately does not mirror pthread object representations or become a thread-runtime framework."
+review_evidence = ["AGENTS.md", "crabc-rs/src/sync.rs", "crabc-rs/tests/synchronization.rs", "crabc-core/src/thread.rs", "crabc-rs/src/runtime_thread.rs"]
+rationale = "The C pthread/C11 ABI remains compatibility work, while crabc-rs exposes its Rust-owned process-private mutex, condition, once, semaphore, rwlock, and barrier on Linux/AArch64 and staged Linux/x86-64 through direct atomic/futex operations. Native contention, predicate publication, broadcast, timeout/relock, once-only initialization, reader/writer exclusion, capacity errors, and reusable barrier generations are tested independently of C pthread object representations. Process-shared and robust synchronization remain outside that native boundary; runtime-TLS is separately gated."
 
 [[capability]]
 id = "ipc"

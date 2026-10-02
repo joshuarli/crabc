@@ -12,7 +12,7 @@
 
 // `crabc-rs` is a public facade, unlike the fixed-mimalloc engine's narrowly
 // scoped native x86-64 evidence lane. Linux/x86-64 admission here is the
-// explicit staged direct-facade foundation from `plan.md`; it does not make
+// explicit staged direct-facade foundation; it does not make
 // the facade or platform publicly supported, and runtime-owned features stay
 // separately gated until their own native boundaries exist.
 #[cfg(not(all(
@@ -191,7 +191,9 @@ pub mod runtime_thread;
 pub mod shm;
 pub mod signal;
 pub mod stdio;
-#[cfg(target_arch = "aarch64")]
+// Rust-owned process-private synchronization uses only atomics and the direct
+// futex seam. Both admitted targets use the same 64-bit relative timespec.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod sync;
 #[cfg(target_arch = "aarch64")]
 pub mod system;
