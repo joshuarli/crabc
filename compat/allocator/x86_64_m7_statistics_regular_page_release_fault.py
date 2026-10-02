@@ -25,21 +25,25 @@ def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False
     """Compare VM transitions while retaining placement-sensitive raw images."""
     normal = (int(raw.get("geometry.block_size", "64")) - (8 if debug else 0)) if level else 0
     bin_index = 9 if debug else 8
+    # The guarded workload keeps a different-bin survivor live at baseline.
+    # Adding the target raises page and normal-byte peaks beyond that baseline.
+    page_peak = int(guarded)
+    normal_peak = normal if guarded else 0
     expected = {
         "profile.level": str(level),
         "profile.disallow_arena": "1",
-        "allocated.pages": "1,0,1",
-        "allocated.normal": f"{normal},0,{normal}",
+        "allocated.pages": f"1,{page_peak},1",
+        "allocated.normal": f"{normal},{normal_peak},{normal}",
         "allocated.page_bin": f"{bin_index}:1,1",
         "allocated.warnings": "0",
         "allocated.failures": "0",
-        "freed.pages": "1,0,1",
-        "freed.normal": f"{normal},0,0",
+        "freed.pages": f"1,{page_peak},1",
+        "freed.normal": f"{normal},{normal_peak},0",
         "freed.page_bin": f"{bin_index}:1,1",
         "freed.warnings": "0",
         "freed.failures": "0",
-        "failed_release.pages": "1,0,0",
-        "failed_release.normal": f"{normal},0,0",
+        "failed_release.pages": f"1,{page_peak},0",
+        "failed_release.normal": f"{normal},{normal_peak},0",
         "failed_release.page_bin": f"{bin_index}:1,0",
         "failed_release.warnings": str(int(faulted)),
         "failed_release.failures": str(int(faulted)),

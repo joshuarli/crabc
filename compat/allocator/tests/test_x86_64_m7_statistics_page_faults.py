@@ -10,15 +10,15 @@ from x86_64_m7_statistics_regular_page_release_fault import comparable_trace
 
 
 class RegularPageReleaseStatisticsTests(unittest.TestCase):
-    def trace(self, *, level=2, debug=False, faulted=True):
+    def trace(self, *, level=2, debug=False, faulted=True, guarded=False):
         normal = (72 if debug else 64) if level else 0
         bin_index = 9 if debug else 8
         trace = {"profile.level": str(level), "profile.disallow_arena": "1"}
         for stage in ("allocated", "freed", "failed_release"):
             released = stage == "failed_release"
             trace.update({
-                f"{stage}.pages": f"1,0,{int(not released)}",
-                f"{stage}.normal": f"{normal},0,{normal if stage == 'allocated' else 0}",
+                f"{stage}.pages": f"1,{int(guarded)},{int(not released)}",
+                f"{stage}.normal": f"{normal},{normal if guarded else 0},{normal if stage == 'allocated' else 0}",
                 f"{stage}.page_bin": f"{bin_index}:1,{int(not released)}",
                 f"{stage}.reserved": f"65536,65536,{0 if released else 65536}",
                 f"{stage}.committed": f"65536,65536,{0 if released else 65536}",
@@ -66,7 +66,7 @@ class RegularPageReleaseStatisticsTests(unittest.TestCase):
 
     def test_guarded_debug_release_keeps_failed_mapping_without_replaying_accounting(self):
         for faulted in (False, True):
-            trace = self.trace(debug=True, faulted=faulted)
+            trace = self.trace(debug=True, faulted=faulted, guarded=True)
             trace.update({"profile.guarded": "1", "profile.guarded_sample_rate": "0", "profile.theap_guarded_sample_rate": "0",
                           "allocation.os_backed": "1", "allocated.client_bytes": "1",
                           "failed_release.mapping_present": str(int(faulted)),
@@ -76,7 +76,8 @@ class RegularPageReleaseStatisticsTests(unittest.TestCase):
                           "recovery.distinct_from_survivor": "1", "recovery.client_bytes": "1",
                           "recovery.survivor_bytes": "1"})
             comparable_trace(trace, debug=True, faulted=faulted, guarded=True)
-            for key in ("profile.guarded_sample_rate", "profile.theap_guarded_sample_rate", "allocation.os_backed", "allocated.client_bytes",
+            for key in ("allocated.pages", "allocated.normal", "freed.pages", "freed.normal", "failed_release.pages", "failed_release.normal",
+                        "profile.guarded_sample_rate", "profile.theap_guarded_sample_rate", "allocation.os_backed", "allocated.client_bytes",
                         "failed_release.mapping_present", "failed_release.survivor_bytes",
                         "recollect.no_unmap", "recollect.mapping_present", "recollect.counters_unchanged",
                         "recovery.nonnull", "recovery.distinct_from_survivor", "recovery.client_bytes"):
