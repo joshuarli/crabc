@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Run the frozen Lua roster as the `consumer.source-build` qualification case.
 
-The caller supplies one authenticated current-source static/dynamic cohort.
-This case compiles Lua only; it never builds or packages runtime products.
+With no arguments this case authenticates the published current-source Lua
+admission receipt. Explicit cohort arguments compile the pinned Lua consumers
+against already prepared static/dynamic products. Neither route builds or
+packages runtime products.
 It reproduces the frozen AArch64 `lua` source-build gate on native x86-64:
 static ET_EXEC and static-PIE programs through the installed static driver,
 then the dynamic `liblua`/`lua`/`luac`/C-module graph through both the
@@ -39,6 +41,7 @@ import run_x86_static_dispatch as STATIC
 import run_x86_dynamic_supplied as SUPPLIED_DYNAMIC
 import run_x86_dynamic as DYNAMIC  # noqa: E402
 import source_build_admission as ADMISSION  # noqa: E402
+import qualification_gates as GATES
 import qualification_case as CASE  # noqa: E402
 import owned_dynamic_qualification as PRODUCT  # noqa: E402
 
@@ -90,6 +93,13 @@ def require_current_products(args: argparse.Namespace, source: Mapping[str, str]
 def qualify(args: argparse.Namespace) -> dict[str, object]:
     source = CASE.clean_source_identity()
     CASE.require_prerequisites_closed(FAMILY)
+    if args.cohort_checkout is None:
+        receipt = GATES.read_publication(FAMILY, "lua-source-build")
+        admission = receipt["admission"]
+        require(admission.get("source_identity") == source,
+                "published Lua admission is bound to a different source than this case")
+        require(CASE.clean_source_identity() == source, "source changed during the Lua qualification case")
+        return {"family": FAMILY, "source_identity": source, "admission": admission}
     require_current_products(args, source)
     static = require_lane(
         STATIC.run_supplied(argparse.Namespace(
@@ -124,17 +134,22 @@ def qualify(args: argparse.Namespace) -> dict[str, object]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("cohort-checkout", "static-preparation", "static-installed-sysroot",
+    cohort_arguments = ("cohort-checkout", "static-preparation", "static-installed-sysroot",
                  "static-rebuilt-sysroot", "static-extracted-sysroot", "dynamic-cohort-receipt",
-                 "dynamic-installed-sysroot", "dynamic-extracted-sysroot", "archive-seed"):
-        parser.add_argument("--" + name, type=Path, required=True)
+                 "dynamic-installed-sysroot", "dynamic-extracted-sysroot", "archive-seed")
+    for name in cohort_arguments:
+        parser.add_argument("--" + name, type=Path)
     parser.add_argument("--work-root", type=Path, default=LUA.ROOT / ".work/x86_64/lua-source-build-supplied")
     args = parser.parse_args(argv)
+    selected = [getattr(args, name.replace("-", "_")) for name in cohort_arguments]
+    if any(value is not None for value in selected) and not all(value is not None for value in selected):
+        parser.error("explicit production requires the complete supplied cohort arguments")
     # Source sealing reads Git state; never let it take an optional index lock.
     os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     try:
         summary = qualify(args)
-    except (LUA.RunnerError, CASE.QualificationCaseError, PRODUCT.QualificationError, OSError, ValueError) as error:
+    except (LUA.RunnerError, CASE.QualificationCaseError, PRODUCT.QualificationError,
+            GATES.GateError, GATES.EvidenceUnmet, OSError, ValueError) as error:
         print(f"x86 consumer.source-build Lua roster: FAIL: {error}", file=sys.stderr)
         return 1
     print(json.dumps(summary, sort_keys=True))

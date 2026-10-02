@@ -6,6 +6,9 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
+import hashlib
+import tempfile
 import os
 import subprocess
 import sys
@@ -51,11 +54,11 @@ def campaign(statuses: dict[str, str]) -> dict[str, object]:
 
 
 class QualificationCaseTests(unittest.TestCase):
-    def run_main(self) -> tuple[int, str, str]:
+    def run_main(self, argv=ARGV) -> tuple[int, str, str]:
         stdout = io.StringIO()
         stderr = io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-            status = QUALIFY.main(ARGV)
+            status = QUALIFY.main(argv)
         return status, stdout.getvalue(), stderr.getvalue()
 
     def forbid_execution(self) -> contextlib.ExitStack:
@@ -69,6 +72,68 @@ class QualificationCaseTests(unittest.TestCase):
                 owner, name, side_effect=AssertionError(f"{name} must not start")
             ))
         return stack
+
+    def test_no_argument_case_authenticates_published_receipt_without_producers(self) -> None:
+        work = ROOT / ".work/x86_64/lua-qualification-host-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            directory = Path(temporary)
+            receipt = directory / "admission.json"
+            receipt.write_text(json.dumps({"schema": "retained admission"}))
+            pointer = directory / "consumer.source-build/lua-source-build.json"
+            pointer.parent.mkdir()
+            pointer.write_text(json.dumps({
+                "schema": QUALIFY.GATES.PUBLICATION_SCHEMA, "gate": QUALIFY.FAMILY,
+                "publication": "lua-source-build", "receipt": str(receipt.relative_to(ROOT)),
+                "receipt_sha256": hashlib.sha256(receipt.read_bytes()).hexdigest(),
+            }))
+            for admitted, status in ((SOURCE, 0), ({**SOURCE, "revision": "c" * 40}, 1)):
+                with (self.subTest(admitted=admitted), self.forbid_execution(),
+                      mock.patch.object(QUALIFY.CASE, "clean_source_identity", return_value=SOURCE),
+                      mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=campaign({})),
+                      mock.patch.object(QUALIFY.GATES, "PUBLICATION_DIRECTORY", directory),
+                      mock.patch.object(QUALIFY.ADMISSION, "validate_receipt", return_value={
+                          "admission": {"source_identity": admitted, "static": {}, "dynamic": {}}
+                      }) as reader):
+                    actual, stdout, stderr = self.run_main([])
+                    self.assertEqual(actual, status, stderr)
+                    reader.assert_called_once_with(ROOT, receipt)
+                    self.assertEqual(QUALIFY.PASS_MARKER in stdout, status == 0)
+            for missing in (False, True):
+                if missing:
+                    pointer.unlink()
+                else:
+                    receipt.write_text("changed receipt")
+                with (self.subTest(missing=missing), self.forbid_execution(),
+                      mock.patch.object(QUALIFY.CASE, "clean_source_identity", return_value=SOURCE),
+                      mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=campaign({})),
+                      mock.patch.object(QUALIFY.GATES, "PUBLICATION_DIRECTORY", directory),
+                      mock.patch.object(QUALIFY.ADMISSION, "validate_receipt", side_effect=AssertionError("untrusted receipt read"))):
+                    actual, stdout, stderr = self.run_main([])
+                    self.assertEqual(actual, 1)
+                    self.assertNotIn(QUALIFY.PASS_MARKER, stdout)
+                    self.assertIn("no published" if missing else "bytes changed", stderr)
+
+    def test_no_argument_case_keeps_prerequisite_closure_before_publication(self) -> None:
+        with (self.forbid_execution(),
+              mock.patch.object(QUALIFY.CASE, "clean_source_identity", return_value=SOURCE),
+              mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=campaign({
+                  "sysroot.owned-artifact": "planned"})),
+              mock.patch.object(QUALIFY.GATES, "read_publication", side_effect=AssertionError("premature publication read"))):
+            status, stdout, stderr = self.run_main([])
+        self.assertEqual(status, 1)
+        self.assertNotIn(QUALIFY.PASS_MARKER, stdout)
+        self.assertIn("prerequisites are not foundation-verified", stderr)
+
+    def test_no_argument_case_rechecks_clean_source_after_receipt_reader(self) -> None:
+        with (self.forbid_execution(),
+              mock.patch.object(QUALIFY.CASE, "clean_source_identity", side_effect=[SOURCE, {**SOURCE, "revision": "d" * 40}]),
+              mock.patch.object(QUALIFY.CASE.CAMPAIGN, "build_report", return_value=campaign({})),
+              mock.patch.object(QUALIFY.GATES, "read_publication", return_value={"admission": {"source_identity": SOURCE}})):
+            status, stdout, stderr = self.run_main([])
+        self.assertEqual(status, 1)
+        self.assertNotIn(QUALIFY.PASS_MARKER, stdout)
+        self.assertIn("source changed", stderr)
 
     def test_product_source_backend_and_profile_are_admitted_before_consumption(self) -> None:
         import argparse

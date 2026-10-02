@@ -90,7 +90,14 @@ edit invalidates it.
 `compat/x86_64/qualification_source_build.json` for the ordered
 `consumer.source-build` qualification gate, selected with
 `./scripts/dev-x86_64.sh qualification-manifest --through consumer.source-build`
-after every predecessor gate is ready. The caller must supply
+after every predecessor gate is ready. Its unchanged no-argument command
+authenticates the published `lua-source-build` admission receipt through the
+existing publication and admission readers. Missing, changed or stale evidence
+fails the case; it never reruns a runtime producer. It checks clean source and
+prerequisite closure before reading the publication and rechecks source after
+admission.
+
+For explicit source-workload production, the caller supplies
 `--cohort-checkout`, `--static-preparation`, `--static-installed-sysroot`,
 `--static-rebuilt-sysroot`, `--static-extracted-sysroot`,
 `--dynamic-cohort-receipt`, `--dynamic-installed-sysroot`,
