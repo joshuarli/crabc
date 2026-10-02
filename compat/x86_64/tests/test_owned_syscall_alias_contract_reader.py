@@ -78,6 +78,21 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
         self.assertNotIn("compat/x86_64/owned-syscall-alias-image-inputs.json", syscall_reader.COLLECTOR_SOURCES)
         self.assertIn("rust-toolchain.toml", syscall_reader.COLLECTOR_SOURCES)
 
+    def test_historical_image_report_cannot_be_admitted_as_current(self) -> None:
+        parent = SOURCE_DIR.parents[1] / ".work/x86_64/tmp"
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            path = Path(temporary) / "report.json"
+            report = {"schema": syscall_reader.SCHEMA, "status": syscall_reader.STATUS,
+                      "musl_source_commit": syscall_reader.MUSL_SOURCE_COMMIT,
+                      "image": "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"}
+            path.write_text(json.dumps(report))
+            with mock.patch.object(subprocess, "run", side_effect=AssertionError("replay executed a tool")), \
+                 mock.patch.object(subprocess, "check_output", side_effect=AssertionError("replay executed a tool")):
+                with self.assertRaisesRegex(ReceiptError, "schema/status/image differs"):
+                    validate_report(path)
+            self.assertEqual(json.loads(path.read_text()), report)
+
     def test_oracle_source_recompile_cannot_pass_same_object_evidence(self) -> None:
         object_path = "/workspace/.work/probe/contract.o"
         commands = {

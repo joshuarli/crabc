@@ -130,16 +130,13 @@ providers: `__clock_gettime`, `__clock_nanosleep`, `__dup3`, `__fstat`,
 `__lsysinfo`, `__sigaction`, and `__libc_sigaction`. The two local statfs
 bodies remain outside that global export ledger.
 
-The retained component pair was built at clean runtime revision `3bf0a0cb`.
-The earlier harness revision `1494e97c` passes its complete signal-override
-checks, but recompiles the oracle sources. Its 45-command receipt is
-`.work/worktrees/syscall_alias_contract/.work/x86_64/syscall-alias-contract/sigset-override-proof-1494e97c.json`
-relative to the main checkout. The corrected collector passes all 47 commands
-with the two unchanged objects across all fourteen links. Parent verification
-is retained at
-`.work/worktrees/owned_posix_evidence_integration/.work/x86_64/syscall-integration/component-parent-review.json`.
-It binds the corrected harness inputs separately from the runtime pair and
-does not supply static preparation or product qualification for later source.
+The historical component pair was built at clean runtime revision `3bf0a0cb`.
+The earlier harness revision `1494e97c` passed its signal-override checks but
+recompiled the oracle sources in its 45-command receipt. The corrected
+collector used 47 commands with the two unchanged objects across all fourteen
+links. Those historical reports lived in retired campaign worktrees and are
+no longer retained. Their source commits remain in Git; neither historical
+result supplies static preparation or product qualification for later source.
 
 ## Current component receipt
 
@@ -157,15 +154,15 @@ facts must bind the exact `libc.a` and `libc.so` bytes, and its base-inventory
 binding must name the supplied inventory byte-for-byte.
 
 ```sh
-CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d \
+CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
   --output "$PWD/.work/x86_64/syscall-alias-receipt/current" \
-  --static-preparation "$PWD/.work/x86_64/public-data-products/static-a9c51887/preparation.json" \
-  --static-product "$PWD/.work/x86_64/public-data-products/static-a9c51887/products/primary" \
-  --dynamic-product "$PWD/.work/x86_64/loader-debug-abi/clean-a9c51887/component/dynamic-product" \
-  --elf-facts "$PWD/.work/x86_64/native-abi-elf-facts/clean-a9c51887/report.json" \
-  --base-inventory "$PWD/.work/x86_64/native-abi-inventory/clean-a9c51887/report.json" \
-  --image-id crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d
+  --static-preparation "$PWD/.work/x86_64/current-cohort/out/static/preparation.json" \
+  --static-product "$PWD/.work/x86_64/current-cohort/out/static/products/primary" \
+  --dynamic-product "$PWD/.work/x86_64/current-cohort/out/dynamic/installed" \
+  --elf-facts "$PWD/.work/x86_64/native-abi-elf-facts/current-cohort/report.json" \
+  --base-inventory "$PWD/.work/x86_64/native-abi-inventory/current-cohort/report.json" \
+  --image-id crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a
 
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report \
   --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
@@ -251,14 +248,21 @@ current selected evidence.
 authority for the current core image. The original
 `owned-syscall-alias-image-inputs.json` remains unchanged as the July 24
 historical authority. The collector also seals `rust-toolchain.toml`, from
-which its current Rust and LLD paths are derived. The current manifest records
+which its current Rust and LLD paths are derived. The restored core image has
+a distinct immutable ID. Its read-only capture
+contains the same finite tool roster; Python's resolved executable bytes
+changed from the previous core image. Reports naming the previous image
+`sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`
+remain historical and cannot pass the current reader. Updating this authority
+does not change any historical report or transfer its qualification.
+The current manifest records
 invocation paths, resolved paths, modes, sizes and SHA-256 values for
 the runner tools, product compiler/assembler/linker inputs, and pinned musl
 wrapper/archive/shared/specs. Regenerate it reproducibly from the exact image:
 
 ```sh
-docker run --rm --network none -v "$PWD:/workspace" -w /workspace \
-  sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d \
+docker run --rm --network none --read-only -v "$PWD:/workspace:ro" -w /workspace \
+  sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
   python3 -B compat/x86_64/owned_syscall_alias_authority.py \
   > .work/x86_64/syscall-image-inputs.json
 cmp compat/x86_64/owned-syscall-alias-image-inputs-current.json \
