@@ -2464,21 +2464,21 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The remaining C spawn aliases and lifecycle hooks are process-supervisor and C-ABI policy, not an idiomatic ownership primitive. The bounded PreparedExec/Child contract owns the selected native use case."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["AGENTS.md", "crabc-rs/src/process.rs", "crabc-rs/tests/signal_process.rs"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/process.rs", "crabc-rs/tests/signal_process.rs", "crabc-rs/src/process_x86_64.rs", "crabc-rs/tests/x86_64_child_ownership.rs", "crabc-rs/tests/x86_64_child_options.rs", "crabc-rs/tests/x86_64_child_interruption.rs"]
 rationale = "Native prepared execution, one-shot child ownership, process groups, sessions, and PID observation remain independently verified. C fork/vfork/clone/daemon/nice aliases and full posix_spawn action/attribute compatibility remain libc ABI behavior rather than a crabc-rs process-management framework."
 
 [[capability]]
 id = "process.child-ownership"
 kind = "implementation"
-classification = "native-unsafe"
+classification = "native-safe"
 status = "verified"
 rust_api = ["process::{PreparedExec, Child}"]
 shared_impl = ["crabc_rs::process::PreparedExec::spawn and Child::wait"]
-native_boundary = "prepared fork/exec transfers one non-Clone, non-Copy Child owner, and consuming wait maps the owned PID through waitpid without permitting duplicate safe owners"
+native_boundary = "prepared fork/exec transfers one non-Clone, non-Copy Child owner; native x86 consuming wait directly selects that PID with wait4, retrying EINTR without permitting duplicate safe owners"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/src/process.rs", "crabc-rs/tests/signal_process.rs"]
-rationale = "Child owns one prepared-spawn wait operation: its PID is not Clone or Copy, and wait consumes that owner. The existing error-pipe setup, descriptor actions, fork, exec, and wait behavior remain unchanged; nonblocking polling, Command/PATH search, posix_spawn attributes, and broader process-lifetime policy remain outside this native child-owner contract."
+evidence = ["crabc-rs/src/process.rs", "crabc-rs/tests/signal_process.rs", "crabc-rs/src/process_x86_64.rs", "crabc-rs/tests/x86_64_child_ownership.rs", "crabc-rs/tests/x86_64_child_options.rs", "crabc-rs/tests/x86_64_child_interruption.rs"]
+rationale = "PreparedExec::spawn and Child::wait are safe ownership APIs; the private child path only performs prepared direct syscalls. Child is neither Clone nor Copy, and wait consumes that owner, including a NOHANG None result. Native x86 tests cover action replacement/order, exec and setup errno propagation, collision-protected error pipes, failed-child reaping, group/session creation, child-only signal-mask replacement, and interrupted consuming wait. Command/PATH search, full posix_spawn attributes, and broader process-lifetime policy remain outside this contract; paused AArch64 behavior is unchanged."
 
 [[capability]]
 id = "process.pidfd-open"

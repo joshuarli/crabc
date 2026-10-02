@@ -334,12 +334,14 @@ impl<'fd> PreparedExec<'fd> {
         })
     }
 
-    /// Replaces the prepared child descriptor actions. The vector copy occurs
-    /// now, before any child path exists, rather than after the internal
+    /// Replaces the prepared child descriptor actions, preserving their order.
+    /// An empty slice clears earlier actions. The vector copy occurs now,
+    /// before any child path exists, rather than after the internal
     /// fork-equivalent clone.
     #[inline]
     #[must_use]
     pub fn with_actions(mut self, actions: &[FdAction<'fd>]) -> Self {
+        self.actions.clear();
         self.actions.extend_from_slice(actions);
         self
     }
@@ -484,6 +486,7 @@ impl Child {
     /// Waits for this child, consuming its unique owner. `NOHANG` may return
     /// `None`, while a state report returns its decoded wait status; either
     /// result consumes the `Child` and cannot be waited a second time.
+    /// Signal interruptions retry the same wait while retaining ownership.
     #[inline]
     pub fn wait(self, options: WaitOptions) -> Result<Option<WaitStatus>> {
         wait_child(self.pid, options)
@@ -494,11 +497,15 @@ impl Child {
 #[inline]
 fn wait_child(pid: Pid, options: WaitOptions) -> Result<Option<WaitStatus>> {
     let mut status = 0_i32;
-    // SAFETY: `status` is writable Linux `int` storage, `pid` is an exact
-    // positive child selector, and the private caller owns this one-child
-    // wait transition.
-    let waited = unsafe {
-        crabc_core::process::wait4_raw(pid.as_raw_pid(), &mut status, options.bits())?
+    let waited = loop {
+        // SAFETY: The same writable status and exclusively owned positive PID
+        // remain valid across interruptions; no wait state was consumed by EINTR.
+        match unsafe {
+            crabc_core::process::wait4_raw(pid.as_raw_pid(), &mut status, options.bits())
+        } {
+            Err(crate::Errno::INTR) => continue,
+            result => break result?,
+        }
     };
     if waited == 0 {
         Ok(None)

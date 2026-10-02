@@ -60,6 +60,17 @@ fn x86_64_prepared_child_applies_descriptor_actions() {
 
 #[test]
 fn x86_64_prepared_child_reports_exec_failure_and_reaps_it() {
+    const ISOLATED: &str = "CRABC_CHILD_REAP_ISOLATED";
+    if std::env::var_os(ISOLATED).is_none() {
+        // A private test process makes the all-children query independent of
+        // sibling tests which may own unrelated live children.
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "x86_64_prepared_child_reports_exec_failure_and_reaps_it"])
+            .env(ISOLATED, "1")
+            .status().unwrap();
+        assert!(status.success());
+        return;
+    }
     let missing = process::PreparedExec::new(
         cstr(b"/crabc-x86-child-ownership-definitely-missing\0"),
         &[cstr(b"missing\0")],
@@ -165,4 +176,39 @@ fn x86_64_child_wait_nohang_consumes_the_owned_child() {
         reported_pid
     );
     assert_eq!(status, 23 << 8);
+}
+
+#[test]
+fn x86_64_prepared_child_replaces_descriptor_actions() {
+    let (_reader, writer) = pipe::pipe().unwrap();
+    let prepared = process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), cstr(b"exit 17\0")],
+        &[],
+    ).unwrap()
+        .with_actions(&[process::FdAction::dup2(&writer, -1)])
+        .with_actions(&[]);
+    let child = prepared.spawn().expect("empty replacement removes invalid prior action");
+    assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().unwrap().exit_status(), Some(17));
+}
+
+#[test]
+fn x86_64_prepared_child_applies_actions_in_declared_order() {
+    let (_reader, writer) = pipe::pipe().unwrap();
+    let prepared = process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), cstr(b"exit 7\0")],
+        &[],
+    ).unwrap();
+    let prepared = prepared.with_actions(&[
+        process::FdAction::close(&writer),
+        process::FdAction::dup2(&writer, 1),
+    ]);
+    assert_eq!(prepared.spawn().unwrap_err(), Errno::BADF);
+    let prepared = prepared.with_actions(&[
+        process::FdAction::dup2(&writer, 1),
+        process::FdAction::close(&writer),
+    ]);
+    assert_eq!(prepared.spawn().unwrap().wait(process::WaitOptions::empty())
+        .unwrap().unwrap().exit_status(), Some(7));
 }
