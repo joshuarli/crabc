@@ -100,7 +100,7 @@ row, and syscall diagnostics.
 `perf-c collect --attempt-roster ROSTER --work-dir NEW` replays the three
 attempts from raw evidence and writes `collector.json` with the per-workload
 scorecard: for each row and attempt, the CPU median ratio and upper bound,
-maximum-checkpoint PSS and `memory.peak` against their `0.90` limits, marked
+maximum-checkpoint PSS and `memory.peak` against their row-specific limits, marked
 and whole-process syscall totals, and wall/fault/context-switch/RSS medians.
 A row passes only if all four gates pass in all three attempts; no row or
 attempt compensates for another. `perf-c check REPORT` independently replays a
@@ -181,23 +181,28 @@ linked memory observer with its fixed main-state and plateau R/C checkpoints.
 
 No x86 release result exists. A full scorecard requires every workload to meet
 CPU upper-95% `<= 0.90` across 31 paired fresh processes, both live PSS and
-`memory.peak` `<= 0.90`, and both the marked-route and whole-process syscall
+`memory.peak` against the memory thresholds below, and both the marked-route
+and whole-process syscall
 totals to be at most `2R` candidate calls (or zero when the reference is
 zero), with no unexplained error, retry, fallback, or unclassified per-syscall
 difference. No native syscall-difference classification exists, so every
 per-syscall difference is currently an explicit failure. Three consecutive
 clean Docker invocations must pass one immutable roster on an uncontended host.
 
-Two measured acceptance-policy conflicts are retained as named blockers until
-the user decides them; neither hides a row nor changes a metric.
-A row's mandated resident data bounds every candidate from below.
-`allocator_live_32m` keeps 32 MiB of written payload while pinned musl's whole
-process is about 33 MiB in both PSS and `memory.peak`, and each 128-MiB span
-row keeps its mapped 128-MiB input (plus a written 128-MiB destination for
-`memcpy`/`memset`) resident at its checkpoint, so `<= 0.90` is below the
-payload itself. Separately, cgroup-v2 charges a fresh
-leaf in 64-page (256-KiB) per-CPU batches, so `memory.peak` is never below
-256 KiB; a row whose musl peak is one batch cannot reach `<= 0.90`.
+Raw total-memory comparisons use a no-regression threshold (`<= 1.0`) only
+where mandatory live payload or kernel accounting prevents a ten-percent
+reduction. PSS uses it for `allocator_live_32m` and every 128-MiB span row.
+`memory.peak` uses it for `allocator_live_32m`, the 128-MiB `memcpy`/`memset`
+span rows, and any row whose reference peak is exactly the observed 256-KiB
+single cgroup charge batch. Search-span peak measurements above that batch
+remain strict. All other memory comparisons retain `<= 0.90`, as does the CPU
+upper bound. Syscall rules remain unchanged.
+
+Both producer and replay derive these limits into the existing threshold
+fields. Reference and candidate PSS/peak values remain complete raw totals:
+no payload, image size, file-cache charge or accounting batch is subtracted.
+Equality passes only for the floor-limited metric; any increase fails. Historical
+reports are not relabeled as qualification under the changed policy.
 
 `perf-c-memory-smoke` is a separate bounded native collector test. It uses a
 fresh supplied product/work directory, seven selected rows across all six

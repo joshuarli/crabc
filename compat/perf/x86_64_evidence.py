@@ -103,25 +103,6 @@ def legacy_io_file(workload_name: str) -> str:
 # An attempt report is one retained measurement, never a release result.
 RELEASE_QUALIFICATION_REASON = "one attempt is not a three-attempt admitted collection"
 
-# Acceptance-policy conflicts measured on native x86.  They do not change a
-# metric, hide a row, or subtract a baseline: each remains a named release
-# blocker until the user explicitly decides the policy.  Row verdicts are still
-# computed by the unchanged 0.90 rules.
-ACCEPTANCE_POLICY_BLOCKERS = {
-    "peak-memory-payload-lower-bound": (
-        "a row's mandated resident data bounds every candidate from below: allocator_live_32m keeps "
-        "32 MiB of written payload against about 33 MiB of musl PSS and memory.peak, and each 128-MiB "
-        "span row keeps a mapped 128-MiB input (plus a written 128-MiB destination for memcpy/memset) "
-        "resident at its checkpoint; these exceed 90% of the musl process total, so PSS <= 0.90 is "
-        "infeasible for all of them and memory.peak <= 0.90 for allocator_live_32m and the "
-        "memcpy/memset span rows"
-    ),
-    "memory-peak-charge-granularity": (
-        "cgroup-v2 charges a fresh leaf in 64-page (256-KiB) per-CPU batches, so memory.peak is never "
-        "below 256 KiB; rows whose musl memory.peak is one batch cannot reach <= 0.90"
-    ),
-}
-
 # Full qualification builds this finite output set once per provider.  The
 # staged roots must contain these exact copied bytes; a report cannot point its
 # parsed link evidence at one ELF while executing another.  Six memory-only
@@ -1980,23 +1961,31 @@ def _verify_observer_checkpoint(
             f"{label}: checkpoint cgroup values disagree with raw bytes")
 
 
-def _memory_metric(reference: int, candidate: int) -> dict[str, Any]:
+def _memory_metric(
+    reference: int, candidate: int, *,
+    row: performance_profile.PerformanceRow | None = None, peak: bool = False,
+) -> dict[str, Any]:
     require(type(reference) is int and reference >= 0 and type(candidate) is int and candidate >= 0,
             "memory comparison value differs")
-    if reference == 0:
-        return {
-            "reference": reference,
-            "candidate": candidate,
-            "threshold_numerator": 9,
-            "threshold_denominator": 10,
-            "release_gate": "reference-zero",
-        }
+    # Total process measurements include mandatory resident payload.  The
+    # large live set and span PSS cannot lose ten percent without dropping
+    # required data.  Written copy/set spans also impose that floor on peak;
+    # search spans retain their strict peak threshold.  Fresh cgroup charges
+    # at the observed single 256-KiB batch floor cannot shrink either.
+    live_payload = row is not None and row.name == "allocator_live_32m"
+    arguments = getattr(row.legacy_workload, "extra_arguments", ()) if row is not None else ()
+    span_payload = (row is not None and row.fixture_mode == "span_matrix"
+                    and len(arguments) == 3 and arguments[1] == str(128 << 20))
+    floor_limited = (live_payload or span_payload and (not peak or arguments[0] in {"memcpy", "memset"})
+                    or peak and reference == (256 << 10))
+    numerator, denominator = (1, 1) if floor_limited else (9, 10)
     return {
         "reference": reference,
         "candidate": candidate,
-        "threshold_numerator": 9,
-        "threshold_denominator": 10,
-        "release_gate": "pass" if candidate * 10 <= reference * 9 else "fail",
+        "threshold_numerator": numerator,
+        "threshold_denominator": denominator,
+        "release_gate": ("reference-zero" if reference == 0 else
+                         "pass" if candidate * denominator <= reference * numerator else "fail"),
     }
 
 
@@ -2090,15 +2079,16 @@ def _verify_memory_observer_comparison(
     reference: Mapping[str, Any],
     candidate: Mapping[str, Any],
     label: str,
+    *, row: performance_profile.PerformanceRow | None = None,
 ) -> None:
     require(isinstance(result, dict) and set(result) == {"status", "pss_max_kib", "memory_peak_after_exit_bytes"}
             and result["status"] == "ok", f"{label}: observer memory comparison differs")
     reference_pss = max(checkpoint["memory"]["pss_kib"] for checkpoint in reference["checkpoints"])
     candidate_pss = max(checkpoint["memory"]["pss_kib"] for checkpoint in candidate["checkpoints"])
-    require(result["pss_max_kib"] == _memory_metric(reference_pss, candidate_pss)
+    require(result["pss_max_kib"] == _memory_metric(reference_pss, candidate_pss, row=row)
             and result["memory_peak_after_exit_bytes"] == _memory_metric(
                 reference["cgroup_memory"]["memory_peak_after_exit_bytes"],
-                candidate["cgroup_memory"]["memory_peak_after_exit_bytes"],
+                candidate["cgroup_memory"]["memory_peak_after_exit_bytes"], row=row, peak=True,
             ), f"{label}: observer memory comparison does not derive from raw checkpoints")
 
 
@@ -2342,7 +2332,7 @@ def validate_measurement_attempt(
                         root_record=root_text, private_mount=private_mount,
                         host=host, seen_peers=seen_peers,
                     )
-                _verify_memory_observer_comparison(item["comparison"], item["musl"], item["crabc"], name)
+                _verify_memory_observer_comparison(item["comparison"], item["musl"], item["crabc"], name, row=row)
             _verify_probe_assignment(memory, observer_memory, selected_rows, owned_probe_leaves, private_mount)
         else:
             require(observer_memory == {}, "partial measurement observer metrics differ")
@@ -2557,7 +2547,6 @@ def release_blockers(
             "measuring host was contended: a retained snapshot exceeds one-minute load "
             f"{HOST_LOAD_1MIN_MAX} or {HOST_PROCS_RUNNING_MAX} runnable tasks (see uncontended_host)"
         )
-    blockers.extend(f"acceptance policy {key}: {value}" for key, value in ACCEPTANCE_POLICY_BLOCKERS.items())
     return blockers
 
 

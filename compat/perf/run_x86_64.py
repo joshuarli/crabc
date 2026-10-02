@@ -2688,29 +2688,21 @@ def memory_observer_probe(
     return result
 
 
-def memory_metric(reference: int, candidate: int) -> dict[str, Any]:
-    """Record one exact 0.90 memory threshold comparison without floats."""
+def memory_metric(
+    reference: int, candidate: int, *,
+    row: performance_profile.PerformanceRow | None = None, peak: bool = False,
+) -> dict[str, Any]:
+    """Record unchanged totals through the same exact policy used by replay."""
 
     require(type(reference) is int and reference >= 0 and type(candidate) is int and candidate >= 0,
             "memory metric values are invalid")
-    if reference == 0:
-        return {
-            "reference": reference,
-            "candidate": candidate,
-            "threshold_numerator": 9,
-            "threshold_denominator": 10,
-            "release_gate": "reference-zero",
-        }
-    return {
-        "reference": reference,
-        "candidate": candidate,
-        "threshold_numerator": 9,
-        "threshold_denominator": 10,
-        "release_gate": "pass" if candidate * 10 <= reference * 9 else "fail",
-    }
+    return evidence._memory_metric(reference, candidate, row=row, peak=peak)
 
 
-def memory_observer_comparison(reference: Mapping[str, Any], candidate: Mapping[str, Any]) -> dict[str, Any]:
+def memory_observer_comparison(
+    reference: Mapping[str, Any], candidate: Mapping[str, Any], *,
+    row: performance_profile.PerformanceRow | None = None,
+) -> dict[str, Any]:
     """Derive PSS plateau and full-process peak comparisons from raw records."""
 
     if reference.get("status") != "ok" or candidate.get("status") != "ok":
@@ -2727,8 +2719,8 @@ def memory_observer_comparison(reference: Mapping[str, Any], candidate: Mapping[
         candidate_peak = candidate["cgroup_memory"]["memory_peak_after_exit_bytes"]
         return {
             "status": "ok",
-            "pss_max_kib": memory_metric(reference_pss, candidate_pss),
-            "memory_peak_after_exit_bytes": memory_metric(reference_peak, candidate_peak),
+            "pss_max_kib": memory_metric(reference_pss, candidate_pss, row=row),
+            "memory_peak_after_exit_bytes": memory_metric(reference_peak, candidate_peak, row=row, peak=True),
         }
     except (AdapterError, KeyError, TypeError, ValueError) as error:
         return {"status": "incomplete", "reason": str(error)}
@@ -2774,7 +2766,7 @@ def collect_memory_observers(
             "invocation": invocation,
             "musl": provider["musl"],
             "crabc": provider["crabc"],
-            "comparison": memory_observer_comparison(provider["musl"], provider["crabc"]),
+            "comparison": memory_observer_comparison(provider["musl"], provider["crabc"], row=row),
         }
     return result
 

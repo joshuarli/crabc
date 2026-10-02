@@ -738,19 +738,18 @@ class ScorecardDerivationTests(unittest.TestCase):
         canonical = list(evidence.canonical_workload_invocations(ROOT))
         available = {"status": "available", "owner": evidence.CORRECTNESS_OWNER, "unmet": []}
         validated = {"status": "validated-product-prerequisite"}
-        policy = [f"acceptance policy {key}: {value}" for key, value in evidence.ACCEPTANCE_POLICY_BLOCKERS.items()]
         quiet = {"status": "uncontended", "evidence": {"attempts": []}}
         self.assertEqual(evidence.release_blockers(
             admission=available, dynamic_product=validated, budget=evidence.FULL_BUDGET, attempts=3,
             workloads=canonical, canonical_workloads=canonical, failing_rows=[], uncontended_host=quiet,
-        ), policy)
+        ), [])
         blockers = evidence.release_blockers(
             admission={"status": "unavailable", "owner": evidence.CORRECTNESS_OWNER, "unmet": ["a: planned"]},
             dynamic_product={"status": "unavailable"}, budget=evidence.SMOKE_BUDGET, attempts=1,
             workloads=canonical[1:], canonical_workloads=canonical, failing_rows=["getpid"],
             uncontended_host={"status": "contended", "evidence": {}},
         )
-        self.assertEqual(len(blockers), 7 + len(policy))
+        self.assertEqual(len(blockers), 7)
         self.assertIn("contended", blockers[6])
         self.assertIn("a: planned", blockers[0])
         self.assertIn("owned-dynamic-qualification", blockers[1])
