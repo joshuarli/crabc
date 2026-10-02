@@ -4511,6 +4511,11 @@ mod tests {
             }
             assert!(allocator.allocate_current_initial_thread_local(request, false).is_none());
             assert_eq!(allocator.allocation_theap(), Some(original_theap));
+            assert!(!allocator.prepare_dormant_page_pair_current_initial_thread_local());
+            assert_eq!(allocator.allocation_theap(), Some(original_theap));
+            // SAFETY: the refused dormant handoff retains this original
+            // live client and its exact published PageMap span.
+            assert_eq!(unsafe { binding.page_map().lookup_registered_page(client.as_ptr()) }.unwrap(), Some(page));
             // This fixture deliberately stops before fatal output delivery.
             // Retain the original owner, live client and pending task together.
             core::mem::forget(allocator);

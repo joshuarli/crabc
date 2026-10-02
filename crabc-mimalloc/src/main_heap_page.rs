@@ -10031,6 +10031,130 @@ pub(crate) mod tests {
         });
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[test]
+    fn auxiliary_live_validity_retains_original_task_across_finish_and_owner_exit() {
+        struct Observation {
+            page: NonNull<Page>,
+            observed: bool,
+        }
+        unsafe fn observe(
+            snapshot: &crate::types::PageValiditySnapshot,
+            argument: *mut core::ffi::c_void,
+        ) -> Option<usize> {
+            // SAFETY: the synchronous fixture retains this context through
+            // every observer call; only a copied input is changed.
+            let observation = unsafe { &mut *argument.cast::<Observation>() };
+            if observation.observed || observation.page != snapshot.page { return None; }
+            observation.observed = true;
+            Some(usize::from(snapshot.capacity) + 1)
+        }
+        with_owner_local_fixture(false, |attachment, mut owner, pair| {
+            let request = crate::config::SMALL_MAX_OBJ_SIZE + crate::config::WORD_SIZE;
+            let (client, snapshot, original_theap, original_heap, process) = owner
+                .with_local_allocator(attachment, |allocator| {
+                    let client = allocator.allocate(request, false).unwrap();
+                    // SAFETY: this exact live client belongs to the bound
+                    // owner. Every raw scalar copy ends before allocation.
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(client) }).unwrap();
+                    let snapshot = unsafe { crate::types::Page::validity_snapshot_at(page) };
+                    let theap = allocator.allocation_theap();
+                    let heap = unsafe { crate::types::Theap::owner_snapshot_at(theap) }.unwrap().heap;
+                    (client, snapshot, theap, heap, allocator.allocation_process())
+                }).unwrap();
+            assert_eq!(snapshot.capacity, 1);
+            assert_eq!(snapshot.used, 1);
+            assert!(snapshot.free.is_null());
+            assert!(snapshot.reserved > snapshot.capacity);
+            let mut observation = Observation { page: snapshot.page, observed: false };
+            // SAFETY: the original client, owner and backing stay valid.
+            // The observer modifies only its copied validity input.
+            let mut task = unsafe {
+                crate::page_validity::with_live_page_validity_observer_for_test(
+                    observe, core::ptr::addr_of_mut!(observation).cast(), || {
+                        let mut phase = owner.with_local_allocator(attachment, |allocator| {
+                            allocator.begin_deferred_free_allocation(request, false)
+                        }).unwrap();
+                        for _ in 0..16 {
+                            phase = match phase {
+                                crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task) => return task,
+                                crate::single_thread::DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                                    let frequency = process.expect("a source getter phase requires process backing").policy().generic_collect_frequency();
+                                    owner.with_local_allocator(attachment, |allocator| {
+                                        allocator.resume_generic_allocation_frequency(request, frequency, continuation)
+                                    }).unwrap()
+                                }
+                                crate::single_thread::DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                                    owner.with_local_allocator(attachment, |allocator| {
+                                        allocator.resume_deferred_free_allocation(collection, continuation)
+                                    }).unwrap()
+                                }
+                                crate::single_thread::DeferredFreeAllocationPhase::Complete(_) => panic!("a source assertion must retain its live-page task"),
+                                crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(_) => panic!("the existing live page cannot become a fresh claim"),
+                            };
+                        }
+                        panic!("the original auxiliary phase must reach its live-page assertion")
+                    },
+                )
+            };
+            assert!(observation.observed);
+            assert_eq!(task.page(), snapshot.page);
+            assert!(task.matches_theap(original_theap));
+            assert!(task.belongs_to_subprocess(pair.subprocess().unwrap().identity()));
+            assert!(!task.has_retirement_refusal_marker());
+            // SAFETY: the original owner and attachment remain continuously
+            // admitted, with every short projection ended before publication.
+            unsafe { task.ensure_retirement_refusal(original_theap, original_heap) }.unwrap();
+            assert!(task.has_retirement_refusal_marker());
+            owner.with_local_allocator(attachment, |allocator| {
+                if let Err(task) = allocator.retain_live_page_validity(task) {
+                    core::mem::forget(task);
+                    panic!("the original auxiliary issuer retains its exact task");
+                }
+                assert_eq!(allocator.allocation_theap(), original_theap);
+                assert!(allocator.allocate(request, false).is_none());
+                assert!(allocator.engine.test_finish_audit().pending_live_page_validity);
+            }).unwrap();
+            let failure = owner.finish(attachment).expect_err("a pending assertion blocks all-free finish");
+            assert!(matches!(&failure, MainHeapThreadOwnerLocalPageEngineFinishFailure::NotQuiescent(_)));
+            let mut owner = failure.into_owner();
+            owner.with_local_allocator(attachment, |allocator| {
+                assert_eq!(allocator.allocation_theap(), original_theap);
+                let task = allocator.engine.take_pending_live_page_validity().unwrap();
+                assert_eq!(task.page(), snapshot.page);
+                assert!(task.matches_theap(original_theap));
+                assert!(task.belongs_to_subprocess(pair.subprocess().unwrap().identity()));
+                assert!(task.has_retirement_refusal_marker());
+                if let Err(task) = allocator.retain_live_page_validity(task) {
+                    core::mem::forget(task);
+                    panic!("failed finish must preserve the exact original auxiliary task");
+                }
+                assert!(allocator.engine.test_finish_audit().pending_live_page_validity);
+            }).unwrap();
+            let owner = match owner.finish_after_collect_abandon(attachment) {
+                Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(owner)) => owner,
+                Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::PreDrain(owner)) => {
+                    core::mem::forget(owner);
+                    panic!("the admitted original owner must enter its drain before retained refusal")
+                }
+                Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly) => panic!("the exact pending task cannot become attachment-only"),
+                Ok(()) => panic!("a pending assertion cannot complete owner exit"),
+            };
+            // SAFETY: the retained owner still owns this original live client
+            // and its complete PageMap span; no release has been attempted.
+            let map = unsafe { pair.page_map_for_owned_ranges() }.unwrap();
+            assert_eq!(unsafe { map.checked_lookup(client.as_ptr()) }, snapshot.page.as_ptr());
+            assert_eq!(attachment.finish_after_user_destructors(),
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal));
+            drop(owner);
+            // SAFETY: unfinished Drop conservatively retains its entire
+            // engine, including the exact task and original live client.
+            assert_eq!(unsafe { map.checked_lookup(client.as_ptr()) }, snapshot.page.as_ptr());
+            assert_eq!(attachment.finish_after_user_destructors(),
+                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal));
+        });
+    }
+
     #[test]
     fn persistent_owner_local_engine_retains_failed_finish_for_local_free_retry() {
         with_owner_local_fixture(true, |attachment, mut owner, _pair| {
