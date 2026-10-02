@@ -204,8 +204,24 @@ unsafe impl Sync for MainSubprocess {}
 pub(crate) struct ChildSubprocessImage {
     identity: SubprocessIdentity,
     native_record: core::sync::atomic::AtomicPtr<lifecycle::NativeChildSubprocess>,
+    // These initialized bytes are included in the requested child extent;
+    // the control never occupies allocator padding or a second allocation.
+    #[cfg(target_arch = "x86_64")]
+    native_control: NativeChildControlSlot,
     _pin: PhantomPinned,
 }
+
+/// Initialized only by the exclusive unpublished creator. Once published,
+/// all control mutations use the record's own lock or atomic fields; shared
+/// child identity projections never cover these interior mutable bytes.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildControlSlot(core::cell::UnsafeCell<MaybeUninit<lifecycle::NativeChildSubprocess>>);
+
+// SAFETY: initialization precedes publication and the record serializes all
+// subsequent mutation. The surrounding allocation remains owned until the
+// last actual TLS member finishes.
+#[cfg(target_arch = "x86_64")]
+unsafe impl Sync for NativeChildControlSlot {}
 
 impl core::ops::Deref for ChildSubprocessImage {
     type Target = SubprocessIdentity;
@@ -218,12 +234,22 @@ impl ChildSubprocessImage {
         Self {
             identity: SubprocessIdentity::new_with_role(SubprocessRole::Child),
             native_record: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            #[cfg(target_arch = "x86_64")]
+            native_control: NativeChildControlSlot(core::cell::UnsafeCell::new(MaybeUninit::uninit())),
             _pin: PhantomPinned,
         }
     }
 
     #[inline]
     pub(crate) fn identity(&self) -> &SubprocessIdentity { &self.identity }
+
+    /// Storage for the control record inside the exact child allocation.
+    /// The unpublished creator alone may initialize this address.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn native_control_pointer(&self) -> core::ptr::NonNull<lifecycle::NativeChildSubprocess> {
+        // SAFETY: an initialized child image has non-null aligned slot storage.
+        unsafe { core::ptr::NonNull::new_unchecked(self.native_control.0.get().cast()) }
+    }
 
     /// Publishes the production record that owns this child. Only the first
     /// publication succeeds.

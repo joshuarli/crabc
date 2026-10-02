@@ -725,7 +725,9 @@ impl ChildThreadMember {
 pub(crate) struct NativeChildSubprocess {
     lock: crate::lock::PrivateLock,
     owner: core::cell::UnsafeCell<Option<ChildMainHeapContextOwner<'static>>>,
-    /// This record's own parent-metadata block, moved out to free it.
+    /// On x86, the enclosing child allocation transfers here after source
+    /// teardown; other targets retain their separate control allocation.
+    /// Release waits for the last actual TLS member to finish.
     storage: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
     parent_metadata: ChildParentMetadata,
     registry: &'static SourceSubprocessRegistry,
@@ -1106,16 +1108,17 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     }
     let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
     let metadata = crate::meta::MetaAllocator::global();
-    // The Rust record is allocated first so that no child state exists when
-    // it fails; source has no such record.
     let parent_metadata = match current_child_id() {
         Some(id) => ChildParentMetadata::Child { id, binding },
         None => ChildParentMetadata::Process { allocator: metadata, main: parent, config },
     };
+    #[cfg(not(target_arch = "x86_64"))]
     let mut storage = parent_metadata
         .allocate(core::mem::size_of::<NativeChildSubprocess>())
         .map_err(NativeSubprocessError::RecordAllocation)?;
+    #[cfg(not(target_arch = "x86_64"))]
     let record = storage.pointer().cast::<NativeChildSubprocess>();
+    #[cfg(not(target_arch = "x86_64"))]
     if record.as_ptr().addr() % core::mem::align_of::<NativeChildSubprocess>() != 0 {
         return match parent_metadata.free(&mut storage) {
             Ok(()) => Err(NativeSubprocessError::RecordAllocation(crate::meta::MetaError::InitializationRetained)),
@@ -1132,25 +1135,31 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
                 .ok_or(ChildSubprocessNewError::HeapAllocation)
         })
     };
-    let child = match child {
+    let mut child = match child {
         Ok(child) => child,
         Err(ChildSubprocessNewFailure::Released(error)) => {
+            #[cfg(target_arch = "x86_64")]
+            return Err(NativeSubprocessError::New(error));
+            #[cfg(not(target_arch = "x86_64"))]
             return match parent_metadata.free(&mut storage) {
                 Ok(()) => Err(NativeSubprocessError::New(error)),
                 Err(_) => Err(NativeSubprocessError::Retained),
             };
-        }
-        // The retained owners are dropped without freeing anything.
-        Err(ChildSubprocessNewFailure::Retained(_)) => {
-            return Err(NativeSubprocessError::Retained);
-        }
+        },
+        Err(ChildSubprocessNewFailure::Retained(_)) => return Err(NativeSubprocessError::Retained),
     };
+    #[cfg(target_arch = "x86_64")]
+    let record = child.with_child_image(|image| image.native_control_pointer())
+        .ok_or(NativeSubprocessError::Retained)?;
     // SAFETY: the block is exclusively owned, zeroed, large enough, and
     // aligned for the record, which is written whole before the id escapes.
     unsafe {
         record.as_ptr().write(NativeChildSubprocess {
             lock: crate::lock::PrivateLock::new(),
             owner: core::cell::UnsafeCell::new(Some(child)),
+            #[cfg(target_arch = "x86_64")]
+            storage: core::cell::UnsafeCell::new(None),
+            #[cfg(not(target_arch = "x86_64"))]
             storage: core::cell::UnsafeCell::new(Some(storage)),
             parent_metadata,
             registry,
@@ -2962,6 +2971,23 @@ unsafe fn destroy_record(
     unsafe { free_record(record) }
 }
 
+/// Transfers the enclosing exact allocation after all source image users
+/// have ended. The control record then retains it through orphan TLS finish.
+///
+/// # Safety
+/// The caller exclusively owns this record's child teardown under its lock;
+/// the child identity is detached and no source image projection remains.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn retain_native_child_control_storage(
+    record: core::ptr::NonNull<NativeChildSubprocess>,
+    storage: crate::meta::ChildMetadataAllocation,
+) {
+    // SAFETY: teardown holds the record lock and owns the one capability.
+    let slot = unsafe { &mut *record.as_ref().storage.get() };
+    assert!(slot.is_none(), "child control custody transfers only once");
+    *slot = Some(storage);
+}
+
 /// Frees a record whose child is gone.
 ///
 /// # Safety
@@ -2969,7 +2995,8 @@ unsafe fn destroy_record(
 unsafe fn free_record(record: &'static NativeChildSubprocess) -> Result<(), NativeSubprocessError> {
     // SAFETY: forwarded exclusivity; the owner cell is empty.
     let mut storage = unsafe { (*record.storage.get()).take() }.ok_or(NativeSubprocessError::Retained)?;
-    record.parent_metadata.free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
+    let parent_metadata = record.parent_metadata;
+    parent_metadata.free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
 }
 
 #[cfg(test)]
@@ -3368,55 +3395,44 @@ pub(crate) mod tests {
             .0
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "mi-debug-1")))]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
-    fn nested_metadata_record_and_compact_image_keep_distinct_live_allocations() {
-        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
-            test_initialize_process_from_host_environment, ThreadFinishResult};
+    fn native_child_creation_metadata_failure_returns_parent_custody_before_retry() {
         crate::test_process::run_in_fresh_process(
-            "subproc::lifecycle::tests::nested_metadata_record_and_compact_image_keep_distinct_live_allocations",
+            "subproc::lifecycle::tests::native_child_creation_metadata_failure_returns_parent_custody_before_retry",
             || {
-                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
                 }));
-                assert!(prepare_native_later_thread_arena());
-                let parent = native_subproc_new().expect("a live metadata parent");
-                let address = parent.as_ptr().addr();
-                let observations = std::thread::spawn(move || {
-                    // SAFETY: this fresh worker retains its descriptor and
-                    // the joined coordinator keeps the parent alive.
-                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
-                        crate::runtime_lifecycle::current_native_allocator_thread_descriptor()) });
-                    let parent = unsafe { NativeSubprocessId::from_ptr(core::ptr::NonNull::new(address as *mut core::ffi::c_void).unwrap()) };
-                    assert_eq!(unsafe { native_subproc_add_current_thread(parent) }, Ok(NativeChildThreadAdd::Added));
-                    let binding = native_backing();
-                    let allocator = ChildParentMetadata::Child { id: parent, binding };
-                    let committed = || allocator.with_identity(|identity| identity.vm_statistics().snapshot().committed_current).unwrap();
-                    let before = committed();
-                    let mut record = allocator.allocate(core::mem::size_of::<NativeChildSubprocess>()).unwrap();
-                    let after_record = committed();
-                    let mut image = allocator.allocate(core::mem::size_of::<crate::subproc::ChildSubprocessImage>()).unwrap();
-                    let after_image = committed();
-                    let geometry = |pointer| unsafe {
-                        parent.with_owner(|owner| owner.as_mut().unwrap().with_metadata_page_engine(binding,
-                            |_child, engine| engine.usable_size(pointer)).unwrap()).unwrap().unwrap()
-                    };
-                    let record_usable = geometry(record.pointer());
-                    let image_usable = geometry(image.pointer());
-                    assert_ne!(record.pointer(), image.pointer());
-                    allocator.free(&mut image).unwrap();
-                    allocator.free(&mut record).unwrap();
-                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
-                    (after_record - before, after_image - after_record, record_usable, image_usable)
-                }).join().unwrap();
-                assert_eq!(unsafe { native_subproc_destroy(parent) }, Ok(()));
-                std::println!("nested.record.committed={}\nnested.image.committed={}\nnested.record.usable={}\nnested.image.usable={}",
-                    observations.0, observations.1, observations.2, observations.3);
-                assert_eq!(observations.0, 64 * 1024);
-                assert_eq!(observations.1, 64 * 1024);
-                assert_eq!(observations.2, 768);
-                assert_eq!(observations.3, 6144);
-            });
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let (_, registry) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                let metadata = crate::meta::MetaAllocator::global();
+                let members = registry_members(registry);
+                let capabilities = metadata.test_allocation_audit().live_capability_count;
+                for context_failure in [true, false] {
+                    let request = if context_failure {
+                        core::mem::size_of::<crate::subproc::ChildSubprocessImage>()
+                    } else { core::mem::size_of::<Theap>() };
+                    metadata.test_fail_next_direct_zeroed_size(request);
+                    let failure = native_subproc_new().expect_err("the exact source metadata request fails");
+                    assert!(matches!((context_failure, failure),
+                        (true, NativeSubprocessError::New(ChildSubprocessNewError::ContextAllocation(_)))
+                        | (false, NativeSubprocessError::New(ChildSubprocessNewError::MetadataTheapAllocation(_)))));
+                    assert_eq!(registry_members(registry), members,
+                        "failed creation publishes no child registry member");
+                    assert_eq!(metadata.test_allocation_audit().live_capability_count, capabilities,
+                        "source reverse rollback returns every exact parent capability");
+                    let retry = native_subproc_new().expect("the same parent can retry creation");
+                    // SAFETY: no member, client, callback, or other operation
+                    // has been admitted to this newly created retry child.
+                    assert_eq!(unsafe { native_subproc_destroy(retry) }, Ok(()));
+                    assert_eq!(registry_members(registry), members);
+                    assert_eq!(metadata.test_allocation_audit().live_capability_count, capabilities,
+                        "complete retry releases its enclosing control exactly once");
+                }
+            },
+        );
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -3880,9 +3896,10 @@ pub(crate) mod tests {
                 observed.recv().expect("actual TLS member retained after failure");
                 // SAFETY: the worker is parked outside allocator operations;
                 // its actual TLS capability remains retained until signalled.
-                unsafe { id.with_owner(|owner| {
+                let context_address = unsafe { id.with_owner(|owner| {
                     let child = owner.as_mut().expect("live retained child");
                     assert_eq!(child.with_child_image(|image| image.get_ref().identity().live_thread_count()), Some(0));
+                    child.with_child_image(|image| core::ptr::from_ref(image.get_ref()).addr()).unwrap()
                 }) }.expect("exclusive source registration observation");
                 let metadata = crate::meta::MetaAllocator::global();
                 let before = metadata.test_allocation_audit().live_capability_count;
@@ -3891,12 +3908,18 @@ pub(crate) mod tests {
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
                 let after = metadata.test_allocation_audit().live_capability_count;
                 std::println!("retained-record.before={before}; after={after}");
-                assert_eq!(after + 2, before,
-                    "context and metadata Theap return while actual TLS retains its record capability");
+                assert_eq!(after + 1, before,
+                    "metadata Theap returns while actual TLS retains the enclosing context capability");
+                // SAFETY: the parked actual member retains the record and no
+                // finish or other record operation can overlap this observation.
+                let retained_context = unsafe { (*id.record().storage.get()).as_ref()
+                    .expect("context custody moved to its embedded control").pointer().as_ptr().addr() };
+                assert_eq!(retained_context, context_address,
+                    "terminal control retains the original parent-issued context allocation");
                 terminal.send(true).expect("audited record remains allocated");
                 worker.join().expect("actual retained member completes terminal finish");
                 assert_eq!(metadata.test_allocation_audit().live_capability_count + 1, after,
-                    "the last real TLS member returns the record capability exactly once");
+                    "the last real TLS member returns the enclosing context capability exactly once");
             },
         );
     }

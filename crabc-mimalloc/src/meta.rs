@@ -5014,6 +5014,16 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 }
             }
         }
+        #[cfg(target_arch = "x86_64")]
+        let native_record = self.context.with_image(|image| image.native_record()).flatten();
+        #[cfg(target_arch = "x86_64")]
+        if let Some(record) = native_record {
+            // SAFETY: source Heap, Theap, arena, and registry teardown have
+            // finished. Native destruction holds this record's lock, and no
+            // source image projection survives the completed closure above.
+            unsafe { crate::subproc::lifecycle::retain_native_child_control_storage(record, self.context.context); }
+            return Ok(());
+        }
         if let Err(error) = self.context.parent_metadata.free(&mut self.context.context) {
             self.stage = ChildMainHeapStage::Terminal;
             return retained(self, ChildMainHeapReleaseStage::Context,
