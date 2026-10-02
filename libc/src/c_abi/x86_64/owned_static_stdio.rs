@@ -1009,10 +1009,18 @@ unsafe fn prepare_read(stream: *mut StandardStream) -> bool {
         // reporting the direction error. This also leaves later writes with
         // a fresh buffer region while the error indicator remains set.
         if is_writable(stream) && flush_output_held(stream) == EOF { return false; }
+        let inactive = (*stream).direction != BufferDirection::Read;
         (*stream).direction = BufferDirection::Read;
         if !is_readable(stream) {
             mark_error(stream);
             return false;
+        }
+        if inactive {
+            // musl __toread starts an empty region at the configured buffer end.
+            // Until refill, this unused storage is also available for pushback.
+            let end = (*stream).buffer.add((*stream).capacity);
+            (*stream).read_position = end;
+            (*stream).read_end = end;
         }
         true
     }
