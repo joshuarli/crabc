@@ -105,8 +105,19 @@ class CargoCommandTests(unittest.TestCase):
         self.assertFalse(loom.exact_filter)
         self.assertEqual(loom.expected_pass_count, len(loom.source_tests))
         self.assertTrue(
-            all(lane.exact_filter for lane in EVIDENCE.TEST_LANES if lane is not loom)
+            all(lane.exact_filter for lane in EVIDENCE.TEST_LANES if not lane.kind.startswith("finite-loom"))
         )
+
+    def test_positive_model_command_excludes_only_the_separate_logical_controls(self) -> None:
+        positive = next(lane for lane in EVIDENCE.TEST_LANES if lane.kind == "finite-loom")
+        controls = next(lane for lane in EVIDENCE.TEST_LANES if lane.kind == "finite-loom-controls")
+        command = EVIDENCE.cargo_test_command("cargo", positive, Path(".work/target"))
+        skipped = command[command.index("--skip") + 1]
+        self.assertTrue(all(skipped not in name for name in positive.source_tests))
+        self.assertTrue(all(skipped in name for name in controls.source_tests))
+        control_command = EVIDENCE.cargo_test_command("cargo", controls, Path(".work/target"))
+        self.assertNotIn("--skip", control_command)
+        self.assertTrue(all(controls.test_filter in name for name in controls.source_tests))
 
     def test_fixed_selection_expects_every_named_source_test(self) -> None:
         for lane in EVIDENCE.TEST_LANES:
@@ -126,11 +137,30 @@ class CargoCommandTests(unittest.TestCase):
                 "remote-free-joined-multi-producer",
                 "remote-free-owner-collection-race",
                 "remote-free-finite-loom-page-protocol",
+                "remote-free-finite-loom-logical-controls",
             ],
         )
 
 
 class ReportTests(unittest.TestCase):
+    def test_model_receipt_requires_the_named_outcomes_even_when_totals_match(self) -> None:
+        for lane in EVIDENCE.TEST_LANES:
+            if not lane.kind.startswith("finite-loom"):
+                continue
+            suffix = " - should panic" if lane.kind == "finite-loom-controls" else ""
+            outcomes = [f"test {name}{suffix} ... ok" for name in lane.source_tests]
+            summary = (
+                f"test result: ok. {len(outcomes)} passed; 0 failed; 0 ignored; "
+                "0 measured; 0 filtered out;"
+            )
+            EVIDENCE.parse_test_result("\n".join([*outcomes, summary]), lane)
+            for replacement in ("test unrelated_model ... ok", outcomes[1]):
+                with self.subTest(lane=lane.identifier, replacement=replacement):
+                    with self.assertRaisesRegex(EVIDENCE.EvidenceError, "named model outcomes"):
+                        EVIDENCE.parse_test_result(
+                            "\n".join([replacement, *outcomes[1:], summary]), lane
+                        )
+
     def complete_lanes(self) -> list[dict[str, object]]:
         target_dir = Path("/tmp/private-lifecycle-target")
         lanes: list[dict[str, object]] = []

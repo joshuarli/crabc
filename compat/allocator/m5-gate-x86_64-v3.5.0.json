@@ -24,9 +24,10 @@
         "native_pointer_first_initial_foreign_free",
         "native_pointer_first_initial_local_free",
         "native_pointer_first_nonlocal_reallocate",
-        "native_pointer_first_usable_size"
+        "native_pointer_first_usable_size",
+        "native_secure_public_growth"
       ],
-      "scope": "free, usable-size, and realloc derive page, canonical block, and local/remote/abandoned behavior from PageMap state on the initial and later owners, including aligned, huge, current-owner in-place, nonlocal replacement, and concurrent nonlocal realloc."
+      "scope": "free, usable-size, and realloc derive page, canonical block, and local/remote/abandoned behavior from PageMap state on the initial and later owners, including aligned, huge, current-owner in-place, nonlocal replacement, and concurrent nonlocal realloc. Secure public heap and guarded aligned growth retain client contents and ownership across joined workers and fork."
     },
     "native:remote-publication": {
       "native_tests": [
@@ -83,9 +84,10 @@
         "native_post_exit_huge_arena_singleton_release",
         "native_post_exit_split_releaser_lifecycle",
         "native_post_exit_terminal_owner_retention",
-        "native_reclaim_on_free"
+        "native_reclaim_on_free",
+        "native_secure_os_release_lifecycle"
       ],
-      "scope": "Abandoned pages are reclaimed on allocation and on free, released through PageMap/arena/OS terminal tails by split and concurrent releasers, and a failed OS release retains one terminal owner without retaining any worker."
+      "scope": "Abandoned pages are reclaimed on allocation and on free, released through PageMap/arena/OS terminal tails by split and concurrent releasers, and a failed OS release retains one terminal owner without retaining any worker. Secure partial OS pages account reset and final release once even when the terminal unmap fails."
     },
     "native:state-auditing": {
       "native_tests": [
@@ -93,6 +95,8 @@
         "native_heap_birth_geometry_contract",
         "native_main_heap_birth_geometry_contract",
         "native_heap_stats_contract",
+        "native_stats_reset_contract",
+        "native_subproc_footprint_contract",
         "native_subproc_heap_birth_contract",
         "native_subproc_stats_contract",
         "native_pointer_first_nonlocal_reallocate_state_auditor",
@@ -100,17 +104,19 @@
         "native_runtime_first_arena_policy",
         "native_runtime_startup_regular_arena"
       ],
-      "scope": "Scalar audits return PageMap entries (excluding retained metadata pages), arena registrations, abandoned counts, and live thread and Theap counts to baseline, and keep the PageMap live for late same-page producers."
+      "scope": "Scalar audits return PageMap entries (excluding retained metadata pages), arena registrations, abandoned counts, and live thread and Theap counts to baseline, and keep the PageMap live for late same-page producers. Child statistics reset merges the caller's child main heap, and nested subprocess creation preserves parent clients and lifetime."
     },
     "native:deterministic-churn": {
       "native_tests": [
         "native_medium_collection_churn",
+        "native_metadata_retention_contract",
         "native_owner_local_persistent_cycles",
         "native_parallel_local_workers",
         "native_parked_compatibility_local_cycles",
-        "native_persistent_worker_fastpath"
+        "native_persistent_worker_fastpath",
+        "native_source_root_memory_bound"
       ],
-      "scope": "Deterministic persistent-owner allocate/free/realloc cycles at 1, 2, 4, and 8 workers with collect-abandon and reclaim teardowns, owner-local operation counts, a medium-page remote collection point, and a metadata registration plateau."
+      "scope": "Deterministic persistent-owner allocate/free/realloc cycles at 1, 2, 4, and 8 workers with collect-abandon and reclaim teardowns, owner-local operation counts, a medium-page remote collection point, and a metadata registration plateau. Seeded initial and worker churn also bounds retained metadata and source-root memory with joined panic cleanup."
     },
     "differential:reclaim-on-free": {
       "command": [
@@ -302,7 +308,7 @@
         "--report",
         "{scratch}/lifecycle.json"
       ],
-      "scope": "The bounded x86 lifecycle lane: focused lifecycle and concurrency unit tests, the remote-free Loom models, and the runtime first-arena integration witness."
+      "scope": "The bounded x86 lifecycle lane: focused lifecycle and concurrency unit tests, separately named positive remote-free Loom schedules and logical ordering controls, and the runtime first-arena integration witness."
     },
     "ratchet:architecture": {
       "command": [

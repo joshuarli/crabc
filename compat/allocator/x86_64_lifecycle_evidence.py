@@ -71,7 +71,7 @@ RUNTIME_THP_CONFIGURATION_C_TRACE_END = {
 # `mi_process_tld_main`; each remaining normal-release object stays linked
 # once. `src/arena.c` remains an ordinary linked source object, so the direct
 # fixture's one `mi_malloc` reaches the real regular first-arena initializer.
-# This is intentionally separate from the wider M2 VM fixture because this
+# This is intentionally separate from the wider VM fixture because this
 # lifecycle lane records one option-aware TLD/regular-first-arena transition.
 INITIAL_TLD_NUMA_C_ORACLE_LINK_SOURCES = (
     "src/alloc.c",
@@ -369,15 +369,17 @@ TEST_LANES = (
         test_filter="remote_free::loom_tests",
         exact_filter=False,
         features=("loom",),
-        expected_pass_count=10,
+        expected_pass_count=12,
         source_tests=(
             "remote_free::loom_tests::claimed_abandoned_remote_free_stays_linear",
             "remote_free::loom_tests::loom_live_owner_collects_remote_frees_before_its_page_release",
-            "remote_free::loom_tests::loom_model_rejects_a_head_without_source_acq_rel_ordering",
-            "remote_free::loom_tests::loom_model_rejects_a_client_read_after_its_publication",
             "remote_free::loom_tests::loom_owner_exit_racing_final_remote_frees_releases_the_page_once",
             "remote_free::loom_tests::loom_full_page_owner_exit_reabandons_to_mapped_then_releases_once",
+            "remote_free::loom_tests::loom_reclaim_on_free_then_owner_exit_retains_an_unpublished_client",
             "remote_free::loom_tests::loom_arena_reader_racing_final_remote_free_has_one_owner_and_one_release",
+            "remote_free::loom_tests::loom_competing_rejected_arena_readers_finish_before_final_release",
+            "remote_free::loom_tests::loom_restored_bitmap_orders_reader_metadata_before_release",
+            "remote_free::loom_tests::loom_identity_replacement_preserves_concurrent_page_flags",
             "remote_free::loom_tests::loom_small_page_partial_collection_retains_its_head_until_the_final_free",
             "remote_free::loom_tests::loom_small_page_unown_from_free_keeps_the_page_mapped_with_its_client",
             "remote_free::loom_tests::loom_owner_exit_remote_frees_and_arena_reader_compose_to_one_release",
@@ -385,8 +387,24 @@ TEST_LANES = (
         bounded_behavior=(
             "Loom executes the production xthread_free publication, detach, claim, unown, and expected-head unown transitions under a bounded preemption schedule",
             "source-plain PageMap entry, page metadata, owner used/free lists, and block links are Loom cells, so an unordered client read or owner access versus page release fails the model",
-            "negative controls require Loom to report a causality violation for Relaxed head operations and for a page release unordered with a client read",
+            "reclaim followed by a second owner exit retains the unpublished client; competing arena readers finish before final release, restored bitmap ordering protects reader metadata, and identity replacement preserves concurrent page flags",
             "remote free, live-owner collection and release, owner exit with mapped or unmapped abandonment, reabandonment, small-page partial collection, and a mapped arena reader are composed on one page without a lease, counter, or registry",
+        ),
+    ),
+    TestLane(
+        identifier="remote-free-finite-loom-logical-controls",
+        kind="finite-loom-controls",
+        test_filter="remote_free::loom_tests::loom_model_rejects_",
+        exact_filter=False,
+        features=("loom",),
+        expected_pass_count=3,
+        source_tests=(
+            "remote_free::loom_tests::loom_model_rejects_a_head_without_source_acq_rel_ordering",
+            "remote_free::loom_tests::loom_model_rejects_a_client_read_after_its_publication",
+            "remote_free::loom_tests::loom_model_rejects_bitmap_release_without_source_acquire_ordering",
+        ),
+        bounded_behavior=(
+            "copied logical-state controls require Loom causality diagnostics when source head ordering, client-publication ordering, or bitmap-release acquire ordering is removed",
         ),
     ),
 )
@@ -1133,6 +1151,10 @@ def cargo_test_command(cargo: str, lane: TestLane, target_dir: Path) -> list[str
         command.extend(("--features", ",".join(lane.features)))
     command.append(lane.test_filter)
     command.extend(("--", "--test-threads=1"))
+    if lane.kind == "finite-loom":
+        # Positive live-client schedules and logical ordering controls retain
+        # separate outcomes so neither selection can substitute for the other.
+        command.extend(("--skip", "loom_model_rejects_"))
     if lane.kind == "native-integration":
         # Each integration child forwards only its named scalar trace. This
         # binds the selected ordinary runtime execution without retaining an
@@ -1173,6 +1195,10 @@ def parse_test_result(output: str, lane: TestLane) -> dict[str, int]:
             f"{lane.identifier} passed {result['passed']} tests, "
             f"expected exactly {lane.expected_pass_count}"
         )
+    if lane.kind in {"finite-loom", "finite-loom-controls"}:
+        names = re.findall(r"^test (\S+)(?: - should panic)? \.\.\. ok$", output, re.MULTILINE)
+        if sorted(names) != sorted(lane.source_tests):
+            raise EvidenceError(f"{lane.identifier} named model outcomes differ: {names}")
     return result
 
 
