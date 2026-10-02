@@ -40292,6 +40292,64 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
+    /// Observes the source live-list predicate without carrying a metadata
+    /// projection into output. Failure detaches the exact queue member while
+    /// keeping its PageMap and backing publication retained.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn observe_live_page_validity(&mut self, page: NonNull<Page>) -> Result<(), GenericPathError> {
+        // SAFETY: this engine owns ordinary Page and local-list fields.
+        // Remote producers keep published links immutable; no collector,
+        // retirement or PageMap mutation overlaps this short observation.
+        let failure = unsafe {
+            let snapshot = Page::validity_snapshot_at(page);
+            crate::page_validity::source_page_lists_valid(&snapshot, self.page_map)
+        };
+        let Err(invariant) = failure else { return Ok(()); };
+        let assertion = invariant.into_live_page_validity_assertion()
+            .map_err(|_| GenericPathError::Lifecycle)?;
+        let theap = NonNull::new(self.theap_identity()).ok_or(GenericPathError::Lifecycle)?;
+        // SAFETY: the active session continuously retains its real issuer;
+        // this short copy grants no replacement admission or lifetime.
+        let issuer = unsafe { Theap::owner_snapshot_at(theap) }.ok_or(GenericPathError::Lifecycle)?;
+        let task = PendingLivePageValidity {
+            page, theap, heap: issuer.heap, subprocess: issuer.subprocess,
+            assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked,
+        };
+        // A scalar failure cannot authorize deriving a queue from block
+        // geometry. Traverse the stable owner queues instead. A fresh
+        // registered Page has no queue predecessor yet.
+        let page_count = self.session.theap().page_count();
+        let mut queue_bin = None;
+        for bin in 0..=BIN_FULL {
+            let Some(queue) = self.session.queue(bin) else { continue; };
+            let mut current = queue.first();
+            for _ in 0..page_count {
+                if current == page.as_ptr() { queue_bin = Some(bin); break; }
+                let Some(current_page) = NonNull::new(current) else { break; };
+                // SAFETY: bounded traversal stays under the same owner, with
+                // source queue links stable until the following detachment.
+                current = unsafe { Page::queue_next_at(current_page) };
+            }
+            if queue_bin.is_some() { break; }
+        }
+        if let Some(bin) = queue_bin {
+            if let Some(queue) = self.session.queue_mut(bin) {
+                // SAFETY: traversal proved exact membership while the same
+                // owner excludes queue writers. No metadata is retired.
+                unsafe { page_queue_remove_metadata(queue, page.as_ptr()) };
+                let _ = self.session.note_page_removed();
+            }
+        }
+        // Nested allocation may use other legal Pages or new backing, but
+        // must not select this retained Page from a direct-cache entry.
+        for index in 0..PAGES_DIRECT {
+            if self.session.direct_page(index) == Some(page.as_ptr()) {
+                let _ = self.session.set_direct_page(index, EMPTY_PAGE.as_ptr());
+            }
+        }
+        Err(GenericPathError::LiveValidity(task))
+    }
+
     /// Performs the selected page's source extension before its free-list
     /// links become visible. Fully committed pages retain the existing scalar
     /// operation. An on-demand page commits its direct page area before
@@ -45589,6 +45647,11 @@ impl<'main> PageAllocatorEngine<'static, 'static, MainStaticPageSession<'main>> 
     /// dedicated terminal slot.
     #[must_use = "a refused borrowed ticket-zero finish still owns its engine and PageMap lifecycle"]
     pub(crate) fn terminalize_borrowed_main_static_finish_failure(mut self) -> Self {
+        if let Some(task) = self.pending_live_page_validity.take() {
+            if let Err(task) = self.session.retain_unfinished_live_page_validity(task) {
+                core::mem::forget(task);
+            }
+        }
         if let Some(task) = self.pending_fresh_initialization.take() {
             if let Err(task) = self.session.retain_unfinished_fresh_initialization(task) {
                 core::mem::forget(task);
@@ -45726,6 +45789,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 {
     fn drop(&mut self) {
         if !self.shutdown_complete {
+            if let Some(task) = self.pending_live_page_validity.take() {
+                if let Err(task) = self.session.retain_unfinished_live_page_validity(task) {
+                    // A refused issuer cannot release or retry this exact
+                    // retained Page. The session is latched below.
+                    core::mem::forget(task);
+                }
+            }
             if let Some(task) = self.pending_fresh_initialization.take() {
                 if let Err(task) = self.session.retain_unfinished_fresh_initialization(task) {
                     // A session without a persistent issuer slot cannot perform
@@ -52715,6 +52785,11 @@ mod tests {
         let mut phase = allocator.begin_deferred_free_aligned_allocation(size, alignment, false);
         loop {
             match phase {
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => {
+                    core::mem::forget(task);
+                    panic!("a legal phased fixture observed a live Page assertion");
+                }
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                             // SAFETY: this fixture retains the original source engine and

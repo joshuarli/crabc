@@ -371,6 +371,11 @@ fn allocate_phased(
     loop {
         match phase {
             #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::LiveValidity(task) => {
+                core::mem::forget(task);
+                panic!("a legal source trace observed a live Page assertion");
+            }
+            #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::FreshInitialization(pending) => {
                 // SAFETY: this trace retains the original engine and backing
                 // continuously through preparation and cleanup.
