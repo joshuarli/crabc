@@ -547,6 +547,8 @@ impl ProcessArenaBacking {
             HugeOsAllocationOutcome::RejectedPrimitive(rejected) =>
                 (None, Some(rejected), Some(HugeOsAllocationStop::NoncontiguousPrimitive)),
         };
+        #[cfg(target_arch = "x86_64")]
+        let retained_child = matches!(&owner, HugeReservationOwner::Child(_));
         let mut pending = PendingHugeCleanup { prefix: None, rejected, owner,
             error: HugeArenaCleanupError::Primitive(Errno::NOMEM) };
         if let Some(rejected) = &pending.rejected {
@@ -554,7 +556,20 @@ impl ProcessArenaBacking {
         }
         let result = match allocation {
             None => Err(HugeArenaReserveError::Unavailable(unavailable.unwrap())),
-            Some(allocation) => match unsafe { self.install_owned_huge_allocation(config, allocation, numa_node, exclusive) } {
+            Some(allocation) => match {
+                #[cfg(target_arch = "x86_64")]
+                let installed = if retained_child {
+                    // SAFETY: the pending owner retains the original child
+                    // admission through rejection; publication transfers only
+                    // to its child context's eventual arena teardown.
+                    unsafe { self.install_owned_huge_allocation_for_retained_process(config, allocation, numa_node, exclusive) }
+                } else {
+                    unsafe { self.install_owned_huge_allocation(config, allocation, numa_node, exclusive) }
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let installed = unsafe { self.install_owned_huge_allocation(config, allocation, numa_node, exclusive) };
+                installed
+            } {
                 Ok(managed) => Ok(Some(managed.arena_id())),
                 Err(failure) => {
                     let error = failure.error();
@@ -826,12 +841,14 @@ mod tests {
                     let backing = unsafe { admission.backing() };
                     let mut warm = admission.allocate_tracker(64).expect("warm child detached metadata");
                     warm.free().expect("return original warm tracker");
+                    assert!(backing.process_lived_projection().is_none());
                     let count = fill_registry(backing);
                     let fault = fault::install(fault::Plan::every(fault::Point::Unmap, Errno::IO));
                     fault.enable_one_synthetic_huge_map();
                     let result = crate::source_heap_api::reserve_huge_os_pages_at(1, -1, 0);
                     assert_eq!(result.value, Errno::NOMEM.raw());
                     assert_eq!(result.errno, crate::source_api::SourceErrno::Store(Errno::IO));
+                    assert!(backing.process_lived_projection().is_none(), "child admission cannot publish permanent VM lifetime");
                     restore_registry(backing, count);
                     assert!(backing.huge_cleanup_pending());
                     {
