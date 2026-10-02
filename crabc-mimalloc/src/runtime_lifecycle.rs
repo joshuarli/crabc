@@ -8332,11 +8332,6 @@ impl NativePersistentThreadOwner {
             DeferredFreeAllocationPhase::Complete(block) => {
                 Ok(NativeDeferredFreeAllocationPhase::Complete(block))
             }
-                Ok(NativeDeferredFreeAllocationPhase::LiveValidity(task))
-            }
-            DeferredFreeAllocationPhase::Complete(block) => {
-                Ok(NativeDeferredFreeAllocationPhase::Complete(block))
-            }
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 let process = self.with_local_allocator(|allocator| allocator.allocation_process())?
