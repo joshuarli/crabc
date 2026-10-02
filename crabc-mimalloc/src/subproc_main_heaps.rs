@@ -1902,7 +1902,29 @@ fn release_retained_deleted_os_pages(theap: NonNull<Theap>, _released_pages: usi
 /// `block` is live on a page `theap` owns, and freed once.
 pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>) -> NativePageFreeResult {
     let Some(thread) = current_main_thread() else { return NativePageFreeResult::Retained };
-    // SAFETY: forwarded.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // SAFETY: the exact live local client and this thread's source roots
+        // retain the actual issuer before any consuming Page transition.
+        return unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            let heap = NonNull::new(Theap::heap_at(theap))?;
+            let issuer = AuxiliaryAllocationIssuer::capture(heap, theap)?;
+            let mut task = None;
+            let result = with_theap_engine(thread, theap, |engine| {
+                let result = engine.free(block);
+                task = engine.take_pending_live_page_validity();
+                result
+            });
+            if let Some(mut task) = task {
+                task = match task.dispatch(&owner) { Ok(never) => match never {}, Err(task) => task };
+                retain_auxiliary_live_validity(task, issuer);
+                return Some(NativePageFreeResult::Retained);
+            }
+            Some(if matches!(result, Some(Ok(()))) { NativePageFreeResult::Freed }
+                else { NativePageFreeResult::Retained })
+        }) }.ok().flatten().unwrap_or(NativePageFreeResult::Retained);
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     match with_theap_engine(thread, theap, |engine| unsafe { engine.free(block) }) {
         Some(Ok(())) => NativePageFreeResult::Freed,
         _ => NativePageFreeResult::Retained,
@@ -2007,6 +2029,26 @@ fn reclaim_on_free(
     if unsafe { Theap::heap_at(theap) } != heap.as_ptr() {
         return Declined;
     }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // SAFETY: the actual current-thread Heap slot retains this issuer
+        // before source reassociation and every queued-page observation.
+        return unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            let issuer = AuxiliaryAllocationIssuer::capture(heap, theap)?;
+            let mut task = None;
+            let result = with_theap_engine(thread, theap, |engine| {
+                let result = engine.reclaim_abandoned_page_on_free(candidate);
+                task = engine.take_pending_live_page_validity();
+                result
+            }).unwrap_or(Declined);
+            if let Some(mut task) = task {
+                task = match task.dispatch(&owner) { Ok(never) => match never {}, Err(task) => task };
+                retain_auxiliary_live_validity(task, issuer);
+            }
+            Some(result)
+        }) }.ok().flatten().unwrap_or(Declined);
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     with_theap_engine(thread, theap, |engine| engine.reclaim_abandoned_page_on_free(candidate)).unwrap_or(Declined)
 }
 
@@ -2358,6 +2400,25 @@ pub(crate) unsafe fn native_theap_collect(theap: NonNull<Theap>, force: bool) {
 }
 
 fn collect_on_theap(thread: MainThread, theap: NonNull<Theap>, force: bool) {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // SAFETY: the current-thread source roots retain the selected issuer
+        // before collection or its deferred callback can observe a Page.
+        let _ = unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            let heap = NonNull::new(Theap::heap_at(theap))?;
+            let mut issuer = Some(AuxiliaryAllocationIssuer::capture(heap, theap)?);
+            collect_on_theap_in_owner(thread, theap, force, &owner, &mut issuer);
+            Some(())
+        }) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    collect_on_theap_in_owner(thread, theap, force);
+}
+
+fn collect_on_theap_in_owner(thread: MainThread, theap: NonNull<Theap>, force: bool,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] issuer: &mut Option<AuxiliaryAllocationIssuer>,
+) {
     // `_mi_deferred_free(theap, force)`: the selected callback runs with no
     // engine or Theap projection live.
     if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {
@@ -2370,6 +2431,18 @@ fn collect_on_theap(thread: MainThread, theap: NonNull<Theap>, force: bool) {
     } else {
         crate::single_thread::GenericAllocationCollection::Full
     };
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        let phase = with_theap_allocation_phase(thread, theap, |engine| Ok(
+            engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
+        )).and_then(Result::ok);
+        if let Some(phase) = phase {
+            // SAFETY: the original admission and issuer predate the source
+            // callback; every engine projection ended before delivery.
+            let _ = unsafe { finish_allocation_on_theap(thread, theap, phase, owner, issuer) };
+        }
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     let _ = with_theap_engine(thread, theap, |engine| {
         engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
     });

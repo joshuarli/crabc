@@ -1786,6 +1786,41 @@ pub(crate) fn native_child_thread_allocate(
 pub(crate) unsafe fn native_child_thread_free_local(
     block: core::ptr::NonNull<u8>,
 ) -> Option<crate::runtime_lifecycle::NativePageFreeResult> {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        use crate::runtime_lifecycle::NativePageFreeResult;
+        // SAFETY: the exact client retains its Page and the actual member
+        // retains its source roots before diagnostic admission is acquired.
+        let current = unsafe { current_child_member() }.as_ref()?;
+        let allocation = unsafe { current.binding.page_map().lookup_live_allocation(block) }.ok()??;
+        let theap = core::ptr::NonNull::new(unsafe { crate::types::Page::theap_at(allocation.page()) })?;
+        drop(allocation);
+        return Some(unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            with_native_child_allocation_scope(&owner, |scope| {
+                let mut freed = false;
+                let phase = with_native_child_allocation_phase(theap, |engine| {
+                    freed = engine.free(block).is_ok();
+                    Ok(match engine.take_pending_live_page_validity() {
+                        Some(task) => crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task),
+                        None => crate::single_thread::DeferredFreeAllocationPhase::Complete(None),
+                    })
+                });
+                let completed = matches!(&phase, Ok(crate::single_thread::DeferredFreeAllocationPhase::Complete(_)));
+                if let Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task)) = phase {
+                    settle_child_live_page_validity(task, &owner, scope);
+                    return NativePageFreeResult::Retained;
+                }
+                if freed && completed { NativePageFreeResult::Freed } else { NativePageFreeResult::Retained }
+            }).unwrap_or(NativePageFreeResult::Retained)
+        }) }.unwrap_or(NativePageFreeResult::Retained));
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    unsafe { native_child_thread_free_local_without_validity(block) }
+}
+
+unsafe fn native_child_thread_free_local_without_validity(
+    block: core::ptr::NonNull<u8>,
+) -> Option<crate::runtime_lifecycle::NativePageFreeResult> {
     use crate::runtime_lifecycle::NativePageFreeResult;
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
@@ -1824,6 +1859,37 @@ pub(crate) unsafe fn native_child_thread_free_local(
 /// for the page's Heap; see `meta::ChildThreadOwner::reclaim_on_free`.
 /// The record lock is not taken: reclaim runs no nested allocation.
 pub(crate) fn native_child_reclaim_on_free(
+    candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>,
+) -> crate::abandoned::ReclaimOnFreeOutcome {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        use crate::abandoned::ReclaimOnFreeOutcome::Declined;
+        let Some(heap) = core::ptr::NonNull::new(candidate.page_heap()) else { return Declined; };
+        // SAFETY: the claimed Page keeps its genuine Heap live; peeking the
+        // caller's actual slot cannot create a replacement source owner.
+        let Some(theap) = core::ptr::NonNull::new(unsafe { crate::types::Heap::source_theap_peek_at(heap) }) else { return Declined; };
+        return unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            with_native_child_allocation_scope(&owner, |scope| {
+                let mut result = Declined;
+                let phase = with_native_child_allocation_phase(theap, |engine| {
+                    result = engine.reclaim_abandoned_page_on_free(candidate);
+                    Ok(match engine.take_pending_live_page_validity() {
+                        Some(task) => crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task),
+                        None => crate::single_thread::DeferredFreeAllocationPhase::Complete(None),
+                    })
+                });
+                if let Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task)) = phase {
+                    settle_child_live_page_validity(task, &owner, scope);
+                }
+                result
+            }).unwrap_or(Declined)
+        }) }.unwrap_or(Declined);
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    native_child_reclaim_on_free_without_validity(candidate)
+}
+
+fn native_child_reclaim_on_free_without_validity(
     candidate: crate::abandoned::ReclaimOnFreeCandidate<'_, crate::single_thread::ChildMappedAbandonedPage<'static>>,
 ) -> crate::abandoned::ReclaimOnFreeOutcome {
     // SAFETY: current-thread slot, no other reference live.
@@ -2187,6 +2253,21 @@ unsafe fn with_native_child_allocation_phase(
         Some(result) if entered => result,
         _ => Err(NativeChildAllocationRefusal::Unavailable),
     }
+}
+
+/// # Safety
+/// The original READY admission and stack issuer scope predate observation;
+/// all member, engine and Page projections have ended before this delivery.
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+unsafe fn settle_child_live_page_validity(
+    mut task: crate::single_thread::PendingLivePageValidity,
+    owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    scope: core::ptr::NonNull<NativeChildAllocationScope>,
+) {
+    task = match unsafe { task.dispatch(owner) } { Ok(never) => match never {}, Err(task) => task };
+    let (theap, heap) = unsafe { NativeChildAllocationScope::issuer_at(scope) };
+    let _ = unsafe { task.ensure_retirement_refusal(theap, heap) };
+    unsafe { NativeChildAllocationScope::retain_live_at(scope, task) };
 }
 
 /// Drives the source phases under the actual original admission acquired
@@ -2628,6 +2709,26 @@ pub(crate) unsafe fn native_child_theap_collect(
     theap: core::ptr::NonNull<crate::types::Theap>,
     force: bool,
 ) {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // SAFETY: the caller retains the actual current child issuer before
+        // its deferred callback and every collecting Page observation.
+        let _ = unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            with_native_child_allocation_scope(&owner, |scope| {
+                native_child_theap_collect_in_owner(theap, force, &owner, scope)
+            })
+        }) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    unsafe { native_child_theap_collect_in_owner(theap, force) };
+}
+
+unsafe fn native_child_theap_collect_in_owner(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    force: bool,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] original: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] scope: core::ptr::NonNull<NativeChildAllocationScope>,
+) {
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return };
     // SAFETY: caller retains the initialized Theap and its current TLD.
     let Some(tld) = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) }) else { return };
@@ -2645,6 +2746,17 @@ pub(crate) unsafe fn native_child_theap_collect(
     } else {
         crate::single_thread::GenericAllocationCollection::Full
     };
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        let phase = unsafe { with_native_child_allocation_phase(theap, |engine| Ok(
+            engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
+        )) };
+        if let Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task)) = phase {
+            unsafe { settle_child_live_page_validity(task, original, scope) };
+        }
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    {
     let collect = |engine: &mut crate::single_thread::ChildOrdinaryPageAllocator<'_, '_, 'static>| {
         engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
     };
@@ -2662,6 +2774,7 @@ pub(crate) unsafe fn native_child_theap_collect(
                 );
             }
         }) };
+    }
     }
 }
 

@@ -3584,6 +3584,8 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
 pub(crate) enum FreeError {
     /// A prior false-force collection failure retained terminal page state.
     CollectionPoisoned,
+    /// The consumed local client reached a retained live-page source assertion.
+    LivePageValidityRetained,
     /// The address maps to no current ordinary page in this explicit lifecycle.
     Unmapped,
     /// The mapped page is not owned by this pinned exclusive theap.
@@ -37889,6 +37891,8 @@ impl<'attach, 'heap, 'arena, 'map>
         unsafe { page_queue_push_at_end_metadata(queue, self.page.as_ptr()) };
         self.engine.session.note_page_added();
         self.engine.update_direct_cache(self.bin);
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if !self.engine.retain_live_page_transition_failure(self.page) { return false; }
         true
     }
 
@@ -38179,6 +38183,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
         self.session.note_page_added();
         self.update_direct_cache(bin);
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if !self.retain_live_page_transition_failure(page) {
+            return Failed(AbandonError::LivePageValidityRetained);
+        }
         self.session.theap().record_page_reclaimed_on_free();
         Reclaimed
     }
@@ -38925,6 +38933,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             GenericAllocationCollection::Force => self.collect_all_pages_for_allocation_retry(),
         };
         if !collected {
+            #[cfg(target_arch = "x86_64")]
+            if let Some(task) = self.take_pending_live_page_validity() {
+                return Ok(DeferredFreeAllocationPhase::LiveValidity(task));
+            }
             return Err(GuardedCanonicalAllocationRefusal);
         }
         // Pinned `theap.c:123-148` merges the current Theap statistics only
@@ -40382,6 +40394,31 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Err(GenericPathError::LiveValidity(task))
     }
 
+    /// Preserves a source transition's exact assertion before its bool
+    /// lifecycle adapter returns. The slot retains the original Page and
+    /// issuer; the caller must carry its task out before diagnostic delivery.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn retain_live_page_transition_failure(&mut self, page: NonNull<Page>) -> bool {
+        match self.observe_live_page_validity(page, true) {
+            Ok(()) => true,
+            Err(GenericPathError::LiveValidity(task)) => {
+                if let Err(task) = self.retain_live_page_validity(task) {
+                    // A foreign or occupied issuer supplies no release right.
+                    // Preserve custody and stop all later source operations.
+                    core::mem::forget(task);
+                    self.page_commit_poison = true;
+                }
+                false
+            }
+            Err(_) => { self.page_commit_poison = true; false }
+        }
+    }
+
+    fn local_page_transition_error(&self) -> FreeError {
+        if self.pending_live_page_validity.is_some() { FreeError::LivePageValidityRetained }
+        else { FreeError::Lifecycle }
+    }
+
     /// Performs the selected page's source extension before its free-list
     /// links become visible. Fully committed pages retain the existing scalar
     /// operation. An on-demand page commits its direct page area before
@@ -41548,14 +41585,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if unsafe { page.as_ref() }.retire_expire() != 0 {
                     return Ok(());
                 }
-                // `mi_page_retire` clears the page-wide interior marker only once
-                // every allocation from the page has returned. Clearing it for an
-                // individual aligned free would make another live interior
-                // pointer unfreeable and give it the wrong usable size.
-                // SAFETY: `used == 0` proves every valid client allocation has
-                // returned; the source accounting therefore excludes a retained
-                // live producer while this atomic flag is cleared.
-                unsafe { page.as_ref() }.set_has_interior_pointers(false);
                 // A full page and a huge singleton both bypass retirement. The
                 // source route is selected from the page's actual queue, not its
                 // ordinary object-size bin: a small OS-aligned singleton belongs
@@ -41563,7 +41592,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if self.retire_or_release(queue_bin, page.as_ptr()) {
                     return Ok(());
                 }
-                return Err(FreeError::Lifecycle);
+                return Err(self.local_page_transition_error());
             }
 
             if in_full {
@@ -41571,7 +41600,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if self.move_full_to_regular(regular_bin, page.as_ptr()) {
                     return Ok(());
                 }
-                return Err(FreeError::Lifecycle);
+                return Err(self.local_page_transition_error());
             }
             Ok(())
         })())
@@ -42218,6 +42247,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[inline]
     fn is_captured_local_free_unavailable(&self) -> bool {
         self.has_retained_collection_poison()
+            || self.pending_live_page_validity.is_some()
+            || self.pending_fresh_initialization.is_some()
             || !(self.session.permits_ordinary_page_operations()
                 || self.session.permits_retained_source_local_free())
     }
@@ -44266,6 +44297,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn move_full_to_regular(&mut self, bin: usize, page: *mut Page) -> bool {
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        {
+            let Some(page) = NonNull::new(page) else { return false; };
+            if !self.retain_live_page_transition_failure(page) { return false; }
+        }
         let regular = match self.session.queue_mut(bin) {
             Some(queue) => queue as *mut _,
             None => return false,
@@ -44285,12 +44321,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(page) = NonNull::new(page) else {
             return false;
         };
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if !self.retain_live_page_transition_failure(page) { return false; }
         // SAFETY: this short immutable check precedes every owner mutation.
         // Source `used == 0` is the concrete proof that no valid live client
         // can retain a producer projection into terminal retirement.
         if unsafe { page.as_ref() }.used() != 0 {
             return false;
         }
+        // SAFETY: zero use excludes a live client retaining an interior
+        // pointer; the source clears this flag only after validity succeeds.
+        unsafe { page.as_ref() }.set_has_interior_pointers(false);
         let count = match self.session.queue(bin) {
             Some(queue) => queue.count(),
             None => return false,
@@ -44319,6 +44360,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(page_pointer) = NonNull::new(page) else {
             return false;
         };
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if !self.retain_live_page_transition_failure(page_pointer) { return false; }
         let statistics_bin = unsafe { page_statistics_bin(page_pointer.as_ref()) };
         // SAFETY: the caller retains initialized queue-linked metadata. This
         // short read occurs before link mutation and encodes the source
@@ -45032,6 +45075,73 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         });
     }
 
+    /// Checks the queued source Page before a terminal owner-exit transition.
+    /// A failure detaches selection while retaining the exact map/backing and
+    /// original issuer in this drain's existing terminal task slot.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn observe_live_page_validity(
+        &mut self, theap: &mut TheapCollectAbandonFieldAccess, page: NonNull<Page>,
+    ) -> Result<(), ProductionOwnerExitError> {
+        // SAFETY: the drain owns ordinary queues and local fields. Published
+        // remote links are immutable while owner-side collection is excluded.
+        let snapshot = unsafe { Page::validity_snapshot_at(page) };
+        let bin = if snapshot.in_full { BIN_FULL } else if snapshot.is_huge { BIN_HUGE }
+            else { size_class::bin(snapshot.block_size).ok_or(ProductionOwnerExitError::Collection)? };
+        let queue = theap.queue(bin).ok_or(ProductionOwnerExitError::Collection)?;
+        let mut current = queue.first();
+        let mut contains = false;
+        for _ in 0..queue.count() {
+            if current == page.as_ptr() { contains = true; break; }
+            let Some(node) = NonNull::new(current) else { break; };
+            // SAFETY: this same drain retains every stable queue node.
+            current = unsafe { Page::queue_next_at(node) };
+        }
+        let block_size = queue.block_size();
+        // SAFETY: source issuer roots remain retained until the enclosing
+        // consuming drain finishes; no former owner's TLD is followed.
+        let owner = unsafe { crate::page_validity::PageSourceOwnerSnapshot::observe_at(
+            &snapshot, contains, Some(block_size),
+        ) };
+        let failure = unsafe { crate::page_validity::source_page_is_valid(
+            &snapshot, self.page_map, &owner, true,
+        ) };
+        let Err(invariant) = failure else { return Ok(()); };
+        let assertion = invariant.into_live_page_validity_assertion()
+            .map_err(|_| ProductionOwnerExitError::Collection)?;
+        // SAFETY: the original consuming drain continuously retains this
+        // actual issuer. This short scalar copy grants no new admission.
+        let issuer = unsafe { Theap::owner_snapshot_at(self.theap) }
+            .ok_or(ProductionOwnerExitError::Collection)?;
+        if self.pending_live_page_validity.is_some() { return Err(ProductionOwnerExitError::Collection); }
+        // Do not infer membership from a predicate's failed geometry. Find
+        // the exact stable queue member under the original field authority.
+        for actual_bin in 0..=BIN_FULL {
+            let Some(queue) = theap.queue(actual_bin) else { continue; };
+            let mut current = queue.first();
+            let mut found = false;
+            for _ in 0..queue.count() {
+                if current == page.as_ptr() { found = true; break; }
+                let Some(node) = NonNull::new(current) else { break; };
+                current = unsafe { Page::queue_next_at(node) };
+            }
+            if found {
+                let queue = theap.queue_mut(actual_bin).ok_or(ProductionOwnerExitError::Collection)?;
+                // SAFETY: this bounded traversal proved exact membership;
+                // source failure stops the coordinator before another visit.
+                unsafe { page_queue_remove_metadata(queue, page.as_ptr()) };
+                if !theap.update_direct_cache(actual_bin) || !theap.note_page_removed() {
+                    self.page_commit_poison = true;
+                }
+                break;
+            }
+        }
+        *self.pending_live_page_validity = Some(PendingLivePageValidity {
+            page, theap: self.theap, heap: issuer.heap, subprocess: issuer.subprocess,
+            assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked,
+        });
+        Err(ProductionOwnerExitError::Collection)
+    }
+
     /// Runs retired-page collection and the non-abandoning full-page scan
     /// before the generic owner-exit visitor. The latter first collects
     /// remote frees without force, then releases empty full pages or moves
@@ -45112,6 +45222,8 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
                         let bin = size_class::bin(page_state.block_size)
                             .filter(|bin| *bin < BIN_FULL)
                             .ok_or(ProductionOwnerExitError::Retired)?;
+                        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                        self.observe_live_page_validity(theap, page)?;
                         let regular = theap.queue_mut(bin)
                             .ok_or(ProductionOwnerExitError::Retired)? as *mut _;
                         let full = theap.queue_mut(BIN_FULL)
@@ -45145,6 +45257,8 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         bin: usize,
         page: NonNull<Page>,
     ) -> Result<(), ProductionOwnerExitError> {
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        self.observe_live_page_validity(theap, page)?;
         let queue = {
             let queue = theap
                 .queue_mut(bin)
@@ -45561,6 +45675,13 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         // SAFETY: raw owner-field read after force collection; a live client
         // may still retain only a disjoint atomic producer projection.
         if unsafe { Self::used_at(page) } == 0 {
+            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            {
+                // SAFETY: the callback is the coordinator's sole current-page
+                // operation; no queue projection survives callback entry.
+                let mut fields = unsafe { TheapCollectAbandonFieldAccess::new(self.theap) };
+                self.observe_live_page_validity(&mut fields, page)?;
+            }
             return Ok(TheapCollectAbandonPageAction::Release);
         }
         self.page_free_collect_false(page).map_err(|error| {
@@ -45570,6 +45691,13 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         // SAFETY: as above, do not materialize `&Page` while a producer may
         // race only through the atomic remote-free subobject.
         Ok(if unsafe { Self::used_at(page) } == 0 {
+            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            {
+                // SAFETY: the same current-page callback still owns the
+                // ordinary queue fields after its false-force collection.
+                let mut fields = unsafe { TheapCollectAbandonFieldAccess::new(self.theap) };
+                self.observe_live_page_validity(&mut fields, page)?;
+            }
             TheapCollectAbandonPageAction::Release
         } else {
             TheapCollectAbandonPageAction::Abandon

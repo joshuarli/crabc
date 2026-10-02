@@ -3247,6 +3247,19 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Transfers an observed source assertion while this permanent issuer
+    /// retains its Page and backing. No projection may cross its dispatch.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn take_live_page_validity_current_initial_thread_local(
+        &mut self,
+    ) -> Option<crate::single_thread::PendingLivePageValidity> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) =>
+                active.engine.take_pending_live_page_validity(),
+            _ => None,
+        }
+    }
+
     /// Offers a claimed abandoned page to the initial thread's Theap through
     /// pinned `mi_abandoned_page_try_reclaim`. Only an active engine owns the
     /// Theap queues; a dormant or awaiting owner declines.

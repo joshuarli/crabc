@@ -11855,13 +11855,32 @@ fn native_initial_thread_allocate(
 fn native_initial_thread_free_pointer_first(
     block: core::ptr::NonNull<u8>,
 ) -> NativePageFreeResult {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    { return with_native_initial_fresh_allocation_owner(|original| Ok(native_initial_thread_free_pointer_first_in_owner(block, original)))
+        .unwrap_or(NativePageFreeResult::Retained); }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    native_initial_thread_free_pointer_first_in_owner(block)
+}
+
+fn native_initial_thread_free_pointer_first_in_owner(
+    block: core::ptr::NonNull<u8>,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] original: NativeFreshAllocationOwner<'_, '_>,
+) -> NativePageFreeResult {
     let result = with_current_thread_native_initial_persistent_allocator(true, |owner| {
         // SAFETY: the caller's one PageMap observation associated this exact
         // live client with the current initial owner for the complete local
         // source operation.
         let free = unsafe { owner.free(block) };
-        (free, owner.is_retained())
+        (free, owner.is_retained(),
+            #[cfg(target_arch = "x86_64")] owner.allocator.take_live_page_validity_current_initial_thread_local())
     });
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    let result = result.map(|(free, retained, task)| {
+        if let Some(task) = task { settle_native_live_page_validity(task, Some(original), true); }
+        (free, retained)
+    });
+    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-3")))]
+    let result = result.map(|(free, retained, _)| (free, retained));
     match result {
         Ok((Ok(()), false)) => NativePageFreeResult::Freed,
         Ok((Ok(()) | Err(_), true))
@@ -11892,12 +11911,31 @@ fn native_initial_thread_free_pointer_first(
 fn native_initial_thread_free_pointer_first_associated(
     block: core::ptr::NonNull<u8>,
 ) -> NativePageFreeResult {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    { return with_native_initial_fresh_allocation_owner(|original| Ok(native_initial_thread_free_pointer_first_associated_in_owner(block, original)))
+        .unwrap_or(NativePageFreeResult::Retained); }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    native_initial_thread_free_pointer_first_associated_in_owner(block)
+}
+
+fn native_initial_thread_free_pointer_first_associated_in_owner(
+    block: core::ptr::NonNull<u8>,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] original: NativeFreshAllocationOwner<'_, '_>,
+) -> NativePageFreeResult {
     let result = with_pointer_associated_initial_persistent_owner(|owner| {
         // SAFETY: the caller's PageMap observation associated this exact
         // live allocation with the current initial source owner.
         let free = unsafe { owner.free(block) };
-        (free, owner.is_retained())
+        (free, owner.is_retained(),
+            #[cfg(target_arch = "x86_64")] owner.allocator.take_live_page_validity_current_initial_thread_local())
     });
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    let result = result.map(|(free, retained, task)| {
+        if let Some(task) = task { settle_native_live_page_validity(task, Some(original), true); }
+        (free, retained)
+    });
+    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-3")))]
+    let result = result.map(|(free, retained, _)| (free, retained));
     match result {
         Ok((Ok(()), false)) => NativePageFreeResult::Freed,
         Ok((Ok(()) | Err(_), true))
@@ -12526,6 +12564,11 @@ pub fn native_collect(force: bool) {
             Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled) => return,
             projection => native_initial_deferred_free_phase_result(projection),
         };
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        let result = phase.and_then(|phase| with_native_initial_fresh_allocation_owner(|owner|
+            run_current_thread_native_initial_deferred_free_phase_with_owner(
+                phase, NativeGenericAllocationPath::Ordinary, Some(owner))));
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
         let result = phase.and_then(run_current_thread_native_initial_deferred_free_phase);
         if matches!(result, Err(NativeInitialPersistentThreadOwnerAccessError::Retained)) {
             RUNTIME_PROCESS.retain_page_owner();
@@ -12548,6 +12591,11 @@ pub fn native_collect(force: bool) {
         Err(NativePersistentThreadOwnerAccessError::Unavailable
             | NativePersistentThreadOwnerAccessError::Retained) => return,
     };
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    let _ = with_native_worker_fresh_allocation_owner(|owner|
+        run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary,
+            Some(NativeFreshAllocationOwner::Ready(owner))));
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     let _ = run_current_thread_native_deferred_free_phase(phase);
 }
 
@@ -13842,6 +13890,25 @@ fn native_free_pointer_first_local(
     // the held pointer-first observation through that owner rather than
     // reopening PageMap inside `allocator.free`.
     let mut held_allocation = Some(allocation);
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    return with_native_worker_fresh_allocation_owner(|owner| {
+        let mut task = None;
+        let result = with_current_thread_native_persistent_allocator(false, |allocator| {
+            let allocation = held_allocation.take().expect("one captured source free");
+            let result = unsafe { allocator.free_captured_live_allocation(allocation) };
+            task = allocator.take_pending_live_page_validity();
+            result
+        });
+        drop(held_allocation);
+        if let Some(task) = task {
+            settle_native_live_page_validity(task, Some(NativeFreshAllocationOwner::Ready(owner)), false);
+        }
+        Ok(match result {
+            Ok(Ok(())) => NativePageFreeResult::Freed,
+            _ => NativePageFreeResult::Retained,
+        })
+    }).unwrap_or(NativePageFreeResult::Retained);
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     let result = with_current_thread_native_persistent_allocator(false, |allocator| {
         let allocation = held_allocation
             .take()
@@ -13853,7 +13920,9 @@ fn native_free_pointer_first_local(
     });
     // An owner access error leaves the held observation unconsumed. Dropping
     // it releases only the read guard; it never changes source page state.
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     drop(held_allocation);
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     match result {
         Ok(Ok(())) => NativePageFreeResult::Freed,
         Ok(Err(_)) | Err(_) => {
@@ -14058,6 +14127,43 @@ fn native_free_pointer_first_nonlocal(
 /// attached, has finished, or is inside an operation that already borrows its
 /// owner declines, and the claim continues to reabandon or unown the page.
 fn native_free_reclaim_on_free_into_current_thread(
+    candidate: crate::single_thread::ProcessReclaimOnFreeCandidate<'_>,
+) -> crate::abandoned::ReclaimOnFreeOutcome {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        use crate::abandoned::ReclaimOnFreeOutcome::Declined;
+        let initial = RUNTIME_PROCESS.is_on_initial_allocation_thread();
+        if initial && !current_thread_native_owner_presence().initial_installed { return Declined; }
+        let mut candidate = Some(candidate);
+        let mut operation = |original: NativeFreshAllocationOwner<'_, '_>| {
+            let mut task = None;
+            let result = if initial {
+                current_thread_native_initial_persistent_owner_cell().with_owner(|issuer| {
+                    let issuer = issuer.get_mut();
+                    if issuer.is_retained() { return Declined; }
+                    let result = issuer.allocator.reclaim_abandoned_page_on_free_current_initial_thread_local(candidate.take().expect("one source reclaim candidate"));
+                    task = issuer.allocator.take_live_page_validity_current_initial_thread_local();
+                    result
+                }).unwrap_or(Declined)
+            } else {
+                with_current_thread_native_persistent_allocator(true, |allocator| {
+                    let result = allocator.reclaim_abandoned_page_on_free(candidate.take().expect("one source reclaim candidate"));
+                    task = allocator.take_pending_live_page_validity();
+                    result
+                }).unwrap_or(Declined)
+            };
+            if let Some(task) = task { settle_native_live_page_validity(task, Some(original), initial); }
+            result
+        };
+        return if initial { with_native_initial_fresh_allocation_owner(|original| Ok(operation(original))).unwrap_or(Declined) }
+            else { with_native_worker_fresh_allocation_owner(|owner|
+                Ok(operation(NativeFreshAllocationOwner::Ready(owner)))).unwrap_or(Declined) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    native_free_reclaim_on_free_without_validity(candidate)
+}
+
+fn native_free_reclaim_on_free_without_validity(
     candidate: crate::single_thread::ProcessReclaimOnFreeCandidate<'_>,
 ) -> crate::abandoned::ReclaimOnFreeOutcome {
     use crate::abandoned::ReclaimOnFreeOutcome;

@@ -3169,6 +3169,14 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         unsafe { self.engine.free_captured_live_allocation_with_progress(allocation) }
     }
 
+    /// Transfers only the observed assertion; this owner keeps the actual
+    /// Page and backing live after all engine projections end.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn take_pending_live_page_validity(&mut self)
+        -> Option<crate::single_thread::PendingLivePageValidity> {
+        self.engine.take_pending_live_page_validity()
+    }
+
     /// Offers a claimed abandoned page to this worker's Theap through pinned
     /// `mi_abandoned_page_try_reclaim`.
     #[inline]

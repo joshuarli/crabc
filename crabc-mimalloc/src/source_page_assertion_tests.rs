@@ -216,7 +216,7 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         let context = argument.cast::<Context>();
         // SAFETY: this synchronous fixture retains its original context;
         // these short scalar accesses create no borrow across callbacks.
-        if unsafe { (*context).check != "used" || (*context).observed || (*context).page != snapshot.page } { return None; }
+        if unsafe { !matches!((*context).check, "used" | "retire" | "unfull" | "release") || (*context).observed || (*context).page != snapshot.page } { return None; }
         unsafe { (*context).observed = true; }
         Some(usize::from(snapshot.capacity) + 1)
     }
@@ -227,7 +227,7 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         // SAFETY: only copied scalar predicate inputs change. The fixture's
         // actual Page, client and retained issuer remain valid and untouched.
         let (check, seen, selected) = unsafe { ((*context).check, (*context).observed, (*context).page) };
-        if seen || selected != snapshot.page || check == "used" { return; }
+        if seen || selected != snapshot.page || matches!(check, "used" | "retire" | "unfull" | "release") { return; }
         if matches!(check, "queue" | "bin" | "key") && owner.queue_block_size.is_none() { return; }
         match check {
             "heap" => owner.heap_present = false,
@@ -257,17 +257,22 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         let (page, client, theap, heap, request) = unsafe {
             ((*context).page, (*context).client, (*context).theap, (*context).heap, (*context).request)
         };
-        // SAFETY: the fixture keeps its actual original client and issuer
-        // live. Every owner/map projection ends before the nested malloc.
+        // SAFETY: the operation keeps its actual original issuer and Page
+        // backing retained, including after local client consumption. The
+        // address is only a registered-range identity here. Every short
+        // owner/map projection ends before the nested malloc.
         let original = unsafe { runtime::with_native_allocation_owner(theap, |owner| {
             let registered = owner.page_map().ok()?.lookup_registered_page(client.as_ptr()).ok()?;
             Some(owner.selected_theap() == theap && owner.heap() == heap && registered == Some(page))
         }) }.ok().flatten().unwrap_or(false);
         write_bytes(if original { b"original-owner-and-page=retained\n" } else { b"original-owner-and-page=lost\n" });
-        let nested = malloc(request);
+        // SAFETY: the original task and admission retain this genuine Heap;
+        // nested allocation selects that exact issuer's current-thread slot.
+        let nested = unsafe { crate::source_heap_api::heap_malloc(heap.as_ptr().cast(), request) };
         if let Some(nested) = nested.value {
-            // SAFETY: both exact clients remain live and the short source
-            // owner observation finishes before the nested client's free.
+            // SAFETY: the original task retains its Page backing and this
+            // callback owns its nested live client. This short owner query
+            // finishes before the nested client's consuming free.
             let distinct = unsafe { runtime::with_native_allocation_owner(theap, |owner| {
                 let nested_page = owner.page_map().ok()?.lookup_registered_page(nested.as_ptr()).ok()?;
                 Some(owner.selected_theap() == theap && nested_page.is_some_and(|nested| nested != page))
@@ -287,6 +292,18 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
 
     let checks = [
         ("used", "page->used <= page->capacity"),
+        ("retire", "page->used <= page->capacity"),
+        ("unfull", "page->used <= page->capacity"),
+        ("release", "page->used <= page->capacity"),
+        ("retire-worker", "page->used <= page->capacity"),
+        ("unfull-worker", "page->used <= page->capacity"),
+        ("release-worker", "page->used <= page->capacity"),
+        ("retire-auxiliary", "page->used <= page->capacity"),
+        ("unfull-auxiliary", "page->used <= page->capacity"),
+        ("release-auxiliary", "page->used <= page->capacity"),
+        ("retire-child", "page->used <= page->capacity"),
+        ("unfull-child", "page->used <= page->capacity"),
+        ("release-child", "page->used <= page->capacity"),
         ("heap", "page->heap!=NULL"),
         ("theap", "page_theap == NULL || mi_page_theap(page)==page_theap || mi_page_theap(page)->tld->thread_id == MI_THREADID_DETACHED"),
         ("queue", "mi_page_queue_contains(pq, page)"),
@@ -294,21 +311,50 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         ("key", "page->keys[0] != 0"),
     ];
     if let Some(child_check) = std::env::var_os(CHILD) {
-        let check = checks.iter().find(|(check, _)| child_check == *check).unwrap().0;
+        let selected_check = checks.iter().find(|(check, _)| child_check == *check).unwrap().0;
+        let (check, domain) = selected_check.split_once('-').unwrap_or((selected_check, "initial"));
         start_source_runtime();
-        let request = 12_288 - crate::config::PADDING_SIZE;
-        let client = allocate(request);
+        if matches!(domain, "worker" | "child") { assert!(runtime::prepare_native_later_thread_arena()); }
+        let child = if domain == "child" { Some(crate::subproc::lifecycle::native_subproc_new().unwrap()) } else { None };
+        let run = || {
+        if domain == "child" {
+            // SAFETY: this genuine worker attaches to the retained child and
+            // remains its sole member through terminal assertion dispatch.
+            assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_add_current_thread(child.unwrap()) },
+                Ok(crate::subproc::lifecycle::NativeChildThreadAdd::Added));
+        }
+        let selected_heap = if domain == "auxiliary" { crate::source_heap_api::heap_new() } else { core::ptr::null_mut() };
+        let allocate_selected = |request| {
+            if selected_heap.is_null() { allocate(request) }
+            else {
+                // SAFETY: this current thread retains its actual new Heap.
+                unsafe { crate::source_heap_api::heap_malloc(selected_heap, request) }.value.unwrap()
+            }
+        };
+        let request = if matches!(check, "retire" | "release") { 32 }
+            else { 12_288 - crate::config::PADDING_SIZE };
+        let client = allocate_selected(request);
         let selected = crate::compiler_tls::default_theap();
         // SAFETY: the exact live client retains its original Page; only
         // copied validity inputs and scalar issuer identities escape.
         let (snapshot, theap, heap) = unsafe { runtime::with_native_allocation_owner(selected, |owner| {
             let page = owner.page_map().unwrap().lookup_registered_page(client.as_ptr()).unwrap().unwrap();
-            (Page::validity_snapshot_at(page), owner.selected_theap(), owner.heap())
+            let snapshot = Page::validity_snapshot_at(page);
+            (snapshot, NonNull::new(snapshot.theap).unwrap(), NonNull::new(snapshot.heap).unwrap())
         }) }.unwrap();
-        assert_eq!(snapshot.capacity, 1);
-        assert_eq!(snapshot.used, 1);
-        assert!(snapshot.free.is_null());
-        assert!(snapshot.reserved > snapshot.capacity);
+        let mut retained_clients = std::vec::Vec::new();
+        if check == "unfull" {
+            for _ in 1..snapshot.reserved { retained_clients.push(allocate_selected(request)); }
+        } else if check == "release" {
+            // SAFETY: this exclusively held client becomes a retired Page's
+            // local-free block. Its backing stays owned until collection.
+            assert_eq!(unsafe { free(client.as_ptr()) }, FreeOutcome::Freed);
+        } else if check != "retire" {
+            assert_eq!(snapshot.capacity, 1);
+            assert_eq!(snapshot.used, 1);
+            assert!(snapshot.free.is_null());
+            assert!(snapshot.reserved > snapshot.capacity);
+        }
         let mut context = Context { page: snapshot.page, client, theap, heap, request, check, observed: false, entered: false };
         let argument = core::ptr::addr_of_mut!(context).cast();
         // SAFETY: this child serializes callback registration and retains
@@ -318,13 +364,39 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
             crate::source_options_api::register_error(Some(error), core::ptr::null_mut());
             let result = crate::page_validity::with_live_page_validity_observer_for_test(
                 observe, argument, || crate::page_validity::with_live_page_owner_validity_observer_for_test(
-                    observe_owner, argument, || malloc(request),
+                    observe_owner, argument, || match check {
+                        "retire" | "unfull" => {
+                            let outcome = free(client.as_ptr());
+                            std::eprintln!("ordinary-free-return: {outcome:?}");
+                            malloc(request)
+                        }
+                        "release" => {
+                            super::theap_collect(theap.as_ptr().cast(), true);
+                            malloc(request)
+                        }
+                        _ => malloc(request),
+                    },
                 ),
             );
             std::eprintln!("ordinary-return: client={}, errno={:?}, observed={}", result.value.is_some(), result.errno, context.observed);
             crate::source_options_api::register_output(None, core::ptr::null_mut());
             crate::source_options_api::register_error(None, core::ptr::null_mut());
         }
+        };
+        if matches!(domain, "worker" | "child") {
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    // SAFETY: this actual worker publishes its own native
+                    // descriptor before any source thread attachment.
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    if domain == "worker" {
+                        assert_eq!(runtime::attach_current_thread(), runtime::ThreadAttachResult::Attached);
+                    }
+                    run();
+                }).join().unwrap();
+            });
+        } else { run(); }
         return;
     }
     for (check, assertion) in checks {
@@ -344,6 +416,78 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         assert!(stderr.contains("nested-page=distinct\n"), "{check}: {stderr}");
         assert!(stderr.contains("nested-client=freed\n"), "{check}: {stderr}");
         assert!(!stderr.contains("ordinary-return:"), "{check}: {stderr}");
+        assert!(!stderr.contains("ordinary-free-return:"), "{check}: {stderr}");
         assert!(!stderr.contains("unexpected-error-handler"), "{check}: {stderr}");
     }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[test]
+fn source_local_free_validates_full_unfull_and_retired_page_before_release() {
+    use core::{ffi::c_void, ptr::NonNull};
+    use crate::types::{Page, PageValiditySnapshot};
+
+    struct Observation { page: NonNull<Page>, expected_used: usize, in_full: bool, seen: bool }
+    unsafe fn observe(state: &PageValiditySnapshot, argument: *mut c_void) -> Option<usize> {
+        let observation = argument.cast::<Observation>();
+        // SAFETY: this synchronous scope retains its scalar fixture. The
+        // callback copies facts only and never mutates live allocator state.
+        unsafe {
+            if state.page == (*observation).page && state.used == (*observation).expected_used
+                && state.in_full == (*observation).in_full { (*observation).seen = true; }
+        }
+        None
+    }
+    crate::test_process::run_in_fresh_process(
+        "source_api::source_page_assertion_tests::source_local_free_validates_full_unfull_and_retired_page_before_release", || {
+            start_source_runtime();
+            for request in [32, 12_288 - crate::config::PADDING_SIZE] {
+                let first = allocate(request);
+                let selected = crate::compiler_tls::default_theap();
+                // SAFETY: the live client retains its Page; only its identity
+                // and copied reserved count leave this short owner access.
+                let (page, reserved) = unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+                    let page = owner.page_map().unwrap().lookup_registered_page(first.as_ptr()).unwrap().unwrap();
+                    (page, usize::from(Page::validity_snapshot_at(page).reserved))
+                }) }.unwrap();
+                let mut clients = std::vec![first];
+                while clients.len() < reserved { clients.push(allocate(request)); }
+                // A small direct-cache page enters the full queue only when
+                // the following generic miss selects a successor.
+                let successor = allocate(request);
+                let mut observation = Observation { page, expected_used: reserved - 1, in_full: true, seen: false };
+                let client = clients.pop().unwrap();
+                // SAFETY: this exact local client is consumed once. The
+                // observer changes no live metadata or client bytes.
+                assert_eq!(unsafe { crate::page_validity::with_live_page_validity_observer_for_test(
+                    observe, core::ptr::addr_of_mut!(observation).cast(), || free(client.as_ptr()),
+                ) }, FreeOutcome::Freed);
+                assert!(observation.seen, "full page was validated after local publication and before unfull");
+                for client in clients.iter().skip(1) {
+                    // SAFETY: every remaining client is held exclusively.
+                    assert_eq!(unsafe { free(client.as_ptr()) }, FreeOutcome::Freed);
+                }
+                // The medium retirement rule retains a sole regular page.
+                // Release its successor while the original client stays live.
+                assert_eq!(unsafe { free(successor.as_ptr()) }, FreeOutcome::Freed);
+                super::collect(true);
+                observation.expected_used = 0;
+                observation.in_full = false;
+                observation.seen = false;
+                // SAFETY: this final client is still exclusively live; its
+                // return reaches retirement while the observer is retained.
+                assert_eq!(unsafe { crate::page_validity::with_live_page_validity_observer_for_test(
+                    observe, core::ptr::addr_of_mut!(observation).cast(), || free(first.as_ptr()),
+                ) }, FreeOutcome::Freed);
+                assert!(observation.seen, "empty regular page was validated before retirement");
+                observation.seen = false;
+                // SAFETY: the observer records scalar identity only. The
+                // source owner retains its retired backing until collection.
+                unsafe { crate::page_validity::with_live_page_validity_observer_for_test(
+                    observe, core::ptr::addr_of_mut!(observation).cast(), || super::collect(true),
+                ) };
+                assert!(observation.seen, "retired page was validated before terminal release");
+            }
+        },
+    );
 }
