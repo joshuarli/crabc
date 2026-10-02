@@ -258,7 +258,10 @@ def _call_transcripts(view: Mapping[str, Any], member: str,
             opcode = calls._public_weak_virtual_bytes(view['image'], address, 7, view['type'], executable=True)
             slot = address + 7 + struct.unpack_from('<i', opcode, 3)[0]
         relocations[slot] = view['relocation_rows'].get(slot, [])
-    return ('\n'.join(line for rows in maps.values() for line in rows),
+    # Local callback slots require the other selected source section's map,
+    # as well as the holder's placement. Preserve the original map domain.
+    return (view['map'] if any(call['kind'] == 'R_X86_64_64' for call in source_calls)
+            else '\n'.join(line for rows in maps.values() for line in rows),
             '\n'.join(line for rows in relocations.values() for line in rows))
 
 
@@ -400,15 +403,63 @@ def integer_memory_operand(source: bytes, offset: int, *,
     return None
 
 
-def data_pointer_relocations(image: bytes, name: str) -> list[dict[str, Any]]:
-    """Read named slots from complete ordinary data.rel.ro pointer tables.
+def data_holder_relocations(image: bytes, section_name: str) -> tuple[static_authority.Elf, tuple[int, ...], list[tuple[int, Mapping[str, Any], int]]]:
+    """Authenticate a complete relocation-ready holder and every pointer slot.
 
-    The source holder can be a section without an OBJECT symbol. Its complete
-    file extent must consist of aligned, zero-filled RELA pointer slots, each
-    naming a strong hidden undefined symbol. Mixed data, section-local targets,
-    merge pools, TLS, constructor arrays and partial relocation coverage do not
-    acquire pointer-table ownership through a similar name or equal bytes.
+    Unrelocated bytes are literal payload, including zero words. Relocated
+    slots must be zero-filled R64 operands naming strong hidden imports or
+    exact local sections. GNU retain changes collection policy, not ownership.
+    No constructor, GOT, TLS or merge-pool storage acquires this authority.
     """
+    original = static_authority.elf_bytes(image)
+    require(original.elf_type == 1, 'data pointer source is not relocatable ELF')
+    holders = [(index, section) for index, section in enumerate(original.sections)
+               if static_authority.section_name(original, section) == section_name]
+    require(len(holders) == 1, 'data pointer source holder is ambiguous')
+    index, section = holders[0]
+    require((section_name == '.data.rel.ro' or section_name.startswith('.data.rel.ro.'))
+            and section[1] == 1 and section[2] in {3, 0x200003}
+            and section[3] == 0 and section[5] > 0 and section[5] % 8 == 0
+            and section[8] >= 8 and section[8] % 8 == 0 and section[9] == 0
+            and section[6] == section[7] == 0 and section[4] + section[5] <= len(image),
+            'data pointer holder extent or payload differs')
+    tables = [other for other in original.sections if other[1] in {4, 9, 19} and other[7] == index]
+    require(len(tables) == 1, 'data pointer holder relocation coverage differs')
+    relocation = tables[0]
+    require(relocation[1] == 4 and relocation[9] == 24 and relocation[5] > 0
+            and relocation[5] % 24 == 0 and relocation[4] + relocation[5] <= len(image)
+            and static_authority.section_name(original, relocation) == '.rela' + section_name
+            and original.sections[relocation[6]][1] == 2,
+            'data pointer relocation table differs')
+    entries, positions = [], []
+    for position in range(relocation[4], relocation[4] + relocation[5], 24):
+        offset, info, addend = original.unpack('<QQq', position)
+        target = original.symbol_row(relocation[6], info >> 32)
+        imported = (target['name'] and target['binding'] == 'GLOBAL' and target['visibility'] == 'HIDDEN'
+                    and target['type'] in {'0', 'OBJECT', 'FUNC'}
+                    and target['section'] == target['value'] == target['size'] == 0)
+        local = (target['type'] == '3' and target['binding'] == 'LOCAL' and target['visibility'] == 'DEFAULT'
+                 and target['name'] == '' and target['value'] == target['size'] == 0
+                 and 0 < target['section'] < len(original.sections))
+        require(info & 0xffffffff == 1 and (imported or local) and target['version_index'] == 1
+                and offset % 8 == 0 and 0 <= offset and offset + 8 <= section[5]
+                and image[section[4] + offset:section[4] + offset + 8] == bytes(8),
+                'data pointer holder relocation footprint differs')
+        if local:
+            destination = original.sections[target['section']]
+            require(destination[1] == 1 and destination[2] in {2, 3, 6}
+                    and destination[3] == 0 and destination[8] > 0 and destination[9] == 0
+                    and destination[4] + destination[5] <= len(image)
+                    and 0 <= addend < destination[5],
+                    'data pointer local source extent differs')
+        positions.append(offset)
+        entries.append((offset, target, addend))
+    require(len(positions) == len(set(positions)), 'data pointer holder relocation coverage differs')
+    return original, section, entries
+
+
+def data_pointer_relocations(image: bytes, name: str) -> list[dict[str, Any]]:
+    """Retain every named slot in complete ordinary relocation-ready holders."""
     original = static_authority.elf_bytes(image)
     require(original.elf_type == 1, 'data pointer source is not relocatable ELF')
     result = []
@@ -424,39 +475,16 @@ def data_pointer_relocations(image: bytes, name: str) -> list[dict[str, Any]]:
                    for _, info, _ in entries):
             continue
         section = original.sections[relocation[7]]
-        if section[1] != 1 or section[2] != 3:
+        if section[1] != 1 or section[2] not in {3, 0x200003}:
             continue
         section_name = static_authority.section_name(original, section)
-        # Explicit relocation-ready data tables are this source class. GOT and
-        # constructor storage require their own ABI ownership authority even
-        # when their file bytes resemble ordinary pointer slots.
         if section_name != '.data.rel.ro' and not section_name.startswith('.data.rel.ro.'):
             continue
-        require(section[3] == 0 and section[5] > 0 and section[5] % 8 == 0
-                and section[8] >= 8 and section[8] % 8 == 0 and section[9] == 0
-                and section[6] == section[7] == 0 and section[4] + section[5] <= len(image)
-                and image[section[4]:section[4] + section[5]] == bytes(section[5])
-                and static_authority.section_name(original, relocation) == '.rela' + section_name
-                and original.sections[relocation[6]][1] == 2
-                and len([other for other in original.sections if other[1] in {4, 9, 19}
-                         and other[7] == relocation[7]]) == 1,
-                'data pointer holder extent or payload differs')
-        positions = []
-        for offset, info, addend in entries:
-            imported = original.symbol_row(relocation[6], info >> 32)
-            require(info & 0xffffffff == 1 and imported['name']
-                    and imported['binding'] == 'GLOBAL' and imported['visibility'] == 'HIDDEN'
-                    and imported['type'] in {'0', 'OBJECT'}
-                    and imported['section'] == imported['value'] == imported['size'] == 0
-                    and imported['version_index'] == 1
-                    and offset % 8 == 0 and 0 <= offset and offset + 8 <= section[5],
-                    'data pointer holder relocation footprint differs')
-            positions.append(offset)
+        _, _, verified = data_holder_relocations(image, section_name)
+        for offset, imported, addend in verified:
             if imported['name'] == name:
                 result.append({'section': section_name, 'offset': offset, 'kind': 'R_X86_64_64',
                                'pointer_addend': addend})
-        require(len(positions) == len(set(positions)) and set(positions) == set(range(0, section[5], 8)),
-                'data pointer holder relocation coverage differs')
     return result
 
 
@@ -466,7 +494,7 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
 
     A function reference may load its address without calling it at that site.
     Only the exact PC-relative instruction forms decoded below are accepted.
-    Ordinary complete data-pointer tables have a separate raw relocation proof.
+    Ordinary relocation-ready data holders have a separate complete payload and raw relocation proof.
     Other non-executable forms stay unsupported. Interior LEA addends
     require a separately authenticated object extent during final projection.
     Disassembly boundaries are checked against raw section bytes so a preceding
@@ -659,16 +687,18 @@ def writable_object_mapping(image: bytes, *, address: int, extent: int,
 def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement: list[str],
                        importer_image: bytes | None, source_payload: bytes,
                        provider_object: tuple[bytes, Mapping[str, Any]] | None,
-                       provider_address: int, elf_type: int, name: str) -> dict[str, Any]:
-    """Bind a named source table slot to the exact selected ordinary OBJECT.
+                       provider_address: int, elf_type: int, name: str,
+                       archive_member: str, map_text: str) -> dict[str, Any]:
+    """Bind a named source holder slot to its exact selected OBJECT or FUNC.
 
     This proves an initial address representation or its RELATIVE fixup, not a
     later dereference or the active contents of a relocatable target object.
-    Neighbor slots must retain the table's complete pointer footprint; their
-    target ownership is proved independently when their names are selected.
+    Every slot retains its raw relocation and every literal byte remains exact.
+    Local targets bind to their full selected source section; imported neighbors
+    retain final identity and their own selected provider proofs.
     """
     require(importer_image is not None and provider_object is not None,
-            'data pointer lacks its owned source table or target object')
+            'data pointer lacks its owned source table or target definition')
     require(reference in data_pointer_relocations(importer_image, name),
             'data pointer source reference differs')
     original = static_authority.elf_bytes(importer_image)
@@ -676,6 +706,7 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
                if static_authority.section_name(original, header) == reference['section']]
     require(len(headers) == 1, 'data pointer source holder is ambiguous')
     holder = headers[0]
+    _, _, holder_entries = data_holder_relocations(importer_image, reference['section'])
     require(source_payload == importer_image[holder[4]:holder[4] + holder[5]],
             'data pointer source holder payload differs')
     require(len(placement) >= 5 and int(placement[0], 16) == int(placement[1], 16)
@@ -698,16 +729,17 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
     symbol = provider.symbol(name, dynamic=False)
     row, observed = definition['row'], definition['definition_section']
     require(provider.elf_type == 1 and symbol is not None
-            and symbol['type'] == row['type'] == 'OBJECT'
+            and symbol['type'] == row['type'] and row['type'] in {'OBJECT', 'FUNC'}
             and symbol['binding'] == row['binding'] == 'GLOBAL'
             and symbol['visibility'] == row['visibility'] == 'HIDDEN'
             and symbol['section'] == int(row['section_index']) == observed['index']
             and symbol['value'] == int(row['value'], 16) and symbol['size'] == row['size_bytes'] > 0
             and 0 < symbol['section'] < len(provider.sections), 'data pointer target source symbol differs')
     header = provider.sections[symbol['section']]
-    readonly = header[2] == 2
+    function = row['type'] == 'FUNC'
+    readonly = header[2] == 2 and not function
     require(header[1] == 1 and observed['type'] == 'PROGBITS'
-            and (header[2], observed['flags']) == ((2, 'A') if readonly else (3, 'WA'))
+            and (header[2], observed['flags']) == ((6, 'AX') if function else (2, 'A') if readonly else (3, 'WA'))
             and header[3] == int(observed['address'], 16) and header[4] == int(observed['offset'], 16)
             and header[5] == int(observed['size'], 16) and header[6] == observed['link']
             and header[7] == observed['info'] and header[8] == observed['alignment'] > 0
@@ -716,17 +748,29 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
             and static_authority.section_name(provider, header) == observed['name'],
             'data pointer target source extent differs')
     addend = reference['pointer_addend']
-    require(type(addend) is int and 0 <= addend < symbol['size'], 'data pointer addend leaves target object')
+    require(type(addend) is int and (addend == 0 if function else 0 <= addend < symbol['size']), 'data pointer addend leaves target definition')
     target = final.symbol(name, dynamic=False)
-    require(target is not None and target['type'] == 'OBJECT' and target['binding'] == 'LOCAL'
+    require(target is not None and target['type'] == row['type'] and target['binding'] == 'LOCAL'
             and target['visibility'] == 'HIDDEN' and target['value'] == provider_address
             and target['size'] == symbol['size'] and 0 < target['section'] < len(final.sections),
             'data pointer target final symbol differs')
     output = final.sections[target['section']]
-    require(output[1] == 1 and (output[2] in {2, 18, 50} if readonly else output[2] in {3, 0x200003})
+    require(output[1] == 1 and (output[2] == 6 if function else output[2] in {2, 18, 50} if readonly else output[2] in {3, 0x200003})
             and output[3] <= provider_address and provider_address + symbol['size'] <= output[3] + output[5]
             and output[4] + output[5] <= len(image), 'data pointer target final extent differs')
-    if readonly:
+    if function:
+        table, width, count = struct.unpack_from('<Q', image, 32)[0], *struct.unpack_from('<HH', image, 54)
+        programs = [struct.unpack_from('<IIQQQQQQ', image, table + width * index) for index in range(count)]
+        mappings = [program for program in programs if program[0] == 1
+                    and program[3] < provider_address + symbol['size']
+                    and provider_address < program[3] + program[6]]
+        require(len(mappings) == 1 and mappings[0][1] == 5
+                and mappings[0][3] <= provider_address
+                and provider_address + symbol['size'] <= mappings[0][3] + mappings[0][5]
+                and mappings[0][2] + provider_address - mappings[0][3] == output[4] + provider_address - output[3]
+                and mappings[0][2] + mappings[0][5] <= len(image),
+                'data pointer function lacks an exclusive executable load extent')
+    elif readonly:
         immutable_object_payload(image, source_image, symbol=symbol, header=header, output=output,
                                  address=provider_address, name=name)
     else:
@@ -743,18 +787,59 @@ def final_data_pointer(image: bytes, *, reference: Mapping[str, Any], placement:
             require(info == 8, 'data pointer final relocation type differs')
             if address < base + holder[5] and base < address + 8:
                 footprint.append((address, info, value))
-    slot = base + offset
-    value = struct.unpack('<Q', calls._public_weak_virtual_bytes(image, slot, 8, elf_type, executable=False))[0]
-    expected = provider_address + addend
+    # Preserve every literal byte and bind all pointer slots, including local
+    # callbacks, to the same selected importer. A local section's full raw
+    # extent and exact map supply address custody; no function size is guessed.
+    expected_slots = []
+    for position, imported, peer_addend in holder_entries:
+        if imported['section'] == 0:
+            peer = final.symbol(imported['name'], dynamic=False)
+            require(peer is not None and peer['type'] in {'FUNC', 'OBJECT'} and imported['type'] in {'0', peer['type']}
+                    and peer['binding'] == 'LOCAL' and peer['visibility'] == 'HIDDEN'
+                    and peer['size'] > 0 and 0 < peer['section'] < len(final.sections)
+                    and (peer_addend == 0 if peer['type'] == 'FUNC' else 0 <= peer_addend < peer['size']),
+                    'data pointer neighboring imported target differs')
+            expected = peer['value'] + peer_addend
+        else:
+            source_section = original.sections[imported['section']]
+            source_name = static_authority.section_name(original, source_section)
+            maps = [line for line in map_text.splitlines()
+                    if line.rstrip().endswith(f'{archive_member}:({source_name})')]
+            require(len(maps) == 1, 'data pointer local target map is absent or ambiguous')
+            parts = maps[0].split()
+            require(len(parts) >= 5 and int(parts[0], 16) == int(parts[1], 16)
+                    and int(parts[2], 16) == source_section[5]
+                    and int(parts[3]) == source_section[8]
+                    and int(parts[0], 16) % source_section[8] == 0,
+                    'data pointer local target placement differs')
+            local_base = int(parts[0], 16)
+            local_outputs = [section for section in final.sections if section[1] == 1
+                             and section[2] == source_section[2]
+                             and section[3] <= local_base
+                             and local_base + source_section[5] <= section[3] + section[5]
+                             and section[4] + section[5] <= len(image)]
+            require(len(local_outputs) == 1, 'data pointer local target final extent differs')
+            expected = local_base + peer_addend
+        expected_slots.append((base + position, 8, expected))
     positions = [position for position, _, _ in footprint]
-    require((elf_type == 2 and not footprint and value == expected)
+    require((elf_type == 2 and not footprint)
             or (elf_type == 3 and len(positions) == len(set(positions))
-                and set(positions) == set(range(base, base + holder[5], 8))
-                and (slot, 8, expected) in footprint and value == 0),
+                and sorted(footprint) == sorted(expected_slots)),
             'data pointer final slot or relocation footprint differs')
+    final_payload = bytearray(calls._public_weak_virtual_bytes(image, base, holder[5], elf_type, executable=False))
+    for position, _, expected in expected_slots:
+        relative = position - base
+        value = struct.unpack_from('<Q', final_payload, relative)[0]
+        require(value == (expected if elf_type == 2 else 0),
+                'data pointer final slot or relocation footprint differs')
+        final_payload[relative:relative + 8] = bytes(8)
+    require(bytes(final_payload) == source_payload, 'data pointer final literal payload differs')
+    slot = base + offset
+    expected = provider_address + addend
+    require((slot, 8, expected) in expected_slots, 'data pointer target resolves to a foreign provider')
     return {'section': reference['section'], 'offset': offset, 'slot_address': slot,
             'target_address': expected, 'provider_offset': addend, 'operand_size': 8,
-            'branch_kind': 'data-object-pointer'}
+            'branch_kind': 'data-function-pointer' if function else 'data-object-pointer'}
 
 
 def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
@@ -770,8 +855,9 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
     They do not assert a later call, register lifetime, comparison outcome,
     reachability or runtime semantics.
     Direct calls retain the existing branch proof and all sites must survive.
-    Ordinary data tables require raw named R64 slots and complete source/final
-    pointer footprints; an address representation grants no dereference scope.
+    Ordinary data holders require all raw R64 slots, complete source/final
+    relocation footprints and literal payload identity; an address representation
+    grants no dereference scope or callback execution claim.
     Scalar reads require the exact unrelocated bytes and full extent of the
     selected read-only OBJECT; the caller authenticates its source definition.
     They prove initial operand bytes, not execution or later memory contents.
@@ -801,7 +887,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         if kind == 'R_X86_64_64':
             resolved.append(final_data_pointer(image, reference=reference, placement=parts,
                 importer_image=importer_image, source_payload=source, provider_object=provider_object,
-                provider_address=provider_address, elf_type=elf_type, name=name))
+                provider_address=provider_address, elf_type=elf_type, name=name,
+                archive_member=archive_member, map_text=map_text))
             continue
         require(len(parts) >= 5 and type(offset) is int and offset >= 1
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
