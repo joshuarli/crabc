@@ -2158,6 +2158,17 @@ impl ChildThreadOwner {
             || (self.heap_theap_pending_fresh_initialization.is_some() || self.heap_theap_pending_live_page_validity.is_some())
     }
 
+    /// Moves a source assertion from this exact retained current member.
+    /// The caller already retains its actual issuer and ends every member
+    /// and record projection before delivering diagnostic output.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) fn take_thread_done_live_validity(&mut self)
+        -> Option<crate::single_thread::PendingLivePageValidity> {
+        self.pending_live_page_validity.take().or_else(|| {
+            self.heap_theap_pending_live_page_validity.take().map(|(_, task)| task)
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn test_has_main_pending_fresh_initialization(&self) -> bool {
         self.pending_fresh_initialization.is_some()
@@ -2767,7 +2778,12 @@ impl ChildThreadOwner {
         child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildHeapTheapError> {
-        let Some(block) = self.thread_locals.as_ref().map(|block| block.pointer) else { return Ok(()) };
+        let Some(block) = self.thread_locals.as_ref().map(|block| block.pointer) else {
+            // Source clears the independent fast slot even when the regular
+            // slot array never materialized, before any Theap page traversal.
+            crate::compiler_tls::set_fast_slot(None);
+            return Ok(());
+        };
         let mut freed = None;
         child
             .with_metadata_page_engine(binding, |_child, engine| {
@@ -2779,6 +2795,7 @@ impl ChildThreadOwner {
             Some(Ok(())) => {
                 crate::compiler_tls::clear_dynamic_backing();
                 self.thread_locals = None;
+                crate::compiler_tls::set_fast_slot(None);
                 Ok(())
             }
             Some(Err(error)) => Err(ChildHeapTheapError::Metadata(error)),
@@ -3330,6 +3347,27 @@ impl ChildThreadOwner {
         child: *mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildHeapTheapError> {
+        unsafe { Self::drain_heap_theaps_for_thread_done_using(this, child, binding,
+            |_theap, engine| engine.collect_abandon_for_thread_done()) }
+    }
+
+    /// Source-locked auxiliary page traversal with a caller-owned assertion
+    /// transport. The collector performs no output and exports no projection;
+    /// a failed exact task must retain its issuer before this lock is released.
+    ///
+    /// # Safety
+    /// The current member, original child and all source images remain live.
+    /// `collect` may mutate only the selected Theap's owned page fields and
+    /// must not invoke callbacks, detach source lists or reenter the TLD lock.
+    pub(crate) unsafe fn drain_heap_theaps_for_thread_done_using(
+        this: *mut Self,
+        child: *mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        mut collect: impl for<'session, 'image> FnMut(
+            NonNull<Theap>,
+            &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'image, 'static>,
+        ) -> bool,
+    ) -> Result<(), ChildHeapTheapError> {
         // Refuse before freeing source locals or unlinking any issuer image.
         if unsafe { (*this).has_pending_page_assertion() } {
             return Err(ChildHeapTheapError::InvalidTransition);
@@ -3339,26 +3377,16 @@ impl ChildThreadOwner {
         // SAFETY: short reads of this owner's identities.
         let (tld, main) = unsafe { ((*this).tld_pointer(), (*this).theap_pointer()) };
         let tld = tld.ok_or(ChildHeapTheapError::InvalidTransition)?;
-        // SAFETY: this thread's live TLD; only this thread changes its list
-        // other than a Heap free, which the child record lock excludes.
-        let mut current = unsafe { ThreadLocalData::theaps_head_at(tld) };
-        while let Some(theap) = NonNull::new(current) {
-            // SAFETY: a live member of the list.
-            current = unsafe { Theap::tld_next_at(theap) };
-            if Some(theap) == main {
-                continue;
-            }
-            // SAFETY: forwarded; one of this thread's non-main Theaps.
-            let drained = unsafe {
-                Self::with_heap_theap_page_engine(this, child, binding, theap, |engine| unsafe {
-                    engine.collect_abandon_for_thread_done()
-                })
-            }
-            .map_err(ChildHeapTheapError::PageEngine)?;
-            if !drained {
-                return Err(ChildHeapTheapError::InvalidTransition);
-            }
-        }
+        let main = main.ok_or(ChildHeapTheapError::InvalidTransition)?;
+        // SAFETY: the source TLD lock retains every selected Heap/Theap while
+        // its current thread collects only that issuer's local page fields.
+        let drained = unsafe { ThreadLocalData::drain_auxiliary_theaps_for_thread_done(
+            tld, main, |theap| {
+                Self::with_heap_theap_page_engine(this, child, binding, theap,
+                    |engine| collect(theap, engine)).unwrap_or(false)
+            },
+        ) }.map_err(|_| ChildHeapTheapError::InvalidTransition)?;
+        if !drained { return Err(ChildHeapTheapError::InvalidTransition); }
         Ok(())
     }
 

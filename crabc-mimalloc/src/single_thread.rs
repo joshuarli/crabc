@@ -778,6 +778,27 @@ impl PendingLivePageValidity {
         }
     }
 
+    /// # Safety
+    /// The original current-thread TLD list lock continuously retains the
+    /// actual issuer and Heap through this protected failure publication.
+    /// The exact task and marker progress must survive unlock/refusal; output
+    /// runs only after every source lock and metadata projection has ended.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn ensure_retirement_refusal_while_tld_locked(
+        &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>,
+    ) -> Result<(), crate::types::HeapTheapListError> {
+        use crate::types::{HeapTheapListError, RetainedFreshTaskMarkerOutcome};
+        if self.theap != theap || self.heap != heap { return Err(HeapTheapListError::Membership); }
+        if self.has_retirement_refusal_marker() { return Ok(()); }
+        match unsafe { Theap::mark_retained_task_while_tld_locked(theap, heap) } {
+            RetainedFreshTaskMarkerOutcome::Unchanged(error) => Err(error),
+            RetainedFreshTaskMarkerOutcome::Changed(result) => {
+                self.retirement_marker = FreshTaskRetirementMarker::Marked { theap, heap };
+                result.map_err(HeapTheapListError::Lock)
+            }
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn has_retirement_refusal_marker(&self) -> bool {
         matches!(self.retirement_marker, FreshTaskRetirementMarker::Marked { .. })
@@ -11444,6 +11465,17 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
     pub(crate) fn finish_after_collect_abandon(
         self,
     ) -> Result<(), MainHeapThreadAttachmentError> {
+        let (completion, attachment) = self.finish_pages_before_attachment();
+        completion.finish(attachment)
+    }
+
+    /// Consumes only the completed page engine. The returned continuation
+    /// permits the caller to end its original diagnostic admission before
+    /// releasing the actual attachment metadata.
+    pub(crate) fn finish_pages_before_attachment(
+        self,
+    ) -> (crate::main_heap_thread::MainHeapThreadPageDrainCompletion,
+          &'attachment mut MainHeapThreadAttachment<'main>) {
         let (session, state) = self.into_session_and_state();
         let PageAllocatorEngineState {
             arena_lifetime: _,
@@ -11476,8 +11508,9 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
         drop(pending_os_release);
         drop(pending_fresh_initialization);
         drop(pending_live_page_validity);
-        let attachment = unsafe { session.into_attachment_after_process_page_route() };
-        unsafe { attachment.finish_after_detached_process_page_route() }
+        // SAFETY: the completed collector proved empty queues and no task;
+        // all engine/backing state ended above, without releasing metadata.
+        unsafe { session.into_completion_after_process_page_route() }
     }
 
  }
@@ -38315,7 +38348,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Some(heap) => heap,
             None => return false,
         };
-        if !unsafe { theap.as_ref().matches_thread(thread) && theap.as_ref().allows_page_abandon() } {
+        // The source flag disables automatic full-page abandonment during
+        // allocation. Explicit thread exit still collects every Theap,
+        // including ordinary Heaps with that flag clear.
+        if !unsafe { theap.as_ref().matches_thread(thread) } {
             return false;
         }
         let result = {
@@ -41896,6 +41932,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // successor before `_mi_page_free` can release the current
                 // page; producers can publish only to its remote atomics.
                 let next = unsafe { (*page).next() };
+                // Source `mi_theap_page_collect` validates the still-queued
+                // Page before collecting either remote or local frees.
+                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                if self.retain_live_page_transition_failure(current) { return false; }
                 if let Err(error) = self.page_free_collect_false(current) {
                     self.retain_page_collect_poison(current, error, None);
                     return false;
@@ -41947,6 +41987,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // successor before collection can release the current page;
                 // concurrent clients can publish only to its remote atomics.
                 let next = unsafe { (*page).next() };
+                // Source `mi_theap_page_collect` validates the still-queued
+                // Page before collecting either remote or local frees.
+                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                if self.retain_live_page_transition_failure(current) { return false; }
                 if let Err(error) = self.page_free_collect_force(current) {
                     self.retain_page_collect_poison(current, error, None);
                     return false;
@@ -45668,6 +45712,14 @@ impl<'arena, B: PageBacking<'arena>> TheapCollectAbandonCallbacks for Production
         current: TheapCollectAbandonCurrentPage<'_>,
     ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
         let page = current.page();
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        {
+            // Source validates each ordinary visitor Page before force
+            // collection, including live Pages later handed to abandonment.
+            // No queue projection survives entry into this current-page call.
+            let mut fields = unsafe { TheapCollectAbandonFieldAccess::new(self.theap) };
+            self.observe_live_page_validity(&mut fields, page)?;
+        }
         self.page_free_collect_force(page).map_err(|error| {
             self.retain_collection_poison(page, error);
             ProductionOwnerExitError::Collection

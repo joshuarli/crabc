@@ -8412,14 +8412,46 @@ impl Theap {
     }
 
     #[cfg(target_arch = "x86_64")]
+    /// Publishes exact task refusal while its owner-exit TLD list lock still
+    /// retains the original Heap. Try the Heap lock in source list order;
+    /// contention must retain the complete protected failure, never block
+    /// against a Heap destroyer that may already wait for the TLD lock.
+    ///
+    /// # Safety
+    /// The caller holds that original current-thread TLD list lock, retains
+    /// the exact unfinished task and every issuer image, and invokes no user
+    /// callback before both source locks have ended. A changed result must be
+    /// recorded in that task even when unlocking fails.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn mark_retained_task_while_tld_locked(
+        theap: NonNull<Self>, heap: NonNull<Heap>,
+    ) -> RetainedFreshTaskMarkerOutcome {
+        unsafe { Self::change_retained_fresh_task_with_lock_at(theap, heap, false, true) }
+    }
+
     unsafe fn change_retained_fresh_task_at(
         theap: NonNull<Self>, heap: NonNull<Heap>, expected: bool,
     ) -> RetainedFreshTaskMarkerOutcome {
+        unsafe { Self::change_retained_fresh_task_with_lock_at(theap, heap, expected, false) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn change_retained_fresh_task_with_lock_at(
+        theap: NonNull<Self>, heap: NonNull<Heap>, expected: bool, tld_locked: bool,
+    ) -> RetainedFreshTaskMarkerOutcome {
         // SAFETY: the original owner retains both images; only synchronized
         // list and initialized scalar fields are projected under this lock.
-        let guard = match unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).theaps_lock) }.lock() {
-            Ok(guard) => guard,
-            Err(error) => return RetainedFreshTaskMarkerOutcome::Unchanged(HeapTheapListError::Lock(error)),
+        let lock = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).theaps_lock) };
+        let guard = if tld_locked {
+            match lock.try_lock() {
+                Some(guard) => guard,
+                None => return RetainedFreshTaskMarkerOutcome::Unchanged(HeapTheapListError::Busy),
+            }
+        } else {
+            match lock.lock() {
+                Ok(guard) => guard,
+                Err(error) => return RetainedFreshTaskMarkerOutcome::Unchanged(HeapTheapListError::Lock(error)),
+            }
         };
         let raw = theap.as_ptr();
         let is_member = unsafe {

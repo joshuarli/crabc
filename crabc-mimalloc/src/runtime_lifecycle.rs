@@ -8482,6 +8482,16 @@ impl NativePersistentThreadOwner {
         &mut self,
         lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
     ) -> Result<(), ()> {
+        let completion = self.collect_owner_exit_deferred_free_phase(lease)?;
+        completion.finish(&mut self.attachment).map_err(|_| ())
+    }
+
+    /// Returns final attachment authority after every collector projection
+    /// ended, so an outer original-issuer admission can end before teardown.
+    fn collect_owner_exit_deferred_free_phase(
+        &mut self,
+        lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
+    ) -> Result<crate::main_heap_thread::MainHeapThreadPageDrainCompletion, ()> {
         let state = core::mem::replace(
             &mut self.state,
             NativePersistentThreadOwnerExitState::AttachmentOnly,
@@ -8496,10 +8506,10 @@ impl NativePersistentThreadOwner {
                 return Err(());
             }
         }
-        match engine.finish_after_owner_exit_deferred_free_phase(&mut self.attachment) {
-            Ok(()) => {
+        match engine.collect_after_owner_exit_deferred_free_phase(&mut self.attachment) {
+            Ok(completion) => {
                 self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
-                Ok(())
+                Ok(completion)
             }
             Err(
                 crate::main_heap_page::MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly,
@@ -14241,6 +14251,37 @@ impl NativeAllocationOwner<'_> {
     }
 
     pub(crate) fn heap(&self) -> core::ptr::NonNull<crate::types::Heap> { self.heap }
+
+    /// Binds an already-held process READY admission to the actual initialized
+    /// issuer selected by its finishing thread's source TLD-list traversal.
+    /// No Page observation or default-cache inference supplies this binding.
+    ///
+    /// # Safety
+    /// The caller holds the original TLD list lock and retains every selected
+    /// Heap, Theap and TLD until traversal returns. Before exporting a failed
+    /// Page outside that lock it must publish the exact task's retirement
+    /// refusal, retaining its actual issuer and backing continuously. This
+    /// view may dispatch only after all source locks and projections end;
+    /// successful attachment teardown must wait for this admission to end.
+    #[cfg(feature = "mi-debug-3")]
+    pub(crate) unsafe fn bind_source_thread_done_issuer(
+        &self, selected: core::ptr::NonNull<crate::types::Theap>,
+    ) -> Option<NativeAllocationOwner<'_>> {
+        let original_tld = unsafe { crate::types::Theap::tld_at(self.selected_theap) };
+        if original_tld.is_null() || unsafe { crate::types::Theap::tld_at(selected) } != original_tld {
+            return None;
+        }
+        let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(selected) })?;
+        let identity = self.process.subprocess() as *const _ as *mut _;
+        if unsafe { crate::types::Theap::subprocess_identity_at(selected) } != identity
+            || unsafe { crate::types::Heap::subprocess_pointer_at(heap) } != identity {
+            return None;
+        }
+        Some(NativeAllocationOwner {
+            selected_theap: selected, heap, process: self.process,
+            output: self.output, _ready: self._ready,
+        })
+    }
 
     /// Returns a process view borrowed from this still-admitted context.
     pub(crate) fn process(&self) -> crate::os::VmProcess<'_> { self.process }
@@ -20735,6 +20776,60 @@ fn begin_current_thread_native_owner_exit_deferred_free_phase(
 fn resume_current_thread_native_owner_exit_deferred_free_phase(
     lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
 ) -> Result<(), NativePersistentThreadOwnerAccessError> {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // Select the actual pending issuer through a short scalar copy before
+        // the collector can inspect a Page. Its root remains alive on failure;
+        // a successful traversal returns a token without tearing it down.
+        let selected = with_current_thread_native_persistent_owner(|issuer| {
+            match &issuer.state {
+                NativePersistentThreadOwnerExitState::DeferredFreePending(engine) => engine.allocation_theap(),
+                _ => None,
+            }
+        }).ok().flatten().ok_or(NativePersistentThreadOwnerAccessError::Retained)?;
+        let mut lease = lease;
+        // SAFETY: the pending owner continuously retains this actual Theap.
+        // Collection consumes page state only; final metadata teardown runs
+        // after this original diagnostic admission has returned and dropped.
+        let completion = unsafe { with_native_allocation_owner(selected, |original| {
+            let mut task = None;
+            let result = with_current_thread_native_persistent_owner(|issuer| {
+                let result = issuer.collect_owner_exit_deferred_free_phase(lease.take());
+                if let NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) = &mut issuer.state {
+                    task = engine.take_retained_live_page_validity();
+                }
+                result
+            });
+            if let Some(task) = task {
+                // All collector, owner-cell, Page, queue, Heap and TLD
+                // projections ended. Refused output keeps terminal task and
+                // original issuer together on this non-returning stack.
+                let task = match task.dispatch(&original) {
+                    Ok(never) => match never {}, Err(task) => task,
+                };
+                let _retained = (task, original);
+                fail_stop_with_current_thread_native_owner();
+            }
+            result
+        }) }.map_err(|_| NativePersistentThreadOwnerAccessError::Retained)?;
+        let completion = match completion {
+            Ok(Ok(completion)) => completion,
+            _ => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                return Err(NativePersistentThreadOwnerAccessError::Retained);
+            }
+        };
+        return match with_current_thread_native_persistent_owner(|issuer| {
+            completion.finish(&mut issuer.attachment)
+        }) {
+            Ok(Ok(())) => Ok(()),
+            _ => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                Err(NativePersistentThreadOwnerAccessError::Retained)
+            }
+        };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     match with_current_thread_native_persistent_owner(|owner| {
         owner.resume_owner_exit_deferred_free_phase(lease)
     }) {

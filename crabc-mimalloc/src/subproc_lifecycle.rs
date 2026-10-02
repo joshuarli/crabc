@@ -529,6 +529,14 @@ pub(crate) struct ChildThreadMember {
     owner: ChildThreadOwner,
 }
 
+/// Scalar authority to finalize one child member after its source page
+/// traversal and all original diagnostic admissions have ended.
+#[must_use = "a collected child member must finalize or retain its exact attachment"]
+struct ChildThreadPageDrainCompletion {
+    thread: crate::types::LiveThreadId,
+    sequence: usize,
+}
+
 /// Result of pinned `mi_subproc_add_current_thread`.
 #[must_use = "an admitted child thread must finish through thread_done"]
 pub(crate) enum ChildThreadAddOutcome {
@@ -671,6 +679,14 @@ impl ChildThreadMember {
         child: &mut ChildMainHeapContextOwner<'_>,
         binding: ProcessMainBackingBinding,
     ) -> Result<(), ChildThreadDoneError> {
+        let completion = unsafe { self.collect_pages_for_thread_done(child, binding) }?;
+        unsafe { self.finish_after_pages_for_thread_done(child, binding, completion) }
+    }
+
+    unsafe fn collect_pages_for_thread_done(
+        &mut self, child: &mut ChildMainHeapContextOwner<'_>,
+        binding: ProcessMainBackingBinding,
+    ) -> Result<ChildThreadPageDrainCompletion, ChildThreadDoneError> {
         if crate::compiler_tls::current_thread_identity() != Some(self.owner.thread()) {
             return Err(ChildThreadDoneError::WrongThread);
         }
@@ -697,8 +713,20 @@ impl ChildThreadMember {
         if !drained {
             return Err(ChildThreadDoneError::PagesRemain);
         }
-        // init.c:465 `_mi_thread_locals_thread_done` clears the fast slot.
-        set_fast_slot(None);
+        Ok(ChildThreadPageDrainCompletion {
+            thread: self.owner.thread(), sequence: self.owner.sequence().get(),
+        })
+    }
+
+    unsafe fn finish_after_pages_for_thread_done(
+        &mut self, child: &mut ChildMainHeapContextOwner<'_>,
+        binding: ProcessMainBackingBinding, completion: ChildThreadPageDrainCompletion,
+    ) -> Result<(), ChildThreadDoneError> {
+        if completion.thread != self.owner.thread()
+            || completion.sequence != self.owner.sequence().get()
+            || self.owner.has_pending_page_assertion() {
+            return Err(ChildThreadDoneError::PagesRemain);
+        }
         // init.c:468.
         let counted = self.owner.with_child_image(|image| {
             image.get_ref().identity().record_statistics_thread_detached();
@@ -1668,6 +1696,138 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
 /// [`ChildThreadMember::thread_done`]. The slot is cleared only on success.
 /// Returns `None` when the thread is not a child member.
 pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadDoneError>> {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // Reject the original in-flight initializer before any exit Page
+        // traversal can consume metadata that it still genuinely owns.
+        if unsafe { !(*CURRENT_CHILD_MEMBER.get()).initialization.is_null()
+            || (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() } {
+            return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
+        }
+        let (selected, id) = {
+            // SAFETY: this current-thread scalar copy ends before admission.
+            let current = unsafe { current_child_member() }.as_ref()?;
+            if current.generic_frequency_captures != 0 || !current.allocation_scope.is_null()
+                || current.retained_page_issuer.is_some() {
+                return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
+            }
+            (current.member.theap_pointer()?, current.record_member.id())
+        };
+        // Retain the real record before dereferencing any member metadata.
+        // A source-destroyed child keeps only its record token; that branch
+        // must finish without reading its former Theap, Heap or TLD.
+        let mut graph = None;
+        let retained = unsafe { id.with_owner(|child| {
+            let Some(child) = child.as_mut() else { return Ok(false); };
+            if child.stage() != ChildMainHeapStage::HeapReady {
+                return Err(NativeSubprocessError::Retained);
+            }
+            let count = &*core::ptr::addr_of!((*id.0.as_ptr()).callback_leases);
+            count.fetch_update(core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1))
+                .map_err(|_| NativeSubprocessError::Retained)?;
+            graph = Some(NativeChildCallbackLease(id.0));
+            Ok(true)
+        }) };
+        match retained {
+            Ok(Ok(false)) => return native_child_thread_done_in_completion(None),
+            Ok(Ok(true)) => {}
+            _ => {
+                if let Some(graph) = graph { core::mem::forget(graph); }
+                return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
+            }
+        }
+        // SAFETY: the actual current member retains its original child and
+        // source Theap before any exit Page observation. Collection ends all
+        // projections; final member teardown waits until this admission drops.
+        let collected = unsafe { crate::runtime_lifecycle::with_native_allocation_owner(selected, |original| {
+            with_native_child_allocation_scope(&original, |scope| {
+                let mut pending = None;
+                let result = {
+                    let current = current_child_member().as_mut()
+                        .expect("the original child exit scope retains its member");
+                    let id = current.record_member.id();
+                    let binding = current.binding;
+                    let member = &mut current.member;
+                    id.with_owner(|child| {
+                        let child = child.as_mut().ok_or(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Gone))?;
+                        let owner: *mut crate::meta::ChildThreadOwner = &mut member.owner;
+                        let child_pointer: *mut ChildMainHeapContextOwner<'_> = child;
+                        let auxiliaries = crate::meta::ChildThreadOwner::drain_heap_theaps_for_thread_done_using(
+                            owner, child_pointer, binding, |theap, engine| {
+                                // The source list lock retains the actual
+                                // initialized issuer before Page observation.
+                                let Some(bound) = original.bind_source_thread_done_issuer(theap) else { return false; };
+                                NativeChildAllocationScope::bind_thread_done_issuer_at(scope, &bound);
+                                let collected = engine.collect_abandon_for_thread_done();
+                                if let Some(mut task) = engine.take_pending_live_page_validity() {
+                                    if task.ensure_retirement_refusal_while_tld_locked(theap, bound.heap()).is_err()
+                                        && !task.has_retirement_refusal_marker() {
+                                        let _retained = (task, bound, scope);
+                                        crabc_core::process::exit_immediately(134);
+                                    }
+                                    pending = Some((task, Some(bound)));
+                                }
+                                collected
+                            },
+                        );
+                        if auxiliaries.is_err() {
+                            return Err(NativeChildThreadDoneError::Done(ChildThreadDoneError::HeapTheap(
+                                crate::meta::ChildHeapTheapError::InvalidTransition)));
+                        }
+                        NativeChildAllocationScope::bind_thread_done_issuer_at(scope, &original);
+                        let collected = member.owner.with_page_engine(binding, |_child, engine| {
+                            let collected = engine.collect_abandon_for_thread_done();
+                            if let Some(task) = engine.take_pending_live_page_validity() {
+                                pending = Some((task, None));
+                            }
+                            collected
+                        });
+                        if pending.is_none() {
+                            if let Some(task) = member.owner.take_thread_done_live_validity() {
+                                pending = Some((task, None));
+                            }
+                        }
+                        match collected {
+                            Ok(true) => Ok(ChildThreadPageDrainCompletion {
+                                thread: member.owner.thread(), sequence: member.owner.sequence().get(),
+                            }),
+                            Ok(false) => Err(NativeChildThreadDoneError::Done(ChildThreadDoneError::PagesRemain)),
+                            Err(error) => Err(NativeChildThreadDoneError::Done(ChildThreadDoneError::PageEngine(error))),
+                        }
+                    }).map_err(NativeChildThreadDoneError::Subprocess).and_then(|result| result)
+                };
+                if let Some((task, bound)) = pending {
+                    // Record, member, Page, queue and source-list projections
+                    // ended before output; actual child/issuer custody remains.
+                    settle_child_live_page_validity(task, bound.as_ref().unwrap_or(&original), scope);
+                    return Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained));
+                }
+                result
+            }).unwrap_or(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)))
+        }) }.unwrap_or(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
+        return match collected {
+            Ok(completion) => {
+                drop(graph);
+                native_child_thread_done_in_completion(Some(completion))
+            }
+            Err(error) => {
+                // Any source-mutated refusal keeps this actual graph pinned.
+                // A terminal member must not become a destroyed orphan whose
+                // failed Page/backing state silently loses its issuing owner.
+                if let Some(graph) = graph { core::mem::forget(graph); }
+                Some(Err(error))
+            }
+        };
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    native_child_thread_done_in_completion(None)
+}
+
+fn native_child_thread_done_in_completion(
+    mut completion: Option<ChildThreadPageDrainCompletion>,
+) -> Option<Result<(), NativeChildThreadDoneError>> {
+
     #[cfg(target_arch = "x86_64")]
     if unsafe { !(*CURRENT_CHILD_MEMBER.get()).initialization.is_null()
         || (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() }
@@ -1697,8 +1857,10 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
     let done = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) => {
-                unsafe { member.thread_done(child, binding) }
-                    .map_err(NativeChildThreadDoneError::Done)?;
+                match completion.take() {
+                    Some(completion) => unsafe { member.finish_after_pages_for_thread_done(child, binding, completion) },
+                    None => unsafe { member.thread_done(child, binding) },
+                }.map_err(NativeChildThreadDoneError::Done)?;
                 // SAFETY: actual teardown succeeded under this exact record
                 // lock; a failed teardown leaves the token and count intact.
                 unsafe { record_member.finish_locked() }
@@ -2040,6 +2202,23 @@ struct NativeChildAllocationScope {
 
 #[cfg(target_arch = "x86_64")]
 impl NativeChildAllocationScope {
+    /// Selects the exact source-list issuer before its exit collector observes
+    /// a Page. The independent child record lease retains the same actual
+    /// member and child; only its current non-allocating traversal step changes.
+    ///
+    /// # Safety
+    /// The original current member and source TLD list are retained. No Page
+    /// has been observed for this step and no prior task remains unfinished.
+    unsafe fn bind_thread_done_issuer_at(
+        scope: core::ptr::NonNull<Self>,
+        owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    ) {
+        let issuer = unsafe { (*scope.as_ptr()).issuer.as_mut() }
+            .expect("the original child exit scope retains its record lease");
+        issuer.theap = owner.selected_theap();
+        issuer.heap = owner.heap();
+    }
+
     unsafe fn issuer_at(scope: core::ptr::NonNull<Self>)
         -> (core::ptr::NonNull<crate::types::Theap>, core::ptr::NonNull<crate::types::Heap>) {
         // SAFETY: the original stack owner keeps this scope pinned; this short

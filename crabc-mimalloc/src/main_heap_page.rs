@@ -2832,9 +2832,23 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
     /// non-allocating drain only afterward, preserving the source order
     /// `_mi_deferred_free` -> retired collection -> page traversal.
     pub(crate) fn finish_after_owner_exit_deferred_free_phase(
-        mut self,
+        self,
         attachment: &mut MainHeapThreadAttachment<'main>,
     ) -> Result<(), MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure<'main>> {
+        let completion = self.collect_after_owner_exit_deferred_free_phase(attachment)?;
+        completion.finish(attachment).map_err(|_| {
+            MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly
+        })
+    }
+
+    /// Ends page traversal and every engine projection while the original
+    /// attachment remains alive. The caller must release its original
+    /// diagnostic admission before consuming the final attachment token.
+    pub(crate) fn collect_after_owner_exit_deferred_free_phase(
+        mut self,
+        attachment: &mut MainHeapThreadAttachment<'main>,
+    ) -> Result<crate::main_heap_thread::MainHeapThreadPageDrainCompletion,
+                MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure<'main>> {
         if self.mapped_abandoned_claim.is_terminal() {
             return Err(
                 MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::RetainedTerminalEngine(
@@ -2873,10 +2887,16 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
                 );
             }
         };
-        if drain.finish_after_collect_abandon().is_err() {
-            return Err(MainHeapThreadOwnerLocalPageEngineCollectAbandonFailure::AttachmentOnly);
-        }
-        Ok(())
+        let (completion, _attachment) = drain.finish_pages_before_attachment();
+        Ok(completion)
+    }
+
+    /// Moves the exact assertion from a terminal retained engine without
+    /// reopening its attachment or ordinary allocation lifecycle.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) fn take_retained_live_page_validity(&mut self)
+        -> Option<crate::single_thread::PendingLivePageValidity> {
+        self.engine.as_mut()?.take_pending_live_page_validity()
     }
 
     #[cfg(test)]

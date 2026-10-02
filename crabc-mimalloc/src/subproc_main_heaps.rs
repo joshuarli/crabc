@@ -2253,6 +2253,65 @@ pub(crate) fn native_thread_done() -> bool {
         }
     }
     crate::compiler_tls::set_fast_slot(None);
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    let drained = {
+        // SAFETY: this fixed owner remains attached throughout auxiliary page
+        // traversal. Its process READY/output admission precedes every Page
+        // observation and ends before auxiliary list/root teardown below.
+        unsafe { crate::runtime_lifecycle::with_native_allocation_owner(thread.theap, |fixed| {
+            let mut pending = None;
+            let result = ThreadLocalData::drain_auxiliary_theaps_for_thread_done(
+                thread.tld, thread.theap, |theap| {
+                    // SAFETY: the source TLD lock retains this actual issuer
+                    // and Heap. Validate its scalar TLD/subprocess before the
+                    // collector observes a Page, with no metadata reference.
+                    let Some(original) = fixed.bind_source_thread_done_issuer(theap) else { return false; };
+                    let Some(issuer) = AuxiliaryAllocationIssuer::capture(original.heap(), theap) else { return false; };
+                    let mut task = None;
+                    let drained = with_theap_engine(thread, theap, |engine| {
+                        #[cfg(crabc_native_thread_done_audit)]
+                        {
+                            unsafe extern "C" { fn crabc_test_thread_done_drain_gate(); }
+                            crabc_test_thread_done_drain_gate();
+                        }
+                        let collected = engine.collect_abandon_child_thread_done(theap, thread.thread);
+                        task = engine.take_pending_live_page_validity();
+                        collected && engine.finish_quiescent_in_place()
+                    });
+                    if let Some(mut task) = task {
+                        // Source lists still retain the actual Heap and TLD.
+                        // Refusal pins that exact graph before list unlock;
+                        // no user callback or Page projection spans marking.
+                        if task.ensure_retirement_refusal_while_tld_locked(theap, original.heap()).is_err()
+                            && !task.has_retirement_refusal_marker() {
+                            let _retained = (task, issuer, original);
+                            crabc_core::process::exit_immediately(134);
+                        }
+                        pending = Some((task, issuer, original));
+                        return false;
+                    }
+                    if drained != Some(true) {
+                        #[cfg(crabc_native_thread_done_audit)]
+                        record_thread_done_branch(if drained.is_some() { 1 } else { 2 });
+                        return false;
+                    }
+                    true
+                },
+            );
+            if let Some((task, issuer, original)) = pending {
+                // The complete source traversal and its lock ended before
+                // output. The task's published refusal retains Heap, Theap,
+                // TLD and Page backing through legal diagnostic reentry.
+                let task = match task.dispatch(&original) {
+                    Ok(never) => match never {}, Err(task) => task,
+                };
+                retain_auxiliary_live_validity(task, issuer);
+                return false;
+            }
+            result == Ok(true)
+        }) }.unwrap_or(false)
+    };
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
     // SAFETY: this finishing thread retains its TLD and fixed owner. The
     // source list lock pins each auxiliary image and Heap throughout its
     // owner-side collection; callbacks neither detach lists nor reenter TLS.
@@ -2279,9 +2338,10 @@ pub(crate) fn native_thread_done() -> bool {
             true
         },
     ) };
-    if drained != Ok(true) {
-        return false;
-    }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    if !drained { return false; }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    if drained != Ok(true) { return false; }
     // SAFETY: the immutable source empty Theap is process-static.
     let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
     // Auxiliary default selections must stop naming metadata before that

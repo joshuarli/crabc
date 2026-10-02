@@ -2394,6 +2394,30 @@ pub(crate) struct MainHeapThreadPageDrainSession<'attachment, 'main> {
     attachment: &'attachment mut MainHeapThreadAttachment<'main>,
 }
 
+/// Linear proof that the source page traversal ended before attachment
+/// teardown. It carries only the original current-thread identity; the real
+/// attachment remains in its persistent owner while diagnostic admissions end.
+#[must_use = "collected source pages require exact attachment teardown or retention"]
+pub(crate) struct MainHeapThreadPageDrainCompletion {
+    thread: LiveThreadId,
+    sequence: usize,
+}
+
+impl MainHeapThreadPageDrainCompletion {
+    pub(crate) fn finish(
+        self, attachment: &mut MainHeapThreadAttachment<'_>,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
+        if attachment.thread != self.thread
+            || !attachment.tld.as_ref().is_some_and(|tld| tld.sequence().get() == self.sequence)
+        {
+            return Err(MainHeapThreadAttachmentError::InvalidCurrentThread);
+        }
+        // SAFETY: only the successful source drain issues this linear token.
+        // Its engine and queue projections ended before final root teardown.
+        unsafe { attachment.finish_after_detached_process_page_route() }
+    }
+}
+
 impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
     /// Returns the process-static main Heap lifetime witness retained by this
     /// still-linked later Theap. A post-exit route may keep this copy after
@@ -2485,6 +2509,23 @@ impl<'attachment, 'main> MainHeapThreadPageDrainSession<'attachment, 'main> {
         self,
     ) -> &'attachment mut MainHeapThreadAttachment<'main> {
         self.attachment
+    }
+
+    /// Ends the successful drain's attachment borrow while preserving its
+    /// sole finalization authority as a scalar, non-allocating continuation.
+    ///
+    /// # Safety
+    /// Every source queue and direct cache is empty, every Page crossed into
+    /// a retained process route or was released, and no engine task remains.
+    pub(crate) unsafe fn into_completion_after_process_page_route(
+        self,
+    ) -> (MainHeapThreadPageDrainCompletion, &'attachment mut MainHeapThreadAttachment<'main>) {
+        let completion = MainHeapThreadPageDrainCompletion {
+            thread: self.attachment.thread,
+            sequence: self.attachment.tld.as_ref()
+                .expect("a successful drain retains its original TLD").sequence().get(),
+        };
+        (completion, self.attachment)
     }
 
     #[inline]
