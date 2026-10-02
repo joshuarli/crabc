@@ -124,7 +124,7 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
             for index in 1..objects[0].symcount {
                 let symbol = unsafe { definition(objects, 0, index) }?;
                 if !symbol_address_candidate(symbol, false) || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-                    || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+                    || !matches!(symbol.kind, 0 | 1 | 2 | 5 | 6)
                 { continue; }
                 if unsafe { symbol_name(&objects[0], index) }? == name { return Some(Some(symbol)); }
             }
@@ -136,7 +136,7 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
         // st_other visibility is INTERNAL or HIDDEN. The ELF hash lookup and
         // binding/type tests decide dlsym eligibility.
         if !symbol_address_candidate(symbol, false) || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-            || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+            || !matches!(symbol.kind, 0 | 1 | 2 | 5 | 6)
         { continue; }
         if symbol.kind == 6 {
             let object = &objects[0];
@@ -435,7 +435,7 @@ unsafe fn lookup_result_at(
     if !matches!(requested.binding, 0 | 1 | 2 | STB_GNU_UNIQUE)
         || (requested.binding == 0 && requested.visibility == 3)
         || (tls && requested.kind != 6)
-        || (!tls && !matches!(requested.kind, 0 | 1 | 2))
+        || (!tls && !matches!(requested.kind, 0 | 1 | 2 | 5))
     { return None; }
     if !copy && (requested.binding == 0 || requested.visibility != 0) {
         return (requested.section != 0).then_some(SymbolLookup::Defined(requested));
@@ -460,10 +460,10 @@ unsafe fn lookup_result_at(
                 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
-                || (!tls && !matches!(found.kind, 0 | 1 | 2))
+                || (!tls && !matches!(found.kind, 0 | 1 | 2 | 5))
             { continue; }
-            if (requested.kind == 1 && found.kind == 2)
-                || (requested.kind == 2 && found.kind == 1)
+            if (matches!(requested.kind, 1 | 5) && found.kind == 2)
+                || (requested.kind == 2 && matches!(found.kind, 1 | 5))
             { return None; }
             return Some(SymbolLookup::Defined(found));
         }
@@ -474,11 +474,11 @@ unsafe fn lookup_result_at(
                 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
-                || (!tls && !matches!(found.kind, 0 | 1 | 2))
+                || (!tls && !matches!(found.kind, 0 | 1 | 2 | 5))
             { continue; }
             if unsafe { symbol_name(&objects[owner], candidate) }? == name {
-                if (requested.kind == 1 && found.kind == 2)
-                    || (requested.kind == 2 && found.kind == 1)
+                if (matches!(requested.kind, 1 | 5) && found.kind == 2)
+                    || (requested.kind == 2 && matches!(found.kind, 1 | 5))
                 { return None; }
                 return Some(SymbolLookup::Defined(found));
             }
@@ -524,6 +524,8 @@ fn symbol_address_candidate(symbol: Definition, require_definition: bool) -> boo
     symbol.section != 0 || (!require_definition && symbol.kind == 2 && symbol.value != 0)
 }
 
+// Allocated STT_COMMON uses the same data-address and copy-storage rules as
+// STT_OBJECT; its SHN_COMMON form is unallocated and has no loaded address.
 unsafe fn ordinary_address(objects: &[Object], symbol: Definition) -> Option<u64> {
     if symbol.section == SHN_ABS && matches!(symbol.kind, 0 | 1) {
         return Some(symbol.value);
@@ -710,12 +712,12 @@ unsafe fn copy_relocation(
 ) -> Option<CopyRelocation> {
     let destination = unsafe { definition(objects, owner, index) }?;
     if owner != 0 || objects[owner].role != ObjectRole::Main || addend != 0
-        || destination.kind != 1 || !matches!(destination.binding, 1 | 2)
+        || !matches!(destination.kind, 1 | 5) || !matches!(destination.binding, 1 | 2)
         || destination.visibility != 0 || destination.section == 0
         || destination.section >= 0xff00 || destination.value != offset
     { return None; }
     let source = unsafe { lookup(scope, objects, owner, index, false, true) }??;
-    if source.kind != 1 || source.visibility != 0 || source.section >= 0xff00
+    if !matches!(source.kind, 1 | 5) || source.visibility != 0 || source.section >= 0xff00
         || objects[source.owner].role != ObjectRole::Library
         || !unsafe { readable_memory(&objects[source.owner], source.value, source.size.max(1)) }
         || !unsafe { readable_memory(&objects[source.owner], source.value, destination.size) }

@@ -37,6 +37,48 @@ unsafe fn mapped(address: *mut u8) -> bool {
 fn identity(number: u64) -> ObjectIdentity { ObjectIdentity { device: 1, inode: number } }
 
 #[test]
+fn allocated_common_storage_is_reported_by_dladdr() {
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        // The isolated fork child has no other threads. Release its inherited
+        // graph lock before the ABI entry acquires that same lock.
+        RuntimeGuard::complete_fork();
+        let storage = page()?;
+        core::ptr::write_bytes(storage, 0, PAGE as usize);
+        core::ptr::write_unaligned(storage.cast::<u32>(), PT_LOAD);
+        core::ptr::write_unaligned(storage.add(4).cast::<u32>(), PF_R | PF_W);
+        core::ptr::write_unaligned(storage.add(32).cast::<u64>(), PAGE as u64);
+        core::ptr::write_unaligned(storage.add(40).cast::<u64>(), PAGE as u64);
+        let symbol = storage.add(256 + 24);
+        core::ptr::write_unaligned(symbol.cast::<u32>(), 1);
+        symbol.add(4).write(0x15);
+        core::ptr::write_unaligned(symbol.add(6).cast::<u16>(), 1);
+        core::ptr::write_unaligned(symbol.add(8).cast::<u64>(), 512);
+        core::ptr::write_unaligned(symbol.add(16).cast::<u64>(), 4);
+        core::ptr::copy_nonoverlapping(b"\0value\0".as_ptr(), storage.add(384), 7);
+        let object = Object { base: storage as u64, phdr: storage, phnum: 1,
+            symtab: storage.add(256), symcount: 2, strtab: storage.add(384), strsz: 7,
+            map_span_start: storage as u64, map_span_byte_len: PAGE,
+            ..EMPTY_OBJECT };
+        let mut nodes = UnpublishedObjects::new();
+        let node = RuntimeObject::allocate(ObjectStorage::Runtime(object), identity(1), 0,
+            LoadedName::new(b"common"), true)?;
+        nodes.append(node)?;
+        (*REGISTRY.0.get()).head = node;
+        (*REGISTRY.0.get()).tail = node;
+        (*REGISTRY.0.get()).count = 1;
+        let mut output: AddressInfo = core::mem::zeroed();
+        let address = storage.add(512);
+        let found = runtime_address_info(address as usize, &mut output);
+        let result = found == 1 && output.symbol_name == storage.add(385)
+            && output.symbol_address == address.cast();
+        *REGISTRY.0.get() = RuntimeRegistry::empty();
+        drop(nodes);
+        Some(result)
+    })().unwrap_or(false) } }
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+}
+
+#[test]
 fn abandoned_registry_nodes_unmap_only_transaction_owned_images() {
     unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
         let borrowed_image = page()?;

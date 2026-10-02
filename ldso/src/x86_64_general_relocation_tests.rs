@@ -967,6 +967,33 @@ fn function_definition_extent_keeps_load_order_and_executable_admission() {
     assert!(unsafe { ordinary_address(&[object], function) }.is_none());
 }
 
+#[test]
+fn allocated_common_symbols_resolve_as_data_and_supply_copy_storage() {
+    let mut main = Image::new();
+    let mut provider = Image::new();
+    main.symbol(1, 1, 1, 0, 0, 0, 8);
+    provider.symbol(1, 5, 1, 0, 1, 0x1000, 8);
+    let objects = [main.object(false), provider.object(true)];
+    let scope = SymbolScope { indices: &[0, 1], module_count: 0,
+        static_tls_count: 0, initial: true };
+    assert!(matches!(unsafe { find_runtime_symbol(objects.iter().map(Some), b"value") },
+        Some(RuntimeSymbol::Address(address)) if address == provider.data.as_ptr() as u64));
+    for kind in [R_64, R_X86_64_GLOB_DAT] {
+        assert_eq!(unsafe { word_value(&scope, &objects, 0, kind, 1, 0) },
+            Some(provider.data.as_ptr() as u64));
+    }
+    for destination_kind in [1, 5] {
+        main.symbol(1, destination_kind, 1, 0, 1, 0x1000, 8);
+        let copy = unsafe { copy_relocation(&scope, &objects, 0, 0x1000, 1, 0) }.unwrap();
+        assert_eq!(copy.source, provider.data.as_ptr() as u64);
+        assert_eq!(copy.destination, main.data.as_ptr() as u64);
+        assert_eq!(copy.length, 8);
+    }
+    provider.symbol(1, 5, 1, 0, 0xfff2, 8, 8);
+    assert!(unsafe { find_runtime_symbol([Some(&objects[1])], b"value") }.is_none());
+    assert!(unsafe { copy_relocation(&scope, &objects, 0, 0x1000, 1, 0) }.is_none());
+}
+
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
 fn canonical_plt_address_preserves_pointer_identity_without_self_binding() {
