@@ -23,7 +23,7 @@ use super::ProcessArenaBacking;
 use crate::arena::{ArenaId, ManageArenaError};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure};
 #[cfg(target_arch = "x86_64")]
-use crate::diagnostic_output::{MbindWarningRoute, SourceFormattedMessage};
+use crate::diagnostic_output::MbindWarningRoute;
 use crate::os::{HugeOsAllocation, HugeOsAllocationOutcome, HugeOsAllocationStop,
     HugeOsRawReleaseRetry, HugeOsRejectedPrimitive, HugeOsReleaseFailure, MemoryConfig, VmProcess};
 use crate::random::TheapRandomImage;
@@ -76,68 +76,127 @@ pub(crate) enum HugeArenaCleanupError {
     TrackerCapacity,
 }
 
+/// The exact detached metadata issuer and the admission retaining any
+/// unpublished child mapping. Successful arena publication transfers child
+/// lifetime custody to that child's registry and teardown path.
+enum HugeReservationOwner {
+    Main(Pin<&'static MetaAllocator>),
+    #[cfg(target_arch = "x86_64")]
+    Child(crate::subproc::lifecycle::NativeChildArenaAdmission),
+}
+
 /// Fresh detached metadata selected exclusively as huge-free tracking words.
-/// Its only typed projections are transient, borrow this linear capability,
-/// and never outlive a retry or storage-return transition.
+/// Its typed projections borrow this linear capability and never outlive a
+/// retry or storage-return transition.
 struct HugeReleaseMetadata {
-    allocation: MetaAllocation<'static>,
+    allocation: HugeTrackerAllocation,
     words: usize,
 }
 
+enum HugeTrackerAllocation {
+    Main(MetaAllocation<'static>),
+    #[cfg(target_arch = "x86_64")]
+    Child(crate::subproc::lifecycle::NativeChildArenaMetadata),
+}
+
+enum HugeTrackerReleaseFailure {
+    Main(MetaReleaseFailure),
+    #[cfg(target_arch = "x86_64")]
+    Child { tracker: crate::subproc::lifecycle::NativeChildArenaMetadata, error: MetaError },
+}
+
+impl HugeTrackerReleaseFailure {
+    fn error(&self) -> HugeArenaCleanupError {
+        match self {
+            Self::Main(MetaReleaseFailure::MallocRetryable { error, .. }
+                | MetaReleaseFailure::MallocTerminal { error, .. }) => HugeArenaCleanupError::Metadata(*error),
+            Self::Main(MetaReleaseFailure::RegularOs { error, .. }) => HugeArenaCleanupError::Primitive(*error),
+            #[cfg(target_arch = "x86_64")]
+            Self::Child { error, .. } => HugeArenaCleanupError::Metadata(*error),
+        }
+    }
+
+    fn retry(self) -> Result<(), Self> {
+        match self {
+            Self::Main(MetaReleaseFailure::MallocRetryable { allocation, .. }) =>
+                MetaRelease::Malloc(allocation).release().map_err(Self::Main),
+            Self::Main(terminal) => Err(Self::Main(terminal)),
+            #[cfg(target_arch = "x86_64")]
+            Self::Child { mut tracker, .. } => tracker.free()
+                .map_err(|error| Self::Child { tracker, error }),
+        }
+    }
+}
+
 impl HugeReleaseMetadata {
-    fn allocate(metadata: Pin<&'static MetaAllocator>, process: VmProcess<'static>,
+    fn allocate(owner: &HugeReservationOwner, process: VmProcess<'static>,
         config: MemoryConfig, words: usize) -> Result<Self, MetaError> {
         let bytes = words.checked_mul(core::mem::size_of::<usize>())
             .filter(|bytes| *bytes != 0).ok_or(MetaError::AllocationUnavailable)?;
-        let subprocess = process.main_subprocess().ok_or(MetaError::SubprocessMismatch)?;
-        let allocation = metadata.zalloc_for_main_subprocess(config, subprocess, bytes)?;
-        // Ordinary metadata zalloc guarantees the allocator's word alignment;
-        // the fresh capability has never been exposed as another typed role.
-        debug_assert_eq!(allocation.pointer().as_ptr().addr() % core::mem::align_of::<usize>(), 0);
-        Ok(Self { allocation, words })
+        let allocation = match owner {
+            HugeReservationOwner::Main(metadata) => {
+                let subprocess = process.main_subprocess().ok_or(MetaError::SubprocessMismatch)?;
+                HugeTrackerAllocation::Main(metadata.zalloc_for_main_subprocess(config, subprocess, bytes)?)
+            }
+            #[cfg(target_arch = "x86_64")]
+            HugeReservationOwner::Child(admission) => HugeTrackerAllocation::Child(admission.allocate_tracker(bytes)?),
+        };
+        let tracker = Self { allocation, words };
+        debug_assert_eq!(tracker.pointer().as_ptr().addr() % core::mem::align_of::<usize>(), 0);
+        Ok(tracker)
     }
 
-    fn release(self) -> Result<(), MetaReleaseFailure> {
-        MetaRelease::Malloc(self.allocation).release()
+    fn pointer(&self) -> core::ptr::NonNull<u8> {
+        match &self.allocation {
+            HugeTrackerAllocation::Main(allocation) => allocation.pointer(),
+            #[cfg(target_arch = "x86_64")]
+            HugeTrackerAllocation::Child(allocation) => allocation.pointer(),
+        }
+    }
+
+    fn release(self) -> Result<(), HugeTrackerReleaseFailure> {
+        match self.allocation {
+            HugeTrackerAllocation::Main(allocation) => MetaRelease::Malloc(allocation).release()
+                .map_err(HugeTrackerReleaseFailure::Main),
+            #[cfg(target_arch = "x86_64")]
+            HugeTrackerAllocation::Child(mut tracker) => tracker.free()
+                .map_err(|error| HugeTrackerReleaseFailure::Child { tracker, error }),
+        }
     }
 }
 
 impl AsRef<[usize]> for HugeReleaseMetadata {
     fn as_ref(&self) -> &[usize] {
-        // SAFETY: this private owner was built from an exact fresh zeroed
-        // metadata request. Its live capability cannot be freed while borrowed.
-        unsafe { core::slice::from_raw_parts(self.allocation.pointer().as_ptr().cast(), self.words) }
+        // SAFETY: this owner holds an exact fresh zeroed metadata request;
+        // the live capability cannot be returned while these words are borrowed.
+        unsafe { core::slice::from_raw_parts(self.pointer().as_ptr().cast(), self.words) }
     }
 }
 
 impl AsMut<[usize]> for HugeReleaseMetadata {
     fn as_mut(&mut self) -> &mut [usize] {
-        // SAFETY: only this unique capability can project these words; no raw
-        // reference is stored by the retry token or exposed outside this module.
-        unsafe { core::slice::from_raw_parts_mut(self.allocation.pointer().as_ptr().cast(), self.words) }
+        // SAFETY: only this unique capability projects these words; no stored
+        // reference outlives a retry or metadata storage-return transition.
+        unsafe { core::slice::from_raw_parts_mut(self.pointer().as_ptr().cast(), self.words) }
     }
 }
 
 enum HugePrefixCleanup {
     Unreleased { allocation: HugeOsAllocation<'static>, tracker: Option<HugeReleaseMetadata> },
     FailedPages(HugeOsRawReleaseRetry<'static, HugeReleaseMetadata>),
-    TrackerRelease(MetaReleaseFailure),
+    TrackerRelease(HugeTrackerReleaseFailure),
 }
 
 pub(super) struct PendingHugeCleanup {
     prefix: Option<HugePrefixCleanup>,
     rejected: Option<HugeOsRejectedPrimitive>,
-    metadata: Pin<&'static MetaAllocator>,
+    owner: HugeReservationOwner,
     error: HugeArenaCleanupError,
 }
 
 impl PendingHugeCleanup {
-    fn retain_tracker_failure(&mut self, failure: MetaReleaseFailure) {
-        self.error = match &failure {
-            MetaReleaseFailure::MallocRetryable { error, .. }
-            | MetaReleaseFailure::MallocTerminal { error, .. } => HugeArenaCleanupError::Metadata(*error),
-            MetaReleaseFailure::RegularOs { error, .. } => HugeArenaCleanupError::Primitive(*error),
-        };
+    fn retain_tracker_failure(&mut self, failure: HugeTrackerReleaseFailure) {
+        self.error = failure.error();
         self.prefix = Some(HugePrefixCleanup::TrackerRelease(failure));
     }
 
@@ -162,7 +221,7 @@ impl PendingHugeCleanup {
             HugePrefixCleanup::Unreleased { allocation, tracker } => {
                 let tracker = match tracker {
                     Some(tracker) => tracker,
-                    None => match HugeReleaseMetadata::allocate(self.metadata, allocation.process(),
+                    None => match HugeReleaseMetadata::allocate(&self.owner, allocation.process(),
                         config, allocation.release_tracking_words()) {
                         Ok(tracker) => tracker,
                         Err(error) => {
@@ -194,13 +253,8 @@ impl PendingHugeCleanup {
                     self.prefix = Some(HugePrefixCleanup::FailedPages(failure.into_retry()));
                 }
             },
-            HugePrefixCleanup::TrackerRelease(failure) => match failure {
-                MetaReleaseFailure::MallocRetryable { allocation, .. } => {
-                    if let Err(failure) = MetaRelease::Malloc(allocation).release() {
-                        self.retain_tracker_failure(failure);
-                    }
-                }
-                terminal => self.prefix = Some(HugePrefixCleanup::TrackerRelease(terminal)),
+            HugePrefixCleanup::TrackerRelease(failure) => {
+                if let Err(failure) = failure.retry() { self.retain_tracker_failure(failure); }
             },
         }
     }
@@ -275,11 +329,6 @@ impl ProcessArenaBacking {
             let result = if node != -1 {
                 let result = unsafe { self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
                     timeout, false, random.as_deref_mut(), warning) };
-                if matches!(result, Err(HugeArenaReserveError::Unavailable(_))) {
-                    // The source startup calls the public reservation entry,
-                    // which reports an empty primitive result after its own warning.
-                    unsafe { warning.huge_warning(SourceFormattedMessage::huge_reservation_failure(pages)) };
-                }
                 result.map(|_| ())
             } else {
                 unsafe { self.reserve_huge_interleaved_with_mbind_warning(process, config, metadata, pages, 0,
@@ -348,6 +397,40 @@ impl ProcessArenaBacking {
         timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
         #[cfg(target_arch = "x86_64")] warning: Option<MbindWarningRoute<'_>>,
     ) -> (Result<Option<ArenaId>, HugeArenaReserveError>, crate::source_api::SourceErrno) {
+        unsafe { self.reserve_huge_at_with_owner(process, config, HugeReservationOwner::Main(metadata),
+            pages, numa_node, timeout_milliseconds, exclusive, random,
+            #[cfg(target_arch = "x86_64")] warning) }
+    }
+
+    /// Reserve under the admitted current child's exact VM and metadata owner.
+    /// Unpublished mappings retain this admission in the cleanup slot; a
+    /// published arena transfers custody to this child's registry.
+    ///
+    /// # Safety
+    /// Any random image belongs exclusively to the calling Theap, and the
+    /// caller ends all process/backing views before publication returns.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn reserve_huge_at_for_child(
+        admission: crate::subproc::lifecycle::NativeChildArenaAdmission,
+        pages: usize, numa_node: i32, timeout_milliseconds: usize,
+        exclusive: bool, random: crate::os::OsRandom<'_>, warning: Option<MbindWarningRoute<'_>>,
+    ) -> (Result<Option<ArenaId>, HugeArenaReserveError>, crate::source_api::SourceErrno) {
+        let config = admission.config();
+        // SAFETY: the admission moves into the reservation owner, remains
+        // retained for unpublished cleanup, and transfers published custody
+        // only to this exact child's arena registry.
+        let process = unsafe { admission.process() };
+        let backing = unsafe { admission.backing() };
+        unsafe { backing.reserve_huge_at_with_owner(process, config, HugeReservationOwner::Child(admission),
+            pages, numa_node, timeout_milliseconds, exclusive, random, warning) }
+    }
+
+    unsafe fn reserve_huge_at_with_owner(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        owner: HugeReservationOwner, pages: usize, numa_node: i32,
+        timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
+        #[cfg(target_arch = "x86_64")] warning: Option<MbindWarningRoute<'_>>,
+    ) -> (Result<Option<ArenaId>, HugeArenaReserveError>, crate::source_api::SourceErrno) {
         use crate::source_api::SourceErrno;
         let mut errno = SourceErrno::Unchanged;
         let result = (|| {
@@ -356,7 +439,7 @@ impl ProcessArenaBacking {
             if self.huge_cleanup_retained.load(Ordering::Acquire) {
                 return Err(HugeArenaReserveError::PendingCleanup);
             }
-            self.prepare_huge_reservation(process, config)?;
+            self.prepare_huge_reservation(process, config, matches!(&owner, HugeReservationOwner::Main(_)))?;
             let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
                 (numa_node as usize % process.policy().numa_node_count()) as i32
             } else { numa_node };
@@ -382,15 +465,46 @@ impl ProcessArenaBacking {
                 | HugeOsAllocationOutcome::RejectedPrimitive(rejected) => SourceErrno::Store(rejected.error()),
                 _ => SourceErrno::Unchanged,
             };
-            unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+            if matches!(&outcome, HugeOsAllocationOutcome::Unavailable(_)
+                | HugeOsAllocationOutcome::RejectedPrimitive(_)) {
+                // The original child admission is still held across this
+                // synchronous warning; no child record lock spans callbacks.
+                let message = crate::diagnostic_output::SourceFormattedMessage::huge_reservation_failure(pages);
+                #[cfg(target_arch = "x86_64")]
+                if let Some(warning) = warning {
+                    unsafe { warning.huge_warning(message) };
+                } else { process.policy().source_warning(message); }
+                #[cfg(not(target_arch = "x86_64"))]
+                process.policy().source_warning(message);
+            }
+            let result = unsafe { self.finish_prepared_huge_reservation(config, owner, numa_node, exclusive, outcome) };
+            // A manage rejection runs the source primitive free pass. Its
+            // last failed free can replace a previous mapping errno even
+            // though the reservation return remains ENOMEM.
+            if let Some(pending) = unsafe { &*self.huge_cleanup.get() }.as_ref() {
+                if matches!(&pending.prefix, Some(HugePrefixCleanup::FailedPages(_)))
+                    || pending.rejected.is_some() {
+                    if let HugeArenaCleanupError::Primitive(error) = pending.error {
+                        errno = SourceErrno::Store(error);
+                    }
+                }
+            }
+            result
         })();
         (result, errno)
     }
 
-    fn prepare_huge_reservation(&self, process: VmProcess<'static>, config: MemoryConfig)
+    fn prepare_huge_reservation(&self, process: VmProcess<'static>, config: MemoryConfig, process_lived: bool)
         -> Result<(), HugeArenaReserveError> {
         let _guard = self.reserve_lock.lock().map_err(HugeArenaReserveError::Lock)?;
-        if !self.begin_preparation_locked(super::StoredVmProcess::from_static_process(process), config) {
+        let stored = if process_lived { super::StoredVmProcess::from_static_process(process) }
+            else {
+                // SAFETY: the reservation admission retains unpublished
+                // mappings; publication transfers ownership to the same child
+                // context, which retires arenas before releasing its image.
+                unsafe { super::StoredVmProcess::from_retained_process(process) }
+            };
+        if !self.begin_preparation_locked(stored, config) {
             return Err(HugeArenaReserveError::Manage(ManageArenaError::InvalidRegion));
         }
         Ok(())
@@ -411,15 +525,15 @@ impl ProcessArenaBacking {
             | HugeOsAllocationOutcome::AllocatedWithRejectedPrimitive { allocation, .. } => allocation.process(),
             _ => return Err(HugeArenaReserveError::Manage(ManageArenaError::InvalidRegion)),
         };
-        self.prepare_huge_reservation(process, config)?;
-        unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+        self.prepare_huge_reservation(process, config, true)?;
+        unsafe { self.finish_prepared_huge_reservation(config, HugeReservationOwner::Main(metadata), numa_node, exclusive, outcome) }
     }
 
     /// Caller holds huge_reservation_lock. Registry installation takes the
     /// ordinary reserve lock only for its publication; metadata cleanup runs
     /// after that lock has been released, so it can safely allocate backing.
     unsafe fn finish_prepared_huge_reservation(
-        &'static self, config: MemoryConfig, metadata: Pin<&'static MetaAllocator>,
+        &'static self, config: MemoryConfig, owner: HugeReservationOwner,
         numa_node: i32, exclusive: bool, outcome: HugeOsAllocationOutcome<'static>,
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
         let (allocation, rejected, unavailable) = match outcome {
@@ -433,7 +547,7 @@ impl ProcessArenaBacking {
             HugeOsAllocationOutcome::RejectedPrimitive(rejected) =>
                 (None, Some(rejected), Some(HugeOsAllocationStop::NoncontiguousPrimitive)),
         };
-        let mut pending = PendingHugeCleanup { prefix: None, rejected, metadata,
+        let mut pending = PendingHugeCleanup { prefix: None, rejected, owner,
             error: HugeArenaCleanupError::Primitive(Errno::NOMEM) };
         if let Some(rejected) = &pending.rejected {
             pending.error = HugeArenaCleanupError::Primitive(rejected.error());
@@ -543,9 +657,6 @@ impl ProcessArenaBacking {
             timeout_milliseconds, |pages, node, timeout| unsafe {
                 let result = self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
                     timeout, false, random.as_deref_mut(), warning);
-                if matches!(result, Err(HugeArenaReserveError::Unavailable(_))) {
-                    warning.huge_warning(SourceFormattedMessage::huge_reservation_failure(pages));
-                }
                 result.map(|_| ())
             })
     }
@@ -641,6 +752,44 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_option_startup_delivers_one_public_huge_failure_warning() {
+        unsafe fn environment() -> *const *const c_char {
+            static END: usize = 0;
+            (&END as *const usize).cast()
+        }
+        unsafe extern "C" fn discard(_: *const c_char) {}
+        unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+            if unsafe { CStr::from_ptr(message) }.to_bytes() == b"failed to reserve 1 GiB huge pages\n" {
+                unsafe { &*argument.cast::<AtomicUsize>() }.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let fault = fault::install(fault::Plan::every(fault::Point::HugeMap, Errno::IO));
+        for node in [0, -1] {
+            let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(discard)));
+            unsafe { output.initialize_source_options(environment) };
+            for (option, value) in [(SourceOption::ShowErrors, 1), (SourceOption::MaxWarnings, 100),
+                (SourceOption::ReserveHugeOsPages, 1), (SourceOption::ReserveHugeOsPagesAt, node),
+                (SourceOption::UseNumaNodes, 1)] {
+                unsafe { output.option_set(option, value) }.unwrap();
+            }
+            let warnings = AtomicUsize::new(0);
+            unsafe { output.register_output(Some(capture), (&warnings as *const AtomicUsize).cast_mut().cast()) };
+            let policy = std::boxed::Box::leak(std::boxed::Box::new(unsafe { crate::os::VmPolicy::from_process_options(output) }));
+            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+            let process = VmProcess::new_main(policy, subprocess);
+            let metadata = MetaAllocator::test_static_owner();
+            let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
+            let result = unsafe { subprocess.arena_backing().reserve_startup_options_with_mbind_warning(
+                process, config, metadata, None, MbindWarningRoute::new(output)) };
+            unsafe { output.register_output(None, core::ptr::null_mut()) };
+            assert_eq!(result.huge, Some(Err(Errno::NOMEM)));
+            assert_eq!(warnings.load(Ordering::Relaxed), 1);
+        }
+        drop(fault);
+    }
+
     fn fill_registry(backing: &ProcessArenaBacking) -> usize {
         let count = backing.registry.count();
         let first = unsafe { backing.registry.arena_at(0) }.unwrap() as *const _ as *mut _;
@@ -652,6 +801,56 @@ mod tests {
     fn restore_registry(backing: &ProcessArenaBacking, count: usize) {
         for slot in &backing.registry.arenas[count..] { slot.store(core::ptr::null_mut(), Ordering::Relaxed); }
         backing.registry.count.store(count, Ordering::Relaxed);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_huge_manage_rejection_retains_its_vm_and_metadata_until_raw_retry() {
+        use crate::subproc::lifecycle::{NativeChildArenaAdmission, NativeChildThreadAdd,
+            NativeSubprocessError, native_subproc_new, native_subproc_add_current_thread,
+            native_child_thread_done, native_subproc_destroy};
+        unsafe extern "C" fn no_output(_: *const c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "arena::owned::huge::tests::child_huge_manage_rejection_retains_its_vm_and_metadata_until_raw_retry",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("child");
+                std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let admission = NativeChildArenaAdmission::acquire_current().unwrap().unwrap();
+                    let backing = unsafe { admission.backing() };
+                    let mut warm = admission.allocate_tracker(64).expect("warm child detached metadata");
+                    warm.free().expect("return original warm tracker");
+                    let count = fill_registry(backing);
+                    let fault = fault::install(fault::Plan::every(fault::Point::Unmap, Errno::IO));
+                    fault.enable_one_synthetic_huge_map();
+                    let result = crate::source_heap_api::reserve_huge_os_pages_at(1, -1, 0);
+                    assert_eq!(result.value, Errno::NOMEM.raw());
+                    assert_eq!(result.errno, crate::source_api::SourceErrno::Store(Errno::IO));
+                    restore_registry(backing, count);
+                    assert!(backing.huge_cleanup_pending());
+                    {
+                        let pending = unsafe { &*backing.huge_cleanup.get() }.as_ref().unwrap();
+                        let HugeReservationOwner::Child(owner) = &pending.owner else { panic!("original child reservation owner"); };
+                        assert!(core::ptr::eq(unsafe { owner.backing() }, backing));
+                        assert!(matches!(&pending.prefix, Some(HugePrefixCleanup::FailedPages(_))));
+                    }
+                    drop(admission);
+                    assert!(matches!(unsafe { native_subproc_destroy(id) }, Err(NativeSubprocessError::DestroyRefused(_))));
+                    assert_eq!(backing.retry_huge_cleanup(), Err(HugeArenaCleanupError::Primitive(Errno::IO)));
+                    fault.set(fault::Plan::disabled());
+                    backing.retry_huge_cleanup().expect("same child raw mapping and tracker return");
+                    assert!(!backing.huge_cleanup_pending());
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                }).join().expect("retained child huge cleanup");
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
     }
 
     #[test]

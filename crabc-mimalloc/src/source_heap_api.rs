@@ -2391,8 +2391,8 @@ mod reserve_os_failure_tests {
 }
 
 /// `mi_reserve_huge_os_pages_at_ex` clears its output before the zero-page
-/// return, then reserves physical huge backing in the process-main arena
-/// group. A child member is rejected before selecting any parent backing.
+/// return, then reserves huge backing in the calling subprocess arena group.
+/// A child reservation retains its own VM and detached metadata admission.
 /// A failed primitive returns `ENOMEM`; the actual failing mapping error
 /// remains the C `errno` effect.
 ///
@@ -2406,8 +2406,6 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
     exclusive: bool,
     arena_id: *mut *mut c_void,
 ) -> Sourced<c_int> {
-    use crate::arena::HugeArenaReserveError;
-    use crate::os::HugeOsAllocationStop;
     if !arena_id.is_null() {
         // SAFETY: the caller supplies the writable output.
         unsafe { arena_id.write(null_mut()) };
@@ -2415,8 +2413,22 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
     if pages == 0 {
         return Sourced { value: 0, errno: SourceErrno::Unchanged };
     }
-    // Child admission needs its pinned child VM image and record lock. Do not
-    // publish a child request in the process-main arena group.
+    #[cfg(target_arch = "x86_64")]
+    if let Some(admission) = crate::subproc::lifecycle::NativeChildArenaAdmission::acquire_current() {
+        let Ok(admission) = admission else {
+            return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
+        };
+        // SAFETY: this member alone owns its default Theap random image.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+        let warning = crate::process_init::process_output_owner()
+            .map(crate::diagnostic_output::HugePageWarningRoute::new);
+        // SAFETY: the owned admission retains every unpublished child mapping
+        // and transfers publication only into its own arena registry.
+        let (reserved, errno) = unsafe { crate::arena::ProcessArenaBacking::reserve_huge_at_for_child(
+            admission, pages, numa_node, timeout_milliseconds, exclusive, Some(&mut random), warning) };
+        return unsafe { huge_reservation_public_result(reserved, errno, arena_id) };
+    }
+    #[cfg(not(target_arch = "x86_64"))]
     if crate::subproc::lifecycle::current_thread_is_child_member() {
         return Sourced { value: Errno::NOMEM.raw(), errno: SourceErrno::Unchanged };
     }
@@ -2442,26 +2454,23 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
     let (reserved, primitive_errno) = unsafe { backing.reserve_huge_at_reporting_errno(
         process, config, metadata, pages, numa_node, timeout_milliseconds, exclusive,
         Some(&mut random), #[cfg(target_arch = "x86_64")] warning) };
+    unsafe { huge_reservation_public_result(reserved, primitive_errno, arena_id) }
+}
+
+/// Caller retains the writable output through this exact publication result.
+unsafe fn huge_reservation_public_result(
+    reserved: Result<Option<crate::arena::ArenaId>, crate::arena::HugeArenaReserveError>,
+    primitive_errno: SourceErrno, arena_id: *mut *mut c_void,
+) -> Sourced<c_int> {
     match reserved {
         Ok(arena) => {
             if let (Some(arena), false) = (arena, arena_id.is_null()) {
-                // SAFETY: the caller supplied the writable output.
+                // SAFETY: forwarded writable output and published arena owner.
                 unsafe { arena_id.write(arena.as_ptr().cast()) };
             }
             Sourced { value: 0, errno: primitive_errno }
         }
-        Err(error) => {
-            if matches!(error, HugeArenaReserveError::Unavailable(_)) {
-                process.policy().source_warning(
-                    SourceFormattedMessage::huge_reservation_failure(pages));
-            }
-            let errno = match error {
-                HugeArenaReserveError::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(error)) =>
-                    SourceErrno::Store(error),
-                _ => primitive_errno,
-            };
-            Sourced { value: Errno::NOMEM.raw(), errno }
-        }
+        Err(_) => Sourced { value: Errno::NOMEM.raw(), errno: primitive_errno },
     }
 }
 
@@ -2480,8 +2489,9 @@ pub fn reserve_huge_os_pages_interleave(
     pages: usize, numa_nodes: usize, timeout_milliseconds: usize,
 ) -> Sourced<c_int> {
     if pages == 0 { return Sourced { value: 0, errno: SourceErrno::Unchanged }; }
-    let detected_nodes = crate::process_init::ProcessMainInitializationStorage::global()
-        .ready_child_subprocess_inputs().map_or(1, |(binding, _)| binding.process().policy().numa_node_count());
+    let detected_nodes = if numa_nodes > 0 && numa_nodes <= c_int::MAX as usize { 1 }
+        else { crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs().map_or(1, |(binding, _)| binding.process().policy().numa_node_count()) };
     let mut errno = SourceErrno::Unchanged;
     let result = crate::arena::ProcessArenaBacking::interleave_huge_reservations(
         pages, numa_nodes, detected_nodes, timeout_milliseconds, |count, node, timeout| {
@@ -2501,6 +2511,11 @@ pub fn reserve_huge_os_pages_interleave(
 pub unsafe fn reserve_huge_os_pages(
     pages: usize, max_seconds: f64, pages_reserved: *mut usize,
 ) -> Sourced<c_int> {
+    // The deprecation warning can call user output before any node request.
+    // Retain an actual child admission across that callback and the complete
+    // interleave sequence, without borrowing its record or membership slot.
+    #[cfg(target_arch = "x86_64")]
+    let _warning_admission = crate::subproc::lifecycle::NativeChildArenaAdmission::acquire_current();
     if let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs() {
         binding.process().policy().source_warning(SourceFormattedMessage::from_source_formatted(
@@ -2592,6 +2607,49 @@ mod huge_at_ex_tests {
                 let result = unsafe { reserve_huge_os_pages(1, 0.0, &mut pages_reserved) };
                 assert_eq!(result.value, Errno::NOMEM.raw());
                 assert_eq!(pages_reserved, 0);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_child_huge_reservation_uses_its_own_primitive_and_arena_group() {
+        use crate::subproc::lifecycle::{native_subproc_new, native_subproc_add_current_thread,
+            native_child_thread_done, native_subproc_destroy, NativeChildThreadAdd};
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::huge_at_ex_tests::public_child_huge_reservation_uses_its_own_primitive_and_arena_group",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let main_count = MainSubprocess::global().arena_backing().registry().count();
+                let id = native_subproc_new().expect("child");
+                std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let admission = crate::subproc::lifecycle::NativeChildArenaAdmission::acquire_current()
+                        .expect("child member").expect("original identity admission");
+                    let child_identity = unsafe { admission.process() }.subprocess() as *const _ as *mut c_void;
+                    drop(admission);
+                    let fault = fault::install(fault::Plan::every(fault::Point::HugeMap, Errno::IO));
+                    let failed = reserve_huge_os_pages_at(1, -1, 0);
+                    assert_eq!(failed.value, Errno::NOMEM.raw());
+                    assert_eq!(failed.errno, SourceErrno::Store(Errno::IO));
+                    fault.set(fault::Plan::disabled());
+                    fault.enable_one_synthetic_huge_map();
+                    let mut arena = null_mut();
+                    // SAFETY: the output is writable; the child owns its arena.
+                    let result = unsafe { reserve_huge_os_pages_at_ex(1, -1, 0, true, &mut arena) };
+                    assert_eq!(result.value, 0);
+                    assert!(!arena.is_null());
+                    // SAFETY: publication returned a live arena of this member.
+                    assert_eq!(unsafe { (*arena.cast::<crate::types::Arena>()).subprocess }.cast::<c_void>(), child_identity);
+                    assert_eq!(MainSubprocess::global().arena_backing().registry().count(), main_count);
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                }).join().expect("child huge reservation");
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
     }
