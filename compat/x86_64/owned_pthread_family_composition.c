@@ -1,5 +1,5 @@
 /*
- * One installed-product pthread/TLS composition used by the x86 family receipt.
+ * Exercise pthread/C11 ownership and publication through ordinary C calls.
  *
  * The program avoids time-based scheduling assumptions. Every transition uses
  * a barrier, mutex/condition handoff, or the selected synchronization primitive
@@ -8,12 +8,15 @@
  */
 #define _GNU_SOURCE 1
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <threads.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define WORKERS 4
 #define BARRIER_PHASES 3
@@ -30,6 +33,7 @@ struct worker {
 
 static _Thread_local int initialized_tls = TLS_INITIAL;
 static _Thread_local int zero_tls;
+_Alignas(256) static _Thread_local unsigned char aligned_tls[17] = {0x51};
 
 static once_flag once = ONCE_FLAG_INIT;
 static tss_t tsd_key;
@@ -205,6 +209,225 @@ static int worker_main(void *opaque)
     return 100 + worker->id;
 }
 
+
+static pthread_once_t canceled_once = PTHREAD_ONCE_INIT;
+static pthread_key_t lifecycle_key;
+static atomic_int canceled_once_calls;
+static atomic_int canceled_once_publication;
+static atomic_int cancel_cleanup;
+static atomic_int cancel_destructors;
+static int cancel_initializer_ready;
+static int cancel_waiter_ready;
+static int fork_worker_ready;
+static int fork_worker_release;
+static int fork_callback_sequence;
+static pthread_key_t fork_key;
+static int fork_key_live;
+
+static void cancel_unlock(void *unused)
+{
+    (void)unused;
+    atomic_store(&cancel_cleanup, 1);
+    REQUIRE(pthread_mutex_unlock(&gate) == 0, "canceled initializer cleanup unlock failed");
+}
+
+static void lifecycle_destructor(void *value)
+{
+    REQUIRE(value == &cancel_cleanup, "canceled initializer TSD value differs");
+    REQUIRE(atomic_load(&cancel_cleanup) == 1, "TSD ran before cancellation cleanup");
+    REQUIRE(pthread_getspecific(lifecycle_key) == NULL, "TSD value was not cleared before destructor");
+    int iteration = atomic_fetch_add(&cancel_destructors, 1) + 1;
+    if (iteration < PTHREAD_DESTRUCTOR_ITERATIONS)
+        REQUIRE(pthread_setspecific(lifecycle_key, value) == 0, "canceled initializer TSD rearm failed");
+    else
+        REQUIRE(iteration == PTHREAD_DESTRUCTOR_ITERATIONS, "TSD exceeded destructor iteration bound");
+}
+
+static void cancel_once_initializer(void)
+{
+    int attempt = atomic_fetch_add(&canceled_once_calls, 1);
+    REQUIRE(attempt == 0 || attempt == 1, "canceled once retried too often");
+    if (attempt == 0) {
+        REQUIRE(pthread_setspecific(lifecycle_key, &cancel_cleanup) == 0, "canceled initializer TSD set failed");
+        REQUIRE(pthread_mutex_lock(&gate) == 0, "canceled initializer gate lock failed");
+        pthread_cleanup_push(cancel_unlock, NULL);
+        cancel_initializer_ready = 1;
+        REQUIRE(pthread_cond_broadcast(&gate_changed) == 0, "canceled initializer announcement failed");
+        for (;;)
+            REQUIRE(pthread_cond_wait(&gate_changed, &gate) == 0, "canceled initializer wait failed");
+        pthread_cleanup_pop(1);
+    }
+    REQUIRE(initialized_tls == TLS_INITIAL && zero_tls == 0, "retry worker initial TLS differs");
+    atomic_store(&canceled_once_publication, 0x2391);
+}
+
+static void *cancel_once_worker(void *argument)
+{
+    if (argument) {
+        REQUIRE(pthread_mutex_lock(&gate) == 0, "canceled once waiter gate lock failed");
+        cancel_waiter_ready = 1;
+        REQUIRE(pthread_cond_broadcast(&gate_changed) == 0, "canceled once waiter announcement failed");
+        REQUIRE(pthread_mutex_unlock(&gate) == 0, "canceled once waiter gate unlock failed");
+    }
+    REQUIRE(pthread_once(&canceled_once, cancel_once_initializer) == 0, "canceled once call failed");
+    REQUIRE(atomic_load(&canceled_once_publication) == 0x2391, "canceled once retry publication differs");
+    return argument;
+}
+
+static void canceled_once_phase(void)
+{
+    pthread_t initializer, waiter;
+    REQUIRE(pthread_key_create(&lifecycle_key, lifecycle_destructor) == 0, "lifecycle TSD create failed");
+    REQUIRE(pthread_create(&initializer, NULL, cancel_once_worker, NULL) == 0, "cancel initializer create failed");
+    REQUIRE(pthread_mutex_lock(&gate) == 0, "main canceled once gate lock failed");
+    while (!cancel_initializer_ready)
+        REQUIRE(pthread_cond_wait(&gate_changed, &gate) == 0, "main canceled initializer wait failed");
+    REQUIRE(pthread_mutex_unlock(&gate) == 0, "main canceled initializer gate unlock failed");
+    REQUIRE(pthread_create(&waiter, NULL, cancel_once_worker, &cancel_waiter_ready) == 0, "cancel waiter create failed");
+    REQUIRE(pthread_mutex_lock(&gate) == 0, "main canceled waiter gate lock failed");
+    while (!cancel_waiter_ready)
+        REQUIRE(pthread_cond_wait(&gate_changed, &gate) == 0, "main canceled waiter wait failed");
+    REQUIRE(pthread_mutex_unlock(&gate) == 0, "main canceled waiter gate unlock failed");
+    REQUIRE(pthread_cancel(initializer) == 0, "once initializer cancel failed");
+    void *result = NULL;
+    REQUIRE(pthread_join(initializer, &result) == 0 && result == PTHREAD_CANCELED, "once canceled join differs");
+    REQUIRE(atomic_load(&cancel_destructors) == PTHREAD_DESTRUCTOR_ITERATIONS, "canceled initializer TSD did not finish before join");
+    REQUIRE(pthread_join(waiter, &result) == 0 && result == &cancel_waiter_ready, "once retry join differs");
+    REQUIRE(pthread_once(&canceled_once, cancel_once_initializer) == 0, "completed canceled once reuse failed");
+    REQUIRE(atomic_load(&canceled_once_calls) == 2, "canceled once completion reran initializer");
+    REQUIRE(pthread_key_delete(lifecycle_key) == 0, "lifecycle TSD delete failed");
+}
+
+static void fork_prepare(void) { fork_callback_sequence = 1; }
+static void fork_parent(void)
+{
+    REQUIRE(fork_callback_sequence == 1, "fork parent callback order differs");
+    fork_callback_sequence = 2;
+}
+static void fork_child(void)
+{
+    REQUIRE(fork_callback_sequence == 1, "fork child callback order differs");
+    fork_callback_sequence = 3;
+}
+
+static void *fork_worker(void *argument)
+{
+    (void)argument;
+    REQUIRE(initialized_tls == TLS_INITIAL && zero_tls == 0, "fork worker initial TLS differs");
+    REQUIRE(pthread_getspecific(fork_key) == NULL, "fork worker inherited main TSD");
+    REQUIRE(pthread_setspecific(fork_key, &fork_worker_release) == 0, "fork worker TSD set failed");
+    initialized_tls = 0x991;
+    REQUIRE(pthread_mutex_lock(&gate) == 0, "fork worker gate lock failed");
+    fork_worker_ready = 1;
+    REQUIRE(pthread_cond_broadcast(&gate_changed) == 0, "fork worker announcement failed");
+    while (!fork_worker_release)
+        REQUIRE(pthread_cond_wait(&gate_changed, &gate) == 0, "fork worker release wait failed");
+    REQUIRE(pthread_mutex_unlock(&gate) == 0, "fork worker gate unlock failed");
+    REQUIRE(initialized_tls == 0x991, "parent worker TLS changed after fork");
+    REQUIRE(pthread_getspecific(fork_key) == &fork_worker_release, "parent worker TSD changed after fork");
+    return NULL;
+}
+
+struct churn_worker {
+    int id;
+    int destructor_calls;
+};
+static pthread_key_t churn_key;
+
+static void churn_destructor(void *value)
+{
+    struct churn_worker *worker = value;
+    REQUIRE(initialized_tls == TLS_INITIAL + worker->id + 1 && zero_tls == worker->id + 1,
+            "churn destructor TLS differs");
+    REQUIRE(pthread_getspecific(churn_key) == NULL, "churn destructor value was not cleared");
+    ++worker->destructor_calls;
+    if (worker->destructor_calls < PTHREAD_DESTRUCTOR_ITERATIONS)
+        REQUIRE(pthread_setspecific(churn_key, worker) == 0, "churn TSD rearm failed");
+}
+
+static void *churn_main(void *argument)
+{
+    struct churn_worker *worker = argument;
+    REQUIRE(initialized_tls == TLS_INITIAL && zero_tls == 0, "reused worker initial TLS differs");
+    REQUIRE(pthread_getspecific(churn_key) == NULL, "reused worker retained TSD");
+    if (fork_key_live)
+        REQUIRE(pthread_getspecific(fork_key) == NULL, "child worker inherited main TSD");
+    REQUIRE((uintptr_t)aligned_tls % 256 == 0 && aligned_tls[0] == 0x51 && aligned_tls[16] == 0,
+            "reused worker aligned TLS differs");
+    aligned_tls[0] = (unsigned char)worker->id;
+    aligned_tls[16] = 0xa1;
+    initialized_tls += worker->id + 1;
+    zero_tls = worker->id + 1;
+    REQUIRE(pthread_setspecific(churn_key, worker) == 0, "churn TSD set failed");
+    unsigned char *allocation = malloc(4097);
+    REQUIRE(allocation != NULL, "churn allocation failed");
+    for (int index = 0; index < 4097; ++index) allocation[index] = (unsigned char)worker->id;
+    for (int index = 0; index < 4097; ++index)
+        REQUIRE(allocation[index] == (unsigned char)worker->id, "churn allocation ownership differs");
+    free(allocation);
+    if (worker->id & 1) pthread_exit(worker);
+    return worker;
+}
+
+static void churn_phase(int rounds)
+{
+    REQUIRE(pthread_key_create(&churn_key, churn_destructor) == 0, "churn key create failed");
+    for (int round = 0; round < rounds; ++round) {
+        pthread_t threads[WORKERS];
+        struct churn_worker state[WORKERS] = {0};
+        for (int index = 0; index < WORKERS; ++index) {
+            state[index].id = index;
+            REQUIRE(pthread_create(&threads[index], NULL, churn_main, &state[index]) == 0, "churn worker create failed");
+        }
+        for (int index = 0; index < WORKERS; ++index) {
+            void *result = NULL;
+            REQUIRE(pthread_join(threads[index], &result) == 0 && result == &state[index], "churn join ownership differs");
+            REQUIRE(state[index].destructor_calls == PTHREAD_DESTRUCTOR_ITERATIONS, "churn TSD teardown incomplete at join");
+        }
+        REQUIRE(initialized_tls == TLS_INITIAL && zero_tls == 0, "worker churn changed main TLS");
+    }
+    REQUIRE(pthread_key_delete(churn_key) == 0, "churn key delete failed");
+}
+
+/* Fork preserves the calling thread's TSD, while child-created workers receive
+ * fresh thread state. The parent's waiting worker retains its own TLS and TSD. */
+static void live_worker_fork_phase(void)
+{
+    pthread_t worker;
+    REQUIRE(pthread_key_create(&fork_key, NULL) == 0, "fork TSD key create failed");
+    fork_key_live = 1;
+    REQUIRE(pthread_setspecific(fork_key, &fork_worker_ready) == 0, "fork main TSD set failed");
+    REQUIRE(pthread_atfork(fork_prepare, fork_parent, fork_child) == 0, "atfork registration failed");
+    REQUIRE(pthread_create(&worker, NULL, fork_worker, NULL) == 0, "fork worker create failed");
+    REQUIRE(pthread_mutex_lock(&gate) == 0, "main fork gate lock failed");
+    while (!fork_worker_ready)
+        REQUIRE(pthread_cond_wait(&gate_changed, &gate) == 0, "main fork worker wait failed");
+    REQUIRE(pthread_mutex_unlock(&gate) == 0, "main fork gate unlock failed");
+    pid_t child = fork();
+    REQUIRE(child >= 0, "live worker fork failed");
+    if (child == 0) {
+        REQUIRE(fork_callback_sequence == 3, "fork child callback missing");
+        REQUIRE(initialized_tls == TLS_INITIAL && zero_tls == 0, "fork child main TLS differs");
+        REQUIRE(pthread_getspecific(fork_key) == &fork_worker_ready, "fork child main TSD differs");
+        REQUIRE(pthread_once(&canceled_once, cancel_once_initializer) == 0, "fork child completed once reuse failed");
+        REQUIRE(atomic_load(&canceled_once_calls) == 2, "fork child completed once reran");
+        churn_phase(4);
+        _Exit(0);
+    }
+    REQUIRE(fork_callback_sequence == 2, "fork parent callback missing");
+    int status = 0;
+    REQUIRE(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "fork child lifecycle composition failed");
+    REQUIRE(pthread_mutex_lock(&gate) == 0, "main fork release gate lock failed");
+    fork_worker_release = 1;
+    REQUIRE(pthread_cond_broadcast(&gate_changed) == 0, "main fork release announcement failed");
+    REQUIRE(pthread_mutex_unlock(&gate) == 0, "main fork release gate unlock failed");
+    REQUIRE(pthread_join(worker, NULL) == 0, "parent live worker join failed");
+    REQUIRE(pthread_getspecific(fork_key) == &fork_worker_ready, "fork parent main TSD differs");
+    REQUIRE(pthread_key_delete(fork_key) == 0, "fork TSD key delete failed");
+    fork_key_live = 0;
+}
+
 int main(void)
 {
     REQUIRE(tss_create(&tsd_key, tsd_destructor) == thrd_success, "TSD key create failed");
@@ -278,6 +501,12 @@ int main(void)
     REQUIRE(pthread_spin_destroy(&spin) == 0, "spin destroy failed");
     REQUIRE(pthread_barrier_destroy(&barrier) == 0, "barrier destroy failed");
     tss_delete(tsd_key);
+    REQUIRE((uintptr_t)aligned_tls % 256 == 0 && aligned_tls[0] == 0x51 && aligned_tls[16] == 0,
+            "main aligned TLS differs");
+    canceled_once_phase();
+    live_worker_fork_phase();
+    churn_phase(32);
+    REQUIRE(aligned_tls[0] == 0x51 && aligned_tls[16] == 0, "worker churn changed main aligned TLS");
     puts("pthread-family-composition-ok");
     return 0;
 }

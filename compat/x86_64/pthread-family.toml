@@ -70,7 +70,7 @@ modes = [
   "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
   "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
 ]
-behavior = "C11 create/join result; distinct initialized and zero TLS; contended call_once publication; TSD destructor rearm/order before join; reusable barrier serial return; rwlock reader/writer publication; contended spin state."
+behavior = "C11 create/join result; distinct initialized and zero TLS; contended call_once publication; TSD destructor rearm/order before join; reusable barrier serial return; rwlock reader/writer publication; contended spin state; canceled once initializer cleanup/TSD ordering and retry; live-worker fork preserving main/worker TSD with fresh child workers; 256-byte-aligned initialized TLS; 32 four-worker lifecycle/TLS/TSD/allocation reuse rounds."
 
 [[required]]
 id = "pthread-static-lifecycle"

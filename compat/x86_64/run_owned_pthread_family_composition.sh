@@ -268,5 +268,5 @@ PY
 if [ -n "$worker_fixture" ]; then
     printf 'owned pthread worker caller: PASS (%s; supplied static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct products)\n' "$worker_fixture"
 else
-printf 'owned pthread family composition: PASS (one installed-header C11 object through supplied static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct products; TLS, once, TSD, barrier, rwlock, and spin handshakes)\n'
+printf 'owned pthread family composition: PASS (one installed-header C11 object through supplied static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct products; TLS, once/cancellation retry, TSD teardown, barrier/rwlock/spin publication, live-worker fork, and lifecycle churn)\n'
 fi
