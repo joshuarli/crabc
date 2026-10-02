@@ -4543,6 +4543,64 @@ mod tests {
         assert!(huge.release_for_process(&mut [0]).is_ok());
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn public_regular_reservation_commit_warning_permits_recursive_reservation() {
+        crate::test_process::run_in_fresh_process(
+            "arena::owned::tests::public_regular_reservation_commit_warning_permits_recursive_reservation",
+            || {
+                use core::ffi::{c_char, c_void};
+                struct Capture { entered: AtomicBool, inner_ok: AtomicBool }
+                unsafe extern "C" fn no_output(_: *const c_char) {}
+                unsafe extern "C" fn reenter(message: *const c_char, argument: *mut c_void) {
+                    // SAFETY: serialized registration retains this capture;
+                    // the source message is live throughout this callback.
+                    let capture = unsafe { &*argument.cast::<Capture>() };
+                    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if !bytes.windows(b"cannot commit OS memory".len())
+                        .any(|part| part == b"cannot commit OS memory")
+                        || capture.entered.swap(true, Ordering::AcqRel) { return; }
+                    let mut id = core::ptr::null_mut();
+                    // SAFETY: this distinct public reservation owns its
+                    // mapping and writes only this local arena ID output.
+                    let nested = unsafe { crate::source_heap_api::reserve_os_memory_ex(
+                        ARENA_MIN_SIZE, true, false, false, &mut id) };
+                    capture.inner_ok.store(nested.value == 0 && !id.is_null(), Ordering::Release);
+                }
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(no_output) }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                crate::source_options_api::option_set(crate::config::SourceOption::ShowErrors as i32, 1);
+                let capture: &'static Capture = Box::leak(Box::new(Capture {
+                    entered: AtomicBool::new(false), inner_ok: AtomicBool::new(false),
+                }));
+                // SAFETY: the sole registration and capture stay callable
+                // through every outer and recursive reservation warning.
+                unsafe { crate::source_options_api::register_output(Some(reenter),
+                    core::ptr::from_ref(capture).cast_mut().cast()) };
+                let (sent, received) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: this thread retains its exact native TLS descriptor.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    let _fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::IO));
+                    let mut id = core::ptr::null_mut();
+                    // SAFETY: the public entry owns the fresh reservation and
+                    // this caller provides one writable local output.
+                    let outer = unsafe { crate::source_heap_api::reserve_os_memory_ex(
+                        ARENA_MIN_SIZE, false, false, false, &mut id) };
+                    sent.send((outer.value, id.is_null())).unwrap();
+                });
+                let outer = received.recv_timeout(std::time::Duration::from_secs(3))
+                    .expect("the source public reservation callback can reserve a distinct parent");
+                worker.join().unwrap();
+                assert_eq!(outer, (Errno::NOMEM.raw(), true));
+                assert!(capture.entered.load(Ordering::Acquire));
+                assert!(capture.inner_ok.load(Ordering::Acquire));
+            },
+        );
+    }
+
     #[test]
     fn explicit_regular_reservation_preserves_multi_arena_source_spans() {
         let _fault = fault::install(fault::Plan::disabled());
