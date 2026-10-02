@@ -124,6 +124,13 @@ class M7GateContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(harness.HarnessError, "input or executable differs"):
                     gate.replay_configuration("guarded-secure-5", directory.relative_to(ROOT))
 
+    def test_private_context_arena_producer_selects_the_existing_debug_feature(self) -> None:
+        with mock.patch.object(gate, "rust_trace", return_value={}) as trace, \
+                mock.patch.object(harness, "write_json"):
+            self.assertEqual(gate.main(["--private-context-arena-print"]), 0)
+        self.assertEqual([call.kwargs["rust_features"] for call in trace.call_args_list],
+                         [("test-adapter",), ("test-adapter", "mi-debug-1")])
+
     def test_xmalloc_cli_selects_the_existing_profile_producer_and_replay(self) -> None:
         for option, replay in (("--xmalloc-profile-differential", False),
                                ("--xmalloc-profile-replay", True)):

@@ -1,4 +1,4 @@
-/* Pinned-C half of the allocator M7 options/environment differential.
+/* Pinned-C half of the allocator options/environment differential.
 
    This probe includes the pinned mimalloc v3.5.0 `src/static.c` as one
    translation unit so it can reset the private `mi_options[]` table between
@@ -437,6 +437,9 @@ int main(void) {
     mi_option_disable(mi_option_disallow_os_alloc);
     image("enabled.disable", mi_option_disallow_os_alloc);
     record("enabled.arena_eager_commit", mi_option_is_enabled(mi_option_arena_eager_commit) ? 1 : 0);
+    /* Debug builds assert the enum range. Valid-client probes leave these
+       source-precondition controls to the complete release fixture. */
+#if !defined(CRABC_MI_OPTIONS_VALID_CLIENT)
     record("invalid.get_negative", mi_option_get((mi_option_t)-1));
     record("invalid.get_last", mi_option_get((mi_option_t)_mi_option_last));
     record("invalid.get_large", mi_option_get((mi_option_t)1000));
@@ -446,6 +449,7 @@ int main(void) {
        the full print prove it left every descriptor unchanged. */
     mi_option_set((mi_option_t)_mi_option_last, 3);
     mi_option_set_default((mi_option_t)-1, 3);
+#endif
     memset(&print, 0, sizeof(print));
     mi_options_print_out(&capture_output, &print);
     printf("api.print=");

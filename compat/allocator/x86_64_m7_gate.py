@@ -2806,7 +2806,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             for profile, features in (
                 ("default", ("test-adapter",)),
-                ("debug", ("test-adapter", "mi-debug")),
+                ("debug", ("test-adapter", "mi-debug-1")),
             )
         }
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
