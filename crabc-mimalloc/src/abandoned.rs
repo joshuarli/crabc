@@ -19,7 +19,7 @@ use core::sync::atomic::Ordering;
 
 #[cfg(test)]
 use crate::arena::ArenaAbandonedPages;
-use crate::atomic::{word_cas_weak_release, word_load_relaxed};
+use crate::atomic::word_load_relaxed;
 use crate::bitmap::AbandonedBitmapClaim;
 use crate::config::{ARENA_BIN_COUNT, BIN_FULL, MEDIUM_MAX_OBJ_SIZE, SMALL_SIZE_MAX};
 use crate::free_list::{self, FreeListError};
@@ -1561,7 +1561,7 @@ where
 
 /// Performs the false-force owner-local phase after a post-exit CAS claim.
 ///
-/// The outer W08 owner-exit coordinator already runs force then false
+/// The outer owner-exit coordinator already runs force then false
 /// collection before it establishes an abandoned identity. A pointer lookup
 /// can, however, observe a page that was abandoned by another valid source
 /// path. Repeating this exact false-force phase under the newly claimed low
@@ -1678,7 +1678,7 @@ where
     }
 }
 
-/// Continues W09's regular post-owner-exit free after a live publication
+/// Continues the regular post-owner-exit free after a live publication
 /// already changed an unowned remote head into an owned head.
 ///
 /// `claim` contains the exact page and canonical block published by
@@ -1779,7 +1779,7 @@ where
 /// Pinned `internal.h:mi_page_is_huge` recognizes the usual size-forced
 /// singleton and the aligned normal-OS variant: `reserved == 1` with the
 /// mapping base below its metadata. The latter is only an admission fact here;
-/// the W03 terminal callback must still reconstruct
+/// the terminal callback must still reconstruct
 /// [`crate::os_page::OsAlignedPageLayout`] before it changes the OS list or
 /// PageMap. Arena and external pages retain the size-forced requirement.
 #[inline]
@@ -1869,7 +1869,7 @@ where
     // size-forced large block or a normal OS mapping whose aligned metadata
     // lies after the mapping base.  The latter is how
     // `aligned_alloc(128 KiB, 7)` reaches `reserved == 1` even though its
-    // rounded internal block remains `PageKind::Small`. W03's terminal
+    // rounded internal block remains `PageKind::Small`. The terminal
     // callback reconstructs `OsAlignedPageLayout` before it mutates the OS
     // list or PageMap. The rounded 4 KiB block already takes the existing
     // full collector (`> SMALL_SIZE_MAX`), so this admission does not widen
@@ -1897,7 +1897,7 @@ where
             &mut no_test_hook,
             // After the source atomic detach, `_mi_page_free_collect(page,
             // false)` must transfer any owner-local deferred list before the
-            // all-free/unabandon decision. The W07 claim still owns the low
+            // all-free/unabandon decision. The live-publication claim still owns the low
             // bit, so this neither consults a departed Theap nor rebuilds
             // page/block authority.
             |page| collect_post_owner_exit_local_free_false(page),
@@ -3950,15 +3950,9 @@ fn set_abandoned_identity(state: &PageAbandonmentState) {
 }
 
 fn set_thread_identity(state: &PageAbandonmentState, thread_id: usize) {
-    debug_assert_eq!(thread_id & PAGE_FLAG_MASK, 0);
-    let xthread_id = unsafe { state.xthread_id.as_ref() };
-    let mut previous = xthread_id.load(Ordering::Relaxed);
-    loop {
-        let replacement = thread_id | (previous & PAGE_FLAG_MASK);
-        if word_cas_weak_release(xthread_id, &mut previous, replacement) {
-            return;
-        }
-    }
+    // SAFETY: the state retains this page's initialized atomic owner word;
+    // replacing its identity preserves the independently updated flag bits.
+    crate::atomic::replace_thread_identity(unsafe { state.xthread_id.as_ref() }, thread_id);
 }
 
 #[inline]
@@ -4121,7 +4115,7 @@ mod tests {
         (page, block)
     }
 
-    /// Raw-backed stand-in for one coherent W02 live-allocation observation.
+    /// Raw-backed stand-in for one coherent live-allocation observation.
     struct TestLiveRemoteAllocation {
         page: NonNull<Page>,
         producer: PageRemoteFreeProducerState,
