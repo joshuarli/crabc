@@ -421,6 +421,9 @@ pub(crate) struct PublishedOsAlignedPage {
     process: Option<VmProcess<'static>>,
     process_identity: Option<NonNull<crate::subproc::SubprocessIdentity>>,
     release_commit_size: usize,
+    /// The terminal guard reset's actual outcome is recorded on this unique
+    /// token before accounting, never by minting a second release right.
+    tail_reset_recorded: bool,
     release_accounted: bool,
 }
 
@@ -1371,6 +1374,37 @@ pub(crate) unsafe fn published_on_demand_os_page_area_for_process(
 }
 
 impl PublishedOsAlignedPage {
+    /// Records the actual successful tail commitment before terminal release.
+    /// An on-demand page's prefix excludes that tail, so its original token
+    /// must debit both commitments. Fully committed source suffix accounting
+    /// already includes the tail and remains unchanged. Refusal leaves this
+    /// unique token and its cached accounting progress intact.
+    ///
+    /// # Safety
+    /// `bytes` is the actual successful commitment charged by the terminal
+    /// reset of this token's original tail under its original process VM
+    /// owner, or zero when that operation skipped or failed. The caller owns
+    /// this same unique token throughout the reset, retains its mapping and
+    /// process binding, and records the outcome before any terminal release
+    /// accounting. No independent reset or release may overlap this operation.
+    pub(crate) unsafe fn record_source_tail_reset_commit(&mut self, bytes: usize) -> bool {
+        if self.release_accounted || self.tail_reset_recorded { return false; }
+        let tail_size = self.layout.allocation_size() - self.layout.page_noguard_size();
+        if bytes != 0 && (crate::config::SECURE_LEVEL < 5 || self.memory.is_pinned()
+            || self.process_identity.is_none() || bytes != tail_size) {
+            return false;
+        }
+        let committed = if bytes != 0 && !self.memory.initially_committed() {
+            match self.release_commit_size.checked_add(bytes) {
+                Some(committed) if committed <= self.layout.allocation_size() => committed,
+                _ => return false,
+            }
+        } else { self.release_commit_size };
+        self.release_commit_size = committed;
+        self.tail_reset_recorded = true;
+        true
+    }
+
     /// Consumes a direct OS page's terminal right without unmapping or changing
     /// reserved/committed accounting. Source main-Heap destruction leaves these
     /// mappings for the process lifetime; subsequent arena teardown does not
@@ -1475,6 +1509,7 @@ impl PublishedOsAlignedPage {
             process_identity,
             process,
             release_commit_size,
+            tail_reset_recorded: false,
             release_accounted: false,
         })
     }
@@ -1562,8 +1597,9 @@ impl PublishedOsAlignedPage {
             self.release_accounted = true;
             // Full OS pages preserve the existing source suffix accounting.
             // The native on-demand correction instead subtracts only the
-            // prefix that reached a successful page-area commit; metadata
-            // commitment was never included in the source statistic.
+            // prefix that reached a successful page-area commit, plus an
+            // actually committed terminal tail reset. Metadata commitment
+            // was never included in the source statistic.
             unsafe { Mapping::reclaim_published_for_process(process, self.base.as_ptr(),
                 self.layout.mapping_length(), self.release_commit_size, false) }
         } else {
@@ -2097,6 +2133,64 @@ mod tests {
         fault.set(fault::Plan::disabled());
         claim.commit_initial_page_prefix(layout.page_noguard_size()).unwrap();
         claim.release().unwrap_or_else(|_| panic!("exact original claim release"));
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[test]
+    fn on_demand_os_release_debits_only_the_actual_terminal_tail_reset() {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        for fail_reset in [false, true] {
+            let fault = fault::install(fault::Plan::disabled());
+            let process = process(false);
+            let before = process.subprocess().vm_statistics().snapshot();
+            let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+            let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+                process.main_subprocess().unwrap()).unwrap();
+            let config = config(4 * KIB);
+            let mut claim = OsAlignedPageClaim::allocate_on_demand_for_process(
+                process, config, 256, 1, crate::arena::ArenaId::none(),
+            ).unwrap_or_else(|_| panic!("original on-demand OS claim"));
+            let layout = claim.layout();
+            let prefix = usize::from(page::initial_page_slice_pcommitted(
+                layout.block_start_offset(), layout.block_size(), layout.allocation_size(),
+                config.page_size().bytes()).unwrap()) * config.page_size().bytes();
+            claim.commit_initial_page_prefix(prefix).unwrap();
+            let memory = claim.memory_id().unwrap();
+            let start = claim.slice_start().unwrap();
+            let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+                layout.block_size(), layout.page_offset(), layout.reserved(),
+                (prefix / config.page_size().bytes()) as u16,
+                memory.initially_zero(), memory) }.unwrap();
+            assert!(unsafe { claim.publish_secondary_metadata(primary) });
+            claim.into_published().unwrap();
+            let mut token = unsafe { PublishedOsAlignedPage::from_page_for_process(
+                process, config, primary) }.unwrap();
+            if fail_reset { fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM)); }
+            let before_reset = process.subprocess().vm_statistics().snapshot();
+            // SAFETY: this isolated original token retains the exact aligned
+            // reserved tail. No client, projection or callback can access it.
+            let reset = unsafe { crate::arena::secure_page_guard_reset_at(Some(process),
+                config.page_size(), start.as_ptr().wrapping_add(layout.page_noguard_size()), memory) };
+            let bytes = if fail_reset {
+                assert_eq!(reset, Err(Errno::NOMEM));
+                0
+            } else {
+                assert_eq!(reset, Ok(true));
+                config.page_size().bytes()
+            };
+            assert_eq!(process.subprocess().vm_statistics().snapshot().committed_current
+                - before_reset.committed_current, bytes as i64);
+            // SAFETY: this count is the actual immediately preceding reset's
+            // charge under this token's original process, with no release yet.
+            assert!(unsafe { token.record_source_tail_reset_commit(bytes) });
+            assert!(unsafe { token.clear_secondary_metadata() });
+            assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+            fault.set(fault::Plan::disabled());
+            assert!(unsafe { token.reclaim() }.is_ok());
+            let after = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(after.reserved_current, before.reserved_current);
+            assert_eq!(after.committed_current, before.committed_current);
+        }
     }
 
     #[test]
