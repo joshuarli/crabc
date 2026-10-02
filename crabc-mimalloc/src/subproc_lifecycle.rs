@@ -4411,11 +4411,11 @@ pub(crate) mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
-    fn child_thread_teardown_removes_freed_metadata_custody_on_late_release_error() {
+    fn child_thread_teardown_consumes_metadata_custody_when_source_os_release_fails() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
             test_initialize_process_from_host_environment};
         crate::test_process::run_in_fresh_process(
-            "subproc::lifecycle::tests::child_thread_teardown_removes_freed_metadata_custody_on_late_release_error",
+            "subproc::lifecycle::tests::child_thread_teardown_consumes_metadata_custody_when_source_os_release_fails",
             || {
                 assert!(test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
@@ -4460,16 +4460,25 @@ pub(crate) mod tests {
                     resume.recv().expect("finish permission");
                     let fault = crate::os::fault::install(crate::os::fault::Plan::at(
                         crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                    let ranges = fault.capture_unmap_ranges();
                     let result = native_child_thread_done();
                     std::println!("teardown.result={result:?}; unmaps={}", fault.observed());
                     assert_eq!(fault.observed(), 1, "the real release fault is reached");
-                    assert!(matches!(result, Some(Err(_))));
-                    let current = unsafe { current_child_member() }.as_ref().expect("actual retained member");
-                    std::println!("teardown.theap_custody={}", current.member.owner.theap_pointer().is_some());
-                    assert!(current.member.owner.theap_pointer().is_none(),
-                        "consumed metadata storage is not left as a live TLS block token");
-                    // The failed mapping stays with the retained child. No
-                    // released image or registration is used again.
+                    assert_eq!(result, Some(Ok(())), "source OS release failure consumes the Page before leaking its unused mapping");
+                    assert!(unsafe { current_child_member() }.is_none(),
+                        "consumed metadata clients grant no retained TLS image custody");
+                    let (ranges, count) = ranges.all().expect("the exact failed unmap range");
+                    assert_eq!(count, 1);
+                    let (base, size) = ranges[0];
+                    let address = core::ptr::with_exposed_provenance_mut(base);
+                    let mut resident = 0u8;
+                    assert!(unsafe { crabc_core::mm::mincore_raw(address, 4096, &mut resident) }.is_ok(),
+                        "the source failed free leaves its unused mapping");
+                    assert!(unsafe { binding.page_map().lookup_registered_page(address) }.unwrap().is_none(),
+                        "the leaked mapping grants no live registered Page");
+                    // All source clients and registrations ended before this
+                    // fixture reclaims the mapping leaked by the source free.
+                    unsafe { crabc_core::mm::munmap_raw(address, size) }.expect("unused fixture mapping cleanup");
                 });
                 entered.recv().expect("registered worker");
                 // Return one actual client from the full page. Two ordinary
@@ -4482,10 +4491,13 @@ pub(crate) mod tests {
                     }).expect("complete metadata operation")
                 }) }.expect("child lock");
                 finish.send(()).expect("worker may finish");
-                worker.join().expect("retained-error control completes");
-                // Remaining clients and their child stay retained; this fault
-                // control does not destroy a context carrying release rights.
-                let _ = fillers;
+                worker.join().expect("source failed-release control completes");
+                unsafe { id.with_owner(|owner| {
+                    owner.as_mut().unwrap().with_metadata_page_engine(binding, |_, engine| {
+                        for filler in fillers { unsafe { engine.free(filler) }.expect("live filler returned once"); }
+                    }).expect("remaining metadata clients finish");
+                }) }.unwrap();
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
     }
