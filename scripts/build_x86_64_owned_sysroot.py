@@ -1233,6 +1233,7 @@ def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocat
         raise BuildError(f"debug libc lacks selected runtime symbols: {sorted(missing)}")
     provenance = {"archive": {"name": libc.name, "sha256": sha256_file(libc)}, "build_profile": "debug",
                   "source_runtime": receipt, "allocator_backend": recorded_backend,
+                  "allocator_lifecycle_test_audit": lifecycle_test_audit,
                   "allocator_headers": headers, "allocator_flags": flags if accepted_c else [],
                   "selected_members": [{"name": name, "sha256": sha256_file(objects / name)} for name in selected],
                   "excluded_members": [name for name in members if name in compiler_members]}
