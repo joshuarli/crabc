@@ -285,6 +285,26 @@ fn reset_with_advice(
     }
 }
 
+/// Applies the source's eager reset fill before the raw Unix advisory.
+///
+/// Basic debug and every secure profile leave bytes to the OS. Internal and
+/// expensive debug without security eagerly clear the complete contained
+/// pages, even when the following advisory reports an error.
+///
+/// # Safety
+/// `address..address + length` is a live, writable, exclusively transitioning
+/// span. No reference or concurrent access may observe these bytes.
+#[inline]
+unsafe fn reset_eager_debug_pages(address: *mut u8, length: usize) {
+    if cfg!(target_arch = "x86_64")
+        && crate::config::DEBUG_LEVEL > 1 && crate::config::SECURE_LEVEL == 0
+    {
+        // SAFETY: the caller supplies the complete writable span and excludes
+        // observing references throughout this source eager-reset operation.
+        unsafe { core::ptr::write_bytes(address, 0, length); }
+    }
+}
+
 /// One configured Linux base-page size supplied by the process-start owner.
 ///
 /// The AArch64 profile accepts 4, 16, and 64 KiB; the x86-64 profile accepts
@@ -782,6 +802,11 @@ impl<'a> VmProcess<'a> {
     /// the bytes while an advisory can discard them. The caller must keep the
     /// mapping live and quiescent through this operation and remains its sole
     /// release owner. `page_size` must be that mapping's Linux base page size.
+    /// If reset is allowed and selected, every contained page must also be
+    /// committed and writable, with no secure guard or protection within it:
+    /// the internal/expensive nonsecure debug profile clears those bytes
+    /// before its advisory. `allow_reset` records this fact; it cannot confer
+    /// access permission to an uncommitted or protected span.
     pub(crate) unsafe fn purge_external_arena_range(
         self,
         page_size: PageSize,
@@ -825,6 +850,9 @@ impl<'a> VmProcess<'a> {
                 contained_unowned_page_range(page_size, address, length)?
             {
                 self.subprocess.vm_statistics().reset(normalized_length);
+                // SAFETY: reset is gated by the caller's complete writable
+                // span obligation, including exclusion of byte aliases.
+                unsafe { reset_eager_debug_pages(normalized, normalized_length); }
                 let result = reset_with_advice(&RESET_ADVICE, |advice| {
                     #[cfg(test)]
                     fault::record_advice_range(normalized, normalized_length, advice);
@@ -2397,9 +2425,14 @@ impl PublishedMappingView {
         length: usize, already_committed: usize) -> Result<Option<CommitOutcome>> {
         self.mapping.commit_for_process_with_warning(process, offset, length, already_committed)
     }
-    pub(crate) fn purge_for_process(&self, process: VmProcess<'_>, offset: usize,
+    /// # Safety
+    /// The contained reset span, if selected and allowed, must be committed
+    /// and writable with no guard pages or observing references. The live
+    /// source-published mapping and process must survive warning callbacks.
+    pub(crate) unsafe fn purge_for_process(&self, process: VmProcess<'_>, offset: usize,
         length: usize, allow_reset: bool, stat_size: usize) -> Result<bool> {
-        self.mapping.purge_for_process(process, offset, length, allow_reset, stat_size)
+        // SAFETY: the caller forwards the writable-span and lifetime proof.
+        unsafe { self.mapping.purge_for_process(process, offset, length, allow_reset, stat_size) }
     }
 }
 
@@ -3413,7 +3446,14 @@ impl Mapping {
     /// Runs `_mi_os_reset` and its unconditional-for-a-nonempty-range source
     /// counters. The counters advance before the Unix advisory reports its
     /// result, exactly as `src/os.c:620-632` does.
-    pub(crate) fn reset_for_process(
+    ///
+    /// # Safety
+    /// Every contained page accepted by this mapping must be committed and
+    /// writable with no guard or other protection. The caller excludes byte
+    /// references and concurrent access throughout the reset and warning
+    /// callback, and retains the mapping and process lifetime. The nonsecure
+    /// internal/expensive debug profile clears bytes before the advisory.
+    pub(crate) unsafe fn reset_for_process(
         &self,
         process: VmProcess<'_>,
         offset: usize,
@@ -3423,6 +3463,9 @@ impl Mapping {
             return Ok(true);
         };
         process.subprocess.vm_statistics().reset(range.length);
+        // SAFETY: the caller proves this accepted contained span is writable
+        // and excludes observing aliases across the eager source reset.
+        unsafe { reset_eager_debug_pages(range.address, range.length); }
         let result = reset_with_advice(&RESET_ADVICE, |advice| {
             // SAFETY: `range` is a complete-page subrange of this live
             // mapping. The advisory does not create aliases or change the
@@ -3458,7 +3501,15 @@ impl Mapping {
     /// commitment bitmap; the retained [`Mapping`] remains the only retry
     /// owner in every case. Do not surface the primitive error through this
     /// source-shaped policy result.
-    pub(crate) fn purge_for_process(
+    ///
+    /// # Safety
+    /// If reset is allowed and selected, every contained page accepted by
+    /// this mapping must be committed and writable, without guard or other
+    /// protection. The caller excludes byte references and concurrent access
+    /// throughout the transition and warning callbacks. Mapping and process
+    /// ownership must survive those callbacks. `allow_reset` records the
+    /// source all-committed fact; it does not grant writable authority.
+    pub(crate) unsafe fn purge_for_process(
         &self,
         process: VmProcess<'_>,
         offset: usize,
@@ -3505,7 +3556,9 @@ impl Mapping {
             // `_mi_os_purge_ex` ignores `_mi_os_reset`'s advisory error and
             // returns its fixed no-recommit outcome. The mapping remains live
             // for the caller's later policy-selected transition or release.
-            let _ = self.reset_for_process(process, offset, length);
+            // SAFETY: the caller's selected-reset contract proves the
+            // contained span is writable and free of observing aliases.
+            let _ = unsafe { self.reset_for_process(process, offset, length) };
         }
         Ok(false)
     }
@@ -10028,7 +10081,7 @@ mod tests {
 
         assert!(policy.is_preloading(), "process-done re-enters source preloading");
         assert_eq!(
-            mapping.purge_for_process(process, 0, page, true, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 0, page, true, page) },
             Ok(false),
             "post-process-done source purge reports no recommit requirement"
         );
@@ -11752,6 +11805,71 @@ mod tests {
         );
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_reset_eager_debug_zeroing_precedes_failed_advice_and_stays_contained() {
+        let fault = fault::install(fault::Plan::disabled());
+        let _advice = fault.initial_reset_advice();
+        let startup = current_startup();
+        let page_size = startup.page_size();
+        let page = page_size.bytes();
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::PurgeDecommits, 0);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_anonymous(startup, 3 * page, MapAccess::Committed).unwrap();
+        let base = mapping.base().unwrap();
+        let eager = crate::config::DEBUG_LEVEL > 1 && crate::config::SECURE_LEVEL == 0;
+
+        for route in 0..3 {
+            // SAFETY: this test owns all three writable pages, retains no
+            // references to their bytes, and never decommits or protects them.
+            unsafe { core::ptr::write_bytes(base, 0x5a, 3 * page); }
+            let before = subprocess.vm_statistics().snapshot();
+            fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::PERM));
+            let capture = fault.capture_advice_range();
+            match route {
+                0 => assert_eq!(/* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.reset_for_process(process, 1, 3 * page - 2) }, Err(Errno::PERM)),
+                1 => assert_eq!(/* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 1, 3 * page - 2, true, page) }, Ok(false)),
+                _ => {
+                    // SAFETY: the raw span and its containing base pages lie
+                    // in this exclusively owned committed mapping. The
+                    // process borrows no byte or allocator metadata aliases.
+                    assert_eq!(unsafe { process.purge_external_arena_range(
+                        page_size, base.add(1), 3 * page - 2, true, page,
+                    ) }, Ok(false));
+                }
+            }
+            assert_eq!(fault.observed(), 1, "PERM cannot retry or switch reset advice");
+            let (ranges, count) = capture.ranges().unwrap();
+            assert_eq!(count, 1);
+            assert_eq!(ranges[0], (base.wrapping_add(page).addr(), page, MADV_FREE));
+            drop(capture);
+            assert_eq!(mapping.base(), Ok(base));
+            assert_eq!(mapping.length(), Ok(3 * page));
+            // SAFETY: the injected error occurred before madvise, so the
+            // complete mapping remains accessible. Raw reads prove the
+            // eager reset's full contained page and both untouched edges.
+            unsafe {
+                for offset in 0..3 * page {
+                    let expected = if eager && (page..2 * page).contains(&offset) { 0 } else { 0x5a };
+                    assert_eq!(base.add(offset).read_volatile(), expected,
+                        "route {route}, offset {offset}, eager reset {eager}");
+                }
+            }
+            let after = subprocess.vm_statistics().snapshot();
+            assert_eq!(after.committed_current, before.committed_current);
+            assert_eq!(after.reserved_current, before.reserved_current);
+            if crate::config::STAT_LEVEL > 0 {
+                assert_eq!(after.reset_calls, before.reset_calls + 1);
+                assert_eq!(after.reset, before.reset + page as i64);
+                assert_eq!(after.purge_calls, before.purge_calls + i64::from(route != 0));
+            }
+        }
+        fault.set(fault::Plan::disabled());
+        mapping.unmap().unwrap();
+    }
+
     #[test]
     fn fault_injection_fails_the_selected_ordinal_without_a_hidden_retry() {
         let fault = fault::install(fault::Plan::disabled());
@@ -12075,7 +12193,7 @@ mod tests {
         assert_eq!(mapping.base(), Ok(base));
         assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
         fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO));
-        assert_eq!(mapping.purge_for_process(process, 19, span, false, span), Ok(true));
+        assert_eq!(/* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 19, span, false, span) }, Ok(true));
         assert_eq!(decommit_mapping_permissions(base.wrapping_add(page)), "---p");
         assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
         fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
@@ -13323,7 +13441,7 @@ mod tests {
 
         fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
         assert_eq!(
-            mapping.purge_for_process(process, 0, page, true, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 0, page, true, page) },
             Ok(false),
             "_mi_os_purge_ex consumes the reset advisory error and reports no recommit",
         );
@@ -13364,7 +13482,7 @@ mod tests {
         // source-style reset advisory policy begins only after this exact
         // owner has accepted the requested range.
         assert_eq!(
-            mapping.purge_for_process(process, page, page, true, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, page, page, true, page) },
             Err(Errno::INVAL),
         );
         let after_invalid_range = subprocess.vm_statistics().snapshot();
@@ -13376,7 +13494,7 @@ mod tests {
             .unmap_for_process(process, page, false)
             .expect("the live reset-purge owner releases once");
         assert_eq!(
-            mapping.purge_for_process(process, 0, page, true, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 0, page, true, page) },
             Err(Errno::INVAL),
         );
         let after_released_mapping = subprocess.vm_statistics().snapshot();
@@ -13413,7 +13531,7 @@ mod tests {
         // follows that source result instead of replacing it with an error.
         fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
         assert_eq!(
-            mapping.purge_for_process(process, 0, page, true, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 0, page, true, page) },
             Ok(false),
         );
         assert_eq!(fault.observed(), 1, "the selected decommit has no hidden retry");
@@ -13426,7 +13544,7 @@ mod tests {
 
         fault.set(fault::Plan::disabled());
         assert_eq!(
-            mapping.purge_for_process(process, 0, page, true, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, 0, page, true, page) },
             Ok(false),
             "a later source decommit success does not need recommit on this Linux profile",
         );
@@ -13643,7 +13761,7 @@ mod tests {
                             let advice_capture = fault.capture_advice_range();
 
                             assert_eq!(
-                                mapping.purge_for_process(process, offset, length, allow_reset, length),
+                                /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { mapping.purge_for_process(process, offset, length, allow_reset, length) },
                                 Ok(expected_recommit),
                                 "source policy result for delay={delay}, purge_decommits={purge_decommits}, preloading={preloading}, allow_reset={allow_reset}, offset={offset}, length={length}"
                             );
@@ -14871,7 +14989,7 @@ mod tests {
         let reset_eagain_capture = fault.capture_advice_range();
         fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::AGAIN));
         let reset_eagain_succeeds =
-            reserved.reset_for_process(transition_process, 0, page) == Ok(true);
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { reserved.reset_for_process(transition_process, 0, page) } == Ok(true);
         let after_reset_eagain = transition_subprocess.vm_statistics().snapshot();
         let reset_eagain_ranges = reset_eagain_capture.ranges();
         drop(reset_eagain_capture);
@@ -14902,7 +15020,7 @@ mod tests {
             Errno::AGAIN,
         ));
         let fallback_eagain_reports_error = matches!(
-            reserved.reset_for_process(transition_process, 0, page),
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { reserved.reset_for_process(transition_process, 0, page) },
             Err(Errno::AGAIN)
         );
         let after_fallback_eagain = transition_subprocess.vm_statistics().snapshot();
@@ -14943,7 +15061,7 @@ mod tests {
             Errno::INVAL,
         ));
         let reset_fallback_succeeds =
-            reserved.reset_for_process(transition_process, 0, page) == Ok(true);
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { reserved.reset_for_process(transition_process, 0, page) } == Ok(true);
         let after_reset_fallback = transition_subprocess.vm_statistics().snapshot();
         let reset_fallback_ranges = reset_fallback_capture.ranges();
         drop(reset_fallback_capture);
@@ -14964,7 +15082,7 @@ mod tests {
 
         fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
         let purge_decommit_failure_no_recommit =
-            reserved.purge_for_process(transition_process, 0, page, true, page) == Ok(false)
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { reserved.purge_for_process(transition_process, 0, page, true, page) } == Ok(false)
                 && fault.observed() == 1
                 && reserved.base() == Ok(reserved_base);
         // Keep a later failure ordinal armed so this successful retry still
@@ -14972,7 +15090,7 @@ mod tests {
         // into another synthetic failure.
         fault.set(fault::Plan::at(fault::Point::Decommit, 2, Errno::NOMEM));
         let purge_decommit_retry_no_recommit =
-            reserved.purge_for_process(transition_process, 0, page, true, page) == Ok(false)
+            /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { reserved.purge_for_process(transition_process, 0, page, true, page) } == Ok(false)
                 && fault.observed() == 1
                 && reserved.base() == Ok(reserved_base);
         fault.set(fault::Plan::disabled());
@@ -15034,8 +15152,8 @@ mod tests {
             1,
             Errno::NOMEM,
         ));
-        let purge_reset_failure_is_consumed = reset_mapping
-            .purge_for_process(reset_process, 0, page, true, page) == Ok(false);
+        let purge_reset_failure_is_consumed = /* SAFETY: this fixture excludes byte aliases; any accepted reset span is in its retained writable mapping. */ unsafe { reset_mapping
+            .purge_for_process(reset_process, 0, page, true, page) } == Ok(false);
         let after_purge_reset_failure = reset_subprocess.vm_statistics().snapshot();
         let purge_reset_ranges = purge_reset_capture.ranges();
         drop(purge_reset_capture);

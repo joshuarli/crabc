@@ -691,8 +691,13 @@ fn run_purge_vm(owner: &OwnedArenaAllocation, range: PurgeRange) -> Option<bool>
             owner.config.page_size(), address, size, all_committed, stat_size,
         ) }.unwrap_or(false)
     } else {
-        owner.allocation.regular()?.purge_for_process(owner.process(), offset, size,
-            all_committed, stat_size).unwrap_or(false)
+        // SAFETY: the claimed bitmap span is quiescent and the regular
+        // allocation retains its mapping. Reset is allowed only when every
+        // source slice is committed; these arena slices have no page guards
+        // or other protection, and no byte references survive the transition
+        // or its warning callbacks.
+        unsafe { owner.allocation.regular()?.purge_for_process(owner.process(), offset, size,
+            all_committed, stat_size) }.unwrap_or(false)
     };
     Some(needs_recommit)
 }
