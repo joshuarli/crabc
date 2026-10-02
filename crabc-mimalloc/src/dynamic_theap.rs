@@ -3663,6 +3663,75 @@ mod tests {
         });
     }
 
+    fn assert_dynamic_mapped_reclaim_exposes_collected_client(request: usize) {
+        with_non_abandoning_dynamic_page_fixture(move |owner, arena, page_map| {
+            let session = owner.page_session().expect("the dynamic owner retains its session");
+            let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                session, arena, ArenaId::none(), page_map,
+            );
+            let first = allocator.allocate(request, false).expect("first regular client");
+            let page = unsafe { allocator.page_for_block(first) };
+            let mut clients = std::vec![first];
+            clients.push(allocator.allocate(request, false).expect("second regular client"));
+            loop {
+                // SAFETY: the fixture owns all current clients and the sole
+                // dynamic engine; no remote producer overlaps this copy.
+                let available = unsafe { !(*page).free_list_head().is_null() };
+                if !available { break; }
+                let next = allocator.allocate(request, false).expect("consume initialized regular capacity");
+                assert_eq!(unsafe { allocator.page_for_block(next) }, page);
+                clients.push(next);
+            }
+            // SAFETY: all short Page reads precede the consuming handoff.
+            let (capacity, reserved) = unsafe { ((*page).capacity(), (*page).reserved()) };
+            assert!(capacity < reserved, "the source page remains nonfull and mappable");
+            assert_eq!(clients.len(), usize::from(capacity));
+            let handoff = match unsafe { allocator.abandon_mapped_regular(first) } {
+                Ok(handoff) => handoff,
+                Err(failure) => {
+                    core::mem::forget(failure);
+                    panic!("the nonfull regular page enters mapped abandonment");
+                }
+            };
+            // SAFETY: the first exact client remains live through mapped
+            // abandonment and is consumed once by this same-origin reclaim.
+            let mut allocator = match unsafe { handoff.remote_free_and_reclaim(first) } {
+                Ok(allocator) => allocator,
+                Err(DynamicMappedRemoteFreeFailure::Rejected { handoff, error })
+                | Err(DynamicMappedRemoteFreeFailure::Terminal { handoff, error }) => {
+                    core::mem::forget(handoff);
+                    panic!("the same-origin regular reclaim completes: {error:?}");
+                }
+            };
+            // SAFETY: source reclaim restored the sole live dynamic owner;
+            // the remaining actual clients retain Page and backing. This
+            // observation occurs before another allocation can collect lists.
+            let (free, local) = unsafe { ((*page).free_list_head(), (*page).remote_free_test_local_free()) };
+            assert_eq!(free, first.cast().as_ptr(), "source false-force reclaim exposes the collected client immediately");
+            assert!(local.is_null(), "the source transfers the local list when free was empty");
+            let reused = allocator.allocate(request, false).expect("reuse the reclaimed client");
+            assert_eq!(reused, first);
+            clients[0] = reused;
+            for client in clients {
+                // SAFETY: every exact client is still live and held once;
+                // metadata observations ended before local free resumes.
+                unsafe { allocator.free(client) }.expect("release each current regular client");
+            }
+            assert!(matches!(allocator.finish(), Ok(())));
+            DynamicPageFixtureOutcome::TearDown
+        });
+    }
+
+    #[test]
+    fn dynamic_mapped_small_reclaim_exposes_collected_client_before_next_allocation() {
+        assert_dynamic_mapped_reclaim_exposes_collected_client(37);
+    }
+
+    #[test]
+    fn dynamic_mapped_medium_reclaim_exposes_collected_client_before_next_allocation() {
+        assert_dynamic_mapped_reclaim_exposes_collected_client(64 * 1024);
+    }
+
     #[test]
     fn dynamic_mapped_regular_remote_free_reclaims_to_its_same_origin_and_records_free_reclaim_statistics() {
         with_non_abandoning_dynamic_page_fixture(|owner, arena, page_map| {

@@ -808,7 +808,7 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
         return Err(AbandonError::InvalidPageGeometry);
     }
 
-    // The frozen normal-release small-page path avoids an atomic detach of
+    // The source small-page path avoids an atomic detach of
     // its just-published head. Larger pages use the ordinary full collection.
     // Both source paths run before the empty/reclaim decision. Preserve the
     // resulting source expected head for a later rejected-reclaim unown.
@@ -820,7 +820,7 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
     let collected_remote_blocks = if state.block_size <= crate::config::SMALL_SIZE_MAX {
         unsafe { remote_free::collect_abandoned_partly(page, block) }
     } else {
-        unsafe { remote_free::collect_abandoned(page) }
+        unsafe { remote_free::collect_abandoned_false(page) }
     }
     .map_err(AbandonError::RemoteFree)?;
 
@@ -856,10 +856,12 @@ pub(crate) unsafe fn free_mapped_and_reclaim<M: MappedAbandonedPages + ?Sized>(
     unsafe { ptr::write(state.theap.as_ptr(), target_theap.as_ptr()) };
     set_thread_identity(&state, target_thread.get());
     // SAFETY: reassociation installed a live owner and this caller retains
-    // sole ordinary-field authority.
+    // sole ordinary-field authority. Complete the false-force local transfer
+    // before requeue, so a collected head is immediately reusable even when
+    // the page had no initialized free blocks before reclaim.
     let owner = unsafe { Page::remote_free_owner_state_at(page) }
         .ok_or(AbandonError::NotAbandoned)?;
-    let collected_after_reassociation = unsafe { remote_free::collect(owner) }
+    let collected_after_reassociation = unsafe { remote_free::collect_live_page_false(owner) }
         .map_err(AbandonError::RemoteFree)?;
     Ok(MappedAbandonedFreeResult::Reclaimed {
         collected_remote_blocks: collected_remote_blocks + collected_after_reassociation,
