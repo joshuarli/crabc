@@ -3,6 +3,7 @@
 #include <link.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define MAX_EXTRA_ROOTS 96
 static void *extra_handles[MAX_EXTRA_ROOTS];
@@ -30,7 +31,8 @@ static int value(void *handle)
 
 int main(int argc, char **argv)
 {
-    int extra = argc == 3 ? atoi(argv[1]) : -1;
+    int ordinary = argc == 4 && strcmp(argv[3], "--ordinary-only") == 0;
+    int extra = argc == 3 || ordinary ? atoi(argv[1]) : -1;
     if (extra < 1 || extra > MAX_EXTRA_ROOTS) return 19;
     int initial = object_count();
     if (initial < 1) return 1;
@@ -39,8 +41,10 @@ int main(int argc, char **argv)
        tries to load the same names. */
     if (dlopen("libgraph-bad.so", RTLD_NOW | RTLD_LOCAL) != NULL) return 2;
     if (object_count() != initial) return 3;
-    if (dlopen("libgraph-malformed.so", RTLD_NOW | RTLD_LOCAL) != NULL) return 4;
-    if (object_count() != initial) return 5;
+    if (!ordinary) {
+        if (dlopen("libgraph-malformed.so", RTLD_NOW | RTLD_LOCAL) != NULL) return 4;
+        if (object_count() != initial) return 5;
+    }
 
     void *ab = dlopen("libgraph-ab.so", RTLD_NOW | RTLD_LOCAL);
     void *ba = dlopen("libgraph-ba.so", RTLD_NOW | RTLD_LOCAL);
