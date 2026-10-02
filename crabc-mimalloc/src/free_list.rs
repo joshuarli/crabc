@@ -982,6 +982,80 @@ mod tests {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn actual_page_forced_local_append_preserves_backing_through_encoded_reuse() {
+        use core::mem::{MaybeUninit, size_of};
+        use crate::config::ARENA_SLICE_SIZE;
+        use crate::types::{Heap, LiveThreadId, MemoryId, Page as NativePage, Theap, ThreadLocalData};
+
+        #[repr(C, align(65536))]
+        struct Storage {
+            metadata: MaybeUninit<NativePage>,
+            bytes: [u8; 2 * ARENA_SLICE_SIZE - size_of::<NativePage>()],
+        }
+        let mut storage = std::boxed::Box::new(Storage {
+            metadata: MaybeUninit::uninit(),
+            bytes: [0; 2 * ARENA_SLICE_SIZE - size_of::<NativePage>()],
+        });
+        // This allocation-wide pointer retains the metadata and complete
+        // client backing, rather than a borrow confined to the Page field.
+        let page = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!(*storage).cast::<NativePage>()) };
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let id = LiveThreadId::new(12).unwrap();
+        tld.attach_bootstrap_exclusive(id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        let memory = MemoryId::external(page.as_ptr().cast(), 2 * ARENA_SLICE_SIZE, true, false, true);
+        // SAFETY: both regions belong to this retained allocation; the sole
+        // owner initializes metadata before any list or client is published.
+        unsafe { NativePage::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
+            32, ARENA_SLICE_SIZE, 8, 0, true, memory) }.unwrap();
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        list.extend_count_with_random(8, || Some(0x1234_5678)).unwrap();
+        let mut clients = std::vec::Vec::new();
+        for _ in 0..3 {
+            let block = list.pop(false).unwrap().unwrap();
+            // SAFETY: pop transferred this complete distinct live client.
+            unsafe { block.as_ptr().write_bytes(0xa5, 32); }
+            clients.push(block);
+        }
+        for block in clients {
+            // SAFETY: each current client is returned exactly once; this
+            // deferred list remains separate from five immediate blocks.
+            unsafe { list.push_local(block) }.unwrap();
+        }
+        drop(list);
+        // SAFETY: this exact live owner retains the complete Page allocation
+        // and excludes release, competing collection and ordinary mutation.
+        let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
+        assert_eq!(unsafe { collect_local(local, false) }, Ok(false));
+        let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
+        assert_eq!(unsafe { collect_local(local, true) }, Ok(true));
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        let mut reused = std::vec::Vec::new();
+        for _ in 0..8 {
+            let block = list.pop(true).unwrap().unwrap();
+            // SAFETY: renewed ownership covers every byte of this zeroed
+            // client, including the previously encoded local-list link.
+            assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 32) }.iter().all(|byte| *byte == 0));
+            reused.push(block);
+        }
+        assert!(list.pop(false).unwrap().is_none());
+        let mut addresses: std::vec::Vec<_> = reused.iter().map(|block| block.addr().get()).collect();
+        addresses.sort_unstable();
+        let base = page.as_ptr().cast::<u8>().wrapping_add(ARENA_SLICE_SIZE).addr();
+        assert_eq!(addresses, (0..8).map(|index| base + index * 32).collect::<std::vec::Vec<_>>());
+        for block in reused { unsafe { list.push_local(block) }.unwrap(); }
+        drop(list);
+        let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
+        assert_eq!(unsafe { collect_local(local, false) }, Ok(true));
+        let state = unsafe { NativePage::validity_snapshot_at(page) };
+        assert_eq!(state.used, 0);
+        assert!(state.local_free.is_null());
+    }
+
     fn list_for<const N: usize>(
         state: &mut TestPageState,
         storage: &mut Page<N>,
