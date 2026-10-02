@@ -1812,6 +1812,115 @@ mod tests {
         assert_eq!(unsafe { owner.used.as_ptr().read() }, 0);
     }
 
+    #[test]
+    fn actual_abandoned_partial_collection_handoff_retains_pending_clients() {
+        use core::mem::{MaybeUninit, size_of};
+        use crate::abandoned::{AbandonResult, abandon_unmappable_after_collect};
+        use crate::config::ARENA_SLICE_SIZE;
+        use crate::free_list::LocalFreeList;
+        use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData};
+
+        #[repr(C, align(65536))]
+        struct Storage {
+            metadata: MaybeUninit<Page>,
+            bytes: [u8; 2 * ARENA_SLICE_SIZE - size_of::<Page>()],
+        }
+        struct Client(NonNull<u8>);
+        // SAFETY: each wrapper owns a distinct current source allocation.
+        // Its worker consumes it by publication and never reads it afterward.
+        unsafe impl Send for Client {}
+        impl Client {
+            unsafe fn publish(self, producer: PageRemoteFreeProducerState) -> bool {
+                unsafe { push_source_block_mt::<true>(producer, self.0, true) }.unwrap()
+            }
+        }
+        let mut storage = std::boxed::Box::new(Storage {
+            metadata: MaybeUninit::uninit(),
+            bytes: [0; 2 * ARENA_SLICE_SIZE - size_of::<Page>()],
+        });
+        // Retain the allocation-wide origin through metadata, predecessor
+        // decoding, pending clients and the final claimed-owner transition.
+        let page = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!(*storage).cast::<Page>()) };
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let id = LiveThreadId::new(12).unwrap();
+        tld.attach_bootstrap_exclusive(id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        let memory = MemoryId::external(page.as_ptr().cast(), 2 * ARENA_SLICE_SIZE, true, false, true);
+        // SAFETY: the retained aligned allocation contains this complete
+        // metadata and block area, and no observer precedes publication.
+        unsafe { Page::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
+            32, ARENA_SLICE_SIZE, 16, 0, true, memory) }.unwrap();
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        list.extend_count(16).unwrap();
+        let mut clients = Vec::new();
+        for _ in 0..16 { clients.push(list.pop(false).unwrap().unwrap()); }
+        let mut expected: Vec<_> = clients.iter().map(|block| block.as_ptr().addr()).collect();
+        expected.sort_unstable();
+        drop(list);
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }.unwrap();
+        assert_eq!(unsafe { collect_live_page_false(owner) }, Ok(0));
+        // SAFETY: this fully used source-unmappable Page has no queue links,
+        // and its sole owner just completed the required false collection.
+        assert_eq!(unsafe { abandon_unmappable_after_collect(page) }, Ok(AbandonResult::UnownedUnmapped));
+        let publish = |block| thread::scope(|scope| {
+            let client = Client(block);
+            scope.spawn(move || unsafe { client.publish(producer) }).join().unwrap()
+        });
+        assert!(!publish(clients.pop().unwrap()), "first publication claims the abandoned owner bit");
+        assert!(publish(clients.pop().unwrap()));
+        let partial_head = clients.pop().unwrap();
+        assert!(publish(partial_head));
+        // SAFETY: this caller holds the publication's low owner bit. Every
+        // predecessor was freed once and every remaining client stays live.
+        assert_eq!(unsafe { collect_abandoned_partly(page, partial_head) }, Ok(2));
+        let owner = unsafe { Page::abandoned_remote_free_owner_state_at(page) }.unwrap();
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 14);
+        assert_eq!(unsafe { owner.xthread_free.as_ref() }.load(Ordering::Relaxed), partial_head.as_ptr().addr() | 1);
+        assert!(unsafe { block_next_for_page(owner_links(owner), partial_head.cast()) }.is_null());
+
+        // A legal late producer wins before the expected-head unown CAS.
+        // The unchanged source transition must return collection authority
+        // instead of discarding its newly published node or clearing ownership.
+        let late = clients.pop().unwrap();
+        let mut before_unown = Some(|| { assert!(publish(late)); });
+        assert_eq!(try_unown_abandoned_expected_head(unsafe { owner.xthread_free.as_ref() },
+            partial_head.as_ptr().addr(), &mut before_unown), Ok(AbandonedExpectedHeadTransition::RemotePublished));
+        assert_eq!(unsafe { collect_abandoned_false(page) }, Ok(2));
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 12);
+        let mut no_hook = None::<fn()>;
+        assert_eq!(try_unown_abandoned_head(unsafe { owner.xthread_free.as_ref() }, &mut no_hook),
+            AbandonedOwnerHeadTransition::Released);
+
+        // Unown retained both backing and all counted clients. The next
+        // foreign free becomes the unique owner, then the final partial
+        // collector must acquire its last pending head and account it too.
+        let first = clients.pop().unwrap();
+        assert!(!publish(first));
+        let mut final_head = first;
+        while let Some(client) = clients.pop() {
+            final_head = client;
+            assert!(publish(client));
+        }
+        assert_eq!(unsafe { collect_abandoned_partly(page, final_head) }, Ok(12));
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 0);
+        assert_eq!(unsafe { owner.xthread_free.as_ref() }.load(Ordering::Relaxed), 1);
+        let mut collected = Vec::new();
+        for mut cursor in [unsafe { owner.free.as_ptr().read() }, unsafe { owner.local_free.as_ptr().read() }] {
+            while let Some(node) = NonNull::new(cursor) {
+                assert!(collected.len() < 16, "every source client is accounted exactly once");
+                collected.push(node.as_ptr().addr());
+                cursor = unsafe { block_next_for_page(owner_links(owner), node) };
+            }
+        }
+        collected.sort_unstable();
+        assert_eq!(collected, expected);
+        // No client or producer survives. The all-free Page remains owned by
+        // this terminal collector until the retained backing is destroyed.
+    }
+
     unsafe fn test_block_next(page: NonNull<Page>, block: NonNull<Block>) -> *mut Block {
         // SAFETY: joined fixture observations retain the original initialized
         // page and the exact published node through the selected link read.
