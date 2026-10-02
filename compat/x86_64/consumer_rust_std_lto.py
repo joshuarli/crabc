@@ -387,8 +387,10 @@ def cargo_consumer(
         "SOURCE_DATE_EPOCH": "0",
     }
     if context.debug:
-        rustflags += ["-C", "opt-level=0", "-C", "lto=off"]
-        environment.update({"CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_DEV_LTO": "false"})
+        panic = "unwind" if panic_runtime == "panic_unwind" else "abort"
+        rustflags += ["-C", "opt-level=0", "-C", "lto=off", "-C", f"panic={panic}"]
+        environment.update({"CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_DEV_LTO": "false",
+                            "CARGO_PROFILE_DEV_PANIC": panic})
     if link == "oracle":
         rustflags += ORACLE_FLAGS
     else:
@@ -884,7 +886,8 @@ def cross_dso_lane(context: Context, label: str, *, build_std: bool) -> dict[str
     driver = dynamic_root / "bin/crabc-cc-dynamic"
     report: dict[str, Any] = {"label": label, "origin": origin, "dsos": {}}
     for name in (CROSS_DSO_INITIAL, CROSS_DSO_RUNTIME):
-        command = [str(driver), "--dynamic-shared-object", str(CROSS_DSO_FRAME), "-o", str(dsos / name)]
+        command = [str(driver), "--dynamic-shared-object",
+                   *(("-O0",) if context.debug else ()), str(CROSS_DSO_FRAME), "-o", str(dsos / name)]
         result = run(command, env=tool_environment(), cwd=dsos)
         context.retained.write(f"{lane.relative_to(context.output)}/{name}.log", result.stdout + result.stderr)
         if result.returncode != 0:
