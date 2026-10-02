@@ -64,6 +64,17 @@ def corrected_source(relative: str, source: str) -> str:
             '\t\t\tif (ux.i.se)\n',
             '\t\t\t/* Negative min-normal also enters the subnormal binade. */\n'
             '\t\t\tif (ux.i.se & 0x7fff)\n')
+    if relative == "src/math/pow.c":
+        return replace_once(source,
+            '\tix = asuint64(x);\n\tiy = asuint64(y);\n',
+            '''	ix = asuint64(x);
+	iy = asuint64(y);
+	/* The exact finite identity needs no approximation or new exceptions.
+	 * Keep infinity and NaN classification in the exceptional-value path. */
+	if (iy == UINT64_C(0x3ff0000000000000) &&
+	    (ix & UINT64_C(0x7fffffffffffffff)) < UINT64_C(0x7ff0000000000000))
+		return x;
+''')
     if relative == "src/math/powf.c":
         return replace_once(source,
             '\tix = asuint(x);\n\tiy = asuint(y);\n',

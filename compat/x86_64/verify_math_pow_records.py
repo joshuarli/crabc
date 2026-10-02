@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare the fixed pow corpus, accounting for the finite powf(x,1) correction."""
+"""Compare the fixed pow corpus, accounting for finite exponent-one corrections."""
 import struct
 import sys
 from pathlib import Path
@@ -17,6 +17,10 @@ for index, (old, new) in enumerate(zip(struct.iter_unpack('<5Q', reference), str
         if result != base & 0xffffffff or flags:
             raise SystemExit(f'powf finite identity is not exact at record {index}')
         corrected += old != new
+    elif base >> 32 != 1 and exponent == 0x3ff0000000000000 and base & 0x7fffffffffffffff < 0x7ff0000000000000:
+        if result != base or flags:
+            raise SystemExit(f'pow finite identity is not exact at record {index}')
+        corrected += old != new
     elif old != new:
         raise SystemExit(f'uncorrected pow record differs at record {index}')
-print(f'pow corpus: 256 records; {corrected} finite powf identity differences; raw oracle retained')
+print(f'pow corpus: 256 records; {corrected} finite exponent-one identity differences; raw oracle retained')

@@ -1,7 +1,7 @@
 # Native scalar math conformance corrections
 
 The native x86 math providers preserve the algorithms from musl 1.2.6 while
-correcting demonstrated result and exception defects in four source bodies.
+correcting demonstrated result and exception defects in five source bodies.
 This is C ABI compatibility machinery within the mature-algorithms policy in
 `AGENTS.md`, not a new math implementation or a numerical-support limitation. The independent pinned musl
 oracle remains unchanged. Candidate success and oracle failure are distinct
@@ -25,7 +25,7 @@ introduced. AArch64 sources and selection remain unchanged.
 | --- | --- | --- |
 | `src/math/fmaf.c` (baseline generic path of `src/math/x86_64/fmaf.c`) | David Schultz's FreeBSD binary64 product/add with residual correction; BSD-2-Clause notice | `math_scalar_completion.rs` / `scalar_completion` |
 | `src/math/fmal.c`, `add_and_denormalize` | David Schultz's FreeBSD scaled Dekker double-double arithmetic and sticky-bit adjustment; BSD-2-Clause notice | `math_elementary_long_double.rs` / `elementary_long_double` |
-| `src/math/powf.c` | Arm logarithm/exponential table kernel; MIT notice | `math_pow.rs` / `pow` |
+| `src/math/{pow,powf}.c` | Arm logarithm/exponential table kernels; MIT notice | `math_pow.rs` / `pow` |
 | `src/math/nextafterl.c`, binary80 branch | Musl's representation-based adjacent-value stepping; musl MIT license | `math_special.rs` / `special` |
 
 Owners live in `libc/src/c_abi/x86_64/`; generators are
@@ -108,13 +108,32 @@ canonical negative maximum-subnormal value. This also fixes directed FMA
 paths that call `nextafterl`. Direct tests cover both signs and both directions
 around normal/subnormal and minimum-subnormal/zero transitions.
 
-For finite `powf(x, 1)`, an exact identity path returns the original bits before
+For finite `pow(x, 1)` and `powf(x, 1)`, an exact identity path returns the original bits before
 entering the unchanged approximation. It preserves negative zero and avoids
 spurious overflow, underflow, and inexact. Signalling NaNs and infinities stay
 on the original exceptional-input path. Because the identity performs no
 floating arithmetic, subnormal inputs also no longer raise x86's non-IEEE
 `denormal operand` status bit. This finite difference is separately recorded;
 the standard-five-exception mask does not hide unexplained status changes.
+
+The binary64 kernel previously returned a neighbour of `1.5` for exponent
+one under directed rounding. Upward rounding turned `DBL_MAX` into infinity
+with overflow; downward rounding turned `DBL_TRUE_MIN` into zero. The scalar
+identity check uses only raw integer classification and returns the original
+operand without evaluating the unchanged logarithm/exponential kernel. It
+preserves already raised flags, both zero signs, and negative finite operands.
+Infinities and NaNs remain on musl's original exceptional-input path.
+
+Inside the pinned native environment, run
+`bash compat/x86_64/run_math_pow_identity110.sh`. Its ordinary compiler-generated
+C calls retain the default builtin policy, use a volatile function pointer to
+reach the actual provider, and compile at `-O0 -frounding-math`. The original
+pinned-musl product fails the exact finite-identity requirement; the corrected
+source product passes. Both raw streams and statuses survive, and nonidentity,
+infinity, quiet-NaN, and signed-zero exponent controls must remain byte equal.
+The C consumer independently checks all four modes and both empty and seeded
+exception flags. This focused source proof does not claim installed-product
+or public-target qualification.
 
 ## Evidence boundaries and reproduction
 
