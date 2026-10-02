@@ -385,6 +385,8 @@ enum PageCommitError {
 #[derive(Debug)]
 enum GenericPathError {
     FreshInitialization(PendingFreshOsPageInitialization),
+    #[cfg(target_arch = "x86_64")]
+    LiveValidity(PendingLivePageValidity),
     Collection(PageCollectError),
     Local(FreeListError),
     PageCommit(PageCommitError),
@@ -848,6 +850,8 @@ impl PendingLivePageValidity {
 pub(crate) enum DeferredFreeAllocationPhase {
     #[cfg(target_arch = "x86_64")]
     FreshInitialization(PendingFreshOsPageInitialization),
+    #[cfg(target_arch = "x86_64")]
+    LiveValidity(PendingLivePageValidity),
     Complete(Option<NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -38945,6 +38949,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 Ok(block) => Ok(DeferredFreeAllocationPhase::Complete(block)),
                 #[cfg(target_arch = "x86_64")]
                 Err(GenericPathError::FreshInitialization(pending)) => Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+                #[cfg(target_arch = "x86_64")]
+                Err(GenericPathError::LiveValidity(pending)) => Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
                 Err(_) => Err(GuardedCanonicalAllocationRefusal),
             },
             GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
@@ -39104,6 +39110,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
                             #[cfg(target_arch = "x86_64")]
                             Err(GenericPathError::FreshInitialization(pending)) => return Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+                            #[cfg(target_arch = "x86_64")]
+                            Err(GenericPathError::LiveValidity(pending)) => return Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
@@ -39124,6 +39132,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
                             #[cfg(target_arch = "x86_64")]
                             Err(GenericPathError::FreshInitialization(pending)) => return Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+                            #[cfg(target_arch = "x86_64")]
+                            Err(GenericPathError::LiveValidity(pending)) => return Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
@@ -39209,6 +39219,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Ok(Some(block)) => Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
             #[cfg(target_arch = "x86_64")]
             Err(GenericPathError::FreshInitialization(pending)) => Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+            #[cfg(target_arch = "x86_64")]
+            Err(GenericPathError::LiveValidity(pending)) => Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
             Err(_) => Err(GuardedCanonicalAllocationRefusal),
             Ok(None) => Ok(DeferredFreeAllocationPhase::Collect {
                 collection: GenericAllocationCollection::Force,
@@ -42188,6 +42200,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     ) -> GenericPathError {
         let retained_error = match &error {
             GenericPathError::FreshInitialization(_) => return error,
+            #[cfg(target_arch = "x86_64")]
+            GenericPathError::LiveValidity(_) => return error,
             GenericPathError::Collection(error) => *error,
             GenericPathError::Local(error) => PageCollectError::Local(*error),
             GenericPathError::PageCommit(error) => {
@@ -42954,6 +42968,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn cleanup_unphased_initialization_error(&mut self, error: GenericPathError) {
+        #[cfg(target_arch = "x86_64")]
+        let error = match error {
+            GenericPathError::LiveValidity(pending) => {
+                if let Err(pending) = self.retain_live_page_validity(pending) {
+                    core::mem::forget(pending);
+                }
+                return;
+            }
+            error => error,
+        };
         if let GenericPathError::FreshInitialization(pending) = error {
             if matches!(pending.failure, FreshOsPageInitializationFailure::SourceObservation(
                 crate::page_validity::SourcePageInvariant::InitiallyZero,
@@ -43277,9 +43301,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Err(GenericPathError::Lifecycle);
         }
 
-        if self.extend_page_before_allocation(page).is_err() {
-            self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
-            return Ok(None);
+        match self.extend_page_before_allocation(page) {
+            Ok(()) => {}
+            #[cfg(target_arch = "x86_64")]
+            Err(error @ GenericPathError::LiveValidity(_)) => return Err(error),
+            Err(_) => {
+                self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
+                return Ok(None);
+            }
         }
         Ok(Some(page))
     }

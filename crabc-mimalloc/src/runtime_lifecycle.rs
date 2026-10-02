@@ -8031,6 +8031,8 @@ enum NativePersistentThreadOwnerLocalAccessError {
 enum NativeDeferredFreeAllocationPhase {
     #[cfg(target_arch = "x86_64")]
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
+    #[cfg(target_arch = "x86_64")]
+    LiveValidity(crate::single_thread::PendingLivePageValidity),
     Complete(Option<core::ptr::NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -8200,7 +8202,7 @@ impl NativePersistentThreadOwner {
             Ok(()) => phase.expect("a completed short engine operation supplied its phase"),
             Err(error) => {
                 #[cfg(target_arch = "x86_64")]
-                if matches!(&phase, Some(Ok(DeferredFreeAllocationPhase::FreshInitialization(_)))) {
+                if matches!(&phase, Some(Ok(DeferredFreeAllocationPhase::FreshInitialization(_) | DeferredFreeAllocationPhase::LiveValidity(_)))) {
                     let _original_task_and_issuer = (phase, self);
                     crabc_core::process::exit_immediately(134);
                 }
@@ -8322,6 +8324,15 @@ impl NativePersistentThreadOwner {
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 Ok(NativeDeferredFreeAllocationPhase::FreshInitialization(task))
+            }
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::LiveValidity(task) => {
+                Ok(NativeDeferredFreeAllocationPhase::LiveValidity(task))
+            }
+            DeferredFreeAllocationPhase::Complete(block) => {
+                Ok(NativeDeferredFreeAllocationPhase::Complete(block))
+            }
+                Ok(NativeDeferredFreeAllocationPhase::LiveValidity(task))
             }
             DeferredFreeAllocationPhase::Complete(block) => {
                 Ok(NativeDeferredFreeAllocationPhase::Complete(block))
@@ -8737,6 +8748,8 @@ impl NativeInitialDeferredFreeCall {
 enum NativeInitialDeferredFreeAllocationPhase {
     #[cfg(target_arch = "x86_64")]
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
+    #[cfg(target_arch = "x86_64")]
+    LiveValidity(crate::single_thread::PendingLivePageValidity),
     Complete(Option<core::ptr::NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -8937,6 +8950,10 @@ impl NativeInitialPersistentThreadOwner {
             #[cfg(target_arch = "x86_64")]
             MainStaticDeferredFreeAllocationPhase::FreshInitialization(task) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task))
+            }
+            #[cfg(target_arch = "x86_64")]
+            MainStaticDeferredFreeAllocationPhase::LiveValidity(task) => {
+                Some(NativeInitialDeferredFreeAllocationPhase::LiveValidity(task))
             }
             MainStaticDeferredFreeAllocationPhase::Complete(block) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
@@ -10674,6 +10691,61 @@ fn settle_native_fresh_initialization(
     }
 }
 
+/// Delivers a retained live Page assertion only after its original allocator
+/// projections ended. Refused output retains this exact task on its issuer;
+/// it never becomes ordinary out-of-memory or a fresh-page cleanup attempt.
+#[cfg(target_arch = "x86_64")]
+fn settle_native_live_page_validity(
+    task: crate::single_thread::PendingLivePageValidity,
+    original_owner: Option<NativeFreshAllocationOwner<'_, '_>>, initial: bool,
+) {
+    let Some(owner) = original_owner else {
+        let _original_task = task;
+        fail_stop_with_current_thread_native_owner();
+    };
+    let mut original = task;
+    #[cfg(feature = "mi-debug-3")]
+    {
+        // SAFETY: the original pre-observation admission and detached Page
+        // remain retained after every engine projection and lock has ended.
+        original = match unsafe { match owner {
+            NativeFreshAllocationOwner::Ready(owner) => original.dispatch(owner),
+            NativeFreshAllocationOwner::SourceAttached(owner) => original.dispatch_source_attached(owner),
+        } } {
+            Ok(never) => match never {}, Err(task) => task,
+        };
+    }
+    // SAFETY: the same actual original issuer remains pinned and admitted;
+    // this task records completed marker progress independently of unlock.
+    if unsafe { original.ensure_retirement_refusal(owner.selected_theap(), owner.heap()) }.is_err() {
+        let _original_task = original;
+        fail_stop_with_current_thread_native_owner();
+    }
+    let mut task = Some(original);
+    let mut stored = false;
+    if initial {
+        let _completion = with_current_thread_native_initial_persistent_allocator(false, |issuer| {
+            let Some(original) = task.take() else { return; };
+            match issuer.allocator.retain_live_page_validity_current_initial_thread_local(original) {
+                Ok(()) => stored = true, Err(original) => task = Some(original),
+            }
+        });
+    } else {
+        let _completion = with_current_thread_native_persistent_owner(|issuer| {
+            issuer.with_local_allocator(|allocator| {
+                let Some(original) = task.take() else { return; };
+                match allocator.retain_live_page_validity(original) {
+                    Ok(()) => stored = true, Err(original) => task = Some(original),
+                }
+            })
+        });
+    }
+    if !stored {
+        let _original_task = task;
+        fail_stop_with_current_thread_native_owner();
+    }
+}
+
 /// Drives the value-only generic allocation continuation through the source
 /// deferred-free callback boundary.
 ///
@@ -10723,6 +10795,13 @@ fn run_current_thread_native_deferred_free_phase_with_owner(
             NativeDeferredFreeAllocationPhase::FreshInitialization(task) => {
                 {
                     settle_native_fresh_initialization(task, original_owner, false);
+                    return Err(NativePersistentThreadOwnerAccessError::Retained);
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            NativeDeferredFreeAllocationPhase::LiveValidity(task) => {
+                {
+                    settle_native_live_page_validity(task, original_owner, false);
                     return Err(NativePersistentThreadOwnerAccessError::Retained);
                 }
             }
@@ -10891,6 +10970,11 @@ fn native_initial_deferred_free_phase_result(
             let _original_task = task;
             crabc_core::process::exit_immediately(134);
         }
+        #[cfg(target_arch = "x86_64")]
+        Ok((Some(NativeInitialDeferredFreeAllocationPhase::LiveValidity(task)), true)) => {
+            let _original_task = task;
+            crabc_core::process::exit_immediately(134);
+        }
         Ok((Some(phase), false)) => Ok(phase),
         Ok((Some(_) | None, true)) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
         Ok((None, false)) => Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable),
@@ -10931,6 +11015,11 @@ fn resume_current_thread_native_initial_deferred_free_allocation_with_path(
     }) {
         #[cfg(target_arch = "x86_64")]
         Ok((Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task)), true)) => {
+            let _original_task = task;
+            crabc_core::process::exit_immediately(134);
+        }
+        #[cfg(target_arch = "x86_64")]
+        Ok((Some(NativeInitialDeferredFreeAllocationPhase::LiveValidity(task)), true)) => {
             let _original_task = task;
             crabc_core::process::exit_immediately(134);
         }
@@ -11045,6 +11134,13 @@ fn run_current_thread_native_initial_deferred_free_phase_with_owner(
             NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task) => {
                 {
                     settle_native_fresh_initialization(task, original_owner, true);
+                    return Err(NativeInitialPersistentThreadOwnerAccessError::Retained);
+                }
+            }
+            #[cfg(target_arch = "x86_64")]
+            NativeInitialDeferredFreeAllocationPhase::LiveValidity(task) => {
+                {
+                    settle_native_live_page_validity(task, original_owner, true);
                     return Err(NativeInitialPersistentThreadOwnerAccessError::Retained);
                 }
             }
@@ -24261,6 +24357,14 @@ mod tests {
             phase = match phase {
                 #[cfg(target_arch = "x86_64")]
                 NativeDeferredFreeAllocationPhase::FreshInitialization(task) => {
+                    // This fixture has no source output admission. Keep the
+                    // original unfinished claim alive through terminal exit
+                    // instead of unwinding and dropping its backing custody.
+                    let _original_task = task;
+                    crabc_core::process::exit_immediately(134);
+                }
+                #[cfg(target_arch = "x86_64")]
+                NativeDeferredFreeAllocationPhase::LiveValidity(task) => {
                     // This fixture has no source output admission. Keep the
                     // original unfinished claim alive through terminal exit
                     // instead of unwinding and dropping its backing custody.
