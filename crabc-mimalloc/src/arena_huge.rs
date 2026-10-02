@@ -318,41 +318,73 @@ impl ProcessArenaBacking {
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
         timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
-        if pages == 0 { return Ok(None); }
-        let _guard = self.huge_reservation_lock.lock().map_err(HugeArenaReserveError::Lock)?;
-        if self.huge_cleanup_retained.load(Ordering::Acquire) {
-            return Err(HugeArenaReserveError::PendingCleanup);
-        }
-        self.prepare_huge_reservation(process, config)?;
-        let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
-            (numa_node as usize % process.policy().numa_node_count()) as i32
-        } else { numa_node };
-        let outcome = HugeOsAllocation::allocate_for_process(process, config, pages,
-            numa_node, timeout_milliseconds as i64, random);
-        unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+        unsafe { self.reserve_huge_at_reporting_errno(process, config, metadata, pages,
+            numa_node, timeout_milliseconds, exclusive, random,
+            #[cfg(target_arch = "x86_64")] None).0 }
     }
 
     #[cfg(target_arch = "x86_64")]
-    /// Same source huge reservation with the process-owned failed-`mbind`
-    /// warning route threaded to the physical primitive mapping call.
+    /// Reserve huge pages with the process-owned failed-mbind warning route.
     pub(crate) unsafe fn reserve_huge_at_with_mbind_warning(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
         metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
         timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
         warning: MbindWarningRoute<'_>,
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
-        if pages == 0 { return Ok(None); }
-        let _guard = self.huge_reservation_lock.lock().map_err(HugeArenaReserveError::Lock)?;
-        if self.huge_cleanup_retained.load(Ordering::Acquire) {
-            return Err(HugeArenaReserveError::PendingCleanup);
-        }
-        self.prepare_huge_reservation(process, config)?;
-        let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
-            (numa_node as usize % process.policy().numa_node_count()) as i32
-        } else { numa_node };
-        let outcome = HugeOsAllocation::allocate_for_process_with_mbind_warning(process, config,
-            pages, numa_node, timeout_milliseconds as i64, random, warning);
-        unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+        unsafe { self.reserve_huge_at_reporting_errno(process, config, metadata, pages,
+            numa_node, timeout_milliseconds, exclusive, random, Some(warning)).0 }
+    }
+
+    /// Retain the last primitive errno effect even when a partial prefix is
+    /// successfully installed. The C reservation return value and errno are
+    /// independent: a failed later map does not discard earlier huge pages.
+    ///
+    /// # Safety
+    /// The arena group, process, metadata, and random image meet the same
+    /// ownership requirements as `reserve_huge_at`.
+    pub(crate) unsafe fn reserve_huge_at_reporting_errno(
+        &'static self, process: VmProcess<'static>, config: MemoryConfig,
+        metadata: Pin<&'static MetaAllocator>, pages: usize, numa_node: i32,
+        timeout_milliseconds: usize, exclusive: bool, random: crate::os::OsRandom<'_>,
+        #[cfg(target_arch = "x86_64")] warning: Option<MbindWarningRoute<'_>>,
+    ) -> (Result<Option<ArenaId>, HugeArenaReserveError>, crate::source_api::SourceErrno) {
+        use crate::source_api::SourceErrno;
+        let mut errno = SourceErrno::Unchanged;
+        let result = (|| {
+            if pages == 0 { return Ok(None); }
+            let _guard = self.huge_reservation_lock.lock().map_err(HugeArenaReserveError::Lock)?;
+            if self.huge_cleanup_retained.load(Ordering::Acquire) {
+                return Err(HugeArenaReserveError::PendingCleanup);
+            }
+            self.prepare_huge_reservation(process, config)?;
+            let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
+                (numa_node as usize % process.policy().numa_node_count()) as i32
+            } else { numa_node };
+            #[cfg(target_arch = "x86_64")]
+            let outcome = if let Some(warning) = warning {
+                HugeOsAllocation::allocate_for_process_with_mbind_warning(process, config,
+                    pages, numa_node, timeout_milliseconds as i64, random, warning)
+            } else {
+                HugeOsAllocation::allocate_for_process(process, config, pages,
+                    numa_node, timeout_milliseconds as i64, random)
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let outcome = HugeOsAllocation::allocate_for_process(process, config, pages,
+                numa_node, timeout_milliseconds as i64, random);
+            errno = match &outcome {
+                HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(error)) =>
+                    SourceErrno::Store(*error),
+                HugeOsAllocationOutcome::Allocated(allocation) => match allocation.stop() {
+                    HugeOsAllocationStop::PrimitiveMapFailed(error) => SourceErrno::Store(error),
+                    _ => SourceErrno::Unchanged,
+                },
+                HugeOsAllocationOutcome::AllocatedWithRejectedPrimitive { rejected, .. }
+                | HugeOsAllocationOutcome::RejectedPrimitive(rejected) => SourceErrno::Store(rejected.error()),
+                _ => SourceErrno::Unchanged,
+            };
+            unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+        })();
+        (result, errno)
     }
 
     fn prepare_huge_reservation(&self, process: VmProcess<'static>, config: MemoryConfig)
@@ -466,6 +498,15 @@ impl ProcessArenaBacking {
             unsafe { *self.huge_cleanup.get() = Some(pending) };
             Err(error)
         }
+    }
+
+    /// Shared node distribution and timeout arithmetic for public reservations
+    /// and startup. Each successful node remains published after a later error.
+    pub(crate) fn interleave_huge_reservations<E>(
+        pages: usize, numa_nodes: usize, detected_nodes: usize, timeout: usize,
+        reserve: impl FnMut(usize, i32, usize) -> Result<(), E>,
+    ) -> Result<(), E> {
+        reserve_huge_interleaved_with(pages, numa_nodes, detected_nodes, timeout, reserve)
     }
 
     /// Source interleave policy: distribute the remainder to the earliest

@@ -18,7 +18,7 @@
 //   `mi_heap_*_aligned[_at]` allocation entries);
 // - `src/arena.c:1886-1922` (`mi_reserve_os_memory_ex2`,
 //   `mi_reserve_os_memory_ex`, `mi_reserve_os_memory`) and
-//   `src/arena.c:2170-2191` (`mi_reserve_huge_os_pages_at_ex`).
+//   `src/arena.c:2170-2247` (the huge OS reservation entries).
 
 //! Pinned mimalloc first-class Heap and OS-reservation public entries over
 //! the native runtime.
@@ -2435,28 +2435,20 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
     let backing = MainSubprocess::global().arena_backing();
     let metadata = crate::meta::MetaAllocator::global();
     #[cfg(target_arch = "x86_64")]
-    let reserved = if let Some(output) = crate::process_init::process_output_owner() {
-        // SAFETY: the operation guard retains process output, the calling
-        // Theap exclusively owns each random draw, and backing owns arenas.
-        unsafe { backing.reserve_huge_at_with_mbind_warning(process, config, metadata,
-            pages, numa_node, timeout_milliseconds, exclusive, Some(&mut random),
-            crate::diagnostic_output::HugePageWarningRoute::new(output)) }
-    } else {
-        // SAFETY: the same arena and random ownership holds in test startup
-        // without a published diagnostic output owner.
-        unsafe { backing.reserve_huge_at(process, config, metadata, pages, numa_node,
-            timeout_milliseconds, exclusive, Some(&mut random)) }
-    };
-    #[cfg(not(target_arch = "x86_64"))]
-    let reserved = unsafe { backing.reserve_huge_at(process, config, metadata, pages,
-        numa_node, timeout_milliseconds, exclusive, Some(&mut random)) };
+    let warning = crate::process_init::process_output_owner()
+        .map(crate::diagnostic_output::HugePageWarningRoute::new);
+    // SAFETY: the admitted operation retains the process and arena group;
+    // the calling Theap exclusively owns the random image during this call.
+    let (reserved, primitive_errno) = unsafe { backing.reserve_huge_at_reporting_errno(
+        process, config, metadata, pages, numa_node, timeout_milliseconds, exclusive,
+        Some(&mut random), #[cfg(target_arch = "x86_64")] warning) };
     match reserved {
         Ok(arena) => {
             if let (Some(arena), false) = (arena, arena_id.is_null()) {
                 // SAFETY: the caller supplied the writable output.
                 unsafe { arena_id.write(arena.as_ptr().cast()) };
             }
-            Sourced { value: 0, errno: SourceErrno::Unchanged }
+            Sourced { value: 0, errno: primitive_errno }
         }
         Err(error) => {
             if matches!(error, HugeArenaReserveError::Unavailable(_)) {
@@ -2466,11 +2458,64 @@ pub unsafe fn reserve_huge_os_pages_at_ex(
             let errno = match error {
                 HugeArenaReserveError::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(error)) =>
                     SourceErrno::Store(error),
-                _ => SourceErrno::Unchanged,
+                _ => primitive_errno,
             };
             Sourced { value: Errno::NOMEM.raw(), errno }
         }
     }
+}
+
+/// Reserve huge pages in the calling thread's subprocess arena group.
+/// A nonempty partial primitive prefix is a successful reservation.
+pub fn reserve_huge_os_pages_at(
+    pages: usize, numa_node: c_int, timeout_milliseconds: usize,
+) -> Sourced<c_int> {
+    // SAFETY: no arena output is requested; the owning subprocess retains it.
+    unsafe { reserve_huge_os_pages_at_ex(pages, numa_node, timeout_milliseconds, false, null_mut()) }
+}
+
+/// Distribute huge pages across NUMA nodes, stopping at the first failed node.
+/// Previously published arenas remain owned by the calling subprocess.
+pub fn reserve_huge_os_pages_interleave(
+    pages: usize, numa_nodes: usize, timeout_milliseconds: usize,
+) -> Sourced<c_int> {
+    if pages == 0 { return Sourced { value: 0, errno: SourceErrno::Unchanged }; }
+    let detected_nodes = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs().map_or(1, |(binding, _)| binding.process().policy().numa_node_count());
+    let mut errno = SourceErrno::Unchanged;
+    let result = crate::arena::ProcessArenaBacking::interleave_huge_reservations(
+        pages, numa_nodes, detected_nodes, timeout_milliseconds, |count, node, timeout| {
+            let result = reserve_huge_os_pages_at(count, node, timeout);
+            if result.errno != SourceErrno::Unchanged { errno = result.errno; }
+            if result.value == 0 { Ok(()) } else { Err(result.value) }
+        });
+    Sourced { value: result.err().unwrap_or(0), errno }
+}
+
+/// Deprecated source entry: warn, clear the output, and interleave reservations.
+/// The output reports the requested count only when every node succeeds;
+/// partial successful arenas remain live after a later node fails.
+///
+/// # Safety
+/// `pages_reserved` is null or writable for one `usize`.
+pub unsafe fn reserve_huge_os_pages(
+    pages: usize, max_seconds: f64, pages_reserved: *mut usize,
+) -> Sourced<c_int> {
+    if let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() {
+        binding.process().policy().source_warning(SourceFormattedMessage::from_source_formatted(
+            c"mi_reserve_huge_os_pages is deprecated: use mi_reserve_huge_os_pages_interleave/at instead\n"));
+    }
+    if !pages_reserved.is_null() {
+        // SAFETY: the caller supplies the writable output.
+        unsafe { pages_reserved.write(0) };
+    }
+    let result = reserve_huge_os_pages_interleave(pages, 0, (max_seconds * 1000.0) as usize);
+    if result.value == 0 && !pages_reserved.is_null() {
+        // SAFETY: the same output remains writable through this call.
+        unsafe { pages_reserved.write(pages) };
+    }
+    result
 }
 
 #[cfg(test)]
@@ -2480,6 +2525,87 @@ mod huge_at_ex_tests {
     use crate::os::fault;
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_huge_partial_success_keeps_the_failed_mapping_errno() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::huge_at_ex_tests::public_huge_partial_success_keeps_the_failed_mapping_errno",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let before = MainSubprocess::global().arena_backing().registry().count();
+                let fault = fault::install(fault::Plan::at(fault::Point::HugeMap, 2, Errno::IO));
+                fault.enable_one_synthetic_huge_map();
+                let result = reserve_huge_os_pages_at(2, -1, 0);
+                assert_eq!(result.value, 0);
+                assert_eq!(MainSubprocess::global().arena_backing().registry().count(), before + 1);
+                assert_eq!(result.errno, SourceErrno::Store(Errno::IO));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_huge_interleave_keeps_successful_nodes_after_a_later_failure() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::huge_at_ex_tests::public_huge_interleave_keeps_successful_nodes_after_a_later_failure",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let backing = MainSubprocess::global().arena_backing();
+                let before = backing.registry().count();
+                let fault = fault::install(fault::Plan::at(fault::Point::HugeMap, 2, Errno::IO));
+                fault.enable_one_synthetic_huge_map();
+                let result = reserve_huge_os_pages_interleave(2, 2, 0);
+                assert_eq!(result.value, Errno::NOMEM.raw());
+                assert_eq!(result.errno, SourceErrno::Store(Errno::IO));
+                assert_eq!(backing.registry().count(), before + 1);
+                assert!(!backing.huge_cleanup_pending());
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn deprecated_huge_reservation_reports_requested_pages_for_a_partial_prefix() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::huge_at_ex_tests::deprecated_huge_reservation_reports_requested_pages_for_a_partial_prefix",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let fault = fault::install(fault::Plan::at(fault::Point::HugeMap, 2, Errno::IO));
+                fault.enable_one_synthetic_huge_map();
+                let mut pages_reserved = usize::MAX;
+                // SAFETY: the source output remains writable through the call.
+                let result = unsafe { reserve_huge_os_pages(2, 0.0, &mut pages_reserved) };
+                assert_eq!(result.value, 0);
+                assert_eq!(result.errno, SourceErrno::Store(Errno::IO));
+                assert_eq!(pages_reserved, 2);
+                fault.set(fault::Plan::every(fault::Point::HugeMap, Errno::IO));
+                let result = unsafe { reserve_huge_os_pages(1, 0.0, &mut pages_reserved) };
+                assert_eq!(result.value, Errno::NOMEM.raw());
+                assert_eq!(pages_reserved, 0);
+            },
+        );
+    }
+
+    #[test]
+    fn public_huge_reservation_variants_accept_zero_without_an_arena() {
+        assert_eq!(reserve_huge_os_pages_at(0, -2, usize::MAX).value, 0);
+        assert_eq!(reserve_huge_os_pages_interleave(0, usize::MAX, usize::MAX).value, 0);
+        let mut reserved = usize::MAX;
+        // SAFETY: the reserved-page output is writable.
+        let result = unsafe { reserve_huge_os_pages(0, 0.0, &mut reserved) };
+        assert_eq!(result.value, 0);
+        assert_eq!(reserved, 0);
+    }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
