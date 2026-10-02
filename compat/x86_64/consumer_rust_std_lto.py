@@ -911,7 +911,7 @@ def cross_dso_lane(context: Context, label: str, *, build_std: bool) -> dict[str
 
 
 def provider_regressions(context: Context, provider_sources: Mapping[str, str]) -> dict[str, Any]:
-    """Run each standalone malformed-metadata regression once; retain its receipt.
+    """Run each malformed-metadata producer; retain every control's evidence.
 
     Each regression rebuilds its own provider through ``unwinder/build.py``.
     The gate container has no network, so those nested builds take the same
@@ -931,11 +931,25 @@ def provider_regressions(context: Context, provider_sources: Mapping[str, str]) 
         log = context.retained.write(f"provider-regressions/{script}.log", result.stdout + result.stderr)
         lines = result.stdout.decode(errors="replace").splitlines()
         record: dict[str, Any] = {"returncode": result.returncode, "log": log, "unmet": []}
-        run_directory = Path(lines[-1]) if lines else None
-        if result.returncode != 0 or run_directory is None or not (run_directory / "receipt.json").is_file():
+        run_directories = [Path(line) for line in lines if line.strip()]
+        if result.returncode != 0 or not run_directories or any(
+                not (directory / "receipt.json").is_file() for directory in run_directories):
             record["unmet"].append(f"provider-regressions/{script}: exit {result.returncode}; see its log")
         else:
-            record["receipt"] = context.retained.record(run_directory / "receipt.json")
+            # A producer can emit several independent controls. Keep their
+            # binaries, provider archives, link receipts and raw execution
+            # alongside every receipt so replay detects removed or changed
+            # evidence from any control, including the earlier ones.
+            receipts = []
+            for directory in run_directories:
+                directory = owned_cleanup.work_child(directory, "provider regression output", existing=True)
+                receipts.append(context.retained.record(directory / "receipt.json"))
+                for artifact in sorted(directory.rglob("*")):
+                    require(not artifact.is_symlink(), f"provider regression evidence is a symlink: {artifact}")
+                    if artifact.is_file():
+                        context.retained.record(artifact)
+            record["receipts"] = receipts
+            record["receipt"] = receipts[-1]
         results[script] = record
     return {"lanes": results}
 

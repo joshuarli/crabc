@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -100,6 +101,33 @@ class FixtureVendorTests(unittest.TestCase):
         self.assertIn("smol-2.0.2", closure)
         self.assertIn("bitflags-2.13.1", closure)
         self.assertFalse(any(name.startswith("crabc-") for name in closure))
+
+
+class ProviderRegressionCollectionTests(unittest.TestCase):
+    def test_all_reported_controls_retain_their_compiled_and_raw_evidence(self) -> None:
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            root = Path(temporary)
+            output = root / "gate"
+            output.mkdir()
+            controls = [root / f"control-{index}" for index in range(4)]
+            expected = set()
+            for control in controls:
+                control.mkdir()
+                for name, contents in (("receipt.json", b"{}\n"), ("fixture", b"compiled fixture"),
+                                       ("execution.log", b"guarded metadata rejected\n")):
+                    artifact = control / name
+                    artifact.write_bytes(contents)
+                    expected.add(str(artifact))
+            retained = GATE.Retained(output)
+            context = SimpleNamespace(output=output, retained=retained)
+            result = GATE.subprocess.CompletedProcess([], 0,
+                ("\n".join(map(str, controls)) + "\n").encode(), b"")
+            with mock.patch.object(GATE, "PROVIDER_REGRESSIONS", ("frame_bounds.py",)), \
+                    mock.patch.object(GATE, "run", return_value=result):
+                report = GATE.provider_regressions(context, {"cargo_home": "cargo", "registry_source": "source"})
+            self.assertEqual(report["lanes"]["frame_bounds.py"]["unmet"], [])
+            self.assertTrue(expected.issubset(retained.files), expected - retained.files.keys())
 
 
 class ArgumentTests(unittest.TestCase):
