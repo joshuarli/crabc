@@ -284,6 +284,51 @@ impl SourcePageInvariant {
     }
 }
 
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[derive(Clone, Copy)]
+struct LivePageValidityTestObserver {
+    observe: unsafe fn(&PageValiditySnapshot, *mut core::ffi::c_void) -> Option<usize>,
+    argument: *mut core::ffi::c_void,
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+std::thread_local! {
+    static LIVE_PAGE_VALIDITY_TEST_OBSERVER:
+        core::cell::Cell<Option<LivePageValidityTestObserver>> = const { core::cell::Cell::new(None) };
+}
+
+/// Observes one synchronous native operation's actual Page snapshots. A
+/// returned count replaces only the copied `used` input to the source scalar
+/// predicates; live metadata, list links and client bytes remain unchanged.
+/// The previous observer is restored on return or unwind.
+///
+/// # Safety
+/// `argument` and the observer's accessed state stay live through `operation`,
+/// including terminal delivery or output-admission refusal. The observer may
+/// inspect copied scalar fields and update its own test state, but must not
+/// mutate allocator metadata or backing, allocate, emit output or reenter the
+/// allocator or validity predicate. It may record a Page address as an identity
+/// scalar, but may not retain the snapshot or derived memory-access pointers.
+/// This scope stays on the same native thread; it supplies no Page retention,
+/// observation, registration or release authority to the operation.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) unsafe fn with_live_page_validity_observer_for_test<R>(
+    observe: unsafe fn(&PageValiditySnapshot, *mut core::ffi::c_void) -> Option<usize>,
+    argument: *mut core::ffi::c_void,
+    operation: impl FnOnce() -> R,
+) -> R {
+    struct RestoreObserver(Option<LivePageValidityTestObserver>);
+    impl Drop for RestoreObserver {
+        fn drop(&mut self) {
+            LIVE_PAGE_VALIDITY_TEST_OBSERVER.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = RestoreObserver(LIVE_PAGE_VALIDITY_TEST_OBSERVER.with(|slot| {
+        slot.replace(Some(LivePageValidityTestObserver { observe, argument }))
+    }));
+    operation()
+}
+
 /// Checks the source scalar/list assertions without taking ownership or
 /// invoking diagnostic callbacks. Remote blocks remain included in `used`.
 ///
@@ -302,6 +347,20 @@ pub(crate) unsafe fn source_page_lists_valid(
     state: &PageValiditySnapshot,
     map: &PageMap,
 ) -> Result<(), SourcePageInvariant> {
+    #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+    let observed = {
+        let mut observed = *state;
+        if let Some(observer) = LIVE_PAGE_VALIDITY_TEST_OBSERVER.with(|slot| slot.get()) {
+            // SAFETY: the installed test scope retains its argument and only
+            // observes copied inputs; it cannot change the actual Page.
+            if let Some(used) = unsafe { (observer.observe)(state, observer.argument) } {
+                observed.used = used;
+            }
+        }
+        observed
+    };
+    #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+    let state = &observed;
     if state.block_size == 0 { return Err(SourcePageInvariant::BlockSize); }
     if state.used > usize::from(state.capacity) { return Err(SourcePageInvariant::UsedCapacity); }
     if state.capacity > state.reserved { return Err(SourcePageInvariant::CapacityReserved); }
@@ -1026,6 +1085,34 @@ mod tests {
             state.local_free = core::ptr::null_mut();
             state.remote = core::ptr::from_mut(&mut outside).cast::<Block>();
             assert_eq!(source_page_lists_valid(&state, map), Err(SourcePageInvariant::RemoteFreeList));
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn live_validity_observer_changes_only_one_copied_count_and_restores_scope() {
+        with_page(|page, map| unsafe {
+            let mut list = LocalFreeList::from_page_at(page).unwrap();
+            list.extend_count(8).unwrap();
+            drop(list);
+            let state = Page::validity_snapshot_at(page);
+            let observed = core::cell::Cell::new(false);
+            unsafe fn observe(state: &PageValiditySnapshot, argument: *mut core::ffi::c_void) -> Option<usize> {
+                // SAFETY: the owning test retains this Cell through its
+                // synchronous scope; the callback retains no reference.
+                let observed = unsafe { &*argument.cast::<core::cell::Cell<bool>>() };
+                if observed.replace(true) { None } else { Some(usize::from(state.capacity) + 1) }
+            }
+            with_live_page_validity_observer_for_test(observe,
+                core::ptr::from_ref(&observed).cast_mut().cast(), || {
+                    let failure = source_page_lists_valid(&state, map).unwrap_err();
+                    assert_eq!(failure, SourcePageInvariant::UsedCapacity);
+                    assert!(failure.into_live_page_validity_assertion().is_ok());
+                    assert_eq!(source_page_lists_valid(&state, map), Ok(()));
+                });
+            assert!(observed.get());
+            assert_eq!(Page::validity_snapshot_at(page).used, state.used);
+            assert_eq!(source_page_lists_valid(&state, map), Ok(()));
         });
     }
 
