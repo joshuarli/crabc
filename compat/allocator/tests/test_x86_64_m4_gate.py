@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for the fail-closed Milestone 4 allocator gate."""
+"""Contracts for pinned x86-64 allocation-operation evidence."""
 
 from __future__ import annotations
 
@@ -24,6 +24,34 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
+    def test_debug_build_uses_opt0_without_selecting_release_or_changing_source_features(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            with mock.patch.object(gate, "debug_adapter_environment", return_value=(
+                    ["/cargo", "-Zbuild-std=core,compiler_builtins"],
+                    {"CARGO_PROFILE_DEV_OPT_LEVEL": "0"}, {})), \
+                    mock.patch.object(harness, "require_tool", return_value="/cargo"), \
+                    mock.patch.object(harness, "command_record", return_value={"status": 0}) as compile, \
+                    mock.patch.object(harness, "require_success"), \
+                    mock.patch.object(harness, "artifact_record", return_value={}):
+                library = gate.build_adapter_library(output, "debug-1", build_profile="debug")
+            command = compile.call_args.args[0]
+            self.assertIn("-Zbuild-std=core,compiler_builtins", command)
+            self.assertNotIn("--release", command)
+            self.assertIn("--offline", command)
+            self.assertEqual(command[command.index("--features") + 1], "crabc-mimalloc/mi-debug-1")
+            self.assertEqual(compile.call_args.kwargs["env"]["CARGO_PROFILE_DEV_OPT_LEVEL"], "0")
+            self.assertEqual(library.parent.name, "debug")
+            with mock.patch.object(harness, "require_tool", return_value="/musl-gcc"), \
+                    mock.patch.object(harness, "command_record", return_value={"status": 0}) as compile, \
+                    mock.patch.object(harness, "require_success"):
+                gate.build_c_driver(output / "source", output, profile="debug-1", build_profile="debug")
+            command = compile.call_args.args[0]
+            self.assertIn("-O0", command)
+            self.assertNotIn("-O2", command)
+            self.assertNotIn("-O3", command)
+            self.assertIn("-DMI_DEBUG=1", command)
+
     def test_guarded_profiles_select_independent_source_and_rust_features(self) -> None:
         for profile, base in (("guarded", "release"), ("guarded-debug-1", "debug-1"),
                               ("guarded-secure-3", "secure-3"), ("guarded-stat-2", "stat-2"),
@@ -237,6 +265,61 @@ class M4GateContractTests(unittest.TestCase):
 
 
 class M4OperationsObservationTests(unittest.TestCase):
+    def test_native_results_survive_a_later_unavailable_c_oracle(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            execution = {"command": ["cargo", "test"], "status": 0,
+                         "stdout": "test result: ok. 1 passed; 0 failed\n" * len(gate.NATIVE_TESTS),
+                         "stderr": "original native compiler log"}
+            with (mock.patch.object(gate, "ARTIFACTS", output),
+                  mock.patch.object(harness, "require_native_x86_64"),
+                  mock.patch.object(harness, "require_tool", return_value="cargo"),
+                  mock.patch.object(harness, "command_record", return_value=execution),
+                  mock.patch.object(harness, "fetch_archive", return_value=output / "archive"),
+                  mock.patch.object(harness, "safe_extract", return_value=output),
+                  mock.patch.object(gate, "build_c_driver", side_effect=harness.HarnessError("missing C oracle"))):
+                with self.assertRaisesRegex(harness.HarnessError, "missing C oracle"):
+                    gate.run_native_tests()
+            self.assertEqual(harness.read_json(output / "native-operations-execution.json"), execution)
+
+    def test_debug_valid_client_differential_retains_programs_without_running_a_cohort(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            def build(side):
+                def builder(source, destination, driver_source=None, profile="release", *, build_profile="release"):
+                    self.assertEqual((profile, build_profile), ("debug-1", "debug"))
+                    driver = destination / ("valid-" + side)
+                    guard = int(side == "c")
+                    driver.write_text("#!/usr/bin/python3\nimport sys\n"
+                        "assert sys.argv[1:] == ['aligned-preservation', '--valid-domain']\n"
+                        "print('CRABC_MI_M4_OPERATIONS_TRACE_BEGIN')\n"
+                        "print('preserved=1')\n"
+                        "print('CRABC_MI_M4_OPERATIONS_TRACE_END')\n"
+                        f"print('valid-domain guarded_precise={guard}', file=sys.stderr)\n")
+                    driver.chmod(0o755)
+                    return driver
+                return builder
+            with (mock.patch.object(gate, "ARTIFACTS", output),
+                  mock.patch.object(harness, "require_native_x86_64"),
+                  mock.patch.object(harness, "fetch_archive", return_value=output / "archive"),
+                  mock.patch.object(harness, "safe_extract", return_value=output),
+                  mock.patch.object(gate, "build_c_driver", side_effect=build("c")),
+                  mock.patch.object(gate, "build_rust_driver", side_effect=build("rust")),
+                  mock.patch.object(gate, "run_operations_profiles", side_effect=AssertionError("unexpected cohort"))):
+                report = gate.run_operations_differential(True, "aligned-preservation", build_profile="debug",
+                    source_profile="debug-1", valid_clients_only=True)
+            self.assertEqual(report["trace"], {"preserved": "1"})
+            self.assertEqual(report["api_profiles"], {})
+            self.assertFalse((output / "aligned-preservation.json").exists())
+            self.assertIn("not-gate-qualification", report["scope"])
+            for artifact in report["programs"].values():
+                self.assertTrue(Path(artifact["path"]).is_file())
+
+    def test_nondefault_source_mode_cannot_write_canonical_differential(self):
+        with mock.patch.object(harness, "require_native_x86_64", side_effect=AssertionError("build reached")):
+            with self.assertRaisesRegex(harness.HarnessError, "private valid-client"):
+                gate.run_operations_differential(True, "operations", source_profile="stat-2")
+
     def test_full_gate_profile_commands_execute_the_selected_valid_client_domain(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
             output = Path(directory)

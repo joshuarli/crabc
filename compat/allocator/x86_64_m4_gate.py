@@ -25,6 +25,10 @@ The evidence checks this module owns:
   in a fresh process of each, and requires identical address-free traces; the
   `operations` scenario also requires identical termination for every
   process-terminating `mi_new` case;
+- `--differential SCENARIO --build-profile debug --valid-clients-only`
+  retains an opt0 legal-client diagnostic with source-built abort-only core;
+  `--source-profile` independently selects the pinned source macros. Its
+  products and reports remain separate from full gate qualification;
 - `--adapter-boundary` audits the native adapter static library: its defined
   `mi_*` globals include every selected external function and only functions
   the pinned header declares. Heap, reservation, option and statistics checks
@@ -36,6 +40,7 @@ The evidence checks this module owns:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import tempfile
@@ -362,6 +367,8 @@ def run_native_tests() -> dict[str, Any]:
     execution = harness.command_record(
         command, cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "native-operations-execution.json", execution)
     harness.require_success(execution, "M4 native-engine regressions")
     output = str(execution["stdout"]) + "\n" + str(execution["stderr"])
     # Every target reports its own libtest summary; a target that ran no test
@@ -580,16 +587,21 @@ def api_profile_features(profile: str) -> tuple[str, ...]:
 
 
 def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER,
-                   profile: str = "release") -> Path:
-    """Link the shared driver against the pinned release `src/static.c`."""
+                   profile: str = "release", *, build_profile: str = "release") -> Path:
+    """Link the shared driver against the pinned `src/static.c` source."""
 
     compiler = harness.require_tool("musl-gcc")
+    if build_profile not in {"release", "debug"}:
+        raise harness.HarnessError("unknown operation build profile")
+    flags = api_profile_flags(profile)
+    if build_profile == "debug":
+        flags = (*(flag for flag in flags if not flag.startswith("-O")), "-O0")
     driver = temporary / "operations-c"
     build = harness.command_record(
         [
             compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
             "-DCRABC_MI_M4_SOURCE_CANARY=1",
-            *api_profile_flags(profile), "-I", str(source / "include"),
+            *flags, "-I", str(source / "include"),
             str(driver_source), str(source / "src/static.c"), "-pthread", "-o", str(driver),
         ],
         cwd=source,
@@ -599,40 +611,94 @@ def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIO
     return driver
 
 
-def build_adapter_library(temporary: Path, profile: str = "release") -> Path:
+def debug_adapter_environment(temporary: Path) -> tuple[list[str], dict[str, str], dict[str, Any]]:
+    """Compile the no-alloc adapter with the pinned abort-only core sources.
+
+    Stock core carries personality references even for an aborting consumer.
+    Rebuilding core removes that unused unwind boundary rather than supplying
+    a dummy personality or borrowing a foreign compiler runtime.
+    """
+
+    path = harness.ROOT / "compat/x86_64/native_static_source_runtime_closure.py"
+    spec = importlib.util.spec_from_file_location("m4_source_runtime", path)
+    assert spec is not None and spec.loader is not None
+    runtime = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runtime)
+    frontend, environment = runtime.pinned_environment()
+    discover = harness.command_record(
+        [frontend["argv0"], "run", runtime.TOOLCHAIN, "rustc", "--print", "sysroot"],
+        cwd=harness.ROOT, env=environment,
+    )
+    harness.require_success(discover, "debug adapter pinned sysroot discovery")
+    source = Path(str(discover["stdout"]).strip()) / "lib/rustlib/src/rust/library"
+    vendor = runtime.private_vendor(
+        temporary, source,
+        harness.ROOT / ".work/x86_64/cargo/native-static-source-runtime-vendor",
+    )
+    flags = runtime.runtime_flags("pic")
+    environment.update({
+        "CARGO_HOME": str(temporary / "cargo-home"),
+        "CARGO_NET_OFFLINE": "true",
+        "CARGO_INCREMENTAL": "0",
+        "CARGO_PROFILE_DEV_OPT_LEVEL": "0",
+        "CARGO_PROFILE_TEST_OPT_LEVEL": "0",
+        "CARGO_ENCODED_RUSTFLAGS": "\x1f".join(flags),
+    })
+    provenance = {
+        "frontend": frontend,
+        "vendor": vendor,
+        "flags": list(flags),
+        "environment": environment,
+        "core_source": runtime.file_record(source / "core/src/lib.rs", "pinned core source"),
+        "compiler_builtins_source": runtime.file_record(
+            source / runtime.RUNTIME_SOURCES["compiler_builtins"], "pinned compiler helper source"),
+    }
+    return [frontend["argv0"], "run", runtime.TOOLCHAIN, "cargo",
+            "-Zbuild-std=core,compiler_builtins"], environment, provenance
+
+
+def build_adapter_library(temporary: Path, profile: str = "release", *, build_profile: str = "release") -> Path:
     """Build the native adapter static library in this run's own target."""
 
     target_dir = temporary / "cargo-target"
     features = api_profile_features(profile)
+    if build_profile not in {"release", "debug"}:
+        raise harness.HarnessError("unknown operation build profile")
+    environment = dict(os.environ)
+    frontend = [harness.require_tool("cargo")]
+    if build_profile == "debug":
+        frontend, environment, provenance = debug_adapter_environment(temporary)
+        harness.write_json(temporary / "adapter-source-runtime.json", provenance)
     build = harness.command_record(
         [
-            harness.require_tool("cargo"), "build", "--locked", "--release", "--message-format=json", "--target", RUST_TARGET,
+            *frontend, "build", "--locked", *(('--release',) if build_profile == "release" else ('--offline',)), "--message-format=json", "--target", RUST_TARGET,
             "-p", ADAPTER_PACKAGE, "--target-dir", str(target_dir),
             *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in features)) if features else ()),
         ],
-        cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+        cwd=harness.ROOT, env=environment, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )
     harness.write_json(temporary / "adapter-build.json", build)
     harness.require_success(build, "M4 native adapter build")
-    library = target_dir / RUST_TARGET / "release" / ADAPTER_STATICLIB
+    library = target_dir / RUST_TARGET / build_profile / ADAPTER_STATICLIB
     build["artifact"] = harness.artifact_record(library)
     harness.write_json(temporary / "adapter-build.json", build)
     return library
 
 
 def build_rust_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER,
-                      profile: str = "release") -> Path:
+                      profile: str = "release", *, build_profile: str = "release") -> Path:
     """Link the same driver, unchanged, against the native adapter only."""
 
-    library = build_adapter_library(temporary, profile)
+    library = build_adapter_library(temporary, profile, build_profile=build_profile)
     driver = temporary / "operations-rust"
     link = harness.command_record(
         [
-            harness.require_tool("musl-gcc"), "-std=c11", "-O2", "-I", str(source / "include"),
+            harness.require_tool("musl-gcc"), "-std=c11", "-O0" if build_profile == "debug" else "-O2", "-I", str(source / "include"),
             str(driver_source), str(library), "-pthread", "-o", str(driver),
         ],
         cwd=source,
     )
+    harness.write_json(temporary / "rust-link.json", link)
     harness.require_success(link, "M4 operations Rust driver link")
     return driver
 
@@ -641,40 +707,55 @@ def run_driver(driver: Path, arguments: Sequence[str] = ()) -> dict[str, Any]:
     return harness.command_record((str(driver), *arguments), cwd=driver.parent, env={}, timeout_seconds=600)
 
 
-def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
+def run_operations_differential(offline: bool, scenario: str, *, build_profile: str = "release",
+                                source_profile: str = "release", valid_clients_only: bool = False) -> dict[str, Any]:
+    if build_profile not in {"release", "debug"} or (build_profile == "debug" and not valid_clients_only):
+        raise harness.HarnessError("debug operation builds require the explicit valid-client domain")
+    if source_profile != "release" and not valid_clients_only:
+        raise harness.HarnessError("nondefault source modes require the private valid-client domain")
+    api_profile_flags(source_profile)
     harness.require_native_x86_64()
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    (ARTIFACTS / f"{scenario}.json").unlink(missing_ok=True)
+    artifacts = ARTIFACTS
+    if valid_clients_only:
+        artifacts = artifacts / "private-valid-clients" / build_profile / source_profile
+    artifacts.mkdir(parents=True, exist_ok=True)
+    (artifacts / f"{scenario}.json").unlink(missing_ok=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
-    with harness.temporary_directory("crabc-mimalloc-x86_64-m4-operations-") as name:
+    context = (contextlib.nullcontext(tempfile.mkdtemp(prefix=f"{scenario}-", dir=artifacts)) if valid_clients_only
+               else harness.temporary_directory("crabc-mimalloc-x86_64-m4-operations-"))
+    with context as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
         driver_source = OOM_SURVIVAL_DRIVER if scenario == "oom-survival" else OPERATIONS_DRIVER
-        drivers = {
-            "c": build_c_driver(source, temporary, driver_source),
-            "rust": build_rust_driver(source, temporary, driver_source),
-        }
+        build_arguments = ({"profile": source_profile, "build_profile": build_profile}
+                           if valid_clients_only or source_profile != "release" else {})
+        drivers = {"c": build_c_driver(source, temporary, driver_source, **build_arguments),
+                   "rust": build_rust_driver(source, temporary, driver_source, **build_arguments)}
         arguments = () if scenario == "oom-survival" else (scenario,)
+        if valid_clients_only and scenario != "oom-survival":
+            arguments = (*arguments, "--valid-domain")
         executions = {side: run_driver(driver, arguments) for side, driver in drivers.items()}
         for side, execution in executions.items():
-            harness.write_json(ARTIFACTS / f"{scenario}-{side}.json", execution)
-            (ARTIFACTS / f"{scenario}-{side}.log").write_text(
+            harness.write_json(artifacts / f"{scenario}-{side}.json", execution)
+            (artifacts / f"{scenario}-{side}.log").write_text(
                 str(execution["stdout"]) + str(execution["stderr"]))
-            (ARTIFACTS / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
+            (artifacts / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
         for side, execution in executions.items():
             harness.require_success(execution, f"M4 operations {side} driver")
+            if valid_clients_only and scenario != "oom-survival":
+                validate_valid_domain_option(source_profile, side, execution)
         traces = {
             side: parse_operations_trace(str(execution["stdout"]), f"{side} operations trace")
             for side, execution in executions.items()
         }
         terminations = {
             name: {side: run_driver(driver, (f"abort:{name}",))["status"] for side, driver in drivers.items()}
-            for name in (ABORT_SCENARIOS if scenario == "operations" else ())
+            for name in (ABORT_SCENARIOS if scenario == "operations" and not valid_clients_only else ())
         }
         mode_traces = {}
         profile_receipt = None
-        if scenario == "aligned-preservation":
+        if scenario == "aligned-preservation" and not valid_clients_only:
             # Valid operation clients and invalid source preconditions are
             # separate observations; whole-trace equality must not mix them.
             run_operations_profiles(offline, API_PROFILES, ("operations", "api-modes"))
@@ -687,11 +768,11 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
                     mode_traces[f"{profile}.{side}"] = parse_operations_trace(
                         str(execution["stdout"]), f"{profile} {side} API trace")
     # Keep both raw traces beside the report so a mismatch can be located.
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    artifacts.mkdir(parents=True, exist_ok=True)
     for side, execution in executions.items():
-        (ARTIFACTS / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
+        (artifacts / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
     for mode, trace in mode_traces.items():
-        (ARTIFACTS / f"api-modes-{mode}.trace").write_text(
+        (artifacts / f"api-modes-{mode}.trace").write_text(
             "".join(f"{key}={value}\n" for key, value in trace.items())
         )
     for profile in ("release", "stat-1", "stat-2", "debug-1") if mode_traces else ():
@@ -710,7 +791,11 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
     }
     if profile_receipt is not None:
         report["operation_profile_receipt"] = profile_receipt
-    harness.write_json(ARTIFACTS / f"{scenario}.json", report)
+    if valid_clients_only:
+        report.update({"scope": "private-valid-client-differential-not-gate-qualification",
+                       "build_profile": build_profile, "source_profile": source_profile, "upstream": pin,
+                       "programs": {side: harness.artifact_record(driver) for side, driver in drivers.items()}})
+    harness.write_json(artifacts / f"{scenario}.json", report)
     return report
 
 
@@ -1265,14 +1350,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the focused native-engine integration regressions")
     mode.add_argument("--adapter-boundary", action="store_true",
         help="audit the native adapter's export boundary and header linkage")
-    mode.add_argument("--differential", choices=DIFFERENTIAL_SCENARIOS,
+    mode.add_argument("--differential", choices=PROFILE_SCENARIOS,
         help="run one shared-driver pinned-C/native-adapter differential scenario")
     mode.add_argument("--upstream-test-api", action="store_true",
         help="link the unmodified pinned test-api.c against the native adapter and run it")
     parser.add_argument("--read", action="store_true", help="authenticate the full operation-profile receipt")
     parser.add_argument("--replay", action="store_true", help="authenticate and replay retained operation-profile products")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
+    parser.add_argument("--build-profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--source-profile", choices=API_PROFILES, default="release")
+    parser.add_argument("--valid-clients-only", action="store_true",
+                        help="retain a private differential without precondition controls or profile qualification")
     arguments = parser.parse_args(argv)
+    if (arguments.build_profile != "release" or arguments.source_profile != "release" or arguments.valid_clients_only) and arguments.differential is None:
+        parser.error("build/source profile and valid-client selection require --differential")
     if (arguments.read or arguments.replay) and not arguments.operations_matrix:
         parser.error("--read and --replay require --operations-matrix")
     if arguments.operations_matrix:
@@ -1296,7 +1387,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"upstream test-api passed: {len(report['checks'])} checks")
         return 0
     if arguments.differential is not None:
-        report = run_operations_differential(arguments.offline, arguments.differential)
+        report = run_operations_differential(arguments.offline, arguments.differential,
+            build_profile=arguments.build_profile, source_profile=arguments.source_profile,
+            valid_clients_only=arguments.valid_clients_only)
         print(f"M4 {arguments.differential} differential passed: {report['compared_key_count']} keys")
         return 0
     contract, summary = load_summary()
