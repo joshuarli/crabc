@@ -8465,11 +8465,23 @@ pub(crate) mod tests {
         let page_map = ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated process map initializes");
+        let layout = crate::arena::ArenaInfoLayout::for_slice_count(
+            ARENA_MIN_SIZE / crate::config::ARENA_SLICE_SIZE,
+            config.page_size().bytes(),
+        )
+        .expect("the selected arena has a source metadata layout");
+        // Reserved backing lets the actual arena initializer commit its
+        // metadata while leaving the source guard inaccessible from birth.
+        let access = if layout.guard_size() > 0 {
+            MapAccess::Reserved
+        } else {
+            MapAccess::Committed
+        };
         let mapping = Mapping::map_aligned_for_allocator(
             config,
             ARENA_MIN_SIZE,
             ARENA_ALIGNMENT,
-            MapAccess::Committed,
+            access,
         )
         .expect("the test owns one complete source arena mapping");
         let arena = match ProcessSharedArenaStorage::test_static_owner()

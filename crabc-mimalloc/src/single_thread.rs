@@ -51612,7 +51612,7 @@ mod tests {
                 let primary = NonNull::new(primary).unwrap();
                 let page = unsafe { primary.as_ref() };
                 let expected_request = match aligned::allocation_plan(
-                    request,
+                    request.checked_add(crate::config::PADDING_SIZE).unwrap(),
                     alignment,
                     0,
                     allocator.page_map.memory_config().page_size().bytes(),
