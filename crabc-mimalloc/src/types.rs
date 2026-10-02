@@ -4297,6 +4297,15 @@ impl PageQueue {
     pub(crate) const fn last(&self) -> *mut Page {
         self.last
     }
+
+    /// Replaces a scalar assertion input in a detached observation copy.
+    /// Original queue links and count remain unchanged; the copy conveys no
+    /// queue mutation, node retention, or allocation authority.
+    #[cfg(test)]
+    pub(crate) fn with_observed_count_for_test(mut self, count: usize) -> Self {
+        self.count = count;
+        self
+    }
 }
 
 // `src/init.c:MI_PAGE_QUEUES_EMPTY`; all source values are machine-word

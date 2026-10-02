@@ -34,6 +34,12 @@ pub(crate) enum SourcePageInvariant {
     PageStartMapping,
     ListNodeMapping,
     InitiallyZero,
+    CollectionHeapNonNull,
+    CollectionHeapTheapBinding,
+    CollectionPageTheapBinding,
+    CollectionPageHeapTheapBinding,
+    CollectionVisitedCount,
+    CollectionQueue(crate::types::page_queue::SourceQueueInvariant),
     /// The observation lacks the readable, finite backing required by the
     /// source traversal; this is a Rust memory-access boundary failure.
     ObservationGeometry,
@@ -65,6 +71,23 @@ impl LivePageValidityAssertion {
             SourcePageInvariant::FreeCount => (c"src/page.c", 117, c"mi_page_is_valid_init"),
             SourcePageInvariant::PageStartMapping => (c"src/page.c", 45, c"mi_page_list_count"),
             SourcePageInvariant::ListNodeMapping => (c"src/page.c", 50, c"mi_page_list_count"),
+            SourcePageInvariant::CollectionHeapNonNull => (c"src/theap.c", 69, c"mi_theap_is_valid"),
+            SourcePageInvariant::CollectionHeapTheapBinding => (c"src/theap.c", 71, c"mi_theap_is_valid"),
+            SourcePageInvariant::CollectionPageTheapBinding => (c"src/theap.c", 41, c"mi_theap_visit_pages"),
+            SourcePageInvariant::CollectionPageHeapTheapBinding => (c"src/theap.c", 61, c"mi_theap_page_is_valid"),
+            SourcePageInvariant::CollectionVisitedCount => (c"src/theap.c", 49, c"mi_theap_visit_pages"),
+            SourcePageInvariant::CollectionQueue(invariant) => {
+                use crate::types::page_queue::SourceQueueInvariant as Q;
+                let line = match invariant {
+                    Q::PredecessorOrder => 153, Q::FullSize => 155, Q::HugeSize => 158,
+                    Q::RegularSize => 161, Q::TheapOwner => 163, Q::Tail => 165, Q::Count => 170,
+                    Q::MissingPage => 128, Q::NextPredecessor => 131, Q::PreviousSuccessor => 132,
+                };
+                let function = if matches!(invariant, Q::MissingPage | Q::NextPredecessor | Q::PreviousSuccessor) {
+                    c"mi_page_queue_contains"
+                } else { c"_mi_page_queue_is_valid" };
+                (c"src/page-queue.c", line, function)
+            }
             // Construction rejects initialization-only and Rust observation
             // failures, which have no live-page assertion delivery site.
             _ => unreachable!(),
@@ -293,6 +316,12 @@ impl SourcePageInvariant {
             Self::FreeCount => c"page->used + free_count == page->capacity",
             Self::PageStartMapping => c"_mi_ptr_page(mi_page_start(page)) == page",
             Self::ListNodeMapping => c"(uint8_t*)head - slice_start > (ptrdiff_t)MI_LARGE_PAGE_SIZE || page == _mi_ptr_page(head)",
+            Self::CollectionHeapNonNull => c"heap != NULL",
+            Self::CollectionHeapTheapBinding => c"heap_theap==NULL || heap_theap == theap",
+            Self::CollectionPageTheapBinding => c"mi_page_theap(page) == theap",
+            Self::CollectionPageHeapTheapBinding => c"page_theap == NULL || theap == page_theap",
+            Self::CollectionVisitedCount => c"!include_full || count == total",
+            Self::CollectionQueue(invariant) => invariant.assertion(),
             Self::InitiallyZero => c"mi_mem_is_zero(page_start, mi_page_committed(page))",
             Self::ObservationGeometry => return None,
         })
@@ -448,6 +477,148 @@ pub(crate) unsafe fn source_page_is_valid(
     // the internal predicate reads no owner pointer from the scalar image.
     unsafe { source_page_lists_valid_with_owner(state, map, Some(owner)) }?;
     if queued { owner.valid_queued()?; }
+    Ok(())
+}
+
+/// Scalar inputs to the source collection prefix. The original Theap and
+/// Heap remain retained independently; these facts grant no dereference,
+/// admission, queue mutation, or retirement permission.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CollectionSourceHeaderSnapshot {
+    pub(crate) theap: NonNull<crate::types::Theap>,
+    pub(crate) heap_present: bool,
+    pub(crate) heap_theap_absent: bool,
+    pub(crate) heap_theap_matches: bool,
+    pub(crate) page_count: usize,
+    #[cfg(test)]
+    pub(crate) queue_count_override: Option<(usize, usize)>,
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+std::thread_local! {
+    static COLLECTION_HEADER_TEST_OBSERVER: core::cell::Cell<Option<(
+        unsafe fn(&mut CollectionSourceHeaderSnapshot, *mut core::ffi::c_void),
+        *mut core::ffi::c_void,
+    )>> = const { core::cell::Cell::new(None) };
+}
+
+/// Replaces only copied collection-header facts during a synchronous test.
+///
+/// # Safety
+/// The argument remains live through the operation and terminal delivery.
+/// The observer changes only this scalar copy or its own test state; it must
+/// not touch allocator metadata, allocate, emit output, or reenter. It grants
+/// no lifetime, issuer, or Page retention authority.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) unsafe fn with_collection_header_observer_for_test<R>(
+    observer: unsafe fn(&mut CollectionSourceHeaderSnapshot, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+    operation: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<(unsafe fn(&mut CollectionSourceHeaderSnapshot, *mut core::ffi::c_void), *mut core::ffi::c_void)>);
+    impl Drop for Restore {
+        fn drop(&mut self) { COLLECTION_HEADER_TEST_OBSERVER.with(|slot| slot.set(self.0)); }
+    }
+    let old = COLLECTION_HEADER_TEST_OBSERVER.with(|slot| slot.replace(Some((observer, argument))));
+    let _restore = Restore(old);
+    operation()
+}
+
+/// A failed source collection leaf, before deferred-free callback selection.
+/// Header and empty-queue assertions may have no selected Page; custody then
+/// belongs to the actual retained original Theap and its complete graph.
+pub(crate) struct CollectionSourceFailure {
+    pub(crate) page: Option<NonNull<crate::types::Page>>,
+    pub(crate) invariant: SourcePageInvariant,
+}
+
+/// Pinned `mi_theap_is_valid`, including full Pages and every source queue.
+/// This runs before `_mi_deferred_free`; it neither invokes callbacks nor
+/// changes the source graph. All observations end before the failure leaves.
+///
+/// # Safety
+/// The actual original Theap, Heap, TLD, every Page and backing are retained
+/// for this entire finite, acyclic traversal. The caller owns ordinary queue,
+/// Page/local-list and count fields. Concurrent clients may touch only their
+/// allocations and disjoint atomic producer fields. The current source Heap
+/// selector and TLS images remain initialized and stable. This predicate
+/// confers no output, retention, mutation, or release rights on its caller.
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+pub(crate) unsafe fn source_theap_collection_is_valid(
+    theap: NonNull<crate::types::Theap>, map: &PageMap,
+) -> Result<(), CollectionSourceFailure> {
+    use crate::types::{Heap, Page, Theap};
+    let fail = |page, invariant| CollectionSourceFailure { page, invariant };
+    // SAFETY: only ordinary retained source fields are copied here.
+    let heap = NonNull::new(unsafe { Theap::heap_at(theap) });
+    let heap_theap = heap.map_or(core::ptr::null_mut(), |heap| unsafe { Heap::source_theap_peek_at(heap) });
+    let header = CollectionSourceHeaderSnapshot {
+        theap,
+        heap_present: heap.is_some(), heap_theap_absent: heap_theap.is_null(),
+        heap_theap_matches: heap_theap == theap.as_ptr(),
+        page_count: unsafe { Theap::local_page_count_at(theap) },
+        #[cfg(test)] queue_count_override: None,
+    };
+    #[cfg(all(test, not(miri)))]
+    let header = {
+        let mut observed = header;
+        if let Some((observe, argument)) = COLLECTION_HEADER_TEST_OBSERVER.with(|slot| slot.get()) {
+            unsafe { observe(&mut observed, argument) };
+        }
+        observed
+    };
+    if !header.heap_present { return Err(fail(None, SourcePageInvariant::CollectionHeapNonNull)); }
+    if !header.heap_theap_absent && !header.heap_theap_matches {
+        return Err(fail(None, SourcePageInvariant::CollectionHeapTheapBinding));
+    }
+    let mut count = 0usize;
+    if header.page_count != 0 {
+        for bin in 0..=crate::config::BIN_FULL {
+            let queue = unsafe { Theap::local_queue_at(theap, bin) }.unwrap();
+            let mut current = queue.first();
+            while let Some(page) = NonNull::new(current) {
+                let snapshot = unsafe { Page::validity_snapshot_at(page) };
+                let next = unsafe { Page::queue_next_at(page) };
+                if snapshot.theap != theap.as_ptr() {
+                    return Err(fail(Some(page), SourcePageInvariant::CollectionPageTheapBinding));
+                }
+                let page_heap = NonNull::new(snapshot.heap);
+                let page_heap_theap = page_heap.map_or(core::ptr::null_mut(), |heap| unsafe { Heap::source_theap_peek_at(heap) });
+                if !page_heap_theap.is_null() && page_heap_theap != theap.as_ptr() {
+                    return Err(fail(Some(page), SourcePageInvariant::CollectionPageHeapTheapBinding));
+                }
+                let page_bin = if snapshot.in_full { Some(crate::config::BIN_FULL) }
+                    else if snapshot.is_huge { Some(crate::config::BIN_HUGE) }
+                    else { crate::size_class::bin(snapshot.block_size) };
+                let page_queue = page_bin.and_then(|bin| unsafe { Theap::local_queue_at(theap, bin) });
+                let contains = match page_queue {
+                    Some(queue) => unsafe { crate::types::page_queue::source_page_queue_contains(queue, page.as_ptr()) }
+                        .map_err(|invariant| fail(Some(page), SourcePageInvariant::CollectionQueue(invariant)))?,
+                    None => false,
+                };
+                let owner = unsafe { PageSourceOwnerSnapshot::observe_at(&snapshot, contains, page_queue.map(|queue| queue.block_size())) };
+                unsafe { source_page_is_valid(&snapshot, map, &owner, true) }
+                    .map_err(|invariant| fail(Some(page), invariant))?;
+                count = count.wrapping_add(1);
+                current = next;
+            }
+        }
+        if count != header.page_count {
+            return Err(fail(None, SourcePageInvariant::CollectionVisitedCount));
+        }
+    }
+    for bin in 0..=crate::config::BIN_FULL {
+        let queue = unsafe { Theap::local_queue_at(theap, bin) }.unwrap();
+        #[cfg(test)]
+        let observed_queue = match header.queue_count_override {
+            Some((selected_bin, count)) if selected_bin == bin => (*queue).with_observed_count_for_test(count),
+            _ => *queue,
+        };
+        #[cfg(test)]
+        let queue = &observed_queue;
+        unsafe { crate::types::page_queue::source_page_queue_check(theap.as_ptr(), queue) }
+            .map_err(|invariant| fail(NonNull::new(queue.first()), SourcePageInvariant::CollectionQueue(invariant)))?;
+    }
     Ok(())
 }
 

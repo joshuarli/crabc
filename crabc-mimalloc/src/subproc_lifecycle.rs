@@ -2911,6 +2911,18 @@ unsafe fn native_child_theap_collect_in_owner(
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return };
     // SAFETY: caller retains the initialized Theap and its current TLD.
     let Some(tld) = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) }) else { return };
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        let phase = unsafe { with_native_child_allocation_phase(theap, |engine| Ok(engine.begin_deferred_free_collection(force))) };
+        match phase {
+            Ok(crate::single_thread::DeferredFreeAllocationPhase::Collect { .. }) => {},
+            Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task)) => {
+                unsafe { settle_child_live_page_validity(task, original, scope) };
+                return;
+            }
+            _ => return,
+        }
+    }
     if let Ok(invocation) = crate::deferred_free::begin_process(theap, tld, force) {
         // SAFETY: no child or engine reference survives across user code.
         let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };

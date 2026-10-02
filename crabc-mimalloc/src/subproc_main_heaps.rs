@@ -2479,6 +2479,21 @@ fn collect_on_theap_in_owner(thread: MainThread, theap: NonNull<Theap>, force: b
     #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
     #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] issuer: &mut Option<AuxiliaryAllocationIssuer>,
 ) {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        let phase = with_theap_allocation_phase(thread, theap, |engine| Ok(engine.begin_deferred_free_collection(force)))
+            .and_then(Result::ok);
+        match phase {
+            Some(crate::single_thread::DeferredFreeAllocationPhase::Collect { .. }) => {},
+            Some(phase) => {
+                // Prefix output precedes callback selection; this original
+                // admission and issuer existed before any Page observation.
+                let _ = unsafe { finish_allocation_on_theap(thread, theap, phase, owner, issuer) };
+                return;
+            }
+            None => return,
+        }
+    }
     // `_mi_deferred_free(theap, force)`: the selected callback runs with no
     // engine or Theap projection live.
     if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {

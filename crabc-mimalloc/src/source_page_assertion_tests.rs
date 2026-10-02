@@ -244,6 +244,30 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         }
         unsafe { (*context).observed = true; }
     }
+    unsafe fn observe_header(header: &mut crate::page_validity::CollectionSourceHeaderSnapshot,
+        argument: *mut c_void,
+    ) {
+        let context = argument.cast::<Context>();
+        if unsafe { !matches!((*context).check, "collectheader" | "exitheader" | "collectqueue" | "exitqueue")
+            || (*context).observed || (*context).theap != header.theap } { return; }
+        // The real Heap and Theap remain initialized. Only a copied source
+        // binding fact is replaced, before any Page or callback is visited.
+        if unsafe { (*context).check.ends_with("queue") } {
+            // The empty bin's actual source count is zero. The detached copy
+            // exercises the same queue-count assertion without changing any
+            // original Page, queue link, count, or client allocation.
+            header.queue_count_override = Some((0, 1));
+        } else {
+            header.heap_theap_absent = false;
+            header.heap_theap_matches = false;
+        }
+        unsafe { (*context).observed = true; }
+    }
+    unsafe extern "C" fn deferred(_: bool, _: u64, argument: *mut c_void) {
+        if unsafe { !(*argument.cast::<Context>()).entered } {
+            write_bytes(b"unexpected-deferred-callback\n");
+        }
+    }
     unsafe extern "C" fn output(message: *const c_char, argument: *mut c_void) {
         // SAFETY: the registered source callback receives a terminated
         // fragment that remains live through this synchronous invocation.
@@ -297,6 +321,22 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         ("collect-worker", "page->used <= page->capacity"),
         ("collect-auxiliary", "page->used <= page->capacity"),
         ("collect-child", "page->used <= page->capacity"),
+        ("collectheader", "heap_theap==NULL || heap_theap == theap"),
+        ("collectheader-worker", "heap_theap==NULL || heap_theap == theap"),
+        ("collectheader-auxiliary", "heap_theap==NULL || heap_theap == theap"),
+        ("collectheader-child", "heap_theap==NULL || heap_theap == theap"),
+        ("exitheader-worker", "heap_theap==NULL || heap_theap == theap"),
+        ("exitheader-auxiliary-worker", "heap_theap==NULL || heap_theap == theap"),
+        ("exitheader-child", "heap_theap==NULL || heap_theap == theap"),
+        ("exitheader-childauxiliary", "heap_theap==NULL || heap_theap == theap"),
+        ("collectqueue", "pq->count == count"),
+        ("collectqueue-worker", "pq->count == count"),
+        ("collectqueue-auxiliary", "pq->count == count"),
+        ("collectqueue-child", "pq->count == count"),
+        ("exitqueue-worker", "pq->count == count"),
+        ("exitqueue-auxiliary-worker", "pq->count == count"),
+        ("exitqueue-child", "pq->count == count"),
+        ("exitqueue-childauxiliary", "pq->count == count"),
         ("retire", "page->used <= page->capacity"),
         ("unfull", "page->used <= page->capacity"),
         ("release", "page->used <= page->capacity"),
@@ -328,7 +368,8 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         // The parent retains a distinct initialized Heap before the worker
         // exit. Its ordinary API route can attach a fresh auxiliary Theap in
         // the callback without reopening the failed fixed owner's queues.
-        let diagnostic_heap = if check == "exit" && !matches!(domain, "child" | "childauxiliary") {
+        let independent = check == "exit" || check.ends_with("header") || check.ends_with("queue");
+        let diagnostic_heap = if independent && !matches!(domain, "child" | "childauxiliary") {
             crate::source_heap_api::heap_new() as usize
         } else { 0 };
         let run = || {
@@ -338,10 +379,10 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
             assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_add_current_thread(child.unwrap()) },
                 Ok(crate::subproc::lifecycle::NativeChildThreadAdd::Added));
         }
-        let diagnostic_heap = if check == "exit" && matches!(domain, "child" | "childauxiliary") {
+        let diagnostic_heap = if independent && matches!(domain, "child" | "childauxiliary") {
             crate::source_heap_api::heap_new() as usize
         } else { diagnostic_heap };
-        if check == "exit" && matches!(domain, "child" | "childauxiliary") {
+        if independent {
             assert_ne!(diagnostic_heap, 0, "an independently retained child Heap is initialized");
             // Establish its actual healthy Theap before source owner exit.
             // The callback uses this retained cached/list member rather than
@@ -390,7 +431,10 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         unsafe {
             crate::source_options_api::register_output(Some(output), argument);
             crate::source_options_api::register_error(Some(error), core::ptr::null_mut());
-            let result = crate::page_validity::with_live_page_validity_observer_for_test(
+            let prefix = matches!(check, "collect" | "collectheader" | "collectqueue" | "exit" | "exitheader" | "exitqueue" | "release");
+            if prefix { runtime::register_native_deferred_free_callback(Some(deferred), argument); }
+            let result = crate::page_validity::with_collection_header_observer_for_test(observe_header, argument, ||
+            crate::page_validity::with_live_page_validity_observer_for_test(
                 observe, argument, || crate::page_validity::with_live_page_owner_validity_observer_for_test(
                     observe_owner, argument, || match check {
                         "retire" | "unfull" => {
@@ -398,11 +442,11 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
                             std::eprintln!("ordinary-free-return: {outcome:?}");
                             malloc(request)
                         }
-                        "collect" => {
+                        "collect" | "collectheader" | "collectqueue" => {
                             super::theap_collect(theap.as_ptr().cast(), false);
                             malloc(request)
                         }
-                        "exit" => {
+                        "exit" | "exitheader" | "exitqueue" => {
                             let finish = runtime::finish_current_thread_native_after_user_destructors();
                             std::eprintln!("ordinary-exit-return: {finish:?}");
                             malloc(request)
@@ -414,7 +458,7 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
                         _ => malloc(request),
                     },
                 ),
-            );
+            ));
             std::eprintln!("ordinary-return: client={}, errno={:?}, observed={}", result.value.is_some(), result.errno, context.observed);
             crate::source_options_api::register_output(None, core::ptr::null_mut());
             crate::source_options_api::register_error(None, core::ptr::null_mut());
@@ -456,7 +500,92 @@ fn source_malloc_live_validity_assertion_reenters_after_original_owner_projectio
         assert!(!stderr.contains("ordinary-exit-return:"), "{check}: {stderr}");
         assert!(!stderr.contains("ordinary-free-return:"), "{check}: {stderr}");
         assert!(!stderr.contains("unexpected-error-handler"), "{check}: {stderr}");
+        assert!(!stderr.contains("unexpected-deferred-callback"), "{check}: {stderr}");
     }
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[test]
+fn source_normal_collection_validates_full_pages_before_deferred_callback() {
+    use core::{ffi::c_void, ptr::NonNull};
+    use crate::types::{Page, PageValiditySnapshot};
+    struct Context {
+        page: Option<NonNull<Page>>, full_seen: bool, callback_seen: bool,
+        callback_after_prefix: bool, nested_freed: bool,
+    }
+    unsafe fn observe(state: &PageValiditySnapshot, argument: *mut c_void) -> Option<usize> {
+        let context = argument.cast::<Context>();
+        if unsafe { Some(state.page) == (*context).page && state.in_full && !(*context).callback_seen } {
+            unsafe { (*context).full_seen = true; }
+        }
+        None
+    }
+    unsafe fn header(state: &mut crate::page_validity::CollectionSourceHeaderSnapshot, argument: *mut c_void) {
+        let context = argument.cast::<Context>();
+        if unsafe { (*context).page.is_none() && !(*context).callback_seen && state.page_count == 0 } {
+            unsafe { (*context).full_seen = true; }
+        }
+    }
+    unsafe extern "C" fn deferred(force: bool, _: u64, argument: *mut c_void) {
+        let context = argument.cast::<Context>();
+        if force || unsafe { (*context).callback_seen } { return; }
+        unsafe {
+            (*context).callback_seen = true;
+            (*context).callback_after_prefix = (*context).full_seen;
+        }
+        let nested = allocate(32);
+        let freed = unsafe { free(nested.as_ptr()) } == FreeOutcome::Freed;
+        unsafe { (*context).nested_freed = freed; }
+    }
+    crate::test_process::run_in_fresh_process(
+        "source_api::source_page_assertion_tests::source_normal_collection_validates_full_pages_before_deferred_callback", || {
+            start_source_runtime();
+            let mut empty = Context { page: None, full_seen: false, callback_seen: false,
+                callback_after_prefix: false, nested_freed: false };
+            let argument = core::ptr::addr_of_mut!(empty).cast();
+            // The initialized empty Theap follows the same prefix without
+            // materializing an engine. Its callback may then allocate normally.
+            unsafe {
+                runtime::register_native_deferred_free_callback(Some(deferred), argument);
+                crate::page_validity::with_collection_header_observer_for_test(header, argument, || super::collect(false));
+                runtime::register_native_deferred_free_callback(None, core::ptr::null_mut());
+            }
+            assert!(empty.callback_seen && empty.callback_after_prefix && empty.nested_freed,
+                "the original empty Theap is validated before its reentrant callback");
+            for request in [32, 12_288 - crate::config::PADDING_SIZE] {
+                let first = allocate(request);
+                let (reserved, _) = source_page_counts(first);
+                let mut clients = std::vec![first];
+                while clients.len() < reserved { clients.push(allocate(request)); }
+                let successor = allocate(request);
+                let selected = crate::compiler_tls::default_theap();
+                // SAFETY: every exact client remains live. This short query
+                // exports only the actual Page identity and copied full flag.
+                let page = unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+                    let page = owner.page_map().unwrap().lookup_registered_page(first.as_ptr()).unwrap().unwrap();
+                    assert!(Page::validity_snapshot_at(page).in_full);
+                    page
+                }) }.unwrap();
+                let mut context = Context { page: Some(page), full_seen: false, callback_seen: false,
+                    callback_after_prefix: false, nested_freed: false };
+                let argument = core::ptr::addr_of_mut!(context).cast();
+                // SAFETY: actual clients, original issuer and this callback
+                // argument remain retained throughout synchronous collection.
+                // The observer modifies no live allocator fields.
+                unsafe {
+                    runtime::register_native_deferred_free_callback(Some(deferred), argument);
+                    crate::page_validity::with_live_page_validity_observer_for_test(observe, argument,
+                        || super::theap_collect(selected.as_ptr().cast(), false));
+                    runtime::register_native_deferred_free_callback(None, core::ptr::null_mut());
+                }
+                assert!(context.callback_seen && context.callback_after_prefix && context.nested_freed,
+                    "normal collection validates its full Page before invoking a callback with legal allocator reentry");
+                for client in clients { assert_eq!(unsafe { free(client.as_ptr()) }, FreeOutcome::Freed); }
+                assert_eq!(unsafe { free(successor.as_ptr()) }, FreeOutcome::Freed);
+                super::collect(true);
+            }
+        },
+    );
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]

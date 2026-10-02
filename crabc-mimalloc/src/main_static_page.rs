@@ -2530,6 +2530,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // `mi_theap_collect_ex` still calls `_mi_deferred_free` and
                 // merges the Theap statistics when there are no pages.
                 use crate::bootstrap::TheapPageSession;
+                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                if let Some(task) = self.engine_less_collection_prefix_failure() {
+                    return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
+                }
                 let session = self.engine_less_session()?;
                 return Some(MainStaticDeferredFreeAllocationPhase::Collect {
                     source: session.deferred_free_source()?,
@@ -2639,6 +2643,12 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 crate::types::GenericAllocationAdministration::Full => GenericAllocationCollection::Full,
                 crate::types::GenericAllocationAdministration::None => return None,
             };
+            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            if collection != GenericAllocationCollection::Mini {
+                if let Some(task) = self.engine_less_collection_prefix_failure() {
+                    return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
+                }
+            }
             return Some(MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation });
         }
         self.allocate_with(WORD_SIZE, |engine| {
@@ -2740,6 +2750,35 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Validates the original empty Theap without materializing a page
+    /// engine or another arena. Its actual session and selected global map
+    /// remain held by this permanent owner across the returned scalar task.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn engine_less_collection_prefix_failure(&mut self)
+        -> Option<crate::single_thread::PendingLivePageValidity> {
+        use crate::bootstrap::TheapPageSession;
+        let (theap, map) = match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, reservation, .. } =>
+                (session.local_field_theap_pointer(), reservation.page_map()),
+            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, page_map, .. } =>
+                (session.local_field_theap_pointer(), *page_map),
+            _ => return None,
+        };
+        // SAFETY: this owner retains the actual initialized source graph and
+        // accesses only its own local queues. No engine or callback overlaps.
+        let map = match unsafe { map.page_map_for_owned_ranges() } {
+            Ok(map) => map,
+            Err(error) => { let _retained = (theap, error); crabc_core::process::exit_immediately(134); }
+        };
+        match unsafe { crate::page_validity::source_theap_collection_is_valid(theap, map) } {
+            Ok(()) => None,
+            Err(failure) => match unsafe { crate::single_thread::PendingLivePageValidity::from_collection_failure(theap, failure) } {
+                Ok(task) => Some(task),
+                Err(failure) => { let _retained = (theap, failure); crabc_core::process::exit_immediately(134); }
+            },
+        }
+    }
+
     /// `_mi_malloc_generic` for a request `mi_find_page` refuses for its
     /// size, on an owner without a page engine.
     ///
@@ -2772,8 +2811,15 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             crate::types::GenericAllocationAdministration::Mini => GenericAllocationCollection::Mini,
             crate::types::GenericAllocationAdministration::Full => GenericAllocationCollection::Full,
         };
+        let source = session.deferred_free_source()?;
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if collection != GenericAllocationCollection::Mini {
+            if let Some(task) = self.engine_less_collection_prefix_failure() {
+                return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
+            }
+        }
         Some(MainStaticDeferredFreeAllocationPhase::Collect {
-            source: session.deferred_free_source()?,
+            source,
             collection,
             continuation: DeferredFreeAllocationContinuation::refused_for_size(request),
         })
@@ -2807,6 +2853,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         Some(match collection {
             GenericAllocationCollection::Force => MainStaticDeferredFreeAllocationPhase::Complete(None),
             GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
+                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                if let Some(task) = self.engine_less_collection_prefix_failure() {
+                    return Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task));
+                }
                 MainStaticDeferredFreeAllocationPhase::Collect {
                     source: current,
                     collection: GenericAllocationCollection::Force,

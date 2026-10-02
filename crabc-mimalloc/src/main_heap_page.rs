@@ -2823,8 +2823,26 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         if self.mapped_abandoned_claim.is_terminal() {
             return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
         }
-        self.lifecycle
-            .begin_thread_exit_deferred_free_phase(attachment)
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        {
+            self.lifecycle.prepare_thread_exit_collection_prefix(attachment)?;
+            let session = attachment.owner_local_collection_prefix_session()
+                .map_err(|_| MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal)?;
+            let valid = {
+                let (engine, selector) = (&mut self.engine, &mut self.mapped_abandoned_claim);
+                let engine = engine.as_mut().ok_or(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal)?;
+                engine.with_owner_local_main_heap_session(session, selector,
+                    |engine| engine.retain_collection_prefix_failure())
+                    .map_err(|_| MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal)?
+            };
+            if !valid {
+                self.lifecycle.retain_terminal_after_thread_exit_failure();
+                return Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal);
+            }
+            self.lifecycle.select_thread_exit_deferred_free_phase(attachment)
+        }
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+        self.lifecycle.begin_thread_exit_deferred_free_phase(attachment)
     }
 
     /// Runs the post-callback source collector.  Phase C must already have

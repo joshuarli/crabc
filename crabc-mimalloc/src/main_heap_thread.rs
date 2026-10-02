@@ -699,6 +699,26 @@ impl<'main> MainHeapThreadAttachment<'main> {
         MainHeapThreadPageSession::begin_owner_local(self)
     }
 
+    /// Borrows only the original local fields after fast-root removal and
+    /// before deferred callback selection. This does not admit ordinary
+    /// allocation or reopen a terminal/draining lifecycle.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) fn owner_local_collection_prefix_session(
+        &mut self,
+    ) -> Result<MainHeapThreadPageSession<'_, 'main>, MainHeapThreadPageSessionError> {
+        if owner_local_page_engine_state() != MainHeapThreadOwnerLocalPageEngineState::Idle {
+            return Err(MainHeapThreadPageSessionError::Attachment(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal));
+        }
+        self.ensure_draining_current().map_err(MainHeapThreadPageSessionError::Attachment)?;
+        self.prevalidate_page_drain_common(false, false).map_err(MainHeapThreadPageSessionError::Attachment)?;
+        if self.has_active_deferred_free_callback() || fast_slot_peek().is_some() {
+            return Err(MainHeapThreadPageSessionError::Attachment(MainHeapThreadAttachmentError::PageDrainState));
+        }
+        let theap = self.local_theap_pointer().map_err(MainHeapThreadPageSessionError::Attachment)?;
+        set_owner_local_page_engine_state(MainHeapThreadOwnerLocalPageEngineState::Borrowed);
+        Ok(MainHeapThreadPageSession { attachment: self, theap })
+    }
+
     /// Checks the attachment half of the selected post-process-done retain
     /// boundary. It performs no source teardown: the pinned Unix automatic
     /// thread-done key has already been deleted, so a nonfinal worker may
@@ -2247,6 +2267,15 @@ impl MainHeapThreadOwnerLocalPageEngineLease {
         &mut self,
         attachment: &mut MainHeapThreadAttachment<'_>,
     ) -> Result<MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError> {
+        self.prepare_thread_exit_collection_prefix(attachment)?;
+        self.select_thread_exit_deferred_free_phase(attachment)
+    }
+
+    /// Ends source fast-slot removal before the complete Theap validity
+    /// predicate. Callback selection and its heartbeat follow that predicate.
+    pub(crate) fn prepare_thread_exit_collection_prefix(
+        &mut self, attachment: &mut MainHeapThreadAttachment<'_>,
+    ) -> Result<(), MainHeapThreadAttachmentError> {
         self.precheck_access()?;
         attachment.prevalidate_attached_page_drain_without_owner_local(false)?;
         if attachment.terminal_os_release.is_some() {
@@ -2261,6 +2290,12 @@ impl MainHeapThreadOwnerLocalPageEngineLease {
             .subprocess()
             .record_statistics_thread_detached();
         attachment.state = MainHeapThreadAttachmentState::DrainingPages;
+        Ok(())
+    }
+
+    pub(crate) fn select_thread_exit_deferred_free_phase(
+        &mut self, attachment: &mut MainHeapThreadAttachment<'_>,
+    ) -> Result<MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError> {
         match attachment.begin_thread_exit_deferred_free_callback(true) {
             Ok(call) => Ok(call),
             Err(error) => {

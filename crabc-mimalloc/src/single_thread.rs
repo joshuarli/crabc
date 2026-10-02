@@ -728,14 +728,15 @@ impl PendingFreshOsPageInitialization {
     }
 }
 
-/// A live source Page assertion retained after queue selection has ended.
-/// The exact Page and its backing remain published in the PageMap, but no
-/// queue or direct cache can select it during diagnostic callback reentry.
+/// A source assertion retained after queue selection has ended. A Page leaf
+/// retains that exact published Page without allowing direct-cache selection.
+/// A collection-header or queue leaf retains the complete original graph and
+/// closes its engine; there may be no Page in an empty source queue.
 /// This task never reconstructs an arena claim or OS mapping release right.
 #[must_use = "a retained live Page assertion must reach its original output owner"]
 #[derive(Debug)]
 pub(crate) struct PendingLivePageValidity {
-    page: NonNull<Page>,
+    page: Option<NonNull<Page>>,
     theap: NonNull<Theap>,
     heap: NonNull<Heap>,
     subprocess: NonNull<crate::subproc::SubprocessIdentity>,
@@ -745,8 +746,27 @@ pub(crate) struct PendingLivePageValidity {
 }
 
 impl PendingLivePageValidity {
+    /// Binds a collection assertion to the continuously retained actual
+    /// issuer. A scalar observation supplies no substitute source lifetime.
+    ///
+    /// # Safety
+    /// The original initialized Theap, Heap, TLD and source graph remain
+    /// retained independently for the complete operation. The caller owns
+    /// local queue/Page fields and stops source mutation after this failure;
+    /// every projection ends before the original output owner dispatches it.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn from_collection_failure(
+        theap: NonNull<Theap>, failure: crate::page_validity::CollectionSourceFailure,
+    ) -> Result<Self, crate::page_validity::CollectionSourceFailure> {
+        let assertion = match failure.invariant.into_live_page_validity_assertion() {
+            Ok(assertion) => assertion, Err(_) => return Err(failure),
+        };
+        let Some(issuer) = (unsafe { Theap::owner_snapshot_at(theap) }) else { return Err(failure); };
+        Ok(Self { page: failure.page, theap, heap: issuer.heap, subprocess: issuer.subprocess,
+            assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked })
+    }
     #[cfg(test)]
-    pub(crate) fn page(&self) -> NonNull<Page> { self.page }
+    pub(crate) fn page(&self) -> NonNull<Page> { self.page.expect("this assertion selected an actual Page") }
 
     pub(crate) fn matches_theap(&self, theap: NonNull<Theap>) -> bool { self.theap == theap }
     pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
@@ -38343,6 +38363,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
             return false;
         }
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if !self.retain_collection_prefix_failure() { return false; }
         // SAFETY: forwarded ownership of the live Theap.
         let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
             Some(heap) => heap,
@@ -38932,10 +38954,23 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if self.is_collection_poisoned() {
             return DeferredFreeAllocationPhase::Complete(None);
         }
-        DeferredFreeAllocationPhase::Collect {
-            collection: if force { GenericAllocationCollection::Force } else { GenericAllocationCollection::Full },
-            continuation: DeferredFreeAllocationContinuation::Collection,
+        self.begin_checked_collection_phase(
+            if force { GenericAllocationCollection::Force } else { GenericAllocationCollection::Full },
+            DeferredFreeAllocationContinuation::Collection,
+        ).unwrap_or(DeferredFreeAllocationPhase::Complete(None))
+    }
+
+    fn begin_checked_collection_phase(&mut self, collection: GenericAllocationCollection,
+        continuation: DeferredFreeAllocationContinuation) -> GuardedCanonicalAllocationPhase {
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        if collection != GenericAllocationCollection::Mini {
+            match self.observe_collection_prefix() {
+                Ok(()) => {},
+                Err(GenericPathError::LiveValidity(task)) => return Ok(DeferredFreeAllocationPhase::LiveValidity(task)),
+                Err(_) => { self.page_commit_poison = true; return Err(GuardedCanonicalAllocationRefusal); },
+            }
         }
+        Ok(DeferredFreeAllocationPhase::Collect { collection, continuation })
     }
 
     /// Resumes one source collection after its selected deferred-free callback
@@ -39249,7 +39284,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Some(GenericAllocationAdministration::Full) => GenericAllocationCollection::Full,
             None | Some(GenericAllocationAdministration::None) => return Err(GuardedCanonicalAllocationRefusal),
         };
-        Ok(DeferredFreeAllocationPhase::Collect { collection, continuation })
+        self.begin_checked_collection_phase(collection, continuation)
     }
 
     fn try_deferred_free_allocation_once(
@@ -39270,10 +39305,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             #[cfg(target_arch = "x86_64")]
             Err(GenericPathError::LiveValidity(pending)) => Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
             Err(_) => Err(GuardedCanonicalAllocationRefusal),
-            Ok(None) => Ok(DeferredFreeAllocationPhase::Collect {
-                collection: GenericAllocationCollection::Force,
-                continuation,
-            }),
+            Ok(None) => self.begin_checked_collection_phase(GenericAllocationCollection::Force, continuation),
         }
     }
 
@@ -40385,6 +40417,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             crate::page_validity::source_page_is_valid(&snapshot, self.page_map, &owner, queued)
         };
         let Err(invariant) = failure else { return Ok(()); };
+        self.retain_live_page_observation_failure(page, invariant)
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn retain_live_page_observation_failure(
+        &mut self, page: NonNull<Page>, invariant: crate::page_validity::SourcePageInvariant,
+    ) -> Result<(), GenericPathError> {
         let assertion = invariant.into_live_page_validity_assertion()
             .map_err(|_| GenericPathError::Lifecycle)?;
         let theap = NonNull::new(self.theap_identity()).ok_or(GenericPathError::Lifecycle)?;
@@ -40392,7 +40431,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // this short copy grants no replacement admission or lifetime.
         let issuer = unsafe { Theap::owner_snapshot_at(theap) }.ok_or(GenericPathError::Lifecycle)?;
         let task = PendingLivePageValidity {
-            page, theap, heap: issuer.heap, subprocess: issuer.subprocess,
+            page: Some(page), theap, heap: issuer.heap, subprocess: issuer.subprocess,
             assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked,
         };
         // A scalar failure cannot authorize deriving a queue from block
@@ -40428,6 +40467,46 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
         }
         Err(GenericPathError::LiveValidity(task))
+    }
+
+    /// Checks the complete source Theap before selecting deferred-free.
+    /// Header/queue failures close this original engine without attempting
+    /// queue repair. Page failures retain the same exact unselectable Page
+    /// used by other source leaf assertions.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn observe_collection_prefix(&mut self) -> Result<(), GenericPathError> {
+        let theap = self.allocation_theap();
+        // SAFETY: the original session retains the actual source owner and
+        // owns ordinary local fields; no callback or collector overlaps.
+        let failure = unsafe { crate::page_validity::source_theap_collection_is_valid(theap, self.page_map) };
+        let Err(failure) = failure else { return Ok(()); };
+        if let Some(page) = failure.page {
+            if !matches!(failure.invariant, crate::page_validity::SourcePageInvariant::CollectionQueue(_)) {
+                return self.retain_live_page_observation_failure(page, failure.invariant);
+            }
+        }
+        self.page_commit_poison = true;
+        let assertion = failure.invariant.into_live_page_validity_assertion()
+            .map_err(|_| GenericPathError::Lifecycle)?;
+        let issuer = unsafe { Theap::owner_snapshot_at(theap) }.ok_or(GenericPathError::Lifecycle)?;
+        Err(GenericPathError::LiveValidity(PendingLivePageValidity {
+            page: failure.page, theap, heap: issuer.heap, subprocess: issuer.subprocess,
+            assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked,
+        }))
+    }
+
+    /// Retains a prefix failure on the existing original engine when its
+    /// lifecycle caller must complete fast-slot removal before exporting it.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) fn retain_collection_prefix_failure(&mut self) -> bool {
+        match self.observe_collection_prefix() {
+            Ok(()) => true,
+            Err(GenericPathError::LiveValidity(task)) => {
+                if let Err(task) = self.retain_live_page_validity(task) { core::mem::forget(task); }
+                false
+            }
+            Err(_) => { self.page_commit_poison = true; false },
+        }
     }
 
     /// Preserves a source transition's exact assertion before its bool
@@ -45180,7 +45259,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
             }
         }
         *self.pending_live_page_validity = Some(PendingLivePageValidity {
-            page, theap: self.theap, heap: issuer.heap, subprocess: issuer.subprocess,
+            page: Some(page), theap: self.theap, heap: issuer.heap, subprocess: issuer.subprocess,
             assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked,
         });
         Err(ProductionOwnerExitError::Collection)

@@ -12561,52 +12561,51 @@ fn merge_current_thread_theap_statistics() {
 #[doc(hidden)]
 pub fn native_collect(force: bool) {
     #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
-        return;
-    };
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else { return; };
     if current_thread_has_active_native_initial_persistent_owner()
         || (!current_thread_has_native_persistent_owner()
             && RUNTIME_PROCESS.is_on_initial_allocation_thread())
     {
-        let phase = match with_current_thread_native_initial_persistent_allocator(false, |owner| {
-            (owner.begin_deferred_free_collection(force), owner.is_retained())
-        }) {
-            Err(NativeInitialPersistentThreadOwnerAccessError::NotInstalled) => return,
-            projection => native_initial_deferred_free_phase_result(projection),
+        let begin = || {
+            let projection = with_current_thread_native_initial_persistent_allocator(false, |owner| {
+                (owner.begin_deferred_free_collection(force), owner.is_retained())
+            });
+            native_initial_deferred_free_phase_result(projection)
         };
         #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
-        let result = phase.and_then(|phase| with_native_initial_fresh_allocation_owner(|owner|
+        let result = with_native_initial_fresh_allocation_owner(|owner| {
+            let phase = begin()?;
             run_current_thread_native_initial_deferred_free_phase_with_owner(
-                phase, NativeGenericAllocationPath::Ordinary, Some(owner))));
+                phase, NativeGenericAllocationPath::Ordinary, Some(owner))
+        });
         #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
-        let result = phase.and_then(run_current_thread_native_initial_deferred_free_phase);
+        let result = begin().and_then(run_current_thread_native_initial_deferred_free_phase);
         if matches!(result, Err(NativeInitialPersistentThreadOwnerAccessError::Retained)) {
             RUNTIME_PROCESS.retain_page_owner();
         }
         return;
     }
-    let phase = match with_current_thread_native_persistent_owner(|owner| {
-        owner.begin_deferred_free_collection(force)
-    }) {
-        Ok(Ok(phase)) => phase,
-        Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
-        | Err(NativePersistentThreadOwnerAccessError::NotInstalled) => return,
-        Ok(Err(
-            NativePersistentThreadOwnerLocalAccessError::Access(_)
-            | NativePersistentThreadOwnerLocalAccessError::Terminal,
-        )) => {
-            retain_current_thread_native_persistent_owner_for_teardown();
-            return;
+    let begin = || {
+        match with_current_thread_native_persistent_owner(|owner| owner.begin_deferred_free_collection(force)) {
+            Ok(Ok(phase)) => Ok(Some(phase)),
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly))
+            | Err(NativePersistentThreadOwnerAccessError::NotInstalled) => Ok(None),
+            Ok(Err(NativePersistentThreadOwnerLocalAccessError::Access(_)
+                | NativePersistentThreadOwnerLocalAccessError::Terminal)) => {
+                retain_current_thread_native_persistent_owner_for_teardown();
+                Err(NativePersistentThreadOwnerAccessError::Retained)
+            }
+            Err(error) => Err(error),
         }
-        Err(NativePersistentThreadOwnerAccessError::Unavailable
-            | NativePersistentThreadOwnerAccessError::Retained) => return,
     };
     #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
-    let _ = with_native_worker_fresh_allocation_owner(|owner|
+    let _ = with_native_worker_fresh_allocation_owner(|owner| {
+        let Some(phase) = begin()? else { return Ok(None); };
         run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary,
-            Some(NativeFreshAllocationOwner::Ready(owner))));
+            Some(NativeFreshAllocationOwner::Ready(owner)))
+    });
     #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
-    let _ = run_current_thread_native_deferred_free_phase(phase);
+    if let Ok(Some(phase)) = begin() { let _ = run_current_thread_native_deferred_free_phase(phase); }
 }
 
 /// The source allocation entry one native request selects.
@@ -20760,11 +20759,39 @@ fn begin_current_thread_native_owner_exit_deferred_free_phase(
     // the fast root, so failure to obtain it remains fail-closed without
     // asking a post-clear callback to manufacture a new default Theap.
     let pair = current_native_process_page_backing();
-    match with_current_thread_native_persistent_owner(|owner| {
-        owner.begin_owner_exit_deferred_free_phase(pair)
-    }) {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    {
+        // The factory retains the actual original issuer before fast-slot
+        // removal or Page observation, including the lazy empty owner.
+        return with_native_worker_fresh_allocation_owner(|original| {
+            let mut task = None;
+            let result = with_current_thread_native_persistent_owner(|owner| {
+                let result = owner.begin_owner_exit_deferred_free_phase(pair);
+                if let NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) = &mut owner.state {
+                    task = engine.take_retained_live_page_validity();
+                }
+                result
+            });
+            if let Some(task) = task {
+                let task = match unsafe { task.dispatch(original) } {
+                    Ok(never) => match never {}, Err(task) => task,
+                };
+                let _retained = (task, original);
+                fail_stop_with_current_thread_native_owner();
+            }
+            match result {
+                Ok(Ok(phase)) => Ok(phase),
+                _ => {
+                    retain_current_thread_native_persistent_owner_for_teardown();
+                    Err(NativePersistentThreadOwnerAccessError::Retained)
+                }
+            }
+        });
+    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))]
+    match with_current_thread_native_persistent_owner(|owner| owner.begin_owner_exit_deferred_free_phase(pair)) {
         Ok(Ok(phase)) => Ok(phase),
-        Ok(Err(())) | Err(_) => {
+        _ => {
             retain_current_thread_native_persistent_owner_for_teardown();
             Err(NativePersistentThreadOwnerAccessError::Retained)
         }
