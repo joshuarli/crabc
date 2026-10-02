@@ -6149,6 +6149,3 @@ pub unsafe extern "C" fn memmove(destination: *mut c_void, source: *const c_void
 pub unsafe extern "C" fn bcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { memcmp(left, right, length) }
 #[no_mangle]
 pub unsafe extern "C" fn memcmp(left: *const c_void, right: *const c_void, length: usize) -> i32 { let left = left as *const u8; let right = right as *const u8; for index in 0..length { let delta = *left.add(index) as i32 - *right.add(index) as i32; if delta != 0 { return delta; } } 0 }
-#[cfg(not(test))]
-#[no_mangle]
-pub extern "C" fn rust_eh_personality() {}

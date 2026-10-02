@@ -99,10 +99,11 @@ import crabc_cc_owned_dynamic as installed_driver
 import owned_static_sysroot_package as shared_package
 import owned_dynamic_elf as elf_inspection
 import owned_dynamic_qualification as qualification
+import native_static_source_runtime_closure as source_runtime
 
 
 def audit_shared_elf(path: Path) -> dict[str, str]:
-    """The actual installed ELF must be self-contained and position independent."""
+    """Require a self-contained, position-independent abort-only runtime ELF."""
     dynamic = common.run(["/usr/bin/readelf", "-dW", str(path)]).decode()
     relocations = common.run(["/usr/bin/readelf", "-rW", str(path)]).decode()
     segments = common.run(["/usr/bin/readelf", "-lW", str(path)]).decode()
@@ -112,6 +113,18 @@ def audit_shared_elf(path: Path) -> dict[str, str]:
         raise common.BuildError(f"owned shared ELF retains an absolute 32-bit relocation: {path}")
     if "GNU_RELRO" not in segments or not re.search(r"GNU_STACK.* RW +", segments):
         raise common.BuildError(f"owned shared ELF lacks RELRO or non-executable stack: {path}")
+    # Libc and the interpreter never own language exception machinery. Inspect
+    # local definitions as well as dynamic exports and unresolved imports, so
+    # symbol visibility cannot conceal a personality stub or runtime fallback.
+    symbols = common.run(["/usr/bin/readelf", "-sW", str(path)]).decode()
+    forbidden = []
+    for line in symbols.splitlines():
+        fields = line.split()
+        if (len(fields) >= 8 and fields[3] not in {"FILE", "SECTION"}
+                and source_runtime.FORBIDDEN_FINAL_SYMBOL.search(fields[7])):
+            forbidden.append(fields[7])
+    if forbidden:
+        raise common.BuildError(f"owned abort runtime contains language exception symbols: {sorted(set(forbidden))}: {path}")
     # Unwinders reach an object's frames only through PT_GNU_EH_FRAME; this is
     # the same rule the installed driver applies to every application link.
     try:

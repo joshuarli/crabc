@@ -19,6 +19,32 @@ sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import owned_loader_inventory as inventory
 
 
+class OwnedSharedElfLanguageBoundaryTests(unittest.TestCase):
+    def audit(self, symbols: bytes) -> None:
+        def run(command):
+            if "-sW" in command:
+                return symbols
+            if "-lW" in command:
+                return b"GNU_RELRO\nGNU_STACK 0x0 RW 0x10\n"
+            return b""
+
+        with mock.patch.object(producer.common, "run", side_effect=run), \
+             mock.patch.object(producer.elf_inspection, "unwind_table_facts"), \
+             mock.patch.object(producer.elf_inspection, "require_unwind_table_header"):
+            producer.audit_shared_elf(Path("owned-abort-runtime.so"))
+
+    def test_abort_runtime_rejects_language_exception_definitions_and_imports(self) -> None:
+        for name in ("rust_eh_personality", "_Unwind_RaiseException", "panic_unwind"):
+            for binding, section in (("GLOBAL", "6"), ("LOCAL", "6"), ("WEAK", "UND")):
+                with self.subTest(name=name, binding=binding, section=section):
+                    with self.assertRaisesRegex(producer.common.BuildError, "language exception"):
+                        self.audit(f"1: 00000000 2 FUNC {binding} DEFAULT {section} {name}\n".encode())
+
+    def test_abort_runtime_accepts_owned_entry_and_memory_symbols(self) -> None:
+        self.audit(b"1: 00000000 20 FUNC GLOBAL DEFAULT 6 _start\n"
+                   b"2: 00000020 20 FUNC GLOBAL DEFAULT 6 memcpy\n")
+
+
 class OwnedLoaderProvenanceTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work" / "x86_64" / "tmp"
