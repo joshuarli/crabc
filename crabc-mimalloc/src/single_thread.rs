@@ -44368,7 +44368,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// index from `mi_bin(index * MI_INTPTR_SIZE)`, so aggregate owner-exit
     /// preflight must accept a populated direct-small cache only when it is
     /// exactly that derived image; an all-empty requirement would reject a
-    /// valid small regular page before source traversal begins.
+    /// valid small regular page before source traversal begins. The updater
+    /// leaves entries whose rounded queue size exceeds `SMALL_SIZE_MAX`
+    /// empty, including the extra padding slot in padded profiles.
     fn direct_cache_matches_source_queue_heads(&self) -> bool {
         for index in 0..PAGES_DIRECT {
             let Some(size) = index.checked_mul(WORD_SIZE) else {
@@ -44380,11 +44382,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let Some(queue) = self.session.queue(bin) else {
                 return false;
             };
-            if queue.block_size() > SMALL_SIZE_MAX {
-                return false;
-            }
             let first = queue.first();
-            let expected = if first.is_null() {
+            let expected = if queue.block_size() > SMALL_SIZE_MAX || first.is_null() {
                 EMPTY_PAGE.as_ptr()
             } else {
                 first
@@ -48281,6 +48280,35 @@ mod tests {
             std::println!("trace.medium_full.release.slices_free={}", u8::from(slices_free));
             std::println!("trace.medium_full.valid={}", u8::from(valid));
             std::println!("CRABC_MI_MEDIUM_FULL_TRACE_END");
+        });
+    }
+
+    #[test]
+    fn source_direct_cache_preflight_accepts_live_queues_and_rejects_padding_members() {
+        with_allocator(|allocator| {
+            let small = allocator.allocate(37, false).unwrap();
+            let medium = allocator.allocate(SMALL_SIZE_MAX + WORD_SIZE, false).unwrap();
+            assert!(allocator.direct_cache_matches_source_queue_heads());
+
+            if crate::config::PADDING_WSIZE != 0 {
+                let padding_index = PAGES_DIRECT - 1;
+                assert_eq!(allocator.session.direct_page(padding_index), Some(EMPTY_PAGE.as_ptr()));
+                // SAFETY: the current medium client keeps its published page
+                // live while this isolated owner temporarily corrupts one
+                // direct-cache slot, then restores it before either free.
+                let medium_page = unsafe { allocator.page_for_block(medium) };
+                assert!(allocator.session.set_direct_page(padding_index, medium_page));
+                assert!(!allocator.direct_cache_matches_source_queue_heads());
+                assert!(allocator.session.set_direct_page(padding_index, EMPTY_PAGE.as_ptr()));
+                assert!(allocator.direct_cache_matches_source_queue_heads());
+            }
+
+            // SAFETY: both exact clients remain owned by this allocator and
+            // the direct-cache image was restored before their ordinary frees.
+            unsafe {
+                allocator.free(small).unwrap();
+                allocator.free(medium).unwrap();
+            }
         });
     }
 
