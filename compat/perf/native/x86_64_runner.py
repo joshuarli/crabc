@@ -68,7 +68,7 @@ NUMERIC_RESOURCE_KEYS = RESOURCE_KEYS - {"status", "memory_status"}
 # The dispatcher passes the identity of the source-built core image, whose
 # filesystem layers include the pinned compiler, target std, and oracle tools.
 # Keep this identity equal to the execution profile's image identity.
-PINNED_IMAGE = "crabc-core-evidence@sha256:279f273841b44bfe0301943c172a6b28dbb61c0bae23694ad5c4229b28d30d20"
+PINNED_IMAGE = "crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a"
 PINNED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_EXECUTION = {
     "architecture": "x86_64",

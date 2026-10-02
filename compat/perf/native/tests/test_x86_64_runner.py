@@ -391,17 +391,19 @@ class AdmissionAndPathTests(unittest.TestCase):
     def test_current_core_image_is_accepted_and_previous_image_is_rejected(self) -> None:
         profile = native_x86.load_profile(ROOT)
         current_image = (
-            "crabc-core-evidence@sha256:279f273841b44bfe0301943c172a6b28dbb61c0bae23694ad5c4229b28d30d20"
+            "crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a"
         )
-        previous_image = (
-            "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
-        )
-        self.assertEqual(profile["execution"]["image"], current_image)
         with unittest.mock.patch.dict(os.environ, {"CRABC_PERF_X86_IMAGE_ID": current_image}):
             native_x86._execution_environment(profile)
-        with unittest.mock.patch.dict(os.environ, {"CRABC_PERF_X86_IMAGE_ID": previous_image}):
-            with self.assertRaisesRegex(native_x86.RunnerError, "pinned image identity"):
-                native_x86._execution_environment(profile)
+        self.assertEqual(profile["execution"]["image"], current_image)
+        for previous_image in (
+            "crabc-core-evidence@sha256:279f273841b44bfe0301943c172a6b28dbb61c0bae23694ad5c4229b28d30d20",
+            "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+        ):
+            with self.subTest(image=previous_image):
+                with unittest.mock.patch.dict(os.environ, {"CRABC_PERF_X86_IMAGE_ID": previous_image}):
+                    with self.assertRaisesRegex(native_x86.RunnerError, "pinned image identity"):
+                        native_x86._execution_environment(profile)
 
     def test_active_dependency_roster_rejects_a_subset_or_extra_package(self) -> None:
         with (ROOT / "compat/perf/native/x86_64_profile.toml").open("rb") as stream:

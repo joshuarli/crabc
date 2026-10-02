@@ -33,6 +33,9 @@ class NativeFacadeDispatcherTests(unittest.TestCase):
         scripts = self.checkout / "scripts"
         scripts.mkdir()
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", scripts / "dev-x86_64.sh")
+        core_image = self.checkout / "compat/x86_64/core_image.py"
+        core_image.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / "compat/x86_64/core_image.py", core_image)
         self.sources = {}
         for name in ("rustybench", "rustix"):
             path = self.work / "inputs" / name
