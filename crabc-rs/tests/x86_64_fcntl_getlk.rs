@@ -1,7 +1,8 @@
 #![cfg(target_arch = "x86_64")]
 
 use core::mem::{align_of, offset_of, size_of};
-use crabc_rs::{process, BorrowedFd, Errno};
+use core::num::NonZeroU64;
+use crabc_rs::{fs, process, BorrowedFd, Errno};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 
@@ -43,43 +44,29 @@ fn child_record_lock_case() -> bool {
         .write(true)
         .open(path)
         .expect("open child lock fixture");
-    let mut held = crabc_core::process::KernelFlock {
-        l_type: process::FlockType::WriteLock as i16,
-        l_whence: process::FlockOffsetType::Set as i16,
-        l_start: 128,
-        l_len: 37,
-        l_pid: 0,
-    };
-    // SAFETY: `held` is a complete writable Linux/x86-64 `struct flock`
-    // record for the direct F_SETLK operation. The child keeps `file` open
-    // while the parent performs its conflicting F_GETLK query.
-    unsafe {
-        crabc_core::io::fcntl_raw(
-            std::os::fd::AsRawFd::as_raw_fd(&file),
-            6,
-            core::ptr::addr_of_mut!(held).cast(),
-        )
-    }
-    .expect("acquire child record lock");
+    // SAFETY: The child retains its open file for all immediate operations.
+    let fd = unsafe { BorrowedFd::borrow_raw(std::os::fd::AsRawFd::as_raw_fd(&file)) };
+    fs::seek(fd, fs::SeekFrom::Start(128)).expect("position child lock");
+    fs::lock_from_current(fd, fs::CurrentLockOperation::LockExclusive,
+        fs::CurrentLockRange::Forward(NonZeroU64::new(37).unwrap()))
+        .expect("acquire child record lock");
+    assert_eq!(fs::tell(fd), Ok(128));
 
     std::io::stdout()
         .write_all(b"CRABC_FCNTL_READY\n")
         .and_then(|_| std::io::stdout().flush())
         .expect("announce child record lock");
     let mut release = [0; 1];
-    let _ = std::io::stdin().read(&mut release);
+    std::io::stdin().read_exact(&mut release).expect("receive unlock request");
 
-    held.l_type = process::FlockType::Unlocked as i16;
-    // SAFETY: `held` remains a complete writable record and the child still
-    // owns the descriptor until this unlock operation completes.
-    unsafe {
-        crabc_core::io::fcntl_raw(
-            std::os::fd::AsRawFd::as_raw_fd(&file),
-            6,
-            core::ptr::addr_of_mut!(held).cast(),
-        )
-    }
-    .expect("release child record lock");
+    fs::lock_from_current(fd, fs::CurrentLockOperation::Unlock,
+        fs::CurrentLockRange::Forward(NonZeroU64::new(37).unwrap()))
+        .expect("release child record lock");
+    std::io::stdout().write_all(b"CRABC_FCNTL_UNLOCKED\n")
+        .and_then(|_| std::io::stdout().flush()).expect("announce explicit unlock");
+    // Remain alive with the descriptor open until the parent has checked that
+    // explicit unlock, rather than process exit or close, removed the lock.
+    let _ = std::io::stdin().read(&mut release);
     true
 }
 
@@ -165,8 +152,51 @@ fn x86_64_fcntl_getlk_reports_a_conflicting_record_lock() {
             .expect("child PID is positive")),
     );
 
+    fs::seek(fd, fs::SeekFrom::Start(140)).expect("position inside held range");
+    assert_eq!(fs::lock_from_current(fd, fs::CurrentLockOperation::TestExclusive,
+        fs::CurrentLockRange::ToEnd), Err(Errno::ACCESS));
+    assert!(matches!(fs::lock_from_current(fd, fs::CurrentLockOperation::TryExclusive,
+        fs::CurrentLockRange::Forward(NonZeroU64::new(1).unwrap())),
+        Err(Errno::ACCESS) | Err(Errno::AGAIN)));
+    assert!(matches!(fs::fcntl_lock(fd, fs::FlockOperation::NonBlockingLockExclusive),
+        Err(Errno::ACCESS) | Err(Errno::AGAIN)));
+    fs::seek(fd, fs::SeekFrom::Start(0)).expect("position outside held range");
+    fs::lock_from_current(fd, fs::CurrentLockOperation::TryExclusive,
+        fs::CurrentLockRange::Forward(NonZeroU64::new(128).unwrap()))
+        .expect("disjoint lock does not conflict");
+    fs::lock_from_current(fd, fs::CurrentLockOperation::Unlock,
+        fs::CurrentLockRange::Forward(NonZeroU64::new(128).unwrap()))
+        .expect("release disjoint lock");
+
+    child.stdin.as_mut().expect("child lock stdin").write_all(b"x")
+        .expect("request explicit unlock");
+    let mut unlocked = [0; b"CRABC_FCNTL_UNLOCKED\n".len()];
+    child_stdout.read_exact(&mut unlocked).expect("wait for explicit unlock");
+    assert_eq!(&unlocked, b"CRABC_FCNTL_UNLOCKED\n");
+    assert_eq!(process::fcntl_getlk(fd, &query), Ok(None));
+    fs::fcntl_lock(fd, fs::FlockOperation::NonBlockingLockExclusive)
+        .expect("whole-file lock succeeds after child releases its range");
+    fs::fcntl_lock(fd, fs::FlockOperation::Unlock).expect("release whole-file lock");
     drop(child.stdin.take().expect("child lock stdin"));
     assert!(child.wait().expect("wait for record-lock owner").success());
+}
+
+#[test]
+fn x86_64_current_record_lock_checks_ranges_without_moving_the_offset() {
+    let (file, _cleanup) = fixture_file();
+    // SAFETY: The file remains open throughout all borrowed operations.
+    let fd = unsafe { BorrowedFd::borrow_raw(std::os::fd::AsRawFd::as_raw_fd(&file)) };
+    fs::seek(fd, fs::SeekFrom::Start(16)).expect("position backward range");
+    let backward = fs::CurrentLockRange::Backward(NonZeroU64::new(8).unwrap());
+    fs::lock_from_current(fd, fs::CurrentLockOperation::TryExclusive, backward)
+        .expect("acquire backward range");
+    fs::lock_from_current(fd, fs::CurrentLockOperation::Unlock, backward)
+        .expect("release backward range");
+    assert_eq!(fs::tell(fd), Ok(16));
+    assert_eq!(fs::lock_from_current(fd, fs::CurrentLockOperation::TryExclusive,
+        fs::CurrentLockRange::Forward(NonZeroU64::new(i64::MAX as u64 + 1).unwrap())),
+        Err(Errno::RANGE));
+    assert_eq!(fs::tell(fd), Ok(16));
 }
 
 #[test]

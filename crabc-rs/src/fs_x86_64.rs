@@ -183,13 +183,12 @@ bitflags! {
     }
 }
 
-/// Linux whole-file advisory-lock operations accepted by [`flock`].
+/// Linux whole-file advisory-lock operations accepted by [`flock`] and
+/// [`fcntl_lock`].
 ///
-/// These values apply to an open file description through the direct
-/// `flock(2)` syscall. They are deliberately distinct from the read-only
-/// [`crate::process::fcntl_getlk`] record-lock observation slice; this module
-/// does not expose `fcntl` record-lock mutation. The blocking variants may
-/// wait indefinitely for a conflicting advisory lock.
+/// `flock` associates the lock with an open file description; `fcntl_lock`
+/// associates it with the process. The blocking variants may wait indefinitely
+/// for a conflicting advisory lock.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum FlockOperation {
@@ -205,6 +204,34 @@ pub enum FlockOperation {
     NonBlockingLockExclusive = 2 | 4,
     /// Release a lock without waiting.
     NonBlockingUnlock = 8 | 4,
+}
+
+/// Operations on an exclusive record lock beginning at a descriptor's current
+/// file offset.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CurrentLockOperation {
+    /// Release the selected range without waiting.
+    Unlock,
+    /// Acquire an exclusive lock, waiting until it is available.
+    LockExclusive,
+    /// Acquire an exclusive lock without waiting.
+    TryExclusive,
+    /// Observe whether an exclusive lock would conflict.
+    TestExclusive,
+}
+
+/// A checked signed range relative to a descriptor's current file offset.
+///
+/// Nonzero lengths keep a finite range distinct from Linux's zero-length
+/// convention for locking through the dynamically changing end of file.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CurrentLockRange {
+    /// Lock from the current offset through the dynamically changing EOF.
+    ToEnd,
+    /// Lock `length` bytes beginning at the current offset.
+    Forward(NonZeroU64),
+    /// Lock `length` bytes ending at the current offset.
+    Backward(NonZeroU64),
 }
 
 /// The largest byte pathname represented in the fixed-stack [`PathArg`]
@@ -641,13 +668,100 @@ pub fn fcntl_setfl<Fd: AsFd>(fd: Fd, flags: OFlags) -> Result<()> {
 /// Acquires or releases a Linux whole-file `flock(2)` advisory lock.
 ///
 /// The descriptor is borrowed only for the direct syscall. Blocking operations
-/// may wait indefinitely. This remains separate from
-/// [`crate::process::fcntl_getlk`], which only observes `fcntl` record
-/// locks; record-lock mutation and generic `fcntl` stay outside the x86-64
-/// facade.
+/// may wait indefinitely. Unlike [`fcntl_lock`], this associates locks with
+/// an open file description rather than a process.
 #[inline]
 pub fn flock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
     crabc_core::fs::flock(fd.as_fd().as_raw_fd(), operation as u32)
+}
+
+const F_GETLK: i32 = 5;
+const F_SETLK: i32 = 6;
+const F_SETLKW: i32 = 7;
+const F_WRLCK: i16 = 1;
+const F_UNLCK: i16 = 2;
+
+/// Acquires or releases a whole-file, process-associated `fcntl` lock.
+///
+/// The range extends from byte zero through the dynamically changing EOF.
+/// These locks do not exclude threads of the same process. Closing any
+/// descriptor for the same file releases that process's record locks, even
+/// when it is not the descriptor passed here. Blocking requests propagate
+/// interruption errors without retrying.
+#[inline]
+pub fn fcntl_lock<Fd: AsFd>(fd: Fd, operation: FlockOperation) -> Result<()> {
+    let (command, lock_type) = match operation {
+        FlockOperation::LockShared => (F_SETLKW, 0),
+        FlockOperation::LockExclusive => (F_SETLKW, F_WRLCK),
+        FlockOperation::Unlock => (F_SETLKW, F_UNLCK),
+        FlockOperation::NonBlockingLockShared => (F_SETLK, 0),
+        FlockOperation::NonBlockingLockExclusive => (F_SETLK, F_WRLCK),
+        FlockOperation::NonBlockingUnlock => (F_SETLK, F_UNLCK),
+    };
+    let mut lock = crabc_core::process::KernelFlock {
+        l_type: lock_type,
+        l_whence: crabc_core::fs::SEEK_SET as i16,
+        l_start: 0,
+        l_len: 0,
+        l_pid: 0,
+    };
+    // SAFETY: The complete Linux/x86-64 flock record remains readable for
+    // the selected fixed-arity operation on the borrowed descriptor.
+    unsafe { crabc_core::io::fcntl_raw(fd.as_fd().as_raw_fd(), command,
+        core::ptr::addr_of_mut!(lock).cast()).map(|_| ()) }
+}
+
+/// Acquires, tests, or releases an exclusive process-associated record lock
+/// relative to a descriptor's observed current file offset.
+///
+/// The current offset is read through `lseek(SEEK_CUR)` and never changed.
+/// Callers sharing an open file description must synchronize concurrent seeks
+/// if the observation must match a particular position. Lengths exceeding
+/// `i64::MAX` return [`Errno::RANGE`]; Linux validates the resulting range.
+/// `TestExclusive` reports a conflicting lock as [`Errno::ACCESS`]. Lock
+/// ownership and close behavior are the same as [`fcntl_lock`].
+#[inline]
+#[doc(alias = "lockf")]
+pub fn lock_from_current<Fd: AsFd>(
+    fd: Fd,
+    operation: CurrentLockOperation,
+    range: CurrentLockRange,
+) -> Result<()> {
+    let fd = fd.as_fd();
+    let current = crabc_core::fs::lseek(fd.as_raw_fd(), 0, crabc_core::fs::SEEK_CUR)?;
+    if current < 0 { return Err(Errno::RANGE); }
+    let (start, length) = match range {
+        CurrentLockRange::ToEnd => (current, 0_i64),
+        CurrentLockRange::Forward(length) => {
+            let length = i64::try_from(length.get()).map_err(|_| Errno::RANGE)?;
+            (current, length)
+        }
+        CurrentLockRange::Backward(length) => {
+            let length = i64::try_from(length.get()).map_err(|_| Errno::RANGE)?;
+            (current.checked_sub(length).ok_or(Errno::RANGE)?, length)
+        }
+    };
+    let (command, lock_type) = match operation {
+        CurrentLockOperation::Unlock => (F_SETLK, F_UNLCK),
+        CurrentLockOperation::LockExclusive => (F_SETLKW, F_WRLCK),
+        CurrentLockOperation::TryExclusive => (F_SETLK, F_WRLCK),
+        CurrentLockOperation::TestExclusive => (F_GETLK, F_WRLCK),
+    };
+    let mut lock = crabc_core::process::KernelFlock {
+        l_type: lock_type,
+        l_whence: crabc_core::fs::SEEK_SET as i16,
+        l_start: start,
+        l_len: length,
+        l_pid: 0,
+    };
+    // SAFETY: The complete Linux/x86-64 flock record is readable and writable
+    // for the selected operation; F_GETLK writes only into this local record.
+    unsafe { crabc_core::io::fcntl_raw(fd.as_raw_fd(), command,
+        core::ptr::addr_of_mut!(lock).cast()).map(|_| ())?; }
+    if operation == CurrentLockOperation::TestExclusive && lock.l_type != F_UNLCK {
+        return Err(Errno::ACCESS);
+    }
+    Ok(())
 }
 
 /// The six POSIX filesystem access-pattern policies accepted by Linux

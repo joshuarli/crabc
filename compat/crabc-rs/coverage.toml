@@ -1323,13 +1323,13 @@ kind = "semantic"
 symbols = ["lockf", "posix_close", "splice", "vmsplice"]
 classification = "native-unsafe"
 status = "verified"
-rust_api = ["fd::OwnedFd::close", "fs::{CurrentLockOperation, CurrentLockRange, lock_from_current}", "pipe::{IoSliceRaw, SpliceFlags, splice, vmsplice}"]
+rust_api = ["fd::OwnedFd::close", "fs::{CurrentLockOperation, CurrentLockRange, lock_from_current, fcntl_lock}", "pipe::{IoSliceRaw, SpliceFlags, splice, vmsplice}"]
 shared_impl = ["crabc_core::io::{close, fcntl_raw}", "crabc_core::fs::lseek", "crabc_core::pipe::{splice_raw, vmsplice_raw}"]
 native_boundary = "an owned close boundary, typed current-offset advisory locks, borrowed descriptors plus optional staged offsets for splice, and an explicit unsafe raw-memory vmsplice boundary; no public C ABI or TLS errno"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/io.rs", "crabc-core/src/fs.rs", "crabc-core/src/pipe.rs", "crabc-rs/src/fd.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/descriptor.rs", "crabc-rs/examples/descriptor_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/pipe_splice.rs", "../rustix/src/pipe.rs"]
-rationale = "OwnedFd close consumes before Linux's non-retrying close, current-position record locking avoids C command/negative-length traps, splice retains Rustix's source shape, and vmsplice keeps direction, mutability, and GIFT lifetime obligations explicit. tee and generic fcntl remain independently owned contracts."
+evidence = ["crabc-core/src/io.rs", "crabc-core/src/fs.rs", "crabc-core/src/pipe.rs", "crabc-rs/src/fd.rs", "crabc-rs/src/fs.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/src/pipe.rs", "crabc-rs/tests/descriptor.rs", "crabc-rs/tests/x86_64_fcntl_getlk.rs", "crabc-rs/examples/descriptor_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py", "compat/rustix/source/pipe_splice.rs", "../rustix/src/pipe.rs"]
+rationale = "OwnedFd close consumes before Linux's non-retrying close, current-position record locking avoids C command/negative-length traps, splice retains Rustix's source shape, and vmsplice keeps direction, mutability, and GIFT lifetime obligations explicit. Staged Linux/x86-64 also admits the existing typed whole-file and current-offset process-associated record locks, with isolated subprocess conflict, range, and release/reacquisition evidence. tee and generic fcntl remain independently owned contracts."
 
 [[capability]]
 id = "io.status-flags"
