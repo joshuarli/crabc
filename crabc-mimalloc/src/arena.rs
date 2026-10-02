@@ -63,6 +63,87 @@ use crate::types::{
 #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use crate::types::MemoryKind;
 
+/// Decommits the exact secure tail after fresh-page metadata initialization.
+/// The arena's commit callback owns its own accounting; ordinary OS backing
+/// uses the supplied VM owner. Failure never releases or replaces the claim.
+///
+/// # Safety
+/// The caller retains `memory`'s live arena and complete aligned base page at
+/// `address`, with no byte references or allocator projections across callbacks.
+/// The page is committed and belongs exclusively to the retained fresh-page
+/// claim. `process`, when supplied, owns this mapping's VM accounting; absence
+/// is reserved for unaccounted external backing.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn secure_page_guard_set_at(
+    process: Option<os::VmProcess<'_>>, page_size: PageSize,
+    address: *mut u8, memory: MemoryId,
+) -> crabc_core::Result<bool> {
+    if crate::config::SECURE_LEVEL == 0 || address.is_null() { return Ok(true); }
+    let result = if memory.is_pinned() { Ok(false) } else {
+        // SAFETY: the caller keeps arena metadata live through the short
+        // projection and any ensuing callback, without retaining a reference.
+        let hook = unsafe { secure_page_commit_hook(memory) };
+        if let Some((function, argument)) = hook {
+            // SAFETY: the supplied callback owns this exact arena page;
+            // no metadata projection or byte alias crosses its invocation.
+            Ok(unsafe { function(false, address, page_size.bytes(), null_mut(), argument) })
+        } else {
+            // SAFETY: the caller's exact retained page and VM owner are forwarded.
+            unsafe { os::secure_guard_page_transition(process, page_size, address, false) }
+        }
+    };
+    if result != Ok(true) {
+        if let Some(process) = process {
+            process.policy().source_error(crate::diagnostic_output::SourceErrorReport::SecureGuardFailure {
+                level: crate::config::SECURE_LEVEL, address: address.addr(), size: page_size.bytes(),
+            });
+        }
+    }
+    result
+}
+
+/// Recommits the retained secure tail after page-map removal and before
+/// metadata retirement or slice release. Pinned backing requires no reset.
+///
+/// # Safety
+/// The caller retains the same live arena, exact aligned tail page, original
+/// release claim and VM owner used for guard installation. No byte references
+/// or allocator projections cross the transition or commit callback.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn secure_page_guard_reset_at(
+    process: Option<os::VmProcess<'_>>, page_size: PageSize,
+    address: *mut u8, memory: MemoryId,
+) -> crabc_core::Result<bool> {
+    if crate::config::SECURE_LEVEL == 0 || address.is_null() || memory.is_pinned() {
+        return Ok(true);
+    }
+    // SAFETY: only callback values are copied from the caller-retained arena.
+    if let Some((function, argument)) = unsafe { secure_page_commit_hook(memory) } {
+        // SAFETY: the callback operates on the same retained guard page;
+        // no arena projection or client reference survives across it.
+        Ok(unsafe { function(true, address, page_size.bytes(), null_mut(), argument) })
+    } else {
+        // SAFETY: the original page and accounting owner remain retained.
+        unsafe { os::secure_guard_page_transition(process, page_size, address, true) }
+    }
+}
+
+/// Copies immutable callback fields without keeping an arena reference alive.
+///
+/// # Safety
+/// An arena memory ID must refer to live initialized arena metadata. The
+/// caller keeps that arena alive until the copied callback finishes.
+#[cfg(target_arch = "x86_64")]
+unsafe fn secure_page_commit_hook(memory: MemoryId) -> Option<(CommitFunction, *mut c_void)> {
+    let arena = memory.arena_memory()?.arena;
+    if arena.is_null() { return None; }
+    // SAFETY: these immutable fields belong to the caller-retained arena;
+    // raw reads end before reentrant callbacks or diagnostics begin.
+    let function = unsafe { core::ptr::addr_of!((*arena).commit_function).read() }?;
+    let argument = unsafe { core::ptr::addr_of!((*arena).commit_function_argument).read() };
+    Some((function, argument))
+}
+
 #[path = "arena_selection.rs"]
 mod selection;
 pub(crate) use selection::{ArenaCandidates, ArenaReservationPlan, ArenaSearch, arena_max_object_size};
@@ -3358,6 +3439,76 @@ pub(crate) mod tests {
             && retry.commit_initial_page_prefix(ARENA_SLICE_SIZE);
         assert!(retry.release());
         [callback_failed, mapping_retained, callback_statistics, recovered]
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[test]
+    fn secure_page_guard_callback_refusal_retains_claim_until_explicit_release() {
+        struct GuardTrace {
+            calls: std::sync::Mutex<std::vec::Vec<(bool, usize, usize, bool)>>,
+            refuse: std::sync::atomic::AtomicBool,
+        }
+        unsafe extern "C" fn guard_callback(
+            commit: bool, start: *mut u8, size: usize,
+            is_zero: *mut bool, argument: *mut c_void,
+        ) -> bool {
+            // SAFETY: the test retains this trace through arena and claim use.
+            let trace = unsafe { &*argument.cast::<GuardTrace>() };
+            trace.calls.lock().unwrap().push((commit, start.addr(), size, is_zero.is_null()));
+            !trace.refuse.load(Ordering::Acquire)
+        }
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let trace = GuardTrace {
+            calls: std::sync::Mutex::new(std::vec::Vec::new()),
+            refuse: std::sync::atomic::AtomicBool::new(false),
+        };
+        let page_size = PageSize::new(4096).unwrap();
+        // SAFETY: the aligned external storage, trace and registry remain live;
+        // this callback controls commitment without transferring map ownership.
+        let managed = unsafe { manage_external_in_place(
+            &registry, region.as_ptr(), ARENA_MIN_SIZE, page_size,
+            false, false, true, -1, true,
+            Some(CommitHook::new(guard_callback, (&trace as *const GuardTrace).cast_mut().cast())),
+        ) }.unwrap();
+        // SAFETY: initialization published this live retained arena.
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view.try_claim_suitable_slices(managed.arena_id(), 8, false, 1).unwrap();
+        assert!(claim.commit_initial_page_prefix(ARENA_SLICE_SIZE));
+        let index = claim.slice_index();
+        let tail = region.as_ptr().wrapping_add((index + 8) * ARENA_SLICE_SIZE - page_size.bytes());
+        let memory = claim.memory_id();
+        trace.calls.lock().unwrap().clear();
+        let before = subprocess.vm_statistics().snapshot();
+        trace.refuse.store(true, Ordering::Release);
+        // SAFETY: the original claim excludes client aliases and retains its
+        // callback owner through refusal and retry; no page is published.
+        unsafe {
+            assert_eq!(secure_page_guard_set_at(None, page_size, tail, memory), Ok(false));
+            assert_eq!(secure_page_guard_reset_at(None, page_size, tail, memory), Ok(false));
+        }
+        // SAFETY: the arena and its bitmap metadata remain initialized/live.
+        let free = unsafe { view.slices_free() }.unwrap();
+        assert_eq!(free.is_clear_range(index, 8), Some(true));
+        assert_eq!(subprocess.vm_statistics().snapshot(), before);
+        trace.refuse.store(false, Ordering::Release);
+        // SAFETY: retry uses exactly the same retained page and callback owner.
+        unsafe {
+            assert_eq!(secure_page_guard_set_at(None, page_size, tail, memory), Ok(true));
+            assert_eq!(secure_page_guard_reset_at(None, page_size, tail, memory), Ok(true));
+        }
+        assert_eq!(*trace.calls.lock().unwrap(), std::vec![
+            (false, tail.addr(), page_size.bytes(), true),
+            (true, tail.addr(), page_size.bytes(), true),
+            (false, tail.addr(), page_size.bytes(), true),
+            (true, tail.addr(), page_size.bytes(), true),
+        ]);
+        assert_eq!(free.is_clear_range(index, 8), Some(true));
+        assert!(claim.release());
+        let reused = view.try_claim_suitable_slices(managed.arena_id(), 8, false, 1).unwrap();
+        assert_eq!(reused.slice_index(), index);
+        assert!(reused.release());
     }
 
     #[test]

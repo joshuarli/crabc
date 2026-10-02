@@ -2279,6 +2279,48 @@ pub(crate) unsafe fn decommit_arena_range(
     unsafe { decommit_primitive(address, length) }.map(Some)
 }
 
+/// Discards or recommits one retained OS base page used as a secure tail.
+/// An explicit process charges only successful source transitions; its absence
+/// denotes an unaccounted external mapping and supplies no diagnostic owner.
+///
+/// # Safety
+/// `address` is aligned to `page_size` and retains provenance for one complete
+/// live base page. The caller retains its original release claim and excludes
+/// byte references and allocator projections throughout syscalls and callbacks.
+/// `process`, if present, owns the mapping's VM accounting.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn secure_guard_page_transition(
+    process: Option<VmProcess<'_>>, page_size: PageSize, address: *mut u8, commit: bool,
+) -> Result<bool> {
+    let size = page_size.bytes();
+    if address.is_null() || address.addr() % size != 0
+        || address.addr().checked_add(size).is_none() {
+        return Err(Errno::INVAL);
+    }
+    if let Some(process) = process {
+        // SAFETY: the caller retains this exact page and its accounting owner.
+        return if commit {
+            unsafe { process.commit_external_arena_range(page_size, address, size, 0) }
+                .map(|outcome| outcome.is_some())
+        } else {
+            unsafe { process.decommit_external_arena_range(page_size, address, size, size) }
+                .map(|outcome| outcome.is_some())
+        };
+    }
+    if !commit {
+        // SAFETY: the unaccounted external owner retains the complete page.
+        return unsafe { decommit_arena_range(page_size, address, size) }
+            .map(|outcome| outcome.is_some());
+    }
+    #[cfg(test)]
+    fault::record_protection_range(address, size, PROT_READ | PROT_WRITE);
+    fault_before(FaultPoint::Commit)?;
+    // SAFETY: this is the same retained page, with no references observing
+    // the accessibility change and no new mapping or release authority.
+    unsafe { crabc_core::mm::mprotect_raw(address, size, PROT_READ | PROT_WRITE) }?;
+    Ok(true)
+}
+
 /// One failed aligned-map attempt.
 ///
 /// Pinned `mi_os_prim_alloc_aligned` treats its internal partial frees as
@@ -11821,6 +11863,131 @@ mod tests {
             base.add(page).write_volatile(0x33);
         }
         mapping.unmap().expect("release the full protected decommit owner once");
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[test]
+    fn secure_page_guard_unaccounted_tail_and_pinned_reset_keep_mapping_ownership() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page_size = config.page_size();
+        let page = page_size.bytes();
+        let allocation = NormalOsAllocation::allocate(config, 2 * page).unwrap();
+        let base = allocation.base().unwrap();
+        let tail = base.wrapping_add(allocation.full_size().unwrap() - page);
+        let memory = allocation.memory_id().unwrap();
+        let pinned = MemoryId::external(base, allocation.full_size().unwrap(), true, true, true);
+        // SAFETY: both IDs describe this live mapping; the owner and no byte
+        // aliases are retained across each synchronous guard operation.
+        unsafe {
+            assert_eq!(crate::arena::secure_page_guard_set_at(None, page_size, tail, pinned), Ok(false));
+            assert_eq!(crate::arena::secure_page_guard_reset_at(None, page_size, tail, pinned), Ok(true));
+        }
+        assert_eq!(decommit_mapping_permissions(tail), "rw-p");
+        // SAFETY: the same retained, unaccounted tail page is now discarded.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_set_at(None, page_size, tail, memory) }, Ok(true));
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::IO));
+        // SAFETY: failure cannot invalidate the original allocation owner.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(None, page_size, tail, memory) }, Err(Errno::IO));
+        assert_eq!(allocation.base(), Ok(base));
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        fault.set(fault::Plan::disabled());
+        // SAFETY: retry restores accessibility before legal client reuse.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(None, page_size, tail, memory) }, Ok(true));
+        assert_eq!(decommit_mapping_permissions(tail), "rw-p");
+        // SAFETY: the successful reset restored the entire tail page.
+        unsafe { tail.write_volatile(0x71); assert_eq!(tail.read_volatile(), 0x71); }
+        allocation.release().unwrap();
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
+    #[test]
+    fn secure_page_guard_tail_preserves_client_bytes_and_vm_accounting_through_reuse() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page_size = config.page_size();
+        let page = page_size.bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let initial = subprocess.vm_statistics().snapshot();
+        let allocation = NormalOsAllocation::allocate_for_process(process, config, 3 * page).unwrap();
+        let base = allocation.base().unwrap();
+        let tail = base.wrapping_add(allocation.full_size().unwrap() - page);
+        let memory = allocation.memory_id().unwrap();
+        // SAFETY: this fresh mapping is writable and exclusively retained;
+        // these sentinels precede every guard transition.
+        unsafe { base.write_volatile(0x31); tail.write_volatile(0x32); }
+        let mapped = subprocess.vm_statistics().snapshot();
+        // SAFETY: the exact tail page has no byte aliases and the allocation
+        // and its accounting owner remain live through both transitions.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_set_at(
+            Some(process), page_size, tail, memory) }, Ok(true));
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        assert_eq!(decommit_mapping_permissions(base), "rw-p");
+        let guarded = subprocess.vm_statistics().snapshot();
+        assert_eq!(guarded.committed_current, mapped.committed_current - page as i64);
+        assert_eq!(guarded.reserved_current, mapped.reserved_current);
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::IO));
+        // SAFETY: failed reset leaves the same allocation and inaccessible
+        // tail retained; no client observes those bytes.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(
+            Some(process), page_size, tail, memory) }, Err(Errno::IO));
+        assert_eq!(allocation.base(), Ok(base));
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, guarded.committed_current);
+        fault.set(fault::Plan::disabled());
+        // SAFETY: retry retains the original tail, mapping and process.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(
+            Some(process), page_size, tail, memory) }, Ok(true));
+        assert_eq!(decommit_mapping_permissions(tail), "rw-p");
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, mapped.committed_current);
+        // SAFETY: successful reset restored access before inspecting the
+        // discarded page or writing a new valid client byte.
+        unsafe { assert_eq!(base.read_volatile(), 0x31); assert_eq!(tail.read_volatile(), 0); tail.write_volatile(0x33); }
+        allocation.release_for_process(process, true).unwrap();
+        let terminal = subprocess.vm_statistics().snapshot();
+        assert_eq!(terminal.committed_current, initial.committed_current);
+        assert_eq!(terminal.reserved_current, initial.reserved_current);
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
+    #[test]
+    fn secure_page_guard_decommit_and_protection_failures_retain_the_original_owner() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page_size = config.page_size();
+        let page = page_size.bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let allocation = NormalOsAllocation::allocate_for_process(process, config, 2 * page).unwrap();
+        let base = allocation.base().unwrap();
+        let tail = base.wrapping_add(allocation.full_size().unwrap() - page);
+        let memory = allocation.memory_id().unwrap();
+        let mapped = subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO));
+        // SAFETY: the original allocation retains this exact complete tail
+        // and excludes byte aliases throughout the injected failure/retry.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_set_at(
+            Some(process), page_size, tail, memory) }, Err(Errno::IO));
+        assert_eq!(allocation.base(), Ok(base));
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, mapped.committed_current);
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::NOMEM));
+        // SAFETY: the failed advisory transferred no claim; retry uses the
+        // same owner. Source protection remains best effort after discard.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_set_at(
+            Some(process), page_size, tail, memory) }, Ok(true));
+        assert_eq!(allocation.base(), Ok(base));
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current,
+                   mapped.committed_current - page as i64);
+        fault.set(fault::Plan::disabled());
+        // SAFETY: restore the original tail before terminal release.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(
+            Some(process), page_size, tail, memory) }, Ok(true));
+        allocation.release_for_process(process, true).unwrap();
     }
 
     #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-secure-3")))]
