@@ -3130,6 +3130,48 @@ mod nested_heap_visit_tests {
     }
 
     #[test]
+    fn foreign_caller_destroys_child_heap_after_its_owner_exits() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::nested_heap_visit_tests::foreign_caller_destroys_child_heap_after_its_owner_exits",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let child = native_subproc_new().unwrap();
+                let (heap_address, client_address) = std::thread::spawn(move || {
+                    unsafe { register_worker() };
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                    let mut arena = null_mut();
+                    // SAFETY: the sole member keeps its arena and Heap live
+                    // until thread exit transfers the abandoned page custody.
+                    let (heap_address, client_address) = unsafe {
+                        assert_eq!(reserve_os_memory_ex(64 * crate::config::MIB, true, false, true, &mut arena).value, 0);
+                        let heap = heap_new_in_arena(arena);
+                        assert!(!heap.is_null());
+                        let client = heap_malloc(heap, 80).value.unwrap();
+                        client.as_ptr().write_bytes(0x37, 80);
+                        (heap.expose_provenance(), client.as_ptr().expose_provenance())
+                    };
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                    (heap_address, client_address)
+                }).join().unwrap();
+                // SAFETY: the worker has exited. Its Heap and client remain
+                // live in the child, with no thread able to access or mutate
+                // them. Destroy consumes the Heap and every client once.
+                unsafe {
+                    let heap = core::ptr::with_exposed_provenance_mut(heap_address);
+                    let client = core::ptr::with_exposed_provenance(client_address);
+                    assert!(heap_contains(heap, client));
+                    assert!(!heap_contains(null_mut(), client));
+                    assert!(heap_release(heap, true));
+                    assert_eq!(native_subproc_destroy(child), Ok(()));
+                }
+            },
+        );
+    }
+
+    #[test]
     fn nested_child_heap_visits_its_live_client_and_empty_abandoned_set() {
         crate::test_process::run_in_fresh_process(
             "source_heap_api::nested_heap_visit_tests::nested_child_heap_visits_its_live_client_and_empty_abandoned_set",
@@ -3171,6 +3213,19 @@ mod nested_heap_visit_tests {
                         assert_eq!(count, 0);
                         assert_eq!(crate::source_api::free(client.as_ptr()), crate::source_api::FreeOutcome::Freed);
                         assert!(heap_release(heap, true));
+                        let deleting = heap_new_in_arena(arena);
+                        assert!(!deleting.is_null());
+                        let survivor = heap_malloc(deleting, 96).value.unwrap();
+                        survivor.as_ptr().write_bytes(0x62, 96);
+                        assert!(heap_release(deleting, false));
+                        // Delete transfers the still-live page to this
+                        // subprocess's main Heap. The old Heap is consumed;
+                        // only the original client is inspected and freed.
+                        assert_eq!(heap_of(survivor.as_ptr()), heap_main());
+                        assert!(heap_contains(null_mut(), survivor.as_ptr().add(95)));
+                        assert_eq!(survivor.as_ptr().read(), 0x62);
+                        assert_eq!(survivor.as_ptr().add(95).read(), 0x62);
+                        assert_eq!(crate::source_api::free(survivor.as_ptr()), crate::source_api::FreeOutcome::Freed);
                     }
                     assert_eq!(native_child_thread_done(), Some(Ok(())));
                 }).join().unwrap();
