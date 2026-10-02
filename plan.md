@@ -59,10 +59,13 @@ Update this small section in place when the implementation frontier changes.
   preserves live unwind records; static/dynamic cleanup, cross-DSO panic and
   source-built backtrace pass, including 12 retained consumers replayed read-only.
   Lua source/bytecode consumption passes through explicit opt0 static and dynamic
-  interfaces. Free/unfull/retire/reclaim assertions and entry delivery are
-  integrated; outer owner-exit delivery still needs its typed completion split.
-  Audit the loader's unnecessary abort-personality definition next. No release
-  or full-family qualification is claimed.
+  interfaces. Free/unfull/retire/reclaim assertions and outer owner-exit delivery
+  are integrated, including the typed completion split that ends diagnostic
+  admissions before metadata teardown. The unused loader abort-personality stub
+  is removed; rebuilt loader clients and symbol ownership checks pass. Remaining
+  work is the secure fixture setup, source collection-prefix validation and
+  actual merged native-shadow debug products. No release or full-family
+  qualification is claimed.
 - **Merged correctness:** allocator early options, guarded initialization,
   false-force reclaim transfers, aligned null realloc and resolver construction
   boundaries are repaired. Native spawn needs only two free pipe descriptors;
