@@ -3174,6 +3174,23 @@ an injected direct-map failure remains source behavior, including at startup.
 
 ### Native 1-GiB huge-page and multi-NUMA qualification
 
+Ordinary x86 qualification uses `--qualification-profile baseline` for the
+M6/M7 gates and `--profile baseline` for M9/M10. This profile keeps every
+ordinary producer, logical NUMA policy, failure/fallback check, source
+convergence condition, qualified performance threshold, release prerequisite
+and artifact audit. The pinned `allow_large_os_pages` option defaults to zero;
+its enablement and failure/fallback producers remain required. Successful
+configured-host 2-MiB `MAP_HUGETLB` allocation remains unqualified alongside
+physical NUMA and 1-GiB pages; THP advice is not proof of that mapping route.
+Reports explicitly retain `physical-numa`, `2mib-pages` and `1gib-pages` as
+unqualified modes. A full-profile reader rejects a baseline
+report. Baseline readiness does not change the selected C backend or public
+platform support; the actual promotion and rerun gates still apply.
+
+The full profile retains successful physical reservation/placement obligations.
+Baseline qualification does not rewrite or hide failed hardware receipts. The
+configured-host command below remains the route for qualifying those modes.
+
 `./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification` is the
 hardware-only companion to the simulated reservation and registry evidence.
 It first runs those existing source-policy and ownership workloads, then runs

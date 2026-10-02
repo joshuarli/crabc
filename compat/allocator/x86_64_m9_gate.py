@@ -395,7 +395,7 @@ def convergence_condition(
     evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]],
     engine_paths: Sequence[Path] = (),
     integrated_paths: Sequence[Path] = (),
-    gate_root: Path = harness.ARTIFACT_ROOT / "x86_64",
+    gate_root: Path = harness.ARTIFACT_ROOT / "x86_64", *, qualification_profile: str = "full",
 ) -> dict[str, Any]:
     """Read current convergence inputs and require their physical evidence cohort."""
 
@@ -425,7 +425,8 @@ def convergence_condition(
             continue
         differential = entry["differential"]
         if "command" in differential:
-            reason = convergence_differential_unmet(differential["command"], gate_root, newest)
+            reason = convergence_differential_unmet(differential["command"], gate_root, newest,
+                                                    qualification_profile=qualification_profile)
             if reason:
                 unmet.append(f"{key}: {reason}")
         performance = entry["performance"]
@@ -438,7 +439,8 @@ def convergence_condition(
     return _condition("m9.source-convergence", unmet, "every source-convergence condition is met")
 
 
-def convergence_differential_unmet(command: Sequence[str], gate_root: Path, newest: int | None) -> str | None:
+def convergence_differential_unmet(command: Sequence[str], gate_root: Path, newest: int | None, *,
+                                  qualification_profile: str = "full") -> str | None:
     """Find an executed differential in a current source-sealed correctness gate."""
 
     matches = []
@@ -457,7 +459,9 @@ def convergence_differential_unmet(command: Sequence[str], gate_root: Path, newe
         path = gate_root / f"{gate}-gate/report.json"
         try:
             report = json.loads(path.read_text(encoding="utf-8"))
-            if report.get("overall_status") != "passed" or correctness_evidence_unmet(gate, report, path.parent, newest):
+            if report.get("overall_status") != "passed" or correctness_evidence_unmet(
+                    gate, report, path.parent, newest,
+                    qualification_profile=qualification_profile if gate in {"m6", "m7"} else "full"):
                 continue
             recorded = report["evidence"][evidence_id]
             if declared.get("runner") is not None and recorded.get("runner") != declared["runner"]:
@@ -635,7 +639,7 @@ def physical_tree(root: Path, *, exclude: set[str] | None = None) -> tuple[dict[
 
 def correctness_condition(
     accepted_paths: Sequence[Path], gate_root: Path = harness.ARTIFACT_ROOT / "x86_64",
-    m8_report_path: Path = M8_REPORT,
+    m8_report_path: Path = M8_REPORT, *, qualification_profile: str = "full",
 ) -> dict[str, Any]:
     unmet: list[str] = []
     newest = max((Path(path).stat().st_mtime_ns for path in accepted_paths), default=None)
@@ -656,7 +660,8 @@ def correctness_condition(
             unmet.append(f"{gate.upper()} gate report predates the newest qualified report")
         else:
             unmet.extend(f"{gate.upper()} gate {reason}" for reason in correctness_evidence_unmet(
-                gate, report, path.parent, newest))
+                gate, report, path.parent, newest,
+                qualification_profile=qualification_profile if gate in {"m6", "m7"} else "full"))
     if not m8_report_path.is_file() or m8_report_path.is_symlink():
         unmet.append(f"M8 gate has no retained report ({harness.relative(m8_report_path)})")
     else:
@@ -803,12 +808,17 @@ def correctness_evidence_unmet(
 ) -> list[str]:
     """Reconstruct contract classification and recheck source and retained raw evidence."""
 
-    if qualification_profile not in {"full", "correctness"} or (gate != "m5" and qualification_profile != "full"):
+    if qualification_profile not in {"full", "correctness", "baseline"} or (
+            qualification_profile == "correctness" and gate != "m5") or (
+            qualification_profile == "baseline" and gate not in {"m6", "m7"}):
         return ["unsupported correctness evidence profile"]
-    if gate == "m5":
+    if gate in {"m5", "m6", "m7"}:
         if report.get("qualification_profile", "full") != qualification_profile:
             return (["report lacks the complete passing gate roster"] if qualification_profile == "full"
                     else ["report qualification profile differs from the requested profile"])
+        if gate in {"m6", "m7"} and report.get("unqualified_modes", []) != (
+                ["physical-numa", "2mib-pages", "1gib-pages"] if qualification_profile == "baseline" else []):
+            return ["report hardware qualification claims differ from the requested profile"]
         if qualification_profile == "correctness":
             expected = harness.ARTIFACT_ROOT / "x86_64/m5-correctness-gate"
             if artifacts.resolve() != expected.resolve():
@@ -853,7 +863,7 @@ def correctness_evidence_unmet(
         if set(evidence) != set(runnable_evidence):
             return ["report lacks executed producers for every gate"]
         reconstructed = (producer.gate_report(contract, summary, evidence, qualification_profile=qualification_profile)
-                         if gate == "m5" and qualification_profile == "correctness"
+                         if (gate == "m5" and qualification_profile == "correctness") or gate in {"m6", "m7"}
                          else producer.gate_report(contract, summary, evidence))
         if reconstructed["overall_status"] != "passed":
             return ["report retains unresolved current gate conditions"]
@@ -928,7 +938,10 @@ def evaluate(
     integrated_reports: Sequence[Path] | None = None,
     inspect_integrated: Callable[[Path, Path], Mapping[str, Any]] = integrated.inspect_integrated_report,
     evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]] = source_convergence.evaluate,
+    *, profile: str = "full",
 ) -> dict[str, Any]:
+    if profile not in {"full", "baseline"}:
+        raise harness.HarnessError(f"unknown qualification profile: {profile}")
     records = read_reports(report_paths, inspect)
     accepted = [Path(path) for path, record in zip(report_paths, records) if not record["unmet"]]
     cohort = [record for record in records if not record["unmet"]]
@@ -938,14 +951,17 @@ def evaluate(
         matrix_condition(records),
         *report_conditions(records),
         codegen_condition(codegen_report, [record for record in records if not record["unmet"]]),
-        convergence_condition(evaluate_convergence, report_paths, integrated_paths, gate_root),
+        convergence_condition(evaluate_convergence, report_paths, integrated_paths, gate_root,
+                              qualification_profile=profile),
         integrated_result,
-        correctness_condition(accepted, gate_root),
+        correctness_condition(accepted, gate_root, qualification_profile=profile),
     ]
     assert [row["id"] for row in conditions] == list(CONDITION_IDS)
     unmet = [row["id"] for row in conditions if not row["met"]]
     return {
         "schema": "crabc-mimalloc-x86_64-m9-gate/v1",
+        "qualification_profile": profile,
+        "unqualified_modes": ["physical-numa", "2mib-pages", "1gib-pages"] if profile == "baseline" else [],
         "reports": records,
         "codegen_report": harness.relative(Path(codegen_report)) if codegen_report else None,
         "conditions": conditions,
@@ -962,6 +978,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="engine report to read (default: every --full report under the engine report directory)")
     parser.add_argument("--codegen-report", type=Path, default=None,
                         help="codegen audit report (default: the newest one)")
+    parser.add_argument("--profile", choices=("full", "baseline"), default="full")
     arguments = parser.parse_args(argv)
     if arguments.check:
         manifest = engine.load_manifest()
@@ -971,7 +988,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     reports = arguments.report if arguments.report is not None else discover_reports()
     codegen_report = arguments.codegen_report or newest_codegen_report()
-    result = evaluate(reports, codegen_report)
+    result = evaluate(reports, codegen_report, profile=arguments.profile)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / "report.json", result)
     for row in result["conditions"]:

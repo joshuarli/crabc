@@ -487,7 +487,7 @@ def validate_contract(
     blocked: list[str] = []
     for gate in gates:
         gate_id = gate["id"]
-        if set(gate) != {"id", "required", "items", "compile_time_modes", "acceptance", "evidence", "blocked_by"}:
+        if set(gate) - {"hardware_blocked_by"} != {"id", "required", "items", "compile_time_modes", "acceptance", "evidence", "blocked_by"}:
             raise harness.HarnessError(f"M7 gate {gate_id} has unexpected fields")
         if gate["required"] is not True:
             raise harness.HarnessError(f"M7 gate {gate_id} must remain required")
@@ -516,9 +516,12 @@ def validate_contract(
             raise harness.HarnessError(f"M7 gate {gate_id} names undeclared evidence: {unknown}")
         referenced.update(gate_evidence)
         blockers = _string_list(gate["blocked_by"], f"{gate_id} blockers", allow_empty=True)
+        hardware = _string_list(gate.get("hardware_blocked_by", []), f"{gate_id} hardware blockers", allow_empty=True)
+        if hardware and gate_id != 'm7.option-effects':
+            raise harness.HarnessError("hardware blockers belong only to the hardware-dependent gate")
         if any(entry not in runnable for entry in gate_evidence) and not blockers:
             raise harness.HarnessError(f"M7 gate {gate_id} depends on missing evidence without a blocker")
-        if blockers:
+        if blockers or hardware:
             blocked.append(gate_id)
     for kind, selected in selections.items():
         unassigned = sorted(selected - set(owners[kind]))
@@ -538,22 +541,32 @@ def validate_contract(
 
 
 def gate_report(
-    contract: Mapping[str, Any], summary: Mapping[str, Any], results: Mapping[str, Mapping[str, Any]]
+    contract: Mapping[str, Any], summary: Mapping[str, Any], results: Mapping[str, Mapping[str, Any]],
+    *, qualification_profile: str = "full",
 ) -> dict[str, Any]:
-    """Classify each gate from reviewed blockers and executed evidence."""
+    """Classify reviewed blockers and executed evidence for the requested scope.
 
+    Baseline defers successful physical NUMA and 2-MiB/1-GiB-page qualification only;
+    ordinary policy, failure and fallback producers remain mandatory.
+    """
+
+    if qualification_profile not in {"full", "baseline"}:
+        raise harness.HarnessError(f"unsupported qualification profile: {qualification_profile}")
     records: list[dict[str, Any]] = []
     for gate in contract["gates"]:
+        blockers = list(gate["blocked_by"])
+        if qualification_profile == "full":
+            blockers += gate.get("hardware_blocked_by", [])
         observed = {entry: results[entry]["status"] for entry in gate["evidence"] if entry in results}
         missing = [entry for entry in gate["evidence"] if entry not in summary["runnable_evidence"]]
         if any(status != "passed" for status in observed.values()):
             status = "failed"
-        elif gate["blocked_by"] or missing or len(observed) != len(gate["evidence"]):
+        elif blockers or missing or len(observed) != len(gate["evidence"]):
             status = "blocked"
         else:
             status = "passed"
         records.append({
-            "blocked_by": list(gate["blocked_by"]),
+            "blocked_by": blockers,
             "evidence": observed,
             "id": gate["id"],
             "item_count": len(gate["items"]),
@@ -563,6 +576,8 @@ def gate_report(
         })
     unmet = [record["id"] for record in records if record["status"] != "passed"]
     return {
+        "qualification_profile": qualification_profile,
+        "unqualified_modes": ["physical-numa", "2mib-pages", "1gib-pages"] if qualification_profile == "baseline" else [],
         "contract": harness.relative(CONTRACT),
         "evidence": {key: dict(value) for key, value in sorted(results.items())},
         "gates": records,
@@ -2773,6 +2788,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--configuration-profile", choices=CONFIGURATION_PROFILES)
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
+    parser.add_argument("--qualification-profile", choices=("full", "baseline"), default="full")
     arguments = parser.parse_args(argv)
     if arguments.configuration_replay:
         if arguments.configuration_profile is None:
@@ -2984,7 +3000,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         selected = next(gate for gate in contract["gates"] if gate["id"] == arguments.gate)
         runnable = {key: value for key, value in runnable.items() if key in selected["evidence"]}
         contract = {**contract, "gates": [selected]}
-    report = gate_report(contract, summary, run_evidence(runnable, ARTIFACTS))
+    report = gate_report(contract, summary, run_evidence(runnable, ARTIFACTS),
+                         qualification_profile=arguments.qualification_profile)
     report_path = ARTIFACTS / ("report.json" if arguments.gate is None else f"{arguments.gate}.json")
     report["provenance"] = {
         "seal": {**integrated.source_seal(), "gate": engine.file_record(Path(__file__)),

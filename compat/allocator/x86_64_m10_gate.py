@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fail-closed native x86-64 allocator default qualification.
 
+The baseline profile retains release performance and every ordinary prerequisite
+while explicitly leaving physical NUMA and 2-MiB/1-GiB-page modes unqualified.
 The full profile requires release performance evidence as well as functional
 correctness, source convergence, native product purity, and switch reruns.
 The explicit correctness profile defers performance evidence while retaining
@@ -167,7 +169,7 @@ def build_and_audit() -> dict[str, Any]:
 # ---- check ------------------------------------------------------------------------
 
 
-def report_passed(path: Path) -> str | None:
+def report_passed(path: Path, *, profile: str = "full") -> str | None:
     """Why a retained milestone report is not a pass, or None when it passed."""
 
     if not path.is_file():
@@ -176,6 +178,10 @@ def report_passed(path: Path) -> str | None:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return f"unreadable report: {error}"
+    if report.get("qualification_profile", "full") != profile:
+        return "qualification profile differs from the requested profile"
+    if profile == "baseline" and report.get("unqualified_modes") != ["physical-numa", "2mib-pages", "1gib-pages"]:
+        return "baseline report does not retain unqualified hardware modes"
     # Gate reports carry overall_status; milestone reports carry milestone.status.
     milestone = report.get("milestone")
     status = report.get("overall_status", report.get("status",
@@ -188,7 +194,8 @@ def prior_milestones(m0: Mapping[str, Any], *, profile: str = "full") -> dict[st
     if profile == "correctness":
         return functional_milestones(m0)
     for milestone, path in PRIOR_REPORTS.items():
-        reason = report_passed(path)
+        reason = (report_passed(path, profile="baseline")
+                  if profile == "baseline" and milestone in {"M6", "M7", "M9"} else report_passed(path))
         if reason:
             unmet.append(f"{milestone}: {reason}")
     return _condition("m10.prior-milestones", unmet, "M0-M9 passed")
@@ -311,11 +318,12 @@ def switch_condition(record: Mapping[str, Any], others_met: bool) -> dict[str, A
 
 def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, Any],
              profile: str = "full") -> dict[str, Any]:
-    if profile not in {"full", "correctness"}:
+    if profile not in {"full", "correctness", "baseline"}:
         raise harness.HarnessError(f"unknown M10 profile: {profile!r}")
     if profile == "correctness" and receipt is not None:
         raise harness.HarnessError("correctness profile does not consume performance receipts")
-    prerequisites = ([prior_milestones(m0), promotion_gates(receipt)] if profile == "full" else
+    prerequisites = ([(prior_milestones(m0, profile="baseline") if profile == "baseline" else prior_milestones(m0)),
+                      promotion_gates(receipt)] if profile in {"full", "baseline"} else
                      [prior_milestones(m0, profile="correctness"), functional_convergence(),
                       _condition("m10.performance-deferred", [], "performance qualification is outside this profile")])
     preconditions = [*prerequisites, native_artifacts(head), oracle_retained()]
@@ -327,6 +335,7 @@ def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, 
     conditions.append(switch_condition(record, ready))
     unmet = [row["id"] for row in conditions if not row["met"]]
     return {"schema": "crabc-mimalloc-x86_64-m10-gate/v1", "qualification_profile": profile,
+            "unqualified_modes": ["physical-numa", "2mib-pages", "1gib-pages"] if profile == "baseline" else [],
             **({"performance_qualified": False, "deferred_prerequisites": ["M9", "performance.release"]}
                if profile == "correctness" else {}),
             "pre_switch_ready": ready,
@@ -341,7 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="name every unmet M10 condition; builds nothing")
     mode.add_argument("--build-audit", action="store_true", help="build and audit the native static and dynamic products")
     parser.add_argument("--performance-receipt", type=Path, default=None)
-    parser.add_argument("--profile", choices=("full", "correctness"), default="full")
+    parser.add_argument("--profile", choices=("full", "correctness", "baseline"), default="full")
     arguments = parser.parse_args(argv)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     if arguments.build_audit:
@@ -357,7 +366,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     m0 = harness.command_record(["python3", "compat/allocator/run.py", "--check", "--architecture", "x86_64",
                                  "--offline"], cwd=ROOT, timeout_seconds=900)
     result = evaluate(m0={"status": m0["status"]}, receipt=arguments.performance_receipt, head=git_head(), profile=arguments.profile)
-    report_path = ARTIFACTS / ("report.json" if arguments.profile == "full" else "correctness-report.json")
+    report_path = ARTIFACTS / ("correctness-report.json" if arguments.profile == "correctness" else "report.json")
     harness.write_json(report_path, result)
     for row in result["conditions"]:
         print(f"{row['id']}: {'met' if row['met'] else 'unmet'}")

@@ -676,6 +676,65 @@ class CodegenTests(GateFixture):
 
 
 class CorrectnessTests(GateFixture):
+    def test_baseline_evaluation_forwards_policy_without_waiving_other_conditions(self) -> None:
+        def met(identifier):
+            return gate._condition(identifier, [], "validated fixture")
+        with (patch.object(gate, "read_reports", return_value=[]),
+              patch.object(gate, "matrix_condition", return_value=met("m9.matrix")),
+              patch.object(gate, "report_conditions", return_value=[
+                  met("m9.qualified-reports"), met("m9.agreement")]),
+              patch.object(gate, "codegen_condition", return_value=gate._condition(
+                  "m9.codegen-audit", ["missing actual codegen"], "")),
+              patch.object(gate, "integrated_condition", return_value=met("m9.integrated-products")),
+              patch.object(gate, "convergence_condition", return_value=met("m9.source-convergence")) as converge,
+              patch.object(gate, "correctness_condition", return_value=met("m9.correctness")) as correctness):
+            report = gate.evaluate([], None, integrated_reports=[], profile="baseline")
+        self.assertEqual(converge.call_args.kwargs["qualification_profile"], "baseline")
+        self.assertEqual(correctness.call_args.kwargs["qualification_profile"], "baseline")
+        self.assertEqual(report["unqualified_modes"], ["physical-numa", "2mib-pages", "1gib-pages"])
+        self.assertEqual(report["unmet"], ["m9.codegen-audit"])
+        with self.assertRaises(gate.harness.HarnessError):
+            gate.evaluate([], None, profile="unknown")
+
+    def test_baseline_reader_reconstructs_policy_and_authenticates_original_raw_logs(self) -> None:
+        import m6_gate as producer
+
+        contract = gate.harness.read_json(producer.CONTRACT)
+        for row in contract["gates"]:
+            row["blocked_by"] = []
+        contract_path = self.root / "baseline-contract.json"
+        contract_path.write_text(json.dumps(contract))
+        summary = producer.validate_contract(contract, gate.harness.read_json(
+            gate.harness.ALLOCATOR_ROOT / "api-v3.5.0.json"), gate.harness.load_pin())
+        artifacts = self.root / "m6-gate"
+        artifacts.mkdir()
+        evidence = {}
+        for name, runner in summary["runnable_evidence"].items():
+            log = artifacts / f"{name.replace(':', '-')}.log"
+            log.write_text("original ordinary differential output\n")
+            evidence[name] = {"runner": runner, "command": producer.evidence_command(runner),
+                              "status": "passed", "log": gate.harness.relative(log)}
+        report = producer.gate_report(contract, summary, evidence, qualification_profile="baseline")
+        with patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True}), \
+                patch.dict(gate.CORRECTNESS_INPUTS, {"m6": ("m6_gate.py", str(contract_path))}):
+            report["provenance"] = producer.report_provenance(report)
+            report["provenance"]["seal"]["contract"] = gate.engine.file_record(contract_path)
+            read = lambda value: gate.correctness_evidence_unmet(
+                "m6", value, artifacts, None, qualification_profile="baseline")
+            self.assertEqual(read(report), [])
+            self.assertTrue(gate.correctness_evidence_unmet("m6", report, artifacts, None))
+            forged = copy.deepcopy(report)
+            forged["unqualified_modes"] = []
+            self.assertTrue(read(forged))
+            forged = copy.deepcopy(report)
+            forged["evidence"][next(iter(evidence))]["status"] = "failed"
+            self.assertTrue(read(forged))
+            (artifacts / f"{next(iter(evidence)).replace(':', '-')}.log").write_text("changed raw output")
+            self.assertTrue(read(report))
+            contract["gates"][0]["blocked_by"] = ["ordinary correctness gap"]
+            contract_path.write_text(json.dumps(contract))
+            self.assertTrue(read(report))
+
     def test_corpus_receipt_reader_ignores_unrelated_run_x86_module(self) -> None:
         entry = {
             "command": ["runner", "--dynamic-sysroot", "/workspace/.work/missing-product"],

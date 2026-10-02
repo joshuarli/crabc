@@ -435,8 +435,10 @@
         "differential:option-profiles",
         "differential:reclaim-options"
       ],
-      "blocked_by": [
-        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`. The option-profile differential covers, through process start and page allocation, disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, arena_eager_commit, page_commit_on_demand (a page's `slice_pcommitted` in a lazily committed arena), arena_is_numa_local (the first arena's stored node), allow_thp (the process THP state), and max_vabits (the PageMap reservation). On this host (no reserved huge pages, overcommit enabled) the reserve_huge_os_pages, reserve_huge_os_pages_at, and allow_large_os_pages profiles run but cannot discriminate their decisions: the huge and large-page mappings fail over. Separate controlled PageMap profiles discriminate commitment and exact reservation layout under both observed overcommit states."
+      "blocked_by": [],
+      "hardware_blocked_by": [
+        "The allow_large_os_pages environment profile falls back when MAP_HUGETLB allocations fail. Successful configured-host 2-MiB MAP_HUGETLB allocation, pinned ownership, accounting and release remain unqualified; successful MADV_HUGEPAGE advice does not establish this distinct mapping route.",
+        "Successful 1-GiB-page reservation and physical NUMA placement remain unqualified; ordinary failure, fallback and logical NUMA policy evidence remain required."
       ]
     },
     {

@@ -29,6 +29,46 @@ class M7GateContractTests(unittest.TestCase):
         self.api = harness.read_json(harness.ALLOCATOR_ROOT / "api-v3.5.0.json")
         self.sibling = gate.sibling_owned_items(self.contract["inventory"])
 
+    def test_baseline_defers_configured_two_mib_success_but_retains_option_producer(self) -> None:
+        summary = self.validate()
+        results = {name: {"status": "passed", "command": command}
+                   for name, command in summary["runnable_evidence"].items()}
+        report = gate.gate_report(self.contract, summary, results, qualification_profile="baseline")
+        option_effects = self.gate_record(report, "m7.option-effects")
+        self.assertEqual(option_effects["status"], "passed")
+        self.assertEqual(option_effects["blocked_by"], [])
+        full = gate.gate_report(self.contract, summary, results)
+        self.assertEqual(self.gate_record(full, "m7.option-effects")["status"], "blocked")
+        del results["differential:option-profiles"]
+        missing = gate.gate_report(self.contract, summary, results, qualification_profile="baseline")
+        self.assertEqual(self.gate_record(missing, "m7.option-effects")["status"], "blocked")
+
+    def test_baseline_defers_only_physical_hardware_and_keeps_failed_evidence(self) -> None:
+        contract = copy.deepcopy(self.contract)
+        summary = self.validate()
+        for row in contract["gates"]:
+            row["blocked_by"] = []
+        summary["runnable_evidence"] = {name: record["command"] or ["fixture"]
+                                       for name, record in contract["evidence"].items()}
+        results = {name: {"status": "passed", "command": command}
+                   for name, command in summary["runnable_evidence"].items()}
+        full = gate.gate_report(contract, summary, results)
+        baseline = gate.gate_report(contract, summary, results, qualification_profile="baseline")
+        self.assertEqual(full["overall_status"], "unmet")
+        self.assertEqual(baseline["overall_status"], "passed")
+        self.assertEqual(baseline["unqualified_modes"], ["physical-numa", "2mib-pages", "1gib-pages"])
+        row = next(row for row in contract["gates"] if row.get("hardware_blocked_by"))
+        row["blocked_by"] = ["ordinary failure/fallback remains unproved"]
+        self.assertIn(row["id"], gate.gate_report(
+            contract, summary, results, qualification_profile="baseline")["unmet_required"])
+        row["blocked_by"] = []
+        results[row["evidence"][0]]["status"] = "failed"
+        self.assertIn(row["id"], gate.gate_report(
+            contract, summary, results, qualification_profile="baseline")["unmet_required"])
+        del results[row["evidence"][0]]
+        self.assertIn(row["id"], gate.gate_report(
+            contract, summary, results, qualification_profile="baseline")["unmet_required"])
+
     def validate(self, contract=None, api=None, sibling=None):
         return gate.validate_contract(
             self.contract if contract is None else contract,
@@ -966,6 +1006,7 @@ class M7GateContractTests(unittest.TestCase):
             record["command"] = ["python3", "compat/allocator/x86_64_m7_gate.py"]
         for entry in contract["gates"]:
             entry["blocked_by"] = []
+            entry.pop("hardware_blocked_by", None)
         summary = self.validate(contract)
         results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
         self.assertEqual(gate.gate_report(contract, summary, results)["overall_status"], "passed")

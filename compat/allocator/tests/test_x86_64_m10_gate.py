@@ -148,6 +148,33 @@ class ConditionTests(unittest.TestCase):
                 report.write_text(json.dumps({"overall_status": "unmet"}), encoding="utf-8")
                 self.assertIn("M8: report status is 'unmet'", gate.prior_milestones({"status": 0})["detail"])
 
+    def test_baseline_retains_release_performance_purity_and_unqualified_hardware(self) -> None:
+        met = lambda name: gate._condition(name, [], "validated fixture")
+        with (mock.patch.object(gate, "prior_milestones", return_value=met("m10.prior-milestones")) as prior,
+              mock.patch.object(gate, "promotion_gates", return_value=gate._condition(
+                  "m10.promotion-gates", ["actual release performance missing"], "")) as timing,
+              mock.patch.object(gate, "native_artifacts", return_value=met("m10.native-artifacts")),
+              mock.patch.object(gate, "oracle_retained", return_value=met("m10.oracle-retained"))):
+            result = gate.evaluate(m0={"status": 0}, receipt=Path("real.json"), head={}, profile="baseline")
+        prior.assert_called_once_with({"status": 0}, profile="baseline")
+        timing.assert_called_once_with(Path("real.json"))
+        self.assertFalse(result["pre_switch_ready"])
+        self.assertIn("m10.promotion-gates", result["unmet"])
+        self.assertIn("m10.promotion-rerun", result["unmet"])
+        self.assertEqual(result["unqualified_modes"], ["physical-numa", "2mib-pages", "1gib-pages"])
+
+    def test_full_promotion_rejects_baseline_report_and_baseline_requires_explicit_nonclaims(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            report = {"overall_status": "passed", "qualification_profile": "baseline",
+                      "unqualified_modes": ["physical-numa", "2mib-pages", "1gib-pages"]}
+            path.write_text(json.dumps(report))
+            self.assertIsNotNone(gate.report_passed(path))
+            self.assertIsNone(gate.report_passed(path, profile="baseline"))
+            report["unqualified_modes"] = []
+            path.write_text(json.dumps(report))
+            self.assertIsNotNone(gate.report_passed(path, profile="baseline"))
+
     def test_correctness_profile_defers_timing_and_retains_switch_and_purity(self) -> None:
         met = lambda name: gate._condition(name, [], "validated fixture")
         with (mock.patch.object(gate, "prior_milestones", return_value=met("m10.prior-milestones")) as prior,

@@ -443,7 +443,10 @@
         "unit:arena"
       ],
       "blocked_by": [
-        "Main and child public aligned OS map failures match the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Public managed OS memory has main and child selected-allocation, short-region warning/errno, child destruction, and caller-held unmap evidence. Main and child callback-managed memory match selected commit/purge geometry, failed metadata commit warning with retry, and a failed purge that leaves its span committed for reuse; main short-region refusal also matches. Public arena queries now match across reserved, managed, child, and 17 GiB split-parent backing. Other OS failure branches, managed-memory cleanup, callback reentrancy and broader child lifetime cases, huge-page reservation, and wider arena query combinations remain open."
+        "Main and child public aligned OS map failures match the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Public managed OS memory has main and child selected-allocation, short-region warning/errno, child destruction, and caller-held unmap evidence. Main and child callback-managed memory match selected commit/purge geometry, failed metadata commit warning with retry, and a failed purge that leaves its span committed for reuse; main short-region refusal also matches. Public arena queries now match across reserved, managed, child, and 17 GiB split-parent backing. Other OS failure branches, managed-memory cleanup, callback reentrancy and broader child lifetime cases, and wider arena query combinations remain open."
+      ],
+      "hardware_blocked_by": [
+        "Successful 1-GiB-page reservation and physical NUMA placement remain unqualified; ordinary failure, fallback and logical NUMA policy evidence remain required."
       ]
     },
     {

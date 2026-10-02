@@ -28,6 +28,30 @@ class M6GateContractTests(unittest.TestCase):
         self.contract = harness.read_json(gate.CONTRACT)
         self.api = harness.read_json(harness.ALLOCATOR_ROOT / "api-v3.5.0.json")
 
+    def test_baseline_defers_only_physical_hardware_and_keeps_failed_evidence(self) -> None:
+        contract = copy.deepcopy(self.contract)
+        for row in contract["gates"]:
+            row["blocked_by"] = []
+        summary = self.validate(contract=contract)
+        results = {name: {"status": "passed", "command": gate.evidence_command(command)}
+                   for name, command in summary["runnable_evidence"].items()}
+        full = gate.gate_report(contract, summary, results)
+        baseline = gate.gate_report(contract, summary, results, qualification_profile="baseline")
+        self.assertEqual(full["overall_status"], "unmet")
+        self.assertEqual(baseline["overall_status"], "passed")
+        self.assertEqual(baseline["unqualified_modes"], ["physical-numa", "2mib-pages", "1gib-pages"])
+        row = next(row for row in contract["gates"] if row.get("hardware_blocked_by"))
+        row["blocked_by"] = ["ordinary failure/fallback remains unproved"]
+        self.assertIn(row["id"], gate.gate_report(
+            contract, summary, results, qualification_profile="baseline")["unmet_required"])
+        row["blocked_by"] = []
+        results[row["evidence"][0]]["status"] = "failed"
+        self.assertIn(row["id"], gate.gate_report(
+            contract, summary, results, qualification_profile="baseline")["unmet_required"])
+        del results[row["evidence"][0]]
+        self.assertIn(row["id"], gate.gate_report(
+            contract, summary, results, qualification_profile="baseline")["unmet_required"])
+
     def validate(self, contract=None, api=None):
         return gate.validate_contract(
             self.contract if contract is None else contract,
@@ -199,6 +223,7 @@ class M6GateContractTests(unittest.TestCase):
         contract = copy.deepcopy(self.contract)
         for entry in contract["gates"]:
             entry["blocked_by"] = []
+            entry.pop("hardware_blocked_by", None)
         self.gate_record(contract, "m6.destruction-lifetime")["blocked_by"] = [
             "Live-owner destruction has no matched lifetime evidence."
         ]
@@ -218,6 +243,7 @@ class M6GateContractTests(unittest.TestCase):
             record["runner"] = "compat/allocator/heap_destroy.py"
         for entry in contract["gates"]:
             entry["blocked_by"] = []
+            entry.pop("hardware_blocked_by", None)
         summary = self.validate(contract)
         results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
                    for entry, runner in summary["runnable_evidence"].items()}
