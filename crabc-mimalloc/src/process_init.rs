@@ -3413,6 +3413,100 @@ mod tests {
         .expect("process-main initialization test thread completes");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn successful_huge_startup_consumes_canonical_registry_before_regular_parent() {
+        for (regular, exhaust_huge, selected_output) in [(false, false, false), (true, false, true), (true, true, true)] {
+            thread::spawn(move || {
+                let fault = fault::install(fault::Plan::disabled());
+                fault.enable_one_synthetic_huge_map();
+                let config = memory_config();
+                let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+                let mut options = resolved_vm_options();
+                options.set(crate::config::VmOption::ReserveHugeOsPages, 1);
+                options.set(crate::config::VmOption::ReserveHugeOsPagesAt, 0);
+                options.set(crate::config::VmOption::UseNumaNodes, 1);
+                if regular {
+                    options.set(crate::config::VmOption::ReserveOsMemory,
+                        (crate::config::ARENA_MIN_SIZE / crate::config::KIB) as i64);
+                }
+                unsafe extern "C" fn stderr(_: *const core::ffi::c_char) {}
+                let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(stderr)));
+                // SAFETY: the absent environment and nonallocating receiver
+                // remain valid throughout this isolated selected startup.
+                unsafe { output.initialize_source_options(|| core::ptr::null()) };
+                // SAFETY: the isolated thread retains each process-static
+                // owner and exclusively owns its initial TLS roots.
+                let (owner, startup) = unsafe {
+                    storage.prepare_with_test_components_and_vm_options(config,
+                        options, main_static, subprocess, metadata, page_map_storage,
+                        selected_output.then_some(output))
+                }.expect("the source owner attaches before huge reservation");
+                startup.complete().expect("a successful huge primitive completes real source startup");
+                let ready = owner.ready().unwrap();
+                let outcomes = ready.startup_reservation_outcomes().unwrap();
+                assert_eq!(outcomes.huge, Some(Ok(())));
+                assert_eq!(outcomes.regular, regular.then_some(Ok(())));
+                let binding = ready.process_backing().unwrap();
+                let backing = subprocess.arena_backing();
+                let registry = backing.registry();
+                let expected_count = 1 + usize::from(regular);
+                assert_eq!(registry.count(), expected_count);
+                let huge = registry.arena_print_pointer(0).unwrap();
+                // SAFETY: source publication and this isolated process owner
+                // keep the exact immutable arena header live.
+                let huge_image = unsafe { huge.as_ref() };
+                assert_eq!(huge_image.memid.kind(), crate::types::MemoryKind::OsHuge);
+                assert_eq!(huge_image.memid.os_memory().unwrap().base.addr(),
+                    fault.synthetic_huge_hint());
+                assert!(huge_image.memid.is_pinned());
+                // SAFETY: the registry keeps this parent live; this exact
+                // source claim excludes its free slices until explicit return.
+                let held = if exhaust_huge {
+                    let search = crate::arena::ArenaSearch {
+                        heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+                        numa_node: -1, requested: unsafe { ArenaId::from_arena(huge.as_ptr()) }.unwrap(),
+                        allow_pinned: true,
+                    };
+                    let mut claims = std::vec::Vec::new();
+                    while let Some(claim) = unsafe { backing.try_find_free(search, 1,
+                        crate::config::ARENA_SLICE_SIZE, true) } {
+                        claims.push(claim);
+                        assert!(claims.len() <= huge_image.slice_count);
+                    }
+                    assert!(!claims.is_empty(), "real source claims exhaust the huge parent before search advances");
+                    claims
+                } else { std::vec::Vec::new() };
+                let selected = if exhaust_huge { registry.arena_print_pointer(1).unwrap() } else { huge };
+                let sidecar = ProcessSharedArenaStorage::test_static_owner();
+                let session = owner.begin_process_lifetime_page_session().unwrap();
+                let mut allocator = crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                    session, binding, sidecar).unwrap();
+                let block = allocator.allocate(37, false)
+                    .expect("ticket zero searches the successful source startup parents");
+                // SAFETY: this exact live client and its PageMap remain
+                // exclusively owned by the active isolated initial allocator.
+                let page = unsafe { binding.page_map().page_map().unwrap().checked_lookup(block.as_ptr()) };
+                assert!(!page.is_null());
+                let memory = unsafe { (*page).memid() };
+                assert_eq!(memory.arena_memory().unwrap().arena, selected.as_ptr());
+                assert_eq!(memory.is_pinned(), !exhaust_huge);
+                assert_eq!(registry.count(), expected_count,
+                    "consuming startup state never fabricates a fallback parent");
+                assert!(sidecar.test_is_cold());
+                // SAFETY: the current block has never escaped this owner.
+                unsafe { allocator.free(block) }.unwrap();
+                assert!(unsafe { binding.page_map().page_map().unwrap().checked_lookup(block.as_ptr()) }.is_null());
+                assert_eq!(registry.count(), expected_count);
+                for claim in held { assert!(claim.release()); }
+                // The permanent initial session owns process-lifetime roots;
+                // this isolated fixture must not drop them as bounded owners.
+                core::mem::forget(allocator);
+                core::mem::forget(owner);
+            }).join().unwrap();
+        }
+    }
+
     #[test]
     fn huge_failed_startup_reservation_preserves_the_later_regular_option() {
         thread::spawn(|| {
