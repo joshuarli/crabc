@@ -97,6 +97,7 @@ FIXTURES = {
     "native-facade": ROOT / "compat/lto/native-facade-lto-fixture",
     "native-std": ROOT / "compat/lto/native-std-lto-fixture",
     "cross-dso": ROOT / "unwinder/fixtures/cross_dso",
+    "cleanup": ROOT / "unwinder/fixtures/build_std_cleanup",
 }
 CROSS_DSO_FRAME = FIXTURES["cross-dso"] / "frame.c"
 CROSS_DSO_INITIAL = "libcrabc_unwind_frame_initial.so"
@@ -862,6 +863,30 @@ def unwind_matrix(context: Context, provider_vendor: Path, labels: Sequence[str]
     return results
 
 
+def debug_backtrace_lane(context: Context, label: str) -> dict[str, Any]:
+    """Walk compiler frames and stop a bounded callback through source-built std."""
+
+    lane = context.output / "unwind" / f"backtrace-build-std-static-{label}"
+    build = cargo_consumer(context, lane / "consumer", fixture="cleanup", build_std=True,
+                           flags=("-C", "target-feature=+crt-static", "-C", "force-unwind-tables=yes"),
+                           link="owned-static", product=label, panic_runtime="panic_unwind")
+    report: dict[str, Any] = {"build": build}
+    unmet = owned_link_conditions(lane.name, build, provider=context.provider)
+    if build.get("status") == "built":
+        binary = Path(build["executable"]["path"])
+        report["elf"] = inspect_elf(context, binary, dynamic=False)
+        unmet.extend(report["elf"]["problems"])
+        execution = execute(context, lane, binary, runtime="candidate", product=context.root("dynamic"), label="run")
+        report["execution"] = execution
+        try:
+            report["backtrace"] = owned_cleanup.assert_backtrace_execution(
+                execution["status"], execution["stdout_text"], execution["stderr_text"], ("static-nested",))
+        except owned_cleanup.OwnedCleanupError as error:
+            unmet.append(f"{lane.name}: {error}")
+    report["unmet"] = unmet
+    return report
+
+
 def dynamic_symbols(context: Context, image: Path) -> set[str]:
     """Every defined or undefined dynamic-symbol name of one ELF image."""
 
@@ -1052,6 +1077,9 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
                 for origin in CROSS_DSO_ORIGINS
             }
             unwind[label]["unmet"] += [item for lane in unwind[label]["cross_dso"].values() for item in lane["unmet"]]
+            if arguments.debug:
+                unwind[label]["backtrace"] = debug_backtrace_lane(context, label)
+                unwind[label]["unmet"] += unwind[label]["backtrace"]["unmet"]
     regressions = (provider_regressions(context, {"cargo_home": provider_sources["cargo_home"],
                                                   "registry_source": registry_source["registry_source"]})
                    if "provider-regressions" in selected else {"lanes": {}})
