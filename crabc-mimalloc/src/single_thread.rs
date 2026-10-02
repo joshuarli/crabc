@@ -3333,7 +3333,7 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
     }
 
     match preflight {
-        ProcessNonArenaPagePreflight::Os(published) => {
+        ProcessNonArenaPagePreflight::Os(mut published) => {
             let retain = |mapping, stage| {
                 ClaimedProcessNonArenaPageRelease::RetainedAfterList(
                     RetainedProcessNonArenaPage {
@@ -3375,10 +3375,16 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
             }
             // SAFETY: the exact all-free mapping remains owned after PageMap
             // removal and before aliases or primary metadata are retired.
-            unsafe { crate::page_backing::reset_source_page_guard(
+            let tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
                 page_map.memory_config(), process, expected_memory,
                 published.slice_start().as_ptr(), layout.allocation_size(),
             ) };
+            // SAFETY: this same unique token and original VM owner retain the
+            // mapping through reset; record its actual charge before release.
+            if !unsafe { published.record_source_tail_reset_commit(if process.is_some() { tail_commit } else { 0 }) } {
+                return retain(OsAlignedPageOwner::Published(published),
+                ProcessPostOwnerExitNonArenaTerminalStage::PageMapUnregistered);
+            }
             if unsafe { !published.clear_secondary_metadata() } {
                 return retain(
                     OsAlignedPageOwner::Published(published),
@@ -20090,7 +20096,7 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
             Ok(free_list) => free_list.validate_local_free_preflight(canonical_block),
             Err(error) => Err(error),
         };
-        let published = unsafe {
+        let mut published = unsafe {
             PublishedOsAlignedPage::from_page(page_map.memory_config(), page)
         };
         if preflight.is_err()
@@ -20181,7 +20187,7 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
     ) -> Result<(), ThreadExitFullOsSingletonPagesPostExitFreeError> {
         // SAFETY: the caller retains the raw empty result, exact page, and
         // serialized PageMap range until this terminal release completes.
-        let published = unsafe {
+        let mut published = unsafe {
             PublishedOsAlignedPage::from_page(page_map.memory_config(), page)
         }
         .ok_or(ThreadExitFullOsSingletonPagesPostExitFreeError::Release)?;
@@ -20216,10 +20222,15 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
         }
         // SAFETY: the exact all-free mapping remains owned after PageMap
         // removal and before aliases or primary metadata are retired.
-        unsafe { crate::page_backing::reset_source_page_guard(
+        let _tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
             page_map.memory_config(), None, expected_memory,
             published.slice_start().as_ptr(), layout.allocation_size(),
         ) };
+        // SAFETY: this same unique token and original VM owner retain the
+        // mapping through reset; record its actual charge before release.
+        if !unsafe { published.record_source_tail_reset_commit(0) } {
+            return Err(ThreadExitFullOsSingletonPagesPostExitFreeError::Release);
+        }
         // SAFETY: PageMap lookup is now absent while the primary and its
         // secondary aliases still live in this exact retained mapping.
         if unsafe { !published.clear_secondary_metadata() } {
@@ -42706,13 +42717,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             pending.metadata_stage = FreshOsMetadataStage::Primary { statistics_bin };
         }
         if let FreshOsMetadataStage::Primary { statistics_bin } = pending.metadata_stage {
-            if let (Some(start), Ok(memory)) = (pending.claim.slice_start(), pending.claim.memory_id()) {
+            if !pending.claim.source_tail_reset_recorded() {
+                let (Some(start), Ok(memory)) = (pending.claim.slice_start(), pending.claim.memory_id()) else { return Err(pending); };
                 // SAFETY: this private failed attempt retains its exact claim;
                 // no client, queue, or PageMap publication remains.
-                unsafe { crate::page_backing::reset_source_page_guard(
+                let tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
                     self.page_map.memory_config(), self.arena.process(), memory,
                     start.as_ptr(), pending.claim.layout().allocation_size(),
                 ) };
+                // SAFETY: the outcome belongs to this same original claim and
+                // process. Raw fixture mappings carry no process VM charge.
+                if !unsafe { pending.claim.record_source_tail_reset_commit(
+                    if self.arena.process().is_some() { tail_commit } else { 0 },
+                ) } { return Err(pending); }
             }
             // SAFETY: no observer remains and the exact selected session owns
             // this original primary's terminal metadata transition.
@@ -42753,7 +42770,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// then aliases, then primary metadata, then the still-local mapping.
     fn rollback_fresh_os_aligned(
         &mut self,
-        claim: OsAlignedPageClaim,
+        mut claim: OsAlignedPageClaim,
         page: NonNull<Page>,
         aliases_published: bool,
         page_map_registered: bool,
@@ -42782,13 +42799,25 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 return;
             }
         }
-        if let (Some(start), Ok(memory)) = (claim.slice_start(), claim.memory_id()) {
+        if !claim.source_tail_reset_recorded() {
+            let (Some(start), Ok(memory)) = (claim.slice_start(), claim.memory_id()) else {
+                self.park_pending_os_release(claim.retain_failed_publication());
+                return;
+            };
             // SAFETY: this private failed attempt retains its exact claim;
             // no client, queue, or PageMap publication remains.
-            unsafe { crate::page_backing::reset_source_page_guard(
+            let tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
                 self.page_map.memory_config(), self.arena.process(), memory,
                 start.as_ptr(), claim.layout().allocation_size(),
             ) };
+            // SAFETY: this is the same original claim's actual reset outcome;
+            // processless fixtures have no VM charge to add to its debit.
+            if !unsafe { claim.record_source_tail_reset_commit(
+                if self.arena.process().is_some() { tail_commit } else { 0 },
+            ) } {
+                self.park_pending_os_release(claim.retain_failed_publication());
+                return;
+            }
         }
         if aliases_published && !unsafe { claim.clear_secondary_metadata(page) } {
             // An alias ownership mismatch is a terminal provenance fault: do
@@ -44040,7 +44069,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // its free bitmap.
                 unsafe { self.arena.release(memory) }
             }
-            ReleaseSpan::Os(published) => {
+            ReleaseSpan::Os(mut published) => {
                 let layout = published.layout();
                 let expected_memory = published.memory_id();
                 // SAFETY: `PublishedOsAlignedPage` prevalidated the exact
@@ -44062,10 +44091,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 }
                 // SAFETY: the exact all-free mapping remains owned after PageMap
                 // removal and before aliases or primary metadata are retired.
-                unsafe { crate::page_backing::reset_source_page_guard(
+                let tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
                     self.page_map.memory_config(), self.arena.process(), expected_memory,
                     published.slice_start().as_ptr(), layout.allocation_size(),
                 ) };
+                // SAFETY: this same unique token and original VM owner retain the
+                // mapping through reset; record its actual charge before release.
+                if !unsafe { published.record_source_tail_reset_commit(if self.arena.process().is_some() { tail_commit } else { 0 }) } {
+                    return false;
+                }
                 // SAFETY: page-map lookup is gone before the secondary slots
                 // are cleared, and this single-thread lifecycle has no other
                 // aligned metadata reader.
@@ -44206,7 +44240,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// existing engine slot so the handoff remains terminal rather than
     /// inventing a second release path.
     fn release_queue_detached_abandoned_os_page(&mut self, page: NonNull<Page>) -> bool {
-        let Some(ReleaseSpan::Os(published)) = self.release_span(page.as_ptr()) else {
+        let Some(ReleaseSpan::Os(mut published)) = self.release_span(page.as_ptr()) else {
             return false;
         };
         // SAFETY: list removal and the claimed low owner bit leave this
@@ -44238,10 +44272,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         // SAFETY: the exact all-free mapping remains owned after PageMap
         // removal and before aliases or primary metadata are retired.
-        unsafe { crate::page_backing::reset_source_page_guard(
+        let tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
             self.page_map.memory_config(), self.arena.process(), expected_memory,
             published.slice_start().as_ptr(), layout.allocation_size(),
         ) };
+        // SAFETY: this same unique token and original VM owner retain the
+        // mapping through reset; record its actual charge before release.
+        if !unsafe { published.record_source_tail_reset_commit(if self.arena.process().is_some() { tail_commit } else { 0 }) } {
+            return false;
+        }
         // SAFETY: page-map lookup is gone before the secondary aligned
         // metadata aliases are cleared, while the primary remains live.
         if unsafe { !published.clear_secondary_metadata() } {
@@ -45029,7 +45068,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         let Some(statistics_bin) = page_statistics_bin(unsafe { page.as_ref() }) else {
             return false;
         };
-        let Some(ReleaseSpan::Os(published)) = self.release_span(page) else {
+        let Some(ReleaseSpan::Os(mut published)) = self.release_span(page) else {
             return false;
         };
         // SAFETY: same all-free plus queue-detached proof as the arena tail.
@@ -45057,10 +45096,15 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         }
         // SAFETY: the exact all-free mapping remains owned after PageMap
         // removal and before aliases or primary metadata are retired.
-        unsafe { crate::page_backing::reset_source_page_guard(
+        let tail_commit = unsafe { crate::page_backing::reset_source_page_guard(
             self.page_map.memory_config(), self.arena.process(), expected_memory,
             published.slice_start().as_ptr(), layout.allocation_size(),
         ) };
+        // SAFETY: this same unique token and original VM owner retain the
+        // mapping through reset; record its actual charge before release.
+        if !unsafe { published.record_source_tail_reset_commit(if self.arena.process().is_some() { tail_commit } else { 0 }) } {
+            return false;
+        }
         // SAFETY: PageMap lookup is gone before secondary aliases clear.
         if unsafe { !published.clear_secondary_metadata() } {
             return false;
