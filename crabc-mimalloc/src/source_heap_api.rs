@@ -18,7 +18,9 @@
 //   `mi_heap_*_aligned[_at]` allocation entries);
 // - `src/arena.c:1886-1922` (`mi_reserve_os_memory_ex2`,
 //   `mi_reserve_os_memory_ex`, `mi_reserve_os_memory`) and
-//   `src/arena.c:2170-2247` (the huge OS reservation entries).
+//   `src/arena.c:2170-2247` (the huge OS reservation entries);
+// - `src/arena.c:2471-2520` (`_mi_heap_visit_blocks`,
+//   `mi_heap_visit_blocks`, `mi_heap_visit_abandoned_blocks`).
 
 //! Pinned mimalloc first-class Heap and OS-reservation public entries over
 //! the native runtime.
@@ -1962,8 +1964,10 @@ unsafe fn heap_visit_blocks_selected(
     // SAFETY: the caller retains the Heap's owning subprocess through this
     // traversal; its identity is immutable after Heap initialization.
     let Some(subprocess) = (unsafe { heap_ref.subprocess_pointer().as_ref() }) else { return false };
-    if !subprocess.is_process_main()
-        && !subprocess.is_registered_child_of(MainSubprocess::global().identity()) {
+    // The caller retains this Heap's owning subprocess, including its
+    // parent metadata custody. Registration admits every nesting depth;
+    // traversal uses only this subprocess's own arena registry.
+    if !subprocess.is_process_main() && !subprocess.is_registered() {
         return false;
     }
     let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
@@ -3095,6 +3099,87 @@ use crate::subproc::lifecycle::{NativeChildThreadAdd, NativeSubprocessId};
 
 /// A Heap visitor (`mi_heap_visit_fun`).
 pub type HeapVisitor = unsafe extern "C" fn(heap: *mut c_void, argument: *mut c_void) -> bool;
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+mod nested_heap_visit_tests {
+    use super::*;
+    use crate::subproc::lifecycle::{native_subproc_new, native_subproc_add_current_thread,
+        native_child_thread_done, native_subproc_destroy, NativeChildThreadAdd};
+    unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    unsafe fn register_worker() {
+        // SAFETY: this newly spawned worker publishes its own descriptor once.
+        assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+            crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+    }
+
+    unsafe extern "C" fn count_client(_: *const c_void, _: *const HeapArea,
+        block: *mut c_void, _: usize, argument: *mut c_void) -> bool {
+        // SAFETY: the synchronous visitor owns the count for the entire call.
+        if !block.is_null() { unsafe { *argument.cast::<usize>() += 1 }; }
+        true
+    }
+
+    unsafe extern "C" fn stop_visit(_: *const c_void, _: *const HeapArea,
+        _: *mut c_void, _: usize, _: *mut c_void) -> bool { false }
+
+    unsafe extern "C" fn count_heap(_: *mut c_void, argument: *mut c_void) -> bool {
+        // SAFETY: the synchronous visitor owns the count for the entire call.
+        unsafe { *argument.cast::<usize>() += 1 };
+        true
+    }
+
+    #[test]
+    fn nested_child_heap_visits_its_live_client_and_empty_abandoned_set() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::nested_heap_visit_tests::nested_child_heap_visits_its_live_client_and_empty_abandoned_set",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let parent = native_subproc_new().unwrap();
+                let nested = std::thread::spawn(move || {
+                    unsafe { register_worker() };
+                    assert_eq!(unsafe { native_subproc_add_current_thread(parent) }, Ok(NativeChildThreadAdd::Added));
+                    let nested = native_subproc_new().unwrap();
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                    nested
+                }).join().unwrap();
+                std::thread::spawn(move || {
+                    unsafe { register_worker() };
+                    assert_eq!(unsafe { native_subproc_add_current_thread(nested) }, Ok(NativeChildThreadAdd::Added));
+                    let mut arena = null_mut();
+                    // SAFETY: the output, owned arena, Heap and client remain
+                    // live in this sole member through traversal and release.
+                    unsafe {
+                        assert_eq!(reserve_os_memory_ex(64 * crate::config::MIB, true, false, true, &mut arena).value, 0);
+                        let heap = heap_new_in_arena(arena);
+                        assert!(!heap.is_null());
+                        let client = heap_malloc(heap, 80).value.unwrap();
+                        client.as_ptr().write_bytes(0x41, 80);
+                        assert!(heap_contains(heap, client.as_ptr()));
+                        let mut count = 0usize;
+                        assert!(heap_visit_blocks(heap, true, Some(count_client), (&mut count as *mut usize).cast()));
+                        assert_eq!(count, 1);
+                        assert!(!heap_visit_blocks(heap, false, Some(stop_visit), null_mut()));
+                        count = 0;
+                        assert!(subproc_visit_heaps(nested.as_ptr(), count_heap, (&mut count as *mut usize).cast()));
+                        assert_eq!(count, 2, "the child's main Heap and its explicit arena Heap");
+                        count = 0;
+                        assert!(heap_visit_abandoned_blocks(heap, true, Some(count_client), (&mut count as *mut usize).cast()));
+                        assert_eq!(count, 0);
+                        assert_eq!(crate::source_api::free(client.as_ptr()), crate::source_api::FreeOutcome::Freed);
+                        assert!(heap_release(heap, true));
+                    }
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                }).join().unwrap();
+                assert_eq!(unsafe { native_subproc_destroy(nested) }, Ok(()));
+                assert_eq!(unsafe { native_subproc_destroy(parent) }, Ok(()));
+            },
+        );
+    }
+}
 
 /// The outcome of `mi_subproc_add_current_thread`, for the embedding boundary
 /// that binds threads to the runtime.

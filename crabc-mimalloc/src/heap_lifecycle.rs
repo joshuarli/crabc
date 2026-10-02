@@ -35,8 +35,9 @@
 //! Heap before a fresh page (`mi_arenas_page_try_find_abandoned`). OS-backed
 //! pages use the Heap's OS-abandoned list.
 //!
-//! Not yet covered: exclusive arenas and Heaps of the process main
-//! subprocess.
+//! An explicitly selected arena belongs to this child and retains every
+//! Theap and page allocated from it. Process-main Heaps use their separate
+//! owner while sharing these source list and page transitions.
 
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
