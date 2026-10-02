@@ -21,10 +21,13 @@ TARGET = "x86_64-unknown-linux-musl"
 VM_FIELDS = ("reserved", "committed")
 
 
-def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False, faulted: bool = True, guarded: bool = False) -> dict[str, str]:
+def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False, secure: int = 0, faulted: bool = True, guarded: bool = False) -> dict[str, str]:
     """Compare VM transitions while retaining placement-sensitive raw images."""
-    normal = (int(raw.get("geometry.block_size", "64")) - (8 if debug else 0)) if level else 0
-    bin_index = 9 if debug else 8
+    # Buffer padding changes the physical size class even when debug is off.
+    # The normal-byte statistic excludes that footer in either padded mode.
+    padded = debug or secure >= 3
+    normal = (int(raw.get("geometry.block_size", "64")) - (8 if padded else 0)) if level else 0
+    bin_index = 9 if padded else 8
     # The guarded workload keeps a different-bin survivor live at baseline.
     # Adding the target raises page and normal-byte peaks beyond that baseline.
     page_peak = int(guarded)

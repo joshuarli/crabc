@@ -64,6 +64,14 @@ class RegularPageReleaseStatisticsTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             comparable_trace(trace, debug=True)
 
+    def test_secure_padding_uses_source_bin_with_debug_disabled(self):
+        trace = self.trace(level=0, debug=True)
+        trace["profile.debug"] = "0"
+        comparable_trace(trace, level=0, secure=3)
+        trace["allocated.page_bin"] = "8:1,1"
+        with self.assertRaises(harness.HarnessError):
+            comparable_trace(trace, level=0, secure=3)
+
     def test_guarded_debug_release_keeps_failed_mapping_without_replaying_accounting(self):
         for faulted in (False, True):
             trace = self.trace(debug=True, faulted=faulted, guarded=True)
