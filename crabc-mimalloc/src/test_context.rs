@@ -21,7 +21,7 @@ use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
 use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, StartupInput};
 use crate::page_map::{PageMap, PageMapInitializationError, PageMapRoot};
 use crate::rust_alloc::boxed::Box;
-use crate::single_thread::{FreeError, SingleThreadAllocator};
+use crate::single_thread::{FreeError, LocalClientFreeProgress, SingleThreadAllocator};
 use crate::types::{LiveThreadId, PAGE_FLAG_BITS};
 
 /// Construction failed before a private test-adapter context became usable.
@@ -627,6 +627,10 @@ impl TestAllocatorContext {
 
     /// Returns one live allocation to this exact context.
     ///
+    /// A lifecycle error can follow client consumption; an error does not
+    /// authorize accessing or retrying `block`. Backing cleanup ownership is
+    /// retained separately for shutdown, independently of the live-block count.
+    ///
     /// # Safety
     ///
     /// `block` must be exactly one still-live allocation returned by this
@@ -642,11 +646,16 @@ impl TestAllocatorContext {
         let allocator = self.allocator_mut_if_active().map_err(|_| TestContextFreeError::Closing)?;
         // SAFETY: this method repeats the inner allocator's exact-current-block
         // ownership contract in its public safety documentation.
-        unsafe { allocator.free(block) }.map_err(map_free_error)?;
-        // The precondition above and the successful current-allocation free
-        // preserve the context's exact allocation-count invariant.
-        self.outstanding -= 1;
-        Ok(())
+        match unsafe { allocator.free_with_progress(block) } {
+            LocalClientFreeProgress::RefusedBeforeConsumption(error) => Err(map_free_error(error)),
+            LocalClientFreeProgress::Consumed(result) => {
+                // Publication consumes the client even if later page retirement
+                // or backing release fails. Shutdown retains those lifecycle
+                // owners independently of the outstanding client count.
+                self.outstanding -= 1;
+                result.map_err(map_free_error)
+            }
+        }
     }
 
     /// Performs the explicit terminal lifecycle after all delegated blocks
@@ -1030,6 +1039,23 @@ mod tests {
         let allocation = context.alloc(37).unwrap();
         assert!(unsafe { context.usable_size(allocation) }.unwrap() >= 37);
         unsafe { context.free(allocation) }.unwrap();
+        assert_eq!(context.outstanding_allocations(), 0);
+        assert_eq!(context.shutdown(), Ok(()));
+        assert_eq!(context.shutdown(), Err(TestContextShutdownError::AlreadyShutdown));
+    }
+
+    #[test]
+    fn context_free_lifecycle_failure_counts_the_consumed_client() {
+        let mut context = TestAllocatorContext::new().unwrap();
+        // A huge allocation uses the context-owned arena and bypasses delayed
+        // retirement. The release seam fails after local client consumption
+        // and PageMap removal, while the context retains the backing mapping.
+        let allocation = context.alloc(MIB).unwrap();
+        context.allocator.as_mut().unwrap()
+            .inject_page_release_after_page_map_unregister_failure_once();
+        // SAFETY: this is the sole return of this context's exact live client.
+        // No client access or second free occurs after its consumption.
+        assert_eq!(unsafe { context.free(allocation) }, Err(TestContextFreeError::Lifecycle));
         assert_eq!(context.outstanding_allocations(), 0);
         assert_eq!(context.shutdown(), Ok(()));
         assert_eq!(context.shutdown(), Err(TestContextShutdownError::AlreadyShutdown));
