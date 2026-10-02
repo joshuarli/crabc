@@ -1462,6 +1462,43 @@ impl ProcessArenaBacking {
         &'static self, config: MemoryConfig, allocation: HugeOsAllocation<'static>,
         numa_node: i32, exclusive: bool,
     ) -> Result<ManagedExternalRegion, ProcessHugeArenaInstallFailure> {
+        let process = StoredVmProcess::from_static_process(allocation.process());
+        // SAFETY: the process-static input satisfies the retained core's
+        // publication and quiescent destruction lifetime requirements.
+        unsafe { self.install_owned_huge_allocation_with_process(config, allocation,
+            process, numa_node, exclusive) }
+    }
+
+    /// Installs a huge prefix whose process identity is retained by an
+    /// external child owner. Publication grants no process-static VM view.
+    ///
+    /// # Safety
+    /// This is the allocation's exact subprocess backing. Its policy and
+    /// pinned subprocess image remain live through every published arena,
+    /// page and callback, until quiescent `destroy_all` transfers all backing
+    /// ownership. The child admission also remains live throughout this call
+    /// and any rejected allocation cleanup. The allocation has no outstanding
+    /// views, and `config` is its fixed process configuration. Its erased
+    /// lifetime must not be treated as proof of process-static ownership.
+    pub(crate) unsafe fn install_owned_huge_allocation_for_retained_process(
+        &self, config: MemoryConfig, allocation: HugeOsAllocation<'static>,
+        numa_node: i32, exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ProcessHugeArenaInstallFailure> {
+        // SAFETY: the caller retains the actual policy and pinned subprocess
+        // through publication, rejected-owner cleanup and arena destruction.
+        let process = unsafe { StoredVmProcess::from_retained_process(allocation.process()) };
+        unsafe { self.install_owned_huge_allocation_with_process(config, allocation,
+            process, numa_node, exclusive) }
+    }
+
+    /// # Safety
+    /// `stored_process` names the allocation's exact process and retains its
+    /// policy/subprocess until quiescent backing destruction. The transferred
+    /// owner has no views, and the configuration is its process configuration.
+    unsafe fn install_owned_huge_allocation_with_process(
+        &self, config: MemoryConfig, allocation: HugeOsAllocation<'static>,
+        stored_process: StoredVmProcess, numa_node: i32, exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ProcessHugeArenaInstallFailure> {
         let _guard = match self.reserve_lock.lock() {
             Ok(guard) => guard,
             Err(_) => return Err(ProcessHugeArenaInstallFailure {
@@ -1471,7 +1508,7 @@ impl ProcessArenaBacking {
         let process = allocation.process();
         let size = allocation.size();
         let memory = allocation.memory_id();
-        unsafe { self.install_owned_allocation_locked(process, StoredVmProcess::from_static_process(process), config, size,
+        unsafe { self.install_owned_allocation_locked(process, stored_process, config, size,
             ArenaBacking::Huge(allocation), memory, numa_node, exclusive) }
             .map_err(|(error, owner)| {
                 let ArenaBacking::Huge(allocation) = owner else { unreachable!() };
