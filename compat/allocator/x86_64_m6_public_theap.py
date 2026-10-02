@@ -2,6 +2,7 @@
 """Compare public default-Theap switching and direct allocation with pinned C."""
 
 import argparse
+import importlib.util
 import json
 from pathlib import Path
 import re
@@ -177,11 +178,12 @@ def native_controls(output, profile, cases):
     return products
 
 
-def run_profile(profile, guarded_only, cases):
+def run_profile(profile, guarded_only, cases, *, debug=False):
     execution = harness.require_native_x86_64(require_image_identity=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, True)
-    output = ARTIFACTS if profile == "release" else ARTIFACTS / profile
+    root = ARTIFACTS / "debug" if debug else ARTIFACTS
+    output = root if profile == "release" else root / profile
     if guarded_only:
         output = output / "guarded-configuration"
     output.mkdir(parents=True, exist_ok=True)
@@ -191,25 +193,27 @@ def run_profile(profile, guarded_only, cases):
     harness.write_json(inputs, {"profile": profile, "guarded_only": guarded_only, "upstream": pin,
         "archive_sha256": harness.sha256_file(archive), "driver_sha256": harness.sha256_file(retained_driver),
         "source": receipts.source_seal(harness.ROOT), "execution": execution,
-        "workload_assertions": True, "allocator_flags": list(m4.api_profile_flags(profile))})
+        "workload_assertions": True, "allocator_flags": list(compiler_flags(profile, debug)),
+        **({"build_profile": "debug", "scope": "legal-public-theap-debug"} if debug else {})})
     with harness.temporary_directory("crabc-mimalloc-m6-public-theap-") as name:
         source = harness.safe_extract(archive, Path(name) / "source", pin["archive_root"])
         compiler = harness.require_tool("musl-gcc")
         client_flags = ("-DCRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY=1",) if guarded_only else ()
         common = [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-                  *m4.api_profile_flags(profile), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
+                  *compiler_flags(profile, debug), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
         drivers = {side: output / f"public-theap-{side}" for side in ("c", "rust")}
         _, logs = command(output, "c-build", [*common, "-DCRABC_M6_SOURCE_INTERNAL=1",
             "-I", str(source / "src"), str(retained_driver), str(source / "src/static.c"),
             "-pthread", "-o", str(drivers["c"])], source)
         cases.append((f"{profile}-c-build", 0, logs))
-        library = m4.build_adapter_library(output, profile)
+        library = (m4.build_adapter_library(output, profile, build_profile="debug") if debug
+                   else m4.build_adapter_library(output, profile))
         _, logs = command(output, "rust-link", [*common, str(retained_driver), str(library),
                           "-pthread", "-o", str(drivers["rust"])], source)
         cases.append((f"{profile}-rust-link", 0, [*logs, output / "adapter-build.json"]))
         count = observe(drivers, output, profile, guarded_only, cases)
     products = {f"{profile}-{side}": path for side, path in drivers.items()}
-    if not guarded_only:
+    if not guarded_only and not debug:
         products.update(native_controls(output, profile, cases))
     native = output / "native-execution-provenance.json"
     harness.write_json(native, harness.native_execution_attestation(
@@ -217,31 +221,45 @@ def run_profile(profile, guarded_only, cases):
     products.update({f"{profile}-adapter.a": library, f"{profile}-driver.c": retained_driver,
         f"{profile}-upstream-archive": archive, f"{profile}-inputs.json": inputs,
         f"{profile}-native-execution-provenance.json": native})
+    if debug:
+        products[f"{profile}-source-runtime.json"] = output / "adapter-source-runtime.json"
     return count, products
 
 
-def run_cohort(profiles, guarded_only=False):
+def compiler_flags(profile, debug=False):
+    """Keep source macros independent from the optimization level."""
+    flags = m4.api_profile_flags(profile)
+    return (*(flag for flag in flags if not flag.startswith("-O")), "-O0") if debug else flags
+
+
+def run_cohort(profiles, guarded_only=False, *, debug=False):
     if (not profiles or len(set(profiles)) != len(profiles)
             or any(profile not in AVAILABLE_PROFILES for profile in profiles)):
         raise harness.HarnessError("unsupported public Theap profile")
+    if debug and (profiles != ("release",) or guarded_only):
+        raise harness.HarnessError("debug public Theap supports only the ordinary legal-client workload")
     seal = receipts.source_seal(harness.ROOT)
     cases, products, total = [], {}, 0
     for profile in profiles:
-        count, selected = run_profile(profile, guarded_only, cases)
+        count, selected = (run_profile(profile, guarded_only, cases, debug=True) if debug
+                           else run_profile(profile, guarded_only, cases))
         total += count
         products.update(selected)
         print(f"public Theap ({profile}): {count} source-built C/Rust keys match", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during public Theap profile cohort")
-    receipts.write_receipt(harness.ROOT, RUNNER, ARTIFACTS, products, cases,
-        parameters(profiles, guarded_only), True)
-    receipts.read_receipt(harness.ROOT, RUNNER)
+    runner = RUNNER + "-debug" if debug else RUNNER
+    work = ARTIFACTS / "debug" if debug else ARTIFACTS
+    receipts.write_receipt(harness.ROOT, runner, work, products, cases,
+        parameters(profiles, guarded_only, debug), not debug)
+    receipts.read_receipt(harness.ROOT, runner)
     return total
 
 
-def parameters(profiles, guarded_only):
+def parameters(profiles, guarded_only, debug=False):
     return {"profiles": ",".join(profiles), "guarded-only": str(int(guarded_only)),
-            "watchdog-seconds": "60", "workload-assertions": "active"}
+            "watchdog-seconds": "60", "workload-assertions": "active",
+            **({"build-profile": "debug", "scope": "legal-public-theap-debug"} if debug else {})}
 
 
 def main(profile: str = "release", guarded_only: bool = False) -> None:
@@ -260,6 +278,8 @@ def cli(argv=None):
     selection.add_argument("--profiles", nargs="+", choices=AVAILABLE_PROFILES,
         help="complete ordered profile cohort for production or retained reading")
     parser.add_argument("--guarded-only", action="store_true")
+    parser.add_argument("--debug", action="store_true",
+        help="run the ordinary legal-client driver at opt0 with abort-only source core")
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--read", action="store_true")
     action.add_argument("--replay", action="store_true")
@@ -267,14 +287,19 @@ def cli(argv=None):
     profiles = tuple(args.profiles) if args.profiles else (PROFILES if args.matrix else (args.profile,))
     if len(set(profiles)) != len(profiles):
         parser.error("profile selection cannot contain duplicates")
+    if args.debug and (profiles != ("release",) or args.guarded_only):
+        parser.error("--debug selects only the ordinary legal-client workload")
     if not (args.read or args.replay):
-        run_cohort(profiles, args.guarded_only)
+        if args.debug:
+            run_cohort(profiles, args.guarded_only, debug=True)
+        else:
+            run_cohort(profiles, args.guarded_only)
         return 0
-    receipt = receipts.read_receipt(harness.ROOT, RUNNER)
-    if dict(receipt.parameters) != parameters(profiles, args.guarded_only):
+    receipt = receipts.read_receipt(harness.ROOT, RUNNER + "-debug" if args.debug else RUNNER)
+    if dict(receipt.parameters) != parameters(profiles, args.guarded_only, args.debug):
         raise harness.HarnessError("public Theap receipt profile or workload parameters differ")
     profile_labels = {profile: ["c-build", "rust-link", "c-run", "rust-run",
-        *([] if args.guarded_only else ["native_theap_contract",
+        *([] if args.guarded_only or args.debug else ["native_theap_contract",
             *(test.rsplit("::", 1)[-1] for test in native_control_tests(profile)[1:])])]
         for profile in profiles}
     if receipt.case_ids() != [f"{profile}-{label}" for profile in profiles for label in profile_labels[profile]]:
@@ -296,8 +321,10 @@ def cli(argv=None):
         if (inputs.get("profile") != profile or inputs.get("guarded_only") is not args.guarded_only
                 or inputs.get("upstream") != pin or inputs.get("archive_sha256") != pin["sha256"]
                 or inputs.get("source") != dict(receipt.source) or inputs.get("workload_assertions") is not True
-                or inputs.get("allocator_flags") != list(m4.api_profile_flags(profile))):
+                or inputs.get("allocator_flags") != list(compiler_flags(profile, args.debug))):
             raise harness.HarnessError(f"{profile} public Theap retained selector or source inputs differ")
+        if args.debug and (inputs.get("build_profile") != "debug" or inputs.get("scope") != "legal-public-theap-debug"):
+            raise harness.HarnessError("public Theap debug selector differs")
         if (harness.sha256_file(products / f"{profile}-upstream-archive") != pin["sha256"]
                 or inputs.get("driver_sha256") != harness.sha256_file(products / f"{profile}-driver.c")
                 or (products / f"{profile}-driver.c").read_bytes() != DRIVER.read_bytes()):
@@ -345,13 +372,13 @@ def cli(argv=None):
         if not isinstance(adapter_argv, list) or not adapter_argv:
             raise harness.HarnessError(f"{profile} public Theap native compiler argv is missing")
         compiler, cargo = c_argv[0], adapter_argv[0]
-        if Path(compiler).name != "musl-gcc" or Path(cargo).name != "cargo":
+        if Path(compiler).name != "musl-gcc" or Path(cargo).name != ("rustup" if args.debug else "cargo"):
             raise harness.HarnessError(f"{profile} public Theap compiler identity differs")
         client_flags = ("-DCRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY=1",) if args.guarded_only else ()
         common = [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-                  *m4.api_profile_flags(profile), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
+                  *compiler_flags(profile, args.debug), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
         retained_driver = output / DRIVER.name
-        library = output / "cargo-target" / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
+        library = output / "cargo-target" / m4.RUST_TARGET / ("debug" if args.debug else "release") / m4.ADAPTER_STATICLIB
         expected_commands = {
             "c-build": [*common, "-DCRABC_M6_SOURCE_INTERNAL=1", "-I", str(source / "src"),
                         str(retained_driver), str(source / "src/static.c"), "-pthread", "-o", str(output / "public-theap-c")],
@@ -359,7 +386,7 @@ def cli(argv=None):
             "c-run": [str(output / "public-theap-c")],
             "rust-run": [str(output / "public-theap-rust")],
         }
-        if not args.guarded_only:
+        if not args.guarded_only and not args.debug:
             for index, test in enumerate(native_control_tests(profile)):
                 label = "native_theap_contract" if index == 0 else test.rsplit("::", 1)[-1]
                 expected_commands[label] = [cargo, "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
@@ -371,7 +398,28 @@ def cli(argv=None):
         for label, expected in expected_commands.items():
             if records[label].get("command") != expected:
                 raise harness.HarnessError(f"{profile} public Theap {label} compiler/provider argv differs")
-        expected_adapter = [cargo, "build", "--locked", "--release", "--message-format=json",
+        prefix = [cargo]
+        if args.debug:
+            specification = importlib.util.spec_from_file_location("theap_source_core",
+                harness.ROOT / "compat/x86_64/native_static_source_runtime_closure.py")
+            runtime = importlib.util.module_from_spec(specification)
+            specification.loader.exec_module(runtime)
+            provenance = harness.read_json(products / f"{profile}-source-runtime.json")
+            flags = list(runtime.runtime_flags("pic"))
+            if (cargo != str(runtime.PINNED_RUSTUP_FRONTEND)
+                    or provenance.get("flags") != flags
+                    or provenance.get("environment", {}).get("CARGO_ENCODED_RUSTFLAGS") != "\x1f".join(flags)
+                    or provenance.get("environment", {}).get("CARGO_PROFILE_DEV_OPT_LEVEL") != "0"):
+                raise harness.HarnessError("public Theap source-core compiler boundary differs")
+            artifacts = [json.loads(line) for line in str(adapter["stdout"]).splitlines()
+                         if line.startswith("{")]
+            artifacts = [record for record in artifacts if record.get("reason") == "compiler-artifact"]
+            if (not {"core", "compiler_builtins", "crabc_mimalloc_native_mi_adapter"}.issubset(
+                    {record["target"]["name"] for record in artifacts})
+                    or any(record["profile"]["opt_level"] != "0" for record in artifacts)):
+                raise harness.HarnessError("public Theap lacks compiled opt0 source-core artifacts")
+            prefix += ["run", runtime.TOOLCHAIN, "cargo", "-Zbuild-std=core,compiler_builtins"]
+        expected_adapter = [*prefix, "build", "--locked", "--offline" if args.debug else "--release", "--message-format=json",
             "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(output / "cargo-target"),
             *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in m4.api_profile_features(profile))) if m4.api_profile_features(profile) else ())]
         artifact = adapter.get("artifact", {})
@@ -394,13 +442,13 @@ def cli(argv=None):
             output = scratch / profile
             output.mkdir()
             drivers = {}
-            for target in ("c", "rust", *(("native_theap_contract", "crabc_mimalloc") if not args.guarded_only else ())):
+            for target in ("c", "rust", *(("native_theap_contract", "crabc_mimalloc") if not args.guarded_only and not args.debug else ())):
                 binary = output / target
                 shutil.copyfile(source / f"{profile}-{target}", binary)
                 binary.chmod(0o755)
                 drivers[target] = binary
             observe(drivers, output, profile, args.guarded_only, [])
-            if not args.guarded_only:
+            if not args.guarded_only and not args.debug:
                 for index, test in enumerate(native_control_tests(profile)):
                     target = "native_theap_contract" if index == 0 else "crabc_mimalloc"
                     label = target if index == 0 else test.rsplit("::", 1)[-1]
@@ -408,7 +456,8 @@ def cli(argv=None):
                         [str(drivers[target]), test, "--exact", "--nocapture", "--test-threads=1"],
                         output, runtime=True)
                     require_one_native_test(record, label)
-        print("public Theap retained full-profile replay: PASS", flush=True)
+        print("public Theap retained debug legal-client replay: PASS" if args.debug
+              else "public Theap retained full-profile replay: PASS", flush=True)
     return 0
 
 

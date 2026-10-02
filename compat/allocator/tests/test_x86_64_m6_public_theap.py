@@ -247,6 +247,79 @@ class TheapProducerTests(unittest.TestCase):
                     theap.cli(['--profiles','secure-3','--read'])
                 path.write_text(saved)
 
+    def test_debug_entry_selects_opt0_legal_clients_without_publishing_release_receipt(self):
+        with mock.patch.object(theap, 'run_cohort') as run:
+            self.assertEqual(theap.cli(['--debug']), 0)
+        run.assert_called_once_with(('release',), False, debug=True)
+
+    def test_debug_reader_binds_opt0_core_and_ordinary_driver_compilers(self):
+        receipt, pin, commands = self.receipt_fixture('release')
+        latest = receipt.path.parent
+        products, logs = latest / 'products', latest / 'logs'
+        work = Path(theap.harness.ROOT / json.loads(receipt.path.read_text())['work'])
+        original_output = work / 'release'
+        flags = list(theap.compiler_flags('release', True))
+        inputs = json.loads((products / 'release-inputs.json').read_text())
+        inputs.update(allocator_flags=flags, build_profile='debug', scope='legal-public-theap-debug')
+        (products / 'release-inputs.json').write_text(json.dumps(inputs))
+        runtime_path = theap.harness.ROOT / 'compat/x86_64/native_static_source_runtime_closure.py'
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('theap_test_core', runtime_path)
+        runtime = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runtime)
+        core_flags = list(runtime.runtime_flags('pic'))
+        provenance = {'flags':core_flags, 'environment': {
+            'CARGO_ENCODED_RUSTFLAGS':'\x1f'.join(core_flags), 'CARGO_PROFILE_DEV_OPT_LEVEL':'0'}}
+        core = products / 'release-source-runtime.json'
+        core.write_text(json.dumps(provenance))
+        library = work / 'cargo-target' / theap.m4.RUST_TARGET / 'debug' / theap.m4.ADAPTER_STATICLIB
+        adapter_command = [str(runtime.PINNED_RUSTUP_FRONTEND), 'run', runtime.TOOLCHAIN, 'cargo',
+            '-Zbuild-std=core,compiler_builtins', 'build', '--locked', '--offline', '--message-format=json',
+            '--target', theap.m4.RUST_TARGET, '-p', theap.m4.ADAPTER_PACKAGE,
+            '--target-dir', str(work / 'cargo-target')]
+        raw_adapter = json.loads((logs / 'release/adapter-build.json').read_text())
+        raw_adapter.update(command=adapter_command, stdout='\n'.join(json.dumps({
+            'reason':'compiler-artifact','target':{'name':name},'profile':{'opt_level':'0'}})
+            for name in ('core','compiler_builtins','crabc_mimalloc_native_mi_adapter')))
+        raw_adapter['artifact']['path'] = library.relative_to(theap.harness.ROOT).as_posix()
+        (logs / 'adapter-build.json').write_text(json.dumps(raw_adapter))
+        selected = receipt.cases[:4]
+        for case in selected:
+            label = case['id'].removeprefix('release-')
+            stem = {'c-run':'c','rust-run':'rust'}.get(label, label)
+            record = json.loads((logs / 'release' / (stem+'.json')).read_text())
+            argv = [argument.replace(str(original_output), str(work)) for argument in record['command']]
+            if label in ('c-build','rust-link'):
+                argv = [argument for argument in argv if not argument.startswith('-O')]
+                argv.insert(argv.index('-UNDEBUG'), '-O0')
+                if label == 'rust-link':
+                    argv[-4] = str(library)
+            record['command'] = argv
+            (logs / (stem+'.json')).write_text(json.dumps(record))
+            case['logs'] = {stem+'.json':{}}
+            if label == 'rust-link':
+                case['logs']['adapter-build.json'] = {}
+        receipt.cases = selected
+        receipt.case_ids = lambda prefix='':[case['id'] for case in selected]
+        receipt.parameters = theap.parameters(('release',), False, True)
+        with mock.patch.object(theap.receipts, 'read_receipt', return_value=receipt), \
+             mock.patch.object(theap.harness, 'load_pin', return_value=pin):
+            self.assertEqual(theap.cli(['--debug','--read']), 0)
+            for field, changed in (('flags', core_flags[:-1]), ('environment',
+                    {**provenance['environment'], 'CARGO_PROFILE_DEV_OPT_LEVEL':'1'})):
+                altered = {**provenance, field:changed}
+                core.write_text(json.dumps(altered))
+                with self.subTest(field=field), self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--debug','--read'])
+                core.write_text(json.dumps(provenance))
+            for target in ('core','compiler_builtins'):
+                changed = dict(raw_adapter, stdout='\n'.join(line for line in raw_adapter['stdout'].splitlines()
+                    if json.loads(line)['target']['name'] != target))
+                (logs / 'adapter-build.json').write_text(json.dumps(changed))
+                with self.subTest(target=target), self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--debug','--read'])
+                (logs / 'adapter-build.json').write_text(json.dumps(raw_adapter))
+
     def test_successful_process_with_wrong_visitor_geometry_is_retained_and_rejected(self):
         changed = self.observation(visitor='0,0,1,1,1,1,1,1')
         with mock.patch.object(theap.harness, 'command_record',
