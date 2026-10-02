@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import itertools
+import socket
 import struct
 import tempfile
 import unittest
@@ -26,6 +28,7 @@ def load_module(name: str, filename: str):
 
 dns_server = load_module("resolver_network_dns_server", "dns_server.py")
 runner = load_module("resolver_network_runner", "run.py")
+native_runner = load_module("resolver_network_native_runner", "run_x86_64.py")
 
 
 def question(name: str, identifier: int = 7) -> bytes:
@@ -34,6 +37,67 @@ def question(name: str, identifier: int = 7) -> bytes:
 
 
 class DnsHelperTests(unittest.TestCase):
+    def test_tc_failover_waits_for_both_drop_routes_in_every_receive_order(self) -> None:
+        for order in itertools.permutations(("valid", "drop", "fallback")):
+            with self.subTest(order=order):
+                server = dns_server.LoopbackDnsServer(None)
+                self.addCleanup(server.selector.close)
+                client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.addCleanup(client.close)
+                client.bind(("127.0.0.1", 0))
+                endpoints = {}
+                for role in order:
+                    endpoint = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    self.addCleanup(endpoint.close)
+                    endpoint.bind(("127.0.0.1", 0))
+                    endpoints[role] = endpoint
+                request = question("tc-failover.example.test")
+                observed = set()
+                for role in order:
+                    client.sendto(request, endpoints[role].getsockname())
+                    server._handle_datagram(endpoints[role], role, "ipv4")
+                    observed.add(role)
+                    if len(observed) < 3:
+                        with self.assertRaises(BlockingIOError):
+                            client.recv(65535, socket.MSG_DONTWAIT)
+                truncated = client.recv(65535, socket.MSG_DONTWAIT)
+                self.assertEqual(truncated, dns_server.encode_answer(
+                    request, 7, "tc-failover.example.test.", 1))
+                connection, tcp_client = socket.socketpair()
+                self.addCleanup(connection.close)
+                self.addCleanup(tcp_client.close)
+                tcp_client.sendall(struct.pack("!H", len(request)) + request)
+                server._serve_tcp_connection(connection, "fallback", "ipv4")
+                complete = dns_server.encode_answer(
+                    request, 7, "tc-failover.example.test.", 1, complete=True)
+                self.assertEqual(tcp_client.recv(65535), struct.pack("!H", len(complete)) + complete)
+                self.assertTrue(native_runner.tc_failover_provenance(server.events))
+
+    def test_tc_failover_drops_cannot_release_another_client_or_request(self) -> None:
+        server = dns_server.LoopbackDnsServer(None)
+        self.addCleanup(server.selector.close)
+        clients = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(2)]
+        endpoints = {role: socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                     for role in ("valid", "drop", "fallback")}
+        for sock in (*clients, *endpoints.values()):
+            self.addCleanup(sock.close)
+            sock.bind(("127.0.0.1", 0))
+        request = question("tc-failover.example.test")
+        clients[0].sendto(request, endpoints["fallback"].getsockname())
+        server._handle_datagram(endpoints["fallback"], "fallback", "ipv4")
+        for client, packet in ((clients[1], request),
+                               (clients[0], question("tc-failover.example.test", 8))):
+            for role in ("valid", "drop"):
+                client.sendto(packet, endpoints[role].getsockname())
+                server._handle_datagram(endpoints[role], role, "ipv4")
+            with self.assertRaises(BlockingIOError):
+                clients[0].recv(65535, socket.MSG_DONTWAIT)
+        for role in ("valid", "drop"):
+            clients[0].sendto(request, endpoints[role].getsockname())
+            server._handle_datagram(endpoints[role], role, "ipv4")
+        self.assertEqual(clients[0].recv(65535, socket.MSG_DONTWAIT),
+                         dns_server.encode_answer(request, 7, "tc-failover.example.test.", 1))
+
     def test_question_parser_canonicalizes_name(self) -> None:
         parsed = dns_server.parse_question(question("A.Example.Test"))
         self.assertEqual(parsed, (7, "a.example.test.", 1, 1))

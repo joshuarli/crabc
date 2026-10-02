@@ -349,10 +349,29 @@ class LoopbackDnsServer:
         self.endpoints: dict[str, dict[str, object]] = {}
         self.held_batch_a: dict[tuple[str, tuple[str, int]], tuple[bytes, int, str, int]] = {}
         self.batch_retries: dict[tuple[str, tuple[str, int], str, int], int] = {}
+        self.tc_failover_drops: dict[tuple[str, tuple[str, int], bytes], set[str]] = {}
+        self.held_tc_failover: dict[
+            tuple[str, tuple[str, int], bytes],
+            list[tuple[socket.socket, dict[str, object], list[bytes]]],
+        ] = {}
 
     def _record(self, event: dict[str, object]) -> None:
         with self.events_lock:
             self.events.append(event)
+
+    def _release_tc_failover(self, key: tuple[str, tuple[str, int], bytes]) -> None:
+        # Independent UDP sockets can receive a broadcast in any order. Hold
+        # the truncated reply until both other routes have actually observed
+        # this client's exact request, so TCP starts after those causal drops.
+        if self.tc_failover_drops.get(key) != {"valid", "drop"}:
+            return
+        for sock, event, responses in self.held_tc_failover.pop(key, []):
+            self._record(event)
+            for response in responses:
+                try:
+                    sock.sendto(response, key[1])
+                except OSError:
+                    return
 
     def _bind_endpoint(self, role: str) -> None:
         address = ROLE_ADDRESSES[role]
@@ -499,6 +518,10 @@ class LoopbackDnsServer:
                 event["request_hex"] = packet.hex()
                 event["response_hex"] = None
             self._record(event)
+            if name == "tc-failover.example.test.":
+                key = (family, peer, packet)
+                self.tc_failover_drops.setdefault(key, set()).add(role)
+                self._release_tc_failover(key)
             return
         behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
         if behavior == "source-spoof-sequence" and role == "valid":
@@ -520,6 +543,10 @@ class LoopbackDnsServer:
         if name == "tc-failover.example.test.":
             event["request_hex"] = packet.hex()
             event["response_hex"] = responses[0].hex() if len(responses) == 1 else None
+            key = (family, peer, packet)
+            self.held_tc_failover.setdefault(key, []).append((sock, event, responses))
+            self._release_tc_failover(key)
+            return
         self._record(event)
         for response in responses:
             try:
