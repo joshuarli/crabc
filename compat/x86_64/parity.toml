@@ -16,8 +16,8 @@ no_portability_framework = true
 no_symbol_count_claim = true
 
 [completion]
-qualification_profile = "correctness"
-deferred_families = ["performance.release"]
+qualification_profile = "full"
+deferred_families = []
 
 [status_meaning]
 foundation_verified = "A bounded native source or artifact slice has the named evidence. It does not select the full artifact or discharge later family obligations."

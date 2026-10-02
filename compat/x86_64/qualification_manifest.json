@@ -1,7 +1,7 @@
 {
   "schema": "crabc.x86_64-qualification-manifest/v2",
   "id": "x86_64-native-qualification",
-  "qualification_profile": "correctness",
+  "qualification_profile": "full",
   "target": {
     "triple": "x86_64-unknown-linux-musl",
     "system": "Linux",

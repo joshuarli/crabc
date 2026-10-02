@@ -6,13 +6,12 @@
     "compat.loader-corpus",
     "consumer.rust-std-lto",
     "consumer.source-build",
-    "capability.accounting"
-  ],
-  "completed_gate_count": 0,
-  "contract_sha256": "b425e801b7b01e97404ecbafe9229acdb4c8ac31e98c9c29af24501930e17517",
-  "deferred_gate_ids": [
+    "capability.accounting",
     "performance.release"
   ],
+  "completed_gate_count": 0,
+  "contract_sha256": "cb865f72cd07bf80f5b53554072420f8181aab40314f25b998711bb0bdbf1497",
+  "deferred_gate_ids": [],
   "execution": {
     "cargo_home": "/workspace/.work/x86_64/cargo",
     "dispatcher_command": [
@@ -33,7 +32,8 @@
     "compat.loader-corpus",
     "consumer.rust-std-lto",
     "consumer.source-build",
-    "capability.accounting"
+    "capability.accounting",
+    "performance.release"
   ],
   "policy": {
     "native_execution_only": true,
@@ -185,8 +185,8 @@
     }
   ],
   "promotion_ready": false,
-  "qualification_profile": "correctness",
-  "ready_gate_count": 7,
+  "qualification_profile": "full",
+  "ready_gate_count": 8,
   "runnable_prefix": [
     "compat.abi-differential",
     "compat.posix-process",
@@ -194,7 +194,8 @@
     "compat.loader-corpus",
     "consumer.rust-std-lto",
     "consumer.source-build",
-    "capability.accounting"
+    "capability.accounting",
+    "performance.release"
   ],
   "schema": "crabc.x86_64-qualification-manifest/v2",
   "target": {

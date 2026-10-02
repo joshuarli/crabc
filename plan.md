@@ -1,26 +1,20 @@
-# Complete crabc's native x86-64 features
+# Complete and qualify crabc's native x86-64 runtime
 
 ## Goal
 
 Finish the selected native Linux/x86-64 runtime and the faithful Rust mimalloc
-v3.5.0 implementation. Feature completeness is the active finish line: every
+v3.5.0 implementation, qualify owned release products, and promote the native
+allocator and public x86 support. Feature completeness remains the foundation: every
 selected capability, source operation, API and applicable mode must work through
 its intended runtime path, including errors, ownership and composition.
 
-User direction (2026-10-02): remove performance and release gates from this plan.
-Do not run release builds, benchmarks, optimization campaigns, release cohort
-qualification, repeated independent/extracted builds, or ordered promotion
-admission while implementing features. Use debug builds and the smallest useful
-correctness check. Build another configuration only to exercise a concrete
-conditional feature or reproduce a demonstrated defect.
-
-The x86 allocator default switch and public x86-support promotion are deferred
-to a later release phase, as confirmed by the user. C mimalloc remains selected
-and public x86 support remains disabled during this feature phase. Performance
-investigation starts after feature completion. Existing release/performance
-contracts and retained historical evidence stay outside this active plan;
-they are neither active prerequisites nor newly claimed passes. Reports removed
-during the authorized disk cleanup are not reconstructed or claimed as retained.
+User direction (2026-10-02): the feature milestone is complete; reactivate all
+previously deferred work. Reconcile current-source correctness, ownership and
+tooling first. Investigate performance and qualify release products afterwards;
+switch the x86 allocator default and promote public support only when their
+existing prerequisites pass. C mimalloc remains selected and public x86 support
+remains disabled until those transitions. Historical receipts are not current
+qualification, and deliberately deleted reports are not claimed as retained.
 
 `AGENTS.md` owns scope and working rules. This file is the sole implementation
 plan and progress handoff. User direction takes precedence over older gate or
@@ -35,15 +29,16 @@ Update this small section in place when the implementation frontier changes.
 - **Feature status:** selected native runtime, Rust facade, allocator source
   operations and owned integration are complete in the active feature scope.
   All demonstrated defects are repaired with focused debug evidence. No feature
-  lanes remain open. Performance, release builds, release qualification,
-  allocator-default changes and public-support promotion remain deferred.
+  lanes remain open. Performance, release qualification, allocator-default
+  changes and public-support promotion are now active, in that dependency order.
   Interrupted historical producers retain their actual statuses and available
   original partial evidence.
 - **Cleanup:** the user's expanded authorization removed 54 older registered
   evidence worktrees, eight obsolete top-level archives and 1,285 old build/report
   paths, plus two unused AArch64 Docker build-cache volumes. The earlier cleanup
   removed 20 campaign worktrees and 20 unused Docker volumes. Free disk is now
-  about 1 TiB. Broad cleanup is stopped at the user's request. Historical build
+  about 1 TiB. The user has authorized a further milestone cleanup of obsolete
+  state before new lanes start. Historical build
   products and reports were deliberately discarded; source commits remain in Git.
 - **Runtime accounting:** frozen inventory remains 223 capabilities and 26 families;
   25 families have functional scope. Historical release labels do not establish
@@ -85,33 +80,35 @@ Update this small section in place when the implementation frontier changes.
   metadata geometry against pinned C. Retained stdio programs pass all 42 cases
   with exact musl transcripts; multibyte original/fixed programs and the positive
   remote reclaim/second-owner-exit Loom model replay from read-only reports.
-- **Active work recovery:** a container-path mismatch during Git worktree pruning
-  removed the active registrations. All 16 registrations were reconstructed from
-  their preserved branch refs without changing working files; expected edits were
-  verified and lanes resumed. Current worktrees are under `.work/worktrees/`.
+- **Active integration:** all feature lanes have been integrated or settled;
+  only the main worktree remains. Historical lane refs remain available for source
+  recovery. New lanes use fresh trees under `.work/worktrees/`.
 - **Evidence and tools:** retain compact current regression inputs/programs/raw
   failures in the existing allocator/runtime reports, rather than historical build
   graphs. Development image `5b43da01b755` replaces the deleted historical image
   only for focused debug work via `CRABC_X86_64_CORE_IMAGE`; original image-qualified
   claims are not transferred. Derived Miri image `40a5aff94eab` supports focused
-  strict-provenance checks. Performance/release qualification remains deferred.
+  strict-provenance checks. Restore and authenticate the pinned qualification
+  environment before admitting new release evidence.
 - **Physical environment:** the host lacks the two allowed NUMA nodes/free 1-GiB
   pages required by the historical physical qualification job. Implement and
-  test software behavior with available mechanisms; physical certification belongs
-  to the later release phase. Do not repeat an unchanged denied `mbind`, alter
+  test software behavior with available mechanisms; physical certification is
+  an open release prerequisite. Do not repeat an unchanged denied `mbind`, alter
   shared pools/security policy, rent resources or reboot without authorization.
 
 ## Parallel lanes
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
 lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
-feature work remains, with one difficult deliverable and an exclusive file
+campaign work remains, with one difficult deliverable and an exclusive file
 boundary per lane. New assignments use medium thinking as directed by the user;
 existing assignments may finish at their current setting. The parent alone
 integrates to `main` and updates this file.
 Each lane works in `.work/worktrees/lane-<id>`, owns its mutable build state and
-uses focused debug checks. The user's feature-first instruction overrides skill
-requirements to repeat broad qualification or release checks before handoff.
+uses the smallest relevant correctness checks while preparing qualification.
+Final release evidence must use current merged source and its pinned environment.
+Run qualifying benchmarks on an uncontended host, after parallel preparation;
+do not manufacture lane occupancy with duplicate checks during measurement.
 
 When a lane finishes, integrate its coherent changes, preserve needed original
 source/programs/raw failures in existing ignored reports, remove the settled
@@ -136,14 +133,14 @@ Default behavior matches pinned musl's defaults (user decision, 2026-09-25):
 
 - **Loader validation.** At load time the loader rejects what musl rejects.
   Up-front checks musl does not perform are not required and must not keep a
-  startup or `dlopen` functional row open; performance comparison is deferred.
+  startup or `dlopen` functional row open; compare performance after correctness.
 - **Transparent huge pages.** The runtime leaves the process THP policy as
   musl does (no `PR_SET_THP_DISABLE`; upstream `allow_thp` stays 1). The
   native allocator's own arena reservations opt out of huge pages with
   `MADV_NOHUGEPAGE`, so first-allocation residency is musl-like. This is a
   recorded divergence from mimalloc v3.5.0 and carries a
   `known-differences.md` entry and a pinned-C correctness differential.
-  Comparative performance evidence is deferred.
+  Comparative performance evidence remains required for qualification.
 
 The accepted `libmimalloc-sys` 0.1.49 backend bundles mimalloc v3.3.2; it is
 **not** the exact v3.5.0 engine oracle. Preserve separate candidate, accepted-C
@@ -167,8 +164,8 @@ Miri/Loom case. Widen checking only when changed behavior or a failure warrants 
 
 Implement against stable interfaces while related features are developed. Keep
 shared state single-owner. Commit coherent increments and integrate continuously;
-no fixed candidate, full-cohort rebuild or release admission is required between
-implementation increments. Preserve unsafe caller obligations, explicit state
+no full-cohort rebuild is required between implementation increments. Use a
+fixed current-source cohort for final qualification. Preserve unsafe caller obligations, explicit state
 transitions, atomics and short validated projections. Never weaken a contract,
 mask a failure, fabricate a pass or substitute an easier feature.
 
@@ -181,10 +178,9 @@ per-artifact validator for every case. Preserve historical receipts as written.
 
 Implement every selected behavior in the frozen 223-capability mapping and
 25 functional families. Preserve the 26-family frozen inventory; the performance
-family remains outside active scope. Private native development profiles may
-exercise the intended implementation while public/default promotion is deferred.
-Family qualification status and ordered release dependencies are not feature
-completion prerequisites.
+family is active for final qualification. Private native development profiles
+exercise the intended implementation before public/default promotion.
+Feature implementation and current-source qualification remain distinct claims.
 
 ### Families and public ABI
 
@@ -233,7 +229,7 @@ selected `dl*` APIs, initial/dynamic TLS and DTV growth, and cross-DSO ownership
 Test concurrency, callback reentry, fork repair and failed-load rollback at the
 changed boundary. Inspect relevant ELF/link inputs for ownership and ABI errors.
 Independent reproducibility, full installed/extracted matrices, packaging
-certification and repeated corpus runs are deferred release work.
+certification and selected corpus runs are required final release work.
 
 ## Native allocator feature completion
 
@@ -345,8 +341,9 @@ is not final completion.
 
 ### Source feature groups
 
-The existing M0–M8 source inventories identify applicable features; their release
-milestone admission and full target-qualified matrices are not active gates.
+The existing M0–M8 source inventories identify applicable features. Their
+milestone admission and full target-qualified matrices are active qualification
+requirements; do not confuse historical source completion with a current pass.
 
 | Area | Required implementation |
 | --- | --- |
@@ -359,12 +356,13 @@ milestone admission and full target-qualified matrices are not active gates.
 | Configuration | Applicable options/environment, callbacks/deferred free, statistics, visitation, debug, secure levels and guarded/optional ISA behavior without raising the baseline. |
 | Runtime composition | Actual libc startup, constructors, pthread/TSD/cleanup/cancellation/fork, errno/interposition, loader/DSOs and Rust/Lua consumer interfaces. |
 
-Preserve the original unmodified upstream workloads as future release inputs.
+Preserve the original unmodified upstream workloads as release inputs.
 Use a focused workload when it exercises an actual feature or regression;
 large stress/soak matrices, leak certification and full milestone reruns are
-later release work. Small ownership/model tests remain appropriate for unsafe
+final release work. Small ownership/model tests remain appropriate for unsafe
 state transitions. Fault injection belongs at the actual primitive boundary.
-No optimization, comparative memory/size ratio or performance threshold is active.
+Comparative memory/size ratios and performance thresholds become active after
+current-source correctness and architecture checks pass.
 
 ## Allocator/runtime integration and Rust consumers
 
@@ -443,19 +441,40 @@ with the affected package/test. Type-check
 only the profiles whose interfaces changed. Use small existing Miri/Loom
 commands for the affected ownership/atomic transition.
 
-Do not invoke `campaign-all`, `campaign-qualification`, `campaign-promotion-check`,
-ordered qualification dispatch, full allocator milestone qualification, release
-builds or performance commands for this feature phase. Existing commands and
-reports remain available for later work. A command that unconditionally builds
-release artifacts must gain or use a development/debug route before use here.
-Do not call its release producer merely to obtain a feature-status receipt.
+Use `campaign-status`, the ordered qualification dispatcher and
+`qualification-candidate` to establish dependencies and reuse one authenticated
+current-source cohort. Full allocator milestone qualification, release builds,
+performance commands and promotion checks are authorized at their proper stage.
+Keep focused debug routes for diagnosing failures before rebuilding a cohort.
 
 Restore pinned development tools when needed; building a compiler/test environment
 is distinct from a release build of the runtime. A host read-only replay of an
 original native program may establish a focused behavior, with its actual context
 recorded. It must not be relabeled as a pinned-image or release qualification run.
 
-## Definition of feature completion
+## Qualification sequence
+
+1. Integrate or settle every open feature lane, remove obsolete local state,
+   and preserve source history, exact pins and compact original regressions.
+2. Restore pinned native tools and corpus inputs; reconcile current-source
+   ownership, architecture and correctness across runtime, allocator and consumers.
+   Repair reproduced failures before performance investigation.
+3. Investigate algorithmic work, syscalls, allocation and codegen. Measure the
+   native allocator against both accepted C integration and exact v3.5.0, and
+   runtime against pinned musl, with authenticated uncontended measurements.
+   Fix demonstrated regressions without changing selected semantics.
+4. Qualify the final owned release cohort: all four link modes, headers/ABI,
+   process/resolver/loader, std/LTO and source consumers, installed/extracted
+   products, reproducibility, allocator M0–M9, architecture and required physical
+   profiles. Follow the manifest's ordered chain, whose performance gate is last;
+   optimized products needed for measurements may be built before final admission.
+5. Pass full M10 prerequisites and the runtime performance receipt, switch only
+   the x86 default, then rerun the required post-switch qualification on that
+   source revision. Preserve the paused AArch64 allocator and frozen contracts.
+6. Promote public x86 support only with complete current-source receipts and
+   default products. Do not waive unavailable hardware, missing inputs or failures.
+
+## Definition of completion
 
 Completion requires all of the following together:
 
@@ -474,15 +493,10 @@ Completion requires all of the following together:
   Focused debug/type/ABI/source-differential and ownership/model checks provide
   evidence appropriate to changed behavior. Report unresolved behavior honestly;
   lack of a release receipt is not an implementation defect.
-- Paused AArch64 behavior and backend selection are preserved. C remains the
-  selected production allocator and public x86 support remains disabled, with
-  their transitions explicitly left for the later release phase.
-
-No performance result, optimized/release build, complete release cohort,
-reproducibility run, physical certification, ordered gate receipt, allocator
-switch or public promotion is required to finish this feature plan.
-
-After feature completion, performance investigation and release qualification
-may be scoped separately. Do not import their thresholds or admission rules back
-into this active implementation plan. Preserve historical tools/contracts/raw
-results without claiming they passed or deleting them as part of this edit.
+- Current-source full qualification, performance and allocator promotion
+  contracts pass with authenticated raw evidence, including required physical,
+  reproducibility and installed/extracted checks. Deleted historical evidence
+  cannot establish a pass.
+- Native Rust mimalloc is the qualified x86 default and public x86 support is
+  enabled through its promotion contract. Paused AArch64 behavior, backend
+  selection and frozen evidence remain intact.
