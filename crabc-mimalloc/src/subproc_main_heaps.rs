@@ -271,9 +271,29 @@ struct RetainedAuxiliaryFreshInitialization {
     task: crate::single_thread::PendingFreshOsPageInitialization,
 }
 
+#[cfg(target_arch = "x86_64")]
+struct RetainedAuxiliaryLiveValidity {
+    issuer: AuxiliaryAllocationIssuer,
+    _task: crate::single_thread::PendingLivePageValidity,
+}
+
+/// # Safety
+/// The original allocation issuer remains admitted through this handoff;
+/// every engine and metadata projection ended before the task was delivered.
+#[cfg(target_arch = "x86_64")]
+unsafe fn retain_auxiliary_live_validity(mut task: crate::single_thread::PendingLivePageValidity, issuer: AuxiliaryAllocationIssuer) {
+    let marked = unsafe { task.ensure_retirement_refusal(issuer.theap, issuer.heap) }.is_ok()
+        || task.has_retirement_refusal_marker();
+    if !marked || has_retained_auxiliary_fresh_initialization() {
+        core::hint::black_box((&task, &issuer));
+        crabc_core::process::exit_immediately(134);
+    }
+    unsafe { thread_heaps() }.pending_live_page_validity = Some(RetainedAuxiliaryLiveValidity { issuer, _task: task });
+}
+
 fn has_retained_auxiliary_fresh_initialization() -> bool {
     #[cfg(target_arch = "x86_64")]
-    { unsafe { thread_heaps() }.pending_fresh_initialization.is_some() }
+    { let state = unsafe { thread_heaps() }; state.pending_fresh_initialization.is_some() || state.pending_live_page_validity.is_some() }
     #[cfg(not(target_arch = "x86_64"))]
     { false }
 }
@@ -327,6 +347,8 @@ struct ThreadHeaps {
     /// claim. Its Heap marker and these live source roots forbid teardown.
     #[cfg(target_arch = "x86_64")]
     pending_fresh_initialization: Option<RetainedAuxiliaryFreshInitialization>,
+    #[cfg(target_arch = "x86_64")]
+    pending_live_page_validity: Option<RetainedAuxiliaryLiveValidity>,
 }
 
 #[thread_local]
@@ -338,6 +360,8 @@ static THREAD_HEAPS: UnsafeCell<ThreadHeaps> =
         pending_os_release: None,
         #[cfg(target_arch = "x86_64")]
         pending_fresh_initialization: None,
+        #[cfg(target_arch = "x86_64")]
+        pending_live_page_validity: None,
     });
 
 /// Preserve the live main-subprocess Heap slots until the pthread's source
@@ -388,7 +412,7 @@ impl CopiedThreadHeapTls {
     pub(crate) unsafe fn release_vanished_regular_backing(self) -> bool {
         // SAFETY: sole-child ownership of the pinned originating TLS field.
         let state = unsafe { self.state.as_ptr().as_mut() }.unwrap();
-        if state.pending_os_release.is_some() || state.pending_fresh_initialization.is_some() { return false; }
+        if state.pending_os_release.is_some() || (state.pending_fresh_initialization.is_some() || state.pending_live_page_validity.is_some()) { return false; }
         if let Some(owner) = state.thread_locals.as_mut() {
             // The image is parked in this exact lifecycle outside a bounded
             // slot operation, rather than installed in the survivor's TLS.
@@ -745,7 +769,8 @@ unsafe fn retain_refused_main_heap_metadata(theap: NonNull<Theap>, allocation: M
 unsafe fn theap_decref(theap: NonNull<Theap>) {
     #[cfg(target_arch = "x86_64")]
     if unsafe { thread_heaps() }.pending_fresh_initialization.as_ref()
-        .is_some_and(|retained| retained.issuer.theap == theap) { return; }
+        .is_some_and(|retained| retained.issuer.theap == theap)
+        || unsafe { thread_heaps() }.pending_live_page_validity.as_ref().is_some_and(|retained| retained.issuer.theap == theap) { return; }
     // SAFETY: forwarded.
     if !unsafe { Theap::decref_at(theap) } {
         return;
@@ -1201,6 +1226,8 @@ fn with_theap_engine<R>(
     let mut pending_os_release = None;
     #[cfg(target_arch = "x86_64")]
     let mut pending_fresh_initialization = None;
+    #[cfg(target_arch = "x86_64")]
+    let mut pending_live_page_validity = None;
     let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
     // SAFETY: this engine registers and unregisters only its own pages.
     let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }.ok()?;
@@ -1217,7 +1244,8 @@ fn with_theap_engine<R>(
         )
     }?;
     #[cfg(target_arch = "x86_64")]
-    let session = unsafe { session.with_fresh_initialization_slot(&mut pending_fresh_initialization) }?;
+    let session = unsafe { session.with_fresh_initialization_slot(&mut pending_fresh_initialization)
+        .and_then(|session| session.with_live_page_validity_slot(&mut pending_live_page_validity)) }?;
     // SAFETY: the process registry backing and its PageMap are held for the
     // operation.
     let mut engine = unsafe {
@@ -1232,6 +1260,8 @@ fn with_theap_engine<R>(
         // Session projections ended; move the exact before-candidate custody
         // with this task, preserving any completed marker stage.
         unsafe { retain_auxiliary_fresh_initialization(task, issuer) };
+    } else if let Some(task) = pending_live_page_validity.take() {
+        unsafe { retain_auxiliary_live_validity(task, issuer) };
     }
     if let Some(owner) = pending_os_release.take() {
         // SAFETY: the current thread's own state.
@@ -1266,7 +1296,8 @@ fn with_theap_allocation_phase(
         phase = Some(operation(engine));
     });
     if finished.is_some()
-        || matches!(&phase, Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(_))))
+        || matches!(&phase, Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(_)
+            | crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(_))))
     {
         phase
     } else {
@@ -1521,6 +1552,20 @@ unsafe fn finish_allocation_on_theap(
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     loop {
         match phase {
+            DeferredFreeAllocationPhase::LiveValidity(mut task) => {
+                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                { task = match unsafe { task.dispatch(owner) } { Ok(never) => match never {}, Err(task) => task }; }
+                #[cfg(target_arch = "x86_64")]
+                {
+                    let Some(original) = issuer.take() else {
+                        core::hint::black_box(&task); crabc_core::process::exit_immediately(134);
+                    };
+                    unsafe { retain_auxiliary_live_validity(task, original); }
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                { core::hint::black_box(&task); crabc_core::process::exit_immediately(134); }
+                return None;
+            }
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 #[cfg(target_arch = "x86_64")]
                 unsafe { finish_auxiliary_fresh_initialization(thread, theap, task, owner, issuer) };
@@ -1572,6 +1617,20 @@ unsafe fn finish_guarded_canonical_allocation_on_theap(
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     loop {
         match phase {
+            DeferredFreeAllocationPhase::LiveValidity(mut task) => {
+                #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+                { task = match unsafe { task.dispatch(owner) } { Ok(never) => match never {}, Err(task) => task }; }
+                #[cfg(target_arch = "x86_64")]
+                {
+                    let Some(original) = issuer.take() else {
+                        core::hint::black_box(&task); crabc_core::process::exit_immediately(134);
+                    };
+                    unsafe { retain_auxiliary_live_validity(task, original); }
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                { core::hint::black_box(&task); crabc_core::process::exit_immediately(134); }
+                return Err(());
+            }
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 unsafe { finish_auxiliary_fresh_initialization(thread, theap, task, owner, issuer) };
                 return Err(());
@@ -2500,6 +2559,7 @@ pub(crate) mod tests {
                                 loop {
                                     phase = match phase {
                                         DeferredFreeAllocationPhase::FreshInitialization(task) => break task,
+                                        DeferredFreeAllocationPhase::LiveValidity(_) => panic!("fresh candidate expected, live assertion received"),
                                         DeferredFreeAllocationPhase::Complete(_) => panic!("the actual OS candidate must fail its observed source zero assertion"),
                                         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                                             let frequency = binding().unwrap().process().policy().generic_collect_frequency();

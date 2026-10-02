@@ -195,6 +195,7 @@ pub(crate) struct ChildMetadataTheapPageSession<'session, 'image> {
     child: NonNull<crate::subproc::SubprocessIdentity>,
     pending_os_release: &'session mut Option<OsAlignedPageOwner>,
     pending_fresh_initialization: Option<&'session mut Option<crate::single_thread::PendingFreshOsPageInitialization>>,
+    pending_live_page_validity: Option<&'session mut Option<crate::single_thread::PendingLivePageValidity>>,
     page_engine: &'session mut crate::meta::ChildPageEngineState,
     metadata_pages_may_exist: &'session mut bool,
     _image: PhantomData<&'image crate::subproc::ChildSubprocessImage>,
@@ -214,6 +215,7 @@ pub(crate) struct ChildOrdinaryTheapPageSession<'session, 'image> {
     thread: LiveThreadId,
     pending_os_release: &'session mut Option<OsAlignedPageOwner>,
     pending_fresh_initialization: Option<&'session mut Option<crate::single_thread::PendingFreshOsPageInitialization>>,
+    pending_live_page_validity: Option<&'session mut Option<crate::single_thread::PendingLivePageValidity>>,
     page_engine: &'session mut crate::meta::ChildPageEngineState,
     /// For a Theap of a non-main Heap, the allocation of that Heap's
     /// per-arena `mi_arena_pages_t` from the subprocess main Heap
@@ -236,6 +238,20 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
     ) -> Option<Self> {
         if slot.is_some() { return None; }
         self.pending_fresh_initialization = Some(slot);
+        Some(self)
+    }
+
+    /// Binds the actual issuer's terminal live Page assertion slot.
+    ///
+    /// # Safety
+    /// The owner retains this session's Heap, Theap, subprocess and Page
+    /// backing after engine Drop; slot occupancy prevents their retirement.
+    pub(crate) unsafe fn with_live_page_validity_slot(
+        mut self,
+        slot: &'session mut Option<crate::single_thread::PendingLivePageValidity>,
+    ) -> Option<Self> {
+        if slot.is_some() { return None; }
+        self.pending_live_page_validity = Some(slot);
         Some(self)
     }
 
@@ -286,6 +302,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             thread,
             pending_os_release,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine,
             non_main_arena_pages: None,
             _image: PhantomData,
@@ -345,6 +362,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             thread,
             pending_os_release,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine,
             non_main_arena_pages: if heap_ref.is_subprocess_main() { None } else { Some(arena_pages) },
             _image: PhantomData,
@@ -398,6 +416,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             thread,
             pending_os_release,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine,
             non_main_arena_pages: if heap_ref.is_subprocess_main() { None } else { Some(arena_pages) },
             _image: PhantomData,
@@ -454,6 +473,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             thread,
             pending_os_release,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine,
             non_main_arena_pages: Some(arena_pages),
             _image: PhantomData,
@@ -490,6 +510,20 @@ impl<'session, 'image> ChildMetadataTheapPageSession<'session, 'image> {
         Some(self)
     }
 
+    /// Binds the actual issuer's terminal live Page assertion slot.
+    ///
+    /// # Safety
+    /// The owner retains this session's Heap, Theap, subprocess and Page
+    /// backing after engine Drop; slot occupancy prevents their retirement.
+    pub(crate) unsafe fn with_live_page_validity_slot(
+        mut self,
+        slot: &'session mut Option<crate::single_thread::PendingLivePageValidity>,
+    ) -> Option<Self> {
+        if slot.is_some() { return None; }
+        self.pending_live_page_validity = Some(slot);
+        Some(self)
+    }
+
     /// # Safety
     /// The caller owns the exact child metadata lock and projects the pinned
     /// child image, Theap capability, and Heap allocation from one live
@@ -519,6 +553,7 @@ impl<'session, 'image> ChildMetadataTheapPageSession<'session, 'image> {
             child: NonNull::from(identity),
             pending_os_release,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine,
             metadata_pages_may_exist,
             _image: PhantomData,
@@ -646,6 +681,36 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
         task: crate::single_thread::PendingFreshOsPageInitialization,
     ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
         let Some(slot) = self.pending_fresh_initialization.as_deref_mut() else { return Err(task); };
+        // These comparisons can refuse a foreign task; the actual owner of
+        // the prebound slot separately retains all issuing images and backing.
+        if slot.is_some() || !task.matches_theap(self.theap)
+            || !task.belongs_to_subprocess(unsafe { self.child.as_ref() }) {
+            return Err(task);
+        }
+        #[cfg(target_arch = "x86_64")]
+        let mut task = task;
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: this prebound slot's actual owner retains the original
+            // Heap, Theap, TLD and subprocess beyond this engine projection.
+            // The linear task records completed marking across handoffs.
+            let marked = unsafe { task.ensure_retirement_refusal(self.theap, self.heap) };
+            if marked.is_err() && !task.has_retirement_refusal_marker() {
+                return Err(task);
+            }
+            // A late unlock error after the marker store still transfers the
+            // same task into terminal custody; it cannot reopen retirement.
+        }
+        *slot = Some(task);
+        *self.page_engine = crate::meta::ChildPageEngineState::Poisoned;
+        Ok(())
+    }
+
+    fn retain_unfinished_live_page_validity(
+        &mut self,
+        task: crate::single_thread::PendingLivePageValidity,
+    ) -> Result<(), crate::single_thread::PendingLivePageValidity> {
+        let Some(slot) = self.pending_live_page_validity.as_deref_mut() else { return Err(task); };
         // These comparisons can refuse a foreign task; the actual owner of
         // the prebound slot separately retains all issuing images and backing.
         if slot.is_some() || !task.matches_theap(self.theap)
@@ -889,6 +954,36 @@ unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
         task: crate::single_thread::PendingFreshOsPageInitialization,
     ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
         let Some(slot) = self.pending_fresh_initialization.as_deref_mut() else { return Err(task); };
+        // These comparisons can refuse a foreign task; the actual owner of
+        // the prebound slot separately retains all issuing images and backing.
+        if slot.is_some() || !task.matches_theap(self.theap)
+            || !task.belongs_to_subprocess(unsafe { self.child.as_ref() }) {
+            return Err(task);
+        }
+        #[cfg(target_arch = "x86_64")]
+        let mut task = task;
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: this prebound slot's actual owner retains the original
+            // Heap, Theap, TLD and subprocess beyond this engine projection.
+            // The linear task records completed marking across handoffs.
+            let marked = unsafe { task.ensure_retirement_refusal(self.theap, self.heap) };
+            if marked.is_err() && !task.has_retirement_refusal_marker() {
+                return Err(task);
+            }
+            // A late unlock error after the marker store still transfers the
+            // same task into terminal custody; it cannot reopen retirement.
+        }
+        *slot = Some(task);
+        *self.page_engine = crate::meta::ChildPageEngineState::Poisoned;
+        Ok(())
+    }
+
+    fn retain_unfinished_live_page_validity(
+        &mut self,
+        task: crate::single_thread::PendingLivePageValidity,
+    ) -> Result<(), crate::single_thread::PendingLivePageValidity> {
+        let Some(slot) = self.pending_live_page_validity.as_deref_mut() else { return Err(task); };
         // These comparisons can refuse a foreign task; the actual owner of
         // the prebound slot separately retains all issuing images and backing.
         if slot.is_some() || !task.matches_theap(self.theap)

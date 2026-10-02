@@ -1123,6 +1123,7 @@ impl NativeChildInitializationScope {
         else { core::mem::forget(admission); }
     }
 
+
     /// Reads the original route without retaining a scope projection across
     /// any option getter or entropy warning.
     unsafe fn output_at(scope: core::ptr::NonNull<Self>) -> &'static crate::diagnostic_output::OutputOwner {
@@ -1390,7 +1391,7 @@ struct CurrentChildMember {
     #[cfg(target_arch = "x86_64")]
     allocation_scope: *const NativeChildAllocationScope,
     #[cfg(target_arch = "x86_64")]
-    retained_fresh_issuer: Option<NativeChildRetainedFreshIssuer>,
+    retained_page_issuer: Option<NativeChildRetainedPageIssuer>,
 }
 
 struct NativeChildThreadSlot {
@@ -1643,7 +1644,7 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
                 #[cfg(target_arch = "x86_64")]
                 allocation_scope: core::ptr::null(),
                 #[cfg(target_arch = "x86_64")]
-                retained_fresh_issuer: None,
+                retained_page_issuer: None,
             });
             NativeChildThreadAdd::Added
         }
@@ -1675,7 +1676,7 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
     let current = slot.as_mut()?;
     #[cfg(target_arch = "x86_64")]
     if current.generic_frequency_captures != 0
-        || !current.allocation_scope.is_null() || current.retained_fresh_issuer.is_some()
+        || !current.allocation_scope.is_null() || current.retained_page_issuer.is_some()
     {
         return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
     }
@@ -1947,9 +1948,15 @@ struct NativeChildOriginalIssuer {
 /// Terminal original custody, including a task that a refused engine could
 /// not take. A marker can refuse teardown but never replaces this admission.
 #[cfg(target_arch = "x86_64")]
-struct NativeChildRetainedFreshIssuer {
+struct NativeChildRetainedPageIssuer {
     issuer: NativeChildOriginalIssuer,
-    _task: Option<crate::single_thread::PendingFreshOsPageInitialization>,
+    _task: Option<NativeChildRetainedPageTask>,
+}
+
+#[cfg(target_arch = "x86_64")]
+enum NativeChildRetainedPageTask {
+    FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
+    LiveValidity(crate::single_thread::PendingLivePageValidity),
 }
 
 /// A stack-pinned synchronous selected-issuer scope. Linked scopes allow
@@ -1977,13 +1984,22 @@ impl NativeChildAllocationScope {
         // SAFETY: no projection or callback is live; the scope excludes this
         // member's finish and replacement. Its exact admission moves once.
         let current = unsafe { current_child_member() }.as_mut().expect("the admitted member is retained");
-        assert!(current.retained_fresh_issuer.is_none());
+        assert!(current.retained_page_issuer.is_none());
         assert_eq!(current.record_member.id(), unsafe { &*core::ptr::addr_of!((*scope.as_ptr()).issuer) }
             .as_ref().expect("one original issuer").id);
-        current.retained_fresh_issuer = Some(NativeChildRetainedFreshIssuer {
+        current.retained_page_issuer = Some(NativeChildRetainedPageIssuer {
             issuer: unsafe { &mut *core::ptr::addr_of_mut!((*scope.as_ptr()).issuer) }
-                .take().expect("one original issuer"), _task: task,
+                .take().expect("one original issuer"), _task: task.map(NativeChildRetainedPageTask::FreshInitialization),
         });
+    }
+
+    /// # Safety
+    /// The stack scope still owns its original counted issuer and no
+    /// callback or allocator projection remains during the terminal move.
+    unsafe fn retain_live_at(scope: core::ptr::NonNull<Self>, task: crate::single_thread::PendingLivePageValidity) {
+        // The original counted issuer outlives the rejected diagnostic task.
+        unsafe { Self::retain_at(scope, None); }
+        unsafe { current_child_member() }.as_mut().unwrap().retained_page_issuer.as_mut().unwrap()._task = Some(NativeChildRetainedPageTask::LiveValidity(task));
     }
 }
 
@@ -2016,7 +2032,7 @@ unsafe fn with_native_child_allocation_scope<R>(
         // SAFETY: a short projection of the actual current member, before
         // any source callback or candidate; no reference escapes this block.
         let current = unsafe { current_child_member() }.as_ref().ok_or(NativeChildAllocationRefusal::Unavailable)?;
-        if current.retained_fresh_issuer.is_some() { return Err(NativeChildAllocationRefusal::Retained); }
+        if current.retained_page_issuer.is_some() { return Err(NativeChildAllocationRefusal::Retained); }
         (current.record_member.id(), current.member.theap_pointer().ok_or(NativeChildAllocationRefusal::Unavailable)?)
     };
     if unsafe { crate::types::Theap::tld_at(theap) != crate::types::Theap::tld_at(main_theap) } {
@@ -2163,6 +2179,8 @@ unsafe fn with_native_child_allocation_phase(
         #[cfg(target_arch = "x86_64")]
         Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(task))) =>
             Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(task)),
+        Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task))) =>
+            Ok(crate::single_thread::DeferredFreeAllocationPhase::LiveValidity(task)),
         Some(result) if entered => result,
         _ => Err(NativeChildAllocationRefusal::Unavailable),
     }
@@ -2202,6 +2220,22 @@ unsafe fn native_child_theap_allocate_request_in_owner(
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::LiveValidity(mut task) => {
+                let (original_theap, heap) = unsafe { NativeChildAllocationScope::issuer_at(scope) };
+                #[cfg(feature = "mi-debug-3")]
+                { task = match unsafe { task.dispatch(owner) } {
+                    Ok(never) => match never {}, Err(task) => task,
+                }; }
+                // No lock or Page projection crosses delivery. Retain the
+                // actual pre-observation issuer even if marker publication
+                // refuses, so retirement cannot release its detached Page.
+                if original_theap == theap && task.matches_theap(theap) {
+                    let _ = unsafe { task.ensure_retirement_refusal(theap, heap) };
+                }
+                unsafe { NativeChildAllocationScope::retain_live_at(scope, task); }
+                return Err(NativeChildAllocationRefusal::Retained);
+            }
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 let (original_theap, heap) = unsafe { NativeChildAllocationScope::issuer_at(scope) };
@@ -2885,7 +2919,7 @@ pub(crate) unsafe fn native_child_heap_release(
         // linked scope is pinned until synchronous nested scopes have ended.
         let current = unsafe { current_child_member() }.as_ref();
         if let Some(current) = current {
-            if current.retained_fresh_issuer.as_ref().is_some_and(|retained| retained.issuer.heap == heap) {
+            if current.retained_page_issuer.as_ref().is_some_and(|retained| retained.issuer.heap == heap) {
                 return Some(Err(NativeSubprocessError::Retained));
             }
             let mut scope = current.allocation_scope;

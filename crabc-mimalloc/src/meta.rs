@@ -2027,6 +2027,7 @@ pub(crate) struct ChildMainHeapContextOwner<'heap> {
     // This owner retains the original issuing images while an unpublished
     // claim remains terminal; the claim's raw identities grant no lifetime.
     pending_fresh_initialization: Option<crate::single_thread::PendingFreshOsPageInitialization>,
+    pending_live_page_validity: Option<crate::single_thread::PendingLivePageValidity>,
     page_engine: ChildPageEngineState,
     metadata_pages_may_exist: bool,
     stage: ChildMainHeapStage,
@@ -2094,6 +2095,7 @@ pub(crate) struct ChildThreadOwner {
     // This owner retains the original issuing images while an unpublished
     // claim remains terminal; the claim's raw identities grant no lifetime.
     pending_fresh_initialization: Option<crate::single_thread::PendingFreshOsPageInitialization>,
+    pending_live_page_validity: Option<crate::single_thread::PendingLivePageValidity>,
     page_engine: ChildPageEngineState,
     /// This thread's regular dynamic thread-local slots
     /// (`mi_thread_locals_t`), allocated from the child's metadata as
@@ -2105,6 +2107,7 @@ pub(crate) struct ChildThreadOwner {
     /// once that Theap is freed); see [`ChildHeapTheapImage`].
     heap_theap_pending_os_release: Option<(Option<NonNull<Theap>>, crate::os_page::OsAlignedPageOwner)>,
     heap_theap_pending_fresh_initialization: Option<(NonNull<Theap>, crate::single_thread::PendingFreshOsPageInitialization)>,
+    heap_theap_pending_live_page_validity: Option<(NonNull<Theap>, crate::single_thread::PendingLivePageValidity)>,
 }
 
 /// One child-thread Theap for a non-main Heap: the source `mi_theap_t` at
@@ -2148,11 +2151,11 @@ impl ChildThreadOwner {
         self.theap.as_ref().map(|block| block.pointer.cast())
     }
 
-    /// An original unpublished claim prevents member/image retirement before
-    /// source registration, TLD lists or cache references are changed.
-    pub(crate) fn has_pending_fresh_page_initialization(&self) -> bool {
-        self.pending_fresh_initialization.is_some()
-            || self.heap_theap_pending_fresh_initialization.is_some()
+    /// An original unpublished claim or detached live Page assertion prevents
+    /// member/image retirement before registration, lists or caches change.
+    pub(crate) fn has_pending_page_assertion(&self) -> bool {
+        (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
+            || (self.heap_theap_pending_fresh_initialization.is_some() || self.heap_theap_pending_live_page_validity.is_some())
     }
 
     #[cfg(test)]
@@ -2277,7 +2280,7 @@ impl ChildThreadOwner {
     ) -> Result<R, ChildMetadataPageEngineError> {
         if self.state != ChildThreadOwnerState::Attached
             || self.registration.is_none()
-            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+            || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.page_engine != ChildPageEngineState::Active
             || !binding.is_active()
             || !binding.is_allocation_ready()
@@ -2294,7 +2297,7 @@ impl ChildThreadOwner {
         let theap = self.theap.as_ref()
             .map(|block| block.pointer.cast::<Theap>())
             .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
-        let Self { image, heap, thread, sequence, pending_os_release, pending_fresh_initialization, page_engine, .. } = self;
+        let Self { image, heap, thread, sequence, pending_os_release, pending_fresh_initialization, pending_live_page_validity, page_engine, .. } = self;
         // SAFETY: see `with_child_image`; the registration was checked above.
         let child_ref = unsafe { Pin::new_unchecked(image.as_ref()) };
         let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
@@ -2316,6 +2319,7 @@ impl ChildThreadOwner {
                 child_ref, tld, theap, *heap, *thread, *sequence,
                 pending_os_release, page_engine,
             ).and_then(|session| session.with_fresh_initialization_slot(pending_fresh_initialization))
+                .and_then(|session| session.with_live_page_validity_slot(pending_live_page_validity))
         }.ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
         let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
         // SAFETY: the validated child pair and session are held through the
@@ -2352,7 +2356,7 @@ impl ChildThreadOwner {
         child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildThreadTeardownError> {
-        if self.has_pending_fresh_page_initialization()
+        if self.has_pending_page_assertion()
             || self.state != ChildThreadOwnerState::Attached || !self.belongs_to(child) {
             return Err(ChildThreadTeardownError::InvalidTransition);
         }
@@ -2797,7 +2801,9 @@ impl ChildThreadOwner {
         // the reference that this path would otherwise consume. Refuse before
         // decrementing: a scalar task identity cannot replace that custody
         // after the image has reached its final-reference release boundary.
-        if self.pending_fresh_initialization.as_ref().is_some_and(|task| task.matches_theap(theap))
+        if self.pending_live_page_validity.as_ref().is_some_and(|task| task.matches_theap(theap))
+            || self.heap_theap_pending_live_page_validity.as_ref().is_some_and(|(issuer, _)| *issuer == theap)
+            || self.pending_fresh_initialization.as_ref().is_some_and(|task| task.matches_theap(theap))
             || self.heap_theap_pending_fresh_initialization.as_ref()
                 .is_some_and(|(issuer, _)| *issuer == theap)
         {
@@ -3176,7 +3182,7 @@ impl ChildThreadOwner {
             (owner.image, owner.tld_pointer(), owner.thread, owner.sequence, owner.state, owner.config, owner.parent_subprocess)
         };
         let tld = tld.ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
-        if unsafe { (*this).heap_theap_pending_fresh_initialization.is_some() }
+        if unsafe { ((*this).heap_theap_pending_fresh_initialization.is_some() || (*this).heap_theap_pending_live_page_validity.is_some()) }
             || state != ChildThreadOwnerState::Attached
             || !binding.is_active()
             || !binding.is_allocation_ready()
@@ -3192,6 +3198,7 @@ impl ChildThreadOwner {
         let page_engine = unsafe { &mut (*theap_image).page_engine };
         let mut pending_os_release = None;
         let mut pending_fresh_initialization = None;
+        let mut pending_live_page_validity = None;
         // SAFETY: the owner's registration keeps the child image allocated.
         let child_ref = unsafe { Pin::new_unchecked(image.as_ref()) };
         let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
@@ -3224,6 +3231,7 @@ impl ChildThreadOwner {
                 child_ref, tld, theap, heap, thread, sequence,
                 &mut pending_os_release, &mut *page_engine, &mut allocate_arena_pages,
             ).and_then(|session| session.with_fresh_initialization_slot(&mut pending_fresh_initialization))
+                .and_then(|session| session.with_live_page_validity_slot(&mut pending_live_page_validity))
         }
         .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
         let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
@@ -3244,6 +3252,19 @@ impl ChildThreadOwner {
             // owner retains the auxiliary image and its Heap; terminal state
             // prevents either from being retired while this claim persists.
             let slot = unsafe { &mut (*this).heap_theap_pending_fresh_initialization };
+            if slot.is_none() {
+                *slot = Some((theap, task));
+            } else {
+                core::mem::forget(task);
+            }
+            *page_engine = ChildPageEngineState::Poisoned;
+        }
+
+        if let Some(task) = pending_live_page_validity.take() {
+            // The engine has ended its projections. This original thread
+            // owner retains the auxiliary image and its Heap; terminal state
+            // prevents either from being retired while this claim persists.
+            let slot = unsafe { &mut (*this).heap_theap_pending_live_page_validity };
             if slot.is_none() {
                 *slot = Some((theap, task));
             } else {
@@ -3285,7 +3306,7 @@ impl ChildThreadOwner {
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildHeapTheapError> {
         // Refuse before freeing source locals or unlinking any issuer image.
-        if unsafe { (*this).has_pending_fresh_page_initialization() } {
+        if unsafe { (*this).has_pending_page_assertion() } {
             return Err(ChildHeapTheapError::InvalidTransition);
         }
         // SAFETY: forwarded; the owner and child are not otherwise borrowed.
@@ -3331,7 +3352,7 @@ impl ChildThreadOwner {
         child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildHeapTheapError> {
-        if self.has_pending_fresh_page_initialization() {
+        if self.has_pending_page_assertion() {
             return Err(ChildHeapTheapError::InvalidTransition);
         }
         // SAFETY: the immutable source empty Theap is process-static.
@@ -3714,6 +3735,7 @@ impl ChildContextOwner {
             heap_storage: Some(heap),
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine: ChildPageEngineState::Active,
             metadata_pages_may_exist: false,
             stage: ChildMainHeapStage::Registered,
@@ -3883,7 +3905,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         owner: crate::os_page::OsAlignedPageOwner,
     ) -> Result<(), crate::os_page::OsAlignedPageOwner> {
-        if self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.stage == ChildMainHeapStage::Terminal {
+        if self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.stage == ChildMainHeapStage::Terminal {
             return Err(owner);
         }
         let belongs_to_child = self.context.with_image(|child| {
@@ -3945,7 +3967,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             MemoryId,
         ) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.page_engine.permits_page_projection() { return None; }
         let Self { context, heap_storage, .. } = self;
         let heap = heap_storage.as_mut()?;
@@ -3961,7 +3983,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         operation: impl for<'theap> FnOnce(&'theap mut Theap) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.page_engine.permits_page_projection() { return None; }
         self.context.with_lease(|mut lease| lease.with_metadata_theap(operation))
     }
@@ -3979,7 +4001,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             MemoryId,
         ) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.page_engine.permits_page_projection() { return None; }
         let Self { context, heap_storage, .. } = self;
         let heap_storage = heap_storage.as_mut()?;
@@ -4010,7 +4032,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             return Err(ChildMetadataPageEngineError::SessionNotReady);
         }
         if self.stage != ChildMainHeapStage::HeapReady
-            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+            || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.page_engine != ChildPageEngineState::Active
             || !binding.is_active()
             || !binding.is_allocation_ready()
@@ -4027,6 +4049,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             heap_storage,
             pending_os_release,
             pending_fresh_initialization,
+            pending_live_page_validity,
             page_engine,
             metadata_pages_may_exist,
             ..
@@ -4067,6 +4090,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                     page_engine,
                     metadata_pages_may_exist,
                 ).and_then(|session| session.with_fresh_initialization_slot(pending_fresh_initialization))
+                .and_then(|session| session.with_live_page_validity_slot(pending_live_page_validity))
             }
             .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
             let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
@@ -4205,7 +4229,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
         if self.stage != ChildMainHeapStage::HeapReady
             || self.page_engine != ChildPageEngineState::Active
-            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+            || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
         {
             return Err(ChildThreadStartFailure::Rejected(
                 ChildThreadStartError::InvalidTransition,
@@ -4232,10 +4256,12 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             config: self.context.config,
             pending_os_release: None,
             pending_fresh_initialization: None,
+            pending_live_page_validity: None,
             page_engine: ChildPageEngineState::Active,
             thread_locals: None,
             heap_theap_pending_os_release: None,
             heap_theap_pending_fresh_initialization: None,
+            heap_theap_pending_live_page_validity: None,
             tld: None,
             theap: None,
             registration: None,
@@ -4537,7 +4563,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildMetadataPageEngineError> {
         if self.page_engine == ChildPageEngineState::RetryComplete {
-            if self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.metadata_pages_may_exist {
+            if self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) || self.metadata_pages_may_exist {
                 return Err(ChildMetadataPageEngineError::InvalidTransition);
             }
             let result = self.context.with_image(|child| {
@@ -4783,7 +4809,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Result<(), ChildMetadataTheapError> {
         if self.stage != ChildMainHeapStage::RegistryUnlinked
             || self.metadata_pages_may_exist
-            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+            || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.page_engine.permits_teardown() {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         }
@@ -4817,7 +4843,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn release_metadata_theap_after_detach(
         &mut self,
     ) -> Result<(), ChildMainHeapReleaseError> {
-        if self.stage != ChildMainHeapStage::TheapDetached || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+        if self.stage != ChildMainHeapStage::TheapDetached || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.page_engine.permits_teardown() {
             return Err(ChildMainHeapReleaseError::InvalidTransition);
         }
@@ -4874,7 +4900,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn unlink_child_heap(
         &mut self,
     ) -> Result<(), crate::types::heap_registry::SourceHeapRegistryError> {
-        if self.stage != ChildMainHeapStage::MetadataTheapReleased || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+        if self.stage != ChildMainHeapStage::MetadataTheapReleased || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || !self.page_engine.permits_teardown() {
             return Err(crate::types::heap_registry::SourceHeapRegistryError::InvalidImage);
         }
@@ -4946,7 +4972,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         let retained = |owner, stage, error| {
             Err(ChildMainHeapReleaseFailure::Retained { owner, stage, error })
         };
-        if self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
+        if self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.metadata_pages_may_exist
             || !self.page_engine.permits_teardown()
             || !matches!(
@@ -5220,6 +5246,16 @@ impl MetadataPageAllocator<'_> {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    fn take_pending_live_page_validity(&mut self)
+        -> Option<crate::single_thread::PendingLivePageValidity> {
+        match self {
+            Self::LegacySelectedArena(engine) => engine.take_pending_live_page_validity(),
+            Self::Process(engine) => engine.take_pending_live_page_validity(),
+            Self::CanonicalProcess(engine) => engine.take_pending_live_page_validity(),
+        }
+    }
+
     unsafe fn initialize_child_metadata_theap(
         &mut self,
         parent: &'static MainSubprocess,
@@ -5392,6 +5428,21 @@ impl SourceInitializationOutputWitness<'_, '_, '_> {
         entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess)
             .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
         Ok(entry.allocator().take_pending_fresh_initialization())
+    }
+
+    /// Moves the exact detached live Page task from the original metadata
+    /// issuer. Entry validation and all projections end before delivery;
+    /// the caller retains this witness and issuer through dispatch or refusal.
+    pub(crate) fn take_retained_live_page_validity_task(&self)
+        -> Result<Option<crate::single_thread::PendingLivePageValidity>,
+            SourceInitializationOutputAdmissionError> {
+        self.validate()?;
+        let mut entry = self.issuer.allocator.enter()
+            .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
+        if entry.status() != READY { return Ok(None); }
+        entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess)
+            .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
+        Ok(entry.allocator().take_pending_live_page_validity())
     }
 
     /// Revalidates this original domain after all allocator projections end.
