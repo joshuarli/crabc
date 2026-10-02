@@ -37,6 +37,107 @@ unsafe fn mapped(address: *mut u8) -> bool {
 fn identity(number: u64) -> ObjectIdentity { ObjectIdentity { device: 1, inode: number } }
 
 #[test]
+fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
+    static PROVIDER: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    static MISSING: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+
+    fn compile(source: &str, output: &std::path::Path) {
+        let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+            .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv"])
+            .arg(source).arg("-o").arg(output).status().unwrap();
+        assert!(status.success(), "TLS fixture compilation failed");
+    }
+
+    unsafe fn mapped_file(needle: &[u8]) -> Option<bool> {
+        let fd = unsafe { syscall4(257, -100, b"/proc/self/maps\0".as_ptr() as i64, 0, 0) };
+        if fd < 0 { return None; }
+        let mut bytes = [0u8; 65536];
+        let mut used = 0;
+        let result = loop {
+            if used == bytes.len() { break None; }
+            let count = unsafe { syscall3(0, fd, bytes.as_mut_ptr().add(used) as i64,
+                (bytes.len() - used) as i64) };
+            if count < 0 { break None; }
+            if count == 0 { break Some(bytes[..used].windows(needle.len()).any(|part| part == needle)); }
+            used += count as usize;
+        };
+        unsafe { syscall1(SYS_CLOSE, fd); }
+        result
+    }
+
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        let image = [31u8];
+        let mut initial = [EMPTY_OBJECT; 32];
+        initial[0] = Object { role: ObjectRole::Main, tls_image: image.as_ptr(),
+            tls_filesz: 1, tls_memsz: 16, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+        let block = materialize_initial_tls(&initial, 0)?;
+        let original = *block.dtv.add(1) as *mut u8;
+        *original = 97;
+        let root = RuntimeObject::allocate(ObjectStorage::Runtime(initial[0]), identity(1), 0,
+            LoadedName::new(b"main"), false)?;
+        (*root).callback_state.store(INITIALIZED, Ordering::Release);
+        (*REGISTRY.0.get()).head = root;
+        (*REGISTRY.0.get()).tail = root;
+        (*REGISTRY.0.get()).count = 1;
+        (*REGISTRY.0.get()).tls_count = 1;
+        (*REGISTRY.0.get()).initial_tls_count = 1;
+        add_global(&mut *REGISTRY.0.get(), root);
+        x86_64_initial_worker_tls::adopt_after_fork(block.thread_pointer);
+        // This isolated child uses offline owned TCB storage. Keep host FS
+        // intact; constructors access only their ordinary non-TLS counter.
+        RuntimeGuard::complete_fork();
+        let mut diagnostic: RuntimeDiagnostic = core::mem::zeroed();
+        let failed = runtime_open(MISSING.load(Ordering::Acquire), 2, &mut diagnostic);
+        if !failed.is_null() || diagnostic.kind != DIAGNOSTIC_SYMBOL
+            || (*REGISTRY.0.get()).count != 1 || (*REGISTRY.0.get()).tls_count != 1
+            || !x86_64_runtime_tls_view::current(block.thread_pointer).is_null()
+            || *original != 97 || mapped_file(b"loader109_failed_tls.so")? { return None; }
+        if !diagnostic.text.is_null() {
+            syscall2(SYS_MUNMAP, diagnostic.text as i64, diagnostic.text_len as i64);
+        }
+        let provider = runtime_open(PROVIDER.load(Ordering::Acquire), 2, &mut diagnostic);
+        if provider.is_null() || diagnostic.kind != 0 || (*REGISTRY.0.get()).count != 2
+            || (*REGISTRY.0.get()).tls_count != 2 { return None; }
+        let view = x86_64_runtime_tls_view::current(block.thread_pointer);
+        let address = x86_64_runtime_tls_view::resolve(view, 2, 0).cast::<i32>();
+        if address.is_null() || *address != 41
+            || x86_64_runtime_tls_view::resolve(view, 1, 0).cast::<u8>() != original
+            || *original != 97 || *block.dtv != 1 { return None; }
+        *address = 73;
+        let mut error = 0;
+        let counter = runtime_symbol(provider, b"loader109_constructor_calls\0".as_ptr(),
+            0, &mut error).cast::<i32>();
+        if error != 0 || counter.is_null() || *counter != 1 || runtime_close(provider) != 0 { return None; }
+        let reopened = runtime_open(PROVIDER.load(Ordering::Acquire), 2 | 4, &mut diagnostic);
+        if reopened != provider || *counter != 1 || *address != 73
+            || x86_64_runtime_tls_view::current(block.thread_pointer) != view
+            || (*REGISTRY.0.get()).count != 2 || (*REGISTRY.0.get()).tls_count != 2
+            || !mapped_file(b"loader109_provider_tls.so")? { return None; }
+        if x86_64_runtime_tls_view::release(block.thread_pointer) != 0
+            || syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) != 0
+        { return None; }
+        Some(true)
+    })().unwrap_or(false) } }
+
+    let directory = std::path::Path::new(".work/loader109/fixtures");
+    std::fs::create_dir_all(directory).unwrap();
+    let provider = directory.join("loader109_provider_tls.so");
+    let missing = directory.join("loader109_failed_tls.so");
+    compile("compat/x86_64/tests/loader109_tls_provider.c", &provider);
+    compile("compat/x86_64/tests/loader109_tls_missing.c", &missing);
+    let provider = std::ffi::CString::new(std::fs::canonicalize(provider).unwrap().as_os_str()
+        .as_encoded_bytes()).unwrap();
+    let missing = std::ffi::CString::new(std::fs::canonicalize(missing).unwrap().as_os_str()
+        .as_encoded_bytes()).unwrap();
+    PROVIDER.store(provider.as_ptr().cast_mut().cast(), Ordering::Release);
+    MISSING.store(missing.as_ptr().cast_mut().cast(), Ordering::Release);
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+    PROVIDER.store(core::ptr::null_mut(), Ordering::Release);
+    MISSING.store(core::ptr::null_mut(), Ordering::Release);
+}
+
+#[test]
 fn allocated_common_storage_is_reported_by_dladdr() {
     unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
         // The isolated fork child has no other threads. Release its inherited

@@ -201,6 +201,47 @@ mod tests {
     extern crate std;
 
     #[test]
+    fn valid_population_allocation_refusal_reclaims_partial_preparation() {
+        unsafe fn probe(guard: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+            let image = [31u8];
+            let mut initial = [EMPTY_OBJECT; 32];
+            initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
+                tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+            let first = materialize_initial_tls(&initial, 0)?;
+            let second = materialize_initial_tls(&initial, 0)?;
+            *(*first.dtv.add(1) as *mut u8) = 97;
+            *(*second.dtv.add(1) as *mut u8) = 101;
+            let modules = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
+                tls_memsz: 33, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
+            let view = PreparedTlsView::prepare(first.thread_pointer, &modules)?;
+            let address = view.view;
+            let mut prepared = PreparedAllThreads { _guard: guard, threads: LoaderBuffer::new(2,
+                ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() })? };
+            prepared.threads.as_mut_slice()[0] = ThreadView { tp: first.thread_pointer, view: view.view };
+            core::mem::forget(view);
+            let mut original_limit = [0u64; 2];
+            if syscall4(302, 0, 9, 0, original_limit.as_mut_ptr() as i64) != 0 { return None; }
+            // Refuse new mappings only in this isolated child. Existing TLS
+            // remains accessible and the hard limit remains unchanged.
+            let restricted = [0, original_limit[1]];
+            if syscall4(302, 0, 9, restricted.as_ptr() as i64, 0) != 0 { return None; }
+            let refused = PreparedTlsView::prepare(second.thread_pointer, &modules).is_none();
+            if syscall4(302, 0, 9, original_limit.as_ptr() as i64, 0) != 0 || !refused { return None; }
+            drop(prepared);
+            let mut residency = 0u8;
+            if syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) != -12 { return None; }
+            for (block, value) in [(first, 97), (second, 101)] {
+                if !current(block.thread_pointer).is_null() || *block.dtv != 1
+                    || *(*block.dtv.add(1) as *const u8) != value
+                    || syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) != 0
+                { return None; }
+            }
+            Some(true)
+        })().unwrap_or(false) } }
+        unsafe { x86_64_runtime_lock::isolated_mapping_probe(probe); }
+    }
+
+    #[test]
     fn abandoning_partial_all_thread_preparation_preserves_every_live_view() {
         unsafe fn probe(guard: &RuntimeGuard) -> bool { (|| -> Option<bool> {
         let image = [31u8];
