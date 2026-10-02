@@ -226,6 +226,11 @@ pub(crate) enum AbandonError {
     /// association, and consumed bitmap/count state remain with the caller's
     /// retained adoption owner.
     LocalFree(FreeListError),
+    /// The new live owner observed a source Page validity assertion after
+    /// reclaim and queue insertion. Its engine retains the exact typed
+    /// assertion and the PageMap/backing; the abandoned continuation must
+    /// stop without reabandoning, unowning, or releasing that page.
+    LivePageValidityRetained,
     /// A bounded post-exit publisher did not complete while the direct
     /// freeing thread held the source low owner bit. The page remains owned
     /// and the caller must retain its enclosing post-exit route; it must not

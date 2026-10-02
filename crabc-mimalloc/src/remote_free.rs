@@ -3071,6 +3071,134 @@ mod tests {
 #[path = "remote_free_loom.rs"]
 mod loom_tests;
 
+#[cfg(all(test, target_arch = "x86_64", feature = "native-runtime-test-audit", feature = "mi-debug-3", not(miri)))]
+mod source_reclaim_tests {
+    use core::ptr::NonNull;
+    use crate::runtime_lifecycle as runtime;
+    use crate::types::{Page, Theap};
+
+    fn attach() {
+        let descriptor = runtime::current_native_allocator_thread_descriptor();
+        // SAFETY: this worker retains its own allocator TLS until it joins;
+        // no external registry scans these standalone test descriptors.
+        assert!(unsafe { runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+        assert_eq!(runtime::attach_current_thread(), runtime::ThreadAttachResult::Attached);
+    }
+
+    fn worker<R: Send + 'static>(operation: impl FnOnce() -> R + Send + 'static) -> R {
+        std::thread::spawn(move || {
+            attach();
+            let result = operation();
+            assert_eq!(runtime::finish_current_thread_native_after_user_destructors(),
+                runtime::ThreadFinishResult::Finished);
+            result
+        }).join().expect("the actual page owner exits successfully")
+    }
+
+    fn client(address: usize) -> NonNull<u8> {
+        NonNull::new(address as *mut u8).expect("a retained live client")
+    }
+
+    fn release(address: usize) {
+        // SAFETY: the test transfers each exact live client once, after all
+        // short metadata observations and previous-owner operations ended.
+        assert_eq!(unsafe { runtime::native_free(client(address)) }, runtime::NativePageFreeResult::Freed);
+    }
+
+    fn validate_owned_client(address: usize, expected_used: usize) {
+        let selected = crate::compiler_tls::default_theap();
+        // SAFETY: this worker is the sole ordinary-field owner and retains
+        // the exact client throughout the short map, Page and queue reads.
+        // No collection or ownership transition overlaps this observation.
+        unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+            let map = owner.page_map().unwrap().page_map().unwrap();
+            let page = NonNull::new(map.checked_lookup(client(address).as_ptr())).unwrap();
+            let snapshot = Page::validity_snapshot_at(page);
+            let theap = NonNull::new(snapshot.theap).unwrap();
+            assert_eq!(theap, selected);
+            let bin = crate::size_class::bin(snapshot.block_size).unwrap();
+            let queue = Theap::local_queue_at(theap, bin).unwrap();
+            let mut next = queue.first();
+            let mut contains = false;
+            for _ in 0..queue.count() {
+                if next == page.as_ptr() { contains = true; break; }
+                let Some(node) = NonNull::new(next) else { break; };
+                next = Page::queue_next_at(node);
+            }
+            let source_owner = crate::page_validity::PageSourceOwnerSnapshot::observe_at(
+                &snapshot, contains, Some(queue.block_size()),
+            );
+            assert_eq!(snapshot.used as usize, expected_used);
+            assert_eq!(crate::page_validity::source_page_is_valid(&snapshot, map, &source_owner, true), Ok(()));
+        }) }.expect("the current owner retains the source assertion boundary");
+    }
+
+    fn application_entries() -> usize {
+        let total = runtime::native_runtime_lifecycle_test_audit().unwrap().page_map_registered_entry_count;
+        // SAFETY: every worker has joined before this quiescent scalar copy.
+        let metadata = unsafe { runtime::native_runtime_metadata_page_map_test_audit() }.unwrap();
+        total.checked_sub(metadata).unwrap()
+    }
+
+    fn reclaim_after_two_owner_exits(request: usize) {
+        unsafe extern "C" fn stderr(message: *const core::ffi::c_char) {
+            unsafe extern "C" {
+                fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+                #[link_name = "stderr"] static mut STREAM: *mut core::ffi::c_void;
+            }
+            // SAFETY: source output supplies a terminated fragment, and the
+            // host process retains its stderr for synchronous delivery.
+            unsafe { let _ = fputs(message, STREAM); }
+        }
+        // SAFETY: this static callback retains no borrowed output argument.
+        let output = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr) };
+        assert!(runtime::test_initialize_process_from_host_environment(4096, output));
+        assert!(runtime::prepare_native_later_thread_arena());
+        let baseline = application_entries();
+        let addresses = worker(move || {
+            let addresses = [0; 4].map(|_| match runtime::native_allocate_aligned(request, 16, false) {
+                runtime::NativePageAllocationResult::Allocated(pointer) => pointer.as_ptr() as usize,
+                _ => panic!("the source owner allocates an ordinary client"),
+            });
+            validate_owned_client(addresses[0], 4);
+            addresses
+        });
+        worker(move || {
+            release(addresses[3]);
+            validate_owned_client(addresses[0], 3);
+            release(addresses[2]);
+            validate_owned_client(addresses[0], 2);
+            crate::source_api::collect(false);
+            validate_owned_client(addresses[0], 2);
+            crate::source_api::collect(true);
+            validate_owned_client(addresses[0], 2);
+        });
+        worker(move || {
+            release(addresses[1]);
+            validate_owned_client(addresses[0], 1);
+            release(addresses[0]);
+            crate::source_api::collect(true);
+        });
+        assert_eq!(application_entries(), baseline, "the last collection releases the exact application page");
+    }
+
+    #[test]
+    fn source_small_reclaim_validates_new_owner_queue_and_second_owner_exit() {
+        crate::test_process::run_in_fresh_process(
+            "remote_free::source_reclaim_tests::source_small_reclaim_validates_new_owner_queue_and_second_owner_exit",
+            || reclaim_after_two_owner_exits(1024),
+        );
+    }
+
+    #[test]
+    fn source_medium_reclaim_validates_new_owner_queue_and_second_owner_exit() {
+        crate::test_process::run_in_fresh_process(
+            "remote_free::source_reclaim_tests::source_medium_reclaim_validates_new_owner_queue_and_second_owner_exit",
+            || reclaim_after_two_owner_exits(64 * 1024),
+        );
+    }
+}
+
 #[cfg(all(test, feature = "loom"))]
 mod publication_collect_race_tests {
     use super::loom_tests;
