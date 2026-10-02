@@ -29,27 +29,27 @@ reports remain unqualified and cannot supply correctness evidence.
 Update this section in place when the frontier changes. A retained report qualifies
 only its exact source, configuration, image, products, and execution context.
 
-- **Resumed (2026-10-01):** active after the user's resume instruction.
-  Sixteen isolated `gpt-6.1-sol` medium lanes are restoring the parked source
-  contracts and their native proofs; the parent integrates to `main`. Winddown
-  refs and raw inputs remain retained. Disk exhaustion interrupted initial lane
-  edits/builds; source was restored from Git and disposable Cargo incremental
-  caches were reclaimed without removing retained products or reports.
-  Original completed corpus APK bytes now share physical storage after exact
-  byte/mode/ownership checks and descendant closure. This recovered 16.14 GiB;
-  the original archived 219-case owning reader passes before and after, and
-  all original reports and seals remain unchanged. Successor agent starts are
-  currently rejected by the agent service thread limit; existing lanes continue
-  and the parent owns the next runtime cohort preparation.
-  Historical custody remains under `.work/x86_64/reports/integrated-lanes/`
-  in `cleanup-winddown-current70`, `cleanup-winddown-historical70` and
-  `cleanup-winddown-admin70`. Parked refs below remain unqualified drafts.
+- **Resumed (2026-10-02):** the user prioritized disk cleanup and finishing
+  integration. Twenty unused Docker build-cache volumes were removed, reclaiming
+  103.64 GiB. Twenty campaign worktrees were retired after preserving refs,
+  exact sources, original compiler products, raw evidence and owning read-only
+  replay. The last failed-release repair is integrated on `main`; its exact-source
+  paired producer and custody checks pass. Evidence worktrees, frozen AArch64 state,
+  unrelated volumes and live containers remain retained. Cleanup records are
+  under `.work/cleanup-20261002/`.
+  Original completed corpus APK bytes share physical storage after exact
+  byte/mode/ownership checks and descendant closure. This earlier repair recovered
+  16.14 GiB; the archived 219-case owning reader passes before and after, and
+  original reports and seals remain unchanged. Historical custody remains under
+  `.work/x86_64/reports/integrated-lanes/` in `cleanup-winddown-current70`,
+  `cleanup-winddown-historical70` and `cleanup-winddown-admin70`.
 - **Campaign:** 9/26 frozen families are `foundation-verified`; 17 remain
   planned. All 223 capabilities are accounted for: 180 implemented and 43
   selected-private. Completion requires 25 active families and seven ordered
   correctness gates. Performance remains outside scope. C mimalloc remains
   selected, public x86 support is disabled and AArch64 qualification is paused.
-  Resumed Codex lanes use sixteen `gpt-6.1-sol` agents at medium reasoning effort.
+  The usual sixteen-lane campaign is suspended while finishing the user's
+  cleanup and integration priority.
 - **Qualified runtime sources:** accepted-C `b2a903880` passes complete
   four-mode qualification, independent builds and extraction, both static suites
   and 219 installed/rebuilt/extracted dynamic executions with owning read-only
@@ -68,6 +68,13 @@ only its exact source, configuration, image, products, and execution context.
   reference cohort exhausted available storage; its static receipt remains
   `prepared-unqualified`. The completed APK storage repair removes duplicate
   payload storage but supplies no qualification for a newer runtime source.
+  Frozen `7001e2dcc` source and its complete original static/dynamic cohort now
+  have relocated custody under `families80-7001e2dcc`. Original and relocated
+  owning readers pass with unchanged source, products and inputs. Its 219
+  dynamic cases pass but remain `qualified-pending-review`; static remains
+  `prepared-unqualified`. The original outer wrapper status is unavailable,
+  and its five resolver components were not run. No current-main or whole-family
+  qualification follows from this custody repair.
 - **Merged compiler and ownership evidence:** all nine Rust compiler profiles
   pass on the composed bootstrap/frequency graph at `27f714e5e`; later composed
   checks through 81 also pass, with raw logs under `.work/tmp`. Live option getters now return descriptor
@@ -89,22 +96,32 @@ only its exact source, configuration, image, products, and execution context.
   child control lifetime and complete allocator contracts remain open.
   Merged `83b640552` passes all nine compiler profiles; the image/feature
   receipt regressions pass 84 host tests (one skipped), and the callable-provider
-  controls pass fifteen. The private Fresh-Page composition retains original
-  tasks across refused session completion and distinguishes persistent retirement
-  refusal from callback admission. It remains unqualified while the complete
-  source-attached transport and child initializer graph are being composed.
+  controls pass fifteen. The Fresh-Page composition integrated at `87d20a61b`
+  retains original tasks across refused session completion and distinguishes
+  persistent retirement refusal from callback admission. Source-attached winning
+  initialization, staged child metadata, original-owner fresh publication/key
+  draws, pre-READY fork continuation and fatal-assertion callback admission are
+  composed.
   The allocated Heap-list regression reproduces a shared-reference write to
   the list head. The interior-mutation repair is merged at `aa4a989ef`; its
   native and leak-free strict-provenance GREEN controls pass on the exact lane
   source. Actual static Theap accounting is observed before Heap publication,
   with an old-order RED and restored GREEN. The private Fresh-Page graph
   separately passes genuine source-attached startup allocation and six Task/aux
-  controls. An isolated legacy runtime-ticket control still crashes on both
-  the composed graph and its immediate baseline; it remains unresolved.
-  Child guarded sampler inheritance has a real C/native differential RED;
-  staged child initializer APIs are private until the actual callers qualify.
-  The OS-claim Miri fixture passes assertions but exits on two fixture leaks,
-  so it is not qualified as a successful Miri run.
+  controls. Actual runtime ownership controls and their read-only replay pass
+  23 tests; child guarded sampler/entropy-warning controls pass with production
+  callers. Ordinary and guarded metadata subsets each pass 58 tests on
+  `87d20a61b`. The original OS-claim fixture's two-leak Miri failure is retained;
+  its scoped-owner repair passes leak-free strict-provenance Miri on exact
+  `87d20a61b`, using the rebuilt pinned allocator image.
+  `ce5a19039` restores DynamicTheapPageSession's fresh primary/key hooks and
+  makes x86 hook authority explicit; all 70 release single-thread tests pass.
+  Composed `aec787d18` passes all nine compiler profiles and all 71 release
+  runtime tests. Debug-3 runtime passes 70/72: mapped/mixed owner-exit queue
+  preflight remains refused, with original-source failures retained. Release-only
+  geometry assertions also fail in broader debug runs on old and composed sources;
+  pinned C confirms the profile's actual padding and slot population. These
+  focused results do not close the complete ownership or guarded gates.
 - **Allocator verified slices:** exact frozen sources retain independent replay
   for ordinary/auxiliary Theap geometry, public API and Heap/Theap visitors,
   fault controls, queue ownership, abort-on-failure, visitation and statistics.
@@ -149,6 +166,24 @@ only its exact source, configuration, image, products, and execution context.
   source/native control and relocated replay pass at `eba4ea3b1`. The debug-1
   exhausted-page second-extension fault and success controls separately pass
   59 fields each, with owning physical replay at exact `455367754`.
+  Exact `4a94cbeee` ordinary initial-commit fault/success production and relocated
+  owning replay now pass 49 keys using the rebuilt image; four guarded profiles
+  retain their original 54-field passes. Historical `not_run` receipts remain
+  unchanged. Guarded regular-Page release testing exposed a real mismatch:
+  after a refused unmap, native recollection retried an already consumed source
+  Page free and unmapped its 32-page range, while pinned C kept it mapped.
+  The repair is integrated at `ef415257f`, with comment-only successors through
+  `4e4041189`. Exact lane `777486920` ordinary and guarded fault/success producers
+  and owning read-only replays pass 25 and 40 fields respectively. It consumes
+  failed source Page frees after publication/statistics retirement, preserving
+  the refused mapping without automatic raw retry. Unpublished claim rollback
+  and explicit retained-owner raw retries remain available. Exact repair `9c216bb26`
+  passes all 70 release single-thread tests, 25 OS-page tests, all nine compiler
+  profiles and leak-free strict-provenance Miri. Original failures, source programs,
+  interrupted-build/link failures and source-qualified receipts remain retained
+  under `release105-777486920`; no whole memory gate follows from these controls.
+  Merged `4e4041189` also passes all nine compiler profiles and all 70 release
+  single-thread tests; the parity ledger remains non-promoting.
 - **Secure-3:** encoded/padded fast-path eligibility repair is integrated
   at `f66846874` from exact lane source `42a3f7c4f`. The genuine repeated Heap-birth
   regression passes against pinned C and native; the complete public producer
@@ -167,17 +202,22 @@ only its exact source, configuration, image, products, and execution context.
   selects ordinary clients. Four actual guarded Heap visitation cohorts and
   their owning replay pass at `de90f662b`; these selected cohorts do not close
   the whole guarded or allocator qualification gates.
+  Exact `c8fb0f3e` adds five guarded public profiles, passing 575 comparison
+  fields and 40 controls with owning replay. Actual abandoned OS-page visitation
+  passes thirteen C/native profiles on `648af2080`. Selected-client write/recommit
+  controls pass eighteen profiles on `3af2a51ed`; the secure-3 recommit predicate
+  is repaired without changing AArch64 selection.
 - **Callable providers:** exact instruction/operand, immutable object,
   merged-string, atomic, byte-store, MOVDQU and ordinary object pointer-table
   proofs are integrated through `6283b2314`. Sixteen real-ELF host and pinned
   controls and all nine compiler profiles pass on the exact lane source.
   Frozen `e9de501dd` diagnostic projection now admits
-  2,916/2,958 references, with 42 refused; its owning read-only replay is
+  2,925/2,958 references, with 33 refused on `958871837`; its owning read-only replay is
   byte-identical. One-past address formation is distinct from a memory read;
   writable and 16-byte vector references retain full object/mapping extent proof.
   Source-identity admission still rejects the wrong runtime source. Exact source
   and raw inputs have relocated custody under
-  `.work/x86_64/reports/integrated-lanes/closure77-567dcb20a/source`.
+  `.work/x86_64/reports/integrated-lanes/closure80-958871837/source`.
   Diagnostic replay cannot qualify newer runtime source; whole closure remains open.
   All five resolver functional components now pass together on exact
   `0e31a348a`, including all 847 cancellation observations without exceptions.
@@ -188,10 +228,15 @@ only its exact source, configuration, image, products, and execution context.
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Keep this requirement unmet.
   The caller-locked arena fixture needs 64 MiB memlock; original 8-MiB refusals
-  remain retained. Native environments remain pinned to core image
-  `sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`
-  and allocator image
-  `sha256:4815f7fbcc2cd03ea82574fff38441365f9aced034008b0468d0d2758aa286ec`.
+  remain retained. The retained core environment is image
+  `sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`.
+  Historical allocator image
+  `sha256:4815f7fbcc2cd03ea82574fff38441365f9aced034008b0468d0d2758aa286ec`
+  is unavailable; its original receipts retain that identity. Rebuilding the
+  checked-in pinned allocator environment produced
+  `sha256:cbe5d24736ff670eb3b7b552ba12da594e5a54e963281aa24207f50c522de0ff`.
+  Fresh receipts identify their actual image; historical qualification is not
+  transferred to the rebuild.
 - **Parked source:** these branch tips preserve unfinished work, not qualification.
   Recreate disposable worktrees from the refs; compare each with current `main`
   before composing overlapping drafts. Substantive ignored inputs were moved
@@ -223,30 +268,26 @@ only its exact source, configuration, image, products, and execution context.
   with former namespace aliases recorded.
   Moving those inputs does not establish a new reader or source qualification.
 
-  No complete bootstrap/guarded graph is claimed. WIP products and patches remain
+  The resumed bootstrap/child/Fresh-Page source graph is integrated, but complete
+  allocator qualification remains open. Historical WIP products and patches remain
   under matching report directories in `.work/allocator-x86_64/reports/allocator/x86_64`,
   `.work/allocator-x86_64/reports/guardedsnapshot53-f7685029b`,
   `.work/x86_64/reports/runtimeclosure60`,
   `.work/x86_64/reports/guardedfrontend55-wip-96bcc64fc`, and
   `.work/reports/allocator/claimcustody57-wip-be30b3039`.
-- **Continue:** qualify the composed bootstrap/frequency graph on merged
-  source, including first-allocation warnings, consumed child metadata custody,
-  guarded callback routing and surviving-owner fork continuation. Complete fresh
-  OS/Arena Page transport with exact publication order and persistent cleanup
-  custody, child control lifetime and footprint parity, and sampled guarded
-  allocation relays. The checked canonical engine and main-owner relay now keep
-  internal refusal distinct from completed source-null; actual collector-refusal,
-  exhaustion and original-owner retry controls pass on the exact source.
-  Primary Page publication and later original-owner key draws have separate APIs
-  with genuine PageMap-failure RED/GREEN and strict Miri proofs; production
-  fresh-Page transport and ordering remain private integration work.
-  Compare source-default reservation retention controls without
-  converting source-lived roots into a false memory pass. Finish callable-provider
-  closure and remaining runtime families, then replay all seven gates on one merged
-  source before default/public promotion. Keep sixteen medium `gpt-6.1-sol` lanes
-  occupied; preserve exact inputs and retire settled worktrees promptly.
-  Performance remains outside scope. Git owns source history and this section
-  owns the handoff.
+- **Continue:** cleanup and resumed-source integration are settled. Resolve
+  mapped/mixed owner-exit queue preflight and child footprint parity with genuine
+  regressions and pinned C evidence. Qualify the complete composed
+  bootstrap/Fresh-Page graph and child
+  control lifetime on merged source. Original-owner collector refusal, exhaustion,
+  publication and key-draw controls have focused proofs; whole ownership remains
+  open. Compare source-default reservation retention without converting source-lived
+  roots into a false memory pass. Finish callable-provider closure and remaining
+  runtime families, then replay all seven gates on one merged source before
+  default/public promotion. Resume the sixteen medium `gpt-6.1-sol` lanes after
+  settling the user's immediate cleanup/integration task; preserve exact inputs
+  and retire settled worktrees promptly. Performance remains outside scope. Git
+  owns source history and this section owns the handoff.
 
 ## Parallel lanes
 
