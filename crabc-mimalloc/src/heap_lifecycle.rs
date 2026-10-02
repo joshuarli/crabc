@@ -203,9 +203,11 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     let key = slot.key().raw();
     let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     // SAFETY: the zeroed block is exclusively owned, large enough, and
-    // aligned; the image is written whole before any list publishes it.
+    // aligned. Initialize both fields before any list publishes the image;
+    // the slot moves once into its sole release owner.
     unsafe {
-        image.as_ptr().write(NonMainHeapImage { heap: Heap::bootstrap_empty(), slot: Some(slot) });
+        Heap::write_bootstrap_empty_at(image.cast());
+        core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
     let heap = image.cast::<Heap>();
     let linked = child.with_child_image(|image_ref| {
@@ -688,8 +690,13 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     let image_size = size_of::<NonMainHeapImage>();
     let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     let image = block.cast::<NonMainHeapImage>();
-    // SAFETY: forwarded; written whole before any list publishes it.
-    unsafe { image.as_ptr().write(NonMainHeapImage { heap: Heap::bootstrap_empty(), slot: Some(slot) }) };
+    // SAFETY: the forwarded extent and exclusive fresh-storage obligations
+    // cover both fields. Move the slot once into its sole release owner,
+    // after initializing the Heap and before publishing it on the list.
+    unsafe {
+        Heap::write_bootstrap_empty_at(image.cast());
+        core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
+    }
     let heap = image.cast::<Heap>();
     // SAFETY: the image is exclusively owned until the push publishes it.
     let heap_ref = unsafe { &mut *heap.as_ptr() };
