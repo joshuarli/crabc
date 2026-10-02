@@ -122,6 +122,9 @@ impl HugeTrackerReleaseFailure {
                 MetaRelease::Malloc(allocation).release().map_err(Self::Main),
             Self::Main(terminal) => Err(Self::Main(terminal)),
             #[cfg(target_arch = "x86_64")]
+            Self::Child { tracker, error } if !tracker.can_retry_free() =>
+                Err(Self::Child { tracker, error }),
+            #[cfg(target_arch = "x86_64")]
             Self::Child { mut tracker, .. } => tracker.free()
                 .map_err(|error| Self::Child { tracker, error }),
         }

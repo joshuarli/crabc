@@ -2646,6 +2646,23 @@ mod huge_at_ex_tests {
                     assert!(!arena.is_null());
                     // SAFETY: publication returned a live arena of this member.
                     assert_eq!(unsafe { (*arena.cast::<crate::types::Arena>()).subprocess }.cast::<c_void>(), child_identity);
+                    // SAFETY: this thread retains the published child arena
+                    // and the explicit Heap through its client and final free.
+                    let heap = unsafe { heap_new_in_arena(arena) };
+                    assert!(!heap.is_null());
+                    let block = unsafe { heap_malloc(heap, 80) }.value.expect("client from exclusive child huge arena");
+                    let mut area_size = 0;
+                    let area = unsafe { arena_area(arena, &mut area_size) };
+                    assert!(block.as_ptr().addr() >= area.addr());
+                    assert!(block.as_ptr().addr() + 80 <= area.addr() + area_size);
+                    unsafe {
+                        block.as_ptr().write_volatile(0x3c);
+                        block.as_ptr().add(79).write_volatile(0x6d);
+                        assert_eq!(block.as_ptr().read_volatile(), 0x3c);
+                        assert_eq!(block.as_ptr().add(79).read_volatile(), 0x6d);
+                        assert_eq!(crate::source_api::free(block.as_ptr()), crate::source_api::FreeOutcome::Freed);
+                        assert!(heap_release(heap, false));
+                    }
                     assert_eq!(MainSubprocess::global().arena_backing().registry().count(), main_count);
                     assert_eq!(native_child_thread_done(), Some(Ok(())));
                 }).join().expect("child huge reservation");
