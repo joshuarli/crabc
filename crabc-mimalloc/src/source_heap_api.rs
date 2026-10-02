@@ -2771,7 +2771,15 @@ unsafe fn heap_realloc_zero(heap: NonNull<Heap>, block: *mut u8, new_size: usize
     }
     let Some(live) = NonNull::new(block) else {
         // SAFETY: forwarded Heap contract.
-        return freed_with(unsafe { heap_allocate(heap.as_ptr().cast(), new_size, Request::Plain, zero) });
+        let result = unsafe { heap_allocate(heap.as_ptr().cast(), new_size, Request::Plain, zero) };
+        if new_size == 0 {
+            if let Some(replacement) = result.value {
+                // SAFETY: every successful minimal block has byte zero;
+                // this internal kernel clears it even for a null input.
+                unsafe { replacement.as_ptr().write(0) };
+            }
+        }
+        return freed_with(result);
     };
     // `mi_validate_ptr_page`: an unregistered pointer returns null.
     // SAFETY: forwarded live-block contract.
@@ -2861,6 +2869,11 @@ unsafe fn heap_realloc_zero_aligned_at(
 /// is null or an exact live block no other thread uses, consumed on a
 /// non-null result.
 pub unsafe fn heap_realloc(heap: *mut c_void, block: *mut u8, new_size: usize, zero: bool) -> Sourced<(Block, FreeOutcome)> {
+    if block.is_null() {
+        // SAFETY: forwarded retained Heap contract. The public ordinary
+        // null shortcut is malloc or zalloc, including a zero-size request.
+        return freed_with(unsafe { heap_allocate(heap, new_size, Request::Plain, zero) });
+    }
     // SAFETY: forwarded public Heap contract.
     match unsafe { resolve_heap_target(heap) } {
         None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
@@ -2917,8 +2930,14 @@ pub unsafe fn heap_realloc_aligned(
     zero: bool,
 ) -> Sourced<(Block, FreeOutcome)> {
     if offset.is_none() && alignment <= WORD {
-        // SAFETY: forwarded.
-        return unsafe { heap_realloc(heap, block, new_size, zero) };
+        // SAFETY: forwarded Heap lifetime and exact-live-client obligations.
+        // The word-aligned form enters the internal kernel even for null,
+        // retaining its zero-size byte clear rather than the public shortcut.
+        return match unsafe { resolve_heap_target(heap) } {
+            None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+            Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc_zero_native(block, new_size, zero) }),
+            Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero(heap, block, new_size, zero) },
+        };
     }
     let offset = offset.unwrap_or(0);
     // SAFETY: forwarded public Heap contract.

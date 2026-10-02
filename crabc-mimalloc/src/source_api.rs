@@ -369,6 +369,29 @@ pub unsafe fn theap_realloc(
     new_size: usize,
     zero: bool,
 ) -> Sourced<Block> {
+    if block.is_null() {
+        // SAFETY: the caller retains this exact current-thread Theap.
+        // The public entry's null shortcut is malloc or zalloc, including
+        // a zero-size request; it does not enter the internal realloc kernel.
+        return unsafe { crate::source_heap_api::theap_malloc(theap, new_size, zero) };
+    }
+    // SAFETY: forwarded exact-live-client and retained Theap obligations.
+    unsafe { theap_realloc_zero(theap, block, new_size, zero) }
+}
+
+/// The internal ordinary Theap realloc kernel, including a null input.
+/// A successful zero-size allocation clears byte zero. Public ordinary
+/// entries bypass this kernel for null inputs; word-aligned entries use it.
+///
+/// # Safety
+/// The caller retains the initialized current-thread Theap and exclusively
+/// holds any exact live old client. Success consumes it; failure preserves it.
+unsafe fn theap_realloc_zero(
+    theap: *mut core::ffi::c_void,
+    block: *mut u8,
+    new_size: usize,
+    zero: bool,
+) -> Sourced<Block> {
     let Some(selected) = NonNull::new(theap.cast::<crate::types::Theap>()) else { return Sourced::quiet(None) };
     #[cfg(feature = "mi-debug-1")]
     // SAFETY: forwarded exact-live-client and exclusion obligations.
@@ -391,9 +414,16 @@ pub unsafe fn theap_realloc(
         }
         size
     } else {
-        // SAFETY: forwarded Theap lifetime; source's null shortcut zeroes
-        // the complete client extent for rezalloc.
-        return unsafe { crate::source_heap_api::theap_malloc(theap, new_size, zero) };
+        // SAFETY: forwarded Theap lifetime; no old client is consumed.
+        let result = unsafe { crate::source_heap_api::theap_malloc(theap, new_size, zero) };
+        if new_size == 0 {
+            if let Some(replacement) = result.value {
+                // SAFETY: every successful minimal block has byte zero;
+                // this internal kernel clears it even for a null input.
+                unsafe { replacement.as_ptr().write(0) };
+            }
+        }
+        return result;
     };
     // SAFETY: forwarded Theap lifetime; zeroing happens after allocation.
     let mut result = unsafe { crate::source_heap_api::theap_malloc(theap, new_size, false) }.after(earlier);
@@ -438,7 +468,7 @@ unsafe fn theap_realloc_aligned_at(
     }
     if alignment <= core::mem::size_of::<usize>() && offset == 0 {
         // SAFETY: forwarded exact-live-client and Theap obligations.
-        return unsafe { theap_realloc(theap, block, new_size, zero) };
+        return unsafe { theap_realloc_zero(theap, block, new_size, zero) };
     }
     let Some(live) = NonNull::new(block) else {
         // SAFETY: the caller retains the supplied current-thread Theap.
@@ -847,7 +877,7 @@ unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<B
         if selected != main {
             // SAFETY: the calling thread retains its substituted Theap and
             // the caller holds the exact live client throughout reallocation.
-            return unsafe { theap_realloc(selected.as_ptr().cast(), block, new_size, zero) };
+            return unsafe { theap_realloc_zero(selected.as_ptr().cast(), block, new_size, zero) };
         }
     }
     // SAFETY: forwarded exact-live-client contract.
@@ -865,7 +895,7 @@ pub(crate) unsafe fn realloc_zero_native(block: *mut u8, new_size: usize, zero: 
         // SAFETY: the calling thread retains its initialized fixed Theap;
         // the caller exclusively retains the exact client. The source kernel
         // samples only when replacement allocation is actually required.
-        return unsafe { theap_realloc(theap.as_ptr().cast(), block, new_size, zero) };
+        return unsafe { theap_realloc_zero(theap.as_ptr().cast(), block, new_size, zero) };
     }
     #[cfg(feature = "mi-debug-1")]
     // SAFETY: forwarded exact-live-client and exclusion obligations.
@@ -2286,6 +2316,153 @@ mod tests {
                 // The fixture ends with the replacement and warm client still
                 // owned by this retained process. Retention is not authority to
                 // retry the consumed old client or destroy the terminal Heap.
+            },
+        );
+    }
+
+    #[test]
+    fn heap_offset_recalloc_preserves_clients_and_selected_replacement_owner() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::heap_offset_recalloc_preserves_clients_and_selected_replacement_owner",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                fn check_heaps() {
+                    let source = crate::source_heap_api::heap_new();
+                    let target = crate::source_heap_api::heap_new();
+                    let base = crate::source_heap_api::theap_get_default();
+                    // SAFETY: both Heaps and their exact clients remain retained
+                    // by this thread until their single terminal release.
+                    unsafe {
+                        let old = crate::source_heap_api::heap_malloc_aligned_at(source, 73, 64, 7, true).value.unwrap();
+                        assert_eq!((old.as_ptr().addr() + 7) % 64, 0);
+                        let extent = super::usable_size(old.as_ptr());
+                        assert!(extent >= 73);
+                        old.as_ptr().write_bytes(0x51, extent);
+                        let refused = crate::source_heap_api::heap_recalloc_aligned(
+                            target, old.as_ptr(), usize::MAX, 2, 256, Some(17),
+                        );
+                        assert!(refused.value.0.is_none());
+                        assert_eq!(refused.errno.apply(91), 91);
+                        assert!(core::slice::from_raw_parts(old.as_ptr(), extent).iter().all(|byte| *byte == 0x51));
+                        let reused = crate::source_heap_api::heap_realloc_aligned(
+                            target, old.as_ptr(), extent, 64, Some(7), false,
+                        ).value.0.unwrap();
+                        assert_eq!(reused, old, "aligned fitting reuse has no target-Heap requirement");
+                        assert_eq!(crate::source_heap_api::heap_of(reused.as_ptr()), source);
+                        let grown = crate::source_heap_api::heap_recalloc_aligned(
+                            target, reused.as_ptr(), 2, 512, 256, Some(17),
+                        ).value.0.unwrap();
+                        assert_eq!((grown.as_ptr().addr() + 17) % 256, 0);
+                        assert_eq!(crate::source_heap_api::heap_of(grown.as_ptr()), target);
+                        assert!(core::slice::from_raw_parts(grown.as_ptr(), extent).iter().all(|byte| *byte == 0x51));
+                        let grown_extent = super::usable_size(grown.as_ptr());
+                        assert!(core::slice::from_raw_parts(grown.as_ptr().add(extent), grown_extent - extent)
+                            .iter().all(|byte| *byte == 0));
+                        let refused = super::recalloc_aligned_at(grown.as_ptr(), usize::MAX, 2, 64, 7);
+                        assert!(refused.value.is_none());
+                        assert_eq!(refused.errno.apply(91), 91);
+                        assert_eq!(crate::source_heap_api::heap_of(grown.as_ptr()), target);
+                        assert_eq!(super::free(grown.as_ptr()), super::FreeOutcome::Freed);
+                        assert!(crate::source_heap_api::heap_release(source, false));
+                        assert!(crate::source_heap_api::heap_release(target, false));
+                        assert_eq!(crate::source_heap_api::theap_get_default(), base);
+                    }
+                }
+                check_heaps();
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let child = crate::subproc::lifecycle::native_subproc_new().unwrap();
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this fresh worker registers its own descriptor
+                    // once and joins a retained live child subprocess.
+                    unsafe {
+                        assert!(crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor));
+                        assert_eq!(crate::subproc::lifecycle::native_subproc_add_current_thread(child),
+                            Ok(crate::subproc::lifecycle::NativeChildThreadAdd::Added));
+                    }
+                    check_heaps();
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                }).join().expect("the child source API client completes");
+                // SAFETY: the only child member finished and consumed all
+                // clients before releasing its auxiliary Heaps.
+                assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_destroy(child) }, Ok(()));
+            },
+        );
+    }
+
+    #[test]
+    fn null_zero_size_realloc_distinguishes_public_and_internal_entries() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::null_zero_size_realloc_distinguishes_public_and_internal_entries",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let base = crate::source_heap_api::theap_get_default();
+                // SAFETY: this thread retains the Heap and its exact clients;
+                // the anchor keeps the minimal-size page live between calls.
+                unsafe {
+                    let anchor = crate::source_heap_api::theap_malloc(selected, 1, false).value.unwrap();
+                    let old = crate::source_heap_api::theap_malloc(selected, 1, false).value.unwrap();
+                    old.as_ptr().write(0x79);
+                    super::free(old.as_ptr());
+                    let cleared = super::theap_realloc(selected, core::ptr::null_mut(), 0, false).value.unwrap();
+                    let direct_byte = cleared.as_ptr().read();
+                    assert_eq!(crate::source_heap_api::heap_of(cleared.as_ptr()), heap);
+                    super::free(cleared.as_ptr());
+                    crate::source_heap_api::theap_set_default(selected);
+                    let aligned = super::realloc_aligned(core::ptr::null_mut(), 0, core::mem::size_of::<usize>())
+                        .value.unwrap();
+                    let aligned_byte = aligned.as_ptr().read();
+                    assert_eq!(crate::source_heap_api::heap_of(aligned.as_ptr()), heap);
+                    super::free(aligned.as_ptr());
+                    let aligned_at = super::realloc_aligned_at(core::ptr::null_mut(), 0, core::mem::size_of::<usize>(), 0)
+                        .value.unwrap();
+                    assert_eq!(aligned_at.as_ptr().read(), 0);
+                    super::free(aligned_at.as_ptr());
+                    let with_sizes = super::urealloc(core::ptr::null_mut(), 0).value.0.unwrap();
+                    assert_eq!(with_sizes.as_ptr().read(), 0, "the size-reporting entry uses the internal kernel");
+                    super::free(with_sizes.as_ptr());
+                    crate::source_heap_api::theap_set_default(base);
+                    let heap_plain = crate::source_heap_api::heap_realloc(heap, core::ptr::null_mut(), 0, false).value.0.unwrap();
+                    let heap_plain_byte = heap_plain.as_ptr().read();
+                    super::free(heap_plain.as_ptr());
+                    let heap_aligned = crate::source_heap_api::heap_realloc_aligned(
+                        heap, core::ptr::null_mut(), 0, core::mem::size_of::<usize>(), Some(0), false,
+                    ).value.0.unwrap();
+                    let heap_aligned_byte = heap_aligned.as_ptr().read();
+                    super::free(heap_aligned.as_ptr());
+                    let heap_aligned = crate::source_heap_api::heap_realloc_aligned(
+                        heap, core::ptr::null_mut(), 0, core::mem::size_of::<usize>(), None, false,
+                    ).value.0.unwrap();
+                    assert_eq!(heap_aligned.as_ptr().read(), 0);
+                    super::free(heap_aligned.as_ptr());
+                    let main = crate::source_heap_api::heap_main();
+                    let main_plain = crate::source_heap_api::heap_realloc(main, core::ptr::null_mut(), 0, false).value.0.unwrap();
+                    let main_plain_byte = main_plain.as_ptr().read();
+                    super::free(main_plain.as_ptr());
+                    let main_aligned = crate::source_heap_api::heap_realloc_aligned(
+                        main, core::ptr::null_mut(), 0, core::mem::size_of::<usize>(), None, false,
+                    ).value.0.unwrap();
+                    let main_aligned_byte = main_aligned.as_ptr().read();
+                    super::free(main_aligned.as_ptr());
+                    super::free(anchor.as_ptr());
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                    assert_eq!(crate::source_heap_api::theap_get_default(), base);
+                    std::println!("null-zero-bytes={direct_byte},{aligned_byte},{heap_plain_byte},{heap_aligned_byte},{main_plain_byte},{main_aligned_byte}");
+                    #[cfg(feature = "mi-debug-1")]
+                    assert_eq!([direct_byte, heap_plain_byte, main_plain_byte], [0xD0; 3],
+                        "public ordinary null shortcuts retain the source debug malloc fill");
+                    assert_eq!([aligned_byte, heap_aligned_byte, main_aligned_byte], [0; 3],
+                        "default and Heap word-aligned entries use the zero-size internal realloc kernel");
+                }
             },
         );
     }
