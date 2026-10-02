@@ -33,6 +33,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m2
   allocator-m3 [--differential-only|--owner-only|--miri-only|--miri-ownership-only|--miri-guarded-ownership-only|--miri-page-ownership-only|--page-ownership-only|--queue-reorder-only]
   allocator-m4 [--check|--gate ID|--reader-tests|--operations-matrix [--read|--replay]]
+  allocator-m4 --differential SCENARIO [--build-profile debug --valid-clients-only --source-profile PROFILE]
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
   allocator-m7 [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
@@ -472,6 +473,8 @@ case "$command" in
             m4_command=(python3 compat/allocator/tests/test_x86_64_m4_gate.py)
         elif [ "$#" -eq 2 ] && [ "$1" = --gate ]; then
             m4_command=(python3 compat/allocator/x86_64_m4_gate.py --offline --gate "$2")
+        elif [ "${1:-}" = --differential ]; then
+            m4_command=(python3 compat/allocator/x86_64_m4_gate.py --offline "$@")
         elif [ "${1:-}" = --operations-matrix ]; then
             shift
             m4_command=(python3 compat/allocator/x86_64_m4_gate.py --offline --operations-matrix)
@@ -488,7 +491,7 @@ case "$command" in
                 m4_command=(--read-only-retained-inputs "${m4_command[@]}")
             fi
         else
-            fail "allocator-m4 accepts only --check, --gate ID, --reader-tests, or --operations-matrix [--read|--replay]"
+            fail "allocator-m4 accepts --check, --gate ID, --reader-tests, --differential SCENARIO, or --operations-matrix [--read|--replay]"
         fi
         ensure_image
         run_in_container "${m4_command[@]}"
