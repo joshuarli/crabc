@@ -26,75 +26,66 @@ paused AArch64 behavior. A real behavior failure remains a bug.
 
 Update this small section in place when the implementation frontier changes.
 
-- **Feature status:** selected native runtime, Rust facade, allocator source
-  operations and owned integration are complete in the active feature scope.
-  All demonstrated defects are repaired with focused debug evidence. No feature
-  lanes remain open. Performance, release qualification, allocator-default
-  changes and public-support promotion are now active, in that dependency order.
-  Interrupted historical producers retain their actual statuses and available
-  original partial evidence.
-- **Cleanup:** the user's expanded authorization removed 54 older registered
-  evidence worktrees, eight obsolete top-level archives and 1,285 old build/report
-  paths, plus two unused AArch64 Docker build-cache volumes. The earlier cleanup
-  removed 20 campaign worktrees and 20 unused Docker volumes. Free disk is now
-  about 1 TiB. The user has authorized a further milestone cleanup of obsolete
-  state before new lanes start. Historical build
-  products and reports were deliberately discarded; source commits remain in Git.
-- **Runtime accounting:** frozen inventory remains 223 capabilities and 26 families;
-  25 families have functional scope. Historical release labels do not establish
-  feature completion. Inspect actual source paths and focused behavior.
-- **Integrated implementation:** restored coherent source work is integrated on
-  `main`. Recent fixes cover C11 once/TSS exit, write-only FILE read state,
-  zero-capacity multibyte conversion, iconv reset, word expansion, binary64 power
-  identity, interrupted interface dumps, allocator child statistics reset,
-  debug OS reset, regular reservation callback/diagnostic ordering, and live-Page
-  assertion ownership. Compact original failures and focused proving programs
-  are retained in the existing ignored reports.
-- **Completed integration:** owned opt0 debug sysroots support all four entry
-  modes with sealed Linux UAPI headers. Installed header checks and actual
-  loader graph/finalization consumers pass. Rust std's duplicate private panic
-  and allocator-symbol link failure is fixed. The debug provider packaging now
-  preserves live unwind records; static/dynamic cleanup, cross-DSO panic and
-  source-built backtrace pass, including 12 retained consumers replayed read-only.
-  Lua source/bytecode consumption passes through explicit opt0 static and dynamic
-  interfaces. Free/unfull/retire/reclaim assertions and outer owner-exit delivery
-  are integrated, including the typed completion split that ends diagnostic
-  admissions before metadata teardown. The unused loader abort-personality stub
-  is removed; rebuilt loader clients and symbol ownership checks pass. Secure
-  reclaim fixtures now retain real guard/process owners: conditional checks pass
-  32/32 and default checks pass 27/27, including read-only retained-program replay.
-  Complete source collection-prefix validation across active and engine-less
-  paths is integrated; the merged focused source checks pass 7/7. Fresh native-
-  shadow opt0 debug static/dynamic products pass worker/TSD/deferred exit,
-  allocator policy, late FILE cleanup and initial/worker prepared fork through
-  all four link modes and kernel/direct dynamic entry. The debug producer now
-  records its actual compiled lifecycle-audit feature. Product ownership audits
-  exclude C allocator recovery and dummy loader personalities. Actual retained
-  programs replay from the main checkout's read-only reports; all settled
-  worktrees are retired. No release or full-family qualification is claimed.
-- **Merged correctness:** allocator early options, guarded initialization,
-  false-force reclaim transfers, aligned null realloc and resolver construction
-  boundaries are repaired. Native spawn needs only two free pipe descriptors;
-  filesystem/readiness callers now use the selected native typed APIs. Debug-2
-  reset checks pass 28/28 after correcting fixture
-  metadata geometry against pinned C. Retained stdio programs pass all 42 cases
-  with exact musl transcripts; multibyte original/fixed programs and the positive
-  remote reclaim/second-owner-exit Loom model replay from read-only reports.
-- **Active integration:** all feature lanes have been integrated or settled;
-  only the main worktree remains. Historical lane refs remain available for source
-  recovery. New lanes use fresh trees under `.work/worktrees/`.
-- **Evidence and tools:** retain compact current regression inputs/programs/raw
-  failures in the existing allocator/runtime reports, rather than historical build
-  graphs. Development image `5b43da01b755` replaces the deleted historical image
-  only for focused debug work via `CRABC_X86_64_CORE_IMAGE`; original image-qualified
-  claims are not transferred. Derived Miri image `40a5aff94eab` supports focused
-  strict-provenance checks. Restore and authenticate the pinned qualification
-  environment before admitting new release evidence.
-- **Physical environment:** the host lacks the two allowed NUMA nodes/free 1-GiB
-  pages required by the historical physical qualification job. Implement and
-  test software behavior with available mechanisms; physical certification is
-  an open release prerequisite. Do not repeat an unchanged denied `mbind`, alter
-  shared pools/security policy, rent resources or reboot without authorization.
+- **Feature status:** the selected surface is implemented. Current-source
+  qualification preparation found an unresolved native-shadow opt0 worker
+  attachment failure on a legal 16-KiB pthread stack; accepted-C products and
+  larger native worker stacks pass. Constructor admission, metadata activation
+  and aggregate-copy reductions are integrated and pass focused unit/compiler
+  checks, but do not establish that this failure is repaired. Correctness comes
+  before performance, release qualification, allocator-default and public-support
+  transitions. C remains selected; public x86 support remains disabled.
+- **Integration:** every open lane's coherent source changes are integrated on
+  `main`, including the reviewed initializer increment. Completed and interrupted
+  lane worktrees are retired; their source branches remain in Git. No running
+  lane or uncommitted source is left from this milestone. New work uses fresh
+  trees under `.work/worktrees/`.
+- **Cleanup:** the expanded milestone cleanup removed obsolete allocator build
+  roots and historical report snapshots, then retired 20 settled worktrees and
+  removed 18 redundant intermediate build directories. Free disk is about
+  1.1 TiB. Retain source history, exact reusable input archives and compact
+  regression programs/raw evidence in the existing ignored report locations.
+  Deliberately deleted reports are not retained qualification. Other projects'
+  Docker containers and volumes remain outside this cleanup.
+- **Runtime accounting:** the immutable baseline still has 223 capabilities and
+  26 families. Full qualification is reactivated: eight ordered gates are ready,
+  zero are qualified. Structural validation does not certify runtime behavior,
+  release products, allocator promotion or public support.
+- **Merged readiness:** resumable candidate execution binds invocation, inputs
+  and product bytes; supplied Lua consumption binds the current release cohort
+  and backend. Installed pthread compiler provenance, nested C++ header linkage,
+  static-PIE LTO roots, clean dynamic text environments, POSIX interruption cleanup,
+  resolver cancellation network observations, and legal loader graph entries are
+  repaired. Frozen ABI/header/coverage digests are unchanged.
+- **Allocator readiness:** M4 has isolated opt0 valid-client source-core builds;
+  M5 names all positive Loom outcomes and keeps controls separate; M6 rereads
+  original C ownership witnesses after relocation; M7 parses and replays the
+  three source configuration probes. Native source closure now selects the
+  actual feature graph and admits the already-reviewed pinned rand dependencies.
+  These focused results do not close full milestone or physical requirements.
+- **Retained evidence:** main-checkout read-only replay passes the original Lua,
+  text, pthread/ABI six-entry consumers and loader TLS programs. M4 original
+  programs, M5 named-outcome reader, M6 ownership reader and three M7 configuration
+  profiles retain their actual checks. Compact programs, failures, source pins
+  and raw results survive independently of retired worktrees.
+- **Tools and inputs:** authenticated native core image `a635e97c4bb5` and
+  standalone allocator image `3d5e3a88e4f5` are restored. The core image has the
+  pinned nightly, musl 1.2.6 and 935 Linux UAPI headers; linked-worktree checks
+  mount read-only Git metadata while keeping the worktree's own index. All 59
+  exact package archives and their signed index authenticate. Pinned std/provider
+  vendors, Lua archive, Rustybench/Rustix offline inputs and both source-oracle
+  checkouts are restored. Historical image-qualified claims are not transferred.
+  Development image `5b43da01b755` and Miri image `40a5aff94eab` remain available
+  for their original focused scopes.
+- **Qualification frontier:** reconcile remaining current-image input manifests
+  and producer/reader boundaries, then investigate performance on an uncontended
+  host and qualify the final merged-source release cohort. The architecture
+  promotion benchmark producer still needs a reviewed executable contract.
+  Full M10, the default switch with post-switch reruns and public promotion remain
+  open. No qualifying timing or full release-family pass is claimed.
+- **Physical environment:** the host lacks two allowed NUMA nodes and free 1-GiB
+  pages required by physical qualification. Preserve this open release prerequisite.
+  Do not repeat unchanged denied `mbind`, change shared pools/security policy,
+  rent resources or reboot without authorization.
 
 ## Parallel lanes
 
