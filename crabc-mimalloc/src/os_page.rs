@@ -390,6 +390,8 @@ pub(crate) struct OsAlignedPageClaim {
     /// A Page metadata owner has taken over the returned slice start. Its
     /// rollback frees from that start and clips the committed accounting.
     page_publication_started: Cell<bool>,
+    /// Retains the terminal reset outcome across metadata rollback retries.
+    tail_reset_recorded: bool,
     release_state: OsPageReleaseState,
     ready: bool,
 }
@@ -555,7 +557,7 @@ impl OsAlignedPageClaim {
             process_identity: None,
             initially_committed: true,
             release_commit_size: 0,
-            page_publication_started: Cell::new(false),
+            page_publication_started: Cell::new(false), tail_reset_recorded: false,
             release_state: OsPageReleaseState::Unaccounted,
             ready,
         }
@@ -605,7 +607,7 @@ impl OsAlignedPageClaim {
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
-                            page_publication_started: Cell::new(false),
+                            page_publication_started: Cell::new(false), tail_reset_recorded: false,
                             release_state: OsPageReleaseState::Unaccounted,
                         })),
                 };
@@ -620,7 +622,7 @@ impl OsAlignedPageClaim {
             // Before the fresh area returns its slice start, an early commit
             // failure frees from the mapping base and charges its full extent.
             release_commit_size: layout.mapping_length(),
-            page_publication_started: Cell::new(false),
+            page_publication_started: Cell::new(false), tail_reset_recorded: false,
             release_state: OsPageReleaseState::Unaccounted,
             ready: false,
         };
@@ -689,7 +691,7 @@ impl OsAlignedPageClaim {
                             mapping, layout, process: None,
                             process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false, release_commit_size: 0, ready: false,
-                            page_publication_started: Cell::new(false),
+                            page_publication_started: Cell::new(false), tail_reset_recorded: false,
                             release_state: OsPageReleaseState::Unaccounted,
                         },
                     )),
@@ -700,7 +702,7 @@ impl OsAlignedPageClaim {
             mapping, layout, process: None,
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: true, release_commit_size: layout.mapping_length(),
-            page_publication_started: Cell::new(false),
+            page_publication_started: Cell::new(false), tail_reset_recorded: false,
             release_state: OsPageReleaseState::Unaccounted, ready: false,
         };
         let metadata_size = layout.metadata_commit_size();
@@ -761,7 +763,7 @@ impl OsAlignedPageClaim {
                         Self { mapping, layout, process: None,
                             process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false, release_commit_size: 0, ready: false,
-                            page_publication_started: Cell::new(false),
+                            page_publication_started: Cell::new(false), tail_reset_recorded: false,
                             release_state: OsPageReleaseState::Unaccounted },
                     )),
                 };
@@ -770,7 +772,7 @@ impl OsAlignedPageClaim {
         let mut claim = Self { mapping, layout, process: None,
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: false, release_commit_size: 0,
-            page_publication_started: Cell::new(false),
+            page_publication_started: Cell::new(false), tail_reset_recorded: false,
             release_state: OsPageReleaseState::Unaccounted, ready: false };
         let metadata_size = layout.metadata_commit_size();
         if let Err(error) = claim.mapping.commit_for_process_with_warning(process, 0, metadata_size, metadata_size) {
@@ -845,7 +847,7 @@ impl OsAlignedPageClaim {
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
-                            page_publication_started: Cell::new(false),
+                            page_publication_started: Cell::new(false), tail_reset_recorded: false,
                             release_state: OsPageReleaseState::Unaccounted,
                         })),
                 };
@@ -858,7 +860,7 @@ impl OsAlignedPageClaim {
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: false,
             release_commit_size: 0,
-            page_publication_started: Cell::new(false),
+            page_publication_started: Cell::new(false), tail_reset_recorded: false,
             release_state: OsPageReleaseState::Unaccounted,
             ready: false,
         };
@@ -1153,6 +1155,43 @@ impl OsAlignedPageClaim {
         }
     }
 
+    /// Reports whether terminal cleanup already recorded this claim's reset.
+    /// A refused metadata retirement keeps this progress with the original
+    /// mapping, so the next cleanup attempt must not reset and charge it again.
+    pub(crate) fn source_tail_reset_recorded(&self) -> bool {
+        self.tail_reset_recorded
+    }
+
+    /// Records the original claim's terminal tail reset before rollback.
+    /// On-demand commitment accounting excludes the reserved tail; a successful
+    /// reset adds its actual charge to the original claim's release debit.
+    /// Fully committed suffix accounting already includes that tail.
+    ///
+    /// # Safety
+    /// `bytes` is the actual terminal reset commitment charged under this
+    /// claim's original process VM owner, or zero for a skipped or failed reset.
+    /// The caller retains this same unique mapping and process binding, records
+    /// the outcome before release accounting, and excludes overlapping resets
+    /// or independent release rights for the mapping.
+    pub(crate) unsafe fn record_source_tail_reset_commit(&mut self, bytes: usize) -> bool {
+        if !matches!(self.release_state, OsPageReleaseState::Unaccounted)
+            || self.tail_reset_recorded { return false; }
+        let tail_size = self.layout.allocation_size() - self.layout.page_noguard_size();
+        if bytes != 0 && (crate::config::SECURE_LEVEL < 5
+            || self.process_identity.is_none() || bytes != tail_size) {
+            return false;
+        }
+        let committed = if bytes != 0 && !self.initially_committed {
+            match self.release_commit_size.checked_add(bytes) {
+                Some(committed) if committed <= self.layout.allocation_size() => committed,
+                _ => return false,
+            }
+        } else { self.release_commit_size };
+        self.release_commit_size = committed;
+        self.tail_reset_recorded = true;
+        true
+    }
+
     /// Releases an unpublished claim after metadata/page rollback.
     ///
     /// An `unmap` failure returns this exact still-live claim inside
@@ -1374,6 +1413,12 @@ pub(crate) unsafe fn published_on_demand_os_page_area_for_process(
 }
 
 impl PublishedOsAlignedPage {
+    /// Keeps the recorded reset outcome attached to the unique terminal token
+    /// while metadata retirement or mapping release is retried.
+    pub(crate) fn source_tail_reset_recorded(&self) -> bool {
+        self.tail_reset_recorded
+    }
+
     /// Records the actual successful tail commitment before terminal release.
     /// An on-demand page's prefix excludes that tail, so its original token
     /// must debit both commitments. Fully committed source suffix accounting
@@ -2133,6 +2178,64 @@ mod tests {
         fault.set(fault::Plan::disabled());
         claim.commit_initial_page_prefix(layout.page_noguard_size()).unwrap();
         claim.release().unwrap_or_else(|_| panic!("exact original claim release"));
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[test]
+    fn on_demand_os_claim_rollback_accounts_the_actual_tail_reset_once() {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        for fail_reset in [false, true] {
+            let fault = fault::install(fault::Plan::disabled());
+            let process = process(false);
+            let before = process.subprocess().vm_statistics().snapshot();
+            let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+            let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+                process.main_subprocess().unwrap()).unwrap();
+            let config = config(4 * KIB);
+            let mut claim = OsAlignedPageClaim::allocate_on_demand_for_process(
+                process, config, 256, 1, crate::arena::ArenaId::none(),
+            ).unwrap_or_else(|_| panic!("original on-demand OS claim"));
+            let layout = claim.layout();
+            let prefix = usize::from(page::initial_page_slice_pcommitted(
+                layout.block_start_offset(), layout.block_size(), layout.allocation_size(),
+                config.page_size().bytes()).unwrap()) * config.page_size().bytes();
+            claim.commit_initial_page_prefix(prefix).unwrap();
+            let memory = claim.memory_id().unwrap();
+            let start = claim.slice_start().unwrap();
+            let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+                layout.block_size(), layout.page_offset(), layout.reserved(),
+                (prefix / config.page_size().bytes()) as u16,
+                memory.initially_zero(), memory) }.unwrap();
+            assert!(unsafe { claim.publish_secondary_metadata(primary) });
+            if fail_reset { fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM)); }
+            let before_reset = process.subprocess().vm_statistics().snapshot();
+            // SAFETY: this isolated original claim retains the exact aligned
+            // reserved tail. No client, projection or callback can access it.
+            let reset = unsafe { crate::arena::secure_page_guard_reset_at(Some(process),
+                config.page_size(), start.as_ptr().wrapping_add(layout.page_noguard_size()), memory) };
+            let bytes = if fail_reset {
+                assert_eq!(reset, Err(Errno::NOMEM));
+                0
+            } else {
+                assert_eq!(reset, Ok(true));
+                config.page_size().bytes()
+            };
+            assert_eq!(process.subprocess().vm_statistics().snapshot().committed_current
+                - before_reset.committed_current, bytes as i64);
+            assert!(!claim.source_tail_reset_recorded());
+            // SAFETY: the immediately preceding reset charged these bytes to
+            // this original process-bound claim before any release accounting.
+            assert!(unsafe { claim.record_source_tail_reset_commit(bytes) });
+            assert!(claim.source_tail_reset_recorded());
+            assert!(!unsafe { claim.record_source_tail_reset_commit(bytes) });
+            assert!(unsafe { claim.clear_secondary_metadata(primary) });
+            assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+            fault.set(fault::Plan::disabled());
+            assert!(claim.release().is_ok());
+            let after = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(after.reserved_current, before.reserved_current);
+            assert_eq!(after.committed_current, before.committed_current);
+        }
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
