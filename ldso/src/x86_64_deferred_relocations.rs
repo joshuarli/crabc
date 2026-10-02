@@ -113,7 +113,7 @@ pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: 
                 let mut definer = None;
                 if symbol != 0 {
                     let tls = matches!(kind, R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64);
-                    match unsafe { lookup_result(&scope, objects, owner, symbol, tls, kind == R_COPY) } {
+                    match unsafe { lookup_result(&scope, objects, owner, symbol, tls, kind == R_COPY, kind == R_X86_64_JUMP_SLOT) } {
                         Some(SymbolLookup::MissingStrong) => {
                             if deferrable && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) { continue; }
                             return Some(RelocationFailure::MissingSymbol { owner, symbol: name });

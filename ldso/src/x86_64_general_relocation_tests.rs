@@ -969,6 +969,41 @@ fn function_definition_extent_keeps_load_order_and_executable_admission() {
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
+fn canonical_plt_address_preserves_pointer_identity_without_self_binding() {
+    let mut main = Image::new();
+    let mut provider = Image::new();
+    main.symbol(1, 2, 1, 0, 0, 0x600, 0);
+    provider.symbol(1, 2, 1, 0, 1, 0x1000, 8);
+    let objects = [main.object(false), provider.object(true)];
+    let scope = SymbolScope { indices: &[0, 1], module_count: 0,
+        static_tls_count: 0, initial: true };
+    let canonical = objects[0].base + 0x600;
+    let definition = objects[1].base + 0x1000;
+    assert!(matches!(unsafe { find_runtime_symbol(objects.iter().map(Some), b"value") },
+        Some(RuntimeSymbol::Address(address)) if address == canonical));
+    for owner in 0..2 {
+        for kind in [R_64, R_X86_64_GLOB_DAT] {
+            assert_eq!(unsafe { word_value(&scope, &objects, owner, kind, 1, 0) }, Some(canonical));
+        }
+        assert_eq!(unsafe { word_value(&scope, &objects, owner, R_X86_64_JUMP_SLOT, 1, 0) },
+            Some(definition));
+    }
+    let scope = SymbolScope { indices: &[0], ..scope };
+    assert_eq!(unsafe { word_resolution(&scope, &objects, 0, 0x1000,
+        R_X86_64_JUMP_SLOT, 1, 0, true) }, Some(None));
+    assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_JUMP_SLOT, 1, 0) }.is_none());
+    for (kind, value) in [(2, 0), (1, 0x600), (6, 0x600)] {
+        main.symbol(1, kind, 1, 0, 0, value, 0);
+        assert!(matches!(unsafe { find_runtime_symbol(objects.iter().map(Some), b"value") },
+            Some(RuntimeSymbol::Address(address)) if address == definition));
+    }
+    main.symbol(1, 2, 1, 0, 0, 0x600, 0);
+    main.put_u32(4, PF_R);
+    assert!(unsafe { find_runtime_symbol([Some(&objects[0])], b"value") }.is_none());
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
 fn ordered_lookup_reuses_name_across_sysv_and_gnu_tables() {
     let mut main = Image::new();
     let mut sysv = Image::new();

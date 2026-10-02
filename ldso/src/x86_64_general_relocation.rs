@@ -123,7 +123,7 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
         let Some(symbol) = (|| -> Option<Option<Definition>> {
             for index in 1..objects[0].symcount {
                 let symbol = unsafe { definition(objects, 0, index) }?;
-                if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
+                if !symbol_address_candidate(symbol, false) || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
                     || !matches!(symbol.kind, 0 | 1 | 2 | 6)
                 { continue; }
                 if unsafe { symbol_name(&objects[0], index) }? == name { return Some(Some(symbol)); }
@@ -135,7 +135,7 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
         // A retained dynamic symbol remains findable by name even when its
         // st_other visibility is INTERNAL or HIDDEN. The ELF hash lookup and
         // binding/type tests decide dlsym eligibility.
-        if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
+        if !symbol_address_candidate(symbol, false) || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
             || !matches!(symbol.kind, 0 | 1 | 2 | 6)
         { continue; }
         if symbol.kind == 6 {
@@ -395,7 +395,7 @@ unsafe fn lookup(
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<Option<Definition>> {
     let symbol = unsafe { symbol_record(objects.get(requestor)?, index) }?;
-    match unsafe { lookup_result_at(scope, objects, requestor, symbol, None, tls, copy) }? {
+    match unsafe { lookup_result_at(scope, objects, requestor, symbol, None, tls, copy, false) }? {
         SymbolLookup::Defined(symbol) => Some(Some(symbol)),
         SymbolLookup::UndefinedWeak => Some(None),
         SymbolLookup::MissingStrong => None,
@@ -406,9 +406,9 @@ unsafe fn lookup(
 /// dispatch. Ordinary lookup still applies the requestor's binding rules.
 unsafe fn lookup_with_record(
     scope: &SymbolScope<'_>, objects: &[Object],
-    requestor: usize, symbol: *const u8, name: &[u8], tls: bool, copy: bool,
+    requestor: usize, symbol: *const u8, name: &[u8], tls: bool, copy: bool, require_definition: bool,
 ) -> Option<Option<Definition>> {
-    match unsafe { lookup_result_at(scope, objects, requestor, symbol, Some(name), tls, copy) }? {
+    match unsafe { lookup_result_at(scope, objects, requestor, symbol, Some(name), tls, copy, require_definition) }? {
         SymbolLookup::Defined(symbol) => Some(Some(symbol)),
         SymbolLookup::UndefinedWeak => Some(None),
         SymbolLookup::MissingStrong => None,
@@ -419,17 +419,17 @@ unsafe fn lookup_with_record(
 /// Only the former may enter musl's deferred PLT/GOT queue.
 unsafe fn lookup_result(
     scope: &SymbolScope<'_>, objects: &[Object],
-    requestor: usize, index: usize, tls: bool, copy: bool,
+    requestor: usize, index: usize, tls: bool, copy: bool, require_definition: bool,
 ) -> Option<SymbolLookup> {
     let symbol = unsafe { symbol_record(objects.get(requestor)?, index) }?;
-    unsafe { lookup_result_at(scope, objects, requestor, symbol, None, tls, copy) }
+    unsafe { lookup_result_at(scope, objects, requestor, symbol, None, tls, copy, require_definition) }
 }
 
 /// `symbol` is the requestor's already validated relocation-selected record.
 unsafe fn lookup_result_at(
     scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, symbol: *const u8, requested_name: Option<&[u8]>,
-    tls: bool, copy: bool,
+    tls: bool, copy: bool, require_definition: bool,
 ) -> Option<SymbolLookup> {
     let requested = unsafe { definition_at(requestor, symbol) };
     if !matches!(requested.binding, 0 | 1 | 2 | STB_GNU_UNIQUE)
@@ -456,7 +456,8 @@ unsafe fn lookup_result_at(
         }
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         if let Some(found) = unsafe { lookup_exported(objects, owner, name, &mut hashes) }? {
-            if found.section == 0 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
+            if !symbol_address_candidate(found, require_definition || tls || copy)
+                || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
                 || (!tls && !matches!(found.kind, 0 | 1 | 2))
@@ -469,7 +470,8 @@ unsafe fn lookup_result_at(
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         for candidate in 1..objects[owner].symcount {
             let found = unsafe { definition(objects, owner, candidate) }?;
-            if found.section == 0 || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
+            if !symbol_address_candidate(found, require_definition || tls || copy)
+                || !matches!(found.binding, 1 | 2 | STB_GNU_UNIQUE)
                 || !matches!(found.visibility, 0 | 3)
                 || (tls && found.kind != 6)
                 || (!tls && !matches!(found.kind, 0 | 1 | 2))
@@ -514,11 +516,19 @@ unsafe fn function_extent_in_executable_load(
     false
 }
 
+// An undefined function with a nonzero value publishes its canonical PLT
+// address. Pointer relocations and dlsym use it; JUMP_SLOT must find the real
+// definition so its PLT entry cannot bind back to itself. TLS and COPY also
+// require a defining section.
+fn symbol_address_candidate(symbol: Definition, require_definition: bool) -> bool {
+    symbol.section != 0 || (!require_definition && symbol.kind == 2 && symbol.value != 0)
+}
+
 unsafe fn ordinary_address(objects: &[Object], symbol: Definition) -> Option<u64> {
     if symbol.section == SHN_ABS && matches!(symbol.kind, 0 | 1) {
         return Some(symbol.value);
     }
-    if symbol.section == 0 || symbol.section >= 0xff00 { return None; }
+    if !symbol_address_candidate(symbol, false) || symbol.section >= 0xff00 { return None; }
     let object = &objects[symbol.owner];
     let length = symbol.size.max(1);
     let admitted = if symbol.kind == 2 {
@@ -626,7 +636,7 @@ unsafe fn word_value(
         R_64 | R_X86_64_PC32 | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             let address = if index == 0 { 0 } else {
                 match unsafe { lookup_with_record(scope, objects, owner,
-                    requested_symbol?, requested_name?, false, false) }? {
+                    requested_symbol?, requested_name?, false, false, kind == R_X86_64_JUMP_SLOT) }? {
                     Some(symbol) => unsafe { ordinary_address(objects, symbol) }?,
                     None => 0,
                 }
@@ -663,7 +673,7 @@ unsafe fn word_resolution(scope: &SymbolScope<'_>, objects: &[Object], owner: us
         let private = is_private_runtime_symbol(name);
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         let private = private || x86_64_initial_worker_tls::runtime_function(name).is_some();
-        if !private && matches!(unsafe { lookup_result(scope, objects, owner, index, false, false) }?, SymbolLookup::MissingStrong) {
+        if !private && matches!(unsafe { lookup_result(scope, objects, owner, index, false, false, kind == R_X86_64_JUMP_SLOT) }?, SymbolLookup::MissingStrong) {
             return Some(None);
         }
     }
