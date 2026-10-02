@@ -390,7 +390,8 @@ def cargo_consumer(
     if context.debug:
         panic = "unwind" if panic_runtime == "panic_unwind" else "abort"
         rustflags += ["-C", "opt-level=0", "-C", "lto=off", "-C", f"panic={panic}"]
-        environment.update({"CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_DEV_LTO": "false",
+        environment.update({"CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_TEST_OPT_LEVEL": "0",
+                            "CARGO_PROFILE_DEV_LTO": "false",
                             "CARGO_PROFILE_DEV_PANIC": panic})
     if link == "oracle":
         rustflags += ORACLE_FLAGS

@@ -50,6 +50,7 @@ class DebugRouteTests(unittest.TestCase):
             self.assertIn("--offline", command)
             self.assertEqual(environment[GATE.owned_rust_link.CARGO_PROFILE_ENV], "debug")
             self.assertEqual(environment["CARGO_PROFILE_DEV_OPT_LEVEL"], "0")
+            self.assertEqual(environment["CARGO_PROFILE_TEST_OPT_LEVEL"], "0")
             self.assertIn("opt-level=0", environment["RUSTFLAGS"])
             self.assertIn("lto=off", environment["RUSTFLAGS"])
 
