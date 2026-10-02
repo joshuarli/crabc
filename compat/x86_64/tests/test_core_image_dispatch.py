@@ -126,6 +126,33 @@ class CoreImageDispatchTests(unittest.TestCase):
         self.assertEqual(len(runs), 9)
         self.assertTrue(all(PIN in run and TAG not in run for run in runs))
 
+    def test_c_performance_executes_the_current_pin_without_a_tag_override(self) -> None:
+        product = self.work / "dynamic-product"
+        product.mkdir()
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit):
+                if explicit:
+                    self.environment["CRABC_X86_64_CORE_IMAGE"] = PIN
+                result = self.invoke("scripts/dev-x86_64.sh", "perf-c", "plan",
+                                     "--dynamic-product", str(product),
+                                     "--work-dir", str(self.work / "performance-plan"))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                runs = [call for call in self.calls() if call[0] == "run"]
+                self.assertTrue(runs)
+                self.assertTrue(all(PIN in run for run in runs))
+                self.assertTrue(all("CRABC_PERF_DOCKER_IMAGE_ID=" + PIN in run for run in runs))
+                self.assertFalse(any(call[0] == "build" for call in self.calls()))
+
+    def test_c_performance_rejects_a_retired_tag_before_execution(self) -> None:
+        product = self.work / "dynamic-product"
+        product.mkdir()
+        self.environment["CRABC_X86_64_CORE_IMAGE"] = "crabc-core-evidence:x86_64-native-perf"
+        result = self.invoke("scripts/dev-x86_64.sh", "perf-c", "plan",
+                             "--dynamic-product", str(product),
+                             "--work-dir", str(self.work / "performance-plan"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(call[0] in ("run", "build") for call in self.calls()))
+
     def test_rust_check_respects_explicit_image_for_custom_command(self) -> None:
         custom = "local-core:custom"
         self.environment["CRABC_X86_64_CORE_IMAGE"] = custom

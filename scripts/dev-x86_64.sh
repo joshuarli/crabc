@@ -196,7 +196,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
   image  build the pinned Linux/amd64 core-evidence image
-  perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter; use CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf
+  perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter in the pinned core image
   perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
   perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
   perf-native {--prepare|--mode smoke|--mode full|--validate-report REPORT} ...  pinned native Rust-facade performance companion; full waits for the ordered qualification chain
@@ -4061,6 +4061,9 @@ run_in_user_namespace_chroot_container() {
 # Resolver execution sees only loopback and its private conventional files.
 # Product construction happens separately, before network isolation.
 run_in_resolver_network_container() {
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve resolver network image identity"
     prepare_work_dir
     docker run --rm --init \
         "${GIT_METADATA_MOUNT[@]}" \
@@ -4072,6 +4075,7 @@ run_in_resolver_network_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env "CRABC_CLASSIC_NETDB_IMAGE_ID=crabc-core-evidence@$image_id" \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
@@ -4080,7 +4084,7 @@ run_in_resolver_network_container() {
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
-        "$IMAGE" "$@"
+        "$image_id" "$@"
 }
 
 # Installed dynamic-product and filesystem-mechanism evidence mounts read-only procfs; the PTY gate
@@ -4125,16 +4129,18 @@ run_in_dynamic_loader_mount_container() {
         "$IMAGE" "$@"
 }
 
-# Native C-performance collection needs a private cgroup namespace solely for
-# a diagnostic leaf mounted below its fresh `.work` directory.  It is not a
-# general privileged container: network is absent, no host-root bind is added,
-# and an LSM denial is reported by the runner as unsupported rather than
-# replaced with Docker's parent cgroup.  The non-default image tag is
-# deliberate: performance tooling (including strace) must never rebuild the
-# default evidence image while another qualification batch uses it.
+# Native C-performance collection uses a private diagnostic cgroup namespace.
+# The current immutable core image supplies the authenticated performance tools;
+# resolving it before execution keeps a mutable alias from changing the inputs.
 require_native_c_performance_image() {
-    [ "$IMAGE" = "crabc-core-evidence:x86_64-native-perf" ] || \
-        fail "native C performance requires CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf"
+    local pinned_image selected_image image_id
+    pinned_image="$(python3 -B "$ROOT_DIR/compat/x86_64/core_image.py")"
+    selected_image="${IMAGE:-$pinned_image}"
+    image_id="$(docker image inspect --format '{{.Id}}' "$selected_image")" || \
+        fail "native C performance image $selected_image is unavailable"
+    [ "$image_id" = "$pinned_image" ] || \
+        fail "native C performance requires pinned core image $pinned_image; selected $image_id"
+    IMAGE="$image_id"
 }
 
 run_in_native_c_performance_container() {
@@ -4167,7 +4173,7 @@ run_in_native_c_performance_container() {
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
-        "$IMAGE" "$@"
+        "$image_id" "$@"
 }
 
 # Only the UTS-identity artifact needs SYS_ADMIN, solely to create a fresh UTS
@@ -6553,6 +6559,7 @@ run_in_resolver_family_image_container() {
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
         --env "$marker=crabc-core-evidence@$image_id" \
+        --env "CRABC_CLASSIC_NETDB_IMAGE_ID=crabc-core-evidence@$image_id" \
         --volume "$ROOT_DIR:/workspace" \
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
