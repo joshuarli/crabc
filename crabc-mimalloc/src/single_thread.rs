@@ -43120,15 +43120,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     /// Ports the selected regular-page full transition.
     ///
-    /// A selected x86 static-main arena owner follows the source abandoning
-    /// branch. Its validation is intentionally inside that selected branch:
-    /// an unavailable static-main capability or invalid page image terminally
-    /// retains the transition instead of changing source policy to
-    /// non-abandoning `BIN_FULL`. False collection precedes the all-free
-    /// decision and queue detach; a nonempty page is then mapped-abandoned or
-    /// left unmapped while full. Every unselected session keeps the existing
-    /// non-abandoning full-queue branch, including its second false collection
-    /// after enqueue.
+    /// The source Theap policy decides whether an exhausted page is abandoned
+    /// or retained in its local full queue. A selected owner that permits
+    /// abandonment validates that branch's exact arena or OS capabilities;
+    /// disabling abandonment instead retains the page locally. False
+    /// collection follows the full-queue enqueue so a just-published remote
+    /// free can make the page available again under the same owner.
     fn move_regular_to_full(
         &mut self,
         bin: usize,
@@ -43139,9 +43136,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if self
             .session
             .selects_selected_main_arena_source_full_abandonment()
+            && self.session.theap().allows_page_abandon()
         {
-            // Pinned `mi_page_to_full` gives every selected page to
-            // `_mi_page_abandon`. The subsequent arena/non-arena choice comes
+            // When the Theap permits abandonment, `mi_page_to_full` gives
+            // its exhausted page to `_mi_page_abandon`. The backing choice comes
             // from the page's original memory provenance, never from this
             // session's ordinary abandoning option alone. In particular,
             // `mi_page_is_huge` routes an aligned OS singleton through
