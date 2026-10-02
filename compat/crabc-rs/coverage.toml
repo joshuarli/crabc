@@ -408,8 +408,8 @@ shared_impl = ["crabc_core::text ASCII search, musl version ordering, and statef
 native_boundary = "NUL-free borrowed byte or C-string inputs, caller-owned builder storage, alloc-gated owned CString duplication, and independent non-mutating cursor state"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/text.rs", "crabc-rs/src/text.rs", "crabc-rs/src/path.rs", "crabc-rs/tests/text_stateful.rs", "crabc-rs/examples/text_stateful_direct_probe.rs", "compat/crabc-rs/verify_stateful_text.py"]
-rationale = "The native API makes destination capacity, NUL termination, duplicate ownership, tokenizer state, fixed ASCII folding, and musl path/version policy explicit. It never exposes C destination pointers, static strtok state, mutable libgen buffers, locale state, or errno."
+evidence = ["crabc-core/src/text.rs", "crabc-rs/src/text.rs", "crabc-rs/src/path.rs", "crabc-rs/tests/text_stateful.rs", "crabc-rs/tests/x86_64_path_components.rs", "crabc-rs/examples/text_stateful_direct_probe.rs", "compat/crabc-rs/verify_stateful_text.py"]
+rationale = "The native API makes destination capacity, NUL termination, duplicate ownership, tokenizer state, fixed ASCII folding, and musl path/version policy explicit. Borrowed basename/dirname components are also admitted on staged Linux/x86-64 without allocation or caller mutation, preserving non-UTF-8 Unix pathname bytes and rejecting interior NULs. It never exposes C destination pointers, static strtok state, mutable libgen buffers, locale state, or errno."
 
 [[capability]]
 id = "numeric.scalar-basic"

@@ -162,7 +162,9 @@ pub mod net;
 pub mod netdb;
 pub mod numeric;
 pub mod param;
-#[cfg(target_arch = "aarch64")]
+// Path arguments and borrowed component extraction use byte/C-string values,
+// with no architecture-specific kernel records or process state.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod path;
 #[cfg(target_arch = "aarch64")]
 pub mod pattern;
