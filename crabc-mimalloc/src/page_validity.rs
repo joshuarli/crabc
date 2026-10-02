@@ -34,6 +34,105 @@ pub(crate) enum SourcePageInvariant {
     ObservationGeometry,
 }
 
+/// A live-page source assertion observed while its original owner retained
+/// the page. This carries only the failure site; the allocation operation
+/// separately keeps the actual page unselectable until terminal delivery or
+/// a refused output admission returns it to that same operation.
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct LivePageValidityAssertion {
+    invariant: SourcePageInvariant,
+}
+
+impl LivePageValidityAssertion {
+    fn source_site(&self) -> (&'static CStr, u32, &'static CStr) {
+        match self.invariant {
+            SourcePageInvariant::BlockSize => (c"include/mimalloc/internal.h", 812, c"mi_page_block_size"),
+            SourcePageInvariant::UsedCapacity => (c"src/page.c", 86, c"mi_page_is_valid_init"),
+            SourcePageInvariant::CapacityReserved => (c"src/page.c", 87, c"mi_page_is_valid_init"),
+            SourcePageInvariant::FreeList => (c"src/page.c", 97, c"mi_page_is_valid_init"),
+            SourcePageInvariant::LocalFreeList => (c"src/page.c", 98, c"mi_page_is_valid_init"),
+            SourcePageInvariant::RemoteFreeList => (c"src/page.c", 111, c"mi_page_is_valid_init"),
+            SourcePageInvariant::FreeCount => (c"src/page.c", 117, c"mi_page_is_valid_init"),
+            SourcePageInvariant::PageStartMapping => (c"src/page.c", 45, c"mi_page_list_count"),
+            SourcePageInvariant::ListNodeMapping => (c"src/page.c", 50, c"mi_page_list_count"),
+            // Construction rejects initialization-only and Rust observation
+            // failures, which have no live-page assertion delivery site.
+            _ => unreachable!(),
+        }
+    }
+
+    /// Delivers within the original attached startup operation, preserving
+    /// the descriptor when its output admission refuses delivery.
+    ///
+    /// # Safety
+    /// The caller continuously retains the original winning startup and its
+    /// selected ordinary Theap, Heap, TLD, process, map and output binding.
+    /// Its actual page stays alive and unselectable through delivery or
+    /// refusal. Every allocator and metadata projection or lock ends before
+    /// entry. Callback registration and arguments remain live and serialized;
+    /// nested operations cannot reuse that retained page or attachment.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn dispatch_source_attached(
+        self, witness: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        let output = match witness.output() {
+            Ok(output) => output,
+            Err(_) => return Err(self),
+        };
+        let (file, line, function) = self.source_site();
+        // SAFETY: the retained original startup revalidated its output after
+        // projections ended; callback arguments and the page remain live.
+        unsafe { crate::diagnostic_output::source_assert_fail(output,
+            self.invariant.assertion().unwrap(), file, line, Some(function)) }
+    }
+
+    /// Delivers within the original metadata startup domain, preserving the
+    /// descriptor when the same domain cannot admit output.
+    ///
+    /// # Safety
+    /// The caller retains its original owned page and complete backing, kept
+    /// unselectable through delivery or refusal. The witness was captured
+    /// before that candidate; its process, metadata issuer, selected map and
+    /// output binding stay live without teardown or rebinding. Every allocator
+    /// and metadata projection or lock ends before entry. Callback registration
+    /// and arguments remain valid and serialized; nested operations cannot
+    /// reuse the retained candidate.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn dispatch_source_initialization(
+        self, witness: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        let output = match witness.output() {
+            Ok(output) => output,
+            Err(_) => return Err(self),
+        };
+        let (file, line, function) = self.source_site();
+        // SAFETY: the original startup witness revalidated its own domain
+        // after projections ended, with page and callback lifetimes retained.
+        unsafe { crate::diagnostic_output::source_assert_fail(output,
+            self.invariant.assertion().unwrap(), file, line, Some(function)) }
+    }
+
+    /// Delivers the observed assertion after every allocator projection ends.
+    ///
+    /// # Safety
+    /// `owner` belongs to the same admitted operation that observed this
+    /// failure. Its original process, output binding, Heap and Theap remain
+    /// continuously retained. The caller keeps the actual page and backing
+    /// alive and unselectable through terminal delivery; this descriptor
+    /// supplies no page retention or release authority. Every Page, Heap,
+    /// Theap, map and allocator projection or lock ends before entry. Output
+    /// callback registration and arguments remain live and serialized, and
+    /// nested operations cannot reuse the retained page.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn dispatch(self, owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>) -> ! {
+        let (file, line, function) = self.source_site();
+        // SAFETY: the original operation retains its output domain and page
+        // after ending projections, throughout terminal callback delivery.
+        unsafe { crate::diagnostic_output::source_assert_fail(owner.output(),
+            self.invariant.assertion().unwrap(), file, line, Some(function)) }
+    }
+}
+
 /// Identifies only the fresh committed-region assertion at page initialization.
 /// This descriptor carries no Page reference, backing ownership or release
 /// permission; the allocation caller separately retains the original candidate.
@@ -146,6 +245,15 @@ impl FreshPageInitializationAssertion {
 }
 
 impl SourcePageInvariant {
+    /// Separates actual live-page source assertions from fresh zero checks
+    /// and memory-observation refusal, without transferring any page rights.
+    pub(crate) const fn into_live_page_validity_assertion(self) -> Result<LivePageValidityAssertion, Self> {
+        match self {
+            Self::InitiallyZero | Self::ObservationGeometry => Err(self),
+            invariant => Ok(LivePageValidityAssertion { invariant }),
+        }
+    }
+
     /// An observation-boundary or list failure belongs to a different caller
     /// contract and cannot be delivered as the fresh zero assertion.
     pub(crate) const fn into_fresh_initialization_assertion(self) -> Result<FreshPageInitializationAssertion, Self> {
@@ -918,6 +1026,26 @@ mod tests {
             state.local_free = core::ptr::null_mut();
             state.remote = core::ptr::from_mut(&mut outside).cast::<Block>();
             assert_eq!(source_page_lists_valid(&state, map), Err(SourcePageInvariant::RemoteFreeList));
+        });
+    }
+
+    #[test]
+    fn live_validity_descriptor_keeps_initialization_and_observation_failures_distinct() {
+        with_page(|page, map| unsafe {
+            let mut list = LocalFreeList::from_page_at(page).unwrap();
+            list.extend_count(8).unwrap();
+            drop(list);
+            let mut state = Page::validity_snapshot_at(page);
+            state.used = 1;
+            let failure = source_page_lists_valid(&state, map).unwrap_err();
+            assert_eq!(failure, SourcePageInvariant::FreeCount);
+            let descriptor = failure.into_live_page_validity_assertion().unwrap();
+            assert_eq!(descriptor.invariant, failure);
+            assert_eq!(descriptor.source_site(), (c"src/page.c", 117, c"mi_page_is_valid_init"));
+            assert_eq!(SourcePageInvariant::InitiallyZero.into_live_page_validity_assertion(),
+                Err(SourcePageInvariant::InitiallyZero));
+            assert_eq!(SourcePageInvariant::ObservationGeometry.into_live_page_validity_assertion(),
+                Err(SourcePageInvariant::ObservationGeometry));
         });
     }
 
