@@ -14,7 +14,7 @@ static ssize_t cookie_write(void *opaque, const char *bytes, size_t length)
 {
     struct cookie_output *output = opaque;
     if (length > sizeof output->bytes - output->length) return -1;
-    memcpy(output->bytes + output->length, bytes, length);
+    if (length) memcpy(output->bytes + output->length, bytes, length);
     output->length += length;
     return (ssize_t)length;
 }
