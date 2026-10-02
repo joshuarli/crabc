@@ -109,7 +109,48 @@ impl ProcessArenaBacking {
     /// its releases succeed; it grants no use of old allocations or arena IDs.
     pub(crate) unsafe fn destroy_all<'tracking>(
         &self,
-        mut tracking: &'tracking mut [usize],
+        tracking: &'tracking mut [usize],
+    ) -> Result<DestroyedArenas<'tracking>, ArenaDestroyError> {
+        unsafe { self.destroy_all_with_huge_process(tracking, self.process_lived_projection()) }
+    }
+
+    /// Retire this exact child arena group under its actual context owner.
+    /// A retained failed huge release carries a non-owning VM projection;
+    /// the caller retains the child image until every such release ends.
+    ///
+    /// # Safety
+    /// The caller meets `destroy_all`'s exclusive shutdown obligations and
+    /// owns the pinned child context containing this arena group. It must
+    /// retain that exact context, its immutable VM policy and its statistics
+    /// through the returned failure owner's final successful raw release.
+    /// The child metadata allocator has already stopped and no callback or
+    /// member may resume allocation after this transition.
+    pub(crate) unsafe fn destroy_all_retained_child<'tracking>(
+        &self, tracking: &'tracking mut [usize],
+    ) -> Result<DestroyedArenas<'tracking>, ArenaDestroyError> {
+        let binding = unsafe { *self.binding.get() };
+        let process = match binding {
+            None => None,
+            Some(binding) => {
+                if binding.process.main_subprocess.is_some() {
+                    return Err(ArenaDestroyError::InvalidOwnership);
+                }
+                // SAFETY: the caller retains the exact child context and
+                // immutable policy through every returned raw failure. This
+                // spelling grants no process-lived publication marker.
+                let identity = unsafe { binding.process.subprocess.as_ref() };
+                if !core::ptr::eq(identity.arena_backing(), self) {
+                    return Err(ArenaDestroyError::InvalidOwnership);
+                }
+                Some(crate::os::VmProcess::new(unsafe { binding.process.policy.as_ref() }, identity))
+            }
+        };
+        unsafe { self.destroy_all_with_huge_process(tracking, process) }
+    }
+
+    unsafe fn destroy_all_with_huge_process<'tracking>(
+        &self, mut tracking: &'tracking mut [usize],
+        huge_process: Option<crate::os::VmProcess<'static>>,
     ) -> Result<DestroyedArenas<'tracking>, ArenaDestroyError> {
         if self.destroyed.load(Ordering::Acquire) {
             return Err(ArenaDestroyError::AlreadyDestroyed);
@@ -139,7 +180,7 @@ impl ProcessArenaBacking {
                 return Err(ArenaDestroyError::TrackingInsideArena);
             }
             if owner.memory.kind() == MemoryKind::OsHuge
-                && self.process_lived_projection().is_none() { return Err(ArenaDestroyError::InvalidOwnership); }
+                && huge_process.is_none() { return Err(ArenaDestroyError::InvalidOwnership); }
             required_words = required_words.checked_add(huge_tracking_words(owner.memory)?)
                 .ok_or(ArenaDestroyError::InvalidOwnership)?;
             releases[index] = Some(owner.memory);
@@ -168,10 +209,11 @@ impl ProcessArenaBacking {
                     }
                 }
                 MemoryKind::OsHuge => {
-                    let process = self.process_lived_projection().ok_or(ArenaDestroyError::InvalidOwnership)?;
-                    // SAFETY: only process-lived huge owners enter this
-                    // registry. The snapshotted memid uniquely retains every
-                    // live primitive, with all derived readers quiescent.
+                    let process = huge_process.ok_or(ArenaDestroyError::InvalidOwnership)?;
+                    // SAFETY: the selected process is permanently live or
+                    // retained by the exact child context owner through all
+                    // raw failures. The snapshot uniquely owns every primitive
+                    // and all derived readers have become quiescent.
                     let allocation = unsafe { HugeOsAllocation::recover_published(process, memory) }
                         .ok_or(ArenaDestroyError::InvalidOwnership)?;
                     let (words, rest) = tracking.split_at_mut(allocation.release_tracking_words());
