@@ -15,7 +15,7 @@ use core::marker::PhantomData;
 use core::pin::Pin;
 use core::ptr::{self, NonNull};
 
-use crate::arena::{manage_external_in_place, ArenaId, ArenaRegistry, ArenaView};
+use crate::arena::{manage_external_in_place_with_guard, ArenaId, ArenaRegistry, ArenaView, MetadataGuardHook};
 use crate::bootstrap::ExclusiveTheapBootstrap;
 use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
 use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize, StartupInput};
@@ -787,7 +787,7 @@ impl TestAllocatorContext {
         let arena_initially_committed = arena_mapping.initially_committed();
         let arena_initially_zero = arena_mapping.initially_zero();
         let managed = match unsafe {
-            manage_external_in_place(
+            manage_external_in_place_with_guard(
                 &registry,
                 arena_start,
                 ARENA_MIN_SIZE,
@@ -802,6 +802,7 @@ impl TestAllocatorContext {
                 -1,
                 false,
                 None,
+                Some(MetadataGuardHook::new(decommit_context_metadata_guard, &arena_mapping)),
             )
         } {
             Ok(managed) => managed,
@@ -1017,6 +1018,26 @@ fn live_thread_id() -> Option<LiveThreadId> {
     LiveThreadId::new(raw)
 }
 
+/// Decommits arena metadata through the context's actual external mapping.
+/// Initialization does not retain this borrowed VM capability in the arena.
+unsafe fn decommit_context_metadata_guard(
+    start: *mut u8, size: usize, argument: *const core::ffi::c_void,
+) {
+    // SAFETY: the synchronous MetadataGuardHook borrow retains this exact
+    // live mapping; no arena header, bitmap or client byte view exists yet.
+    let mapping = unsafe { &*argument.cast::<Mapping>() };
+    let base = mapping.base().expect("metadata guard owner retains its mapping");
+    let length = mapping.length().expect("metadata guard owner retains its extent");
+    let offset = start.addr().checked_sub(base.addr()).expect("metadata guard belongs to its owner");
+    assert!(offset.checked_add(size).is_some_and(|end| end <= length),
+        "validated metadata guard stays inside its retained mapping");
+    assert_eq!(size, mapping.page_size().bytes());
+    // The external map was not charged to a process VM accounting pair.
+    // Run the reviewed advisory/protection transition. Source initialization
+    // continues after guard failure while this owner retains the mapping.
+    let _ = mapping.decommit(offset, size);
+}
+
 fn map_free_error(error: FreeError) -> TestContextFreeError {
     match error {
         FreeError::Unmapped | FreeError::ForeignPage | FreeError::InvalidBlock(_) => {
@@ -1032,6 +1053,41 @@ fn map_free_error(error: FreeError) -> TestContextFreeError {
 mod tests {
     use super::*;
     use crate::config::{KIB, MIB};
+
+    #[test]
+    fn context_owned_committed_arena_supports_selected_metadata_guard() {
+        let mut context = TestAllocatorContext::new().expect("owned anonymous arena initializes");
+        let guard = {
+            // SAFETY: the active context retains its sole published arena mapping.
+            let arena = unsafe { context._registry.arena_at(0) }.unwrap();
+            assert!(arena.memid.initially_committed());
+            assert!(!arena.memid.is_pinned());
+            if crate::config::SECURE_LEVEL > 0 && crate::os::decommit_needs_recommit() {
+                let page = context.arena_mapping.as_ref().unwrap().page_size().bytes();
+                Some(arena.start.addr() + arena.info_slices * crate::config::ARENA_SLICE_SIZE - page)
+            } else { None }
+        };
+        if let Some(guard) = guard {
+            let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+            let protected = maps.lines().any(|line| {
+                let mut fields = line.split_whitespace();
+                let range = fields.next().unwrap();
+                let permissions = fields.next().unwrap();
+                let (begin, end) = range.split_once('-').unwrap();
+                usize::from_str_radix(begin, 16).unwrap() <= guard
+                    && guard < usize::from_str_radix(end, 16).unwrap()
+                    && permissions.starts_with("---")
+            });
+            assert!(protected, "the owned metadata guard is inaccessible without accessing it");
+        }
+        let allocation = context.alloc(37).unwrap();
+        // SAFETY: this allocation remains exclusively live in this context.
+        unsafe { allocation.as_ptr().write_bytes(0x5a, 37) };
+        assert!(unsafe { context.usable_size(allocation) }.unwrap() >= 37);
+        unsafe { context.free(allocation) }.unwrap();
+        assert_eq!(context.outstanding_allocations(), 0);
+        assert_eq!(context.shutdown(), Ok(()));
+    }
 
     #[test]
     fn context_initializes_delegates_and_shutdowns_once() {

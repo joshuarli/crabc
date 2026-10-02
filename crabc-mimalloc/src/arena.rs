@@ -1313,6 +1313,35 @@ pub(crate) unsafe fn manage_external_in_place(
     exclusive: bool,
     commit_hook: Option<CommitHook>,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
+    // SAFETY: this entry point carries no metadata transition owner; the
+    // secure committed branch must continue refusing that missing capability.
+    unsafe { manage_external_in_place_with_guard(
+        registry, start, size, page_size, initially_committed, is_pinned,
+        initially_zero, numa_node, exclusive, commit_hook, None,
+    ) }
+}
+
+/// Registers caller-owned external backing with a synchronous metadata guard.
+/// The borrowed capability is used during initialization and never published.
+///
+/// # Safety
+/// The complete external-region, commitment and registry lifetime contract of
+/// `manage_external_in_place` applies. The guard's owner must retain the same
+/// backing through the callback and exclude byte references to the validated
+/// metadata guard page during its VM transition.
+pub(super) unsafe fn manage_external_in_place_with_guard(
+    registry: &ArenaRegistry,
+    start: *mut u8,
+    size: usize,
+    page_size: PageSize,
+    initially_committed: bool,
+    is_pinned: bool,
+    initially_zero: bool,
+    numa_node: i32,
+    exclusive: bool,
+    commit_hook: Option<CommitHook>,
+    metadata_guard_hook: Option<MetadataGuardHook<'_>>,
+) -> Result<ManagedExternalRegion, ManageArenaError> {
     let memory = MemoryId::external(
         start,
         size,
@@ -1330,6 +1359,7 @@ pub(crate) unsafe fn manage_external_in_place(
             numa_node,
             exclusive,
             commit_hook,
+            metadata_guard_hook,
             memory,
         )
     }
@@ -1458,6 +1488,7 @@ unsafe fn manage_in_place(
     numa_node: i32,
     exclusive: bool,
     commit_hook: Option<CommitHook>,
+    metadata_guard_hook: Option<MetadataGuardHook<'_>>,
     memory: MemoryId,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
     unsafe {
@@ -1471,7 +1502,7 @@ unsafe fn manage_in_place(
             exclusive,
             commit_hook,
             commit_hook,
-            None,
+            metadata_guard_hook,
             memory,
             |arena| {
                 if registry.insert(arena) {
@@ -2029,7 +2060,7 @@ impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
         // SAFETY: the caller proves this exact raw source slice has no live
         // Rust object. The static prefix-fit assertions above prove its
         // placement fits within the one selected source minimum-object slice.
-        unsafe { prefix.as_ptr().write(Theap::empty()) };
+        unsafe { Theap::write_empty_at(prefix) };
         ExclusiveArenaTheapStorage {
             reservation: self,
             prefix,
