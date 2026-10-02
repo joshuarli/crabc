@@ -78,6 +78,20 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                         self.assertEqual((root / "receipt/dns-ready.json").read_bytes(), raw)
                     selector.close.assert_called_once()
 
+    def test_collection_rejects_changed_image_inputs_before_any_translation(self) -> None:
+        import resolver_network_component_receipt as receipt
+
+        arguments = runner.parse_args([
+            "--static-sysroot", "/prepared/static", "--dynamic-sysroot", "/prepared/dynamic",
+            "--extracted-static-sysroot", "/prepared/extracted-static",
+            "--extracted-dynamic-sysroot", "/prepared/extracted-dynamic",
+        ])
+        with mock.patch.object(receipt, "trusted_image_manifest", side_effect=receipt.ReceiptError("changed image inputs")), \
+             mock.patch.object(runner, "require_native_loopback_container"), \
+             mock.patch.object(runner, "private_work_root", side_effect=AssertionError("created run state")):
+            with self.assertRaisesRegex(runner.RunnerError, "changed image inputs"):
+                runner.run(arguments)
+
     def test_private_work_root_rejects_a_path_outside_checkout_work(self) -> None:
         with self.assertRaisesRegex(runner.RunnerError, "must stay below"):
             runner.private_work_root(Path("/var/tmp/resolver-network"))

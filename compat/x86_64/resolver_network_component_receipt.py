@@ -110,6 +110,7 @@ SOURCE_PATHS = {
     "image_manifest": IMAGE_MANIFEST,
     "toolchain_config": "rust-toolchain.toml",
     "toolchain_reader": "scripts/rust_toolchain.py",
+    "core_image": "compat/x86_64/core_image.py",
 }
 
 
@@ -396,13 +397,28 @@ def trusted_image_manifest(root: Path) -> Mapping[str, object]:
     return value
 
 
+def authenticate_image_inputs(root: Path) -> Mapping[str, object]:
+    """Bind every declared command alias to its actual file bytes and permissions."""
+
+    image = trusted_image_manifest(root)
+    require(os.environ.get("PATH") == image["path"], "resolver image command search path differs")
+    files = image["files"]
+    assert isinstance(files, dict)
+    for invocation, expected in files.items():
+        actual = resolved_tool(Path(invocation), f"resolver image input {invocation}")
+        require(str(actual) == expected["path"], f"resolver image input path differs: {invocation}")
+        record = receipt_file_identity(root, actual)
+        manifest_matches_tool(image, record, invocation, invocation=invocation)
+    return image
+
+
 def image_manifest(root: Path, receipt: Mapping[str, object]) -> Mapping[str, object]:
     image = receipt["image"]
     require(isinstance(image, dict) and set(image) == {"id", "manifest"} and image["id"] == PINNED_IMAGE,
             "resolver receipt image identity differs")
     manifest = assert_receipt_file_identity(root, image["manifest"], "pinned core image manifest",
                                             expected=root / IMAGE_MANIFEST)
-    value = trusted_image_manifest(root)
+    value = authenticate_image_inputs(root)
     require(manifest.read_bytes() == (json.dumps(value, indent=2, sort_keys=True) + "\n").encode(),
             "pinned resolver-network image manifest bytes differ")
     return value

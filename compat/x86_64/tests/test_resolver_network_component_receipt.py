@@ -78,6 +78,51 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         })
         self.assertIn(f"{self.reader.pinned_toolchain(ROOT)}-x86_64-", str(self.reader.RUSTC))
 
+    def test_image_input_authentication_rejects_content_mode_alias_and_search_path_drift(self) -> None:
+        (ROOT / ".work").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = Path(directory)
+            original = work / "original"
+            replacement = work / "replacement"
+            alias = work / "command"
+            original.write_bytes(b"immutable input")
+            replacement.write_bytes(original.read_bytes())
+            original.chmod(0o644)
+            replacement.chmod(0o644)
+            alias.symlink_to(original)
+            identity = self.reader.receipt_file_identity(ROOT, original)
+            manifest = {"path": os.environ["PATH"], "files": {str(alias): {
+                "path": str(original), "sha256": identity["sha256"],
+                "size": identity["byte_length"], "mode": identity["mode"],
+            }}}
+            with mock.patch.object(self.reader, "trusted_image_manifest", return_value=manifest):
+                self.assertIs(self.reader.authenticate_image_inputs(ROOT), manifest)
+                original.write_bytes(b"changed content")
+                with self.assertRaisesRegex(self.reader.ReceiptError, "identity differs"):
+                    self.reader.authenticate_image_inputs(ROOT)
+                original.write_bytes(b"immutable input")
+                original.chmod(0o600)
+                with self.assertRaisesRegex(self.reader.ReceiptError, "identity differs"):
+                    self.reader.authenticate_image_inputs(ROOT)
+                original.chmod(0o644)
+                alias.unlink()
+                alias.symlink_to(replacement)
+                with self.assertRaisesRegex(self.reader.ReceiptError, "input path differs"):
+                    self.reader.authenticate_image_inputs(ROOT)
+                with mock.patch.dict(os.environ, {"PATH": "/unexpected/bin"}):
+                    with self.assertRaisesRegex(self.reader.ReceiptError, "search path differs"):
+                        self.reader.authenticate_image_inputs(ROOT)
+
+    def test_historical_image_receipt_is_rejected_without_changing_its_identity(self) -> None:
+        historical = {"image": {
+            "id": "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+            "manifest": {},
+        }}
+        before = json.dumps(historical, sort_keys=True)
+        with self.assertRaisesRegex(self.reader.ReceiptError, "image identity differs"):
+            self.reader.image_manifest(ROOT, historical)
+        self.assertEqual(json.dumps(historical, sort_keys=True), before)
+
     def test_raw_dns_events_without_required_transitions_remain_rejected(self) -> None:
         contract = self.reader.recompute_event_contract([], executions=13)
         self.assertFalse(contract["passed"])

@@ -36,6 +36,9 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 from scripts.rust_toolchain import pinned_toolchain
 
+import core_image
+import resolver_network_component_receipt as component_receipt
+
 import owned_dynamic_receipt as receipt_contract
 import owned_static_link_authority as static_authority
 
@@ -51,7 +54,7 @@ DEFAULT_REPORT = ROOT / "compat/reports/resolver-network/x86_64/latest.json"
 STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
 DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
-PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json"
 PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v3"
 COMPONENT_SCOPE = ["libc.resolver"]
@@ -67,6 +70,7 @@ RECEIPT_SOURCE_FILES = {
     "image_manifest": IMAGE_MANIFEST,
     "toolchain_config": ROOT / "rust-toolchain.toml",
     "toolchain_reader": ROOT / "scripts/rust_toolchain.py",
+    "core_image": ROOT / "compat/x86_64/core_image.py",
 }
 COMPILER_ORACLE_INPUTS = {
     "gcc": Path("/usr/bin/gcc"),
@@ -1245,6 +1249,10 @@ def retain_physical_receipt(
     if not ready.is_file() or not events.is_file():
         raise RunnerError("cannot retain missing resolver DNS artifacts")
 
+    try:
+        component_receipt.authenticate_image_inputs(ROOT)
+    except component_receipt.ReceiptError as error:
+        raise RunnerError(f"resolver image inputs changed: {error}") from error
     sources_after = source_receipt()
     tools_after = tool_receipt(compiler, arms)
     products_after = product_receipt(arms)
@@ -1281,6 +1289,10 @@ def retain_physical_receipt(
 
 
 def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]:
+    try:
+        component_receipt.authenticate_image_inputs(ROOT)
+    except component_receipt.ReceiptError as error:
+        raise RunnerError(f"resolver image inputs rejected: {error}") from error
     require_native_loopback_container()
     work_parent = private_work_root(args.work_root)
     state = Path(tempfile.mkdtemp(prefix="run-", dir=work_parent))

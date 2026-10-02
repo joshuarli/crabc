@@ -103,6 +103,16 @@ document. It also retains their ordered aggregate for inspection. The public
 JSON must byte-match the producer's
 `state_root/report.json`.
 
+The launcher selects the immutable native core image from `core_image.py`.
+Before collection and after execution, `run_x86_64.py` authenticates every
+command alias, resolved input file, SHA-256, length, permission mode, and
+command search path against `owned_resolver_network_image_inputs.json`.
+The reader independently performs the same authentication. The receipt binds
+both the input manifest and central image pin as source inputs. Rebuilding the
+image requires measuring its actual input bytes and replacing the current
+manifest; prior receipts retain their original image and manifest identities
+and do not become current evidence through a label change.
+
 Replay it from the pinned core image with the checkout mounted read-only at
 `/workspace` and each of the four supplied products mounted at the physical
 paths named by the report:
