@@ -193,14 +193,36 @@ fn churn(workers: usize, seed: u64, panic_control: PanicControl) {
     // First publish remote frees while every allocating worker is still
     // alive. Joined releasers cannot leave a producer racing owner teardown.
     let mut live_releasers = JoinedWorkers::default();
+    let (ready, initialized) = mpsc::channel();
     for clients in &mut remote {
         let live = ClientBatch(clients.0.split_off(clients.0.len() / 2));
+        let ready = ready.clone();
+        let (release, resume) = mpsc::channel();
+        live_releasers.release.push(release);
         live_releasers.threads.push(std::thread::spawn(move || {
             assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             let _attachment = NativeWorker;
+            // A pointer-only foreign free need not initialize the caller's
+            // source Theap. Hold one local client so the warmup observes all
+            // owner and releaser metadata simultaneously, independent of
+            // scheduling. Channel guards release parked peers on unwind.
+            let anchor = match native_allocate_aligned(37, 16, false) {
+                NativePageAllocationResult::Allocated(client) => client,
+                _ => panic!("each releaser initializes its actual local source"),
+            };
+            // SAFETY: this releaser owns the exact 37-byte local client.
+            unsafe { core::ptr::write_bytes(anchor.as_ptr(), 0x6a, 37) };
+            let _anchor = ClientBatch(vec![(anchor.as_ptr().addr(), 37, 0x6a)]);
+            ready.send(()).expect("the coordinator awaits initialized releasers");
+            drop(ready);
+            let _ = resume.recv();
             let mut live = live;
             while let Some(client) = live.0.pop() { free_client(client); }
         }));
+    }
+    drop(ready);
+    for _ in 0..workers {
+        initialized.recv().expect("every live releaser initializes or closes its sender");
     }
     live_releasers.finish();
     owners.finish();
@@ -270,7 +292,7 @@ fn source_default_initial_and_worker_churn_bounds_retained_metadata() {
             assert_eq!(now.page_map_published_submap_count, warm.page_map_published_submap_count);
             assert_eq!(now.page_map_lazy_submap_allocation_count, warm.page_map_lazy_submap_allocation_count);
             std::println!("metadata_retention seed={seed} epoch={epoch} workers={workers} clients={} live={} metadata_high_water={} arenas={} arena_bytes={} registered_slices={} submaps={}",
-                (workers + 1) * CLIENTS, now.metadata_live_capability_count,
+                (workers + 1) * CLIENTS + workers, now.metadata_live_capability_count,
                 now.metadata_high_water_capability_count, now.arena_registry_count,
                 now.process_arena_size, now.page_map_registered_entry_count,
                 now.page_map_published_submap_count);
