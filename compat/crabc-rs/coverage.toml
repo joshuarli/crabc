@@ -289,7 +289,7 @@ symbols = ["__cxa_atexit", "__cxa_finalize", "__setjmp", "__sigsetjmp", "__sigse
 classification = "internal-runtime"
 status = "documented"
 runtime_owner = "compiler, unwinding, and C ABI support"
-evidence = ["libc/src/c_abi.rs", "docs/history/crabc-rs-delivery-plan.md#33"]
+evidence = ["libc/src/c_abi.rs", "docs/design/crabc-rs.md"]
 rationale = "These exports preserve compiler and C control-transfer ABI behavior; Rust exposes neither a safe nor a meaningful direct operation for them."
 
 [[capability]]
@@ -309,7 +309,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "These mutable C globals and process aliases remain compatibility machinery; crabc-rs does not expose libc-owned global state as a native operation."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. The native Rust surface uses explicit owned values and kernel observations instead of process-global environment, option, timezone, or diagnostic aliases."
 
 [[capability]]
@@ -332,7 +332,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "These C diagnostics, errno accessors, exit hooks, and process aliases are ABI compatibility machinery rather than one native crabc-rs capability."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track, including errno and C exit/diagnostic semantics. crabc-rs may expose typed errors or explicit process operations independently, but does not claim to wrap this entire C family."
 
 [[capability]]
@@ -344,7 +344,7 @@ status = "documented"
 scope_exception_id = "allocator-mimalloc-libc-boundary"
 scope_exception_version = 1
 scope_exception_policy = "mimalloc-backed-libc-boundary"
-evidence = ["docs/history/runtime-plan.md", "docs/history/crabc-rs-delivery-plan.md", "docs/evidence/crabc-rs-subsumption.md"]
+evidence = ["AGENTS.md", "docs/evidence/crabc-rs-subsumption.md"]
 rationale = "The project deliberately keeps the public malloc family at the libc boundary while crabc-rs uses ordinary Rust allocation facilities; this is a mimalloc policy boundary, not a semantic-equivalence claim."
 
 [[capability]]
@@ -356,7 +356,7 @@ status = "documented"
 scope_exception_id = "allocator-mimalloc-libc-boundary"
 scope_exception_version = 1
 scope_exception_policy = "mimalloc-backed-libc-boundary"
-evidence = ["docs/history/runtime-plan.md", "docs/history/crabc-rs-delivery-plan.md", "docs/evidence/crabc-rs-subsumption.md"]
+evidence = ["AGENTS.md", "docs/evidence/crabc-rs-subsumption.md"]
 rationale = "The project deliberately keeps malloc_usable_size at the libc boundary with the rest of the public malloc family; crabc-rs exposes no allocator-layout introspection, and this is neither Rust subsumption nor an ABI-only disposal."
 
 [[capability]]
@@ -470,7 +470,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Locale-sensitive floating, wide-character, and legacy formatting conversions do not form a single idiomatic crabc-rs capability under the fixed C/POSIX/C.UTF-8 profile."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. The native profile deliberately does not add a locale database or broad C conversion facade; the verified Rust integer parser remains its own narrower capability."
 
 [[capability]]
@@ -521,7 +521,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C long-double ABI is compatibility machinery; it is not an idiomatic crabc-rs operation and cannot be represented by Rust f32/f64 primitives."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/c_abi.rs"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "libc/src/c_abi.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track, with musl/proven-equivalence math as the implementation oracle. crabc-rs does not promise a competing long-double facade merely to mirror symbols."
 
 [[capability]]
@@ -532,7 +532,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C fenv-sensitive and historical math entry points are not a single native Rust capability; rounding-mode behavior belongs to the separately verified fenv boundary."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "crabc-rs/src/fenv.rs"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "crabc-rs/src/fenv.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track, with musl/proven-equivalence implementations required for subtle math. crabc-rs does not add wrappers solely to match this symbol family."
 
 [[capability]]
@@ -543,7 +543,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Special-function and decomposition symbols are not a coherent crabc-rs capability; any C implementation remains compatibility work guided by musl or proven equivalence."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/c_abi.rs"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "libc/src/c_abi.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs does not become a second libm or expose a wrapper for every historical math export."
 
 [[capability]]
@@ -554,7 +554,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C complex ABI family is compatibility machinery, not a requirement to create a parallel native complex-number framework in crabc-rs."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/complex_basic_exports.rs", "libc/src/complex_powers_exports.rs", "libc/src/complex_transcendentals_exports.rs"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "libc/src/complex_basic_exports.rs", "libc/src/complex_powers_exports.rs", "libc/src/complex_transcendentals_exports.rs"]
 rationale = "The C ABI behavior remains a separately evidenced libc track and follows musl/proven-equivalence algorithms. No native crabc-rs operation is claimed merely because the exports exist."
 
 [[capability]]
@@ -579,7 +579,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Locale handles and locale-sensitive aliases are C compatibility machinery; crabc-rs supports only the fixed C/POSIX/C.UTF-8 profile, not a locale database or mutable locale-object framework."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. The native text APIs use explicit fixed-profile semantics and do not expose libc-owned locale state or general CLDR-style locale data."
 
 [[capability]]
@@ -604,7 +604,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Wide and multibyte C entry points remain compatibility machinery; the native profile is UTF-8-first with only ASCII, UTF-8, UTF-16 LE/BE, and UTF-32 LE/BE compatibility."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. No historical encoding zoo or libc-owned wchar/mbstate facade is planned for crabc-rs."
 
 [[capability]]
@@ -615,7 +615,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The C iconv handle is compatibility machinery; crabc-rs does not add a general encoding registry beyond the documented ASCII/UTF-8/UTF-16/UTF-32 profile."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. The native Rust codec is intentionally narrow and UTF-8-oriented; unsupported historical encodings are not a reason to grow a general conversion framework."
 
 [[capability]]
@@ -653,7 +653,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "A second regex API would either duplicate the C POSIX engine or add a general Rust regex semantic stack. Neither is a useful small-runtime primitive, and no focused dependency-free native contract was justified."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "libc/src/regex.rs", "include/regex.h"]
+review_evidence = ["AGENTS.md", "libc/src/regex.rs", "include/regex.h"]
 rationale = "The C POSIX regex ABI remains part of libc compatibility. Native callers choose an explicit application regex dependency when they need one; crabc-rs does not wrap C regex_t, global error text, or a competing pattern engine."
 
 [[capability]]
@@ -678,7 +678,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "wordexp deliberately has no native crabc-rs API: implicit shell expansion and command-substitution policy are outside the capability profile."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs does not wrap shell expansion, and callers needing command construction must choose an explicit process API and policy."
 
 [[capability]]
@@ -703,7 +703,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "C FILE path and child-pipe constructors remain compatibility machinery; crabc-rs uses explicit owned descriptors and Rust I/O contracts rather than a FILE wrapper."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. Basic stdio is core libc work, but crabc-rs does not need to reproduce every FILE constructor as a native facade."
 
 [[capability]]
@@ -725,7 +725,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "FILE stream and unlocked helper exports are C ABI compatibility machinery, not separate crabc-rs operations."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs should use typed descriptor/read/write boundaries and must not expose FILE internals or unlocked aliases as a broad Rust stream abstraction."
 
 [[capability]]
@@ -736,7 +736,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "FILE position, buffering, locking, and standard-stream globals remain compatibility machinery rather than a single native crabc-rs capability."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs may use explicit descriptor and Rust I/O ownership, but does not promise a wrapper for all FILE lifecycle and buffering state."
 
 [[capability]]
@@ -773,7 +773,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Scanf and C varargs destination mutation remain compatibility machinery; crabc-rs does not imitate C varargs or expose implicit destination ownership."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. Rust formatting subsumes output composition, but no native scanf facade is implied by the symbol inventory."
 
 [[capability]]
@@ -1110,7 +1110,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "C DIR callback, reentrant-record, sorting, and walk exports remain compatibility machinery rather than one native crabc-rs operation."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. crabc-rs already accounts for owned directory streams and raw records; it does not need to wrap every historical callback-oriented directory helper."
 
 [[capability]]
@@ -1163,7 +1163,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "`mktemp`, `tempnam`, and `tmpnam` expose racy or ambient pathname policies, while `name_to_handle_at` and `open_by_handle_at` carry authority-bearing Linux file handles. They remain C compatibility machinery or explicitly unsafe future work; crabc-rs does not create a generic filesystem-handle framework."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "crabc-rs/src/fs.rs", "include/fcntl.h"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/fs.rs", "include/fcntl.h"]
 rationale = "The safe named mkstemp family is separately verified below. Insecure pathname generators and file-handle authority are intentionally not folded into that contract; callers needing those C APIs retain their platform-specific compatibility semantics."
 
 [[capability]]
@@ -1744,7 +1744,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The remaining C calendar surface mixes TZ-global discovery, locale formatting/parsing, and privileged clock discipline. The useful native pieces are already explicit UTC calendar values and caller-supplied immutable timezone rules; a global-time facade would violate the scope boundary."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "crabc-rs/src/time.rs", "crabc-rs/src/timezone.rs"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/time.rs", "crabc-rs/src/timezone.rs"]
 rationale = "C time formatting, TZ setup, and clock-control retain their ABI-specific contracts. crabc-rs deliberately provides explicit UnixTime, CalendarTime, TimeZone, and LocalCalendar values instead of bundled tzdata, process-global TZ, locale data, or a clock-policy API."
 
 [[capability]]
@@ -1962,7 +1962,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "SIGEV_THREAD would require a helper-thread and callback runtime; that asynchronous callback machinery is outside the crabc-rs profile."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. The native POSIX-timer capability intentionally covers direct timer/kernel notification modes without creating an async runtime or callback registry."
 
 [[capability]]
@@ -2464,7 +2464,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The remaining C spawn aliases and lifecycle hooks are process-supervisor and C-ABI policy, not an idiomatic ownership primitive. The bounded PreparedExec/Child contract owns the selected native use case."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "crabc-rs/src/process.rs", "crabc-rs/tests/signal_process.rs"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/process.rs", "crabc-rs/tests/signal_process.rs"]
 rationale = "Native prepared execution, one-shot child ownership, process groups, sessions, and PID observation remain independently verified. C fork/vfork/clone/daemon/nice aliases and full posix_spawn action/attribute compatibility remain libc ABI behavior rather than a crabc-rs process-management framework."
 
 [[capability]]
@@ -2542,7 +2542,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "A safe process-wide credential owner would require a global all-thread rendezvous and authority policy. That is deliberately not a crabc-rs runtime framework; calling-task and filesystem credential operations retain their explicit unsafe contracts."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "tests/credentials_profile.rs", "crabc-rs/tests/thread_credentials.rs"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "tests/credentials_profile.rs", "crabc-rs/tests/thread_credentials.rs"]
 rationale = "The C setreuid/setregid family and direct effective-ID aliases are a tested EOPNOTSUPP profile limitation, leaving IDs unchanged. crabc-rs does not misrepresent raw calling-task setres operations as process-wide mutation; read-only IDs, explicit thread credentials, and filesystem credentials remain separately evidenced."
 
 [[capability]]
@@ -2608,7 +2608,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Environment mutation is shared process-global storage with exec and foreign-code lifetime obligations. crabc-rs has no global process registry and must not invent one for C-compatible mutation."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "libc/src/c_abi.rs"]
+review_evidence = ["AGENTS.md", "libc/src/c_abi.rs"]
 rationale = "The C environ/setenv/unsetenv/clearenv ABI remains separately owned by libc. Native APIs accept explicit program and environment input for prepared execution and do not expose a potentially unsound global environment owner."
 
 [[capability]]
@@ -2800,7 +2800,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The selected typed native signal masks, actions, waits, alt stacks, queueing, and signalfd cover the useful direct-kernel primitives. The unaccounted aliases, C handler compatibility, and async-signal-safe presentation do not form a separate safe Rust capability."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "crabc-rs/src/signal.rs", "crabc-rs/tests/signal_process.rs"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/signal.rs", "crabc-rs/tests/signal_process.rs"]
 rationale = "Native signal primitives remain independently verified. Historical C signal aliases, psignal formatting, handler-convention compatibility, and global disposition policy stay in the libc ABI surface rather than creating a second signal framework."
 
 [[capability]]
@@ -2850,7 +2850,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Pthread/C11 object layouts, cancellation, cleanup scopes, atfork registries, and process-shared synchronization are C runtime contracts. Rust applications use std synchronization or the already selected direct process-private primitives rather than a parallel pthread facade."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "crabc-rs/src/sync.rs", "crabc-rs/src/runtime_thread.rs"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/sync.rs", "crabc-rs/src/runtime_thread.rs"]
 rationale = "The C pthread/C11 ABI remains compatibility work, while crabc-rs keeps its bounded mutex, condition, once, semaphore, rwlock, barrier, futex, and runtime-TLS seams. It deliberately does not mirror pthread object representations or become a thread-runtime framework."
 
 [[capability]]
@@ -3013,7 +3013,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "The selected descriptor-scoped inotify observation contract is complete. Namespaces, capability mutation, ptrace, process_vm, reboot, module, hostname, and logger policy would create the forbidden kernel-administration/security-policy framework."
 reviewed = "Scope realignment 2026-08-21"
-review_evidence = ["SCOPE.md", "crabc-rs/src/system.rs", "crabc-rs/tests/inotify.rs"]
+review_evidence = ["AGENTS.md", "crabc-rs/src/system.rs", "crabc-rs/tests/inotify.rs"]
 rationale = "Direct observations such as inotify, load average, resource limits, and scheduler bounds remain separately verified. The broad historical kernel-admin symbol family remains C ABI behavior or deliberately unsupported rather than a native authority framework."
 
 [[capability]]
@@ -3164,7 +3164,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "crypt and crypt_r remain C compatibility machinery; crabc-rs exposes no password-hash API and must not contain hand-rolled cryptography."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "compat/crabc-rs/crypt-profile.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "compat/crabc-rs/crypt-profile.md"]
 evidence = ["libc/src/crypt_impl.rs", "tests/crypt.rs", "compat/crabc-rs/crypt-profile.md"]
 rationale = "The C ABI behavior remains a separately evidenced dependency-backed libc track. RustCrypto-family crates may provide supported primitives; legacy DES, BSDI, MD5-crypt, and bcrypt behavior is explicitly profile-limited until a focused proven dependency exists. No native crabc-rs cryptography is implied."
 
@@ -3187,7 +3187,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "gettext and message-catalog globals are deliberately outside the locale profile; crabc-rs does not expose a catalog/localization framework."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. The project supports only C/POSIX/C.UTF-8 locale semantics and does not add gettext catalogs, CLDR data, or a localization provider framework."
 
 [[capability]]
@@ -3210,7 +3210,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "Rust ownership-oriented collections subsume ordinary tree/list use; crabc-rs does not need to expose intrusive C links or callback-driven traversal as a native API."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "docs/evidence/crabc-rs-subsumption.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "docs/evidence/crabc-rs-subsumption.md"]
 rationale = "The C ABI behavior remains a separately evidenced libc track. These pointer-linked callback exports are Rust-subsumed for ordinary native use, while their exact C semantics do not become a Rust unsafe wrapper requirement."
 
 [[capability]]
@@ -3221,7 +3221,7 @@ classification = "abi-only"
 status = "documented"
 why_no_native_operation = "These unrelated legacy exports do not define one useful native capability; system observations use existing APIs, while historical DES/crypto operations remain explicitly unsupported."
 reviewed = "Scope reset 2026-08-21"
-review_evidence = ["SCOPE.md", "COMPATIBILITY-PROFILE.md", "libc/src/legacy_des_exports.rs", "tests/legacy_des.rs", "compat/crabc-rs/crypt-profile.md"]
+review_evidence = ["AGENTS.md", "COMPATIBILITY-PROFILE.md", "libc/src/legacy_des_exports.rs", "tests/legacy_des.rs", "compat/crabc-rs/crypt-profile.md"]
 rationale = "They are grouped only as small, semantically documented legacy facilities. System observations use existing APIs; the `encrypt`/`setkey` DES ABI is intentionally inert because crabc does not carry a local cipher implementation. This is an explicit compatibility limit, never hidden as native DES support."
 
 [[candidate_only]]
