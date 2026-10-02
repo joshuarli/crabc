@@ -2079,29 +2079,47 @@ unsafe fn run_runtime_startup_tail(
             ) };
         }
     };
-    // Keep the source-selected target across output reentry. A callback may
-    // change the default root, but cannot redirect this in-flight retry.
-    let current = crate::compiler_tls::default_theap();
-    // SAFETY: the initial thread owns this live image; the short projection
-    // ends before entropy acquisition or diagnostic delivery.
-    let weak = unsafe { crate::types::Theap::with_os_reservation_random_at(
-        current, |random| random.is_some_and(|random| random.is_weak()),
-    ) };
-    if weak {
-        let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
-        if prepared.requires_warning() { warn(); }
-        // SAFETY: refused entropy has crossed its source warning gate and
-        // returned from any callback; successful entropy needs no warning.
-        let material = unsafe { prepared.after_warning() };
-        // SAFETY: the startup caller retains the original image across the
-        // callback and excludes teardown. No other image projection survives.
-        unsafe { crate::types::Theap::with_os_reservation_random_at(current, |random| {
-            random.expect("the retained startup Theap stays initialized").initialize_prepared(material);
-        }) };
-    }
+    // SAFETY: the initial source thread retains its selected default image
+    // across output reentry and excludes teardown until its tail returns.
+    unsafe { reinitialize_startup_random_with_warning(crate::compiler_tls::default_theap(), warn) };
     metadata.reinitialize_detached_metadata_random_if_weak_with_warning(subprocess, warn)
         .map_err(ProcessMainInitError::Metadata)?;
     Ok(())
+}
+
+/// Retries the originally selected startup random image without retaining a
+/// field projection across its source warning callback. Strong and empty
+/// images make no entropy call; refused entropy warns before weak observations.
+///
+/// # Safety
+/// The pointer retains mutable provenance for an initialized source Theap,
+/// or names the immutable empty prototype. The caller excludes image teardown
+/// and every overlapping field/image projection until this call returns.
+/// Its warning callback may temporarily draw from the original image or change
+/// TLS selection, but must return without retaining a projection of the image.
+#[cfg(target_arch = "x86_64")]
+unsafe fn reinitialize_startup_random_with_warning(
+    pointer: NonNull<crate::types::Theap>, warning: impl FnOnce(),
+) -> crate::random::RandomReinitialization {
+    // SAFETY: the retained pointer supplies field provenance; the short
+    // projection ends before entropy acquisition or diagnostic delivery.
+    let weak = unsafe { crate::types::Theap::with_os_reservation_random_at(
+        pointer, |random| random.is_some_and(|random| random.is_weak()),
+    ) };
+    if !weak { return crate::random::RandomReinitialization::default(); }
+    let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+    if prepared.requires_warning() { warning(); }
+    // SAFETY: refused entropy has crossed its source warning gate and
+    // returned from any callback; successful entropy needs no warning.
+    let material = unsafe { prepared.after_warning() };
+    // SAFETY: the caller retains the original image across the callback,
+    // regardless of TLS changes; no other field/image projection survives.
+    let remains_weak = unsafe { crate::types::Theap::with_os_reservation_random_at(pointer, |random| {
+        let random = random.expect("the retained startup Theap stays initialized");
+        random.initialize_prepared(material);
+        random.is_weak()
+    }) };
+    crate::random::RandomReinitialization { attempted: true, remains_weak }
 }
 
 /// Embedding-owned writer for the calling thread's C errno slot.
@@ -5164,6 +5182,48 @@ mod tests {
                 owner.teardown().expect("the source owner retains normal teardown");
             }).join().expect("the entropy warning source control completes");
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn startup_random_retry_retains_original_field_across_warning_reentry() {
+        let mut image = core::pin::pin!(crate::bootstrap::ExclusiveTheapBootstrap::new());
+        let subprocess = MainSubprocess::global();
+        image.as_mut().bind_detached_for_main_subprocess(subprocess).unwrap();
+        let original = image.as_mut().detached_metadata_theap_identity(subprocess).unwrap();
+        // SAFETY: the stack pin retains this source image and no allocator
+        // session or overlapping field/image reference exists.
+        unsafe { Theap::with_os_reservation_random_at(original, |random| {
+            random.unwrap().initialize_weak();
+        }) };
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Entropy, 1, fault::Point::Clock, 1, crabc_core::Errno::NOMEM,
+        ));
+        let mut warnings = 0;
+        // SAFETY: this exact pinned image stays live through the callback,
+        // which ends its random draw before prepared material is applied.
+        let failed = unsafe { reinitialize_startup_random_with_warning(original, || {
+            warnings += 1;
+            assert_eq!(fault.secondary_observed(), 0,
+                "weak-key observations follow the source warning callback");
+            assert!(Theap::next_os_reservation_random_at(original).is_some());
+        }) };
+        assert!(failed.attempted && failed.remains_weak);
+        assert_eq!(warnings, 1);
+        assert_eq!((fault.observed(), fault.secondary_observed()), (1, 1));
+        fault.set(fault::Plan::at(fault::Point::Entropy, usize::MAX, crabc_core::Errno::NOMEM));
+        // SAFETY: the same retained pin excludes source teardown and aliasing.
+        let strong = unsafe { reinitialize_startup_random_with_warning(original, || {
+            panic!("accepted entropy cannot deliver a refusal warning");
+        }) };
+        assert!(strong.attempted && !strong.remains_weak);
+        assert_eq!(fault.observed(), 1);
+        // SAFETY: the preceding application ended its field projection.
+        let noop = unsafe { reinitialize_startup_random_with_warning(original, || {
+            panic!("a strong source image does not retry entropy");
+        }) };
+        assert!(!noop.attempted && !noop.remains_weak);
+        assert_eq!(fault.observed(), 1);
     }
 
     #[test]
