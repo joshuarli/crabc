@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native x86 M2 scalar bitmap component producer, for the aggregate M2 gate.
+"""Native x86-64 scalar bitmap differential for the memory-substrate gate.
 
 The producer owns no milestone state. It runs the complete bitmap unit module
 and compares an ordered C/Rust transcript against freshly extracted pinned
@@ -19,6 +19,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 PREFIX = "m2.bitmap.native."
+RUST_INLINE_PREFIX = "test bitmap::native_tests::emit_native_bitmap_component_trace ... "
 EXPECTED_OBSERVATION_COUNT = 138976
 EXPECTED_RUST_TEST_COUNT = 42
 SOURCE_FILES = (
@@ -31,16 +32,23 @@ SOURCE_FILES = (
 
 def transcript(output: str) -> list[int]:
     """Reject missing/repeated/reordered numbered observations."""
-    matches = re.findall(r"m2\.bitmap\.native\.(\d+)=(\d+)(?=\r?$)", output, re.MULTILINE)
-    if (not matches or output.count(PREFIX) != len(matches)
-            or [int(index) for index, _ in matches] != list(range(len(matches)))
-            or any(int(value) > (1 << 64) - 1 for _, value in matches)):
+    values = []
+    for line in output.splitlines():
+        if PREFIX not in line:
+            continue
+        line = line.removeprefix(RUST_INLINE_PREFIX)
+        match = re.fullmatch(r"m2\.bitmap\.native\.([0-9]+)=([0-9]+)", line)
+        if (match is None or int(match[1]) != len(values)
+                or int(match[2]) > (1 << 64) - 1):
+            raise ValueError("native bitmap transcript has a malformed or out-of-order observation")
+        values.append(int(match[2]))
+    if not values:
         raise ValueError("native bitmap transcript is empty or its observation order changed")
-    return [int(value) for _, value in matches]
+    return values
 
 
 def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
-    """Run inside the pinned native allocator image; do not infer M2 closure."""
+    """Run the scalar bitmap differential inside the native allocator image."""
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)

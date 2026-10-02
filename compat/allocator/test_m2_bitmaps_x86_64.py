@@ -27,6 +27,8 @@ class BitmapTranscriptTests(unittest.TestCase):
             "m2.bitmap.native.0=1\nm2.bitmap.native.1=bad",
             "m2.bitmap.native.0=-1", "m2.bitmap.native.0=18446744073709551616",
             "m2.bitmap.native.0=1junk",
+            "unrelated output m2.bitmap.native.0=1",
+            "test unrelated::test ... m2.bitmap.native.0=1",
         ):
             with self.subTest(output=output), self.assertRaises(ValueError):
                 transcript(output)
