@@ -45,10 +45,10 @@ pub(crate) enum SourcePageInvariant {
     ObservationGeometry,
 }
 
-/// A live-page source assertion observed while its original owner retained
-/// the page. This carries only the failure site; the allocation operation
-/// separately keeps the actual page unselectable until terminal delivery or
-/// a refused output admission returns it to that same operation.
+/// A source validity assertion observed while its original owner retained
+/// the Page or collection graph. This carries only the failure site; the
+/// operation separately keeps the Page unselectable or the complete issuer
+/// closed until terminal delivery or return to that same retained operation.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct LivePageValidityAssertion {
     invariant: SourcePageInvariant,

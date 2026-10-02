@@ -65,8 +65,13 @@ Update this small section in place when the implementation frontier changes.
   is removed; rebuilt loader clients and symbol ownership checks pass. Secure
   reclaim fixtures now retain real guard/process owners: conditional checks pass
   32/32 and default checks pass 27/27, including read-only retained-program replay.
-  Remaining work is source collection-prefix validation across active and
-  engine-less paths and actual merged native-shadow debug products. No release
+  Complete source collection-prefix validation across active and engine-less
+  paths is integrated; the merged focused source checks pass 7/7. Fresh native-
+  shadow opt0 debug static/dynamic products pass worker/TSD/deferred exit,
+  allocator policy, late FILE cleanup and initial/worker prepared fork through
+  all four link modes and kernel/direct dynamic entry. The debug producer now
+  records its actual compiled lifecycle-audit feature. Final work is evidence
+  custody, product ownership audit and settled worktree retirement. No release
   or full-family qualification is claimed.
 - **Merged correctness:** allocator early options, guarded initialization,
   false-force reclaim transfers, aligned null realloc and resolver construction

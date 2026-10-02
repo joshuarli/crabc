@@ -101,6 +101,13 @@ Heap/Theap graph against retirement. It tries the Heap lock without waiting
 under the TLD lock, so a concurrent Heap destroyer cannot create a lock cycle.
 An unpublishable refusal retains terminal state and stops the process.
 
+The `src/theap.c:126` prefix also validates original Heap/Theap linkage, every
+Page including full Pages, visited counts and all source queues before selecting
+the deferred callback or advancing its heartbeat. A header or empty-queue
+failure retains the complete original graph even when it has no selected Page.
+The same predicate applies to the initial empty owner and refused-size retry
+without materializing a page engine or reserving another arena.
+
 Diagnostic delivery begins only after Page, engine, member and source-list
 projections and locks end. The original issuer, PageMap and backing remain
 retained throughout delivery; a callback may use an independently valid Heap,
