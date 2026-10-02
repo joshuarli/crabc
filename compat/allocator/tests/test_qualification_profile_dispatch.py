@@ -32,7 +32,7 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
     def runner_arguments(self, command: str, *arguments: str) -> tuple[str, list[str]]:
         result = self.invoke("compat/allocator/run-x86_64.sh", command, *arguments)
         self.assertEqual(result.returncode, 0, result.stderr)
-        runs = [call for call in self.calls() if call[0] == "run"]
+        runs = [call for call in self.calls() if call[0] == "run" and "python3" in call]
         self.assertEqual(len(runs), 1, runs)
         call = runs[0]
         index = call.index("python3")
@@ -86,6 +86,30 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 with self.subTest(command=command, arguments=arguments):
                     self.assert_rejected(command, *arguments)
 
+    def test_baseline_profiles_reach_owning_readers(self) -> None:
+        for command, runner, operation, flag in (
+            ("allocator-m6", "m6_gate.py", ["--check"], "--qualification-profile"),
+            ("allocator-m7", "x86_64_m7_gate.py", ["--check"], "--qualification-profile"),
+            ("allocator-m9", "x86_64_m9_gate.py", ["--check"], "--profile"),
+            ("allocator-m10", "x86_64_m10_gate.py", ["--check"], "--profile"),
+        ):
+            for arguments in ([flag, "baseline", *operation], [*operation, flag, "baseline"]):
+                with self.subTest(command=command, arguments=arguments):
+                    dispatched_runner, dispatched = self.runner_arguments(command, *arguments)
+                    self.assertEqual(dispatched_runner, "compat/allocator/" + runner)
+                    self.assertEqual(dispatched, [*operation, flag, "baseline"])
+
+    def test_hardware_profiles_reject_ambiguous_or_unrelated_operations(self) -> None:
+        for command, flag in (("allocator-m6", "--qualification-profile"),
+                              ("allocator-m7", "--qualification-profile"),
+                              ("allocator-m9", "--profile")):
+            for arguments in ([flag], [flag, "unknown"],
+                              [flag, "baseline", flag, "full"],
+                              ["--reader-tests", flag, "baseline"]):
+                with self.subTest(command=command, arguments=arguments):
+                    self.assert_rejected(command, *arguments)
+        self.assert_rejected("allocator-m7", "--arena-print", "--qualification-profile", "baseline")
+
     def test_reader_tests_have_no_qualification_profile(self) -> None:
         for command, flag in (("allocator-m5", "--qualification-profile"), ("allocator-m10", "--profile")):
             runner, arguments = self.runner_arguments(command, "--reader-tests")
@@ -101,7 +125,7 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 runner, arguments = self.runner_arguments("allocator-m4", "--operations-matrix", *operation)
                 self.assertEqual(runner, "compat/allocator/x86_64_m4_gate.py")
                 self.assertEqual(arguments, ["--offline", "--operations-matrix", *operation])
-                call = next(call for call in self.calls() if call[0] == "run")
+                call = next(call for call in self.calls() if call[0] == "run" and "python3" in call)
                 volumes = [call[index + 1] for index, value in enumerate(call) if value == "--volume"]
                 if operation:
                     self.assertIn("--read-only", call)

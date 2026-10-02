@@ -164,7 +164,7 @@ class ConditionTests(unittest.TestCase):
         self.assertEqual(result["unqualified_modes"], ["physical-numa", "2mib-pages", "1gib-pages"])
 
     def test_full_promotion_rejects_baseline_report_and_baseline_requires_explicit_nonclaims(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
             path = Path(directory) / "report.json"
             report = {"overall_status": "passed", "qualification_profile": "baseline",
                       "unqualified_modes": ["physical-numa", "2mib-pages", "1gib-pages"]}

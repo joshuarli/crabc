@@ -83,6 +83,30 @@ CARGO_VERSION = "cargo 1.100.0-nightly (7941be6fb 2026-09-11)"
 
 
 class ThresholdTests(unittest.TestCase):
+    def test_runtime_memory_floor_policy_keeps_raw_totals_and_other_bounds(self):
+        cases = (
+            ("allocator_live_32m", 33 << 10, 33 << 20, True, True),
+            ("memcpy_128m_aligned", 257 << 10, 257 << 20, True, True),
+            ("strlen_128m_aligned", 129 << 10, 2 << 20, True, False),
+            ("getpid", 1000, 256 << 10, False, True),
+            ("getpid", 1000, (256 << 10) + 1, False, False),
+            ("allocator_live_4m", 5000, 5 << 20, False, False),
+        )
+        for name, pss, peak, pss_floor, peak_floor in cases:
+            for increment in (0, 1):
+                row = runtime_row(
+                    pss_kib={"reference": pss, "candidate": pss + increment, "gate": "pass"},
+                    memory_peak_bytes={"reference": peak, "candidate": peak + increment, "gate": "pass"})
+                with self.subTest(name=name, increment=increment):
+                    unmet = gate.runtime_row_unmet(name, 1, row)
+                    self.assertEqual(any("pss_kib ratio" in item for item in unmet), not pss_floor or bool(increment))
+                    self.assertEqual(any("memory_peak_bytes ratio" in item for item in unmet), not peak_floor or bool(increment))
+                    self.assertEqual(row["pss_kib"]["candidate"], pss + increment)
+        row = runtime_row(pss_kib={"reference": 1000, "candidate": 1000, "gate": "pass"},
+                          memory_peak_bytes={"reference": 1000, "candidate": 1000, "gate": "pass"},
+                          cpu={"one_sided_95_upper": 0.91, "gate": "pass"})
+        self.assertEqual(len(gate.runtime_row_unmet("allocator_live_32m", 1, row)), 1)
+
     def test_runtime_row_at_every_plan_bound_passes(self):
         self.assertEqual(gate.runtime_row_unmet("row", 1, runtime_row()), [])
 

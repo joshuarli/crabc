@@ -23,6 +23,13 @@ revisions unnecessarily or require new administrative proof for each artifact.
 Use enough validation to catch real failures without making its machinery a
 separate product. Actual failures and unsupported host requirements stay open.
 
+User direction (2026-10-02): ordinary x86 baseline promotion may proceed while
+physical NUMA and explicit huge-page modes remain unqualified, including the
+additional optional 2-MiB mode found during source review. Floor-limited
+total-memory rows use no-regression checks with raw measurements retained;
+other performance requirements remain active. Neither decision waives a
+functional failure or establishes a hardware qualification pass.
+
 `AGENTS.md` owns scope and working rules. This file is the sole implementation
 plan and progress handoff. User direction takes precedence over older gate or
 qualification requirements in repository instructions and manifests. Preserve
@@ -38,16 +45,22 @@ Update this small section in place when the implementation frontier changes.
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
-- **Core fixes:** secure/guarded output matches pinned C; the private context
+- **Core fixes:** secure/guarded output formatting matches pinned C; the private
+  context
   maps retained page-validity errors and counts a consumed free even when cleanup
   fails. The bounded queue retry reuses its frame. Child images initialize directly
-  in final storage with the original cold state. Focused tests/compiler checks
-  establish these changes, not repair of the two open runtime failures. Debug
-  public-Theap compiler/link closure is repaired; its actual runtime failure remains.
+  in final storage with the original cold state. Committed external context
+  arenas supply their actual mapping owner for secure metadata guards.
+  Focused tests/compiler checks establish these changes, not repair of the two
+  open runtime failures. Debug public-Theap compiler/link closure is repaired;
+  its actual runtime failure remains.
 - **Integration and cleanup:** all prior lanes' coherent changes are on `main`;
   the duplicate lifecycle case catalog was discarded. Their worktrees are retired
   and source branches remain in Git. The three subsequent core lanes are also
-  integrated and retired; no lane remains active. New trees belong under `.work/worktrees/`.
+  integrated and retired. Approved memory/hardware policies and the context
+  metadata-guard fix are integrated. One successor lane adds request/identity
+  context to ordinary randomized secure-mode comparisons; their remaining
+  differences are unmet. New trees belong under `.work/worktrees/`.
   Cleanup recovered about 1.1 TiB of free disk. Keep exact reusable inputs and
   compact regression programs/raw evidence; deleted reports are not qualification.
   Other projects' Docker state remains outside this cleanup.
@@ -67,11 +80,13 @@ Update this small section in place when the implementation frontier changes.
 - **Next:** repair actual allocator failures, then investigate performance on an
   uncontended host and qualify the final merged-source release cohort. Use existing
   runners and direct regressions; avoid new catalogs or administrative proof layers.
-  Full allocator qualification, post-switch reruns and public promotion remain open.
+  Baseline allocator qualification, post-switch reruns and public promotion remain open.
   No qualifying timing or full release-family pass is claimed.
-- **Host:** two allowed NUMA nodes and free 1-GiB pages are unavailable. Preserve
-  the physical prerequisite; do not repeat unchanged denied `mbind`, alter shared
-  pools/security policy, rent resources or reboot without authorization.
+- **Host:** two allowed NUMA nodes and free 1-GiB pages are unavailable. These
+  optional hardware modes remain unqualified; ordinary baseline promotion may
+  proceed once its other prerequisites pass. Do not repeat unchanged denied
+  `mbind`, alter shared pools/security policy, rent resources or reboot without
+  authorization.
 
 ## Parallel lanes
 
@@ -340,6 +355,10 @@ final release work. Small ownership/model tests remain appropriate for unsafe
 state transitions. Fault injection belongs at the actual primitive boundary.
 Comparative memory/size ratios and performance thresholds become active after
 current-source correctness and architecture checks pass.
+For total-memory metrics dominated by mandatory live payload or kernel charge
+granularity, require no regression rather than a ten-percent reduction. Keep
+the raw reference and candidate measurements and the explicit row threshold;
+retain the existing reduction requirement for other memory metrics and CPU.
 
 ## Allocator/runtime integration and Rust consumers
 
@@ -442,14 +461,17 @@ recorded. It must not be relabeled as a pinned-image or release qualification ru
    Fix demonstrated regressions without changing selected semantics.
 4. Qualify the final owned release cohort: all four link modes, headers/ABI,
    process/resolver/loader, std/LTO and source consumers, installed/extracted
-   products, reproducibility, allocator M0–M9, architecture and required physical
-   profiles. Follow the manifest's ordered chain, whose performance gate is last;
+   products, reproducibility, allocator M0–M9 and architecture. Qualify the
+   ordinary baseline; record physical NUMA and explicit 2-MiB/1-GiB-page modes
+   as unqualified until a suitable host supplies actual evidence. Follow the
+   manifest's ordered chain, whose performance gate is last;
    optimized products needed for measurements may be built before final admission.
-5. Pass full M10 prerequisites and the runtime performance receipt, switch only
+5. Pass baseline M10 prerequisites and the runtime performance receipt, switch only
    the x86 default, then rerun the required post-switch qualification on that
    source revision. Preserve the paused AArch64 allocator and frozen contracts.
 6. Promote public x86 support only with complete current-source receipts and
-   default products. Do not waive unavailable hardware, missing inputs or failures.
+   default products. Keep optional hardware modes explicitly unqualified; do not
+   waive missing baseline inputs or functional failures.
 
 ## Definition of completion
 
@@ -470,10 +492,11 @@ Completion requires all of the following together:
   Focused debug/type/ABI/source-differential and ownership/model checks provide
   evidence appropriate to changed behavior. Report unresolved behavior honestly;
   lack of a release receipt is not an implementation defect.
-- Current-source full qualification, performance and allocator promotion
-  contracts pass with authenticated raw evidence, including required physical,
-  reproducibility and installed/extracted checks. Deleted historical evidence
-  cannot establish a pass.
+- Current-source baseline qualification, performance and allocator promotion
+  contracts pass with authenticated raw evidence, including reproducibility
+  and installed/extracted checks. Optional physical NUMA and explicit huge-page
+  modes are unqualified unless actual host evidence establishes a pass.
+  Deleted historical evidence cannot establish a pass.
 - Native Rust mimalloc is the qualified x86 default and public x86 support is
   enabled through its promotion contract. Paused AArch64 behavior, backend
   selection and frozen evidence remain intact.

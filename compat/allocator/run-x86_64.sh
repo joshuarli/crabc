@@ -35,11 +35,11 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m4 [--check|--gate ID|--reader-tests|--operations-matrix [--read|--replay]]
   allocator-m4 --differential SCENARIO [--build-profile debug --valid-clients-only --source-profile PROFILE]
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
-  allocator-m7 [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
+  allocator-m7 [--qualification-profile baseline|full] [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
-  allocator-m9 [--check|--reader-tests|--report PATH...]
+  allocator-m9 [--profile baseline|full] [--check|--reader-tests|--report PATH...]
   allocator-divergence-evidence [--profile correctness|full] [--check|--reader-tests]
-  allocator-m10 [--profile correctness|full] [--check [--performance-receipt PATH]|--build-audit|--reader-tests]
+  allocator-m10 [--profile correctness|baseline|full] [--check [--performance-receipt PATH]|--build-audit|--reader-tests]
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-concurrent-init | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
@@ -91,7 +91,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-upstream-heap-stress
   allocator-public-heap-alignment
   allocator-heap-convenience [--read|--replay]
-  allocator-m6 [--check|--reader-tests]
+  allocator-m6 [--qualification-profile baseline|full] [--check|--reader-tests]
   allocator-unit [--filter module::tests::exact_test_name] | allocator-core-unit
   allocator-native-integration
 
@@ -103,6 +103,27 @@ EOF
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
     exit 2
+}
+
+parse_hardware_qualification_profile() {
+    local flag="$1"
+    shift
+    hardware_qualification_profile=full
+    hardware_qualification_selected=false
+    hardware_qualification_arguments=()
+    while [ "$#" -gt 0 ]; do
+        if [ "$1" = "$flag" ]; then
+            [ "$#" -ge 2 ] || fail "$flag requires baseline or full"
+            [ "$hardware_qualification_selected" = false ] || fail "select one qualification profile"
+            case "$2" in baseline|full) ;; *) fail "unknown qualification profile" ;; esac
+            hardware_qualification_profile="$2"
+            hardware_qualification_selected=true
+            shift 2
+        else
+            hardware_qualification_arguments+=("$1")
+            shift
+        fi
+    done
 }
 
 validate_positive_integer() {
@@ -551,6 +572,8 @@ case "$command" in
         (cd "$ROOT_DIR" && CRABC_EXECUTION_MODE=native CRABC_HOST_ARCH=x86_64 "${m8_command[@]}")
         ;;
     allocator-m7)
+        parse_hardware_qualification_profile --qualification-profile "$@"
+        set -- "${hardware_qualification_arguments[@]}"
         if [ "$#" -eq 0 ]; then
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py)
         elif [ "$#" -eq 1 ] && [ "$1" = --check ]; then
@@ -566,15 +589,24 @@ case "$command" in
         else
             fail "allocator-m7 accepts only --check, --gate ID, --reader-tests, --arena-print, or --private-context-arena-print"
         fi
+        case "${1:-}" in
+            --reader-tests|--arena-print|--private-context-arena-print)
+                [ "$hardware_qualification_selected" = false ] || fail "this operation does not select a qualification profile"
+                ;;
+            *) m7_command+=(--qualification-profile "$hardware_qualification_profile") ;;
+        esac
         ensure_image
         run_in_container "${m7_command[@]}"
         ;;
     allocator-m9)
+        parse_hardware_qualification_profile --profile "$@"
+        set -- "${hardware_qualification_arguments[@]}"
         # Qualification rereads retained measurements without measuring.
         m9_physical_reader=false
         if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
             m9_command=(python3 compat/allocator/x86_64_m9_gate.py --check)
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
+            [ "$hardware_qualification_selected" = false ] || fail "reader-tests does not select a qualification profile"
             m9_command=(python3 compat/allocator/tests/test_x86_64_m9_gate.py)
         else
             m9_physical_reader=true
@@ -585,6 +617,9 @@ case "$command" in
                 m9_command+=(--report "$2")
                 shift 2
             done
+        fi
+        if [ "${1:-}" != --reader-tests ]; then
+            m9_command+=(--profile "$hardware_qualification_profile")
         fi
         ensure_image
         if [ "$m9_physical_reader" = true ]; then
@@ -601,9 +636,9 @@ case "$command" in
         m10_arguments=()
         while [ "$#" -gt 0 ]; do
             if [ "$1" = --profile ]; then
-                [ "$#" -ge 2 ] || fail "allocator-m10 --profile requires correctness or full"
+                [ "$#" -ge 2 ] || fail "allocator-m10 --profile requires correctness, baseline or full"
                 [ "$m10_profile_selected" = false ] || fail "allocator-m10 accepts one qualification profile"
-                case "$2" in correctness|full) ;; *) fail "allocator-m10 has an unknown qualification profile" ;; esac
+                case "$2" in correctness|baseline|full) ;; *) fail "allocator-m10 has an unknown qualification profile" ;; esac
                 m10_profile="$2"
                 m10_profile_selected=true
                 shift 2
@@ -1133,6 +1168,8 @@ case "$command" in
         run_in_container python3 compat/allocator/x86_64_m6_test_stress_subprocs.py
         ;;
     allocator-m6)
+        parse_hardware_qualification_profile --qualification-profile "$@"
+        set -- "${hardware_qualification_arguments[@]}"
         if [ "$#" -eq 0 ]; then
             m6_command=(python3 compat/allocator/m6_gate.py)
         elif [ "$#" -eq 1 ] && [ "$1" = --check ]; then
@@ -1141,6 +1178,11 @@ case "$command" in
             m6_command=(python3 compat/allocator/tests/test_m6_gate.py)
         else
             fail "allocator-m6 accepts only --check or --reader-tests"
+        fi
+        if [ "${1:-}" = --reader-tests ]; then
+            [ "$hardware_qualification_selected" = false ] || fail "reader-tests does not select a qualification profile"
+        else
+            m6_command+=(--qualification-profile "$hardware_qualification_profile")
         fi
         ensure_image
         run_in_container "${m6_command[@]}"
