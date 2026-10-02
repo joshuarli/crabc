@@ -5,7 +5,9 @@ from pathlib import Path
 import sys
 import subprocess
 import os
+import signal
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest.mock import patch
@@ -20,6 +22,41 @@ class OwnedPosixSignalsTests(unittest.TestCase):
         self.contract = tomllib.loads(signals.CONTRACT.read_text())
         self.scratch = ROOT / ".work/x86_64/tmp"
         self.scratch.mkdir(parents=True, exist_ok=True)
+
+    def test_interrupted_observation_reaps_client_and_retains_terminal_status(self):
+        with tempfile.TemporaryDirectory(dir=self.scratch) as directory:
+            output = Path(directory) / "interrupted"
+            client = [sys.executable, "-c",
+                      'import os,time; print(os.getpid(),flush=True); time.sleep(60)']
+            supervisor = subprocess.Popen([sys.executable, "-B", "-c",
+                'import json,sys; from pathlib import Path; '
+                'sys.path.insert(0,sys.argv[1]); import owned_posix_signals as s; '
+                's.observe("",json.loads(sys.argv[2]),"ordinary",Path(sys.argv[3]))',
+                str(signals.HERE), json.dumps(client), str(output)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            client_pid = None
+            try:
+                stdout = Path(str(output) + ".stdout")
+                deadline = time.monotonic() + 5
+                while not stdout.exists() or not stdout.read_bytes().strip():
+                    self.assertLess(time.monotonic(), deadline, "client did not start")
+                    self.assertIsNone(supervisor.poll(), "supervisor exited before interruption")
+                    time.sleep(0.01)
+                client_pid = int(stdout.read_bytes())
+                supervisor.send_signal(signal.SIGINT)
+                supervisor.wait(timeout=5)
+                status = json.loads(Path(str(output) + ".status.json").read_text())
+                self.assertEqual(status, {"returncode": -signal.SIGTERM, "timed_out": False})
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(client_pid, 0)
+            finally:
+                for process_group in (client_pid, supervisor.pid):
+                    if process_group is not None:
+                        try:
+                            os.killpg(process_group, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                supervisor.wait()
 
     def test_product_selection_preserves_producers_and_complete_cell_rosters(self):
         with tempfile.TemporaryDirectory(dir=self.scratch) as directory:

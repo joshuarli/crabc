@@ -51,10 +51,32 @@ def observe(root, executable, scenario, output):
         try:
             status = {"returncode": child.wait(timeout=20), "timed_out": False}
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             child.wait()
             status = {"returncode": None, "timed_out": True}
-    Path(str(output) + ".status.json").write_text(json.dumps(status, sort_keys=True) + "\n")
+        except BaseException:
+            # The private process group contains the ordinary client and its
+            # descendants. Reap it before closing the raw streams, retaining
+            # the actual terminal status when the observer is interrupted.
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                returncode = child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                returncode = child.wait()
+            status = {"returncode": returncode, "timed_out": False}
+            raise
+        finally:
+            Path(str(output) + ".status.json").write_text(json.dumps(status, sort_keys=True) + "\n")
     return status
 
 
