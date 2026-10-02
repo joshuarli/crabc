@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
+import math
 import json
 import os
 import re
@@ -35,6 +37,42 @@ PROMOTION_BENCHMARK_METRICS = (
     "metadata_plateau_after_warmup",
     "single_thread_throughput_ratio",
 )
+
+PROMOTION_BENCHMARK_SCHEMA = "crabc-mimalloc-x86_64-engine-development-performance/3"
+PROMOTION_THROUGHPUT_ROWS = {
+    "cross_thread_free_throughput_ratio": "remote_free_1",
+    "four_thread_local_throughput_ratio": "local_scaling_4",
+    "single_thread_throughput_ratio": "local_scaling_1",
+}
+
+
+def checkout_reader(name: str, path: Path) -> Any:
+    """Load the owning executable reader without selecting an ambient module."""
+    existing = sys.modules.get(name)
+    if existing is not None and Path(existing.__file__).resolve() == path.resolve():
+        return existing
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RatchetError(f"cannot load required evidence reader: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def promotion_benchmark_engine() -> Any:
+    return checkout_reader(
+        "crabc_architecture_perf_engine", ROOT / "compat/allocator/perf_engine_x86_64.py"
+    )
+
+
+def promotion_benchmark_minimum() -> float:
+    release = checkout_reader(
+        "crabc_architecture_performance_release", ROOT / "compat/x86_64/performance_release_gate.py"
+    )
+    return release.ALLOCATOR_CRITICAL_THROUGHPUT_LOWER_MIN
+
+
 PHASE_EF_PRODUCTION_SYMBOL_SHAPES = {
     "native_post_exit_route_registry": {
         "kind": "struct",
@@ -586,7 +624,7 @@ def production_rust_source(
 ) -> str:
     """Mask cfg-excluded Rust while preserving positions and optional comments.
 
-    Call-site patterns need comments/literals hidden.  The Phase-A bridge
+    Call-site patterns need comments/literals hidden. The caller-identity bridge
     marker is intentionally a source comment, so its selected function body
     asks for the same cfg masking while retaining comments.  Both forms use
     the comment-masked delimiter walker to keep attribute boundaries stable.
@@ -1217,8 +1255,16 @@ def validate_manifest(manifest: Mapping[str, Any]) -> None:
         runtime_evidence.get("promotion_benchmark_producer"),
         "runtime_evidence.promotion_benchmark_producer",
     )
-    if producer.get("schema") is not None or producer.get("status") != "not-registered":
-        raise RatchetError("architecture manifest names an unreviewed benchmark producer schema")
+    expected_producer = {
+        "schema": PROMOTION_BENCHMARK_SCHEMA,
+        "status": "registered",
+        "path": "compat/allocator/perf_engine_x86_64.py",
+        "reader": "validate_qualified_full_report",
+        "throughput_rows": PROMOTION_THROUGHPUT_ROWS,
+        "minimum_lower_95": promotion_benchmark_minimum(),
+    }
+    if any(not exact_json(producer.get(name), value) for name, value in expected_producer.items()):
+        raise RatchetError("architecture manifest benchmark producer contract drifted")
     observations = producer.get("required_observations")
     if not isinstance(observations, list) or not observations or not all(
         isinstance(value, str) and value for value in observations
@@ -1316,9 +1362,9 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
         ],
         # A lease-acquiring call site may-reachable from the selected
         # allocation/free/realloc/usable-size entry points, not a type name.
-        # The W03 post-exit terminal release takes its short structural
-        # boundary through a distinct helper after source state proves no
-        # client remains; the plan forbids leases only on ordinary paths.
+        # Post-exit terminal release takes its short structural boundary
+        # through a distinct helper after source state proves no client
+        # remains. Ordinary allocation operations must not acquire it.
         "local_hot_path_global_pagemap_leases": phase_bc_reachable_signal_matches(
             root, manifest, "long_pagemap_mutation_lease"
         ),
@@ -1370,7 +1416,7 @@ def collect_static_signals(root: Path, manifest: Mapping[str, Any]) -> dict[str,
 def phase_bc_reachable_signal_matches(
     root: Path, manifest: Mapping[str, Any], ratchet_name: str
 ) -> list[SourceMatch]:
-    """Return one Phase-B/C ratchet's reachable call sites as source indicators."""
+    """Return one native-entry ratchet's reachable call sites as source indicators."""
 
     policy = phase_bc_policy(manifest)
     cfg_environment = required_mapping(
@@ -1652,7 +1698,7 @@ def native_reallocate_pointer_first_dispatch(
         )
     entry = entries[0]
     # `RUST_CALL_SITE` intentionally over-approximates methods for the broad
-    # Phase-B/C witness.  That would pull unrelated `free`, `drop`, and
+    # selected-entry reachability witness. That would pull unrelated `free`, `drop`, and
     # `allocate` methods into this narrow reallocation boundary, so resolve
     # only unambiguous free-function calls here.  The null-pointer allocation
     # arm is intentionally outside old-pointer source routing.
@@ -1857,7 +1903,7 @@ def phase_bc_ratchet_matches(
 def phase_bc_selected_production_reachability(
     root: Path, manifest: Mapping[str, Any]
 ) -> dict[str, object]:
-    """Evaluate Phase-B/C source requirements without claiming runtime proof."""
+    """Evaluate native-entry source requirements without claiming runtime proof."""
 
     policy = phase_bc_policy(manifest)
     cfg_environment = required_mapping(
@@ -2224,7 +2270,7 @@ def phase_ef_ceiling_regressions(
 
 
 def phase_ef_forbidden_scaffolding(root: Path, manifest: Mapping[str, Any]) -> dict[str, object]:
-    """Ratchet Phase E/F removal without treating audit-only APIs as production."""
+    """Ratchet retired lifecycle machinery without treating audit-only APIs as production."""
 
     policy = phase_ef_policy(manifest)
     production_cfg = required_mapping(
@@ -2505,11 +2551,12 @@ def validate_byte_stream(record: object, expected: str, name: str) -> None:
 
 
 def validate_file_artifact(root: Path, record: object, name: str) -> dict[str, object]:
+    """Require the retained file's bytes, rather than a receipt's asserted status."""
     if not isinstance(record, Mapping) or set(record) != {"bytes", "path", "sha256"}:
-        raise RatchetError(f"canonical upstream stress {name} file-artifact record drifted")
+        raise RatchetError(f"{name} file-artifact record drifted")
     path_value = record.get("path")
     if not isinstance(path_value, str) or not path_value:
-        raise RatchetError(f"canonical upstream stress {name} artifact path is invalid")
+        raise RatchetError(f"{name} artifact path is invalid")
     path = Path(path_value)
     path = path if path.is_absolute() else root / path
     if (
@@ -2518,7 +2565,7 @@ def validate_file_artifact(root: Path, record: object, name: str) -> dict[str, o
         or record["bytes"] != path.stat().st_size
         or record.get("sha256") != sha256(path)
     ):
-        raise RatchetError(f"canonical upstream stress {name} artifact bytes drifted")
+        raise RatchetError(f"{name} artifact bytes drifted")
     return dict(record)
 
 
@@ -2789,7 +2836,7 @@ def validate_canonical_stress_report(
 def required_evidence_shape(
     actual: object, required: object, path: str
 ) -> None:
-    """Require every checked-in Phase-B/C field without accepting omissions."""
+    """Require every declared local-owner and pointer-dispatch field without omissions."""
 
     if isinstance(required, Mapping):
         if not isinstance(actual, Mapping):
@@ -2819,6 +2866,61 @@ def phase_bc_evidence_mismatches(
             )
         ]
     return [] if actual == required else [path]
+
+
+def promotion_benchmark_evidence(
+    root: Path, manifest: Mapping[str, Any], record: object
+) -> dict[str, Any]:
+    """Re-read qualified full samples before deriving architecture throughput.
+
+    The benchmark's selected rows cover local and live-remote throughput.
+    Process memory snapshots do not expose allocator metadata high-water or
+    source route counters; those observations remain independently required.
+    """
+    producer = required_mapping(
+        required_mapping(manifest.get("runtime_evidence"), "runtime_evidence").get(
+            "promotion_benchmark_producer"
+        ), "runtime_evidence.promotion_benchmark_producer",
+    )
+    if producer.get("schema") != PROMOTION_BENCHMARK_SCHEMA:
+        raise RatchetError("unsupported promotion benchmark producer schema")
+    artifact = validate_file_artifact(root, record, "promotion benchmark report")
+    path = Path(artifact["path"])
+    path = path if path.is_absolute() else root / path
+    if path.is_symlink():
+        raise RatchetError("promotion benchmark report is a symlink")
+    engine = promotion_benchmark_engine()
+    if f"{engine.KIND}/{engine.SCHEMA}" != PROMOTION_BENCHMARK_SCHEMA:
+        raise RatchetError("registered promotion benchmark producer schema differs from its reader")
+    try:
+        qualified = engine.validate_qualified_full_report(root, path)
+        report = read_json(path)
+        validate_file_artifact(root, record, "promotion benchmark report")
+        minimum = promotion_benchmark_minimum()
+        metrics = {}
+        unmet = []
+        for name, row_name in PROMOTION_THROUGHPUT_ROWS.items():
+            row = report["rows"][row_name]
+            lanes = row["lanes"]
+            distribution = engine.throughput_distribution(
+                lanes["pinned_c"]["samples"], lanes["rust_engine"]["samples"], seed=row["seed"]
+            )
+            value = engine.quantile(distribution, 0.05)
+            if not math.isfinite(value) or value <= 0:
+                raise RatchetError(f"promotion benchmark {name} has no finite positive lower bound")
+            metrics[name] = value
+            if value < minimum:
+                unmet.append(f"runtime evidence {name} lower 95% bound {value} < {minimum}")
+    except (engine.HarnessError, KeyError, TypeError, ValueError, IndexError, ZeroDivisionError) as error:
+        raise RatchetError(f"promotion benchmark report is not qualified: {error}") from error
+    return {
+        "schema": PROMOTION_BENCHMARK_SCHEMA,
+        "report": artifact,
+        "identity": qualified["identity"],
+        "metrics": metrics,
+        "minimum_lower_95": minimum,
+        "unmet": unmet,
+    }
 
 
 def load_runtime_evidence(
@@ -2879,13 +2981,20 @@ def load_runtime_evidence(
         runtime_contract.get("promotion_benchmark_producer"),
         "runtime_evidence.promotion_benchmark_producer",
     )
-    producer_schema = producer.get("schema")
-    if producer_schema is None:
-        raise RatchetError(
-            "no reviewed promotion benchmark producer schema is registered; "
-            "status strings are not benchmark samples or provenance"
-        )
-    raise RatchetError(f"unsupported promotion benchmark producer schema: {producer_schema}")
+    if producer.get("schema") != PROMOTION_BENCHMARK_SCHEMA:
+        raise RatchetError("unsupported promotion benchmark producer schema")
+    benchmark = promotion_benchmark_evidence(root, manifest, evidence.get("benchmark_report"))
+    for name, value in benchmark["metrics"].items():
+        if name in metrics and not exact_json(metrics[name], value):
+            raise RatchetError(f"runtime/artifact evidence {name} differs from benchmark samples")
+    return {
+        "present": True,
+        "status": "benchmark-validated-observations-incomplete",
+        "evidence": evidence,
+        "required_phase_bc": required_phase_bc,
+        "benchmark": benchmark,
+        "validated_metrics": benchmark["metrics"],
+    }
 
 
 def metric_statuses(
@@ -2959,20 +3068,21 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
         unmet.append("promotion-qualified runtime/artifact evidence")
     else:
         evidence = runtime["evidence"]
-        metrics = evidence["metrics"]
-        for name, metric in report["metrics"].items():
-            if name in PROMOTION_BENCHMARK_METRICS:
-                continue
-            if metrics.get(name) != metric["final_required"]:
-                unmet.append(f"runtime evidence {name}")
-        for name in PROMOTION_BENCHMARK_METRICS:
-            unmet.append(f"runtime evidence {name} lacks validated benchmark samples/provenance")
-        if metrics.get("forbidden_scaffolding_compiled") is not False:
-            unmet.append("runtime evidence forbidden_scaffolding_compiled")
-        if metrics.get("unmodified_upstream_stress_max_workers", 0) < stress["required_final_max_workers"]:
-            unmet.append("runtime evidence unmodified_upstream_stress_max_workers")
-        if metrics.get("unmodified_upstream_stress_large_mode") is not True:
-            unmet.append("runtime evidence unmodified_upstream_stress_large_mode")
+        validated = runtime.get("validated_metrics", {})
+        benchmark = runtime.get("benchmark", {})
+        unmet.extend(benchmark.get("unmet", []))
+        for name in report["metrics"]:
+            if name in PROMOTION_THROUGHPUT_ROWS:
+                if name not in validated:
+                    unmet.append(f"runtime evidence {name} lacks validated benchmark samples/provenance")
+            else:
+                unmet.append(f"runtime evidence {name} lacks registered raw observations")
+        for name in (
+            "forbidden_scaffolding_compiled", "unmodified_upstream_stress_max_workers",
+            "unmodified_upstream_stress_large_mode",
+        ):
+            unmet.append(f"runtime evidence {name} lacks registered raw observations")
+        unmet.append("runtime evidence Phase-B/C lacks registered raw observations")
         required_phase_bc = runtime["required_phase_bc"]
         for mismatch in phase_bc_evidence_mismatches(
             evidence.get("phase_bc"), required_phase_bc
@@ -3022,6 +3132,8 @@ def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None
     phase_bc = phase_bc_selected_production_reachability(root, manifest)
     phase_ef = phase_ef_forbidden_scaffolding(root, manifest)
     runtime = load_runtime_evidence(runtime_evidence_path, selected, manifest, root)
+    for name, value in runtime.get("validated_metrics", {}).items():
+        metrics[name]["dynamic_value"] = value
     report: dict[str, object] = {
         "format": 1,
         "schema": "crabc-mimalloc-architecture-ratchet-report",

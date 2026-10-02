@@ -15,8 +15,16 @@
     "format": 1,
     "schema": "crabc-mimalloc-architecture-runtime-evidence",
     "promotion_benchmark_producer": {
-      "schema": null,
-      "status": "not-registered",
+      "schema": "crabc-mimalloc-x86_64-engine-development-performance/3",
+      "status": "registered",
+      "path": "compat/allocator/perf_engine_x86_64.py",
+      "reader": "validate_qualified_full_report",
+      "throughput_rows": {
+        "cross_thread_free_throughput_ratio": "remote_free_1",
+        "four_thread_local_throughput_ratio": "local_scaling_4",
+        "single_thread_throughput_ratio": "local_scaling_1"
+      },
+      "minimum_lower_95": 0.90,
       "required_metrics": [
         "cross_thread_free_throughput_ratio",
         "four_thread_local_throughput_ratio",

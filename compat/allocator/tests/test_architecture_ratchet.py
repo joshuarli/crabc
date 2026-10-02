@@ -679,7 +679,7 @@ fn native_reallocate_from_source_page(
                     evidence_path, report["selected_production"], self.manifest, root
                 )
 
-    def test_runtime_performance_claims_fail_closed_without_a_real_producer_schema(self) -> None:
+    def test_runtime_performance_claims_fail_closed_without_benchmark_samples(self) -> None:
         report = RATCHET.evaluate(ROOT, MANIFEST, None)
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -705,7 +705,7 @@ fn native_reallocate_from_source_page(
             }
             evidence_path = root / "runtime-evidence.json"
             evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
-            with self.assertRaisesRegex(RATCHET.RatchetError, "benchmark producer schema"):
+            with self.assertRaisesRegex(RATCHET.RatchetError, "promotion benchmark report"):
                 RATCHET.load_runtime_evidence(
                     evidence_path, report["selected_production"], self.manifest, root
                 )
@@ -718,11 +718,14 @@ fn native_reallocate_from_source_page(
             ],
         }
         unmet = RATCHET.gate_unmet(synthetic)
-        for name in RATCHET.PROMOTION_BENCHMARK_METRICS:
+        for name in RATCHET.PROMOTION_THROUGHPUT_ROWS:
             self.assertIn(
                 f"runtime evidence {name} lacks validated benchmark samples/provenance",
                 unmet,
             )
+        self.assertIn(
+            "runtime evidence metadata_plateau_after_warmup lacks registered raw observations", unmet
+        )
 
     def test_phase_bc_runtime_observation_must_match_the_required_value(self) -> None:
         required = self.manifest["phase_bc_call_graph"]["runtime_evidence_required"]
@@ -1645,6 +1648,135 @@ fn forbidden_helper() {
             self.assertEqual(gated.returncode, 1)
             self.assertIn("allocator architecture ratchet: FAIL:", gated.stderr)
 
+
+
+class ArchitectureBenchmarkEvidenceTests(unittest.TestCase):
+    """Replay complete synthetic samples through the actual engine reader."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "crabc_architecture_perf_fixtures",
+            ROOT / "compat/allocator/tests/test_perf_engine_x86_64.py",
+        )
+        assert spec is not None and spec.loader is not None
+        cls.fixtures = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = cls.fixtures
+        spec.loader.exec_module(cls.fixtures)
+
+    def setUp(self) -> None:
+        self.manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.engine = self.fixtures.engine
+        bootstrap = mock.patch.object(self.engine, "BOOTSTRAP_RESAMPLES", 24)
+        bootstrap.start()
+        self.addCleanup(bootstrap.stop)
+        loader = mock.patch.object(RATCHET, "promotion_benchmark_engine", return_value=self.engine)
+        loader.start()
+        self.addCleanup(loader.stop)
+        self.directory = tempfile.TemporaryDirectory(dir=ROOT / ".work")
+        self.addCleanup(self.directory.cleanup)
+        self.writer = self.fixtures.QualifiedReportTests()
+        self.writer.directory = self.directory
+        self.samples = self.fixtures.synthetic_report()
+
+    def benchmark(self, samples=None):
+        path = self.writer.write(self.samples if samples is None else samples)
+        return {"path": str(path), "bytes": path.stat().st_size, "sha256": RATCHET.sha256(path)}
+
+    def test_replays_samples_and_applies_throughput_thresholds(self) -> None:
+        result = RATCHET.promotion_benchmark_evidence(ROOT, self.manifest, self.benchmark())
+        self.assertEqual(result["unmet"], [])
+        self.assertEqual(set(result["metrics"]), {
+            "single_thread_throughput_ratio", "four_thread_local_throughput_ratio",
+            "cross_thread_free_throughput_ratio",
+        })
+        self.assertTrue(all(value >= 0.90 for value in result["metrics"].values()))
+        self.assertNotIn("metadata_plateau_after_warmup", result["metrics"])
+        self.assertIn("host", result["identity"])
+
+    def test_a_slow_lane_fails_from_raw_samples(self) -> None:
+        result = RATCHET.promotion_benchmark_evidence(
+            ROOT, self.manifest, self.benchmark(self.fixtures.synthetic_report(2.0)),
+        )
+        self.assertEqual(len(result["unmet"]), 3)
+        self.assertTrue(all(value < 0.90 for value in result["metrics"].values()))
+
+    def test_rejects_stale_hash_raw_sample_forgery_and_partial_measurements(self) -> None:
+        for mutation, message in (
+            ("digest", "artifact bytes drifted"),
+            ("stdout", "batches differ from raw fixture stdout"),
+            ("comparison", "comparison differs"),
+            ("smoke", "not --full --set matrix"),
+            ("missing_sample", "samples per lane"),
+            ("source", "source seal"),
+            ("artifact", "executable differs"),
+            ("host", "host is not uncontended"),
+        ):
+            with self.subTest(mutation=mutation):
+                samples = copy.deepcopy(self.samples)
+                row = samples["rows"]["local_scaling_1"]
+                if mutation == "stdout":
+                    row["lanes"]["rust_engine"]["samples"][0]["batches"][0]["ns"] += 1
+                elif mutation == "comparison":
+                    row["comparison"]["throughput_ratio_rust_over_c"]["bootstrap_5th_percentile"] = 999
+                elif mutation == "smoke":
+                    samples["mode"] = "smoke"
+                elif mutation == "missing_sample":
+                    row["lanes"]["rust_engine"]["samples"].pop()
+                elif mutation == "source":
+                    samples["provenance"]["inputs"]["engine_sources"]["sha256"] = "0" * 64
+                elif mutation == "host":
+                    samples["uncontended_host"]["evidence"]["windows"][0]["stat_after"]["cpus"]["all"][0] += 100000
+                record = self.benchmark(samples)
+                if mutation == "digest":
+                    record["sha256"] = "0" * 64
+                elif mutation == "artifact":
+                    product = Path(record["path"]).with_suffix(".artifacts") / "engine-fixture-rust-engine"
+                    product.write_bytes(b"changed retained product")
+                with self.assertRaisesRegex(RATCHET.RatchetError, message):
+                    RATCHET.promotion_benchmark_evidence(ROOT, self.manifest, record)
+
+    def test_runtime_uses_verified_throughput_and_keeps_claimed_observations_unmet(self) -> None:
+        selected = RATCHET.selected_source_metadata(ROOT, self.manifest)
+        record = self.benchmark()
+        artifact = Path(record["path"]).with_suffix(".artifacts") / "engine-fixture-rust-engine"
+        evidence = {
+            "format": 1, "schema": RATCHET.RUNTIME_EVIDENCE_SCHEMA,
+            "evidence_scope": "promotion_qualified",
+            "selected_production": {"feature": selected["feature"], "source_sha256": selected["sources"]},
+            "artifact": {"path": str(artifact), "sha256": RATCHET.sha256(artifact)},
+            "metrics": {"metadata_plateau_after_warmup": True, "forbidden_scaffolding_compiled": False},
+            "phase_bc": self.manifest["phase_bc_call_graph"]["runtime_evidence_required"],
+            "benchmark_report": record,
+        }
+        path = Path(self.directory.name) / "runtime.json"
+        path.write_text(json.dumps(evidence), encoding="utf-8")
+        report = RATCHET.evaluate(ROOT, MANIFEST, path)
+        loaded = report["runtime_artifact_evidence"]
+        self.assertEqual(loaded["validated_metrics"], loaded["benchmark"]["metrics"])
+        self.assertNotIn("metadata_plateau_after_warmup", loaded["validated_metrics"])
+        for name, value in loaded["validated_metrics"].items():
+            self.assertEqual(report["metrics"][name]["dynamic_value"], value)
+        self.assertEqual(report["metrics"]["metadata_plateau_after_warmup"]["dynamic_value"], "unmeasured")
+        self.assertFalse(report["summary"]["final_architecture_passed"])
+        unmet = RATCHET.gate_unmet(report)
+        self.assertIn("runtime evidence metadata_plateau_after_warmup lacks registered raw observations", unmet)
+        self.assertIn("runtime evidence Phase-B/C lacks registered raw observations", unmet)
+        self.assertIn("runtime evidence forbidden_scaffolding_compiled lacks registered raw observations", unmet)
+        self.assertFalse(any("lacks validated benchmark" in reason for reason in unmet))
+        evidence["metrics"]["single_thread_throughput_ratio"] = True
+        path.write_text(json.dumps(evidence), encoding="utf-8")
+        with self.assertRaisesRegex(RATCHET.RatchetError, "differs from benchmark samples"):
+            RATCHET.load_runtime_evidence(path, selected, self.manifest, ROOT)
+
+    def test_registration_cannot_weaken_rows_or_thresholds(self) -> None:
+        for field, value in (("schema", "unreviewed"), ("status", "not-registered"),
+                             ("throughput_rows", {}), ("minimum_lower_95", 0.0)):
+            with self.subTest(field=field):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["runtime_evidence"]["promotion_benchmark_producer"][field] = value
+                with self.assertRaisesRegex(RATCHET.RatchetError, "benchmark producer"):
+                    RATCHET.validate_manifest(manifest)
 
 if __name__ == "__main__":
     unittest.main()
