@@ -37,6 +37,73 @@ unsafe fn mapped(address: *mut u8) -> bool {
 fn identity(number: u64) -> ObjectIdentity { ObjectIdentity { device: 1, inode: number } }
 
 #[test]
+fn local_dependency_scope_promotes_without_repeating_reentrant_constructor() {
+    static ROOT_PATH: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+
+    fn compile(source: &str, output: &std::path::Path, arguments: &[&str]) {
+        let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+            .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv"])
+            .arg(source).args(arguments).arg("-o").arg(output).status().unwrap();
+        assert!(status.success(), "scope fixture compilation failed");
+    }
+
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        let main = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
+            role: ObjectRole::Main, ..EMPTY_OBJECT }), identity(1), 0,
+            LoadedName::new(b"main"), false)?;
+        (*main).callback_state.store(INITIALIZED, Ordering::Release);
+        (*REGISTRY.0.get()).head = main;
+        (*REGISTRY.0.get()).tail = main;
+        (*REGISTRY.0.get()).count = 1;
+        add_global(&mut *REGISTRY.0.get(), main);
+        // The child owns its copied graph and invokes ABI entries that acquire
+        // their own mutation lock. No installed-FS TLS operations are needed.
+        RuntimeGuard::complete_fork();
+        let mut diagnostic: RuntimeDiagnostic = core::mem::zeroed();
+        let root = runtime_open(ROOT_PATH.load(Ordering::Acquire), 2, &mut diagnostic);
+        if root.is_null() || diagnostic.kind != 0 || (*REGISTRY.0.get()).count != 4 { return None; }
+        let mut error = 0;
+        let caller = runtime_symbol(root, b"loader110_next_from_caller\0".as_ptr(), 0, &mut error);
+        let calls = runtime_symbol(root, b"loader110_constructor_calls\0".as_ptr(), 0, &mut error).cast::<i32>();
+        let reentry = runtime_symbol(root, b"loader110_constructor_reentry\0".as_ptr(), 0, &mut error).cast::<i32>();
+        let value = runtime_symbol(root, b"loader110_next_value\0".as_ptr(), 0, &mut error).cast::<i32>();
+        if error != 0 || caller.is_null() || calls.is_null() || reentry.is_null()
+            || value.is_null() || *calls != 1 || *reentry != 1 || *value != 73 { return None; }
+        let next = usize::MAX as *mut c_void;
+        if !runtime_symbol(next, b"loader110_next_value\0".as_ptr(), caller as usize, &mut error).is_null()
+            || error != ERROR_SYMBOL
+            || !runtime_symbol(core::ptr::null_mut(), b"loader110_next_value\0".as_ptr(),
+                0, &mut error).is_null() || error != ERROR_SYMBOL { return None; }
+        let promoted = runtime_open(ROOT_PATH.load(Ordering::Acquire), 2 | 4 | 256, &mut diagnostic);
+        if promoted != root || *calls != 1 || (*REGISTRY.0.get()).count != 4 { return None; }
+        let global = runtime_symbol(core::ptr::null_mut(), b"loader110_next_value\0".as_ptr(),
+            0, &mut error);
+        let following = runtime_symbol(next, b"loader110_next_value\0".as_ptr(),
+            caller as usize, &mut error);
+        if error != 0 || global != value.cast() || following != value.cast()
+            || runtime_close(root) != 0 { return None; }
+        let retained = runtime_open(ROOT_PATH.load(Ordering::Acquire), 2 | 4, &mut diagnostic);
+        Some(retained == root && *calls == 1 && *reentry == 1 && *value == 73)
+    })().unwrap_or(false) } }
+
+    let directory = std::path::Path::new(".work/loader110/fixtures");
+    std::fs::create_dir_all(directory).unwrap();
+    compile("compat/x86_64/tests/loader110_scope_first.c", &directory.join("libloader110-first.so"),
+        &["-Wl,-soname,libloader110-first.so"]);
+    compile("compat/x86_64/tests/loader110_scope_last.c", &directory.join("libloader110-last.so"),
+        &["-Wl,-soname,libloader110-last.so"]);
+    let root = directory.join("libloader110-root.so");
+    compile("compat/x86_64/tests/loader110_scope_root.c", &root,
+        &["-DLOADER110_SOURCE_PROBE", "-L.work/loader110/fixtures", "-l:libloader110-first.so",
+          "-l:libloader110-last.so", "-Wl,-rpath,$ORIGIN"]);
+    let root = std::ffi::CString::new(std::fs::canonicalize(root).unwrap().as_os_str()
+        .as_encoded_bytes()).unwrap();
+    ROOT_PATH.store(root.as_ptr().cast_mut().cast(), Ordering::Release);
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+    ROOT_PATH.store(core::ptr::null_mut(), Ordering::Release);
+}
+
+#[test]
 fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
     static PROVIDER: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
     static MISSING: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
