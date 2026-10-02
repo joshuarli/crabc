@@ -466,7 +466,9 @@ def declared_offline_sources(environment):
     return tuple(paths)
 
 
-def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source=None):
+def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source=None, profile='release'):
+    if profile not in ('release', 'debug'):
+        raise ValueError('provider profile must be release or debug')
     if (platform.system(), platform.machine()) != ('Linux', 'x86_64'):
         raise ValueError('native Linux/x86-64 required')
     output = output.resolve()
@@ -507,7 +509,14 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
         CARGO_TARGET_DIR=str(output / 'target'), TMPDIR=str(temporary),
         CARGO_ENCODED_RUSTFLAGS='\x1f'.join(['-Crelocation-model=pic',
             '-Cforce-unwind-tables=yes', '--remap-path-prefix', f'{ROOT.parent}=/crabc']),
-        CARGO_PROFILE_RELEASE_LTO='fat', SOURCE_DATE_EPOCH='0', CARGO_INCREMENTAL='0')
+        SOURCE_DATE_EPOCH='0', CARGO_INCREMENTAL='0')
+    if profile == 'release':
+        profile_arguments = ['--release']
+        environment['CARGO_PROFILE_RELEASE_LTO'] = 'fat'
+    else:
+        profile_arguments = ['--profile', 'dev']
+        environment.update(CARGO_PROFILE_DEV_OPT_LEVEL='0', CARGO_PROFILE_DEV_LTO='fat',
+            CARGO_PROFILE_DEV_CODEGEN_UNITS='1', CARGO_PROFILE_DEV_PANIC='abort')
     kwargs = {'cwd': ROOT, 'env': environment}
     source_manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
     metadata = json.loads(run([*cargo, 'metadata', *source_manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
@@ -530,7 +539,7 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     # pinned target `core` it was compiled against. Only that fused object is
     # retained; Rust's compiler-builtins members are dropped so compiler helper
     # calls resolve against the consumer's owned builtins archive.
-    log = run([*cargo, 'rustc', *manifest, '--release', '--target', TARGET, '--crate-type', 'staticlib',
+    log = run([*cargo, 'rustc', *manifest, *profile_arguments, '--target', TARGET, '--crate-type', 'staticlib',
                '--message-format=json', '--', '--cfg', STANDALONE_CFG], **staged_kwargs)
     verify_staged_patched_unwinding(staged)
     verify_staged_patched_gimli(staged)
@@ -544,6 +553,12 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     if not ar.exists() or not objcopy.exists():
         raise ValueError('pinned llvm-tools are unavailable')
     artifacts = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
+    if profile == 'debug':
+        provider_packages = {package['id'] for package in packages.values()}
+        if any(artifact.get('reason') == 'compiler-artifact'
+               and artifact['package_id'] in provider_packages
+               and artifact['profile']['opt_level'] != '0' for artifact in artifacts):
+            raise ValueError('debug provider graph was not compiled at opt-level zero')
     sources = []
     for name in sorted(PINS):
         package = packages[name]
@@ -576,7 +591,19 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     keep = directory / 'keep-global-symbols.txt'
     keep.write_text(''.join(f'{symbol}\n' for symbol in sorted(UNWIND_ABI)))
     member = directory / PROVIDER_MEMBER
-    subprocess.run([str(objcopy), f'--keep-global-symbols={keep}', str(fused), str(member)], check=True)
+    localized = directory / 'localized-provider.o' if profile == 'debug' else member
+    subprocess.run([str(objcopy), f'--keep-global-symbols={keep}', str(fused), str(localized)], check=True)
+    if profile == 'debug':
+        linker = llvm / 'rust-lld'
+        if not linker.is_file():
+            raise ValueError('pinned relocatable linker is unavailable')
+        # Unoptimized fusion retains unreachable target-core sections whose
+        # imports belong to other runtimes. Ordinary section GC rooted at the
+        # complete unwind ABI drops those sections without optimizing code or
+        # adding a personality or compiler-helper owner to this provider.
+        subprocess.run([str(linker), '-flavor', 'gnu', '-r', '--gc-sections',
+                        *[f'--undefined={symbol}' for symbol in sorted(UNWIND_ABI)],
+                        '-o', str(member), str(localized)], check=True)
     audit_provider_symbols(
         run([nm, '--defined-only', '--extern-only', member]),
         run([nm, '--undefined-only', member]),
@@ -610,7 +637,9 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
                             'dropped_compiler_builtins_members': len(dropped_members)},
         'c_abi_undefined': sorted(PROVIDER_C_ABI_IMPORTS & {
             line.split()[-1] for line in undefined.splitlines() if line.split()}),
-        'standalone_panic': 'abort',
+        'standalone_panic': 'abort', 'build_profile': profile,
+        'opt_level': '0' if profile == 'debug' else '3',
+        'standalone_section_gc': profile == 'debug',
         'native_build_products': False, 'personality_owner': 'consumer Rust std',
         'qualified': False}
     (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')
@@ -619,6 +648,8 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, help='fresh or empty checkout-local output directory')
+    parser.add_argument('--profile', choices=('release', 'debug'), default='release',
+                        help='standalone provider profile; debug compiles at opt-level zero')
     parser.add_argument('--stage-root', type=Path,
                         help='fresh private provider-source root below --output')
     parser.add_argument('--cargo-home', type=Path,
@@ -635,4 +666,4 @@ if __name__ == '__main__':
         # readable by the invoking host user, like the installed-product jobs.
         output.chmod(0o755)
     build(output, stage_root=arguments.stage_root, cargo_home=arguments.cargo_home,
-          registry_unwinding_source=arguments.registry_unwinding_source)
+          registry_unwinding_source=arguments.registry_unwinding_source, profile=arguments.profile)

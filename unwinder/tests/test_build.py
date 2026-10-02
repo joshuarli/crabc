@@ -380,6 +380,62 @@ class DependencyBoundary(unittest.TestCase):
             self.assertEqual(receipt.read_text(), 'historical evidence\n')
 
 
+class ProviderBuildProfile(unittest.TestCase):
+    def capture_compile(self, **options):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            manifest = root / 'source-inputs/crabc-unwinder/Cargo.toml'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text('[package]\nname = "crabc-unwinder"\n')
+            manifest.with_name('Cargo.lock').write_text('version = 4\n')
+            staged = {'manifest': manifest, 'staged': root / 'unwinding',
+                      'gimli': {'staged': root / 'gimli'}}
+            packages = {name: {'manifest_path': str(root / name / 'Cargo.toml')}
+                        for name in ('unwinding', 'gimli')}
+            observed = {}
+
+            def run(arguments, **keywords):
+                if 'rustc' in arguments and '--crate-type' in arguments:
+                    observed.update(arguments=arguments, environment=keywords['env'])
+                    raise RuntimeError('captured provider compilation')
+                return '{}'
+
+            with unittest.mock.patch.object(builder, 'run', side_effect=run), \
+                 unittest.mock.patch.object(builder, 'audit_graph', return_value=packages), \
+                 unittest.mock.patch.object(builder, 'stage_patched_unwinding', return_value=staged), \
+                 unittest.mock.patch.object(builder, 'stage_patched_gimli'), \
+                 unittest.mock.patch.dict(builder.os.environ, {
+                     'CARGO_PROFILE_DEV_OPT_LEVEL': '3',
+                     'CARGO_PROFILE_DEV_LTO': 'off',
+                 }), self.assertRaisesRegex(RuntimeError, 'captured provider compilation'):
+                builder.build(root / 'output', **options)
+            return observed
+
+    def test_default_provider_compilation_preserves_release_selection(self):
+        compiled = self.capture_compile()
+        self.assertIn('--release', compiled['arguments'])
+        self.assertEqual(compiled['environment']['CARGO_PROFILE_RELEASE_LTO'], 'fat')
+
+    def test_debug_provider_compilation_uses_opt_zero_and_one_fused_member(self):
+        compiled = self.capture_compile(profile='debug')
+        arguments, environment = compiled['arguments'], compiled['environment']
+        self.assertNotIn('--release', arguments)
+        self.assertEqual(arguments[arguments.index('--profile') + 1], 'dev')
+        self.assertEqual(environment['CARGO_PROFILE_DEV_OPT_LEVEL'], '0')
+        self.assertEqual(environment['CARGO_PROFILE_DEV_LTO'], 'fat')
+        self.assertEqual(environment['CARGO_PROFILE_DEV_CODEGEN_UNITS'], '1')
+        self.assertEqual(environment['CARGO_PROFILE_DEV_PANIC'], 'abort')
+        self.assertNotIn('CARGO_PROFILE_RELEASE_LTO', environment)
+
+    def test_unknown_profile_is_refused_before_running_tools(self):
+        with unittest.mock.patch.object(builder, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'profile'):
+                builder.build(builder.ROOT.parent / '.work/unwinder110/unknown-profile', profile='fast')
+            run.assert_not_called()
+
+
 class StandaloneProviderSymbols(unittest.TestCase):
     """The localized provider object may expose and import only C ABI names."""
 

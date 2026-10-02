@@ -37,6 +37,26 @@ Build from the checkout through the pinned native dispatcher:
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
+The standalone builder preserves its release default. For focused debug work,
+select the profile explicitly in the pinned native environment:
+
+```sh
+CRABC_X86_64_CORE_IMAGE=sha256:5b43da01b755c86e9149311572f7a1d2132d6b3ba7e55404857aad5c07cec741 \
+  scripts/lanes/rust-check.sh env CARGO_PROFILE_DEV_OPT_LEVEL=0 CARGO_PROFILE_TEST_OPT_LEVEL=0 \
+  python3 -B unwinder/build.py --profile debug --output .work/x86_64/unwinder-debug
+```
+
+`build(output, profile="debug")` selects Cargo's `dev` profile and enforces
+opt level zero, abort-only standalone panic handling, and one codegen unit.
+Provider-only fat LTO fuses the dependency graph and pinned target `core` into
+one object; it does not select a consumer's build profile. After localization,
+the pinned relocatable linker discards unreachable sections with the exact
+17 unwind exports as roots. This removes unused target-core imports without
+optimizing the remaining instructions or admitting extra runtime owners.
+The debug archive still contains exactly `crabc-unwind.o`, with the same C ABI
+and ordinary archive extraction contract. Its existing provenance records the
+selected profile, opt level and section-GC choice; it remains unqualified.
+
 Each build uses a fresh checkout-local `.work/x86_64/unwinder-builds/run-*`
 directory and the dispatcher's contained Cargo and temporary state. Explicit
 nonempty output directories are rejected before running tools, preserving old
