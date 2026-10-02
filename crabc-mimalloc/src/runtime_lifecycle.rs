@@ -7353,7 +7353,11 @@ pub fn native_runtime_process_done_terminal_purge_test_audit(
     .map_err(|_| -7)?;
     let base = mapping.base().map_err(|_| -8)?;
     let before = process.subprocess().vm_statistics().snapshot();
-    let purge = mapping.purge_for_process(process, 0, page, true, page);
+    // SAFETY: this audit exclusively owns the fresh committed writable
+    // page, with no guard or other protection and no byte references or
+    // concurrent accesses. Mapping and process stay live across the purge
+    // transition and any synchronous warning output.
+    let purge = unsafe { mapping.purge_for_process(process, 0, page, true, page) };
     let mapping_retained_before_release = mapping.base() == Ok(base);
     let after = process.subprocess().vm_statistics().snapshot();
     let release_succeeded = mapping.unmap_for_process(process, page, false).is_ok();
