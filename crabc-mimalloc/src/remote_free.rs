@@ -656,7 +656,8 @@ pub(crate) unsafe fn push_live_allocation_without_collect(
         |previous_block| {
             // SAFETY: this exact block remains producer-owned until the CAS
             // publishes its first word into the source remote list.
-            unsafe { block_set_next_for_page(producer_links(producer), block, thread_free_block(previous_block)) };
+            unsafe { block_set_next_for_page(producer_links(producer), block,
+                published_predecessor(block, previous_block)) };
         },
     )?;
     // The still-counted block kept the page registered and unreleased
@@ -830,7 +831,8 @@ unsafe fn push_source_block_mt<const CANONICAL_ALIGNED: bool>(
         // SAFETY: the caller retains exclusive ownership of `block`; the
         // source profile stores its direct or page-key-encoded next link
         // before the release half of the publishing compare/exchange.
-        unsafe { block_set_next_for_page(producer_links(state), block, thread_free_block(previous_block)) };
+        unsafe { block_set_next_for_page(producer_links(state), block,
+            published_predecessor(block, previous_block)) };
     };
     if CANONICAL_ALIGNED {
         // The checked current allocation supplies an aligned canonical block.
@@ -1554,6 +1556,15 @@ unsafe fn collect_detached_to_local(
 #[inline]
 const fn is_owned(thread_free: ThreadFree) -> bool {
     thread_free & THREAD_FREE_OWNED != 0
+}
+
+/// A live publishing block retains the backing allocation for every remote
+/// predecessor on its own page. Recover that same allocation's provenance
+/// while masking the source owner bit; an empty list remains a null link.
+#[inline]
+fn published_predecessor(block: NonNull<Block>, head: ThreadFree) -> *mut Block {
+    let address = thread_free_block_address(head);
+    if address == 0 { ptr::null_mut() } else { block.as_ptr().with_addr(address) }
 }
 
 #[inline]
