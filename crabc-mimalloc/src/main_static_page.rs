@@ -93,6 +93,8 @@ pub(crate) struct MainStaticProcessPageAllocator<'main> {
 #[must_use = "an initial deferred-free allocation phase must be completed"]
 pub(crate) enum MainStaticDeferredFreeAllocationPhase {
     FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
+    #[cfg(target_arch = "x86_64")]
+    LiveValidity(crate::single_thread::PendingLivePageValidity),
     Complete(Option<NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -116,6 +118,8 @@ fn initial_guarded_canonical_phase(
 ) -> Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal> {
     phase.map(|phase| match phase {
         DeferredFreeAllocationPhase::FreshInitialization(task) => MainStaticDeferredFreeAllocationPhase::FreshInitialization(task),
+        #[cfg(target_arch = "x86_64")]
+        DeferredFreeAllocationPhase::LiveValidity(task) => MainStaticDeferredFreeAllocationPhase::LiveValidity(task),
         DeferredFreeAllocationPhase::Complete(block) => MainStaticDeferredFreeAllocationPhase::Complete(block),
         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
             MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation }
@@ -2192,7 +2196,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     ///
     /// `allocate_with` restores `Active` before this method returns, including
     /// when the phase selected a callback. The returned source identity has
-    /// no engine or session borrow, so runtime phase B can invoke user code
+    /// no engine or session borrow, so the runtime can invoke user code
     /// only after the compiler-TLS owner projection ends.
     pub(crate) fn begin_deferred_free_current_initial_thread_local(
         &mut self,
@@ -2219,6 +2223,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             match engine.begin_deferred_free_allocation(request, zero) {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
@@ -2325,6 +2333,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             match engine.begin_deferred_free_guarded_canonical(source_size) {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
@@ -2441,6 +2453,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::FreshInitialization(task)) => {
                     Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)))
                 }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::LiveValidity(task)) => {
+                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::LiveValidity(task)))
+                }
                 DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(block)) => {
                     Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Complete(block)))
                 }
@@ -2467,6 +2483,8 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         self.allocate_with(plain.requested_size(), |engine| {
             match engine.begin_deferred_free_aligned_plain(plain) {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)),
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task)),
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
@@ -2523,6 +2541,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             DeferredFreeAllocationPhase::FreshInitialization(task) => {
                 Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
             }
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::LiveValidity(task) => {
+                Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
+            }
             DeferredFreeAllocationPhase::Complete(block) => {
                 Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
             }
@@ -2564,6 +2586,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             match engine.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero) {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
@@ -2620,6 +2646,8 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             // getter, and this engine still matches the captured source.
             match unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) } {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)),
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task)),
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::GenericFrequency { .. } => None,
@@ -2661,6 +2689,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             match engine.resume_deferred_free_allocation(collection, continuation) {
                 DeferredFreeAllocationPhase::FreshInitialization(task) => {
                     Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::LiveValidity(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::LiveValidity(task))
                 }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
@@ -3196,6 +3228,21 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
         match &mut self.state {
             MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.engine.retain_fresh_os_initialization(task),
+            _ => Err(task),
+        }
+    }
+
+    /// Returns a live-page assertion to its continuously retained initial
+    /// engine. A foreign task or occupied slot returns the exact task; this
+    /// does not acquire admission or release the failed page's backing.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn retain_live_page_validity_current_initial_thread_local(
+        &mut self, task: crate::single_thread::PendingLivePageValidity,
+    ) -> Result<(), crate::single_thread::PendingLivePageValidity> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                active.engine.retain_live_page_validity(task)
+            }
             _ => Err(task),
         }
     }
@@ -4392,6 +4439,7 @@ mod tests {
             for _ in 0..16 {
                 phase = match phase {
                     MainStaticDeferredFreeAllocationPhase::FreshInitialization(task) => return Err(task),
+                    MainStaticDeferredFreeAllocationPhase::LiveValidity(_) => panic!("valid page must not select a live validity assertion"),
                     MainStaticDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
                     MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation } => {
                         allocator.resume_deferred_free_guarded_canonical_current_initial_thread_local(

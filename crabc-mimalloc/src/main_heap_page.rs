@@ -2812,10 +2812,10 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         Ok(())
     }
 
-    /// Starts phase A of source `_mi_theap_collect_abandon` before the
+    /// Starts source `_mi_theap_collect_abandon` before the
     /// collector borrows the old Theap.  The returned call is value-only; the
     /// persistent engine stays in its owner and remains available for the
-    /// pinned callback's legal allocation reentry until phase C consumes it.
+    /// pinned callback's legal allocation reentry until its continuation runs.
     pub(crate) fn begin_owner_exit_deferred_free_phase(
         &mut self,
         attachment: &mut MainHeapThreadAttachment<'main>,
@@ -2965,6 +2965,17 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
         task: crate::single_thread::PendingFreshOsPageInitialization,
     ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
         self.engine.retain_fresh_os_initialization(task)
+    }
+
+    /// Preserves a failed live page in its original persistent issuing
+    /// engine. The caller keeps that issuer admitted through refusal; scalar
+    /// identity checks cannot recreate admission or backing ownership.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn retain_live_page_validity(
+        &mut self,
+        task: crate::single_thread::PendingLivePageValidity,
+    ) -> Result<(), crate::single_thread::PendingLivePageValidity> {
+        self.engine.retain_live_page_validity(task)
     }
 
     /// Reverses only setup completed by this original unpublished claim.
