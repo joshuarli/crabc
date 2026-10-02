@@ -1215,11 +1215,10 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    #[test]
-    fn native_first_medium_client_has_registered_valid_lists() {
+    fn native_registered_regular_client(test_name: &'static str, block_size: usize, span: usize) {
         use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
         crate::test_process::run_in_fresh_process(
-            "page_validity::tests::native_first_medium_client_has_registered_valid_lists", || {
+            test_name, || {
                 unsafe extern "C" fn stderr(message: *const core::ffi::c_char) {
                     unsafe extern "C" {
                         fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
@@ -1231,12 +1230,12 @@ mod tests {
                 }
                 let output = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr) };
                 assert!(runtime::test_initialize_process_from_host_environment(4096, output));
-                let request = 12_288 - crate::config::PADDING_SIZE;
+                let request = block_size - crate::config::PADDING_SIZE;
                 let block = match runtime::native_allocate(request, false) {
                     NativePageAllocationResult::Allocated(block) => block,
-                    NativePageAllocationResult::Unavailable => panic!("first medium client unavailable"),
-                    NativePageAllocationResult::AllocationFailed => panic!("first medium client allocation failed"),
-                    NativePageAllocationResult::Retained => panic!("first medium client retained"),
+                    NativePageAllocationResult::Unavailable => panic!("regular client unavailable"),
+                    NativePageAllocationResult::AllocationFailed => panic!("regular client allocation failed"),
+                    NativePageAllocationResult::Retained => panic!("regular client retained"),
                 };
                 let selected = crate::compiler_tls::default_theap();
                 // SAFETY: this actual client retains its Page, sole current
@@ -1245,13 +1244,37 @@ mod tests {
                     let map = owner.page_map().unwrap().page_map().unwrap();
                     let page = NonNull::new(map.checked_lookup(block.as_ptr())).unwrap();
                     let state = Page::validity_snapshot_at(page);
-                    assert_eq!(state.block_size, 12_288);
+                    assert_eq!(state.block_size, block_size);
+                    let os_page = crate::os::PageSize::new(4096).unwrap();
+                    assert_eq!(state.reserved, crate::page::page_reserved_object_count(
+                        span, crate::page::page_usable_start_offset(block_size).unwrap(),
+                        state.block_size, os_page).unwrap());
+                    if state.slice_pcommitted != 0 {
+                        assert!(usize::from(state.slice_pcommitted) * os_page.bytes()
+                            <= crate::page::page_noguard_size(span, os_page).unwrap());
+                    }
                     assert_eq!(source_page_lists_valid(&state, map), Ok(()));
                 }) }.unwrap();
                 assert_eq!(unsafe { runtime::native_free(block) }, NativePageFreeResult::Freed);
                 runtime::native_collect(true);
             },
         );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_first_medium_client_has_registered_valid_lists() {
+        native_registered_regular_client(
+            "page_validity::tests::native_first_medium_client_has_registered_valid_lists",
+            12_288, crate::config::MEDIUM_PAGE_SIZE);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_small_client_reservation_excludes_the_source_protected_tail() {
+        native_registered_regular_client(
+            "page_validity::tests::native_small_client_reservation_excludes_the_source_protected_tail",
+            256, crate::config::SMALL_PAGE_SIZE);
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
