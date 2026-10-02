@@ -2067,28 +2067,40 @@ unsafe fn run_runtime_startup_tail(
         // because both callers first claim `runtime_startup_tail`.
         unsafe { output.post_init() };
     }
-    let report_retry = |result: crate::random::RandomReinitialization| {
-        if result.attempted && result.remains_weak {
-            if let Some(output) = output {
-                // SAFETY: the startup caller retains this output route; both
-                // the random projection and any metadata entry lock ended
-                // before delivery, so a foreign callback may reenter.
-                unsafe { output.warning_from_source_options(
-                    crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
-                        c"unable to use secure randomness\n",
-                    ),
-                ) };
-            }
+    let warn = || {
+        if let Some(output) = output {
+            // SAFETY: the retained source output is called only after every
+            // random projection and metadata entry ends. Warning callbacks
+            // may draw from the old image before its weak replacement exists.
+            unsafe { output.warning_from_source_options(
+                crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                    c"unable to use secure randomness\n",
+                ),
+            ) };
         }
     };
-    // SAFETY: the current default Theap belongs to this initial source
-    // thread, and no projection of it is live across this field access.
-    let current = unsafe { crate::types::Theap::reinitialize_random_if_weak_at(crate::compiler_tls::default_theap()) };
-    report_retry(current);
-    let detached = metadata
-        .reinitialize_detached_metadata_random_if_weak(subprocess)
+    // Keep the source-selected target across output reentry. A callback may
+    // change the default root, but cannot redirect this in-flight retry.
+    let current = crate::compiler_tls::default_theap();
+    // SAFETY: the initial thread owns this live image; the short projection
+    // ends before entropy acquisition or diagnostic delivery.
+    let weak = unsafe { crate::types::Theap::with_os_reservation_random_at(
+        current, |random| random.is_some_and(|random| random.is_weak()),
+    ) };
+    if weak {
+        let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+        if prepared.requires_warning() { warn(); }
+        // SAFETY: refused entropy has crossed its source warning gate and
+        // returned from any callback; successful entropy needs no warning.
+        let material = unsafe { prepared.after_warning() };
+        // SAFETY: the startup caller retains the original image across the
+        // callback and excludes teardown. No other image projection survives.
+        unsafe { crate::types::Theap::with_os_reservation_random_at(current, |random| {
+            random.expect("the retained startup Theap stays initialized").initialize_prepared(material);
+        }) };
+    }
+    metadata.reinitialize_detached_metadata_random_if_weak_with_warning(subprocess, warn)
         .map_err(ProcessMainInitError::Metadata)?;
-    report_retry(detached);
     Ok(())
 }
 
