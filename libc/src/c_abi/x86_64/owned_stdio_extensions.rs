@@ -63,6 +63,9 @@ static_archive_member! { ext_source {
     #[no_mangle]
     pub unsafe extern "C" fn __fpurge(stream: *mut StandardStream) -> c_int {
         unsafe {
+            // Permanent streams are lazy until their first ordinary operation.
+            // Establish their storage before deriving any empty region pointers.
+            initialize_buffer(stream);
             (*stream).read_position = (*stream).buffer;
             (*stream).read_end = (*stream).buffer;
             reset_write_region(stream);

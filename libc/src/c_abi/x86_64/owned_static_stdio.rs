@@ -1,8 +1,8 @@
 //! Owned native x86 byte/wide stream engine.
 //!
 //! Source map: pinned musl 1.2.6 commit
-//! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT; see
-//! `compat/upstreams.toml`): stdio_impl.h and stdin/stdout/stderr.c map to
+//! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT):
+//! stdio_impl.h and stdin/stdout/stderr.c map to
 //! StandardStream and permanent storage; __stdio_read/__toread/__uflow and
 //! __stdio_write/__towrite/__overflow map to the byte/block helpers retained
 //! from the existing x86 stdio_standard.rs translation. fdopen/fopen/fclose,
@@ -38,7 +38,7 @@
 //! __do_orphaned_stdio_locks} maps to the explicit-lock list and non-final
 //! pthread retirement hook below; internal guards never enter that list.
 //! Fork preparation consumes the narrow registry triplet and preserves the
-//! surviving task's lock list. This is not stdio-family completion.
+//! surviving task's lock list.
 //!
 //! ## ELF aliases and interposition ownership
 //!
@@ -254,7 +254,7 @@ unsafe extern "C" {
     fn stdio_cabi_free(pointer: *mut c_void);
 }
 
-// All pointer initialization is performed under the individual stream lock.
+// Pointer initialization requires the stream lock or exclusive caller access.
 // No global once-state or allocator is involved in permanent-stream use.
 unsafe fn initialize_buffer(stream: *mut StandardStream) {
     if unsafe { (*stream).buffer.is_null() } {
@@ -280,8 +280,9 @@ unsafe fn initialize_buffer(stream: *mut StandardStream) {
 /// Begin an empty write region in the configured buffer, as musl __towrite
 /// and a completed __stdio_write do (`wpos = wbase = buf; wend = buf+size`).
 /// # Safety
-/// The caller holds the stream lock (or exclusively owns unpublished storage)
-/// and the stream has no pending output that must survive.
+/// The caller holds the stream lock or exclusively accesses the stream storage,
+/// and the stream has initialized buffer storage and no pending output that
+/// must survive.
 unsafe fn reset_write_region(stream: *mut StandardStream) {
     unsafe {
         (*stream).write_base = (*stream).buffer;
