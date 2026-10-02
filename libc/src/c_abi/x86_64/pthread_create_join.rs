@@ -118,10 +118,11 @@ use super::{
 
 // Pinned musl 1.2.6 spells these source bodies `__pthread_*` and publishes
 // weak public aliases with `weak_alias`.  The static source body for detach is
-// local, while create/exit/join are hidden globals.  Keep the Rust item names
-// useful to direct internal callers, but give their ELF definitions musl's
-// provider spellings so a public application override cannot preempt an
-// internal lifecycle call.
+// local in C. Rust emits its definition and assembly aliases in separate
+// codegen units, so its canonical provider needs external linkage with ELF
+// hidden visibility. That keeps it non-preemptible and outside the dynamic
+// API while allowing both weak public aliases to name the same body.
+// Create/exit/join retain their source hidden-global providers.
 core::arch::global_asm!(
     ".hidden __pthread_create",
     ".weak pthread_create",
@@ -129,6 +130,7 @@ core::arch::global_asm!(
     ".hidden __pthread_exit",
     ".weak pthread_exit",
     ".set pthread_exit, __pthread_exit",
+    ".hidden __pthread_detach",
     ".weak pthread_detach",
     ".set pthread_detach, __pthread_detach",
     ".weak thrd_detach",
@@ -3847,20 +3849,12 @@ pub(super) unsafe fn detach_selected_worker(thread: *mut c_void) -> c_int {
 /// `thread` must be one selected opaque thread handle. After a successful
 /// return it is no longer valid for an admitted join operation.
 #[export_name = "__pthread_detach"]
-#[linkage = "internal"]
 #[inline(never)]
 pub unsafe extern "C" fn pthread_detach(thread: *mut c_void) -> c_int {
     // SAFETY: this C boundary preserves the selected opaque-handle ownership
     // contract documented above.
     unsafe { detach_selected_worker(thread) }
 }
-
-// LLVM does not discover a `global_asm!` `.set` reference when it decides
-// whether an internal provider is dead. Retain one local typed reference until
-// the linker sees the public weak alias in the same function section.
-#[used]
-#[linkage = "internal"]
-static KEEP_PTHREAD_DETACH: unsafe extern "C" fn(*mut c_void) -> c_int = pthread_detach;
 
 /// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].
 ///

@@ -52,9 +52,12 @@ use super::{pthread_create_join, pthread_identity, static_tls};
 
 // Musl's key-create source exports hidden global providers. Its
 // `__pthread_getspecific` source body is static, with both pthread_getspecific
-// and tss_get as weak same-address aliases. Preserve those distinct source
-// linkage classes while Rust callers keep the direct item spellings below.
+// and tss_get as weak same-address aliases. Its Rust definition must instead
+// have external linkage so assembly in another codegen unit can bind it.
+// ELF hidden visibility keeps that canonical provider non-preemptible and
+// outside the dynamic API; the two public aliases retain one shared address.
 core::arch::global_asm!(
+    ".hidden __pthread_getspecific",
     ".weak pthread_getspecific",
     ".set pthread_getspecific, __pthread_getspecific",
     ".weak tss_get",
@@ -393,7 +396,6 @@ static_archive_member! { pthread_key_create_source {
 /// borrowed C pointers and may not be dereferenced unless the application
 /// still owns the referenced storage.
 #[export_name = "__pthread_getspecific"]
-#[linkage = "internal"]
 #[inline(never)]
 pub unsafe extern "C" fn pthread_getspecific(key: c_uint) -> *mut c_void {
     let Some(index) = key_index(key) else {
@@ -414,12 +416,6 @@ pub unsafe extern "C" fn pthread_getspecific(key: c_uint) -> *mut c_void {
     unlock_selected_tsd();
     value as *mut c_void
 }
-
-// See the matching detach provider: a local `export_name` needs an explicit
-// typed `used` reference because LLVM cannot see the assembler `.set` edge.
-#[used]
-#[linkage = "internal"]
-static KEEP_PTHREAD_GETSPECIFIC: unsafe extern "C" fn(c_uint) -> *mut c_void = pthread_getspecific;
 
 // Musl's `src/thread/pthread_setspecific.c` object.
 static_archive_member! { pthread_setspecific_source {
