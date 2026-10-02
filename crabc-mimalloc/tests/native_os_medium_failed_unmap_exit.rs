@@ -206,8 +206,11 @@ fn final_os_medium_unmap_failure_consumes_allocator_owner_once() {
     assert_eq!(finish, ThreadFinishResult::Finished);
     assert!(range.0 <= clients[1] && clients[1] < range.0 + range.1);
     assert_eq!(range.1, 9 * 64 * 1024);
+    // A committed secure tail is debited on guard installation and credited
+    // on successful reset before ordinary full-suffix release.
+    let tail_reset_credit = if cfg!(feature = "mi-secure-5") { page_size as i64 } else { 0 };
     let counters_released = after.map(|after| {
-        before.0 - after.0 == range.1 as i64 && before.1 - after.1 == 8 * 64 * 1024
+        before.0 - after.0 == range.1 as i64 && before.1 - after.1 == 8 * 64 * 1024 - tail_reset_credit
     }).unwrap_or(false);
 
     std::println!("CRABC_MI_OS_MEDIUM_FAILED_UNMAP_BEGIN");
