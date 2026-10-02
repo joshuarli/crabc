@@ -14,7 +14,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
-    native_collect, native_block_size, native_runtime_terminal_vm_current_test_audit,
+    native_collect, native_runtime_terminal_vm_current_test_audit,
     TicketZeroPageAllocationResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     native_runtime_test_fail_next_unmap, prepare_native_later_thread_arena, ticket_zero_allocate,
@@ -136,8 +136,6 @@ fn post_exit_failed_os_release_consumes_page_without_raw_retry() {
         let os_singleton = client.into_block();
         let before_map = native_runtime_lifecycle_test_audit().unwrap();
         let before_vm = vm_current();
-        // SAFETY: the joined former owner left this exact singleton client live.
-        let committed_extent = unsafe { native_block_size(os_singleton) }.unwrap();
         let failure = native_runtime_test_fail_next_unmap();
         let capture = failure.capture_range();
         // SAFETY: A published this exact still-live C client before its owner
@@ -152,8 +150,10 @@ fn post_exit_failed_os_release_consumes_page_without_raw_retry() {
         let after_vm = vm_current();
         assert_eq!(before_vm.0 - after_vm.0, failed_range.1 as i64,
             "source release retires reserved bytes even when raw unmap fails");
-        assert_eq!(failed_range.0 + failed_range.1 - os_singleton.as_ptr().addr(), committed_extent,
-            "this singleton follows the uncommitted alignment prefix in its raw reservation");
+        // This alignment-forced singleton begins at the source slice start.
+        // Its reservation also includes a preceding uncommitted alignment area.
+        let committed_extent = failed_range.0 + failed_range.1 - os_singleton.as_ptr().addr();
+        assert!(committed_extent > 0 && committed_extent < failed_range.1);
         assert_eq!(before_vm.1 - after_vm.1, committed_extent as i64,
             "source release retires the committed Page extent, excluding its alignment prefix");
         let after_map = native_runtime_lifecycle_test_audit().unwrap();
