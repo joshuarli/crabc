@@ -3,15 +3,20 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crabc_rs::fs::{
     self, AtFlags, FileType, FlockOperation, Mode, OFlags, RawDir, RenameFlags, ResolveFlags,
-    Timespec, Timestamps, XattrFlags, ABS, CWD,
+    Timespec, Timestamps, XattrFlags, CWD,
 };
+#[cfg(target_arch = "aarch64")]
+use crabc_rs::fs::{AtFlags as LinkAtFlags, AtFlags as TimestampAtFlags, AtFlags as UnlinkAtFlags, ABS};
+#[cfg(target_arch = "x86_64")]
+use crabc_rs::fs::{LinkAtFlags, TimestampAtFlags, UnlinkAtFlags};
 use crabc_rs::{Errno, Result};
 
 static SCRATCH_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn with_scratch_directory<T>(run: impl FnOnce(&str) -> Result<T>) -> T {
     let root = format!(
-        "/tmp/crabc-rs-fs-{}-{}",
+        "{}/crabc-rs-fs-{}-{}",
+        std::env::temp_dir().display(),
         std::process::id(),
         SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed),
     );
@@ -58,16 +63,29 @@ fn statat_fstat_and_unlinkat_share_direct_metadata_contract() {
 
         let absolute = format!("{root}/record");
         assert_eq!(fs::stat(&absolute).unwrap().st_ino, by_fd.st_ino);
-        let by_absolute = fs::statat(ABS, &absolute, AtFlags::empty())
-            .expect("ABS accepts an absolute metadata path");
-        assert_eq!(by_absolute.st_ino, by_fd.st_ino);
-        assert_eq!(
-            fs::statat(ABS, "record", AtFlags::empty()).unwrap_err(),
-            Errno::BADF,
-        );
+        #[cfg(target_arch = "aarch64")]
+        {
+            let by_absolute = fs::statat(ABS, &absolute, AtFlags::empty())
+                .expect("ABS accepts an absolute metadata path");
+            assert_eq!(by_absolute.st_ino, by_fd.st_ino);
+            assert_eq!(
+                fs::statat(ABS, "record", AtFlags::empty()).unwrap_err(),
+                Errno::BADF,
+            );
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            let by_absolute = fs::statat(&file, &absolute, AtFlags::empty())
+                .expect("an absolute metadata path ignores the directory descriptor");
+            assert_eq!(by_absolute.st_ino, by_fd.st_ino);
+            assert_eq!(
+                fs::statat(&file, "record", AtFlags::empty()).unwrap_err(),
+                Errno::NOTDIR,
+            );
+        }
 
         drop(file);
-        fs::unlinkat(&directory, "record", AtFlags::empty())
+        fs::unlinkat(&directory, "record", UnlinkAtFlags::empty())
             .expect("unlink regular file relative to descriptor");
         assert_eq!(
             fs::statat(&directory, "record", AtFlags::empty()).unwrap_err(),
@@ -84,10 +102,10 @@ fn unlinkat_removedir_only_removes_directories() {
         let directory = fs::openat(CWD, root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
             .expect("open directory");
         fs::mkdirat(&directory, "child", Mode::RWXU)
-            .expect("directory creation will be added before this test is enabled");
-        fs::unlinkat(&directory, "child", AtFlags::empty())
+            .expect("create child directory");
+        fs::unlinkat(&directory, "child", UnlinkAtFlags::empty())
             .expect_err("unlinkat without REMOVEDIR cannot remove a directory");
-        fs::unlinkat(&directory, "child", AtFlags::REMOVEDIR)
+        fs::unlinkat(&directory, "child", UnlinkAtFlags::REMOVEDIR)
             .expect("unlinkat REMOVEDIR removes an empty directory");
         drop(directory);
         Ok(())
@@ -108,7 +126,7 @@ fn links_renames_and_bounded_readlink_use_the_direct_path_seam() {
         .expect("create record");
         let record = fs::fstat(&file).expect("stat record");
 
-        fs::linkat(&directory, "record", &directory, "hard", AtFlags::empty())
+        fs::linkat(&directory, "record", &directory, "hard", LinkAtFlags::empty())
             .expect("create hard link");
         assert_eq!(
             fs::statat(&directory, "hard", AtFlags::empty())
@@ -156,7 +174,7 @@ fn links_renames_and_bounded_readlink_use_the_direct_path_seam() {
 
         drop(file);
         for name in ["record", "renamed", "symbolic"] {
-            fs::unlinkat(&directory, name, AtFlags::empty()).expect("remove link fixture");
+            fs::unlinkat(&directory, name, UnlinkAtFlags::empty()).expect("remove link fixture");
         }
         drop(directory);
         Ok(())
@@ -201,8 +219,13 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
             .unwrap_err(),
             Errno::OPNOTSUPP,
         );
+        #[cfg(target_arch = "aarch64")]
+        let access_flags = AtFlags::EACCESS;
+        #[cfg(target_arch = "x86_64")]
+        // Linux's AT_EACCESS belongs to access checks, not permission changes.
+        let access_flags = AtFlags::from_bits_retain(0x200);
         assert_eq!(
-            fs::chmodat(&directory, "record", Mode::empty(), AtFlags::EACCESS).unwrap_err(),
+            fs::chmodat(&directory, "record", Mode::empty(), access_flags).unwrap_err(),
             Errno::INVAL,
         );
 
@@ -216,7 +239,7 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
                 tv_nsec: 47_000,
             },
         };
-        fs::utimensat(&directory, "record", &times, AtFlags::empty())
+        fs::utimensat(&directory, "record", &times, TimestampAtFlags::empty())
             .expect("set timestamps through pathname");
         let by_path = fs::statat(&directory, "record", AtFlags::empty()).unwrap();
         assert_eq!((by_path.st_mtime, by_path.st_mtime_nsec), (46_000, 47_000));
@@ -237,7 +260,7 @@ fn permissions_and_timestamps_match_linux_rustix_contracts() {
 
         drop(file);
         for name in ["record", "symbolic"] {
-            fs::unlinkat(&directory, name, AtFlags::empty()).expect("remove permission fixture");
+            fs::unlinkat(&directory, name, UnlinkAtFlags::empty()).expect("remove permission fixture");
         }
         drop(directory);
         Ok(())
@@ -316,7 +339,7 @@ fn raw_dir_preserves_record_lifetimes_alignment_and_long_names() {
         drop(small_directory);
 
         for name in ["short", long_name.as_str()] {
-            fs::unlinkat(&directory, name, AtFlags::empty()).expect("remove RawDir fixture entry");
+            fs::unlinkat(&directory, name, UnlinkAtFlags::empty()).expect("remove RawDir fixture entry");
         }
         drop(directory);
         Ok(())
@@ -344,14 +367,14 @@ fn advisory_locks_use_direct_flock_and_fcntl_contracts() {
             .expect("release process-associated fcntl lock");
 
         drop(file);
-        fs::unlinkat(&directory, "record", AtFlags::empty()).expect("remove lock fixture");
+        fs::unlinkat(&directory, "record", UnlinkAtFlags::empty()).expect("remove lock fixture");
         drop(directory);
         Ok(())
     });
 }
 
 #[test]
-fn openat2_and_nofollow_preserve_linux_aarch64_path_resolution_rules() {
+fn openat2_and_nofollow_preserve_linux_path_resolution_rules() {
     with_scratch_directory(|root| {
         let directory = fs::openat(CWD, root, OFlags::RDONLY | OFlags::DIRECTORY, Mode::empty())
             .expect("open directory");
@@ -372,7 +395,7 @@ fn openat2_and_nofollow_preserve_linux_aarch64_path_resolution_rules() {
             OFlags::RDONLY | OFlags::NOFOLLOW,
             Mode::empty(),
         )
-        .expect_err("O_NOFOLLOW must reject a final symlink on Linux/AArch64");
+        .expect_err("O_NOFOLLOW must reject a final symlink on Linux");
         assert_eq!(
             fs::openat(
                 &directory,
@@ -405,7 +428,7 @@ fn openat2_and_nofollow_preserve_linux_aarch64_path_resolution_rules() {
         );
 
         for name in ["record", "symbolic"] {
-            fs::unlinkat(&directory, name, AtFlags::empty()).expect("remove openat2 fixture");
+            fs::unlinkat(&directory, name, UnlinkAtFlags::empty()).expect("remove openat2 fixture");
         }
         drop(directory);
         Ok(())
@@ -431,7 +454,7 @@ fn extended_attributes_preserve_path_link_fd_and_buffer_contracts() {
             Ok(()) => {}
             Err(Errno::OPNOTSUPP | Errno::NOSYS) => {
                 drop(file);
-                fs::unlinkat(&directory, "record", AtFlags::empty())
+                fs::unlinkat(&directory, "record", UnlinkAtFlags::empty())
                     .expect("remove unavailable xattr fixture");
                 drop(directory);
                 return Ok(());
@@ -480,7 +503,7 @@ fn extended_attributes_preserve_path_link_fd_and_buffer_contracts() {
         );
 
         drop(file);
-        fs::unlinkat(&directory, "record", AtFlags::empty()).expect("remove xattr fixture");
+        fs::unlinkat(&directory, "record", UnlinkAtFlags::empty()).expect("remove xattr fixture");
         drop(directory);
         Ok(())
     });

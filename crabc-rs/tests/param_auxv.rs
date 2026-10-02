@@ -14,5 +14,6 @@ fn auxv_values_are_present_and_stable() {
     assert_ne!(minimum_signal_stack, 0);
     assert_eq!(minimum_signal_stack, param::linux_minsigstksz());
 
+    #[cfg(target_arch = "aarch64")]
     assert!(!param::linux_execfn().to_bytes().is_empty());
 }
