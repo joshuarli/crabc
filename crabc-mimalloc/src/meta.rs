@@ -5699,15 +5699,22 @@ impl<'owner> MetadataEngine<'owner> {
             .ok_or(MetaError::InitializationRetained)?;
         if !weak { return Ok(crate::random::RandomReinitialization::default()); }
         let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
-        drop(entry);
-        if prepared.requires_warning() { warning(); }
-        // SAFETY: the warning returned with no entry or source projection live.
-        let material = unsafe { prepared.after_warning() };
-        let _entry = self.enter_for_main_subprocess(subprocess)?;
-        self.validate_bound_detached_metadata_theap(subprocess)?;
-        if self.get_ref().detached_metadata_theap.load(Ordering::Acquire) != pointer.as_ptr() {
-            return Err(MetaError::InitializationRetained);
-        }
+        let (material, _entry) = if prepared.requires_warning() {
+            drop(entry);
+            warning();
+            // SAFETY: the warning returned with no source projection live.
+            let material = unsafe { prepared.after_warning() };
+            let entry = self.enter_for_main_subprocess(subprocess)?;
+            self.validate_bound_detached_metadata_theap(subprocess)?;
+            if self.get_ref().detached_metadata_theap.load(Ordering::Acquire) != pointer.as_ptr() {
+                return Err(MetaError::InitializationRetained);
+            }
+            (material, entry)
+        } else {
+            // SAFETY: strong entropy needs no warning or weak observations;
+            // the short random projection ended before entropy acquisition.
+            (unsafe { prepared.after_warning() }, entry)
+        };
         // SAFETY: reacquired entry retains the original validated image and
         // excludes every other projection while applying prepared material.
         let remains_weak = unsafe { Theap::with_os_reservation_random_at(pointer, |random| {
