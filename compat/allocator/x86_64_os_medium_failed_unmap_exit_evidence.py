@@ -34,7 +34,7 @@ TRACE_BEGIN = "CRABC_MI_OS_MEDIUM_FAILED_UNMAP_BEGIN"
 TRACE_END = "CRABC_MI_OS_MEDIUM_FAILED_UNMAP_END"
 C_OS_PREFIX = "CRABC_MI_C_OS_MEDIUM_STATE "
 RANGE_PREFIX = "CRABC_MI_OS_MEDIUM_FAILED_RANGE "
-RUST_FILTER = "final_os_medium_unmap_failure_retains_one_terminal_owner"
+RUST_FILTER = "final_os_medium_unmap_failure_consumes_allocator_owner_once"
 EXPECTED = {
     "request": 65536,
     "block_size": 81920,

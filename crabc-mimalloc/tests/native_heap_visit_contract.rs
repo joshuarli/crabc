@@ -97,10 +97,7 @@ unsafe extern "C" fn observe_calloc(
     }
 }
 
-#[test]
 fn public_theap_visitation_finds_one_live_calloc_block() {
-    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
-    assert!(native_runtime_test_support::initialize(page_size));
     let heap = heaps::heap_new();
     assert!(!heap.is_null());
     // SAFETY: the test owns this Heap and retains its only live client until
@@ -123,10 +120,7 @@ fn public_theap_visitation_finds_one_live_calloc_block() {
     }
 }
 
-#[test]
 fn public_heap_visitation_tracks_live_population_early_stop_and_collection() {
-    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
-    assert!(native_runtime_test_support::initialize(page_size));
     let default = heaps::theap_get_default();
     let heap = heaps::heap_new();
     let reentry_heap = heaps::heap_new();
@@ -196,4 +190,21 @@ fn public_heap_visitation_tracks_live_population_early_stop_and_collection() {
         assert!(heaps::heap_release(heap, true));
         assert!(heaps::heap_release(reentry_heap, true));
     }
+}
+
+#[test]
+fn public_heap_and_theap_visitation_preserve_live_population_after_prior_heap_history() {
+    // Process startup owns the initial thread's allocator descriptor. Keep
+    // both histories on that same live thread instead of treating a later
+    // libtest worker as another initial process thread.
+    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
+    assert!(native_runtime_test_support::initialize(page_size));
+    public_heap_visitation_tracks_live_population_early_stop_and_collection();
+    std::thread::spawn(|| {
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
+        public_theap_visitation_finds_one_live_calloc_block();
+        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+    }).join().unwrap();
+    public_theap_visitation_finds_one_live_calloc_block();
+    public_heap_visitation_tracks_live_population_early_stop_and_collection();
 }

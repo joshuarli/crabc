@@ -52,6 +52,35 @@ unsafe extern "C" {
     fn __crabc_mimalloc_page_map_class_test_audit(output: *mut c_void, bytes: usize) -> i32;
 }
 
+// Linux mincore reports ENOMEM if any page in the queried span is absent.
+// Its output vector needs one byte per OS page, including the unused prefix.
+fn entire_range_mapped(range: (usize, usize), page_size: usize) -> bool {
+    assert_eq!(range.0 % page_size, 0);
+    assert_eq!(range.1 % page_size, 0);
+    let mut residency = vec![0u8; range.1 / page_size];
+    // SAFETY: mincore observes this captured address range without reading
+    // allocator metadata or client bytes; the vector covers the whole range.
+    unsafe { crabc_core::mm::mincore_raw(
+        range.0 as *mut u8, range.1, residency.as_mut_ptr()) }.is_ok()
+}
+
+fn entire_range_unmapped(range: (usize, usize), page_size: usize) -> bool {
+    (0..range.1).step_by(page_size).all(|offset| {
+        let mut residency = 0u8;
+        // SAFETY: this observes one OS page without dereferencing its bytes.
+        (unsafe { crabc_core::mm::mincore_raw(
+            (range.0 + offset) as *mut u8, page_size, &mut residency) })
+            == Err(crabc_core::Errno::NOMEM)
+    })
+}
+
+fn survivor_bytes_match(address: usize, length: usize, pattern: u8) -> bool {
+    // SAFETY: the caller holds this still-live client after the allocating
+    // worker has joined, and no other worker reads, writes, or frees it.
+    unsafe { core::slice::from_raw_parts(address as *const u8, length) }
+        .iter().all(|byte| *byte == pattern)
+}
+
 fn client(address: usize) -> core::ptr::NonNull<u8> {
     core::ptr::NonNull::new(address as *mut u8).expect("the exact client is nonnull")
 }
@@ -109,6 +138,11 @@ fn failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases() {
         assert_eq!((local.used, local.reserved), (2, 6));
         assert!(unsafe { native_runtime_current_local_page_same_test_audit(
             client(medium[0]), client(medium[1])) }.unwrap());
+        // SAFETY: this worker exclusively owns all three live client spans.
+        unsafe {
+            core::ptr::write_bytes(huge as *mut u8, 0xA5, HUGE_REQUEST);
+            for address in medium { core::ptr::write_bytes(address as *mut u8, 0x5A, MEDIUM_REQUEST); }
+        }
         owner_send.send((huge, medium)).unwrap();
         owner_go_recv.recv().unwrap();
         assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
@@ -127,17 +161,22 @@ fn failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases() {
         let before = vm_current();
         let failure = native_runtime_test_fail_next_unmap();
         let range = failure.capture_range();
+        assert!(survivor_bytes_match(huge, HUGE_REQUEST, 0xA5));
         let result = unsafe { native_free(client(huge)) };
         let failed = range.single().expect("one exact failed huge OS unmap");
-        let attempts = failure.observed();
         let after = vm_current();
-        let mut residency = 0u8;
-        let mapping_retained = unsafe { crabc_core::mm::mincore_raw(
-            failed.0 as *mut u8, page_size, &mut residency) }.is_ok();
+        assert!(entire_range_mapped(failed, page_size));
+        native_collect(true);
+        native_collect(true);
+        assert_eq!(vm_current(), after, "collection cannot account the consumed range again");
+        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        assert_eq!(vm_current(), after, "thread finish cannot account the consumed range again");
+        assert_eq!(range.single(), Some(failed), "collection and finish cannot retry the consumed range");
+        let attempts = failure.observed();
+        let mapping_retained = entire_range_mapped(failed, page_size);
         drop(range);
         drop(failure);
         huge_done_send.send((result, failed, attempts, before, after, mapping_retained)).unwrap();
-        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
     });
 
     let (medium_ready_send, medium_ready_recv) = mpsc::sync_channel(0);
@@ -147,7 +186,10 @@ fn failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases() {
         assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         medium_ready_send.send(()).unwrap();
         medium_go_recv.recv().unwrap();
+        assert!(survivor_bytes_match(medium[0], MEDIUM_REQUEST, 0x5A));
+        assert!(survivor_bytes_match(medium[1], MEDIUM_REQUEST, 0x5A));
         let first = unsafe { native_free(client(medium[0])) };
+        assert!(survivor_bytes_match(medium[1], MEDIUM_REQUEST, 0x5A));
         let second = unsafe { native_free(client(medium[1])) };
         native_collect(true);
         medium_done_send.send((first, second)).unwrap();
@@ -169,7 +211,7 @@ fn failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases() {
     let (huge_result, failed_range, failed_attempts, before, after_huge_vm, mapping_retained) =
         huge_done_recv.recv().unwrap();
     huge_survivor.join().unwrap();
-    assert_eq!(huge_result, NativePageFreeResult::Retained);
+    assert_eq!(huge_result, NativePageFreeResult::Freed);
     assert_eq!(failed_attempts, 1);
     assert!(mapping_retained);
     assert!(failed_range.0 <= huge && huge < failed_range.0 + failed_range.1);
@@ -201,9 +243,7 @@ fn failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases() {
     // the raw cleanup after both surviving threads have finished.
     let raw_retry = unsafe { crabc_core::mm::munmap_raw(
         failed_range.0 as *mut u8, failed_range.1) }.is_ok();
-    let mut residency = 0u8;
-    let terminal_unmapped = unsafe { crabc_core::mm::mincore_raw(
-        failed_range.0 as *mut u8, page_size, &mut residency) }.is_err();
+    let terminal_unmapped = entire_range_unmapped(failed_range, page_size);
     let raw_only_retry = vm_current() == after_medium_vm;
     assert!(raw_retry && terminal_unmapped && raw_only_retry);
 

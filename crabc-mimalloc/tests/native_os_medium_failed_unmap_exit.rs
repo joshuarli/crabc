@@ -19,6 +19,35 @@ use crabc_mimalloc::__crabc_runtime::{
 
 const REQUEST: usize = 64 * 1024;
 
+// Linux mincore reports ENOMEM if any page in the queried span is absent.
+// Its output vector needs one byte per OS page, including the unused prefix.
+fn entire_range_mapped(range: (usize, usize), page_size: usize) -> bool {
+    assert_eq!(range.0 % page_size, 0);
+    assert_eq!(range.1 % page_size, 0);
+    let mut residency = vec![0u8; range.1 / page_size];
+    // SAFETY: mincore observes this captured address range without reading
+    // allocator metadata or client bytes; the vector covers the whole range.
+    unsafe { crabc_core::mm::mincore_raw(
+        range.0 as *mut u8, range.1, residency.as_mut_ptr()) }.is_ok()
+}
+
+fn entire_range_unmapped(range: (usize, usize), page_size: usize) -> bool {
+    (0..range.1).step_by(page_size).all(|offset| {
+        let mut residency = 0u8;
+        // SAFETY: this observes one OS page without dereferencing its bytes.
+        (unsafe { crabc_core::mm::mincore_raw(
+            (range.0 + offset) as *mut u8, page_size, &mut residency) })
+            == Err(crabc_core::Errno::NOMEM)
+    })
+}
+
+fn survivor_bytes_match(address: usize, length: usize, pattern: u8) -> bool {
+    // SAFETY: the caller holds this still-live client after the allocating
+    // worker has joined, and no other worker reads, writes, or frees it.
+    unsafe { core::slice::from_raw_parts(address as *const u8, length) }
+        .iter().all(|byte| *byte == pattern)
+}
+
 fn client(address: usize) -> core::ptr::NonNull<u8> {
     core::ptr::NonNull::new(address as *mut u8).expect("a live source client is nonnull")
 }
@@ -72,7 +101,7 @@ fn vm_current() -> Option<(i64, i64)> {
 }
 
 #[test]
-fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
+fn final_os_medium_unmap_failure_consumes_allocator_owner_once() {
     std::env::set_var("mimalloc_disallow_arena_alloc", "1");
     std::env::set_var("mimalloc_page_full_retain", "-1");
     std::env::set_var("mimalloc_show_errors", "1");
@@ -104,6 +133,8 @@ fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
             .expect("both clients share the exact page"));
         assert_eq!((local.used, local.reserved), (2, 6));
         assert_eq!(unsafe { native_block_size(blocks[0]) }, Some(81920));
+        // SAFETY: this worker exclusively owns both complete live client spans.
+        for block in blocks { unsafe { core::ptr::write_bytes(block.as_ptr(), 0x5A, REQUEST); } }
         clients_sender.send(blocks.map(|block| block.as_ptr().addr())).unwrap();
         exit_receiver.recv().unwrap();
         assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
@@ -119,6 +150,7 @@ fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
             assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             ready_sender.send(()).unwrap();
             go_receiver.recv().unwrap();
+            assert!(survivor_bytes_match(address, REQUEST, 0x5A));
             if index == 0 {
                 assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Freed);
                 let local = unsafe { native_runtime_current_local_page_test_audit(client(clients[1])) }
@@ -130,18 +162,20 @@ fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
                 let before = vm_current().expect("source statistics before terminal release");
                 let fault = native_runtime_test_fail_next_unmap();
                 let range = fault.capture_range();
-                assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Retained);
+                assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Freed);
                 let failed_range = range.single().expect("one exact failed terminal unmap");
                 let after = vm_current();
-                let mut residency = 0u8;
-                let physical_retained = unsafe {
-                    crabc_core::mm::mincore_raw(failed_range.0 as *mut u8, page_size, &mut residency)
-                }.is_ok();
-                assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::InvalidPointer);
+                assert!(entire_range_mapped(failed_range, page_size));
+                native_collect(true);
+                native_collect(true);
+                assert_eq!(vm_current(), after, "collection cannot account the consumed range again");
+                let finish = finish_current_thread_native_after_user_destructors();
+                assert_eq!(vm_current(), after, "thread finish cannot account the consumed range again");
+                assert_eq!(range.single(), Some(failed_range), "collection and finish cannot retry the consumed range");
+                let physical_retained = entire_range_mapped(failed_range, page_size);
                 let attempts = fault.observed();
                 drop(range);
                 drop(fault);
-                let finish = finish_current_thread_native_after_user_destructors();
                 Some((failed_range, before, after, physical_retained, attempts, finish))
             }
         });
@@ -161,6 +195,7 @@ fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
     let after_first = medium_map_image();
     assert_eq!(medium_slices(after_first), medium_slices(baseline) + 8);
     assert_eq!(unsafe { native_block_size(client(clients[1])) }, Some(81920));
+    assert!(survivor_bytes_match(clients[1], REQUEST, 0x5A));
 
     go.remove(0).send(()).unwrap();
     let (range, before, after, physical_retained, attempts, finish) = survivors.remove(0).join().unwrap().unwrap();
@@ -191,4 +226,10 @@ fn final_os_medium_unmap_failure_retains_one_terminal_owner() {
     std::println!("CRABC_MI_OS_MEDIUM_FAILED_UNMAP_END");
     std::println!("CRABC_MI_OS_MEDIUM_FAILED_RANGE base=0x{:X} length={}", range.0, range.1);
     assert!(counters_released, "the failed source unmap still decrements VM counters once");
+    let before_raw_cleanup = vm_current();
+    // SAFETY: allocator ownership was consumed and every worker has joined.
+    // This is the exact still-mapped failed syscall range, used only for raw cleanup.
+    assert!(unsafe { crabc_core::mm::munmap_raw(range.0 as *mut u8, range.1) }.is_ok());
+    assert!(entire_range_unmapped(range, page_size));
+    assert_eq!(vm_current(), before_raw_cleanup);
 }
