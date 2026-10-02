@@ -13,6 +13,55 @@ use crate::config::{ARENA_MIN_OBJ_SIZE, ARENA_SLICE_SIZE, PAGE_META_ALIGNMENT, P
 use crate::os::{MemoryConfig, VmProcess};
 use crate::types::{MemoryId, Page};
 
+/// Installs the selected Fresh Page tail after primary metadata exists and
+/// before any PageMap, queue, or client can observe the claim.
+///
+/// # Safety
+/// `slice_start..slice_start + size` is this exact live page claim, described
+/// by `memory`. The caller excludes all access to its final OS page and
+/// retains the matching process owner when the claim has VM accounting.
+pub(crate) unsafe fn set_source_page_guard(
+    config: MemoryConfig, process: Option<VmProcess<'_>>, memory: MemoryId,
+    slice_start: *mut u8, size: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::config::SECURE_LEVEL >= 5 && memory.initially_committed() {
+        let Some(offset) = crate::page::page_noguard_size(size, config.page_size()) else { return; };
+        // The source guard transition is best effort: an unsuccessful
+        // primitive retains the claim and reports through its original owner.
+        let _ = unsafe { crate::arena::secure_page_guard_set_at(
+            process, config.page_size(), slice_start.wrapping_add(offset), memory,
+        ) };
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = (config, process, memory, slice_start, size);
+}
+
+/// Restores a detached Page's tail before metadata or backing is released.
+/// Larger later claims may cover this same address, so even an originally
+/// uncommitted Page follows the source reset once its publication is gone.
+///
+/// # Safety
+/// The caller owns this exact all-free claim, has removed its PageMap and
+/// queue publication, and retains its metadata and matching process owner.
+/// No client or lookup may access the span during the transition.
+pub(crate) unsafe fn reset_source_page_guard(
+    config: MemoryConfig, process: Option<VmProcess<'_>>, memory: MemoryId,
+    slice_start: *mut u8, size: usize,
+) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::config::SECURE_LEVEL >= 5 && !memory.is_pinned() {
+        let Some(offset) = crate::page::page_noguard_size(size, config.page_size()) else { return; };
+        // The source page-free tail ignores the reset result and keeps its
+        // terminal release sequence under this exact backing owner.
+        let _ = unsafe { crate::arena::secure_page_guard_reset_at(
+            process, config.page_size(), slice_start.wrapping_add(offset), memory,
+        ) };
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = (config, process, memory, slice_start, size);
+}
+
 mod sealed {
     pub trait Sealed {}
     impl Sealed for crate::arena::ArenaView<'_> {}

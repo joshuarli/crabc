@@ -2816,7 +2816,7 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear_and_sta
     let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
-    let Some(expected_reserved) = page::reserved_object_count(size, usable_offset, block_size)
+    let Some(expected_reserved) = page::page_reserved_object_count(size, usable_offset, block_size, page_map.memory_config().page_size())
     else {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
@@ -2855,6 +2855,11 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear_and_sta
     }
     // The ordinary arena bit is separate from the mapped-abandoned identity
     // the source unown tail may already have cleared.
+    // SAFETY: this exact all-free claim is no longer PageMap-published;
+    // its original process backing remains retained before ordinary-bit release.
+    unsafe { crate::page_backing::reset_source_page_guard(
+        page_map.memory_config(), backing.process(), expected_memory, slice_start, size,
+    ) };
     if !clear_ordinary(&arena, slice_index) {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
@@ -2996,6 +3001,11 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_s
     if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
         return ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation;
     }
+    // SAFETY: this exact all-free claim is no longer PageMap-published;
+    // its original process backing remains retained before ordinary-bit release.
+    unsafe { crate::page_backing::reset_source_page_guard(
+        page_map.memory_config(), backing.process(), expected_memory, slice_start, size,
+    ) };
     if !clear_ordinary(&arena, slice_index) {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
@@ -3363,6 +3373,12 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
                     ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
                 );
             }
+            // SAFETY: the exact all-free mapping remains owned after PageMap
+            // removal and before aliases or primary metadata are retired.
+            unsafe { crate::page_backing::reset_source_page_guard(
+                page_map.memory_config(), process, expected_memory,
+                published.slice_start().as_ptr(), layout.allocation_size(),
+            ) };
             if unsafe { !published.clear_secondary_metadata() } {
                 return retain(
                     OsAlignedPageOwner::Published(published),
@@ -19656,6 +19672,11 @@ impl<'main, 'arena> ThreadExitFullRegularPostExitParts<'main, 'arena> {
         if unsafe { page_map.unregister_range(self.slice_start, page_map_size) }.is_err() {
             return false;
         }
+        // SAFETY: this explicit arena route retains the exact all-free
+        // claim after PageMap removal and before its ordinary bit is cleared.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            page_map.memory_config(), None, self.memory, self.slice_start, self.size,
+        ) };
         if unsafe { self.arena.pages() }
             .and_then(|pages| pages.clear_range(expected_memory.slice_index as usize, 1))
             != Some(true)
@@ -19939,6 +19960,11 @@ impl<'arena> ThreadExitFullSingletonPagesPostExitParts<'arena> {
         if unsafe { page_map.unregister_range(slice_start, size) }.is_err() {
             return false;
         }
+        // SAFETY: this explicit arena route retains the exact all-free
+        // claim after PageMap removal and before its ordinary bit is cleared.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            page_map.memory_config(), None, memory, slice_start, size,
+        ) };
         if unsafe { self.arena.pages() }
             .and_then(|pages| pages.clear_range(slice_index, 1))
             != Some(true)
@@ -20188,6 +20214,12 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
         {
             return Err(ThreadExitFullOsSingletonPagesPostExitFreeError::Release);
         }
+        // SAFETY: the exact all-free mapping remains owned after PageMap
+        // removal and before aliases or primary metadata are retired.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            page_map.memory_config(), None, expected_memory,
+            published.slice_start().as_ptr(), layout.allocation_size(),
+        ) };
         // SAFETY: PageMap lookup is now absent while the primary and its
         // secondary aliases still live in this exact retained mapping.
         if unsafe { !published.clear_secondary_metadata() } {
@@ -20626,7 +20658,7 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
             return false;
         };
         let Some(expected_reserved) =
-            page::reserved_object_count(size, usable_offset, block_size)
+            page::page_reserved_object_count(size, usable_offset, block_size, page_map.memory_config().page_size())
         else {
             return false;
         };
@@ -20660,6 +20692,11 @@ impl<'main, 'arena> ThreadExitFullRegularPagesPostExitParts<'main, 'arena> {
         if unsafe { page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
+        // SAFETY: this explicit arena route retains the exact all-free
+        // claim after PageMap removal and before its ordinary bit is cleared.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            page_map.memory_config(), None, memory, slice_start, size,
+        ) };
         if unsafe { self.arena.pages() }
             .and_then(|pages| pages.clear_range(slice_index, 1))
             != Some(true)
@@ -21806,7 +21843,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         let Some(usable_offset) = page::page_usable_start_offset(block_size) else {
             return false;
         };
-        let Some(expected_reserved) = page::reserved_object_count(size, usable_offset, block_size)
+        let Some(expected_reserved) = page::page_reserved_object_count(size, usable_offset, block_size, page_map.memory_config().page_size())
         else {
             return false;
         };
@@ -21845,6 +21882,11 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         // clear, metadata retirement, and finally arena-slice release. The
         // ordinary bitmap has one bit at the page's first slice even though a
         // regular page can span one or more arena slices.
+        // SAFETY: this explicit arena route retains the exact all-free
+        // claim after PageMap removal and before its ordinary bit is cleared.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            page_map.memory_config(), None, memory, slice_start, size,
+        ) };
         if unsafe { self.arena.pages() }
             .and_then(|pages| pages.clear_range(slice_index, 1))
             != Some(true)
@@ -22472,6 +22514,11 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         // abandoned bit cleared by the raw helper. Preserve source order:
         // PageMap unregister, ordinary page-image clear, metadata retirement,
         // then arena-slice return.
+        // SAFETY: this explicit arena route retains the exact all-free
+        // claim after PageMap removal and before its ordinary bit is cleared.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            page_map.memory_config(), None, self.memory, self.slice_start, self.size,
+        ) };
         if unsafe { self.arena.pages() }
             .and_then(|pages| pages.clear_range(expected_memory.slice_index as usize, 1))
             != Some(true)
@@ -34979,6 +35026,11 @@ impl<'heap, 'arena, 'map>
         if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
+        // SAFETY: this linear raw-arena route retains its exact all-free
+        // span after removing PageMap publication and before bitmap release.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            self.page_map.memory_config(), None, self.memory, slice_start, _size,
+        ) };
         let Some(owner) = self.owner.as_ref() else {
             return false;
         };
@@ -42232,11 +42284,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let key = unsafe { Page::source_page_keys_at(page) };
             // SAFETY: the block was just popped for this checked request; its
             // complete writable span includes the reserved trailing record.
-            let policy = if crate::config::DEBUG_LEVEL >= 1 {
-                alloc::SourcePaddingPolicy::Debug
-            } else {
-                alloc::SourcePaddingPolicy::RecordOnly
-            };
+            let policy = alloc::selected_source_padding_policy();
             unsafe { alloc::initialize_source_padding(
                 block, block_size, request, page.as_ptr().addr(), key, zero, huge, policy,
             ) }.ok_or(FreeListError::InvalidBlock)?;
@@ -42417,6 +42465,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 return Ok(None);
             }
         };
+        // SAFETY: this exact fresh span has primary metadata but no escaped
+        // alias, lookup, queue entry, or client when its source tail changes.
+        unsafe { crate::page_backing::set_source_page_guard(
+            config, self.arena.process(), memory, slice_start.as_ptr(), layout.allocation_size(),
+        ) };
         if unsafe { !claim.publish_secondary_metadata(page) } {
             self.rollback_fresh_os_aligned(claim, page, false, false);
             return Ok(None);
@@ -42653,6 +42706,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             pending.metadata_stage = FreshOsMetadataStage::Primary { statistics_bin };
         }
         if let FreshOsMetadataStage::Primary { statistics_bin } = pending.metadata_stage {
+            if let (Some(start), Ok(memory)) = (pending.claim.slice_start(), pending.claim.memory_id()) {
+                // SAFETY: this private failed attempt retains its exact claim;
+                // no client, queue, or PageMap publication remains.
+                unsafe { crate::page_backing::reset_source_page_guard(
+                    self.page_map.memory_config(), self.arena.process(), memory,
+                    start.as_ptr(), pending.claim.layout().allocation_size(),
+                ) };
+            }
             // SAFETY: no observer remains and the exact selected session owns
             // this original primary's terminal metadata transition.
             if unsafe { self.session.retire_page(&mut *pending.page.as_ptr()) }.is_none() { return Err(pending); }
@@ -42720,6 +42781,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 self.park_pending_os_release(claim.retain_failed_publication());
                 return;
             }
+        }
+        if let (Some(start), Ok(memory)) = (claim.slice_start(), claim.memory_id()) {
+            // SAFETY: this private failed attempt retains its exact claim;
+            // no client, queue, or PageMap publication remains.
+            unsafe { crate::page_backing::reset_source_page_guard(
+                self.page_map.memory_config(), self.arena.process(), memory,
+                start.as_ptr(), claim.layout().allocation_size(),
+            ) };
         }
         if aliases_published && !unsafe { claim.clear_secondary_metadata(page) } {
             // An alias ownership mismatch is a terminal provenance fault: do
@@ -42839,7 +42908,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let reserved = match kind {
             PageKind::Singleton => 1,
             PageKind::Small | PageKind::Medium | PageKind::Large => {
-                match page::reserved_object_count(allocation_size, usable_offset, block_size) {
+                match page::page_reserved_object_count(allocation_size, usable_offset, block_size, self.page_map.memory_config().page_size()) {
                     Some(reserved) => reserved,
                     None => {
                         let _ = claim.release();
@@ -42918,6 +42987,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Ok(None);
         };
 
+        // SAFETY: the unique fresh claim retains its initialized primary;
+        // no arena bitmap, PageMap, queue, or client observes it yet.
+        unsafe { crate::page_backing::set_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), memory, slice_start, allocation_size,
+        ) };
         let page_map_size = match arena_page_map_size(page, slice_start, allocation_size) {
             Some(size) => size,
             None => {
@@ -43001,6 +43075,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     .unregister_range(slice_start, page_map_size)
             };
         }
+        // SAFETY: no client or PageMap reader remains; the exact claim
+        // and its original backing owner remain live before bitmap release.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), memory, slice_start, memory.arena_memory().map(|m| m.slice_count as usize * ARENA_SLICE_SIZE).unwrap_or(0),
+        ) };
         if arena_registered {
             if memory.arena_memory().is_some() {
                 // The exact session-selected bitmap bit was set by this
@@ -43934,6 +44013,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if self.consume_page_release_after_page_map_unregister_failure() {
                     return false;
                 }
+                // SAFETY: no client or PageMap reader remains; the exact claim
+                // and its original backing owner remain live before bitmap release.
+                unsafe { crate::page_backing::reset_source_page_guard(
+                    self.page_map.memory_config(), self.arena.process(), memory, slice_start, size,
+                ) };
                 let Some(arena) = (unsafe { self.arena.arena_for_memory(memory) }) else { return false; };
                 if !self.session.clear_arena_page(&arena, memory) {
                     // The map is already clear, so do not release the arena
@@ -43978,6 +44062,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if self.consume_page_release_after_page_map_unregister_failure() {
                     return false;
                 }
+                // SAFETY: the exact all-free mapping remains owned after PageMap
+                // removal and before aliases or primary metadata are retired.
+                unsafe { crate::page_backing::reset_source_page_guard(
+                    self.page_map.memory_config(), self.arena.process(), expected_memory,
+                    published.slice_start().as_ptr(), layout.allocation_size(),
+                ) };
                 // SAFETY: page-map lookup is gone before the secondary slots
                 // are cleared, and this single-thread lifecycle has no other
                 // aligned metadata reader.
@@ -44079,6 +44169,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
+        // SAFETY: the exact all-free claim and backing remain retained
+        // after PageMap removal and before ordinary bitmap release.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), memory, slice_start, size,
+        ) };
         let Some(arena) = (unsafe { self.arena.arena_for_memory(memory) }) else { return false; };
         if !self.session.clear_arena_page(&arena, memory) {
             // The map is already clear; retain terminal ownership rather than
@@ -44143,6 +44238,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             return false;
         }
+        // SAFETY: the exact all-free mapping remains owned after PageMap
+        // removal and before aliases or primary metadata are retired.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), expected_memory,
+            published.slice_start().as_ptr(), layout.allocation_size(),
+        ) };
         // SAFETY: page-map lookup is gone before the secondary aligned
         // metadata aliases are cleared, while the primary remains live.
         if unsafe { !published.clear_secondary_metadata() } {
@@ -44258,7 +44359,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let usable_offset = page::page_usable_start_offset(block_size)?;
         let expected_reserved = match kind {
             PageKind::Small | PageKind::Medium | PageKind::Large => {
-                page::reserved_object_count(size, usable_offset, block_size)?
+                page::page_reserved_object_count(size, usable_offset, block_size, page_map.memory_config().page_size())?
             }
             PageKind::Singleton => 1,
         };
@@ -44805,7 +44906,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         let usable_offset = page::page_usable_start_offset(block_size)?;
         let expected_reserved = match kind {
             PageKind::Small | PageKind::Medium | PageKind::Large => {
-                page::reserved_object_count(size, usable_offset, block_size)?
+                page::page_reserved_object_count(size, usable_offset, block_size, self.page_map.memory_config().page_size())?
             }
             PageKind::Singleton => 1,
         };
@@ -44895,6 +44996,11 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
+        // SAFETY: no client or PageMap reader remains; the exact claim
+        // and its original backing owner remain live before bitmap release.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), memory, slice_start, size,
+        ) };
         if !self.clear_main_arena_page(memory) {
             return false;
         }
@@ -44951,6 +45057,12 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         {
             return false;
         }
+        // SAFETY: the exact all-free mapping remains owned after PageMap
+        // removal and before aliases or primary metadata are retired.
+        unsafe { crate::page_backing::reset_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), expected_memory,
+            published.slice_start().as_ptr(), layout.allocation_size(),
+        ) };
         // SAFETY: PageMap lookup is gone before secondary aliases clear.
         if unsafe { !published.clear_secondary_metadata() } {
             return false;
@@ -45526,6 +45638,73 @@ mod tests {
         unsafe { page_map.destroy() }.unwrap();
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[test]
+    fn secure_page_tail_protection_resets_before_reusing_arena_span() {
+        let fault = fault::install(fault::Plan::disabled());
+        with_unpinned_mapping_allocator_with_access(MapAccess::Reserved,
+            Some(CommitHook::new(secure_mapping_commit, null_mut())), |allocator, _mapping| {
+            let protection = fault.capture_protection_ranges();
+            let block = allocator.allocate(37, true).unwrap();
+            // SAFETY: the current client pins its initialized page and arena claim.
+            let page = unsafe { allocator.page_map.checked_lookup(block.as_ptr()).as_ref() }.unwrap();
+            let memory = page.memid().arena_memory().unwrap();
+            let start = allocator.arena.slice_start(memory.slice_index as usize).unwrap();
+            let tail = start.addr() + memory.slice_count as usize * ARENA_SLICE_SIZE - 4096;
+            let (ranges, count) = protection.attempts().unwrap();
+            assert!(ranges[..count].contains(&(tail, 4096, 0)));
+            // Only the valid client is touched while its separate tail is inaccessible.
+            unsafe { core::ptr::write_bytes(block.as_ptr(), 0x71, 37); }
+            assert!(unsafe { allocator.free(block) }.is_ok());
+            assert!(allocator.collect_retired(true));
+            let (ranges, count) = protection.attempts().unwrap();
+            let protected = ranges[..count].iter().position(|range| *range == (tail, 4096, 0)).unwrap();
+            let reset = ranges[..count].iter().position(|range| *range == (tail, 4096, 3)).unwrap();
+            assert!(protected < reset);
+            drop(protection);
+            let large = allocator.allocate(MIB, true).unwrap();
+            assert!(large.as_ptr().addr() <= tail && tail < large.as_ptr().addr() + MIB);
+            // The former tail now belongs to this complete live client span.
+            unsafe { core::ptr::write_bytes(large.as_ptr(), 0x39, MIB); }
+            assert_eq!(unsafe { large.as_ptr().add(tail - large.as_ptr().addr()).read() }, 0x39);
+            assert!(unsafe { allocator.free(large) }.is_ok());
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", not(feature = "mi-debug-1")))]
+    #[test]
+    fn secure_fresh_page_excludes_tail_and_initializes_checked_padding() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(19, false).unwrap();
+            // SAFETY: this owner retains the live client and its source page.
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let state = unsafe { page.as_ref() };
+            let memory = state.memid().arena_memory().unwrap();
+            let span = memory.slice_count as usize * ARENA_SLICE_SIZE;
+            let page_size = allocator.page_map.memory_config().page_size();
+            let offset = page::page_usable_start_offset(state.block_size()).unwrap();
+            let expected = page::reserved_object_count(
+                page::page_noguard_size(span, page_size).unwrap(), offset, state.block_size(),
+            ).unwrap();
+            assert_eq!(state.reserved(), expected);
+            assert_eq!(unsafe { allocator.usable_size(block) }, Some(19));
+            // Full-security padding fills only slack, preserving every valid
+            // client byte and the ordinary record's logical requested extent.
+            let usable = state.block_size() - PADDING_SIZE;
+            for offset in 19..usable.min(35) {
+                assert_eq!(unsafe { block.as_ptr().add(offset).read() }, 0xDE);
+            }
+            unsafe { core::ptr::write_bytes(block.as_ptr(), 0x71, 19); }
+            assert!(unsafe { allocator.free(block) }.is_ok());
+            assert!(allocator.collect_retired(true));
+            let reused = allocator.allocate(19, true).unwrap();
+            for offset in 0..19 {
+                assert_eq!(unsafe { reused.as_ptr().add(offset).read() }, 0);
+            }
+            assert!(unsafe { allocator.free(reused) }.is_ok());
+        });
+    }
+
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3", not(feature = "mi-debug-1")))]
     #[test]
     fn secure_record_only_allocation_preserves_client_bytes_and_logical_usable_size() {
@@ -45945,7 +46124,30 @@ mod tests {
         unsafe { page_map.destroy() }.unwrap();
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    unsafe extern "C" fn secure_mapping_commit(
+        commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, _argument: *mut c_void,
+    ) -> bool {
+        let access = if commit { 3 } else { 0 };
+        fault::record_protection_range(start, size, access);
+        // SAFETY: the external arena owns this whole-page range for the
+        // callback lifetime and excludes clients during accessibility changes.
+        if unsafe { crabc_core::mm::mprotect_raw(start, size, access) }.is_err() { return false; }
+        if !is_zero.is_null() {
+            // Recommitting this retained mapping does not prove zero contents.
+            unsafe { is_zero.write(false) };
+        }
+        true
+    }
+
     fn with_unpinned_mapping_allocator(
+        test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>, &mut Mapping),
+    ) {
+        with_unpinned_mapping_allocator_with_access(MapAccess::Committed, None, test)
+    }
+
+    fn with_unpinned_mapping_allocator_with_access(
+        access: MapAccess, commit_hook: Option<CommitHook>,
         test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>, &mut Mapping),
     ) {
         let config = MemoryConfig::from_observations(
@@ -45958,7 +46160,7 @@ mod tests {
             config,
             ARENA_MIN_SIZE,
             ARENA_ALIGNMENT,
-            MapAccess::Committed,
+            access,
         )
         .unwrap();
         let registry = ArenaRegistry::new(crate::subproc::MainSubprocess::test_static_owner().as_ptr());
@@ -45973,7 +46175,7 @@ mod tests {
                 mapping.initially_zero(),
                 -1,
                 false,
-                None,
+                commit_hook,
             )
         }
         .unwrap();

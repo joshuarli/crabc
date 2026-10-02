@@ -13477,11 +13477,7 @@ unsafe fn check_source_native_free_padding(
                 .is_some_and(|memory| memory.base.addr() < page.as_ptr().addr()));
     // SAFETY: the caller owns the exact live allocation; no other operation
     // may change the trailing record before this source free check finishes.
-    let policy = if crate::config::DEBUG_LEVEL >= 1 {
-        crate::alloc::SourcePaddingPolicy::Debug
-    } else {
-        crate::alloc::SourcePaddingPolicy::RecordOnly
-    };
+    let policy = crate::alloc::selected_source_padding_policy();
     let result = unsafe { crate::alloc::check_source_padding_on_free(
         canonical, block_size, page.as_ptr().addr(), key, huge, policy,
     ) };
