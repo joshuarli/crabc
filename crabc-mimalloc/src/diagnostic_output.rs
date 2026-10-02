@@ -5968,8 +5968,10 @@ mod tests {
             set(owner, SourceOption::PurgeDecommits, decommits);
             set(owner, SourceOption::PurgeDelay, delay);
             let before = subprocess.vm_statistics().snapshot();
-            let needs_recommit = mapping
-                .purge_for_process(process, 0, size, allow_reset, size)
+            // SAFETY: this fixture exclusively owns the complete committed,
+            // writable mapping, with no guard pages or outstanding byte views.
+            let needs_recommit = unsafe { mapping
+                .purge_for_process(process, 0, size, allow_reset, size) }
                 .expect("the purge fixture range is live");
             let after = subprocess.vm_statistics().snapshot();
             std::println!(

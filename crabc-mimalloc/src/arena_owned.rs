@@ -6028,8 +6028,10 @@ mod tests {
         let owner = unsafe { backing.allocation_for_arena(arena) }.unwrap();
         let mapping = owner.allocation.regular().unwrap();
         let offset = (claim.start() as usize).checked_sub(mapping.base().unwrap() as usize).unwrap();
-        let needs_recommit = mapping.purge_for_process(owner.process(), offset, ARENA_SLICE_SIZE, false,
-            ARENA_SLICE_SIZE).unwrap();
+        // SAFETY: the live claim retains the complete mapping and process;
+        // reset is disabled, and no byte access overlaps this purge.
+        let needs_recommit = unsafe { mapping.purge_for_process(owner.process(), offset, ARENA_SLICE_SIZE, false,
+            ARENA_SLICE_SIZE) }.unwrap();
         assert!(!needs_recommit);
         assert_eq!(unsafe { claim.start().read() }, 0);
         unsafe { claim.start().write(0x3c); }
