@@ -183,6 +183,29 @@ bitflags! {
     }
 }
 
+bitflags! {
+    /// Linux pathname-resolution controls accepted by [`openat2`].
+    ///
+    /// The named controls are available on the minimum supported Linux 5.10.
+    /// Unknown retained bits are passed to Linux for validation.
+    #[repr(transparent)]
+    #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+    pub struct ResolveFlags: u64 {
+        /// Reject traversal across mount points, including bind mounts.
+        const NO_XDEV = 0x01;
+        /// Reject magic links such as the descriptor links in procfs.
+        const NO_MAGICLINKS = 0x02;
+        /// Reject symbolic links during resolution.
+        const NO_SYMLINKS = 0x04;
+        /// Keep resolution beneath the supplied directory.
+        const BENEATH = 0x08;
+        /// Treat the supplied directory as the root for this lookup.
+        const IN_ROOT = 0x10;
+        /// Preserve unrecognized kernel flag bits for direct validation.
+        const _ = !0;
+    }
+}
+
 /// Linux whole-file advisory-lock operations accepted by [`flock`] and
 /// [`fcntl_lock`].
 ///
@@ -2676,6 +2699,32 @@ pub fn openat<P: PathArg, Fd: AsFd>(
             // non-negative descriptor into this RAII owner.
             unsafe { OwnedFd::from_raw_fd(fd) }
         })
+    })
+}
+
+/// Opens `path` relative to `dirfd` with explicit Linux resolution controls.
+///
+/// The supplied flag and mode words are passed unchanged through `openat2`.
+/// Linux rejects a nonzero mode without a creation flag, unknown flag bits,
+/// and incompatible resolution controls. Kernel errors are returned directly
+/// without retrying through a weaker lookup operation. Success transfers one
+/// fresh descriptor into [`OwnedFd`] and leaves `dirfd` borrowed.
+#[inline]
+pub fn openat2<P: PathArg, Fd: AsFd>(
+    dirfd: Fd,
+    path: P,
+    oflags: OFlags,
+    create_mode: Mode,
+    resolve: ResolveFlags,
+) -> Result<OwnedFd> {
+    let dirfd = dirfd.as_fd();
+    path.into_with_c_str(|path| {
+        crabc_core::fs::openat2(dirfd.as_raw_fd(), path, oflags.bits() as u64,
+            create_mode.bits() as u64, resolve.bits()).map(|fd| {
+                // SAFETY: A successful direct openat2 transfers one fresh,
+                // non-negative descriptor into this unique RAII owner.
+                unsafe { OwnedFd::from_raw_fd(fd) }
+            })
     })
 }
 

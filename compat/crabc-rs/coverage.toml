@@ -1094,13 +1094,13 @@ kind = "semantic"
 symbols = ["chmod", "fchmod", "fchmodat", "fstat", "fstatat", "futimens", "link", "linkat", "lstat", "mkdir", "mkdirat", "open", "openat", "readlink", "readlinkat", "rename", "renameat", "renameat2", "rmdir", "stat", "symlink", "symlinkat", "unlink", "unlinkat", "utimensat"]
 classification = "native-safe"
 status = "verified"
-rust_api = ["fs::{open, openat, stat, statat, lstat, fstat, mkdir, mkdirat, unlink, unlinkat, rmdir, link, linkat, symlink, symlinkat, rename, renameat, renameat_with, chmod, chmodat, fchmod, utimensat, futimens, readlink, readlinkat}"]
+rust_api = ["fs::{open, openat, openat2, ResolveFlags, stat, statat, lstat, fstat, mkdir, mkdirat, unlink, unlinkat, rmdir, link, linkat, symlink, symlinkat, rename, renameat, renameat_with, chmod, chmodat, fchmod, utimensat, futimens, readlink, readlinkat}"]
 shared_impl = ["crabc_core::fs direct path, metadata, link, permission, and timestamp operations"]
 native_boundary = "direct Linux/AArch64 openat/newfstatat/fstat/linkat/symlinkat/renameat2/mkdirat/unlinkat/fchmod/fchmodat/utimensat/readlinkat syscalls"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-rs/tests/filesystem.rs", "compat/rustix/source/links.rs", "compat/rustix/source/metadata.rs", "compat/rustix/source/statat.rs", "compat/rustix/source/openat2.rs", "compat/crabc-rs/verify_filesystem.py"]
-rationale = "This is the tested direct-core path/metadata subset, with `fs::Stat` as a typed Linux/AArch64 kernel metadata view rather than a C struct cast. ABI aliases, ownership-changing path helpers, statfs/statx, and unimplemented operations remain in filesystem.path-metadata; the listed source and dynamic tests cover the remaining named calls where the filesystem static verifier only proves its narrower syscall subset."
+evidence = ["crabc-rs/tests/filesystem.rs", "crabc-core/src/fs.rs", "crabc-rs/src/fs_x86_64.rs", "crabc-rs/tests/x86_64_openat2.rs", "compat/rustix/source/links.rs", "compat/rustix/source/metadata.rs", "compat/rustix/source/statat.rs", "compat/rustix/source/openat2.rs", "compat/crabc-rs/verify_filesystem.py"]
+rationale = "This is the tested direct-core path/metadata subset, with `fs::Stat` as a typed Linux/AArch64 kernel metadata view rather than a C struct cast. Staged Linux/x86-64 also exposes direct openat2 with minimum-Linux-5.10 resolution controls and descriptor ownership, including symlink rejection, beneath-directory and explicit-root lookup, and honest invalid-mode/flag errors. ABI aliases, ownership-changing path helpers, statfs/statx, and unimplemented operations remain in filesystem.path-metadata; the listed source and dynamic tests cover the remaining named calls where the filesystem static verifier only proves its narrower syscall subset."
 
 [[capability]]
 id = "filesystem.directory"

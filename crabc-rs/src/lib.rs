@@ -47,8 +47,9 @@ pub mod collections;
 // epoll readiness with temporary signal masks), the staged typed `fs`
 // pathname-lifecycle and namespace batch (metadata, open/create,
 // directories/nodes/removal, permission/ownership, links, caller-buffer
-// readlink, and ordinary/no-replace/exchange rename), direct caller-buffered
-// `fs::{XattrFlags, getxattr, lgetxattr, fgetxattr, setxattr, lsetxattr,
+// readlink, and ordinary/no-replace/exchange rename), direct
+// `fs::{openat2, ResolveFlags}` directory-relative resolution controls,
+// direct caller-buffered `fs::{XattrFlags, getxattr, lgetxattr, fgetxattr, setxattr, lsetxattr,
 // fsetxattr, listxattr, llistxattr, flistxattr, removexattr, lremovexattr,
 // fremovexattr}` path/no-follow-path/descriptor extended attributes,
 // allocation-free `fs::{RawDir, RawDirEntry, Dir, DirEntry}` Linux getdents64
@@ -77,7 +78,9 @@ pub mod collections;
 // borrowed messages, absolute real-time deadlines, plus validated direct
 // `shm::{open, unlink}` name-to-descriptor ownership with no notification,
 // SysV, semaphore, or mapping IPC,
-// `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking, direct
+// `fd`, `fenv`, `ffi`, direct `fs::flock` whole-file advisory locking,
+// process-associated `fs::{fcntl_lock, lock_from_current, CurrentLockOperation,
+// CurrentLockRange}` advisory record locks, direct
 // `fs::sendfile` descriptor transfer, direct `fs::copy_file_range`
 // descriptor-range copying, direct `fs::posix_fallocate` mode-zero
 // descriptor-range allocation, direct `fs::{FallocateFlags, fallocate}`
