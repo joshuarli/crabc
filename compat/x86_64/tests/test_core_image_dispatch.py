@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -132,6 +134,79 @@ class CoreImageDispatchTests(unittest.TestCase):
         runs = [call for call in self.calls() if call[0] == "run"]
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0][-4:], [custom, "cargo", "fetch", "--locked"])
+
+    def test_lua_supplied_cohort_is_translated_and_uses_supplied_dynamic_runner(self) -> None:
+        for name in ("installed", "rebuilt", "extracted"):
+            (self.work / name).mkdir()
+        for name in ("preparation.json", "qualification.json", "lua.tar.gz"):
+            (self.work / name).write_text("retained input")
+        for kind in ("static", "dynamic"):
+            with self.subTest(kind=kind):
+                arguments = ["--cohort-checkout", str(ROOT),
+                             "--installed-sysroot", str(self.work / "installed"),
+                             "--extracted-sysroot", str(self.work / "extracted"),
+                             "--archive-seed", str(self.work / "lua.tar.gz"),
+                             "--work-root", str(self.work / (kind + "-output"))]
+                if kind == "static":
+                    arguments += ["--static-preparation", str(self.work / "preparation.json"),
+                                  "--rebuilt-sysroot", str(self.work / "rebuilt")]
+                else:
+                    arguments += ["--cohort-receipt", str(self.work / "qualification.json")]
+                result = self.invoke("scripts/dev-x86_64.sh", "lua-" + kind + "-source-build", *arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                run = next(call for call in self.calls() if call[0] == "run")
+                script = "run_x86_static_dispatch.py" if kind == "static" else "run_x86_dynamic_supplied.py"
+                child = run[run.index("/workspace/compat/lua/" + script):]
+                self.assertEqual(child[child.index("--cohort-checkout") + 1], "/workspace")
+                self.assertEqual(child[child.index("--installed-sysroot") + 1],
+                                 "/workspace/.work/x86_64/installed")
+                self.assertEqual(child[child.index("--work-root") + 1],
+                                 "/workspace/.work/x86_64/" + kind + "-output")
+
+
+class InstalledRustCheckWorktreeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        if shutil.which("docker") is None:
+            raise unittest.SkipTest("requires Docker and the pinned native image")
+        image = subprocess.run(["docker", "image", "inspect", PIN], capture_output=True)
+        if image.returncode:
+            raise unittest.SkipTest("requires the pinned native image")
+
+    def test_linked_checkout_uses_its_own_index_without_writing_git_metadata(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp") as temporary:
+            repository = Path(temporary) / "repository"
+            repository.mkdir()
+
+            def git(directory: Path, *arguments: str) -> None:
+                subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=fixture",
+                                "-c", "user.email=fixture@example.invalid", *arguments],
+                               cwd=directory, check=True, capture_output=True)
+
+            git(repository, "init")
+            (repository / "main-only.txt").write_text("main index")
+            git(repository, "add", "main-only.txt")
+            git(repository, "commit", "--no-verify", "-m", "main fixture")
+            checkout = Path(temporary) / "checkout"
+            git(repository, "worktree", "add", "-b", "checker", str(checkout))
+            (checkout / "branch-only.txt").write_text("linked index")
+            git(checkout, "add", "branch-only.txt")
+            git(checkout, "commit", "--no-verify", "-m", "linked fixture")
+
+            def metadata() -> dict[str, str]:
+                return {str(path.relative_to(repository)): hashlib.sha256(path.read_bytes()).hexdigest()
+                        for path in (repository / ".git").rglob("*") if path.is_file()}
+
+            before = metadata()
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith("CRABC_X86_64_") and not key.startswith("GIT_")}
+            environment["CRABC_X86_64_CORE_IMAGE"] = PIN
+            result = subprocess.run([str(ROOT / "scripts/lanes/rust-check.sh"),
+                                     "git", "ls-files", "--error-unmatch", "branch-only.txt"],
+                                    cwd=checkout, env=environment, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "branch-only.txt\n")
+            self.assertEqual(metadata(), before)
 
 
 if __name__ == "__main__":

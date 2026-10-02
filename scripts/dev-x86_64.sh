@@ -6347,6 +6347,70 @@ run_owned_static_sysroot_probe() {
     run_in_container bash /workspace/compat/x86_64/run_owned_static_sysroot.sh
 }
 
+prepare_lua_source_build_arguments() {
+    local kind="$1" flag value required
+    shift
+    LUA_SOURCE_BUILD_ARGUMENTS=()
+    LUA_SOURCE_BUILD_SUPPLIED=false
+    [ "$#" -gt 0 ] || return 0
+    if [ "$#" -eq 2 ] && [ "$1" = --allocator-backend ] && [ "$2" = native-shadow ]; then
+        LUA_SOURCE_BUILD_ARGUMENTS=("$@")
+        return 0
+    fi
+    local -A seen=()
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] || fail "lua-${kind}-source-build takes explicit cohort flags with values"
+        flag="$1"; value="$2"; shift 2
+        [ -z "${seen[$flag]:-}" ] || fail "duplicate Lua source-build flag: $flag"
+        seen[$flag]=true
+        case "$flag" in
+            --cohort-checkout)
+                [ "$value" = "$ROOT_DIR" ] || [ "$value" = /workspace ] ||
+                    fail "Lua cohort checkout must be the active checkout"
+                value=/workspace
+                ;;
+            --installed-sysroot|--extracted-sysroot)
+                value="$(translate_owned_posix_product "$value")" || exit 2
+                ;;
+            --rebuilt-sysroot)
+                [ "$kind" = static ] || fail "dynamic Lua cohort has no rebuilt static root"
+                value="$(translate_owned_posix_product "$value")" || exit 2
+                ;;
+            --static-preparation)
+                [ "$kind" = static ] || fail "dynamic Lua cohort requires --cohort-receipt"
+                value="$(translate_owned_posix_product "$value" receipt-file)" || exit 2
+                ;;
+            --cohort-receipt)
+                [ "$kind" = dynamic ] || fail "static Lua cohort requires --static-preparation"
+                value="$(translate_owned_posix_product "$value" receipt-file)" || exit 2
+                ;;
+            --archive-seed)
+                value="$(translate_owned_posix_product "$value" receipt-file)" || exit 2
+                ;;
+            --work-root)
+                if [ -d "$value" ]; then
+                    value="$(translate_owned_posix_product "$value")" || exit 2
+                else
+                    value="$(translate_owned_posix_product "$value" fresh-output)" || exit 2
+                fi
+                ;;
+            --jobs|--timeout) ;;
+            *) fail "lua-${kind}-source-build takes only explicit cohort flags or --allocator-backend native-shadow" ;;
+        esac
+        LUA_SOURCE_BUILD_ARGUMENTS+=("$flag" "$value")
+    done
+    for required in --cohort-checkout --installed-sysroot --extracted-sysroot --archive-seed --work-root; do
+        [ "${seen[$required]:-}" = true ] || fail "Lua supplied cohort is missing $required"
+    done
+    if [ "$kind" = static ]; then
+        [ "${seen[--static-preparation]:-}" = true ] && [ "${seen[--rebuilt-sysroot]:-}" = true ] ||
+            fail "static Lua supplied cohort requires preparation and rebuilt root"
+    else
+        [ "${seen[--cohort-receipt]:-}" = true ] || fail "dynamic Lua supplied cohort requires its receipt"
+    fi
+    LUA_SOURCE_BUILD_SUPPLIED=true
+}
+
 run_lua_static_source_build_probe() {
     # Expand the bounded knobs into this exact child argv rather than relying
     # on Docker's optional host-environment forwarding semantics.
@@ -6613,6 +6677,9 @@ PY_RESOLVER_FAMILY_PLAN
     resolver_family_step resolver-cancellation run_in_resolver_network_container \
         python3 -B /workspace/compat/x86_64/owned_resolver_cancellation.py run --work "${path[cancellation_work]}" \
         --static-sysroot "${path[primary_static]}" --dynamic-sysroot "${path[primary_dynamic]}"
+    resolver_family_step resolver-cancellation-network run_in_resolver_network_container \
+        python3 -B /workspace/compat/x86_64/owned_resolver_cancellation_network.py \
+        --work "${path[cancellation_work]}" --static --dynamic
     resolver_family_step protocol-database-product run_in_resolver_network_container \
         python3 -B /workspace/compat/x86_64/owned_protocol_database.py --work "${path[protocol_work]}" \
         --installed-static-sysroot "${path[primary_static]}" --installed-dynamic-sysroot "${path[primary_dynamic]}" \
@@ -6654,7 +6721,11 @@ PY_RESOLVER_FAMILY_PLAN
 run_lua_dynamic_source_build_probe() {
     # The dynamic candidate enters its copied product root through the kernel
     # interpreter and needs only chroot authority for that private execution.
-    run_in_chroot_cap_container python3 -B /workspace/compat/lua/run_x86_dynamic.py \
+    local runner=/workspace/compat/lua/run_x86_dynamic.py
+    if [ "$LUA_SOURCE_BUILD_SUPPLIED" = true ]; then
+        runner=/workspace/compat/lua/run_x86_dynamic_supplied.py
+    fi
+    run_in_chroot_cap_container python3 -B "$runner" \
         --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
         --timeout "${CRABC_X86_64_LUA_TIMEOUT:-180}" "$@"
 }
@@ -10242,16 +10313,14 @@ PY
         run_owned_static_sysroot_probe
         ;;
     lua-static-source-build)
-        [ "$#" -eq 0 ] || { [ "$#" -eq 2 ] && [ "$1" = --allocator-backend ] && [ "$2" = native-shadow ]; } ||
-            fail "lua-static-source-build takes only --allocator-backend native-shadow"
+        prepare_lua_source_build_arguments static "$@"
         ensure_image
-        run_lua_static_source_build_probe "$@"
+        run_lua_static_source_build_probe "${LUA_SOURCE_BUILD_ARGUMENTS[@]}"
         ;;
     lua-dynamic-source-build)
-        [ "$#" -eq 0 ] || { [ "$#" -eq 2 ] && [ "$1" = --allocator-backend ] && [ "$2" = native-shadow ]; } ||
-            fail "lua-dynamic-source-build takes only --allocator-backend native-shadow"
+        prepare_lua_source_build_arguments dynamic "$@"
         ensure_image
-        run_lua_dynamic_source_build_probe "$@"
+        run_lua_dynamic_source_build_probe "${LUA_SOURCE_BUILD_ARGUMENTS[@]}"
         ;;
     lua-source-build-admission)
         lua_admission_arguments=()
