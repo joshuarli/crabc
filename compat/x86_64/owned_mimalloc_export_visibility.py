@@ -32,6 +32,7 @@ NATIVE_IMAGE_TOOL_NAMES = ("ar", "nm", "readelf")
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 from core_image import CORE_IMAGE_ID  # noqa: E402
 import native_abi_inventory as inventory  # noqa: E402
+import crabc_cc_static as static_driver
 import owned_dynamic_qualification as qualification  # noqa: E402
 
 
@@ -380,11 +381,41 @@ def dynamic_product_source_binding(library: Path, collector: dict[str, object]) 
             "matches_collector": source == collector["source_sha256"]}
 
 
+def selected_products(args: argparse.Namespace, collector: dict[str, object]) -> dict[str, object]:
+    """Both installed products must own the requested backend and collector source."""
+    static_root = args.static_archive.parents[2]
+    dynamic_root = args.dynamic_shared.parents[2]
+    require(args.static_archive == static_root / "usr/lib/libc.a"
+            and args.dynamic_shared == dynamic_root / "usr/lib/libc.so",
+            "visibility inputs are not the installed libc products")
+    try:
+        static_driver.validate_installed_runtime(static_root)
+        qualification.product_identity(dynamic_root)
+    except (static_driver.DriverError, qualification.QualificationError) as error:
+        raise EvidenceError(f"selected owned product is invalid: {error}") from error
+    records = {}
+    for label, path in (("static", static_root / "share/crabc/manifest.json"),
+                        ("dynamic", dynamic_root / "share/crabc/dynamic-product-state.json")):
+        record = identity(path, f"{label} product metadata")
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise EvidenceError(f"{label} product metadata is malformed") from error
+        require(isinstance(metadata, dict) and metadata.get("allocator_backend") == args.allocator_backend,
+                f"{label} product backend differs from selected visibility backend")
+        require(metadata.get("source_sha256") == collector["source_sha256"],
+                f"{label} product source differs from collector")
+        records[label] = record
+    return {"allocator_backend": args.allocator_backend,
+            "source_sha256": collector["source_sha256"], "metadata": records}
+
+
 def native_shadow(args: argparse.Namespace) -> dict[str, object]:
     hidden_members, contract = contract_members()
     hidden = set(hidden_members)
     image_inputs = native_image_inputs({"ar": args.ar, "nm": args.nm, "readelf": args.readelf})
     collector = collector_source_identity()
+    products = selected_products(args, collector)
     source = dynamic_product_source_binding(args.dynamic_shared, collector)
     require(source["matches_collector"], "native dynamic product source differs from collector")
 
@@ -465,6 +496,7 @@ def native_shadow(args: argparse.Namespace) -> dict[str, object]:
         "contract": {"identity": contract, "member_count": len(hidden_members),
                      "native_c_definitions": 0},
         "image_inputs": image_inputs,
+        "selected_products": products,
         "collector": collector,
         "source": source,
         "static": {"archive": archive_identity, "manifest": static_manifest_identity,
@@ -477,6 +509,7 @@ def native_shadow(args: argparse.Namespace) -> dict[str, object]:
 
 
 def validate(args: argparse.Namespace) -> dict[str, object]:
+    image_inputs = native_image_inputs({"ar": args.ar, "nm": args.nm, "readelf": args.readelf})
     hidden_members, contract = contract_members()
     hidden = set(hidden_members)
     baseline, baseline_extra, baseline_record = baseline_symbols(args.baseline_report)
@@ -487,6 +520,7 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
     require(hidden <= set(baseline), "historical libc product did not expose every contract name")
 
     collector = collector_source_identity()
+    products = selected_products(args, collector)
     product_source = dynamic_product_source_binding(args.dynamic_shared, collector)
     baseline_tables, baseline_tables_record = complete_shared_symbol_tables(args.readelf, args.baseline_shared)
     current_tables, current_tables_record = complete_shared_symbol_tables(args.readelf, args.dynamic_shared)
@@ -541,6 +575,9 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
     return {
         "schema": "crabc.x86_64-owned-mimalloc-export-visibility/v1",
         "status": "component-pass-not-qualification",
+        "allocator_backend": args.allocator_backend,
+        "image_inputs": image_inputs,
+        "selected_products": products,
         "contract": {"identity": contract, "member_count": CONTRACT_COUNT},
         "collector": collector,
         "historical_prechange": {**baseline_record, "shared": baseline_actual_record,
@@ -556,25 +593,37 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
         "symtab_local_contract": {"members": localized, "member_count": len(localized)},
         "limits": [
             "The supplied pre-change product is a comparison input, not a source match for the fresh product.",
-            "The collector and dynamic-product source identities are recorded separately; a mismatch is retained evidence, not current-source proof.",
+            "Both selected owned products must match the collector source; historical comparison inputs remain separate.",
             "This proves the shared-only visibility boundary and selected allocator provider; it does not qualify the runtime, allocator, or platform.",
         ],
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline-report", type=Path)
     parser.add_argument("--baseline-shared", type=Path)
     parser.add_argument("--allocator-backend", choices=("accepted-c", "native-shadow"), default="accepted-c")
-    parser.add_argument("--static-archive", type=Path, required=True)
-    parser.add_argument("--dynamic-shared", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--ar", default="ar")
-    parser.add_argument("--nm", default="nm")
-    parser.add_argument("--readelf", default="readelf")
-    args = parser.parse_args()
+    parser.add_argument("--check-image-inputs", action="store_true", help="authenticate inspection tools without building or reading products")
+    parser.add_argument("--static-archive", type=Path)
+    parser.add_argument("--dynamic-shared", type=Path)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--ar", default="/usr/bin/ar")
+    parser.add_argument("--nm", default="/usr/bin/nm")
+    parser.add_argument("--readelf", default="/usr/bin/readelf")
+    args = parser.parse_args(argv)
+    if args.check_image_inputs and any(value is not None for value in (
+        args.baseline_report, args.baseline_shared, args.static_archive, args.dynamic_shared, args.output
+    )):
+        parser.error("--check-image-inputs does not accept product or report paths")
+    if not args.check_image_inputs and any(value is None for value in (
+        args.static_archive, args.dynamic_shared, args.output
+    )):
+        parser.error("visibility inspection requires static archive, dynamic shared libc and output")
     try:
+        if args.check_image_inputs:
+            print(json.dumps(native_image_inputs({"ar": args.ar, "nm": args.nm, "readelf": args.readelf}), sort_keys=True))
+            return 0
         require(args.output.parent.is_dir(), "output parent must exist")
         require(not args.output.exists() and not args.output.is_symlink(), "output already exists")
         if args.allocator_backend == "native-shadow":

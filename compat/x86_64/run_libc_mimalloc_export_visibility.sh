@@ -49,8 +49,10 @@ PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-mimalloc-export-visibility.XXXXXX")"
 printf 'owned mimalloc export visibility evidence: %s\n' "$work"
+python3 -B "$ROOT/compat/x86_64/owned_mimalloc_export_visibility.py" \
+    --check-image-inputs >"$work/image-inputs.json"
+source_before="$(source_digest)"
 if [ "$native_shadow" = true ]; then
-    source_before="$(source_digest)"
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --allocator-backend native-shadow \
         --output "$work/static" >"$work/static-build.json"
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --allocator-backend native-shadow \
@@ -63,9 +65,11 @@ if [ "$native_shadow" = true ]; then
     printf 'owned mimalloc export visibility: PASS (native-shadow selected; no C allocator exports; image inputs pinned); evidence: %s\n' "$work"
     exit 0
 fi
-python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static" >"$work/static-build.json"
-python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic" >"$work/dynamic-build.json"
+python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --allocator-backend accepted-c --output "$work/static" >"$work/static-build.json"
+python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --allocator-backend accepted-c --output "$work/dynamic" >"$work/dynamic-build.json"
+[ "$(source_digest)" = "$source_before" ] || fail 'source changed during accepted-C product builds'
 python3 -B "$ROOT/compat/x86_64/owned_mimalloc_export_visibility.py" \
+    --allocator-backend accepted-c --ar /usr/bin/ar --nm /usr/bin/nm --readelf /usr/bin/readelf \
     --baseline-report "$baseline_report" --baseline-shared "$baseline_shared" \
     --static-archive "$work/static/usr/lib/libc.a" --dynamic-shared "$work/dynamic/usr/lib/libc.so" \
     --output "$work/export-visibility.json"

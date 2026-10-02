@@ -2,6 +2,9 @@
 """Structural contracts for exact shared-only bundled-mimalloc visibility."""
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import hashlib
 import importlib.util
 import json
@@ -26,7 +29,9 @@ EVIDENCE_SPEC.loader.exec_module(evidence)
 
 class OwnedMimallocExportVisibilityTests(unittest.TestCase):
     def test_native_image_input_rejects_changed_tool_bytes(self) -> None:
-        with tempfile.TemporaryDirectory() as scratch:
+        scratch_root = ROOT / ".work/x86_64/visibility-host-tests"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as scratch:
             tool = Path(scratch) / "readelf"
             tool.write_bytes(b"pinned inspection tool")
             tool.chmod(0o755)
@@ -40,9 +45,51 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
                  mock.patch.object(evidence, "NATIVE_IMAGE_TOOL_NAMES", ("readelf",)):
                 evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(expected), encoding="utf-8")
                 self.assertEqual(evidence.native_image_inputs({"readelf": str(tool)})["tools"], expected["tools"])
+                retired = {**expected, "image": "retired-image-id"}
+                evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(retired), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "manifest or image differs"):
+                    evidence.native_image_inputs({"readelf": str(tool)})
+                evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(expected), encoding="utf-8")
                 tool.write_bytes(b"tampered inspection tool")
                 with self.assertRaisesRegex(evidence.EvidenceError, "image input differs: readelf"):
                     evidence.native_image_inputs({"readelf": str(tool)})
+
+    def test_image_check_needs_no_products_and_never_starts_symbol_inspection(self) -> None:
+        with (mock.patch.object(evidence, "native_image_inputs", return_value={"image": "authenticated"}) as tools,
+              mock.patch.object(evidence, "native_shadow", side_effect=AssertionError("product inspection")),
+              mock.patch.object(evidence, "validate", side_effect=AssertionError("product inspection")),
+              contextlib.redirect_stdout(io.StringIO()) as stdout):
+            self.assertEqual(evidence.main(["--check-image-inputs"]), 0)
+        self.assertEqual(json.loads(stdout.getvalue()), {"image": "authenticated"})
+        tools.assert_called_once_with({name: "/usr/bin/" + name for name in evidence.NATIVE_IMAGE_TOOL_NAMES})
+
+    def test_current_products_reject_other_backend_or_source_before_symbols(self) -> None:
+        scratch = ROOT / ".work/x86_64/visibility-host-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            roots = {label: work / label for label in ("static", "dynamic")}
+            metadata = {"allocator_backend": "native-shadow", "source_sha256": "a" * 64}
+            for root in roots.values():
+                (root / "share/crabc").mkdir(parents=True)
+                (root / "usr/lib").mkdir(parents=True)
+                for name in ("manifest.json", "dynamic-product-state.json"):
+                    (root / "share/crabc" / name).write_text(json.dumps(metadata))
+            args = argparse.Namespace(allocator_backend="native-shadow",
+                static_archive=roots["static"] / "usr/lib/libc.a", dynamic_shared=roots["dynamic"] / "usr/lib/libc.so")
+            collector = {"source_sha256": "a" * 64}
+            with (mock.patch.object(evidence.static_driver, "validate_installed_runtime"),
+                  mock.patch.object(evidence.qualification, "product_identity")):
+                evidence.selected_products(args, collector)
+                for label in ("static", "dynamic"):
+                    file = roots[label] / "share/crabc" / ("manifest.json" if label == "static" else "dynamic-product-state.json")
+                    for changed, message in (({"allocator_backend": "accepted-c"}, "backend differs"),
+                                             ({"source_sha256": "b" * 64}, "source differs")):
+                        with self.subTest(product=label, changed=changed):
+                            file.write_text(json.dumps({**metadata, **changed}))
+                            with self.assertRaisesRegex(evidence.EvidenceError, message):
+                                evidence.selected_products(args, collector)
+                    file.write_text(json.dumps(metadata))
 
     def test_native_provenance_rejects_c_backend_visibility_claim(self) -> None:
         native = {"allocator_backend": "native-shadow", "accepted_allocator": None,
@@ -87,7 +134,12 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         self.assertIn('f"--version-script={errno_private_aliases}"', source)
         self.assertIn('"linker_policy": "exact-local-symbols"', source)
         self.assertIn('"shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports', source)
-        self.assertEqual(source.count("--version-script="), 3)
+        native = {"allocator_backend": "native-shadow", "accepted_allocator": None,
+                  "native_allocator": {}, "selected_members": {"libc.o": "a" * 64},
+                  "shared_mimalloc_hidden_exports": {"status": "not-selected-native-shadow"},
+                  "libc_shared_link_command": ["ld.lld", "--version-script=$BUILD/libc-mimalloc-hidden.exports"]}
+        with self.assertRaisesRegex(evidence.EvidenceError, "C allocator or broad visibility policy"):
+            evidence.validate_native_provenance(native, {})
 
     def test_local_contract_rejects_a_public_dynsym_row_or_nonlocal_symtab_row(self) -> None:
         members = ["hidden_function", "hidden_object"]

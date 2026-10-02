@@ -34,8 +34,9 @@ matches its raw spelling, version, kind, and object/TLS size to the sole
 selected static allocator member. The complete shared table may localize only
 the exact roster; surviving visible entries retain their ELF metadata and
 OBJECT/TLS size. The evidence records the collector source identity and the
-dynamic product's source state separately, so a historical product cannot be
-misrepresented as a fresh source match. It then reuses the owned C
+dynamic product's source state separately. Both fresh installed products must
+match the collector source and the explicitly selected accepted-C backend; a
+historical comparison product cannot substitute for either fresh product. It then reuses the owned C
 allocation-interposition and mimalloc startup/errno lifecycle components with
 the fresh dynamic product.
 
@@ -53,3 +54,18 @@ backend selection, link policy, or product provenance fail the receipt.
 
 This is component evidence only. It does not qualify the native runtime,
 allocator, product campaign, or public x86 support.
+
+Both backend paths authenticate the same inspection-tool manifest before
+building products. The immutable core image is
+`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
+The restored image's `ar`, `nm` and `readelf` bytes match their existing hashes;
+this observation does not transfer reports produced under the previous image.
+Run `owned_mimalloc_export_visibility.py --check-image-inputs` inside that image
+to authenticate the manifest and tool bytes without reading or building any
+runtime product. The command prints the authenticated image and file identities.
+
+The product reader uses the existing installed static payload validator and
+dynamic product ownership validator before symbol inspection. Static manifest
+and dynamic materialization metadata must select the requested allocator backend
+and match the collector source digest. Fresh product payloads, source metadata
+and allocator provenance remain distinct from historical comparison evidence.
