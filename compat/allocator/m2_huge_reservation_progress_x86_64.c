@@ -117,5 +117,52 @@ int main(void) {
   emit("committed_terminal", subproc.stats.committed.current - committed_before);
   emit("mmap_terminal", subproc.stats.mmap_calls.total - mmap_before);
   emit("arena_terminal", subproc.stats.arena_count.total - arena_before);
+  /* Continue through the real source reservation/management caller. Only
+   * the huge mmap import is substituted; arena publication and slice use
+   * execute the unchanged source body on that virtual backing. */
+  mi_subproc_t* owner = _mi_subproc();
+  if (mi_arenas_get_count(owner) != 0) return 3;
+  const int64_t owner_reserved = owner->stats.reserved.current;
+  const int64_t owner_committed = owner->stats.committed.current;
+  const int64_t owner_arenas = owner->stats.arena_count.total;
+  selected_start += 2 * MI_GiB;
+  mi_atomic_store_relaxed(&mi_huge_start, selected_start);
+  huge_calls = huge_1g_calls = huge_2m_calls = exact_hints = 0;
+  selected = true;
+  mi_arena_id_t id = NULL;
+  int result = mi_reserve_huge_os_pages_at_ex(3, -1, 0, false, &id);
+  selected = false;
+  if (result != 0 || id == NULL) return 4;
+  mi_arena_t* arena = _mi_arena_from_id(id);
+  void* parent_base = arena->memid.mem.os.base;
+  emit("arena_published", mi_arenas_get_count(owner) == 1);
+  emit("arena_partial", arena->memid.mem.os.size == MI_GiB);
+  emit("arena_base_exact", (uintptr_t)parent_base == selected_start);
+  emit("arena_memory_huge", arena->memid.memkind == MI_MEM_OS_HUGE);
+  emit("arena_memory_pinned", arena->memid.is_pinned);
+  emit("arena_reserved_after", (owner->stats.reserved.current - owner_reserved) / MI_GiB);
+  emit("arena_committed_after", (owner->stats.committed.current - owner_committed) / MI_GiB);
+  emit("arena_count_after", owner->stats.arena_count.total - owner_arenas);
+  mi_heap_t heap = {0};
+  heap.subproc = owner;
+  mi_memid_t claim;
+  unsigned char* start = mi_arenas_try_alloc(&heap, 2, MI_ARENA_SLICE_ALIGN,
+      true, true, arena, 0, -1, &claim);
+  if (start == NULL) return 5;
+  volatile unsigned char* bytes = start;
+  bytes[0] = 0x3c;
+  bytes[2 * MI_ARENA_SLICE_SIZE - 1] = 0x6d;
+  emit("arena_claim_writable", bytes[0] == 0x3c && bytes[2 * MI_ARENA_SLICE_SIZE - 1] == 0x6d);
+  emit("arena_claim_pinned", claim.is_pinned);
+  emit("arena_claim_committed", claim.initially_committed);
+  const size_t claim_index = claim.mem.arena.slice_index;
+  _mi_arenas_free(owner, start, 2 * MI_ARENA_SLICE_SIZE, claim);
+  emit("arena_claim_released", mi_bbitmap_is_setN(arena->slices_free, claim_index, 2));
+  _mi_arenas_unsafe_destroy_all(owner);
+  emit("arena_terminal_released", !live(parent_base));
+  emit("arena_terminal_registry", mi_arenas_get_count(owner));
+  emit("arena_reserved_terminal", owner->stats.reserved.current - owner_reserved);
+  emit("arena_committed_terminal", owner->stats.committed.current - owner_committed);
+  emit("arena_terminal_absent", !live(parent_base));
   return 0;
 }

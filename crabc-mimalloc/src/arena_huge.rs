@@ -762,6 +762,75 @@ mod tests {
         assert_eq!(backing.registry.count(), 1);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn huge_partial_reservation_publishes_claims_and_releases_the_source_arena() {
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::LargeMap, 1, fault::Point::LargeMap, 1, Errno::NOMEM));
+        let (config, process, metadata) = fixture();
+        let backing = process.subprocess().arena_backing();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let arena_before = process.subprocess().arena_statistics().snapshot().arena_count;
+        fault.enable_one_synthetic_huge_map();
+        // SAFETY: this fixture retains its process and bound metadata through
+        // the complete sole-owner reservation, claim, and terminal release.
+        let id = unsafe { backing.reserve_huge_at(process, config, metadata,
+            3, -1, 0, false, None) }.unwrap().unwrap();
+        let hint = fault.synthetic_huge_hint();
+        let arena = unsafe { &*id.as_ptr() };
+        let parent = arena.memid;
+        let span = parent.os_memory().unwrap();
+        let after = process.subprocess().vm_statistics().snapshot();
+        macro_rules! emit {
+            ($name:literal, $value:expr) => {
+                std::println!(concat!("m2.huge_reservation_progress.arena_", $name, "={}"), $value);
+            };
+        }
+        emit!("published", usize::from(backing.registry.count() == 1));
+        emit!("partial", usize::from(span.size == GIB));
+        emit!("base_exact", usize::from(span.base.addr() == hint));
+        emit!("memory_huge", usize::from(parent.kind() == crate::types::MemoryKind::OsHuge));
+        emit!("memory_pinned", usize::from(parent.is_pinned()));
+        emit!("reserved_after", (after.reserved_current - before.reserved_current) / GIB as i64);
+        emit!("committed_after", (after.committed_current - before.committed_current) / GIB as i64);
+        emit!("count_after", process.subprocess().arena_statistics().snapshot().arena_count - arena_before);
+        let claim = unsafe { backing.registry.try_find_free(crate::arena::ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0, numa_node: -1,
+            requested: id, allow_pinned: true,
+        }, 2, crate::config::ARENA_SLICE_SIZE, true) }.unwrap();
+        let start = claim.start();
+        let memory = claim.memory_id();
+        let length = 2 * crate::config::ARENA_SLICE_SIZE;
+        // SAFETY: the source claim owns both committed slices exclusively.
+        let writable = unsafe {
+            start.write_volatile(0x3c);
+            start.add(length - 1).write_volatile(0x6d);
+            start.read_volatile() == 0x3c && start.add(length - 1).read_volatile() == 0x6d
+        };
+        emit!("claim_writable", usize::from(writable));
+        emit!("claim_pinned", usize::from(memory.is_pinned()));
+        emit!("claim_committed", usize::from(memory.initially_committed()));
+        emit!("claim_released", usize::from(claim.release()));
+        fault.set(fault::Plan::disabled());
+        let mut tracking = [0usize; 1];
+        // SAFETY: no claim, view, callback or allocation survives destruction;
+        // tracking is separate from the retiring one-GiB mapping.
+        let destroyed = unsafe { backing.destroy_all(&mut tracking) }.unwrap();
+        emit!("terminal_released", usize::from(destroyed.is_released()));
+        emit!("terminal_registry", backing.registry.count());
+        let terminal = process.subprocess().vm_statistics().snapshot();
+        emit!("reserved_terminal", terminal.reserved_current - before.reserved_current);
+        emit!("committed_terminal", terminal.committed_current - before.committed_current);
+        let mut residence = 0u8;
+        // SAFETY: residency tests the former address without dereferencing it.
+        emit!("terminal_absent", usize::from(unsafe {
+            crabc_core::mm::mincore_raw(span.base, 4096, &mut residence)
+        }.is_err()));
+        assert!(writable && destroyed.is_released());
+        assert_eq!(terminal.reserved_current, before.reserved_current);
+        assert_eq!(terminal.committed_current, before.committed_current);
+    }
+
     #[test]
     fn huge_interleave_preserves_source_distribution_timeout_and_first_error() {
         let mut field = 0;

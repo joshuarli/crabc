@@ -927,7 +927,7 @@
       {
         "id": "huge-page-and-numa-placement",
         "disposition": "unqualified",
-        "source_scope": "src/os.c:729-898 and src/prim/unix/prim.c:613-689 huge 1-GiB reservation, timeout/progress policy, high-address hints, mbind placement, and option-driven NUMA count/current normalization.",
+        "source_scope": "src/os.c:729-898 and src/prim/unix/prim.c:613-689 huge 1-GiB reservation, timeout/progress policy, high-address hints, mbind placement, and option-driven NUMA count/current normalization. The independent m2_huge_reservation_progress_x86_64.py receiver additionally compares unchanged mi_reserve_huge_os_pages_at_ex with ProcessArenaBacking::reserve_huge_at through one partial successful huge primitive, arena publication with MI_MEM_OS_HUGE parent identity, a writable committed pinned two-slice claim, source bitmap release, and terminal arena destruction. Only the successful huge mmap import is replaced with an ordinary exact-address virtual mapping; these observations qualify software state and accounting, not physical huge-page success or placement.",
         "source_anchors": [
           {
             "member": "src/os.c",

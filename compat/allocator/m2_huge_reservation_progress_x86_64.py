@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = Path(__file__).with_suffix(".c")
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m2-huge-reservation-progress"
 TEST = "os::tests::emit_m2_huge_reservation_progress_c_rust_trace"
+ARENA_TEST = "arena::owned::huge::tests::huge_partial_reservation_publishes_claims_and_releases_the_source_arena"
 FIELDS = (
     "pages", "size_gib", "base_exact", "memory_huge", "memory_pinned",
     "memory_committed", "memory_zero", "huge_calls", "huge_1g_calls",
@@ -23,6 +24,12 @@ FIELDS = (
     "ordinary_memory", "reserved_with_ordinary", "committed_with_ordinary",
     "ordinary_gone", "huge_gone", "reserved_terminal", "committed_terminal",
     "mmap_terminal", "arena_terminal",
+    "arena_published", "arena_partial", "arena_base_exact", "arena_memory_huge",
+    "arena_memory_pinned", "arena_reserved_after", "arena_committed_after",
+    "arena_count_after", "arena_claim_writable", "arena_claim_pinned",
+    "arena_claim_committed", "arena_claim_released", "arena_terminal_released",
+    "arena_terminal_registry", "arena_reserved_terminal", "arena_committed_terminal",
+    "arena_terminal_absent",
 )
 LINE = re.compile(r"^m2\.huge_reservation_progress\.([a-z0-9_]+)=(-?[0-9]+)$")
 
@@ -66,13 +73,23 @@ def c_oracle(offline: bool) -> tuple[dict[str, int], dict]:
 
 
 def rust_receiver() -> tuple[dict[str, int], dict]:
-    command = ["python3", "compat/allocator/run_unit_x86_64.py", TEST]
-    execution = harness.command_record(command, cwd=ROOT, timeout_seconds=900)
-    (ARTIFACTS / "rust.stdout").write_text(str(execution["stdout"]))
-    (ARTIFACTS / "rust.stderr").write_text(str(execution["stderr"]))
-    harness.require_success(execution, "Rust huge progress receiver")
-    return trace(str(execution["stdout"]), "Rust"), {
-        "run_status": execution["status"], "stderr": execution["stderr"],
+    executions = []
+    for target in (TEST, ARENA_TEST):
+        command = ["python3", "compat/allocator/run_unit_x86_64.py", target]
+        execution = harness.command_record(command, cwd=ROOT, timeout_seconds=900)
+        executions.append(execution)
+        (ARTIFACTS / "rust.stdout").write_text(
+            "\n".join(str(record["stdout"]) for record in executions))
+        (ARTIFACTS / "rust.stderr").write_text(
+            "\n".join(str(record["stderr"]) for record in executions))
+        harness.require_success(execution, f"Rust huge progress receiver {target}")
+    stdout = "\n".join(str(execution["stdout"]) for execution in executions)
+    stderr = "\n".join(str(execution["stderr"]) for execution in executions).strip()
+    (ARTIFACTS / "rust.stdout").write_text(stdout)
+    (ARTIFACTS / "rust.stderr").write_text(stderr)
+    return trace(stdout, "Rust"), {
+        "run_status": 0, "stderr": stderr,
+        "commands": [execution["command"] for execution in executions],
     }
 
 
@@ -93,6 +110,14 @@ def run(offline: bool, c_only: bool) -> dict:
         "reserved_with_ordinary": 1, "committed_with_ordinary": 1,
         "ordinary_gone": 1, "huge_gone": 1, "reserved_terminal": 0,
         "committed_terminal": 0, "mmap_terminal": 1, "arena_terminal": 0,
+        "arena_published": 1, "arena_partial": 1, "arena_base_exact": 1,
+        "arena_memory_huge": 1, "arena_memory_pinned": 1,
+        "arena_reserved_after": 1, "arena_committed_after": 1,
+        "arena_count_after": 1, "arena_claim_writable": 1,
+        "arena_claim_pinned": 1, "arena_claim_committed": 1,
+        "arena_claim_released": 1, "arena_terminal_released": 1,
+        "arena_terminal_registry": 0, "arena_reserved_terminal": 0,
+        "arena_committed_terminal": 0, "arena_terminal_absent": 1,
     }
     mismatches.extend(f"c.{field}" for field in FIELDS if c[field] != expected[field])
     if c_commands["stderr"]:
@@ -103,7 +128,7 @@ def run(offline: bool, c_only: bool) -> dict:
         "status": "matched" if not mismatches else "red", "c": c, "rust": rust,
         "mismatches": mismatches, "c_commands": c_commands,
         "rust_commands": rust_commands,
-        "scope": "process-owned huge OS primitive partial progress and later ordinary map; arena publication and physical huge-page residency are outside this receiver",
+        "scope": "process-owned huge OS primitive partial progress, later ordinary map, and source huge reservation through arena publication, writable slice claim/free, and terminal destruction; synthetic huge mmap success establishes software state only and leaves physical huge-page residency and NUMA placement unqualified",
     }
     (ARTIFACTS / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(f"huge reservation progress {report['status'].upper()} ({len(FIELDS)} fields)")
