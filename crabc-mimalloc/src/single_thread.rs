@@ -39584,7 +39584,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         ) }.map(|word| word as usize).ok_or(GenericPathError::Local(FreeListError::RandomSourceUnavailable))?;
                         if word & 1 != 0 {
                             let extension = self.extend_page_before_allocation(first);
-                            if self.page_commit_poison {
+                            // A retained assertion owns this Page and cannot
+                            // be discarded as a recoverable commitment miss.
+                            #[cfg(target_arch = "x86_64")]
+                            let retained_assertion = matches!(&extension, Err(GenericPathError::LiveValidity(_)));
+                            #[cfg(not(target_arch = "x86_64"))]
+                            let retained_assertion = false;
+                            if self.page_commit_poison || retained_assertion {
                                 extension?;
                             }
                         }
@@ -40358,6 +40364,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &mut self,
         page: NonNull<Page>,
     ) -> Result<(), GenericPathError> {
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        self.observe_live_page_validity(page)?;
         #[cfg(feature = "mi-stat-1")]
         self.session.theap().record_page_extension_attempted();
         // SAFETY: callers name one selected active page while this engine owns
@@ -40378,6 +40386,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             #[cfg(not(target_arch = "x86_64"))]
             let extension = free_list.extend();
             let extended = extension.map_err(GenericPathError::Local)?;
+            drop(free_list);
             if extended == 0 {
                 return Err(GenericPathError::Lifecycle);
             }
@@ -40388,10 +40397,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let block_size = unsafe { page.as_ref().block_size() };
                 self.session.theap().record_page_extension_published(extended as usize, block_size);
             }
+            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+            self.observe_live_page_validity(page)?;
             return Ok(());
         }
 
-        self.extend_on_demand_page_before_allocation(page)
+        self.extend_on_demand_page_before_allocation(page)?;
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        self.observe_live_page_validity(page)?;
+        Ok(())
     }
 
     /// Ports `mi_page_extend_free`'s direct-commit order: mapping commit,
@@ -42918,7 +42932,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     pub(crate) fn retain_fresh_os_initialization(
         &mut self, pending: PendingFreshOsPageInitialization,
     ) -> Result<(), PendingFreshOsPageInitialization> {
-        if pending.theap != self.theap_identity() || self.pending_fresh_initialization.is_some() {
+        if pending.theap != self.theap_identity() || self.pending_fresh_initialization.is_some()
+            || self.pending_live_page_validity.is_some() {
             return Err(pending);
         }
         if let Some(process) = self.arena.process() {
