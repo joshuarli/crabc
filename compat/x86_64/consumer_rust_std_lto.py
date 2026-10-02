@@ -512,7 +512,10 @@ def inspect_elf(context: Context, path: Path, *, dynamic: bool, needed_dsos: Seq
 def execution_root(root: Path, *, runtime: str, product: Path | None) -> list[dict[str, str]]:
     """Build one private root; oracle and candidate roots differ only in runtime."""
 
-    if runtime == "candidate":
+    if runtime == "candidate-static":
+        root.mkdir(parents=True)
+        runtime_files = []
+    elif runtime == "candidate":
         assert product is not None
         shutil.copytree(product, root, symlinks=True)
         runtime_files = [product / "lib/ld-crabc-x86_64.so.1", product / "usr/lib/libc.so"]
@@ -605,10 +608,11 @@ def compared_lane(context: Context, name: str, fixture: str, flags: Sequence[str
         return report
     report["candidate_elf"] = inspect_elf(context, Path(candidate["executable"]["path"]), dynamic=not static)
     unmet.extend(f"{name}: {problem}" for problem in report["candidate_elf"]["problems"])
-    dynamic_root = context.root("dynamic")
+    dynamic_root = None if static else context.root("dynamic")
     report["oracle"] = execute(context, lane, Path(oracle["executable"]["path"]), runtime="oracle", product=None,
                                label="oracle")
-    report["candidate"] = execute(context, lane, Path(candidate["executable"]["path"]), runtime="candidate",
+    report["candidate"] = execute(context, lane, Path(candidate["executable"]["path"]),
+                                  runtime="candidate-static" if static else "candidate",
                                   product=dynamic_root, label="candidate")
     report["comparison"] = raw_comparison(report["oracle"], report["candidate"])
     if not report["comparison"]["passed"]:
@@ -876,7 +880,7 @@ def debug_backtrace_lane(context: Context, label: str) -> dict[str, Any]:
         binary = Path(build["executable"]["path"])
         report["elf"] = inspect_elf(context, binary, dynamic=False)
         unmet.extend(report["elf"]["problems"])
-        execution = execute(context, lane, binary, runtime="candidate", product=context.root("dynamic"), label="run")
+        execution = execute(context, lane, binary, runtime="candidate-static", product=None, label="run")
         report["execution"] = execution
         try:
             report["backtrace"] = owned_cleanup.assert_backtrace_execution(
