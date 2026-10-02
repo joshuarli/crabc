@@ -61,9 +61,10 @@
 //! main Heap ([`ChildThreadMember::thread_done`]); [`free_child_block_nonlocal`]
 //! frees such blocks, or blocks of another thread's page, from any thread.
 //!
-//! Not yet covered: nested children, deferred-free callbacks on the child
-//! allocation route. Live
-//! child metadata blocks at destruction are released with the child arenas,
+//! Nested children obtain their context and detached Theap from the actual
+//! parent's metadata route. Their parent-issued control storage retains that
+//! parent independently until final TLS finish returns the exact allocation.
+//! Live child metadata blocks at destruction are released with the child arenas,
 //! as in source. The source `_mi_thread_locals_thread_done` call in
 //! `mi_subproc_destroy` releases the destroying thread's dynamic thread-local
 //! table, which no child lifecycle here allocates.
@@ -730,6 +731,11 @@ pub(crate) struct NativeChildSubprocess {
     /// Release waits for the last actual TLS member to finish.
     storage: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
     parent_metadata: ChildParentMetadata,
+    /// A nested child's parent-issued context outlives source teardown when
+    /// actual TLS still retains its inline record. Keep that parent pinned
+    /// until the exact context allocation returns at final record release.
+    #[cfg(target_arch = "x86_64")]
+    parent_admission: core::cell::UnsafeCell<Option<NativeChildCallbackLease>>,
     registry: &'static SourceSubprocessRegistry,
     /// Actual compiler-TLS member tokens, including a failed finish whose
     /// source thread registration already ended. The record survives child
@@ -823,6 +829,38 @@ impl Drop for NativeChildCallbackLease {
     }
 }
 
+/// # Safety
+/// The caller retains this exact live id while independent record custody is
+/// acquired. No projection or lock survives successful acquisition.
+#[cfg(target_arch = "x86_64")]
+unsafe fn acquire_native_child_record_lease(id: NativeSubprocessId)
+    -> Result<(core::ptr::NonNull<crate::subproc::SubprocessIdentity>, NativeChildCallbackLease), NativeSubprocessError> {
+    let mut admitted = None;
+    // SAFETY: the actual caller retains the original id. This short
+    // projection validates its owner before independent custody begins.
+    let result = unsafe { id.with_owner(|owner| {
+        let child = owner.as_mut().ok_or(NativeSubprocessError::Gone)?;
+        if child.stage() != ChildMainHeapStage::HeapReady {
+            return Err(NativeSubprocessError::Retained);
+        }
+        let identity = core::ptr::NonNull::new(child.identity_pointer()
+            .ok_or(NativeSubprocessError::Gone)?).ok_or(NativeSubprocessError::Gone)?;
+        let count = &*core::ptr::addr_of!((*id.0.as_ptr()).callback_leases);
+        count.fetch_update(core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1))
+            .map_err(|_| NativeSubprocessError::Retained)?;
+        admitted = Some((identity, NativeChildCallbackLease(id.0)));
+        Ok(())
+    }) };
+    if !matches!(result, Ok(Ok(()))) {
+        // An unlock failure after actual custody changed cannot undo
+        // that admission or advertise an owner suitable for callbacks.
+        if let Some((_, lease)) = admitted { core::mem::forget(lease); }
+        return Err(result.err().unwrap_or(NativeSubprocessError::Retained));
+    }
+    Ok(admitted.expect("validated original child admission"))
+}
+
 /// Actual admission to one child arena group and its detached metadata.
 /// It retains the original record independently of TLS and ends only after
 /// every reservation projection and diagnostic callback has ended.
@@ -855,30 +893,9 @@ impl NativeChildArenaAdmission {
         let operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
             .ok_or(NativeSubprocessError::Closed)?;
         let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
-        let mut admitted = None;
-        // SAFETY: the actual caller retains the original id. This short
-        // projection validates its owner before independent custody begins.
-        let result = unsafe { id.with_owner(|owner| {
-            let child = owner.as_mut().ok_or(NativeSubprocessError::Gone)?;
-            if child.stage() != ChildMainHeapStage::HeapReady {
-                return Err(NativeSubprocessError::Retained);
-            }
-            let identity = core::ptr::NonNull::new(child.identity_pointer()
-                .ok_or(NativeSubprocessError::Gone)?).ok_or(NativeSubprocessError::Gone)?;
-            let count = &*core::ptr::addr_of!((*id.0.as_ptr()).callback_leases);
-            count.fetch_update(core::sync::atomic::Ordering::Relaxed,
-                core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1))
-                .map_err(|_| NativeSubprocessError::Retained)?;
-            admitted = Some((identity, NativeChildCallbackLease(id.0)));
-            Ok(())
-        }) };
-        if !matches!(result, Ok(Ok(()))) {
-            // An unlock failure after actual custody changed cannot undo
-            // that admission or advertise an owner suitable for callbacks.
-            if let Some((_, lease)) = admitted { core::mem::forget(lease); }
-            return Err(result.err().unwrap_or(NativeSubprocessError::Retained));
-        }
-        let (identity, child) = admitted.expect("validated original child admission");
+        // SAFETY: the current member or existing actual admission retains
+        // this original id through independent record custody acquisition.
+        let (identity, child) = unsafe { acquire_native_child_record_lease(id) }?;
         Ok(Self { id, binding, identity, config, _child: child, _operation: operation })
     }
 
@@ -1228,6 +1245,15 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
         Some(id) => ChildParentMetadata::Child { id, binding },
         None => ChildParentMetadata::Process { allocator: metadata, main: parent, config },
     };
+    #[cfg(target_arch = "x86_64")]
+    let parent_admission = match parent_metadata {
+        ChildParentMetadata::Child { id, .. } => {
+            // SAFETY: the calling thread's actual member retains this parent
+            // while the nested child acquires its own exact issuer custody.
+            Some(unsafe { acquire_native_child_record_lease(id) }?.1)
+        },
+        ChildParentMetadata::Process { .. } => None,
+    };
     #[cfg(not(target_arch = "x86_64"))]
     let mut storage = parent_metadata
         .allocate(core::mem::size_of::<NativeChildSubprocess>())
@@ -1262,7 +1288,13 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
                 Err(_) => Err(NativeSubprocessError::Retained),
             };
         },
-        Err(ChildSubprocessNewFailure::Retained(_)) => return Err(NativeSubprocessError::Retained),
+        Err(ChildSubprocessNewFailure::Retained(_)) => {
+            // The unpublished child still owns exact parent-issued blocks;
+            // a retained creation failure cannot release their actual issuer.
+            #[cfg(target_arch = "x86_64")]
+            core::mem::forget(parent_admission);
+            return Err(NativeSubprocessError::Retained);
+        },
     };
     #[cfg(target_arch = "x86_64")]
     let record = child.with_child_image(|image| image.native_control_pointer())
@@ -1278,6 +1310,8 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             #[cfg(not(target_arch = "x86_64"))]
             storage: core::cell::UnsafeCell::new(Some(storage)),
             parent_metadata,
+            #[cfg(target_arch = "x86_64")]
+            parent_admission: core::cell::UnsafeCell::new(parent_admission),
             registry,
             members: core::cell::UnsafeCell::new(0),
             #[cfg(target_arch = "x86_64")]
@@ -1674,7 +1708,7 @@ pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadD
             if last {
                 // SAFETY: the child is gone and this was its last thread, so
                 // no operation on the record can run or start.
-                let _ = unsafe { free_record(id.record()) };
+                let _ = unsafe { free_record(id.0) };
             }
             return Some(Ok(()));
         }
@@ -3084,7 +3118,7 @@ unsafe fn destroy_record(
     // The child is gone and the lock is released; no other operation on this
     // id may run (caller contract), so the record can be taken apart.
     // SAFETY: exclusive by the id contract; the owner cell is empty.
-    unsafe { free_record(record) }
+    unsafe { free_record(id.0) }
 }
 
 /// Transfers the enclosing exact allocation after all source image users
@@ -3108,11 +3142,27 @@ pub(crate) unsafe fn retain_native_child_control_storage(
 ///
 /// # Safety
 /// No operation on the record runs or can start.
-unsafe fn free_record(record: &'static NativeChildSubprocess) -> Result<(), NativeSubprocessError> {
-    // SAFETY: forwarded exclusivity; the owner cell is empty.
-    let mut storage = unsafe { (*record.storage.get()).take() }.ok_or(NativeSubprocessError::Retained)?;
-    let parent_metadata = record.parent_metadata;
-    parent_metadata.free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
+unsafe fn free_record(record: core::ptr::NonNull<NativeChildSubprocess>) -> Result<(), NativeSubprocessError> {
+    // SAFETY: forwarded exclusivity; the owner cell is empty. Copy every
+    // release input before the parent free invalidates this inline record.
+    // No reference to the record spans its enclosing allocation's return.
+    let mut storage = unsafe { (*(*record.as_ptr()).storage.get()).take() }
+        .ok_or(NativeSubprocessError::Retained)?;
+    let parent_metadata = unsafe { (*record.as_ptr()).parent_metadata };
+    #[cfg(target_arch = "x86_64")]
+    let parent_admission = unsafe { (*(*record.as_ptr()).parent_admission.get()).take() };
+    if parent_metadata.free(&mut storage).is_err() {
+        // The unreturned exact context remains parent-issued storage. Keep
+        // its original issuer retained even when no caller can retry it.
+        #[cfg(target_arch = "x86_64")]
+        core::mem::forget(parent_admission);
+        return Err(NativeSubprocessError::Retained);
+    }
+    // The exact context is now returned, and the final child-record access
+    // ended before the parent's admission can permit its own destruction.
+    #[cfg(target_arch = "x86_64")]
+    drop(parent_admission);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -3790,6 +3840,70 @@ pub(crate) mod tests {
                 });
                 worker.join().expect("child reservation metadata controls");
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn nested_child_terminal_record_retains_its_parent_until_final_tls_finish() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::nested_child_terminal_record_retains_its_parent_until_final_tls_finish",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let parent = native_subproc_new().expect("main creates parent child");
+                let creator = std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(parent) }, Ok(NativeChildThreadAdd::Added));
+                    // Refuse the first exact parent metadata entry before
+                    // any context allocation, then retry the same source route.
+                    unsafe { parent.with_owner(|owner| owner.as_mut().unwrap().test_fail_next_metadata_session_setup()) }.unwrap();
+                    assert_eq!(native_subproc_new(), Err(NativeSubprocessError::New(
+                        ChildSubprocessNewError::ContextAllocation(MetaError::InitializationRetained))));
+                    assert_eq!(unsafe { parent.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 0,
+                        "released creation failure returns independent parent custody");
+                    let nested = native_subproc_new().expect("same actual parent retries nested child creation");
+                    assert_eq!(unsafe { parent.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 1);
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                    nested
+                });
+                let nested = creator.join().expect("parent member completes");
+                let (ready, entered) = std::sync::mpsc::channel();
+                let (finish, resume) = std::sync::mpsc::channel::<bool>();
+                let worker = std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(nested) }, Ok(NativeChildThreadAdd::Added));
+                    ready.send(()).unwrap();
+                    // A failed audit ends without consulting a released child.
+                    if !resume.recv().unwrap_or(false) { return; }
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                });
+                entered.recv().unwrap();
+                // SAFETY: the nested member is parked and its sole subsequent
+                // allocator action is final thread finish after source teardown.
+                assert_eq!(unsafe { native_subproc_destroy(nested) }, Ok(()));
+                // Source child lifetime ended, but its exact parent-issued
+                // context still contains the orphaned member's control record.
+                // Observe custody before probing parent retirement so a failed
+                // regression never lets that member reach freed parent storage.
+                let retained = unsafe { parent.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire);
+                std::println!("nested-terminal.parent-admissions={retained}");
+                assert_eq!(retained, 1, "the exact parent stays owned through the delayed record release");
+                // Internal admission check; no caller claims source child use
+                // after teardown, and the actual record owner must refuse here.
+                assert_eq!(unsafe { destroy_record(parent, ChildHeapRelease::Native) },
+                    Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive)));
+                finish.send(true).unwrap();
+                worker.join().expect("last actual nested TLS token releases its record");
+                assert_eq!(unsafe { parent.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
+                assert_eq!(unsafe { native_subproc_destroy(parent) }, Ok(()));
             },
         );
     }
