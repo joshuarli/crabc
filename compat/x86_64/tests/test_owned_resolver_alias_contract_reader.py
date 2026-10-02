@@ -734,6 +734,13 @@ class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
                 _capture_input_identities(root / 'unknown-receipt', paths, manifest,
                                           image_inputs={'timeout': '/usr/bin/unknown'})
 
+    def test_historical_image_manifest_is_rejected(self) -> None:
+        manifest = json.loads(resolver_reader.IMAGE_MANIFEST.read_text())
+        manifest['image'] = 'sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
+        with mock.patch.object(resolver_reader, 'read_json', return_value=manifest):
+            with self.assertRaisesRegex(ReceiptError, 'current image manifest differs'):
+                resolver_reader.trusted_image_manifest(ROOT)
+
     def test_image_manifest_covers_each_declared_image_input(self) -> None:
         manifest = resolver_reader.trusted_image_manifest(ROOT)
         self.assertTrue(set(IMAGE_INPUTS.values()).issubset(manifest['files']))

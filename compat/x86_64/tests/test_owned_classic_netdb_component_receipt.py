@@ -98,7 +98,7 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         manifest = self.receipt.trusted_image_manifest(ROOT)
         self.assertEqual(
             manifest["image"],
-            "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+            self.receipt.PINNED_IMAGE.removeprefix("crabc-core-evidence@"),
         )
         files = manifest["files"]
         self.assertEqual(
@@ -109,6 +109,31 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             files[str(self.receipt.LINKER_PATH)]["sha256"],
             "dc40fa1b087ed4538d410a08e7314bcc1614dc7ff728b5bbf624a1daa97730bc",
         )
+
+    def test_collection_admits_only_the_observed_current_image(self) -> None:
+        for observed in (None, "crabc-core-evidence@sha256:" + "0" * 64):
+            with self.subTest(observed=observed), mock.patch.dict(os.environ, {}, clear=True):
+                if observed is not None:
+                    os.environ["CRABC_CLASSIC_NETDB_IMAGE_ID"] = observed
+                with self.assertRaisesRegex(self.receipt.ReceiptError, "not bound to the pinned core evidence image"):
+                    self.receipt.require_collection_image()
+        with mock.patch.dict(os.environ, {"CRABC_CLASSIC_NETDB_IMAGE_ID": self.receipt.PINNED_IMAGE}):
+            self.assertEqual(self.receipt.require_collection_image(), self.receipt.PINNED_IMAGE)
+
+    def test_producer_rejects_an_unbound_image_before_product_or_fixture_access(self) -> None:
+        import owned_classic_netdb as producer
+
+        with mock.patch.dict(os.environ, {}, clear=True), \
+             mock.patch.object(producer, "fixture_module", side_effect=AssertionError("fixture accessed")):
+            with self.assertRaisesRegex(RuntimeError, "not bound to the pinned core evidence image"):
+                producer.run(ROOT / ".work/absent-work", None, ROOT / ".work/absent-product")
+
+    def test_historical_image_manifest_is_rejected(self) -> None:
+        manifest = json.loads((ROOT / self.receipt.IMAGE_MANIFEST).read_text())
+        manifest["image"] = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+        with mock.patch.object(self.receipt, "read_json", return_value=manifest):
+            with self.assertRaisesRegex(self.receipt.ReceiptError, "current image manifest differs"):
+                self.receipt.trusted_image_manifest(ROOT)
 
     def test_symbol_claims_replay_the_elf_not_retained_symbol_text(self) -> None:
         output = b"""Symbol table '.dynsym' contains 2 entries:\n   Num:    Value          Size Type    Bind   Vis      Ndx Name\n     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND gethostbyname\n     2: 0000000000001000    10 FUNC    GLOBAL DEFAULT   12 gethostbyname\n"""

@@ -85,6 +85,7 @@ DYNAMIC_CELLS = (
 )
 FULL_CELLS = ("static", "static-pie", *DYNAMIC_CELLS)
 PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
+IMAGE_MARKER = "CRABC_CLASSIC_NETDB_IMAGE_ID"
 IMAGE_MANIFEST = "compat/x86_64/owned_classic_netdb_image_inputs.json"
 TOOLCHAIN = pinned_toolchain(ROOT)
 TOOLCHAIN_ROOT = Path("/opt/rustup/toolchains") / f"{TOOLCHAIN}-x86_64-unknown-linux-musl"
@@ -103,6 +104,9 @@ SOURCE_PATHS = {
     "payload_evidence": "compat/x86_64/owned_crypt_runtime_evidence.py",
     "reader": "compat/x86_64/owned_classic_netdb_component_receipt.py",
     "image_manifest": IMAGE_MANIFEST,
+    "core_image": "compat/x86_64/core_image.py",
+    "toolchain_contract": "rust-toolchain.toml",
+    "toolchain_reader": "scripts/rust_toolchain.py",
 }
 ASSOCIATION_MUSL = "wrong-association=203.0.113.50\nclassic netdb scenario passed\n"
 ASSOCIATION_OWNED = "wrong-association=198.51.100.50\nclassic netdb scenario passed\n"
@@ -265,6 +269,13 @@ def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[
         result["static"] = {"path": static.relative_to(root).as_posix(), "manifest": identity(root, static_manifest),
                             "tree": tree_identity(static)}
     return result
+
+
+def require_collection_image() -> str:
+    """Admit collection only in the immutable image observed by the launcher."""
+    require(os.environ.get(IMAGE_MARKER) == PINNED_IMAGE,
+            "classic-netdb collector is not bound to the pinned core evidence image")
+    return PINNED_IMAGE
 
 
 def trusted_image_manifest(root: Path) -> dict[str, object]:

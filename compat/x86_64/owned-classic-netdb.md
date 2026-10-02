@@ -188,15 +188,24 @@ bash compat/x86_64/run_owned_classic_netdb.sh \
 ```
 
 Both supplied directories must be physical directories below the invoking
-checkout's `.work`. The frozen `26dfb153` products are therefore mounted or
-copied as a whole read-only checkout beneath `.work/frozen-26df`; hard links
-are not an admissible substitute. These are development replays only and do
-not qualify current source or admit a family.
+checkout's `.work`. Retained products may be mounted or copied as a whole
+read-only checkout beneath that boundary; hard links are not an admissible
+substitute. Replays outside the current source and image remain development
+checks and cannot qualify current source or admit a family.
 
 Read a retained receipt inside the current native evidence image. The reader
 resolves its Rust compiler and linker paths from `rust-toolchain.toml`; the
 captured executable identities and image digest are in
-`owned_classic_netdb_image_inputs.json`:
+`owned_classic_netdb_image_inputs.json`. The current image is
+`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
+Collection requires the dispatcher's observed immutable identity in
+`CRABC_CLASSIC_NETDB_IMAGE_ID`, using the `crabc-core-evidence@sha256:...`
+spelling, before source/product capture or compiler execution. The source seal
+includes `core_image.py`, `rust-toolchain.toml` and `scripts/rust_toolchain.py`.
+Refreshing the image-input manifest authenticates current tools; it does not
+admit historical receipts from a different image or establish a new runtime pass.
+
+Read the receipt with:
 
 ```sh
 python3 -B compat/x86_64/owned_classic_netdb_component_receipt.py validate \

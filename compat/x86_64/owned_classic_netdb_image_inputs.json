@@ -37,6 +37,6 @@
       "size": 390
     }
   },
-  "image": "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+  "image": "sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a",
   "schema": "crabc.x86_64-owned-classic-netdb-image-inputs/v1"
 }

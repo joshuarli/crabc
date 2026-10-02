@@ -98,6 +98,9 @@ COLLECTOR_PATHS = (
     'compat/x86_64/owned_resolver_alias_override_caller.c',
     'compat/x86_64/owned-resolver-alias-contract.md',
     'compat/x86_64/owned_resolver_alias_image_inputs.json',
+    'compat/x86_64/core_image.py',
+    'rust-toolchain.toml',
+    'scripts/rust_toolchain.py',
     'compat/x86_64/owned_static_link_authority.py',
     'compat/x86_64/loader_debug_abi_evidence.py',
     'compat/x86_64/owned_posix_product_evidence.py',
@@ -109,7 +112,7 @@ INPUT_NAMES = (
     'resolver_source', 'static_c_abi_source', 'resolver_batch_source', 'cargo_manifest',
     'resolv_header', 'feature_roster', 'parity_contract', 'cancellation_contract',
     'header_c_probe', 'header_cpp_probe', 'header_runner', 'legacy_probe', 'legacy_runner',
-    'static_authority', 'elf_reader', 'product_authority', 'image_manifest',
+    'static_authority', 'elf_reader', 'product_authority', 'image_manifest', 'core_image', 'toolchain_contract', 'toolchain_reader',
     'header_compiler', 'readelf', 'timeout', 'chroot',
     'oracle_compiler', 'oracle_archive', 'oracle_shared',
     'static_driver', 'static_manifest', 'static_libc', 'static_crt1', 'static_rcrt1', 'static_crti', 'static_crtn', 'static_builtins',
@@ -545,6 +548,9 @@ def _source_identity(root: Path, preparation: Path) -> dict[str, str]:
 
 def _source_paths(root: Path) -> dict[str, Path]:
     return {
+        'core_image': root / 'compat/x86_64/core_image.py',
+        'toolchain_contract': root / 'rust-toolchain.toml',
+        'toolchain_reader': root / 'scripts/rust_toolchain.py',
         'reader': root / 'compat/x86_64/owned_resolver_alias_contract_reader.py',
         'runner': root / 'compat/x86_64/run_owned_resolver_alias_contract.sh',
         'probe': root / 'compat/x86_64/owned_resolver_alias_contract_probe.c',

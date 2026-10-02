@@ -95,6 +95,7 @@ def symbols(binary: Path, dynamic: bool, destination: Path, journal: CommandJour
 
 
 def run(work: Path, static: Path | None, dynamic: Path) -> None:
+    image_id = receipt.require_collection_image()
     fixture = fixture_module()
     from owned_dynamic_qualification import source_digest
     source_sha256 = source_digest()
@@ -293,7 +294,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
                      **({'static': static.relative_to(ROOT).as_posix()} if static is not None else {})},
         'seals': {name: receipt.identity(ROOT, work / f'{name}.json') for name in
                   ('source-product-before', 'source-product-after', 'tools-before', 'tools-after')},
-        'image': {'id': receipt.PINNED_IMAGE, 'manifest': receipt.identity(ROOT, ROOT / receipt.IMAGE_MANIFEST)},
+        'image': {'id': image_id, 'manifest': receipt.identity(ROOT, ROOT / receipt.IMAGE_MANIFEST)},
         'workload': receipt.identity(ROOT, obj), 'commands': journal.records, 'links': links, 'payloads': payloads,
         'executions': executions, 'network': receipt.identity(ROOT, work / 'network-isolation.json'),
         'dns': {'ready': receipt.identity(ROOT, work / 'dns-ready.json'), 'events': receipt.identity(ROOT, work / 'dns-events.json')},
