@@ -1013,7 +1013,9 @@ fn map_free_error(error: FreeError) -> TestContextFreeError {
         FreeError::Unmapped | FreeError::ForeignPage | FreeError::InvalidBlock(_) => {
             TestContextFreeError::InvalidPointer
         }
-        FreeError::CollectionPoisoned | FreeError::Lifecycle => TestContextFreeError::Lifecycle,
+        FreeError::CollectionPoisoned | FreeError::LivePageValidityRetained | FreeError::Lifecycle => {
+            TestContextFreeError::Lifecycle
+        }
     }
 }
 
