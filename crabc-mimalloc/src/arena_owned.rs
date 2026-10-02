@@ -1642,8 +1642,8 @@ impl ProcessArenaBacking {
     /// retained with this backing through all published arena and callback
     /// uses and quiescent destruction. The allocation owns the exact live
     /// range described by `memory`. `public_guard`, when present, owns this
-    /// backing's reserve lock and the allocation is caller-owned external
-    /// memory; otherwise the caller holds that lock until this call returns.
+    /// backing's reserve lock for explicit reservation or caller-owned memory;
+    /// otherwise the caller holds that lock until this call returns.
     unsafe fn install_owned_allocation_with_public_guard(
         &self, process: VmProcess<'_>, stored_process: StoredVmProcess, config: MemoryConfig,
         managed_size: usize, allocation: ArenaBacking, memory: MemoryId,
@@ -2118,8 +2118,10 @@ impl ProcessArenaBacking {
             );
             return Err(ReserveOsMemoryFailure::TooLarge);
         }
-        let _guard = self.reserve_lock.lock().map_err(|_| ReserveOsMemoryFailure::Unmanaged)?;
-        unsafe { self.reserve_one_locked(process, config, size, access, allow_large, exclusive, random) }
+        // Public explicit reservations have no automatic reserve-count
+        // critical section. OS and metadata warnings may synchronously
+        // reserve another arena; publication takes its own short lock.
+        unsafe { self.reserve_one(process, config, size, access, allow_large, exclusive, random, true) }
             .map_err(|error| error.map_or(ReserveOsMemoryFailure::Unmanaged, ReserveOsMemoryFailure::Os))
     }
 
@@ -2138,6 +2140,25 @@ impl ProcessArenaBacking {
         size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
         random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Option<Errno>> {
+        // SAFETY: the caller holds the automatic reservation lock and retains
+        // the exact process pair through every diagnostic and release.
+        unsafe { self.reserve_one(process, config, size, access, allow_large,
+            exclusive, random, false) }
+    }
+
+    /// Runs the same OS map/manage/free sequence for automatic or explicit
+    /// reservation. Only automatic sizing retains a lock across the whole
+    /// operation; an explicit reservation admits callbacks before publication.
+    ///
+    /// # Safety
+    /// The exact process pair and backing remain live through this call and
+    /// every published arena. Teardown is excluded. When `public` is false,
+    /// the caller holds `reserve_lock` through this entire transition.
+    unsafe fn reserve_one(
+        &self, process: VmProcess<'_>, config: MemoryConfig,
+        size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
+        random: crate::os::OsRandom<'_>, public: bool,
+    ) -> Result<ArenaId, Option<Errno>> {
         // Unpublished mapping ownership stays on this synchronous stack,
         // including the final source attempt after a full registry.
         if self.destroyed.load(Ordering::Acquire) || self.preparation_retained.load(Ordering::Acquire) { return Err(None); }
@@ -2146,8 +2167,34 @@ impl ProcessArenaBacking {
         let (mut mapping, memory) = match allocation {
             Ok(allocation) => {
                 let (mapping, memory) = allocation.into_mapping_and_memory();
-                match unsafe { self.install_owned_os_mapping_locked(process,
-                    StoredVmProcess::from_retained_process(process), config, size, mapping, memory, -1, exclusive) } {
+                // SAFETY: this caller retains the exact process pair through
+                // source publication and later quiescent arena destruction.
+                let stored = unsafe { StoredVmProcess::from_retained_process(process) };
+                let installed = if public {
+                    let guard = self.reserve_lock.lock();
+                    match guard {
+                        Ok(guard) => {
+                            // SAFETY: this guard covers binding and preparation;
+                            // the retained preparation excludes destruction while
+                            // callbacks run, then publication reacquires the lock.
+                            unsafe { self.install_owned_allocation_with_public_guard(
+                                process, stored, config, size, ArenaBacking::Regular(mapping),
+                                memory, -1, exclusive, Some(guard)) }
+                                .map_err(|(error, allocation)| {
+                                    let ArenaBacking::Regular(mapping) = allocation else { unreachable!() };
+                                    ProcessArenaInstallFailure { error, mapping, memory, process }
+                                })
+                        }
+                        Err(_) => Err(ProcessArenaInstallFailure {
+                            error: ManageArenaError::RegistryFull, mapping, memory, process,
+                        }),
+                    }
+                } else {
+                    // SAFETY: the automatic caller retains its existing lock.
+                    unsafe { self.install_owned_os_mapping_locked(process,
+                        stored, config, size, mapping, memory, -1, exclusive) }
+                };
+                match installed {
                     Ok(managed) => return Ok(managed.arena_id()),
                     Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory) }
                 }
