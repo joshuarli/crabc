@@ -2080,13 +2080,27 @@ impl OutputOwner {
         let mut line = SourceFormattedMessage::empty();
         line.append(b"mem tracking: none\n");
         unsafe { self.fprintf(output, argument, &line) };
-        // `MI_PAGE_META_IS_ALIGNED` selects the aligned-free line; the
-        // selected profile has neither guarded nor encoded free lists.
+        if crate::config::GUARDED {
+            let rate = unsafe { self.option_get(SourceOption::GuardedSampleRate) }?;
+            let mut line = SourceFormattedMessage::empty();
+            line.append(b"guarded build: ");
+            line.append(if rate != 0 { b"enabled" } else { b"disabled" });
+            line.append(b"\n");
+            unsafe { self.fprintf(output, argument, &line) };
+        }
+        // Aligned page metadata selects this line in every native profile.
         let mut line = SourceFormattedMessage::empty();
         line.append(b"free: aligned, page size: ");
         line.append_signed_decimal(page_record_bytes as i64);
         line.append(b"\n");
         unsafe { self.fprintf(output, argument, &line) };
+        if crate::config::ENCODE_FREELIST {
+            let mut line = SourceFormattedMessage::empty();
+            line.append(b"free lists: encoded with ");
+            line.append_signed_decimal(crate::config::PAGE_KEY_COUNT as i64);
+            line.append(b" key(s)\n");
+            unsafe { self.fprintf(output, argument, &line) };
+        }
         Ok(())
     }
 
@@ -5502,6 +5516,41 @@ mod tests {
     }
 
     #[test]
+    fn options_print_preserves_selected_mode_lines_and_guarded_toggle() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
+            .lock().expect("diagnostic environment test lock is not poisoned");
+        install_option_trace_environment(&[]);
+        let capture = Capture::new();
+        let owner = initialized_option_owner(&capture);
+        for rate in [0, -1, 1] {
+            // SAFETY: this test serializes the owner and retains its capture
+            // through option mutation and synchronous callback delivery.
+            unsafe {
+                owner.option_set(SourceOption::GuardedSampleRate, rate).unwrap();
+                capture.reset();
+                owner.options_print_out(Some(capture_output), capture_argument(&capture), 144).unwrap();
+            }
+            let mut expected = std::vec![
+                std::format!("debug level : {}\n", crate::config::DEBUG_LEVEL),
+                std::format!("secure level: {}\n", crate::config::SECURE_LEVEL),
+                std::string::String::from("mem tracking: none\n"),
+            ];
+            if crate::config::GUARDED {
+                expected.push(std::format!("guarded build: {}\n", if rate == 0 { "disabled" } else { "enabled" }));
+            }
+            expected.push(std::string::String::from("free: aligned, page size: 144\n"));
+            if crate::config::ENCODE_FREELIST {
+                expected.push(std::format!("free lists: encoded with {} key(s)\n", crate::config::PAGE_KEY_COUNT));
+            }
+            let tail = 1 + SOURCE_OPTION_COUNT;
+            assert_eq!(capture.count(), tail + expected.len());
+            for (offset, line) in expected.iter().enumerate() {
+                assert_eq!(capture.message(tail + offset), line.as_bytes());
+            }
+        }
+    }
+
+    #[test]
     fn verbose_post_init_prints_every_descriptor_through_the_default_route() {
         let _guard = default_stderr_test_guard();
         reset_default_stderr_capture();
@@ -5518,20 +5567,36 @@ mod tests {
 
         // The delayed `process init` fragments flush first, then each
         // `mi_options_print` line goes directly to the default primitive.
-        let expected_lines = 1 + SOURCE_OPTION_COUNT + 4;
+        let expected_lines = 1 + SOURCE_OPTION_COUNT + 4
+            + usize::from(crate::config::GUARDED) + usize::from(crate::config::ENCODE_FREELIST);
         assert_eq!(DEFAULT_STDERR_CAPTURE.count(), 1 + expected_lines);
         let process_init = std::format!("mimalloc: process init: 0x{:02X}\n", thread_pointer_identity());
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(0), process_init.as_bytes());
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(1), b"v3.5.0\n");
-        assert_eq!(DEFAULT_STDERR_CAPTURE.message(2), b"option 'show_errors': 0 \n");
+        let errors = std::format!("option 'show_errors': {} \n", SourceOption::ShowErrors.default_value());
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(2), errors.as_bytes());
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(4), b"option 'verbose': 1 \n");
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(2 + 23), b"option 'arena_reserve': 4096 KiB\n");
         let tail = 2 + SOURCE_OPTION_COUNT;
-        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail), b"debug level : 0\n");
-        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 1), b"secure level: 0\n");
+        let debug = std::format!("debug level : {}\n", crate::config::DEBUG_LEVEL);
+        let secure = std::format!("secure level: {}\n", crate::config::SECURE_LEVEL);
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail), debug.as_bytes());
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 1), secure.as_bytes());
         assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 2), b"mem tracking: none\n");
         let page = std::format!("free: aligned, page size: {}\n", core::mem::size_of::<crate::types::Page>());
-        assert_eq!(DEFAULT_STDERR_CAPTURE.message(tail + 3), page.as_bytes());
+        let mut next = tail + 3;
+        if crate::config::GUARDED {
+            let guarded = std::format!("guarded build: {}\n", if SourceOption::GuardedSampleRate.default_value() != 0 {
+                "enabled"
+            } else { "disabled" });
+            assert_eq!(DEFAULT_STDERR_CAPTURE.message(next), guarded.as_bytes());
+            next += 1;
+        }
+        assert_eq!(DEFAULT_STDERR_CAPTURE.message(next), page.as_bytes());
+        if crate::config::ENCODE_FREELIST {
+            let encoded = std::format!("free lists: encoded with {} key(s)\n", crate::config::PAGE_KEY_COUNT);
+            assert_eq!(DEFAULT_STDERR_CAPTURE.message(next + 1), encoded.as_bytes());
+        }
     }
 
     fn hex(bytes: &[u8]) -> std::string::String {
@@ -5694,6 +5759,15 @@ mod tests {
     /// differential. The pinned C probe prints the same keys.
     #[test]
     fn source_options_trace_for_pinned_c_comparison() {
+        source_options_trace(false);
+    }
+
+    #[test]
+    fn source_valid_options_trace_for_pinned_c_comparison() {
+        source_options_trace(true);
+    }
+
+    fn source_options_trace(valid_client: bool) {
         let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
             .lock()
             .expect("diagnostic environment test lock is not poisoned");
@@ -5785,11 +5859,13 @@ mod tests {
             image("enabled.disable", SourceOption::DisallowOsAlloc);
             record("enabled.arena_eager_commit", i64::from(owner.option_is_enabled(SourceOption::ArenaEagerCommit).unwrap()));
         }
-        record("invalid.get_negative", raw_get(-1));
-        record("invalid.get_last", raw_get(SOURCE_OPTION_COUNT as i32));
-        record("invalid.get_large", raw_get(1_000));
-        record("invalid.clamp", source_option_clamp_for_test(raw_get(-1), 5, 10));
-        record("invalid.enabled", i64::from(raw_get(SOURCE_OPTION_COUNT as i32) != 0));
+        if !valid_client {
+            record("invalid.get_negative", raw_get(-1));
+            record("invalid.get_last", raw_get(SOURCE_OPTION_COUNT as i32));
+            record("invalid.get_large", raw_get(1_000));
+            record("invalid.clamp", source_option_clamp_for_test(raw_get(-1), 5, 10));
+            record("invalid.enabled", i64::from(raw_get(SOURCE_OPTION_COUNT as i32) != 0));
+        }
         let print = Capture::new();
         // SAFETY: the print capture outlives this synchronous call.
         unsafe {
