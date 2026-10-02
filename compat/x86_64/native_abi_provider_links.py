@@ -246,7 +246,7 @@ def _call_transcripts(view: Mapping[str, Any], member: str,
         section = call['section']
         rows = view['map_rows'].get(member + ':(' + section + ')', [])
         maps[section] = rows
-        if call['kind'] != 'R_X86_64_GOTPCREL' or len(rows) != 1:
+        if call['kind'] not in {'R_X86_64_GOTPCREL', 'R_X86_64_REX_GOTPCRELX'} or len(rows) != 1:
             continue
         base = int(rows[0].split()[0], 16)
         address = base + call['offset'] - 2
@@ -528,7 +528,7 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
         address = (kind == 'R_X86_64_PC32' and len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
                    and prefix[1] == 0x8d and prefix[2] & 0xc7 == 0x05)
         instruction_span = None
-        if kind == 'R_X86_64_PC32' and disassembly is not None:
+        if kind in {'R_X86_64_PC32', 'R_X86_64_REX_GOTPCRELX'} and disassembly is not None:
             containing = [(start, end) for start, end in instruction_spans.get(section, {}).items()
                           if start <= offset and offset + 4 <= end]
             require(len(containing) == 1, f'provider import {name} instruction span is absent or ambiguous')
@@ -539,8 +539,16 @@ def import_relocations(transcript: str, name: str, *, image: bytes,
                      or (source[offset - 3:offset - 1] == b'\x66\x89'
                          and source[offset - 1] & 0xc7 == 0x05))):
             require(False, f'provider import {name} instruction boundaries are required')
+        if kind == 'R_X86_64_REX_GOTPCRELX':
+            # A relaxable address load retains its exact seven-byte source
+            # instruction. Relaxation can change MOV to LEA, never the REX
+            # register bits, addressing mode, operand boundary or symbol bias.
+            require(instruction_span == (offset - 3, offset + 4) and addend == -4
+                    and len(prefix) == 3 and prefix[0] in {0x48, 0x4c}
+                    and prefix[1] == 0x8b and prefix[2] & 0xc7 == 0x05,
+                    f'provider import {name} relaxable GOT instruction differs')
         integer = integer_memory_operand(source, offset, instruction_span=instruction_span) if kind == 'R_X86_64_PC32' else None
-        require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
+        require(section is not None and kind in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_REX_GOTPCRELX', 'R_X86_64_PC32'}
                 and (addend == -4 or scalar or address or integer is not None),
                 f'provider import {name} relocation is not a supported reference')
         references.append({'section': section, 'offset': offset, 'kind': kind,
@@ -941,11 +949,17 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                              'read_size': 8, 'branch_kind': 'scalar-data-read'})
             continue
         prefix = source[offset - 3:offset] if offset >= 3 else b''
+        got_reference = kind in {'R_X86_64_GOTPCREL', 'R_X86_64_REX_GOTPCRELX'}
+        if kind == 'R_X86_64_REX_GOTPCRELX':
+            require(instruction_span == (offset - 3, offset + 4) and len(prefix) == 3
+                    and prefix[0] in {0x48, 0x4c} and prefix[1] == 0x8b
+                    and prefix[2] & 0xc7 == 0x05,
+                    f'provider {name} relaxable GOT instruction differs')
         address_compare = (len(prefix) == 3 and kind == 'R_X86_64_GOTPCREL'
                            and prefix[0] in {0x48, 0x4c} and prefix[1] == 0x3b
                            and prefix[2] & 0xc7 == 0x05)
         address_load = (len(prefix) == 3 and prefix[0] in {0x48, 0x4c} and prefix[2] & 0xc7 == 0x05
-                        and ((kind == 'R_X86_64_GOTPCREL' and prefix[1] == 0x8b)
+                        and ((got_reference and prefix[1] == 0x8b)
                              or (kind == 'R_X86_64_PC32' and prefix[1] == 0x8d)))
         conditional = (kind == 'R_X86_64_PLT32' and offset >= 2
                        and source[offset - 2] == 0x0f and 0x80 <= source[offset - 1] <= 0x8f)
@@ -967,12 +981,14 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
         prefix_size = 3 if address_load or address_compare else 2
         call_address = int(parts[0], 16) + offset - prefix_size
         opcode = calls._public_weak_virtual_bytes(image, call_address, prefix_size + 4, elf_type, executable=True)
-        require(opcode[:prefix_size] == source[offset - prefix_size:offset],
+        relaxed = (kind == 'R_X86_64_REX_GOTPCRELX'
+                   and opcode[:prefix_size] == prefix[:1] + b'\x8d' + prefix[2:])
+        require(opcode[:prefix_size] == source[offset - prefix_size:offset] or relaxed,
                 f'provider {name} reference opcode differs')
         target = call_address + prefix_size + 4 + struct.unpack_from('<i', opcode, prefix_size)[0]
         record = {'section': section, 'offset': offset, 'call_address': call_address,
                   'target_address': provider_address}
-        if kind == 'R_X86_64_GOTPCREL':
+        if got_reference and not relaxed:
             slot = target
             target = struct.unpack('<Q', calls._public_weak_virtual_bytes(image, slot, 8, elf_type, executable=False))[0]
             relative = re.findall(rf'^0*{slot:x}\s+\S+\s+R_X86_64_RELATIVE\s+([0-9a-f]+)\s*$', relocation_text, re.MULTILINE)
@@ -1055,7 +1071,8 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                 record['target_address'] = provider_address + provider_offset
             require(target == provider_address + provider_offset,
                     f'provider {name} reference resolves to a foreign provider')
-            record['branch_kind'] = ('rip-relative-object-end-address' if object_end else
+            record['branch_kind'] = ('relaxed-got-address-load' if relaxed else
+                                     'rip-relative-object-end-address' if object_end else
                                      'rip-relative-address' if address_load else 'conditional-jump')
         resolved.append(record)
     return {'resolved_calls': resolved, 'discarded_calls': discarded}

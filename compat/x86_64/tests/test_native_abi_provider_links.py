@@ -1575,6 +1575,9 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             for register in range(16):
                 source += [f'.byte {0x48 if register < 8 else 0x4c}, 0x3b, {0x05 + ((register % 8) << 3)}',
                            '.long 0', '.reloc .-4, R_X86_64_GOTPCREL, domain_data-4']
+            for rex, modrm in [(0x48, 0x05), (0x4c, 0x0d)]:
+                source += [f'.byte {rex}, 0x8b, {modrm}', '.long 0',
+                           '.reloc .-4, R_X86_64_REX_GOTPCRELX, domain_data-4']
             source += ['.byte 0x48, 0x8b, 0x05', '.long 0',
                        '.reloc .-4, R_X86_64_GOTPCREL, domain_data-4', 'ret', '.size caller,.-caller',
                        '.section .data.provider,"aw",@progbits', '.globl domain_data', '.type domain_data,@object',
@@ -1587,12 +1590,17 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                            check=True, capture_output=True)
             image = (work / 'caller.o').read_bytes()
             references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
-                                                  'domain_data', image=image)
-            self.assertEqual(len(references), 17)
+                                                  'domain_data', image=image, disassembly=links.read_tool('objdump', '-dw', work / 'caller.o'))
+            self.assertEqual(len(references), 19)
+            with self.assertRaisesRegex(ValueError, 'relaxable GOT instruction differs'):
+                links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                         'domain_data', image=image)
             sections = links.calls._ordinary_source_sections(image, {row['section'] for row in references})
-            for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
+            for mode, elf_type, flag, relaxation in [('static', 2, '-static', '--no-relax'),
+                    ('static-pie', 3, '-pie', '--no-relax'), ('static', 2, '-static', '--relax'),
+                    ('static-pie', 3, '-pie', '--relax')]:
                 output, map_path = work / mode, work / (mode + '.map')
-                subprocess.run([linker, flag, '--no-relax', '-e', 'caller', '--undefined=caller',
+                subprocess.run([linker, flag, relaxation, '-e', 'caller', '--undefined=caller',
                                 '-Map=' + str(map_path), str(work / 'libdomain.a'), '-o', str(output)],
                                check=True, capture_output=True)
                 address = int(next(row.split()[1] for row in links.read_tool('readelf', '-sW', output).splitlines()
@@ -1601,11 +1609,25 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                                  map_text=map_path.read_text(), relocation_text=links.read_tool('readelf', '-rW', output),
                                  provider_address=address, elf_type=elf_type, name='domain_data', source_sections=sections)
                 proof = links.final_member_references(output.read_bytes(), **arguments)
-                self.assertEqual(len(proof['resolved_calls']), 17)
+                self.assertEqual(len(proof['resolved_calls']), len(references))
                 self.assertEqual(proof['discarded_calls'], [])
                 self.assertEqual({row['branch_kind'] for row in proof['resolved_calls']},
-                                 {'got-address-compare', 'got-address-load'})
+                                 {'got-address-compare', 'got-address-load'}
+                                 | ({'relaxed-got-address-load'} if relaxation == '--relax' else set()))
                 for reference in references:
+                    if reference['kind'] == 'R_X86_64_REX_GOTPCRELX':
+                        for mutation in ('missing span', 'extra byte', 'neighbor prefix'):
+                            changed = dict(reference)
+                            if mutation == 'missing span':
+                                changed.pop('instruction_start')
+                                changed.pop('instruction_end')
+                            elif mutation == 'extra byte':
+                                changed['instruction_end'] += 1
+                            else:
+                                changed['instruction_start'] -= 1
+                            with self.assertRaisesRegex(ValueError, 'relaxable GOT instruction differs'):
+                                links.final_member_references(output.read_bytes(), **{
+                                    **arguments, 'source_calls': [changed]})
                     with self.assertRaisesRegex((ValueError, links.calls.AllocatorBoundaryError), 'foreign provider'):
                         links.final_member_references(output.read_bytes(), **{
                             **arguments, 'source_calls': [reference], 'provider_address': address + 1})
