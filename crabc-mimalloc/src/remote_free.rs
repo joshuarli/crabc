@@ -1141,7 +1141,11 @@ where
     // SAFETY: state construction proved this is the initialized page atomic.
     let xthread_free = unsafe { state.xthread_free.as_ref() };
     let detached = detach_from_head_with_before_detach_cas(xthread_free, before_detach_cas)?;
-    let Some(head) = NonNull::new(thread_free_block(detached)) else {
+    let address = thread_free_block_address(detached);
+    if address == 0 { return Ok(0); }
+    // The acquired head names a block in this retained Page backing. Keep
+    // that allocation's provenance when recovering the source pointer word.
+    let Some(head) = NonNull::new(state.area.as_ptr().cast::<Block>().with_addr(address)) else {
         return Ok(0);
     };
     // SAFETY: a successful AcqRel detach synchronizes with every producer's
@@ -1580,6 +1584,7 @@ fn producer_has_live_thread_identity(state: &PageRemoteFreeProducerState) -> boo
 }
 
 #[inline]
+#[cfg(test)]
 fn thread_free_block(thread_free: ThreadFree) -> *mut Block {
     // `mi_thread_free_t` stores a pointer in all bits except the low owner
     // bit. `expose_provenance` recorded that provenance when publishing; this
@@ -1656,7 +1661,10 @@ unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut B
         // word; the page key and null sentinel were copied before collection.
         let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
         let address = crate::free_list::decode_page_link(links.page_address, links.keys, encoded);
-        core::ptr::with_exposed_provenance_mut(address)
+        // Every source predecessor remains in this node's retained Page
+        // backing. Preserve that allocation when decoding the integer link;
+        // the encoded null sentinel must still produce an actual null.
+        if address == 0 { ptr::null_mut() } else { block.as_ptr().with_addr(address) }
     }
     #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
     {
