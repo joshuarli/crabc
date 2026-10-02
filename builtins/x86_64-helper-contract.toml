@@ -233,7 +233,7 @@ metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version 
 name = "__udivmodti4"
 rust_signature = 'pub unsafe extern "C" fn __udivmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
 c_abi = "u128-divmod-slot"
-caller_obligation = "defined unsigned divisor and one non-null writable Uint128 remainder slot"
+caller_obligation = "defined unsigned divisor and optional Uint128 remainder slot; a non-null slot must be aligned and writable"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]

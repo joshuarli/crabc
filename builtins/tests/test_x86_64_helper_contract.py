@@ -62,7 +62,7 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
             self.assertEqual(BUILDER.REQUIRED_SYMBOLS, {item["name"] for item in contract["helpers"]})
         with self.subTest("source-backed roles"):
             self.assertEqual({item["c_abi"] for item in contract["helpers"]}, {
-                "u128-to-binary64", "binary64-to-u128",
+                "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
                 "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
                 "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
                 "u64-bit-count", "u64-byte-swap",

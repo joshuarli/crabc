@@ -554,8 +554,8 @@ impl Uint128 {
 
 #[inline]
 fn write_remainder(output: *mut Uint128, remainder: Uint128) {
-    // SAFETY: __*divmodti4 follows compiler-rt's C ABI: its third argument is
-    // a non-null, writable pointer to one Uint128 result slot owned by caller.
+    // SAFETY: callers use this writer only for a non-null, aligned pointer
+    // to one writable Uint128 result slot owned by the caller.
     unsafe { output.write(remainder) };
 }
 
@@ -588,7 +588,9 @@ pub extern "C" fn __umodti3(numerator: Uint128, denominator: Uint128) -> Uint128
 
 /// # Safety
 ///
-/// `remainder` must point to writable storage for one `Uint128`.
+/// `denominator` must be nonzero. On x86-64, `remainder` may be null to
+/// request only the quotient. Otherwise it must point to aligned writable
+/// storage for one `Uint128`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __udivmodti4(
     numerator: Uint128,
@@ -596,6 +598,12 @@ pub unsafe extern "C" fn __udivmodti4(
     remainder: *mut Uint128,
 ) -> Uint128 {
     let (quotient, value) = Uint128::divmod_unsigned(numerator, denominator);
+    // The unsigned x86 compiler-helper ABI permits a quotient-only call.
+    // The signed sibling still requires its output slot.
+    #[cfg(target_arch = "x86_64")]
+    if remainder.is_null() {
+        return quotient;
+    }
     write_remainder(remainder, value);
     quotient
 }
@@ -982,6 +990,25 @@ mod tests {
             let left = ((next(&mut state) as u128) << 64) | next(&mut state) as u128;
             let right = ((next(&mut state) as u128) << 64) | next(&mut state) as u128;
             assert_eq!(value(__multi3(words(left), words(right))), left.wrapping_mul(right));
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn unsigned_divmod_accepts_null_remainder_for_quotient_only() {
+        let maximum = Uint128 { lo: u64::MAX, hi: u64::MAX };
+        for (numerator, denominator, expected) in [
+            (Uint128::ZERO, words(7), Uint128::ZERO),
+            (words(7), words(3), words(2)),
+            (words(3), words(7), Uint128::ZERO),
+            (maximum, words(3), Uint128 { lo: 0x5555_5555_5555_5555, hi: 0x5555_5555_5555_5555 }),
+            (maximum, Uint128 { lo: 0, hi: 1 << 63 }, Uint128::ONE),
+            (Uint128 { lo: 5, hi: 1 }, Uint128 { lo: 0, hi: 1 }, Uint128::ONE),
+        ] {
+            // SAFETY: all divisors are nonzero; the unsigned x86 helper's
+            // null remainder requests a quotient without an output write.
+            let quotient = unsafe { super::__udivmodti4(numerator, denominator, core::ptr::null_mut()) };
+            assert_eq!(quotient, expected);
         }
     }
 

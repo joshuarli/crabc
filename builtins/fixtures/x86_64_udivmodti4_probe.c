@@ -35,7 +35,7 @@ static unsigned_int128 call_udivmodti4(
     unsigned_int128 denominator,
     unsigned_int128 *remainder
 ) {
-    *remainder = numerator % denominator;
+    if (remainder) *remainder = numerator % denominator;
     return numerator / denominator;
 }
 #else
@@ -92,6 +92,9 @@ static int check_case(unsigned_int128 numerator, unsigned_int128 denominator) {
     results[3] = remainder;
     if (results[0] != results[2] || results[1] != results[3]) {
         return 2;
+    }
+    if (call_udivmodti4(numerator, denominator, (unsigned_int128 *)0) != results[0]) {
+        return 4;
     }
     return write_results(results) == (long)sizeof(results) ? 0 : 3;
 }
