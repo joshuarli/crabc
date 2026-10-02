@@ -23,6 +23,57 @@ pub(crate) type AtomicI64Value = AtomicI64;
 pub(crate) type AtomicPointer<T> = AtomicPtr<T>;
 pub(crate) type AtomicGuardWord = AtomicWord;
 
+/// Atomic boundary of the page identity replacement; the live allocator uses
+/// a concrete word and modeled schedules substitute only these operations.
+pub(crate) trait ThreadIdentityWord {
+    fn load_identity_relaxed(&self) -> usize;
+    fn cas_identity_weak_release(&self, expected: &mut usize, replacement: usize) -> bool;
+}
+
+impl ThreadIdentityWord for AtomicWord {
+    #[inline]
+    fn load_identity_relaxed(&self) -> usize { word_load_relaxed(self) }
+
+    #[inline]
+    fn cas_identity_weak_release(&self, expected: &mut usize, replacement: usize) -> bool {
+        word_cas_weak_release(self, expected, replacement)
+    }
+}
+
+/// Replaces the source thread identity while preserving its current page
+/// flags, including flags changed between a failed CAS and its retry.
+#[inline]
+pub(crate) fn replace_thread_identity<W: ThreadIdentityWord + ?Sized>(word: &W, identity: usize) {
+    let mask = crate::types::PAGE_FLAG_MASK;
+    debug_assert_eq!(identity & mask, 0);
+    let mut previous = word.load_identity_relaxed();
+    loop {
+        let replacement = identity | (previous & mask);
+        if word.cas_identity_weak_release(&mut previous, replacement) { return; }
+    }
+}
+
+/// Exact word operations used to wait for an abandoned bitmap reader to
+/// restore its temporarily cleared candidate before terminal unregistration.
+pub(crate) trait BitmapQuiescenceWord {
+    fn load_bitmap_relaxed(&self) -> usize;
+    fn load_bitmap_acquire(&self) -> usize;
+    fn cas_bitmap_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool;
+}
+
+impl BitmapQuiescenceWord for AtomicWord {
+    #[inline]
+    fn load_bitmap_relaxed(&self) -> usize { word_load_relaxed(self) }
+
+    #[inline]
+    fn load_bitmap_acquire(&self) -> usize { word_load_acquire(self) }
+
+    #[inline]
+    fn cas_bitmap_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool {
+        word_cas_weak_acq_rel(self, expected, replacement)
+    }
+}
+
 #[inline]
 pub(crate) fn word_load_acquire(word: &AtomicWord) -> usize {
     word.load(Ordering::Acquire)

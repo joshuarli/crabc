@@ -47,6 +47,7 @@ use crate::atomic::{
     word_cas_weak_acq_rel, word_exchange_relaxed, word_exchange_release,
     word_load_acquire, word_load_relaxed, word_or_acq_rel, word_or_relaxed,
     word_store_release, AtomicWord,
+    BitmapQuiescenceWord,
 };
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
@@ -69,6 +70,34 @@ pub(crate) const BCHUNK_FIELDS: usize = BCHUNK_BITS / BFIELD_BITS;
 pub(crate) const BCHUNK_SIZE: usize = BCHUNK_BITS / 8;
 const BFIELD_LO_BIT8: usize = usize::MAX / 0xff;
 const BFIELD_HI_BIT8: usize = BFIELD_LO_BIT8 << 7;
+
+/// Permanently clears an abandoned candidate only after any losing reader
+/// has restored it. The callbacks retain the source observation, busy-wait
+/// statistics and thread-yield positions without supplying synchronization.
+pub(crate) fn clear_abandoned_bitmap_once_set<W, F, G, H>(
+    field: &W, mask: usize, mut observed_clear: F, mut busy_wait: G, mut yield_thread: H,
+)
+where
+    W: BitmapQuiescenceWord + ?Sized,
+    F: FnMut(),
+    G: FnMut(),
+    H: FnMut(),
+{
+    let mut previous = field.load_bitmap_relaxed();
+    loop {
+        if previous & mask == 0 {
+            observed_clear();
+            previous = field.load_bitmap_acquire();
+            if previous & mask == 0 { busy_wait(); }
+            while previous & mask == 0 {
+                yield_thread();
+                previous = field.load_bitmap_acquire();
+            }
+        }
+        let replacement = previous & !mask;
+        if field.cas_bitmap_weak_acq_rel(&mut previous, replacement) { return; }
+    }
+}
 
 const _: [(); 64] = [(); BFIELD_BITS];
 const _: [(); 8] = [(); BCHUNK_FIELDS];
@@ -1857,28 +1886,13 @@ impl<'storage> BitmapView<'storage> {
         let bit_index = chunk_bit % BFIELD_BITS;
         let mask = field_mask_valid(1, bit_index);
         let field = self.chunk(chunk_index).field(field_index);
-        let mut previous = word_load_relaxed(field);
-        loop {
-            if previous & mask == 0 {
-                observed_temporary_clear();
-                previous = word_load_acquire(field);
-                if previous & mask == 0 {
-                    subprocess.bitmap_statistics().busy_wait();
-                }
-                while previous & mask == 0 {
-                    // The pinned `_mi_prim_thread_yield` busy-wait backoff
-                    // (source `sleep(0)`, one zero nanosleep). Its
-                    // failure cannot turn a required quiescence wait into a
-                    // successful clear, so retain the loop either way.
-                    let _ = crate::os::thread_yield();
-                    previous = word_load_acquire(field);
-                }
-            }
-            let replacement = previous & !mask;
-            if word_cas_weak_acq_rel(field, &mut previous, replacement) {
-                return Some(());
-            }
-        }
+        clear_abandoned_bitmap_once_set(field, mask, observed_temporary_clear,
+            || subprocess.bitmap_statistics().busy_wait(),
+            || {
+                // A failed yield cannot waive the reader-quiescence wait.
+                let _ = crate::os::thread_yield();
+            });
+        Some(())
     }
 
     #[cfg(test)]
