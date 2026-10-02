@@ -123,8 +123,11 @@ group), allocator-container runners, and revision-bound receipts of the
 runtime-launcher native-shadow runners (`libc-native-mimalloc-shadow-pthread-teardown`,
 `owned-native-allocator-stress`), which the gate reads through
 [`native_shadow_receipt.py`](../x86_64/native_shadow_receipt.py) and accepts
-only when they seal the current checkout and every case passed. Run those
-runners on the tree before the gate. It writes
+only when they seal the current checkout, every case passed, and the declared
+case matrix, retained products, and canonical workload parameters are present.
+The gate records each original receipt identity; admission reopens its retained
+products and raw logs so a summary cannot survive changed or removed evidence.
+Run those runners on the tree before the gate. It writes
 `x86_64/m5-gate/report.json` under the allocator artifacts directory and exits
 nonzero until every gate passes. `--gate ID` runs one gate's evidence,
 `--check` validates the contract alone, and `--reader-tests` runs its checker
