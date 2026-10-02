@@ -1298,6 +1298,15 @@ impl ChildMetadataAllocation {
         match self { Self::Process(block) => block.pointer(), Self::Child { pointer, .. } => *pointer }
     }
 
+    /// A released or rejected capability grants no fresh byte projection.
+    /// Child release records logical consumption before a late lifecycle error.
+    pub(crate) fn is_live(&self) -> bool {
+        match self {
+            Self::Process(block) => block.is_live(),
+            Self::Child { role, .. } => *role != ChildMetadataRole::Released,
+        }
+    }
+
     pub(crate) fn memory_id(&self) -> MemoryId {
         match self {
             Self::Process(block) => block.memory_id(),
@@ -1422,9 +1431,21 @@ impl ChildParentMetadata {
                 // caller ended every typed projection and intrusive edge.
                 let freed = unsafe { id.with_owner(|owner| {
                     owner.as_mut().ok_or(MetaError::Closed)?
-                        .with_metadata_page_engine(binding, |_image, engine| unsafe { engine.free(*pointer) })
+                        .with_metadata_page_engine(binding, |_image, engine| {
+                            // This exact local metadata client can be consumed
+                            // before a later queue or backing error. Preserve
+                            // that disposition so no retry frees reused bytes.
+                            match unsafe { engine.free_with_progress(*pointer) } {
+                                crate::single_thread::LocalClientFreeProgress::RefusedBeforeConsumption(error) => {
+                                    Err(MetaError::Free(error))
+                                }
+                                crate::single_thread::LocalClientFreeProgress::Consumed(result) => {
+                                    *role = ChildMetadataRole::Released;
+                                    result.map_err(MetaError::Free)
+                                }
+                            }
+                        })
                         .map_err(|_| MetaError::InitializationRetained)?
-                        .map_err(MetaError::Free)
                 }) }.map_err(|_| MetaError::Closed)?;
                 freed?;
                 *role = ChildMetadataRole::Released;
@@ -5002,7 +5023,10 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
         if self.stage == ChildMainHeapStage::HeapStorageReleased {
             let destroyed = self.context.with_image(|child| unsafe {
-                child.identity().arena_backing().destroy_all(tracking)
+                // This exact context stays in the aggregate failure owner
+                // until every raw retry finishes; no process-static lifetime
+                // is inferred for the reclaimable child identity.
+                child.identity().arena_backing().destroy_all_retained_child(tracking)
             }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
             match destroyed {
                 Err(error) => {

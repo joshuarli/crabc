@@ -286,6 +286,10 @@ pub(crate) enum ChildSubprocessDestroyError {
     CallbackActive,
     /// The owner is not a created child or is terminally retained.
     InvalidState,
+    /// External huge-release ownership bits could not be allocated before
+    /// source teardown. The complete live child remains available for retry.
+    #[cfg(target_arch = "x86_64")]
+    TrackingAllocation(MetaError),
     Attachment(MainHeapThreadAttachmentError),
     /// Registry unlink or the metadata-page drain that must precede it.
     Registry(ChildMetadataPageEngineError),
@@ -730,6 +734,11 @@ pub(crate) struct NativeChildSubprocess {
     /// teardown; other targets retain their separate control allocation.
     /// Release waits for the last actual TLS member to finish.
     storage: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
+    /// Exact parent-issued destruction scratch exists only when published
+    /// huge owners need raw failure bits. Its pending owner retains those
+    /// bits through retry and never enlarges the inline birth control image.
+    #[cfg(target_arch = "x86_64")]
+    destroy_state: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
     parent_metadata: ChildParentMetadata,
     /// A nested child's parent-issued context outlives source teardown when
     /// actual TLS still retains its inline record. Keep that parent pinned
@@ -941,15 +950,23 @@ pub(crate) struct NativeChildArenaMetadata {
 
 #[cfg(target_arch = "x86_64")]
 impl NativeChildArenaMetadata {
+    /// Reports remaining client-release authority, not issuer availability.
+    /// A consumed or rejected client can never supply bytes or another free.
+    pub(crate) fn can_retry_free(&self) -> bool {
+        self.admission.is_some() && self.allocation.is_live()
+    }
+
     pub(crate) fn pointer(&self) -> core::ptr::NonNull<u8> {
-        assert!(self.admission.is_some(), "released tracker has no live projection");
+        assert!(self.can_retry_free(), "released or rejected tracker has no live projection");
         self.allocation.pointer()
     }
 
-    /// Returns the original capability once. A refusal consumes no admission
-    /// and permits only retrying this same metadata storage return.
+    /// Returns the original capability once. A pre-entry or non-consuming
+    /// refusal retains the same client for retry. An admitted terminal error
+    /// retains issuer custody but grants no bytes or another client free.
     pub(crate) fn free(&mut self) -> Result<(), MetaError> {
         if self.admission.is_none() { return Err(MetaError::ForeignOwner); }
+        if !self.allocation.is_live() { return Err(MetaError::ReleasedOrStale); }
         self.route.free(&mut self.allocation)?;
         self.admission.take();
         Ok(())
@@ -1309,6 +1326,8 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             storage: core::cell::UnsafeCell::new(None),
             #[cfg(not(target_arch = "x86_64"))]
             storage: core::cell::UnsafeCell::new(Some(storage)),
+            #[cfg(target_arch = "x86_64")]
+            destroy_state: core::cell::UnsafeCell::new(None),
             parent_metadata,
             #[cfg(target_arch = "x86_64")]
             parent_admission: core::cell::UnsafeCell::new(parent_admission),
@@ -3045,6 +3064,65 @@ pub(crate) unsafe fn destroy_all_native_children_terminal() -> Result<(), Native
     }
 }
 
+/// The exact preallocated header and trailing failure bits for one native
+/// child destruction. The record owns its parent-issued allocation; a pending
+/// raw failure borrows only the same allocation's separate trailing words.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildArenaDestroyState {
+    pending: Option<crate::arena::DestroyedArenas<'static>>,
+    words: usize,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildArenaDestroyState {
+    fn tracking_offset() -> usize {
+        let alignment = core::mem::align_of::<usize>();
+        (core::mem::size_of::<Self>() + alignment - 1) & !(alignment - 1)
+    }
+}
+
+/// # Safety
+/// The caller holds this exact record lock and its actual child context.
+/// No prior failure-bit projection or raw retry is live. The returned bits
+/// remain in the record's exact parent-issued allocation through every raw
+/// release failure, and may never outlive its final successful storage return.
+#[cfg(target_arch = "x86_64")]
+unsafe fn native_child_destroy_tracking(
+    record: core::ptr::NonNull<NativeChildSubprocess>,
+    child: &mut ChildMainHeapContextOwner<'static>,
+) -> Result<&'static mut [usize], NativeSubprocessError> {
+    let slot = unsafe { &mut *(*record.as_ptr()).destroy_state.get() };
+    if slot.is_none() {
+        let words = child.with_child_image(|image| unsafe {
+            image.identity().arena_backing().terminal_tracking_words()
+        }).ok_or(NativeSubprocessError::Retained)?
+            .map_err(|_| NativeSubprocessError::Retained)?;
+        if words == 0 { return Ok(&mut []); }
+        let bytes = words.checked_mul(core::mem::size_of::<usize>())
+            .and_then(|bytes| NativeChildArenaDestroyState::tracking_offset().checked_add(bytes))
+            .ok_or(NativeSubprocessError::Retained)?;
+        let route = unsafe { (*record.as_ptr()).parent_metadata };
+        let allocation = route.allocate(bytes).map_err(|error| NativeSubprocessError::DestroyRefused(
+            ChildSubprocessDestroyError::TrackingAllocation(error)))?;
+        let state = allocation.pointer().cast::<NativeChildArenaDestroyState>();
+        // Parent metadata guarantees ordinary word alignment; this exact
+        // fresh capability receives a complete header before publication.
+        assert_eq!(state.as_ptr().addr() % core::mem::align_of::<NativeChildArenaDestroyState>(), 0);
+        unsafe { state.as_ptr().write(NativeChildArenaDestroyState { pending: None, words }); }
+        *slot = Some(allocation);
+    }
+    let allocation = slot.as_ref().expect("retained native destruction scratch");
+    if !allocation.is_live() { return Err(NativeSubprocessError::Retained); }
+    let state = allocation.pointer().cast::<NativeChildArenaDestroyState>();
+    // SAFETY: the lock excludes every other use, and a retained raw retry
+    // must have ended before this sole mutable bit projection is formed.
+    if unsafe { (*state.as_ptr()).pending.is_some() } { return Err(NativeSubprocessError::Retained); }
+    let words = unsafe { (*state.as_ptr()).words };
+    Ok(unsafe { core::slice::from_raw_parts_mut(
+        allocation.pointer().as_ptr().add(NativeChildArenaDestroyState::tracking_offset()).cast(), words,
+    ) })
+}
+
 /// Pinned `mi_subproc_unsafe_destroy` for one production record, then the
 /// record itself. `release` is `Native` inside native admission and
 /// `Terminal` under permanent terminal admission.
@@ -3061,6 +3139,7 @@ unsafe fn destroy_record(
         .ok_or(NativeSubprocessError::NotReady)?;
     let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
     let metadata = crate::meta::MetaAllocator::global();
+    let terminal = matches!(release, ChildHeapRelease::Terminal);
     // SAFETY: forwarded id contract.
     let record = unsafe { id.record() };
     let destroyed = unsafe {
@@ -3071,7 +3150,46 @@ unsafe fn destroy_record(
             if record.callback_leases.load(core::sync::atomic::Ordering::Acquire) != 0 {
                 return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
             }
-            let mut child = owner.take().ok_or(NativeSubprocessError::Gone)?;
+            #[cfg(target_arch = "x86_64")]
+            let pending = unsafe { (*record.destroy_state.get()).as_ref().and_then(|allocation| {
+                (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending.take()
+            }) };
+            let mut child = match owner.take() {
+                Some(child) => child,
+                None if unsafe { (*record.storage.get()).is_some() } => {
+                    // Source teardown finished, but an exact metadata return
+                    // refused. Retry only final record storage return when no
+                    // actual TLS member still retains this same record.
+                    return Ok(unsafe { *record.members.get() });
+                }
+                None => return Err(NativeSubprocessError::Gone),
+            };
+            #[cfg(target_arch = "x86_64")]
+            if let Some(destroyed) = pending {
+                let failure = ChildMainHeapReleaseFailure::ArenaBacking { owner: child, destroyed };
+                child = match failure.retry_arena_backing() {
+                    Ok(child) => child,
+                    Err(ChildMainHeapReleaseFailure::ArenaBacking { owner: child, destroyed }) => {
+                        let state = unsafe { (*record.destroy_state.get()).as_ref().unwrap().pointer()
+                            .cast::<NativeChildArenaDestroyState>() };
+                        unsafe { (*state.as_ptr()).pending = Some(destroyed); }
+                        *owner = Some(child);
+                        return Err(NativeSubprocessError::Retained);
+                    }
+                    Err(_) => unreachable!("raw retry retains its original child arena owner"),
+                };
+            }
+            #[cfg(target_arch = "x86_64")]
+            let tracking = if child.stage() == ChildMainHeapStage::ArenaBackingDestroyed {
+                &mut []
+            } else {
+                match unsafe { native_child_destroy_tracking(id.0, &mut child) } {
+                    Ok(tracking) => tracking,
+                    Err(error) => { *owner = Some(child); return Err(error); }
+                }
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let tracking = &mut [];
             // Source destroys a child under its permanently quiescent
             // threads. Rust TLS can still retain a member after the source
             // registration ended, so actual tokens retain this control record.
@@ -3084,7 +3202,7 @@ unsafe fn destroy_record(
             // The caller has permanently quiesced every member and ended all
             // child-block use before the terminal path releases their images.
             match destroy_child_with(
-                child, record.registry, binding, &mut [], metadata, config, release, source_live != 0 || members != 0,
+                child, record.registry, binding, tracking, metadata, config, release, source_live != 0 || members != 0,
             ) {
                 Ok(()) => {
                     // Destruction consumes no actual TLS token; each member
@@ -3106,15 +3224,26 @@ unsafe fn destroy_record(
                     *owner = Some(child);
                     Err(NativeSubprocessError::Retained)
                 }
+                #[cfg(target_arch = "x86_64")]
+                Err(ChildSubprocessDestroyFailure::Release(ChildMainHeapReleaseFailure::ArenaBacking { owner: child, destroyed })) => {
+                    let state = unsafe { (*record.destroy_state.get()).as_ref().unwrap().pointer()
+                        .cast::<NativeChildArenaDestroyState>() };
+                    unsafe { (*state.as_ptr()).pending = Some(destroyed); }
+                    *owner = Some(child);
+                    Err(NativeSubprocessError::Retained)
+                }
                 // The remaining owners are dropped without freeing anything.
                 Err(ChildSubprocessDestroyFailure::Release(_)) => Err(NativeSubprocessError::Retained),
             }
         })
     }??;
-    if destroyed != 0 {
-        // The orphaned threads free the record as the last one finishes.
+    if destroyed != 0 && !terminal {
+        // Ordinary destruction preserves actual TLS tokens until final finish.
         return Ok(());
     }
+    // Permanent terminal exclusion makes every remaining TLS token
+    // unreachable. Releasing this exact record now returns a nested child's
+    // parent custody before source teardown visits that ancestor.
     // The child is gone and the lock is released; no other operation on this
     // id may run (caller contract), so the record can be taken apart.
     // SAFETY: exclusive by the id contract; the owner cell is empty.
@@ -3146,6 +3275,20 @@ unsafe fn free_record(record: core::ptr::NonNull<NativeChildSubprocess>) -> Resu
     // SAFETY: forwarded exclusivity; the owner cell is empty. Copy every
     // release input before the parent free invalidates this inline record.
     // No reference to the record spans its enclosing allocation's return.
+    #[cfg(target_arch = "x86_64")]
+    {
+        let scratch = unsafe { &mut *(*record.as_ptr()).destroy_state.get() };
+        if let Some(allocation) = scratch.as_mut() {
+            // General metadata release rejects admitted failures terminally;
+            // no stale header or failure-bit projection may follow that edge.
+            if !allocation.is_live() { return Err(NativeSubprocessError::Retained); }
+            let state = allocation.pointer().cast::<NativeChildArenaDestroyState>();
+            if unsafe { (*state.as_ptr()).pending.is_some() } { return Err(NativeSubprocessError::Retained); }
+            let parent = unsafe { (*record.as_ptr()).parent_metadata };
+            parent.free(allocation).map_err(|_| NativeSubprocessError::Retained)?;
+            scratch.take();
+        }
+    }
     let mut storage = unsafe { (*(*record.as_ptr()).storage.get()).take() }
         .ok_or(NativeSubprocessError::Retained)?;
     let parent_metadata = unsafe { (*record.as_ptr()).parent_metadata };
@@ -3840,6 +3983,161 @@ pub(crate) mod tests {
                 });
                 worker.join().expect("child reservation metadata controls");
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_huge_teardown_keeps_exact_context_and_failed_page_set_for_retry() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_huge_teardown_keeps_exact_context_and_failed_page_set_for_retry",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let child = native_subproc_new().unwrap();
+                let creator = std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                    let admission = NativeChildArenaAdmission::acquire_current().unwrap().unwrap();
+                    // Real anonymous mappings stand in only for unavailable
+                    // huge primitives. Publication, child ownership, destructive
+                    // free, exact failure bits and raw retry use production paths.
+                    let allocation = crate::os::HugeOsAllocation::test_registry_allocation(
+                        unsafe { admission.process() }, admission.config(), 3);
+                    let base = allocation.base().as_ptr().addr();
+                    unsafe { admission.backing().install_owned_huge_allocation_for_retained_process(
+                        admission.config(), allocation, -1, false) }.unwrap_or_else(|_| panic!("exact child huge publication"));
+                    let count = unsafe { admission.backing() }.registry().count();
+                    drop(admission);
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                    (base, count)
+                });
+                let (base, count) = creator.join().unwrap();
+                let original = unsafe { child.with_owner(|owner| owner.as_mut().unwrap().identity_pointer().unwrap()) }.unwrap();
+                let words = unsafe { child.with_owner(|owner| owner.as_mut().unwrap()
+                    .with_child_image(|image| image.identity().arena_backing().terminal_tracking_words()).unwrap().unwrap()) }.unwrap();
+                let metadata = crate::meta::MetaAllocator::global();
+                let before = metadata.test_allocation_audit().live_capability_count;
+                metadata.test_fail_next_direct_zeroed_size(NativeChildArenaDestroyState::tracking_offset()
+                    + words * core::mem::size_of::<usize>());
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::DestroyRefused(
+                    ChildSubprocessDestroyError::TrackingAllocation(MetaError::AllocationUnavailable))));
+                assert_eq!(metadata.test_allocation_audit().live_capability_count, before,
+                    "failed scratch allocation consumes no parent metadata capability");
+                unsafe { child.with_owner(|owner| {
+                    let child = owner.as_mut().expect("whole child survives tracking refusal");
+                    assert_eq!(child.stage(), ChildMainHeapStage::HeapReady);
+                    assert_eq!(child.identity_pointer(), Some(original));
+                    child.with_child_image(|image| {
+                        assert!(image.identity().is_registered());
+                        assert_eq!(image.identity().arena_backing().registry().count(), count);
+                    }).unwrap();
+                }) }.unwrap();
+                let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Unmap, count + 1, crabc_core::Errno::NOMEM));
+                // SAFETY: the only child member finished and every published
+                // mapping is unused. The production record owns final teardown.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Retained));
+                std::println!("child-huge.teardown-unmaps={}", fault.observed());
+                assert_eq!(fault.observed(), count + 2, "the source pass releases regular backing and attempts all three huge pages");
+                let accounted = unsafe { child.with_owner(|owner| {
+                    let owner = owner.as_mut().expect("same child context retains unresolved raw free");
+                    assert_eq!(owner.identity_pointer(), Some(original));
+                    owner.with_child_image(|image| {
+                        assert_eq!(image.identity().arena_backing().registry().count(), 0);
+                        image.identity().vm_statistics().snapshot()
+                    }).unwrap()
+                }) }.unwrap();
+                let mut resident = 0u8;
+                for page in 0..3 {
+                    let address = core::ptr::with_exposed_provenance_mut(base + page * crate::config::GIB);
+                    assert_eq!(unsafe { crabc_core::mm::mincore_raw(address, 4096, &mut resident) }.is_ok(), page == 1,
+                        "only the exact failed huge page remains mapped");
+                }
+                fault.set(crate::os::fault::Plan::at(crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Retained));
+                assert_eq!(fault.observed(), 1, "raw retry reaches only the retained failed page");
+                let after = unsafe { child.with_owner(|owner| owner.as_mut().unwrap()
+                    .with_child_image(|image| image.identity().vm_statistics().snapshot()).unwrap()) }.unwrap();
+                assert_eq!(after, accounted, "raw retry never repeats source accounting");
+                fault.set(crate::os::fault::Plan::disabled());
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()));
+                assert_eq!(unsafe { crabc_core::mm::mincore_raw(core::ptr::with_exposed_provenance_mut(
+                    base + crate::config::GIB), 4096, &mut resident) }.is_ok(), false);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn terminal_child_tree_releases_parent_issuer_after_permanent_tls_exclusion() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, NativeAllocatorThreadDescriptor,
+            NativeAllocatorPinnedThreadRegistry};
+        struct Registry(std::vec::Vec<core::ptr::NonNull<NativeAllocatorThreadDescriptor>>);
+        // SAFETY: this fixture includes the initial descriptor and exactly
+        // two registered workers. Both workers remain parked until the sealed
+        // child tree has been destroyed, with no registration or removal race.
+        unsafe impl NativeAllocatorPinnedThreadRegistry for Registry {
+            fn visit_descriptors(&self, visitor: &mut dyn FnMut(core::ptr::NonNull<NativeAllocatorThreadDescriptor>)) {
+                for descriptor in &self.0 { visitor(*descriptor); }
+            }
+        }
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::terminal_child_tree_releases_parent_issuer_after_permanent_tls_exclusion",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let parent = native_subproc_new().unwrap();
+                let (created, receive) = std::sync::mpsc::channel();
+                let (stop_parent, parked_parent) = std::sync::mpsc::channel::<()>();
+                let creator = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(parent) }, Ok(NativeChildThreadAdd::Added));
+                    let nested = native_subproc_new().unwrap();
+                    created.send((nested, descriptor.as_ptr().expose_provenance())).unwrap();
+                    let _ = parked_parent.recv();
+                    // Permanent exclusion forbids every further native entry,
+                    // including thread finish through these retired TLS roots.
+                });
+                let (nested, parent_descriptor) = receive.recv().unwrap();
+                let (ready, receive) = std::sync::mpsc::channel();
+                let (stop_nested, parked_nested) = std::sync::mpsc::channel::<()>();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(nested) }, Ok(NativeChildThreadAdd::Added));
+                    ready.send(descriptor.as_ptr().expose_provenance()).unwrap();
+                    let _ = parked_nested.recv();
+                });
+                let nested_descriptor = receive.recv().unwrap();
+                let registry = Registry(std::vec![
+                    crate::runtime_lifecycle::native_allocator_initial_thread_descriptor().unwrap(),
+                    // SAFETY: the parked workers retain their original published
+                    // descriptors at these addresses until after child teardown.
+                    unsafe { core::ptr::NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(parent_descriptor)) },
+                    unsafe { core::ptr::NonNull::new_unchecked(core::ptr::with_exposed_provenance_mut(nested_descriptor)) },
+                ]);
+                // SAFETY: all participating descriptors are pinned, no native
+                // operation or callback runs, and this fixture never reopens or
+                // consults any transferred TLS member after permanent closure.
+                let terminal = unsafe { crate::runtime_lifecycle::begin_native_allocator_terminal_quiescence(&registry) }.unwrap();
+                drop(terminal);
+                assert_eq!(unsafe { destroy_all_native_children_terminal() }, Ok(()),
+                    "newest nested child returns issuer custody before its parent retires");
+                stop_nested.send(()).unwrap();
+                stop_parent.send(()).unwrap();
+                worker.join().unwrap();
+                creator.join().unwrap();
             },
         );
     }
