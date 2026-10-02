@@ -821,10 +821,12 @@ mod tests {
         let config = MemoryConfig::detect(StartupInput::new(PageSize::new(4096).unwrap()));
         let block_size = 32;
         let (claim, metadata, memory, offset, reserved) = if arena {
+            let mut diagnostic = None;
             // SAFETY: actual preadmission and this single-threaded fixture
             // retain the issuing process and its sole arena backing.
             let id = unsafe { issuer.reserve_os_memory_reporting_failure(process, config,
-                crate::config::ARENA_MIN_SIZE, MapAccess::Committed, false, true, None) }
+                crate::config::ARENA_MIN_SIZE, MapAccess::Committed, false, true, None,
+                &mut diagnostic) }
                 .unwrap_or_else(|_| panic!("actual admitted arena reservation"));
             let search = ArenaSearch { heap_sequence: 0, heap_count: 1, thread_sequence: 0,
                 numa_node: -1, requested: id, allow_pinned: false };
