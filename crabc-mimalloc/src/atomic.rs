@@ -8,8 +8,8 @@
 // `379-401`. This is a narrow, concrete facade over the exact C11 atomic
 // operation/order pairs used by later allocator slices. It deliberately does
 // not make the allocator generic: protocol modules call these functions
-// directly, and a future modeled-test backend can replace this module's one
-// private `core::sync::atomic` import without entering the engine API.
+// directly. Narrow page-identity and bitmap-quiescence boundaries substitute
+// modeled words while retaining their production transition loops.
 //
 // The omitted `mi_lock_*` and `_mi_atomic_once_*` surfaces belong to their
 // source-owning lifecycle/lock slices. No allocator operation is exposed here.

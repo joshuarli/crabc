@@ -1875,7 +1875,7 @@ impl<'storage> BitmapView<'storage> {
         self.clear_once_set_with(subprocess, index, || {})
     }
 
-    fn clear_once_set_with<F>(&self, subprocess: &crate::subproc::SubprocessIdentity, index: usize, mut observed_temporary_clear: F) -> Option<()>
+    fn clear_once_set_with<F>(&self, subprocess: &crate::subproc::SubprocessIdentity, index: usize, observed_temporary_clear: F) -> Option<()>
     where
         F: FnMut(),
     {

@@ -28,8 +28,9 @@
 //! `try_unown_abandoned_expected_head_with`
 //! (`mi_abandoned_page_unown_from_free`). The `xthread_id` identity CAS and the
 //! page's one `pages_abandoned` bitmap bit follow `abandoned::set_thread_identity`
-//! and the `bitmap.rs` bfield operations with the exact source orderings;
-//! those production functions act on core atomics that Loom cannot schedule.
+//! and the bfield operations with the exact source orderings. Identity
+//! replacement and the reader-quiescence loop also run their shared production
+//! functions; only the atomic word and thread-yield boundary is substituted.
 //!
 //! # Checked lifetime contract
 //!
@@ -81,6 +82,8 @@ use super::{
     try_unown_abandoned_expected_head_with, try_unown_abandoned_head_with,
 };
 use crate::config::SMALL_SIZE_MAX;
+use crate::atomic::{BitmapQuiescenceWord, ThreadIdentityWord, replace_thread_identity};
+use crate::bitmap::clear_abandoned_bitmap_once_set;
 use crate::types::{PAGE_FLAG_MASK, THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED};
 use loom::cell::UnsafeCell;
 use loom::sync::Arc;
@@ -140,6 +143,25 @@ impl ThreadFreeHead for AtomicUsize {
 impl ModelHead for AtomicUsize {
     fn new(word: ThreadFree) -> Self {
         AtomicUsize::new(word)
+    }
+}
+
+impl ThreadIdentityWord for AtomicUsize {
+    fn load_identity_relaxed(&self) -> usize { self.load(Ordering::Relaxed) }
+
+    fn cas_identity_weak_release(&self, expected: &mut usize, replacement: usize) -> bool {
+        self.compare_exchange_weak(*expected, replacement, Ordering::Release, Ordering::Relaxed)
+            .map_err(|actual| *expected = actual).is_ok()
+    }
+}
+
+impl BitmapQuiescenceWord for AtomicUsize {
+    fn load_bitmap_relaxed(&self) -> usize { self.load(Ordering::Relaxed) }
+    fn load_bitmap_acquire(&self) -> usize { self.load(Ordering::Acquire) }
+
+    fn cas_bitmap_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool {
+        self.compare_exchange_weak(*expected, replacement, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|actual| *expected = actual).is_ok()
     }
 }
 
@@ -470,19 +492,7 @@ impl<H: ModelHead> ModelPage<H> {
 
     /// `mi_page_set_theap`: a Release CAS that preserves the two flag bits.
     fn set_thread_identity(&self, thread_id: usize) {
-        let mut previous = self.xthread_id.load(Ordering::Relaxed);
-        loop {
-            let replacement = thread_id | (previous & PAGE_FLAG_MASK);
-            match self.xthread_id.compare_exchange_weak(
-                previous,
-                replacement,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return,
-                Err(actual) => previous = actual,
-            }
-        }
+        replace_thread_identity(&self.xthread_id, thread_id);
     }
 
     // ----- abandoned-page tail ----------------------------------------------
@@ -586,25 +596,8 @@ impl<H: ModelHead> ModelPage<H> {
 
     /// `mi_bfield_atomic_clear_once_set` for the page's bitmap bit.
     fn abandoned_bitmap_clear_once_set(&self) {
-        let mut observed = self.abandoned_bitmap.load(Ordering::Relaxed);
-        loop {
-            if observed & ABANDONED_BIT == 0 {
-                observed = self.abandoned_bitmap.load(Ordering::Acquire);
-                while observed & ABANDONED_BIT == 0 {
-                    thread::yield_now();
-                    observed = self.abandoned_bitmap.load(Ordering::Acquire);
-                }
-            }
-            match self.abandoned_bitmap.compare_exchange_weak(
-                observed,
-                observed & !ABANDONED_BIT,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return,
-                Err(actual) => observed = actual,
-            }
-        }
+        clear_abandoned_bitmap_once_set(&self.abandoned_bitmap, ABANDONED_BIT,
+            || {}, || {}, thread::yield_now);
     }
 
     /// `_mi_arenas_page_free`: PageMap unregistration, then metadata and
@@ -975,6 +968,98 @@ fn loom_arena_reader_racing_final_remote_free_has_one_owner_and_one_release() {
         producer.join().expect("remote free completes");
         reader.join().expect("arena reader completes");
         page.assert_quiescent(&[0], 0);
+    });
+}
+
+/// Two readers can successively clear and restore the same candidate while
+/// a foreign free publishes to its existing owner. Terminal release must
+/// wait for both rejected claims, even when collection already made used zero.
+#[test]
+fn loom_competing_rejected_arena_readers_finish_before_final_release() {
+    model(|| {
+        let mut image = PageImage::abandoned_mapped(REGULAR_BLOCK_SIZE, 4, 1);
+        image.xthread_free = OWNED_EMPTY;
+        let page = Arc::new(SourcePage::new(image));
+        let producer = spawn_remote_free(&page, 0);
+        let readers: Vec<_> = (0..2).map(|_| {
+            let page = Arc::clone(&page);
+            thread::spawn(move || {
+                assert!(!page.arena_try_find_and_claim(), "the existing owner keeps its page");
+            })
+        }).collect();
+        loop {
+            page.page_free_collect();
+            if page.used() == 0 { break; }
+            thread::yield_now();
+        }
+        page.arenas_page_unabandon();
+        page.arenas_page_free();
+        producer.join().expect("final remote publication completes");
+        for reader in readers { reader.join().expect("rejected arena reader completes"); }
+        page.assert_quiescent(&[0], 0);
+    });
+}
+
+/// Negative control for the bitmap's independent reader-lifetime handoff.
+/// The head may already have been collected before an arena reader examines
+/// metadata, so bitmap restoration must itself order that read with release.
+struct UnorderedBitmap<'a>(&'a AtomicUsize);
+
+impl BitmapQuiescenceWord for UnorderedBitmap<'_> {
+    fn load_bitmap_relaxed(&self) -> usize { self.0.load(Ordering::Relaxed) }
+    fn load_bitmap_acquire(&self) -> usize { self.0.load(Ordering::Relaxed) }
+    fn cas_bitmap_weak_acq_rel(&self, expected: &mut usize, replacement: usize) -> bool {
+        self.0.compare_exchange_weak(*expected, replacement, Ordering::Relaxed, Ordering::Relaxed)
+            .map_err(|actual| *expected = actual).is_ok()
+    }
+}
+
+fn restored_bitmap_orders_reader_metadata_before_release(unordered: bool) {
+    model(move || {
+        let metadata = Arc::new(UnsafeCell::new(false));
+        // This image starts after the arena reader cleared its candidate.
+        let bitmap = Arc::new(AtomicUsize::new(0));
+        let reader_metadata = Arc::clone(&metadata);
+        let reader_bitmap = Arc::clone(&bitmap);
+        let reader = thread::spawn(move || {
+            reader_metadata.with(|metadata| assert!(!unsafe { *metadata }));
+            reader_bitmap.fetch_or(ABANDONED_BIT, Ordering::AcqRel);
+        });
+        if unordered {
+            clear_abandoned_bitmap_once_set(&UnorderedBitmap(&bitmap), ABANDONED_BIT,
+                || {}, || {}, thread::yield_now);
+        } else {
+            clear_abandoned_bitmap_once_set(&*bitmap, ABANDONED_BIT,
+                || {}, || {}, thread::yield_now);
+        }
+        metadata.with_mut(|metadata| unsafe { *metadata = true });
+        reader.join().expect("reader restoration finishes");
+        assert_eq!(bitmap.load(Ordering::Relaxed), 0);
+    });
+}
+
+#[test]
+fn loom_restored_bitmap_orders_reader_metadata_before_release() {
+    restored_bitmap_orders_reader_metadata_before_release(false);
+}
+
+#[test]
+#[should_panic(expected = "Causality violation")]
+fn loom_model_rejects_bitmap_release_without_source_acquire_ordering() {
+    restored_bitmap_orders_reader_metadata_before_release(true);
+}
+
+/// A flag writer can race with reassociation. The identity CAS must preserve
+/// flags from its latest failed observation rather than its original load.
+#[test]
+fn loom_identity_replacement_preserves_concurrent_page_flags() {
+    model(|| {
+        let identity = Arc::new(AtomicUsize::new(OWNER_THREAD_ID));
+        let flags_identity = Arc::clone(&identity);
+        let flags = thread::spawn(move || { flags_identity.fetch_or(PAGE_FLAG_MASK, Ordering::Relaxed); });
+        replace_thread_identity(&*identity, THREAD_ID_ABANDONED);
+        flags.join().expect("page flags are published");
+        assert_eq!(identity.load(Ordering::Relaxed), PAGE_FLAG_MASK);
     });
 }
 
