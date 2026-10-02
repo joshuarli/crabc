@@ -4432,10 +4432,11 @@ impl Page {
                 reserved,
                 free: core::ptr::addr_of!((*raw).free).read(),
                 local_free: core::ptr::addr_of!((*raw).local_free).read(),
-                // An empty source head is null without an integer-derived
-                // pointer conversion or any provenance exposure.
+                // The acquired head names a published block in the retained
+                // area. Recover its address with that backing's provenance;
+                // integer atomics alone cannot provide pointer provenance.
                 remote: if remote == 0 { core::ptr::null_mut() }
-                    else { core::ptr::with_exposed_provenance_mut(remote) },
+                    else { raw.cast::<u8>().add(offset).with_addr(remote).cast() },
                 initially_zero: core::ptr::addr_of!((*raw).memid.initially_zero).read(),
                 slice_pcommitted: core::ptr::addr_of!((*raw).slice_pcommitted).read(),
                 #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
