@@ -699,7 +699,10 @@ def node_linkage_status(
 ) -> str:
     if storage_class == "static":
         return "source-static"
-    if storage_class == "extern" and (source_language == "c" or "C" in linkage_specifier_languages):
+    # A nested language specification overrides the enclosing one. Preserve
+    # C++ declarations as unresolved even when an outer block selected C.
+    effective_language = linkage_specifier_languages[-1] if linkage_specifier_languages else None
+    if storage_class == "extern" and (source_language == "c" or effective_language == "C"):
         return "source-external-declaration"
     return "unresolved-from-json"
 

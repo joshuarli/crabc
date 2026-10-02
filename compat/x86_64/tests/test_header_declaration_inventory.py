@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -40,6 +41,39 @@ def temporary_directory() -> tempfile.TemporaryDirectory[str]:
 
 
 class HeaderDeclarationInventoryTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("clang"), "Clang is required for the declaration ABI probe")
+    def test_nested_language_linkage_uses_innermost_specifier(self) -> None:
+        with temporary_directory() as temporary:
+            root = Path(temporary)
+            header = root / "linkage.h"
+            header.write_text(
+                'extern "C" {\n'
+                'extern int c_parent(int);\n'
+                'extern "C++" {\n'
+                'extern int cpp_nested(int);\n'
+                'extern "C" { extern int c_nested(int); }\n'
+                '}\n}\n',
+                encoding="utf-8",
+            )
+            compiler = subprocess.run(
+                [shutil.which("clang"), "-x", "c++", "-std=c++17", "-nostdinc",
+                 "-Xclang", "-ast-dump=json", "-fsyntax-only", str(header)],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+            occurrences = INVENTORY.discover_declaration_occurrences(
+                json.loads(compiler.stdout), header_root=root, tree="candidate",
+                input_header="linkage.h", profile="cxx17",
+                raw_ast_path="raw/linkage.json",
+            )
+        by_name = {item["name"]: item for item in occurrences}
+        self.assertEqual(by_name["c_parent"]["linkage_status"], "source-external-declaration")
+        self.assertEqual(by_name["cpp_nested"]["linkage_specifier_languages"], ["C", "C++"])
+        self.assertEqual(by_name["cpp_nested"]["mangled_name_observation"], "_Z10cpp_nestedi")
+        self.assertEqual(by_name["cpp_nested"]["linkage_status"], "unresolved-from-json")
+        self.assertEqual(by_name["c_nested"]["linkage_specifier_languages"], ["C", "C++", "C"])
+        self.assertEqual(by_name["c_nested"]["mangled_name_observation"], "c_nested")
+        self.assertEqual(by_name["c_nested"]["linkage_status"], "source-external-declaration")
+
     def test_host_replay_fixture_creates_its_own_work_root(self) -> None:
         """Each retained-input regression must run without an earlier scratch-creating test."""
         with temporary_directory() as temporary:
