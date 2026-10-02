@@ -618,6 +618,8 @@ def _completed(root: Path, record_path: Path, source: Mapping[str, str], argv: l
     require(record.get("argv") == argv, f"{record_path.parent.name} invocation changed after completion")
     for name, identity in record["outputs"].items():
         path = root / identity["path"]
+        require(path.resolve() == path and path.is_relative_to(root / ".work") and not path.is_symlink(),
+                f"{record_path.parent.name} output {name} is not a physical checkout .work file")
         require(path.is_file() and _digest(path) == identity["sha256"],
                 f"{record_path.parent.name} output {name} changed after completion: {identity['path']}")
     return {name: identity["path"] for name, identity in record["outputs"].items()}
@@ -772,6 +774,7 @@ def _work(root: Path, value: Path) -> Path:
     require(path.is_relative_to(root / WORK_PARENT) and path != root / WORK_PARENT,
             "candidate --work must be below this checkout's .work/x86_64")
     require(path.parent.is_dir() and path.parent.resolve() == path.parent, "candidate --work parent is not physical")
+    require(path.resolve() == path, "candidate --work must be physical")
     return path
 
 

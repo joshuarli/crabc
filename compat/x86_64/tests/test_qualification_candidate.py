@@ -249,6 +249,15 @@ class ExecutionTests(unittest.TestCase):
         self.assertIn("retained payload changed", summary["error"])
         self.assertEqual(self.calls, [])
 
+    def test_resume_rejects_output_symlink_even_when_bytes_match(self) -> None:
+        self._execute(through="posix-family")
+        path = self.work / "out/posix-family/execution.json"
+        saved = path.with_name("saved.json")
+        path.rename(saved)
+        path.symlink_to(saved)
+        summary = self._execute(through="posix-family")
+        self.assertIn("physical checkout .work file", summary["error"])
+
     def test_prefix_is_never_reported_complete(self) -> None:
         summary = self._execute(through="static-products")
         self.assertFalse(summary["complete"])
@@ -277,6 +286,18 @@ class AttachmentTests(unittest.TestCase):
 
 
 class DynamicWorkPathTests(unittest.TestCase):
+    def test_candidate_work_rejects_existing_symlink(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            parent = Path(temporary)
+            target = parent / "physical"
+            target.mkdir()
+            link = parent / "link"
+            link.symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(candidate.CandidateError, "candidate --work must be physical"):
+                candidate._work(ROOT, link)
+
     def test_new_cohort_rejects_existing_symlink_and_escape_paths_before_build(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
