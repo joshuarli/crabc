@@ -39,6 +39,11 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         self.assertEqual(builder.parse_args(["--profile", "debug"]).profile, "debug")
         self.assertEqual(builder.parse_args([]).profile, "release")
 
+    def test_installed_manifest_records_lifecycle_audit_selection(self) -> None:
+        manifest = builder.installed_manifest({}, {}, source_sha256="a" * 64,
+                                              lifecycle_test_audit=True)
+        self.assertIs(manifest["allocator_lifecycle_test_audit"], True)
+
     def test_default_installation_stays_in_checkout_work_state(self) -> None:
         self.assertEqual(
             builder.parse_args([]).output,

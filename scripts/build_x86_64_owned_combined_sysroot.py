@@ -135,6 +135,11 @@ def require_matching_source_seals(static_manifest: dict, dynamic_state_payload: 
             and all(character in "0123456789abcdef" for character in dynamic_source),
             "dynamic product source seal is missing or invalid")
     require(static_source == dynamic_source, "static and dynamic product source seals differ")
+    # All four entry modes share one allocator and one instrumentation contract.
+    for field, default in (("allocator_backend", "accepted-c"), ("build_profile", "release"),
+                           ("allocator_lifecycle_test_audit", False)):
+        require(static_manifest.get(field, default) == dynamic_state.get(field, default),
+                f"static and dynamic product configuration differs: {field}")
 
 
 def dynamic_state_destination(record: dict) -> str:

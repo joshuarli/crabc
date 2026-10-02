@@ -192,6 +192,9 @@ def collect(root: Path, work: Path) -> dict:
     exact_children(work / "archives", {"primary.tar.xz", "reproduction.tar.xz"})
     primary_manifest = read(product_paths(work)["primary"] / package.MANIFEST_RELATIVE_PATH)
     require(isinstance(primary_manifest, dict), "primary product manifest must be an object")
+    require(primary_manifest.get("build_profile", "release") == "release"
+            and primary_manifest.get("allocator_lifecycle_test_audit", False) is False,
+            "static preparation requires a release product without lifecycle test audit")
     allocator_backend = primary_manifest.get("allocator_backend")
     require(type(allocator_backend) is str and allocator_backend in ALLOCATOR_BACKENDS,
             "unsupported or absent preparation allocator backend")

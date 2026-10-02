@@ -141,6 +141,17 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(combined.CompositionError, "claim installed path"):
             combined.plan({"static": self.static, "dynamic": self.dynamic})
 
+    def test_products_with_different_allocator_configuration_cannot_compose(self):
+        manifest = json.loads((self.static / combined.MANIFEST).read_text())
+        for field, value in (("allocator_backend", "native-shadow"),
+                             ("allocator_lifecycle_test_audit", True), ("build_profile", "debug")):
+            with self.subTest(field=field):
+                (self.static / combined.MANIFEST).write_text(json.dumps({**manifest, field: value}))
+                with self.assertRaisesRegex(combined.CompositionError, "product configuration differs"):
+                    self.compose(field)
+                self.assertFalse((self.root / field).exists())
+        (self.static / combined.MANIFEST).write_text(json.dumps(manifest))
+
     def test_source_seals_must_match_before_composition(self):
         manifest_path = self.static / combined.MANIFEST
         manifest = json.loads(manifest_path.read_text())

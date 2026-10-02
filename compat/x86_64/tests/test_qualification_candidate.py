@@ -66,6 +66,18 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(prefix["steps"][-1]["step"], "posix-admission")
         self.assertFalse(any("rust_std_lto" in blocker for blocker in prefix["preflight_blockers"]))
 
+    def test_lua_consumers_receive_the_existing_cohort_and_explicit_reports(self) -> None:
+        work = ROOT / ".work/x86_64/candidate-lua-cohort-test"
+        report = candidate.dry_run(ROOT, work, {})
+        steps = {step["step"]: step["argv"] for step in report["steps"]}
+        for name in ("lua-static", "lua-dynamic"):
+            self.assertIn("--cohort-checkout", steps[name])
+            self.assertIn("--archive-seed", steps[name])
+        self.assertIn("<static-products:preparation>", steps["lua-static"])
+        self.assertIn("<dynamic-products:qualification>", steps["lua-dynamic"])
+        self.assertIn("<lua-static:report>", steps["lua-admission"])
+        self.assertIn("<lua-dynamic:report>", steps["lua-admission"])
+
     def test_dynamic_cohort_is_planned_below_candidate_work(self) -> None:
         work = ROOT / ".work/x86_64/candidate-durable-cohort-test"
         report = candidate.dry_run(ROOT, work, {}, "dynamic-products")
@@ -89,11 +101,14 @@ class ExecutionTests(unittest.TestCase):
         self.work = self.root / ".work/x86_64/run"
         self.calls: list[str] = []
         self.fail: set[str] = set()
-        self.inputs = {"rust_std_lto": {"provider_vendor": "v", "dependency_vendor": "d"},
+        self.inputs = {"lua_source_build": {"archive_seed": "lua.tar.gz"}, "rust_std_lto": {"provider_vendor": "v", "dependency_vendor": "d"},
                        "performance_release": {key: "x" for key in candidate.INPUT_KEYS["performance_release"]}}
         patcher = mock.patch.object(candidate, "preflight", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
+        products = mock.patch.object(candidate, "_validate_products", create=True)
+        products.start()
+        self.addCleanup(products.stop)
 
     def _runner(self, argv: list[str], stdout: Path, stderr: Path) -> int:
         identifier = stdout.parent.name.split("-", 1)[1]
@@ -198,6 +213,41 @@ class ExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(candidate.CandidateError, "another source revision"):
             candidate.execute(self.root, self.work, self.inputs, runner=self._runner,
                               source={**SOURCE, "revision": "o" * 40})
+
+    def test_restart_rejects_changed_inputs_before_reusing_steps(self) -> None:
+        self._execute(through="static-products")
+        self.inputs["rust_std_lto"]["provider_vendor"] = "different-vendor"
+        with self.assertRaisesRegex(candidate.CandidateError, "candidate inputs or environment"):
+            self._execute(through="static-products")
+
+    def test_restart_rejects_replaced_input_at_the_same_path(self) -> None:
+        vendor = self.root / ".work/vendor"
+        vendor.mkdir()
+        (vendor / "crate.rs").write_text("original")
+        self.inputs["rust_std_lto"]["provider_vendor"] = ".work/vendor"
+        self._execute(through="static-products")
+        (vendor / "crate.rs").write_text("changed")
+        with self.assertRaisesRegex(candidate.CandidateError, "candidate inputs or environment"):
+            self._execute(through="static-products")
+
+    def test_restart_rejects_changed_completed_invocation(self) -> None:
+        self._execute(through="static-products")
+        path = self.work / "steps/00-static-products/record.json"
+        record = json.loads(path.read_text())
+        record["argv"].append("--different-backend")
+        path.write_text(json.dumps(record))
+        summary = self._execute(through="static-products")
+        self.assertIn("invocation changed", summary["error"])
+        self.assertEqual(self.calls, ["static-products"])
+
+    def test_resume_revalidates_live_product_payload(self) -> None:
+        self._execute(through="dynamic-products")
+        self.calls.clear()
+        with mock.patch.object(candidate, "_validate_products",
+                               side_effect=candidate.CandidateError("retained payload changed")):
+            summary = self._execute(through="dynamic-products")
+        self.assertIn("retained payload changed", summary["error"])
+        self.assertEqual(self.calls, [])
 
     def test_prefix_is_never_reported_complete(self) -> None:
         summary = self._execute(through="static-products")

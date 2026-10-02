@@ -63,6 +63,7 @@ SOURCE_ORACLES = (
 )
 PACKAGE_CORPUS_INPUT = ".work/x86_64/owned-package-corpus-input/apks"
 INPUT_KEYS = {
+    "lua_source_build": ("archive_seed",),
     "rust_std_lto": ("provider_vendor", "dependency_vendor"),
     "performance_release": ("runtime_c_collector", "native_facade_report", "rustybench_source",
                             "rustix_source", "allocator_reports"),
@@ -368,10 +369,29 @@ def _plan() -> tuple[Step, ...]:
                           "--output", c.template("{work}/out/rust-std-lto")),
              (Output("receipt", fixed="{work}/out/rust-std-lto/receipt.json"),),
              needs_input="rust_std_lto", publishes=("consumer.rust-std-lto", "rust-std-lto")),
-        Step("lua-static", "consumer.source-build", lambda c: _d("lua-static-source-build")),
-        Step("lua-dynamic", "consumer.source-build", lambda c: _d("lua-dynamic-source-build")),
+        Step("lua-static", "consumer.source-build",
+             lambda c: _d("lua-static-source-build", "--cohort-checkout", str(c.root),
+                          "--static-preparation", c.out("static-products", "preparation"),
+                          "--installed-sysroot", c.static_pair("primary"),
+                          "--rebuilt-sysroot", c.static_pair("reproduction"),
+                          "--extracted-sysroot", c.static_pair("extracted"),
+                          "--archive-seed", str(c.given("lua_source_build", "archive_seed")),
+                          "--work-root", c.template("{work}/out/lua-static"), "--timeout", "300"),
+             (Output("report", printed="report.json"),), fresh=("{work}/out/lua-static",),
+             needs_input="lua_source_build"),
+        Step("lua-dynamic", "consumer.source-build",
+             lambda c: _d("lua-dynamic-source-build", "--cohort-checkout", str(c.root),
+                          "--cohort-receipt", c.out("dynamic-products", "qualification"),
+                          "--installed-sysroot", c.dynamic_pair("primary"),
+                          "--extracted-sysroot", c.dynamic_pair("extracted"),
+                          "--archive-seed", str(c.given("lua_source_build", "archive_seed")),
+                          "--work-root", c.template("{work}/out/lua-dynamic"), "--timeout", "300"),
+             (Output("report", printed="report.json"),), fresh=("{work}/out/lua-dynamic",),
+             needs_input="lua_source_build"),
         Step("lua-admission", "consumer.source-build",
-             lambda c: _d("lua-source-build-admission", "--output", c.template("{work}/out/lua-admission")),
+             lambda c: _d("lua-source-build-admission", "--static-report", c.out("lua-static", "report"),
+                          "--dynamic-report", c.out("lua-dynamic", "report"),
+                          "--output", c.template("{work}/out/lua-admission")),
              (Output("receipt", fixed="{work}/out/lua-admission/admission.json"),),
              publishes=("consumer.source-build", "lua-source-build")),
         # performance.release reads measurements taken on an uncontended host.
@@ -475,6 +495,18 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
     """Name every condition that would stop the run before its first step."""
 
     blockers = []
+    import core_image
+
+    selected_image = os.environ.get("CRABC_X86_64_CORE_IMAGE", core_image.CORE_IMAGE_ID)
+    if selected_image != core_image.CORE_IMAGE_ID:
+        blockers.append("qualification requires the pinned core image; development image override is selected")
+    try:
+        inspected = subprocess.run(["docker", "image", "inspect", "--format", "{{.Id}} {{.Os}}/{{.Architecture}}",
+                                    core_image.CORE_IMAGE_ID], capture_output=True, text=True, check=False)
+        if inspected.returncode != 0 or inspected.stdout.strip() != core_image.CORE_IMAGE_ID + " linux/amd64":
+            blockers.append("pinned native linux/amd64 core image is absent or has a different identity")
+    except OSError as error:
+        blockers.append(f"pinned native core image cannot be inspected: {error}")
     try:
         import owned_posix_static_products as static
 
@@ -486,6 +518,11 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
             blockers.append(f"pinned source oracle is not seeded (the native container has no network): {relative}")
     if not (root / PACKAGE_CORPUS_INPUT).is_dir():
         blockers.append("package corpus input is absent: run ./scripts/dev-x86_64.sh owned-package-corpus-input")
+    for group in {step.needs_input for step in steps if step.needs_input is not None}:
+        for key, value in context.inputs.get(group, {}).items():
+            for item in value if isinstance(value, list) else [value]:
+                if not isinstance(item, str) or not (root / item).exists():
+                    blockers.append(f"candidate input {group}.{key} is absent: {item}")
     for step in steps:
         if step.needs_input is not None and step.needs_input not in context.inputs:
             blockers.append(f"{step.id}: candidate input {step.needs_input} is not supplied (--inputs)")
@@ -502,6 +539,34 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _input_identity(root: Path, inputs: Mapping[str, Mapping[str, object]]) -> dict[str, object]:
+    """Bind supplied reports and vendor trees to bytes, names and file modes."""
+
+    seals = {}
+    for group, fields in inputs.items():
+        for key, value in fields.items():
+            for item in value if isinstance(value, list) else [value]:
+                require(isinstance(item, str), f"candidate input {group}.{key} must name paths")
+                path = root / item
+                if not path.exists():
+                    # Preflight reports absent inputs before executing any producer.
+                    seals[item] = None
+                    continue
+                require(path.resolve() == path.absolute(), f"candidate input crosses a symlink: {item}")
+                digest = hashlib.sha256()
+                entries = [path] if path.is_file() else sorted(path.rglob("*"))
+                for entry in entries:
+                    require(not entry.is_symlink(), f"candidate input contains a symlink: {entry}")
+                    name = entry.relative_to(path).as_posix() if path.is_dir() else path.name
+                    digest.update(name.encode() + b"\0" + str(entry.stat().st_mode).encode() + b"\0")
+                    if entry.is_file():
+                        digest.update(bytes.fromhex(_digest(entry)))
+                    else:
+                        require(entry.is_dir(), f"candidate input contains a special file: {entry}")
+                seals[item] = digest.hexdigest()
+    return {"paths": inputs, "sha256": seals}
 
 
 def _write(path: Path, value: object) -> None:
@@ -541,7 +606,7 @@ def _discover(root: Path, context: Context, step: Step, stdout: str) -> dict[str
     return found
 
 
-def _completed(root: Path, record_path: Path, source: Mapping[str, str]) -> dict[str, str] | None:
+def _completed(root: Path, record_path: Path, source: Mapping[str, str], argv: list[str]) -> dict[str, str] | None:
     """Return a completed step's outputs only when every one is unchanged."""
 
     if not record_path.is_file():
@@ -550,11 +615,28 @@ def _completed(root: Path, record_path: Path, source: Mapping[str, str]) -> dict
     if record.get("status") != "complete":
         return None
     require(record.get("source") == source, f"{record_path.parent.name} completed on another source")
+    require(record.get("argv") == argv, f"{record_path.parent.name} invocation changed after completion")
     for name, identity in record["outputs"].items():
         path = root / identity["path"]
         require(path.is_file() and _digest(path) == identity["sha256"],
                 f"{record_path.parent.name} output {name} changed after completion: {identity['path']}")
     return {name: identity["path"] for name, identity in record["outputs"].items()}
+
+
+def _validate_products(root: Path, step: Step, found: Mapping[str, str]) -> None:
+    """Replay the existing product readers before retaining or reusing a cohort."""
+
+    try:
+        if step.id == "static-products":
+            import owned_posix_static_products as static
+
+            static.validate_receipt(root, root / found["preparation"])
+        elif step.id == "dynamic-products":
+            import owned_dynamic_qualification as dynamic
+
+            dynamic.validate_receipt(root / found["qualification"])
+    except Exception as error:
+        raise CandidateError(f"{step.id} retained product validation failed: {error}") from error
 
 
 def fresh_paths(context: Context, step: Step) -> list[Path]:
@@ -588,16 +670,20 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
     context = Context(root, work, inputs)
     steps = plan(through)
     blockers = preflight(root, context, steps)
+    authenticate_source = source is None
     if source is None:
         import owned_posix_static_products as static
 
         source = static.source_identity(root)
     work.mkdir(parents=True, exist_ok=True)
     candidate = work / "candidate.json"
-    identity = {"schema": SCHEMA, "source": dict(source)}
+    import core_image
+
+    identity = {"schema": SCHEMA, "source": dict(source), "inputs": _input_identity(root, inputs),
+                "core_image": os.environ.get("CRABC_X86_64_CORE_IMAGE", core_image.CORE_IMAGE_ID)}
     if candidate.exists():
         require(json.loads(candidate.read_text(encoding="utf-8")) == identity,
-                "candidate work belongs to another source revision; use a fresh --work")
+                "candidate work belongs to another source revision, candidate inputs or environment; use a fresh --work")
     else:
         _write(candidate, identity)
     records: list[dict[str, object]] = []
@@ -608,9 +694,13 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
     try:
         require(not blockers, "preflight blockers: " + "; ".join(blockers))
         for index, step in enumerate(steps):
+            if authenticate_source:
+                require(static.source_identity(root) == source, "candidate source changed during execution")
             directory = work / "steps" / f"{index:02d}-{step.id}"
-            done = _completed(root, directory / "record.json", source)
+            argv = ["internal", step.id] if step.internal is not None else step.argv(context)
+            done = _completed(root, directory / "record.json", source, argv)
             if done is not None:
+                _validate_products(root, step, done)
                 context.outputs[step.id] = done
                 records.append({"step": step.id, "family": step.family, "status": "complete", "resumed": True,
                                 "outputs": done})
@@ -638,6 +728,11 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
                                 "log": context.rel(directory)})
                 raise CandidateError(f"step {step.id} failed with status {status}; see {context.rel(directory)}")
             found = _discover(root, context, step, (directory / "stdout").read_text(errors="replace"))
+            if authenticate_source:
+                require(static.source_identity(root) == source, "candidate source changed during execution")
+            if step.needs_input is not None:
+                require(_input_identity(root, inputs) == identity["inputs"], "candidate inputs changed during execution")
+            _validate_products(root, step, found)
             context.outputs[step.id] = found
             _write(directory / "record.json", {
                 "schema": SCHEMA, "step": step.id, "status": "complete", "source": dict(source), "argv": argv,

@@ -77,6 +77,16 @@ class StaticPreparationTests(unittest.TestCase):
         self.assertEqual(set(record["products"]), {"primary", "reproduction", "extracted"})
         self.assertNotIn("runtime", record)
 
+    def test_release_preparation_rejects_debug_or_audited_primary(self):
+        path = preparation.product_paths(self.work)["primary"] / package.MANIFEST_RELATIVE_PATH
+        original = json.loads(path.read_text())
+        for field, value in (("build_profile", "debug"), ("allocator_lifecycle_test_audit", True)):
+            with self.subTest(field=field):
+                path.write_text(json.dumps({**original, field: value}))
+                with self.assertRaisesRegex(preparation.PreparationError, "release product without lifecycle test audit"):
+                    preparation.collect(self.root, self.work)
+        path.write_text(json.dumps(original))
+
     def test_native_shadow_receipt_binds_build_commands_and_all_product_manifests(self):
         for label, product in preparation.product_paths(self.work).items():
             manifest_path = product / package.MANIFEST_RELATIVE_PATH

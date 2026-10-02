@@ -780,6 +780,7 @@ def regular_file_hashes(root: Path, *, exclude: frozenset[str] = frozenset()) ->
 def installed_manifest(
     payload_hashes: dict[str, str], producer_tools: dict[str, object],
     *, allocator_backend: str = "accepted-c", source_sha256: str | None = None,
+    lifecycle_test_audit: bool = False,
 ) -> dict[str, object]:
     """Describe the bounded installed contract without promoting either family."""
 
@@ -803,6 +804,7 @@ def installed_manifest(
         "producer_tools": producer_tools,
         "scope": EVIDENCE_SCOPE if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND else SCOPE,
         "allocator_backend": allocator_backend,
+        "allocator_lifecycle_test_audit": lifecycle_test_audit,
         "package": {
             "format": PACKAGE_FORMAT,
             "archive_root": PACKAGE_ARCHIVE_ROOT,
@@ -1458,6 +1460,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
             "$CRABC_SOURCE=/crabc",
         ],
         "allocator_backend": recorded_backend,
+        "allocator_lifecycle_test_audit": lifecycle_test_audit,
         "crt_root": crt_root,
         "builtins": builtins,
         "builtins_provenance": builtins_provenance,
@@ -1560,7 +1563,8 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
     )
     manifest = installed_manifest(payload_hashes, producer_tools,
                                   allocator_backend=inputs.get("allocator_backend", DEFAULT_ALLOCATOR_BACKEND),
-                                  source_sha256=source_sha256)
+                                  source_sha256=source_sha256,
+                                  lifecycle_test_audit=inputs["libc_provenance"].get("allocator_lifecycle_test_audit", False))
     manifest["build_profile"] = inputs.get("build_profile", "release")
     write_json(manifest_path, manifest)
     installed_hashes = regular_file_hashes(output)
