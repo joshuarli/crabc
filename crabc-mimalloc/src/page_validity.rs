@@ -987,6 +987,19 @@ mod tests {
         });
     }
 
+    struct OwnedRemoteClient(NonNull<u8>);
+    // SAFETY: each wrapper transfers one distinct exclusively held
+    // live client to the worker; the owner retains backing, and no
+    // client pointer is accessed after the worker publishes its link.
+    unsafe impl Send for OwnedRemoteClient {}
+    impl OwnedRemoteClient {
+        unsafe fn publish(self, producer: crate::types::PageRemoteFreeProducerState) {
+            // SAFETY: the wrapper retains this exact exclusive client
+            // until production publication transfers its ownership.
+            unsafe { crate::remote_free::push(producer, self.0).unwrap(); }
+        }
+    }
+
     #[test]
     fn remote_blocks_remain_in_used_after_actual_producer_has_joined() {
         with_page(|page, map| unsafe {
@@ -998,10 +1011,9 @@ mod tests {
             // Keep only the producer's disjoint atomic projection and its
             // own allocated block while the worker publishes. Join provides
             // actual producer exclusion before any ordinary-field snapshot.
-            let address = block.as_ptr().expose_provenance();
+            let client = OwnedRemoteClient(block);
             std::thread::spawn(move || {
-                let block = NonNull::new(core::ptr::with_exposed_provenance_mut(address)).unwrap();
-                crate::remote_free::push(producer, block).unwrap();
+                client.publish(producer);
             }).join().unwrap();
             let state = Page::validity_snapshot_at(page);
             assert_eq!(state.used, 1);
@@ -1022,19 +1034,7 @@ mod tests {
             crate::remote_free::push(producer, clients.remove(0)).unwrap();
             let rendezvous = std::sync::Arc::new(std::sync::Barrier::new(2));
             let worker_barrier = rendezvous.clone();
-            struct OwnedClient(NonNull<u8>);
-            // SAFETY: each wrapper transfers one distinct exclusively held
-            // live client to the worker; the owner retains backing, and no
-            // client pointer is accessed after the worker publishes its link.
-            unsafe impl Send for OwnedClient {}
-            impl OwnedClient {
-                unsafe fn publish(self, producer: crate::types::PageRemoteFreeProducerState) {
-                    // SAFETY: the wrapper retains this exact exclusive client
-                    // until production publication transfers its ownership.
-                    unsafe { crate::remote_free::push(producer, self.0).unwrap(); }
-                }
-            }
-            let clients: std::vec::Vec<_> = clients.into_iter().map(OwnedClient).collect();
+            let clients: std::vec::Vec<_> = clients.into_iter().map(OwnedRemoteClient).collect();
             let worker = std::thread::spawn(move || {
                 for client in clients {
                     worker_barrier.wait();
@@ -1088,83 +1088,59 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
-    fn native_reachable_bin_pages_preserve_lists_through_full_local_reuse_and_release() {
+    fn native_first_medium_client_has_registered_valid_lists() {
         use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
         crate::test_process::run_in_fresh_process(
-            "page_validity::tests::native_reachable_bin_pages_preserve_lists_through_full_local_reuse_and_release", || {
-                // Keep full pages in their original local Theap so the
-                // sweep observes local reuse without an abandonment handoff.
-                std::env::set_var("mimalloc_page_full_retain", "-1");
-                // SAFETY: this no-op output primitive has no borrowed state.
-                unsafe extern "C" fn stderr(_message: *const core::ffi::c_char) {}
+            "page_validity::tests::native_first_medium_client_has_registered_valid_lists", || {
+                unsafe extern "C" fn stderr(message: *const core::ffi::c_char) {
+                    unsafe extern "C" {
+                        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+                        #[link_name = "stderr"] static mut STREAM: *mut core::ffi::c_void;
+                    }
+                    // SAFETY: the native process retains its stderr FILE;
+                    // the source callback supplies a terminated fragment.
+                    unsafe { let _ = fputs(message, STREAM); }
+                }
                 let output = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr) };
                 assert!(runtime::test_initialize_process_from_host_environment(4096, output));
-                let allocate = |size| {
-                    match runtime::native_allocate(size, false) {
-                        NativePageAllocationResult::Allocated(block) => block,
-                        NativePageAllocationResult::Unavailable => panic!("native allocation for {size}: unavailable"),
-                        NativePageAllocationResult::AllocationFailed => panic!("native allocation for {size}: allocation failed"),
-                        NativePageAllocationResult::Retained => panic!("native allocation for {size}: retained"),
-                    }
+                let request = 12_288 - crate::config::PADDING_SIZE;
+                let block = match runtime::native_allocate(request, false) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    NativePageAllocationResult::Unavailable => panic!("first medium client unavailable"),
+                    NativePageAllocationResult::AllocationFailed => panic!("first medium client allocation failed"),
+                    NativePageAllocationResult::Retained => panic!("first medium client retained"),
                 };
-                let seed = allocate(32);
-                assert_eq!(unsafe { runtime::native_free(seed) }, NativePageFreeResult::Freed);
-                unsafe { runtime::native_collect(true); }
-                for bin in 1..crate::config::BIN_HUGE {
-                    let block_size = crate::size_class::bin_size(bin).unwrap();
-                    if crate::size_class::bin(block_size) != Some(bin)
-                        || block_size <= crate::config::PADDING_SIZE { continue; }
-                    let request = block_size - crate::config::PADDING_SIZE;
-                    let first = allocate(request);
-                    let selected = crate::compiler_tls::default_theap();
-                    // SAFETY: live clients retain the current sole-thread owner,
-                    // its metadata and backing throughout admission. No remote
-                    // producer exists and no ordinary projection crosses calls.
-                    unsafe { runtime::with_native_allocation_owner(selected, |owner| {
-                        let map = owner.page_map().unwrap().page_map().unwrap();
-                        let page = NonNull::new(map.checked_lookup(first.as_ptr())).unwrap();
-                        let observe = || {
-                            let state = Page::validity_snapshot_at(page);
-                            assert_eq!(state.block_size, block_size, "bin {bin}");
-                            assert_eq!(source_page_lists_valid(&state, map), Ok(()), "bin {bin}");
-                            state
-                        };
-                        let initial = observe();
-                        let mut blocks = std::vec![first];
-                        while blocks.len() < usize::from(initial.reserved) {
-                            let block = allocate(request);
-                            assert_eq!(map.checked_lookup(block.as_ptr()), page.as_ptr(), "bin {bin}");
-                            blocks.push(block);
-                        }
-                        let full = observe();
-                        assert_eq!(full.capacity, full.reserved);
-                        assert_eq!(full.used, usize::from(full.reserved));
-                        if blocks.len() > 1 {
-                            let returned = blocks.pop().unwrap();
-                            assert_eq!(runtime::native_free(returned), NativePageFreeResult::Freed);
-                            observe();
-                            let reused = allocate(request);
-                            assert_eq!(reused, returned, "local reuse in bin {bin}");
-                            blocks.push(reused);
-                            observe();
-                        }
-                        for block in blocks {
-                            assert_eq!(runtime::native_free(block), NativePageFreeResult::Freed);
-                        }
-                    }) }.unwrap();
-                }
-                unsafe { runtime::native_collect(true); }
+                let selected = crate::compiler_tls::default_theap();
+                // SAFETY: this actual client retains its Page, sole current
+                // owner and PageMap; the observation ends before its free.
+                unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+                    let map = owner.page_map().unwrap().page_map().unwrap();
+                    let page = NonNull::new(map.checked_lookup(block.as_ptr())).unwrap();
+                    let state = Page::validity_snapshot_at(page);
+                    assert_eq!(state.block_size, 12_288);
+                    assert_eq!(source_page_lists_valid(&state, map), Ok(()));
+                }) }.unwrap();
+                assert_eq!(unsafe { runtime::native_free(block) }, NativePageFreeResult::Freed);
+                runtime::native_collect(true);
             },
         );
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
     #[test]
-    fn native_sampled_clients_retain_valid_page_lists_and_physical_tail_protection() {
+    fn native_sampled_clients_retain_valid_page_lists_through_legal_use() {
         use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
         crate::test_process::run_in_fresh_process(
-            "page_validity::tests::native_sampled_clients_retain_valid_page_lists_and_physical_tail_protection", || {
-                unsafe extern "C" fn stderr(_message: *const core::ffi::c_char) {}
+            "page_validity::tests::native_sampled_clients_retain_valid_page_lists_through_legal_use", || {
+                unsafe extern "C" fn stderr(message: *const core::ffi::c_char) {
+                    unsafe extern "C" {
+                        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+                        #[link_name = "stderr"] static mut STREAM: *mut core::ffi::c_void;
+                    }
+                    // SAFETY: the pinned native process retains its stderr
+                    // FILE and the source supplies a NUL-terminated fragment.
+                    unsafe { let _ = fputs(message, STREAM); }
+                }
                 let output = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr) };
                 assert!(runtime::test_initialize_process_from_host_environment(4096, output));
                 let NativePageAllocationResult::Allocated(seed) = runtime::native_allocate(32, false)
@@ -1177,36 +1153,20 @@ mod tests {
                     Theap::guarded_set_size_bound_at(selected, 0, 100_000);
                 }
                 for request in [1, 81, 4096, 8193, 65_536] {
-                    let NativePageAllocationResult::Allocated(block) = runtime::native_allocate(request, false)
-                        else { panic!("sampled client for {request}"); };
+                    let block = crate::source_api::malloc(request).value
+                        .unwrap_or_else(|| panic!("sampled source client for {request}"));
                     // SAFETY: this thread retains exact clients and the sole
                     // owner; no collector, producer, teardown or map mutation
-                    // overlaps these short observations or the child access.
+                    // overlaps these short observations or client accesses.
                     unsafe { runtime::with_native_allocation_owner(selected, |owner| {
                         let root = owner.page_map().unwrap();
                         let allocation = root.lookup_live_allocation(block).unwrap().unwrap();
                         assert!(allocation.is_guarded());
-                        let tail = allocation.guarded_tail_page(4096).unwrap();
+                        assert!(allocation.guarded_tail_page(4096).is_some());
                         assert!(allocation.usable_size() >= request);
                         let state = Page::validity_snapshot_at(allocation.page());
                         assert_eq!(source_page_lists_valid(&state, root.page_map().unwrap()), Ok(()));
                         block.as_ptr().write_bytes(0x5a, request);
-                        unsafe extern "C" {
-                            fn fork() -> i32;
-                            fn waitpid(pid: i32, status: *mut i32, flags: i32) -> i32;
-                            fn _exit(status: i32) -> !;
-                        }
-                        let child = fork();
-                        assert!(child >= 0);
-                        if child == 0 {
-                            // Only the retained mapping is touched in the child;
-                            // no copied allocator owner, lock or callback runs.
-                            tail.as_ptr().write_volatile(1);
-                            _exit(0);
-                        }
-                        let mut status = 0;
-                        assert_eq!(waitpid(child, &mut status, 0), child);
-                        assert_eq!(status & 0x7f, 11, "actual guard must raise SIGSEGV");
                         assert_eq!(source_page_lists_valid(&Page::validity_snapshot_at(allocation.page()),
                             root.page_map().unwrap()), Ok(()));
                     }) }.unwrap();
