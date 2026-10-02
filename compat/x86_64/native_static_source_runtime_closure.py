@@ -761,13 +761,17 @@ def pinned_environment() -> tuple[dict[str, str], dict[str, str]]:
 
     rustup = pinned_rustup_frontend(PINNED_RUSTUP_FRONTEND, PINNED_RUSTUP_TARGET)
     rustup_root = physical(PINNED_RUSTUP_HOME, "pinned rustup home", directory=True)
-    return rustup, {
+    environment = {
         "LC_ALL": "C",
         "PATH": f"{PINNED_CARGO_BIN}:{FIXED_HOST_PATH}",
         "RUSTUP_HOME": str(rustup_root),
         "SOURCE_DATE_EPOCH": "1",
         "TZ": "UTC",
     }
+    for setting in ("CARGO_PROFILE_DEV_OPT_LEVEL", "CARGO_PROFILE_TEST_OPT_LEVEL"):
+        if setting in os.environ:
+            environment[setting] = os.environ[setting]
+    return rustup, environment
 
 
 def command_source_identity(command: Sequence[str], source: pathlib.Path, description: str) -> dict[str, str]:

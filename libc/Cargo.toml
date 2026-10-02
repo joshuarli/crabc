@@ -1304,3 +1304,7 @@ path = "../tests/wmemstream_exports.rs"
 [[test]]
 name = "wordexp"
 path = "../tests/wordexp.rs"
+
+[[test]]
+name = "signal_restore_errno_order"
+path = "../tests/signal_restore_errno_order.rs"
