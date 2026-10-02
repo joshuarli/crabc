@@ -11884,6 +11884,14 @@ mod tests {
             assert_eq!(crate::arena::secure_page_guard_reset_at(None, page_size, tail, pinned), Ok(true));
         }
         assert_eq!(decommit_mapping_permissions(tail), "rw-p");
+        fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::NOMEM));
+        // SAFETY: the unaccounted owner retains the writable tail throughout
+        // successful discard and injected best-effort protection failure.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_set_at(None, page_size, tail, memory) }, Ok(true));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(decommit_mapping_permissions(tail), "rw-p");
+        assert_eq!(allocation.base(), Ok(base));
+        fault.set(fault::Plan::disabled());
         // SAFETY: the same retained, unaccounted tail page is now discarded.
         assert_eq!(unsafe { crate::arena::secure_page_guard_set_at(None, page_size, tail, memory) }, Ok(true));
         assert_eq!(decommit_mapping_permissions(tail), "---p");
