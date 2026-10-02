@@ -40,7 +40,8 @@ class CoreImageDispatchTests(unittest.TestCase):
             "if args[:2] == ['image', 'inspect']:\n"
             f"    if args[-1] == {PIN!r} and os.environ.get('PIN_MISSING'): sys.exit(1)\n"
             "    fmt = args[args.index('--format') + 1] if '--format' in args else ''\n"
-            f"    print({STALE!r} if fmt == '{{{{.Id}}}}' else 'linux/amd64')\n"
+            f"    print((args[-1] if args[-1].startswith('sha256:') else {STALE!r}) "
+            "if fmt == '{{.Id}}' else 'linux/amd64')\n"
             "elif args[:1] not in (['run'], ['build']): sys.exit(3)\n",
             encoding="utf-8",
         )
@@ -102,7 +103,12 @@ class CoreImageDispatchTests(unittest.TestCase):
                     self.environment["CRABC_X86_64_CORE_IMAGE"] = custom
                     result = self.invoke("scripts/dev-x86_64.sh", "core")
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertTrue(any(call[0] == "run" and custom in call for call in self.calls()))
+                    calls = self.calls()
+                    self.assertTrue(any(call[:2] == ["image", "inspect"] and custom == call[-1]
+                                        for call in calls))
+                    runs = [call for call in calls if call[0] == "run"]
+                    self.assertTrue(runs)
+                    self.assertTrue(all(STALE in run and custom not in run for run in runs))
                 result = self.invoke("scripts/dev-x86_64.sh", "image")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = self.calls()

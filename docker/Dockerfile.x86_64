@@ -25,9 +25,8 @@ ENV RUSTUP_HOME=/opt/rustup \
     CARGO_HOME=/opt/cargo \
     PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:${PATH}
 
-# Keep the image limited to the target-specific `crabc-core` lib suite, the
-# bounded direct `crabc-rs` subset, one isolated raw C-ABI syscall probe, and
-# source-only x86 relocation tests. Its pinned musl tree is an oracle-only
+# Native runtime suites use this image's compiler and inspection tools.
+# Its pinned musl tree is an oracle-only
 # input: it cannot select a crabc libc artifact, runtime, sysroot, or allocator
 # profile.
 RUN test "$(uname -m)" = "x86_64" \

@@ -6,7 +6,7 @@ earlier image are then historical, not current evidence.
 Executing this module prints the immutable Docker ID used for native launches.
 """
 
-CORE_IMAGE_ID = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+CORE_IMAGE_ID = "sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a"
 CORE_IMAGE_REFERENCE = "crabc-core-evidence@" + CORE_IMAGE_ID
 
 
