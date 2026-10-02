@@ -47,7 +47,11 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
-pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
+pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-secure-5")) {
+    5
+} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-4")) {
+    4
+} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
     3
 } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
     2
@@ -1108,6 +1112,7 @@ mod tests {
     use super::*;
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3",
+        not(feature = "mi-secure-4"), not(feature = "mi-secure-5"),
         not(feature = "mi-debug-1"), not(feature = "mi-stat-1"), not(feature = "mi-guarded")))]
     #[test]
     fn secure_three_uses_encoded_padding_without_debug_or_statistics() {
@@ -1121,7 +1126,11 @@ mod tests {
     fn selected_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
-        assert_eq!(SECURE_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
+        assert_eq!(SECURE_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-secure-5")) {
+            5
+        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-4")) {
+            4
+        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-3")) {
             3
         } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
             2

@@ -64,6 +64,19 @@ pub(crate) enum SourcePaddingPolicy {
     Debug,
 }
 
+/// Chooses the source padding checks independently from debug client filling.
+/// Secure level five checks padding bytes while preserving initialized client
+/// contents; basic debug additionally initializes nonzero ordinary clients.
+pub(crate) const fn selected_source_padding_policy() -> SourcePaddingPolicy {
+    if crate::config::DEBUG_LEVEL >= 1 {
+        SourcePaddingPolicy::Debug
+    } else if crate::config::SECURE_LEVEL >= 5 {
+        SourcePaddingPolicy::ByteChecked
+    } else {
+        SourcePaddingPolicy::RecordOnly
+    }
+}
+
 /// Initializes requested bytes and the trailing source padding record after
 /// a block has been popped from a page free list.
 ///
@@ -738,7 +751,7 @@ mod tests {
         #[repr(align(16))]
         struct Storage([u8; 32]);
         for policy in [SourcePaddingPolicy::RecordOnly, SourcePaddingPolicy::ByteChecked,
-            SourcePaddingPolicy::Debug] {
+            SourcePaddingPolicy::Debug, selected_source_padding_policy()] {
             let mut storage = Storage([0x55; 32]);
             storage.0[..size_of::<usize>()].fill(0);
             let block = NonNull::from(&mut storage.0).cast::<u8>();

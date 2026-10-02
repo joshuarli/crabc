@@ -72,6 +72,27 @@ pub(crate) const fn singleton_page_slice_count(block_size: usize, os_page_size: 
     invariants::slice_count_of_size(allocation_size)
 }
 
+/// Returns the regular or singleton span available before its source tail.
+/// Full security leaves the final OS page outside every client and commit
+/// extent. Lower levels retain the complete selected slice span.
+#[inline]
+pub(crate) const fn page_noguard_size(page_span_size: usize, os_page_size: PageSize) -> Option<usize> {
+    page_noguard_size_at_secure_level(page_span_size, os_page_size.bytes(), crate::config::SECURE_LEVEL)
+}
+
+const fn page_noguard_size_at_secure_level(
+    page_span_size: usize, os_page_size: usize, secure_level: usize,
+) -> Option<usize> {
+    if page_span_size == 0 || !os_page_size.is_power_of_two()
+        || page_span_size % os_page_size != 0 || secure_level > 5 { return None; }
+    if secure_level >= 5 {
+        match page_span_size.checked_sub(os_page_size) {
+            Some(size) if size > 0 => Some(size),
+            _ => None,
+        }
+    } else { Some(page_span_size) }
+}
+
 /// Returns `block_start`, the usable-page start relative to the page's first
 /// arena slice, for the frozen aligned-metadata profile.
 ///
@@ -309,23 +330,26 @@ pub(crate) fn initial_page_slice_pcommitted(
     page_span_size: usize,
     os_page_size: usize,
 ) -> Option<u16> {
-    if block_size == 0
-        || page_span_size == 0
-        || os_page_size == 0
-        || !invariants::is_power_of_two(os_page_size)
-    {
-        return None;
-    }
+    initial_page_slice_pcommitted_at_secure_level(usable_start_offset, block_size,
+        page_span_size, os_page_size, crate::config::SECURE_LEVEL)
+}
+
+fn initial_page_slice_pcommitted_at_secure_level(
+    usable_start_offset: usize, block_size: usize, page_span_size: usize,
+    os_page_size: usize, secure_level: usize,
+) -> Option<u16> {
+    if block_size == 0 { return None; }
+    let page_noguard_size = page_noguard_size_at_secure_level(page_span_size, os_page_size, secure_level)?;
     let minimum_commit = if PAGE_MIN_COMMIT_SIZE >= os_page_size {
         PAGE_MIN_COMMIT_SIZE
     } else {
         os_page_size
     };
     let first_block_end = usable_start_offset.checked_add(block_size)?;
-    if first_block_end > page_span_size {
+    if first_block_end > page_noguard_size {
         return None;
     }
-    let committed = invariants::align_up(first_block_end, minimum_commit)?.min(page_span_size);
+    let committed = invariants::align_up(first_block_end, minimum_commit)?.min(page_noguard_size);
     if committed == 0 || committed % os_page_size != 0 {
         return None;
     }
@@ -353,6 +377,16 @@ pub(crate) fn page_area_commit_plan(
     page_slice_offset: usize,
     page_span_size: usize,
 ) -> Option<PageAreaCommitPlan> {
+    page_area_commit_plan_at_secure_level(capacity, reserved, block_size,
+        slice_pcommitted, os_page_size, page_slice_offset, page_span_size,
+        crate::config::SECURE_LEVEL)
+}
+
+fn page_area_commit_plan_at_secure_level(
+    capacity: u16, reserved: u16, block_size: usize, slice_pcommitted: u16,
+    os_page_size: usize, page_slice_offset: usize, page_span_size: usize,
+    secure_level: usize,
+) -> Option<PageAreaCommitPlan> {
     if slice_pcommitted == 0
         || page_span_size == 0
         || os_page_size == 0
@@ -360,8 +394,9 @@ pub(crate) fn page_area_commit_plan(
     {
         return None;
     }
+    let page_noguard_size = page_noguard_size_at_secure_level(page_span_size, os_page_size, secure_level)?;
     let current_commit = (slice_pcommitted as usize).checked_mul(os_page_size)?;
-    if current_commit > page_span_size || page_slice_offset >= page_span_size {
+    if current_commit > page_noguard_size || page_slice_offset >= page_noguard_size {
         return None;
     }
     // An already initialized block range must fit the recorded committed
@@ -373,7 +408,7 @@ pub(crate) fn page_area_commit_plan(
     if initialized_extent > current_commit {
         return None;
     }
-    let extend = page_extend_count(capacity, reserved, block_size, slice_pcommitted)?;
+    let extend = page_extend_count_at_secure_level(capacity, reserved, block_size, slice_pcommitted, secure_level)?;
     if extend == 0 {
         return Some(PageAreaCommitPlan {
             extend,
@@ -390,8 +425,15 @@ pub(crate) fn page_area_commit_plan(
     let extended_capacity = (capacity as usize).checked_add(extend as usize)?;
     let extended_size = extended_capacity.checked_mul(block_size)?;
     let required_extent = page_slice_offset.checked_add(extended_size)?;
-    let needed_commit = invariants::align_up(required_extent, minimum_commit)?;
-    if needed_commit > page_span_size || needed_commit % os_page_size != 0 {
+    if required_extent > page_noguard_size { return None; }
+    let mut needed_commit = invariants::align_up(required_extent, minimum_commit)?;
+    if secure_level >= 5 {
+        let complete_area = page_slice_offset.checked_add(page_area_size(block_size, reserved)?)?;
+        let page_size_commit = invariants::align_up(complete_area, os_page_size)?;
+        if page_size_commit > page_noguard_size { return None; }
+        needed_commit = needed_commit.min(page_size_commit);
+    }
+    if needed_commit > page_noguard_size || needed_commit % os_page_size != 0 {
         return None;
     }
     if needed_commit <= current_commit {
@@ -595,7 +637,8 @@ use crate::os::PageSize;
 
         let plan = page_area_commit_plan(
             1,
-            reserved_object_count(span, offset, block_size).unwrap(),
+            reserved_object_count(page_noguard_size_at_secure_level(span, page_size,
+                crate::config::SECURE_LEVEL).unwrap(), offset, block_size).unwrap(),
             block_size,
             initial,
             page_size,
@@ -611,6 +654,29 @@ use crate::os::PageSize;
         ).unwrap();
         assert_eq!(plan.commit_size, needed_commit - 16 * KIB);
         assert_eq!(usize::from(plan.next_slice_pcommitted), needed_commit / page_size);
+    }
+
+    #[test]
+    fn full_security_commit_plans_exclude_the_tail_from_legal_client_extents() {
+        let span = SMALL_PAGE_SIZE;
+        let page_size = 4096;
+        for level in 0..=5 {
+            let usable = if level == 5 { span - page_size } else { span };
+            assert_eq!(page_noguard_size_at_secure_level(span, page_size, level), Some(usable));
+            assert_eq!(initial_page_slice_pcommitted_at_secure_level(0, usable,
+                span, page_size, level), Some((usable / page_size) as u16));
+            let plan = page_area_commit_plan_at_secure_level(3583, 3839, 16,
+                14, page_size, 16, span, level).unwrap();
+            assert_eq!(plan.extend, 256);
+            assert_eq!(plan.commit_offset, 14 * page_size);
+            assert_eq!(plan.next_slice_pcommitted, if level == 5 { 15 } else { 16 });
+            assert_eq!(plan.commit_size, if level == 5 { page_size } else { 2 * page_size });
+        }
+        assert_eq!(initial_page_slice_pcommitted_at_secure_level(0, span,
+            span, page_size, 5), None);
+        assert_eq!(page_area_commit_plan_at_secure_level(3583, 4095, 16,
+            14, page_size, 16, span, 5), None);
+        assert_eq!(page_noguard_size_at_secure_level(page_size, page_size, 5), None);
     }
 
     #[test]
