@@ -32,6 +32,26 @@ fn vm_current() -> (i64, i64) {
     (image.reserved, image.committed)
 }
 
+fn published_submaps() -> usize {
+    native_runtime_first_arena_policy_test_audit().unwrap().page_map_published_submap_count
+}
+
+fn persistent_submap_charge(before: usize, after: usize) -> i64 {
+    // A published two-level PageMap submap contains 8192 pointer entries.
+    // Its fully committed mapping survives client Page retirement.
+    let count = after.checked_sub(before).expect("published submaps remain process-owned");
+    (count * 8192 * core::mem::size_of::<usize>()) as i64
+}
+
+fn warm_os_page_metadata(request: usize) {
+    // The first allocation of this geometry can publish persistent PageMap
+    // metadata. Retire its client before capturing the target Page ledger.
+    let NativePageAllocationResult::Allocated(warm) = native_allocate_aligned(request, 16, false)
+        else { panic!("warm the actual OS Page allocation and PageMap path"); };
+    assert_eq!(unsafe { native_free(warm) }, NativePageFreeResult::Freed);
+    native_collect(true);
+}
+
 fn fully_committed_os_page_returns_its_allocation_charge() {
     const REQUEST: usize = 64 * 1024;
     let owner = std::thread::spawn(|| {
@@ -40,33 +60,46 @@ fn fully_committed_os_page_returns_its_allocation_charge() {
             else { panic!("warm the worker's ordinary Heap metadata"); };
         assert_eq!(unsafe { native_free(warm) }, NativePageFreeResult::Freed);
         native_collect(true);
+        warm_os_page_metadata(REQUEST);
         let baseline = vm_current();
+        let baseline_submaps = published_submaps();
         let NativePageAllocationResult::Allocated(client) = native_allocate_aligned(REQUEST, 16, false)
             else { panic!("allocate the fully committed OS Page control"); };
         let geometry = unsafe { native_runtime_live_client_page_geometry_test_audit(client) }.unwrap();
         assert_eq!(geometry.slice_pcommitted, 0);
         assert_eq!(unsafe { native_runtime_live_client_memory_kind_test_audit(client) }, Some(3));
         let allocated = vm_current();
+        let allocated_submaps = published_submaps();
         assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
-        (LiveClient(client), baseline, allocated)
+        (LiveClient(client), baseline, allocated, baseline_submaps, allocated_submaps)
     });
-    let (live_client, baseline, allocated) = owner.join().unwrap();
+    let (live_client, baseline, allocated, baseline_submaps, allocated_submaps) = owner.join().unwrap();
     let consumer = std::thread::spawn(move || {
         assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let client = live_client.into_pointer();
         let before = vm_current();
+        assert_eq!(published_submaps(), allocated_submaps);
         // SAFETY: the joined producer transferred this still-live exact
         // client; this receiver consumes it once and never reuses its pointer.
         assert_eq!(unsafe { native_free(client) }, NativePageFreeResult::Freed);
         let after = vm_current();
         native_collect(true);
+        assert_eq!(published_submaps(), allocated_submaps);
         assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        assert_eq!(vm_current(), after);
+        let persistent = persistent_submap_charge(baseline_submaps, allocated_submaps);
+        println!("secure.full.metadata new_submaps={} persistent_charge={persistent}", allocated_submaps-baseline_submaps);
         println!("secure.full.release allocation_reserved={} allocation_committed={} release_reserved={} release_committed={} residual_reserved={} residual_committed={}",
             allocated.0-baseline.0, allocated.1-baseline.1, before.0-after.0, before.1-after.1,
             after.0-baseline.0, after.1-baseline.1);
-        assert_eq!(after, baseline, "the full OS Page retires its actual allocation charge");
+        assert_eq!(before, allocated, "owner handoff introduces no unrelated VM charge");
+        assert_eq!(before.0-after.0, allocated.0-baseline.0-persistent);
+        assert_eq!(before.1-after.1, allocated.1-baseline.1-persistent);
+        assert_eq!(after, (baseline.0+persistent, baseline.1+persistent),
+            "the full OS Page retires its charge while published submaps remain");
     });
     consumer.join().unwrap();
+    assert_eq!(published_submaps(), allocated_submaps);
 }
 
 #[test]
@@ -90,10 +123,12 @@ fn secure_partial_os_page_reset_is_accounted_once_before_terminal_failed_unmap()
             else { panic!("warm the worker's ordinary Heap metadata"); };
         assert_eq!(unsafe { native_free(warm) }, NativePageFreeResult::Freed);
         native_collect(true);
-        // Metadata attaches with the ordinary commitment policy; only this
-        // client allocation selects the public on-demand option.
+        // Metadata attaches with the ordinary commitment policy; the warm
+        // and measured client Pages select the public on-demand option.
         crabc_mimalloc::source_options_api::option_set(MI_OPTION_PAGE_COMMIT_ON_DEMAND, 1);
+        warm_os_page_metadata(REQUEST);
         let before = vm_current();
+        let before_submaps = published_submaps();
         let NativePageAllocationResult::Allocated(client) = native_allocate_aligned(REQUEST, 16, false)
             else { panic!("the ordinary worker allocates its on-demand source Page"); };
         // SAFETY: this worker exclusively owns the live client and its Page.
@@ -102,15 +137,17 @@ fn secure_partial_os_page_reset_is_accounted_once_before_terminal_failed_unmap()
         assert!(geometry.slice_pcommitted > 0);
         assert!(geometry.capacity < geometry.reserved, "only an initial prefix is committed");
         let after = vm_current();
+        let after_submaps = published_submaps();
         crabc_mimalloc::source_options_api::option_set(MI_OPTION_PAGE_COMMIT_ON_DEMAND, 0);
         assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
-        (LiveClient(client), geometry, before, after)
+        (LiveClient(client), geometry, before, after, before_submaps, after_submaps)
     });
-    let (live_client, geometry, before_allocation, after_allocation) = owner.join().unwrap();
+    let (live_client, geometry, before_allocation, after_allocation, before_submaps, after_submaps) = owner.join().unwrap();
     let consumer = std::thread::spawn(move || {
         assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let client = live_client.into_pointer();
         let before = vm_current();
+        assert_eq!(published_submaps(), after_submaps);
         let before_map = native_runtime_first_arena_policy_test_audit().unwrap().page_map_registered_entry_count;
         let fault = native_runtime_test_fail_next_unmap();
         let capture = fault.capture_range();
@@ -119,11 +156,13 @@ fn secure_partial_os_page_reset_is_accounted_once_before_terminal_failed_unmap()
         assert_eq!(unsafe { native_free(client) }, NativePageFreeResult::Freed);
         let failed_range = capture.single().expect("one exact source release attempt");
         let after = vm_current();
+        assert_eq!(published_submaps(), after_submaps);
         let after_map = native_runtime_first_arena_policy_test_audit().unwrap().page_map_registered_entry_count;
         assert!(after_map < before_map);
         native_collect(true);
         native_collect(true);
         assert_eq!(vm_current(), after);
+        assert_eq!(published_submaps(), after_submaps);
         assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
         assert_eq!(vm_current(), after);
         assert_eq!(capture.single(), Some(failed_range));
@@ -131,7 +170,10 @@ fn secure_partial_os_page_reset_is_accounted_once_before_terminal_failed_unmap()
         (failed_range, before, after)
     });
     let (range, before, after) = consumer.join().unwrap();
+    assert_eq!(published_submaps(), after_submaps);
     let prefix = i64::from(geometry.slice_pcommitted) * page_size as i64;
+    let persistent = persistent_submap_charge(before_submaps, after_submaps);
+    println!("secure.partial.metadata new_submaps={} persistent_charge={persistent}", after_submaps-before_submaps);
     println!("secure.partial.release prefix={prefix} reserved_drop={} committed_drop={} allocation_reserved={} allocation_committed={} range_base=0x{:X} range_size={} residual_reserved={} residual_committed={}",
         before.0-after.0, before.1-after.1,
         after_allocation.0-before_allocation.0, after_allocation.1-before_allocation.1, range.0, range.1, after.0-before_allocation.0, after.1-before_allocation.1);
@@ -139,10 +181,12 @@ fn secure_partial_os_page_reset_is_accounted_once_before_terminal_failed_unmap()
     // workers joined, and only this exact failed syscall extent remains mapped.
     assert!(unsafe { crabc_core::mm::munmap_raw(range.0 as *mut u8, range.1) }.is_ok());
     assert_eq!(vm_current(), after);
-    assert_eq!(after_allocation.0-before_allocation.0, range.1 as i64);
-    assert_eq!(after_allocation.1-before_allocation.1, prefix);
+    assert_eq!(before, after_allocation, "owner handoff introduces no unrelated VM charge");
+    assert_eq!(after_allocation.0-before_allocation.0-persistent, range.1 as i64);
+    assert_eq!(after_allocation.1-before_allocation.1-persistent, prefix);
     assert_eq!(before.0-after.0, range.1 as i64);
     assert_eq!(before.1-after.1, prefix,
         "whole OS release retires both the committed prefix and the successful tail reset charge");
-    assert_eq!(after, before_allocation, "terminal free returns the allocation ledger to baseline");
+    assert_eq!(after, (before_allocation.0+persistent, before_allocation.1+persistent),
+        "terminal free removes its charge while independently counted submaps remain");
 }
