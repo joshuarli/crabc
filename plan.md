@@ -45,25 +45,28 @@ Update this small section in place when the implementation frontier changes.
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
+- **Paused handoff (2026-10-02):** work is stopped at the user's request. All
+  active lanes are settled and integrated, their worktrees are removed, the lane
+  map is empty, and `main` is clean. Start no new work or lanes until the user
+  resumes the campaign. Source branches and compact evidence remain available.
 - **Core fixes:** secure/guarded output formatting matches pinned C; the private
-  context
-  maps retained page-validity errors and counts a consumed free even when cleanup
-  fails. The bounded queue retry reuses its frame. Child images initialize directly
-  in final storage with the original cold state. Committed external context
-  arenas supply their actual mapping owner for secure metadata guards.
+  context maps retained page-validity errors and counts a consumed free even when
+  cleanup fails. The bounded queue retry reuses its frame. Fresh Heap/Theap and
+  child images initialize directly in final storage with the original cold state.
+  Committed external context arenas supply their actual mapping owner for secure
+  metadata guards. Private randomized secure comparisons validate each side's
+  request, capacity, live identity, payload and zeroing before admitting incidental
+  placement differences; canonical and guarded comparisons remain strict.
   Focused tests/compiler checks establish these changes, not repair of the two
   open runtime failures. Debug public-Theap compiler/link closure is repaired;
   its actual runtime failure remains.
-- **Integration and cleanup:** all prior lanes' coherent changes are on `main`;
-  the duplicate lifecycle case catalog was discarded. Their worktrees are retired
-  and source branches remain in Git. The three subsequent core lanes are also
-  integrated and retired. Approved memory/hardware policies and the context
-  metadata-guard fix are integrated. One successor lane adds request/identity
-  context to ordinary randomized secure-mode comparisons; their remaining
-  differences are unmet. New trees belong under `.work/worktrees/`.
-  Cleanup recovered about 1.1 TiB of free disk. Keep exact reusable inputs and
-  compact regression programs/raw evidence; deleted reports are not qualification.
-  Other projects' Docker state remains outside this cleanup.
+- **Verification and cleanup:** the final merged change passes 32 focused reader
+  tests and the ordinary secure-5 debug C/native comparison (4,314 keys). Preserved
+  C/self and C/native traces also pass the relocated reader; original raw
+  differences remain retained. All nine compiler profiles and both parity
+  validators pass. Other source modes were not rerun. Approved memory/hardware
+  policies are integrated. Cleanup left about 1.1 TiB free; keep reusable inputs
+  and compact evidence. Other projects' Docker state remains outside this cleanup.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
@@ -75,20 +78,31 @@ Update this small section in place when the implementation frontier changes.
   the inspected immutable image ID. Frozen ABI/header/coverage digests are unchanged.
 - **Evidence:** existing ignored report locations retain original programs, source
   pins, raw failures and focused C/native comparisons independently of retired
-  trees. Read-only replay covers the retained runtime consumers and bounded
-  allocator checks. Historical receipts are not transferred to current products.
-- **Next:** repair actual allocator failures, then investigate performance on an
-  uncontended host and qualify the final merged-source release cohort. Use existing
-  runners and direct regressions; avoid new catalogs or administrative proof layers.
+  trees. Recent allocator proofs are in `.work/reports/allocator/operationcontracts120/`,
+  `.work/reports/allocator/heapimage120/` and
+  `.work/x86_64/reports/integrated-lanes/context118-54271afbe/`; policy proofs are in
+  `.work/reports/allocator/hardwarepolicy119/` and
+  `.work/x86_64/reports/memorypolicy119-proof.tar.gz`. Merged checks are in
+  `.work/x86_64/tmp/operationcontracts120-merged-*.log` and `winddown-rust-check.log`.
+  Historical receipts are not transferred to current products.
+- **On resume:** address actual allocator failures, then investigate performance
+  on an uncontended host and qualify the final merged-source release cohort. Use
+  existing runners and direct regressions; avoid new catalogs or proof layers.
   Baseline allocator qualification, post-switch reruns and public promotion remain open.
   No qualifying timing or full release-family pass is claimed.
-- **Host:** two allowed NUMA nodes and free 1-GiB pages are unavailable. These
+- **Constraint:** earlier crash-debugging lanes were rejected by automatic safety
+  review and were not restarted. Continue with source/compiler improvements and
+  ordinary valid-client checks; do not resume those rejected workflows.
+- **Host:** two allowed NUMA nodes and free explicit 2-MiB/1-GiB pages are unavailable. These
   optional hardware modes remain unqualified; ordinary baseline promotion may
   proceed once its other prerequisites pass. Do not repeat unchanged denied
   `mbind`, alter shared pools/security policy, rent resources or reboot without
   authorization.
 
 ## Parallel lanes
+
+Campaign work is paused at the user's request. The following coordination rules
+apply only after the user resumes work; do not start successors during this pause.
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
 lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
