@@ -540,17 +540,21 @@ fn c_string_pointers(values: &[CString]) -> Vec<*const u8> {
 /// A prepared action may legally replace any raw child descriptor. Relocating
 /// the private error writer first preserves `spawn`'s promise to report child
 /// setup and exec errors rather than mistaking a clobbered error pipe for a
-/// successful exec.
+/// successful exec. An already safe writer is retained so spawn needs only
+/// the pipe's two descriptors when no action can overwrite it.
 #[cfg(feature = "alloc")]
 fn reserve_child_error_fd(writer: RawFd, actions: &[FdAction<'_>]) -> Result<RawFd> {
+    let collides = |candidate| actions.iter().any(|action| match action {
+        FdAction::Dup2 { to, .. } => *to == candidate,
+        FdAction::Close(_) => false,
+    });
+    if !collides(writer) {
+        return Ok(writer);
+    }
     let mut minimum = 3;
     loop {
         let candidate = crabc_core::io::fcntl_dupfd_cloexec(writer, minimum)?;
-        let collides = actions.iter().any(|action| match action {
-            FdAction::Dup2 { to, .. } => *to == candidate,
-            FdAction::Close(_) => false,
-        });
-        if !collides {
+        if !collides(candidate) {
             let _ = crabc_core::io::close(writer);
             return Ok(candidate);
         }
@@ -559,6 +563,76 @@ fn reserve_child_error_fd(writer: RawFd, actions: &[FdAction<'_>]) -> Result<Raw
             return Err(crate::Errno::MFILE);
         }
         minimum = candidate + 1;
+    }
+}
+
+#[cfg(all(test, feature = "alloc"))]
+mod child_descriptor_tests {
+    use super::{PreparedExec, Resource, Rlimit, WaitOptions};
+    use crate::{fs, Errno};
+    use std::ffi::CStr;
+
+    #[test]
+    fn x86_64_prepared_exec_needs_only_two_error_pipe_slots() {
+        const ISOLATED: &str = "CRABC_CHILD_TWO_DESCRIPTOR_SLOTS";
+        if std::env::var_os(ISOLATED).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "process::child_descriptor_tests::x86_64_prepared_exec_needs_only_two_error_pipe_slots",
+                ])
+                .env(ISOLATED, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+
+        let original = super::getrlimit(Resource::Nofile).unwrap();
+        let limit = original.current.unwrap_or(32).min(32);
+        assert!(limit >= 8);
+        let path = CStr::from_bytes_with_nul(b"/bin/sh\0").unwrap();
+        let argv = [
+            CStr::from_bytes_with_nul(b"sh\0").unwrap(),
+            CStr::from_bytes_with_nul(b"-c\0").unwrap(),
+            CStr::from_bytes_with_nul(b"exit 37\0").unwrap(),
+        ];
+        let prepared = PreparedExec::new(path, &argv, &[]).unwrap();
+        let missing = PreparedExec::new(
+            CStr::from_bytes_with_nul(b"/crabc-two-descriptor-slots-missing\0").unwrap(),
+            &argv,
+            &[],
+        ).unwrap();
+        super::setrlimit(Resource::Nofile, Rlimit {
+            current: Some(limit),
+            maximum: original.maximum,
+        }).unwrap();
+
+        let mut occupied = std::vec::Vec::new();
+        loop {
+            match fs::open("/dev/null", fs::OFlags::RDONLY | fs::OFlags::CLOEXEC, fs::Mode::empty()) {
+                Ok(fd) => occupied.push(fd),
+                Err(Errno::MFILE) => break,
+                Err(error) => panic!("descriptor fill failed: {error:?}"),
+            }
+        }
+        assert!(occupied.len() >= 2);
+        // The child setup needs one reader and one close-on-exec writer.
+        // No descriptor action can replace the writer, so a third slot must
+        // not be needed merely to report exec errors.
+        occupied.pop();
+        occupied.pop();
+        let status = prepared.spawn().and_then(|child| child.wait(WaitOptions::empty()));
+        let failure = missing.spawn();
+        let mut raw_status = 0;
+        // SAFETY: This isolated process runs only this regression. The raw
+        // output word is writable, and neither spawn may leave an unreaped child.
+        let unreaped = unsafe { crabc_core::process::wait4_raw(-1, &mut raw_status, 1) };
+        super::setrlimit(Resource::Nofile, original).unwrap();
+        let status = status.expect("two slots suffice for the private error pipe").unwrap();
+        assert_eq!(status.exit_status(), Some(37));
+        assert_eq!(failure.unwrap_err(), Errno::NOENT);
+        assert_eq!(unreaped, Err(Errno::CHILD));
     }
 }
 
