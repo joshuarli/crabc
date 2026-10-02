@@ -37,8 +37,9 @@
 //! owns C/POSIX/C.UTF-8 state and `mbstate_t` semantics.  C callers must pass
 //! valid NUL-terminated encoding names and, when a conversion is requested,
 //! live writable pointer/count records and readable/writable byte ranges as
-//! required by the public `iconv` ABI.  `inbuf == NULL` is the selected
-//! stateless reset query and returns zero without touching `errno`.
+//! required by the public `iconv` ABI.  `inbuf == NULL` or `*inbuf == NULL`
+//! selects the stateless reset query, which ignores the count/output records
+//! and returns zero without touching `errno`.
 
 #[cfg(not(all(
     target_os = "linux",
@@ -532,10 +533,19 @@ static_archive_member! { iconv_source {
 
     /// Convert complete input scalars through one selected descriptor.
     ///
-    /// A null `inbuf` is the stateless reset query.  Otherwise all pointer/count
-    /// records and their source/destination ranges must satisfy the normal C
-    /// `iconv` preconditions.  Invalid descriptor or record pointers fail closed
-    /// with `EINVAL`; byte-sequence failures retain musl's pointer-progress rules.
+    /// A null `inbuf` or null `*inbuf` is the stateless reset query.
+    ///
+    /// # Safety
+    ///
+    /// `descriptor` must be a live descriptor returned by `iconv_open`. A
+    /// non-null `input` must point to a readable pointer object. For reset,
+    /// the remaining records are ignored and may be null. For conversion,
+    /// pointer/count records must be readable and writable, input must provide
+    /// the stated readable byte extent, and output must provide the stated
+    /// writable byte extent without overlapping input. A zero output extent
+    /// permits a null output value; a complete scalar then reports `E2BIG`
+    /// before writing bytes. Byte-sequence failures retain musl's
+    /// pointer-progress rules.
     #[no_mangle]
     pub unsafe extern "C" fn iconv(
         descriptor: IconvT,
@@ -552,16 +562,21 @@ static_archive_member! { iconv_source {
         if input.is_null() {
             return 0;
         }
+        // Musl tests the input value before consulting the byte count. Reset
+        // has no input extent and does not require count or output records.
+        // SAFETY: a non-null input names the caller's readable pointer object.
+        let mut source = unsafe { core::ptr::read(input) }.cast::<u8>();
+        if source.is_null() {
+            return 0;
+        }
         if input_left.is_null() {
             // SAFETY: this error belongs to the calling C thread.
             unsafe { errno::set_errno(EINVAL) };
             return usize::MAX;
         }
         // SAFETY: non-null record pointers are required by the selected ABI.
-        let mut source = unsafe { core::ptr::read(input) }.cast::<u8>();
-        // SAFETY: non-null record pointers are required by the selected ABI.
         let mut source_remaining = unsafe { core::ptr::read(input_left) };
-        if source.is_null() || source_remaining == 0 {
+        if source_remaining == 0 {
             return 0;
         }
         if output.is_null() || output_left.is_null() {
@@ -573,7 +588,7 @@ static_archive_member! { iconv_source {
         let mut destination = unsafe { core::ptr::read(output) }.cast::<u8>();
         // SAFETY: non-null record pointers are required by the selected ABI.
         let mut destination_remaining = unsafe { core::ptr::read(output_left) };
-        if destination.is_null() {
+        if destination.is_null() && destination_remaining != 0 {
             // SAFETY: this error belongs to the calling C thread.
             unsafe { errno::set_errno(EINVAL) };
             return usize::MAX;
