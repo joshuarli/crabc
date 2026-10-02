@@ -1104,12 +1104,11 @@ mod tests {
         });
     }
 
-    /// A failed OS unmap on a non-main Heap's Theap is retained on the
-    /// thread for a raw retry, as the main-Heap Theap's is, rather than
-    /// leaked: that Theap's engine stops at `RetryPending` and the retry
-    /// completes it.
+    /// Source terminal OS release consumes the page and its VM accounting
+    /// even when munmap fails. Heap and thread teardown must not rediscover
+    /// that consumed page or retry its raw mapping.
     #[test]
-    fn non_main_heap_theap_retains_a_failed_os_unmap_for_retry() {
+    fn non_main_heap_theap_consumes_failed_os_unmap_without_teardown_retry() {
         with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
             let (parent, registry, binding) = child_fixture_inputs(attachment, pair);
             let keys = HeapKeySource {
@@ -1123,7 +1122,7 @@ mod tests {
             // SAFETY: the scoped worker is the only user until joined.
             unsafe impl<T> Send for Shared<T> {}
             let shared = Shared((&mut child, binding, keys));
-            std::thread::scope(|scope| {
+            let failed_range = std::thread::scope(|scope| {
                 scope.spawn(move || {
                     let shared = shared;
                     let (child, binding, keys) = shared.0;
@@ -1134,6 +1133,11 @@ mod tests {
                     let heap = unsafe { child_heap_new(child, &mut member, binding, keys) }.expect("a Heap");
                     let theap = unsafe { member.owner_mut().heap_theap(child, binding, heap) }.expect("a Theap");
                     let fault = crate::os::fault::install(crate::os::fault::Plan::disabled());
+                    let identity = child.with_child_image(|image| NonNull::from(image.identity())).unwrap();
+                    let mut client_address = 0usize;
+                    let mut reserved_before_free = 0i64;
+                    let mut committed_before_free = 0i64;
+                    let ranges = fault.capture_unmap_ranges();
                     let owner: *mut ChildThreadOwner = member.owner_mut();
                     let child_pointer: *mut ChildMainHeapContextOwner<'_> = child;
                     // SAFETY: the admitted thread's own Theap; nothing else runs.
@@ -1143,31 +1147,58 @@ mod tests {
                             let block = engine.allocate_aligned(crate::config::SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
                                 .expect("an OS-backed block");
                             assert!(unsafe { (*engine.page_for_block(block)).memid().kind().is_os() });
+                            client_address = block.as_ptr().addr();
+                            let before = unsafe { identity.as_ref() }.vm_statistics().snapshot();
+                            reserved_before_free = before.reserved_current;
+                            committed_before_free = before.committed_current;
                             fault.set(crate::os::fault::Plan::at(crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
-                            unsafe { engine.free(block) }.expect("the free succeeds while its unmap is retained");
+                            unsafe { engine.free(block) }.expect("source free consumes the client despite failed unmap");
                         })
                     };
-                    assert_eq!(released, Err(ChildMetadataPageEngineError::EngineRetained));
-                    fault.set(crate::os::fault::Plan::disabled());
-                    assert!(member.owner_mut().test_has_heap_theap_pending_os_release());
-                    assert_eq!(unsafe { ChildThreadOwner::test_heap_theap_engine_state(theap) },
-                        crate::meta::ChildPageEngineState::RetryPending);
-                    assert_eq!(unsafe { member.owner_mut().retry_heap_theap_pending_os_release() }, Ok(true));
+                    assert_eq!(released, Ok(()));
+                    assert_eq!(fault.observed(), 1);
+                    let (attempts, count) = ranges.all().expect("the bounded terminal release trace");
+                    assert_eq!(count, 1);
+                    let failed_range = attempts[0];
+                    let after = unsafe { identity.as_ref() }.vm_statistics().snapshot();
+                    assert_eq!(reserved_before_free - after.reserved_current, failed_range.1 as i64);
+                    assert!(committed_before_free > after.committed_current);
                     assert!(!member.owner_mut().test_has_heap_theap_pending_os_release());
                     assert_eq!(unsafe { ChildThreadOwner::test_heap_theap_engine_state(theap) },
-                        crate::meta::ChildPageEngineState::RetryComplete);
+                        crate::meta::ChildPageEngineState::Active);
+                    assert_eq!(unsafe { member.owner_mut().retry_heap_theap_pending_os_release() }, Ok(false));
+                    assert!(!member.owner_mut().test_has_heap_theap_pending_os_release());
+                    assert_eq!(unsafe { identity.as_ref() }.vm_statistics().snapshot(), after);
+                    assert_eq!(fault.observed(), 1);
+                    // This probes only the former address. No consumed client
+                    // or metadata image is dereferenced after the free.
+                    assert!(unsafe { binding.page_map().lookup_registered_page(
+                        core::ptr::with_exposed_provenance_mut(client_address),
+                    ) }.unwrap().is_none());
                     assert_eq!(unsafe { child_heap_destroy(child, &mut member, binding, heap) },
                         Ok(HeapReleaseOutcome::Released));
                     unsafe { member.thread_done(child, binding) }.expect("the thread finishes");
+                    assert_eq!(fault.observed(), 1, "neither Heap nor thread teardown retries the source-consumed mapping");
+                    assert_eq!(ranges.all().unwrap().1, 1);
+                    failed_range
                 })
                 .join()
-                .expect("the child thread completes");
+                .expect("the child thread completes")
             });
             // SAFETY: the child has no users or threads left.
             unsafe { destroy_child(child, registry, binding, &mut [], attachment, &mut heap_owner) }
                 .expect("the child is destroyed");
             heap_owner.finish(attachment).expect("the parent engine is quiescent");
             attachment.finish_after_user_destructors().expect("the parent attachment completes");
+            let mut resident = 0u8;
+            // SAFETY: every allocator user and owner has finished. Only the
+            // exact raw mapping refused by munmap remains; this cleanup has
+            // no PageMap, Heap, client or VM-accounting capability to reuse.
+            unsafe {
+                let address = core::ptr::with_exposed_provenance_mut(failed_range.0);
+                assert!(crabc_core::mm::mincore_raw(address, 4096, &mut resident).is_ok());
+                crabc_core::mm::munmap_raw(address, failed_range.1).expect("raw-only fixture cleanup");
+            }
         });
     }
 
