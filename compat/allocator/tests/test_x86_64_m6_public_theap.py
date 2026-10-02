@@ -131,6 +131,34 @@ class TheapProducerTests(unittest.TestCase):
         receipt,pin,_=self.receipt_fixture()
         with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
              mock.patch.object(theap.harness,'load_pin',return_value=pin), \
+             mock.patch.object(theap.harness,'require_tool',side_effect=AssertionError('retained reading requires no installed compiler')):
+            self.assertEqual(theap.cli(['--profiles','secure-2','--read']),0)
+
+    def test_reader_requires_original_c_owner_and_empty_collection_observations(self):
+        receipt,pin,_=self.receipt_fixture()
+        path=receipt.path.parent/'logs/secure-2/c.json'
+        original=json.loads(path.read_text())
+        for context in ('main','worker','child','fork'):
+            for witness in (f'source.{context}=1,1,1', f'source.{context}.collect_empty=1'):
+                for changed in ('', witness.replace('=1', '=0', 1), witness+'\n'+witness):
+                    record=dict(original,stderr=original['stderr'].replace(witness,changed))
+                    path.write_text(json.dumps(record))
+                    with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
+                         mock.patch.object(theap.harness,'load_pin',return_value=pin), \
+                         mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
+                        with self.subTest(witness=witness,changed=changed),self.assertRaises(theap.harness.HarnessError):
+                            theap.cli(['--profiles','secure-2','--read'])
+
+    def test_reader_accepts_original_commands_after_checkout_relocation(self):
+        receipt,pin,_=self.receipt_fixture()
+        original_root=str(theap.harness.ROOT)
+        for path in (receipt.path.parent/'logs/secure-2').glob('*.json'):
+            record=json.loads(path.read_text())
+            record['command']=[argument.replace(original_root,'/removed/original-checkout')
+                               for argument in record['command']]
+            path.write_text(json.dumps(record))
+        with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
+             mock.patch.object(theap.harness,'load_pin',return_value=pin), \
              mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
             self.assertEqual(theap.cli(['--profiles','secure-2','--read']),0)
 

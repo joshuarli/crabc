@@ -114,21 +114,26 @@ def command(output, label, argv, cwd, *, runtime=False, timeout=900):
     return record, [raw, log]
 
 
+def observation_trace(record, side, profile, guarded_only):
+    if side == "c":
+        for context in ("main", "worker", "child", "fork"):
+            if re.findall(rf"^source\.{context}=([^\n]*)$",
+                          str(record["stderr"]), re.MULTILINE) != ["1,1,1"]:
+                raise harness.HarnessError(f"pinned C {context} Theap ownership differs")
+        for context in (() if guarded_only else ("main", "worker", "child", "fork")):
+            if re.findall(rf"^source\.{context}\.collect_empty=([^\n]*)$",
+                          str(record["stderr"]), re.MULTILINE) != ["1"]:
+                raise harness.HarnessError(f"pinned C {context} force collection leaves live Theap pages")
+    trace = m7.parse_options_trace(str(record["stdout"]), side, BEGIN, END)
+    require_trace(trace, side, guarded_only, profile)
+    return trace
+
+
 def observe(drivers, output, profile, guarded_only, cases):
     traces = {}
     for side in ("c", "rust"):
         record, logs = command(output, side, [str(drivers[side])], output, runtime=True, timeout=60)
-        if side == "c":
-            for context in ("main", "worker", "child", "fork"):
-                if re.findall(rf"^source\.{context}=([01]),([01]),([01])$",
-                              str(record["stderr"]), re.MULTILINE) != [("1", "1", "1")]:
-                    raise harness.HarnessError(f"pinned C {context} Theap ownership differs")
-            for context in (() if guarded_only else ("main", "worker", "child", "fork")):
-                if re.findall(rf"^source\.{context}\.collect_empty=([01])$",
-                              str(record["stderr"]), re.MULTILINE) != ["1"]:
-                    raise harness.HarnessError(f"pinned C {context} force collection leaves live Theap pages")
-        traces[side] = m7.parse_options_trace(str(record["stdout"]), side, BEGIN, END)
-        require_trace(traces[side], side, guarded_only, profile)
+        traces[side] = observation_trace(record, side, profile, guarded_only)
         cases.append((f"{profile}-{side}-run", 0, logs))
     m7.compare_options_traces(traces["c"], traces["rust"])
     return len(traces["c"])
@@ -308,9 +313,8 @@ def cli(argv=None):
             harness.require_success(records[label], f"retained {profile} {label}")
         retained_traces = {}
         for side in ("c", "rust"):
-            retained_traces[side] = m7.parse_options_trace(
-                str(records[f"{side}-run"]["stdout"]), side, BEGIN, END)
-            require_trace(retained_traces[side], side, args.guarded_only, profile)
+            retained_traces[side] = observation_trace(
+                records[f"{side}-run"], side, profile, args.guarded_only)
         m7.compare_options_traces(retained_traces["c"], retained_traces["rust"])
         # The source extraction was temporary. Authenticate its declared
         # include/static input structure against the pinned archive and
@@ -318,14 +322,31 @@ def cli(argv=None):
         c_argv = records["c-build"].get("command", [])
         if not isinstance(c_argv, list) or len(c_argv) < 5:
             raise harness.HarnessError(f"{profile} public Theap compiler argv is missing")
+        relative_output = output.relative_to(harness.ROOT)
+        recorded_output = Path(c_argv[-1]).parent
+        if (not recorded_output.is_absolute() or ".." in recorded_output.parts
+                or recorded_output.parts[-len(relative_output.parts):] != relative_output.parts):
+            raise harness.HarnessError(f"{profile} public Theap original output boundary differs")
+        producer_root = recorded_output.parents[len(relative_output.parts) - 1]
+        output = recorded_output
         source = Path(c_argv[-4]).parent.parent
         temporary = source.parent.parent
         if (source.name != pin["archive_root"] or source.parent.name != "source"
-                or temporary.parent != harness.TEMP_ROOT
+                or temporary.parent != producer_root / harness.TEMP_ROOT.relative_to(harness.ROOT)
                 or not temporary.name.startswith("crabc-mimalloc-m6-public-theap-")):
             raise harness.HarnessError(f"{profile} public Theap compiler source path differs")
-        compiler = harness.require_tool("musl-gcc")
-        cargo = harness.require_tool("cargo")
+        adapter_path = (relative_output / "adapter-build.json").relative_to(work_relative).as_posix()
+        link_case = next(case for case in receipt.cases if case["id"] == f"{profile}-rust-link")
+        if adapter_path not in link_case["logs"]:
+            raise harness.HarnessError(f"{profile} public Theap native compiler record is missing")
+        adapter = harness.read_json(logs / adapter_path)
+        harness.require_success(adapter, f"retained {profile} native adapter build")
+        adapter_argv = adapter.get("command", [])
+        if not isinstance(adapter_argv, list) or not adapter_argv:
+            raise harness.HarnessError(f"{profile} public Theap native compiler argv is missing")
+        compiler, cargo = c_argv[0], adapter_argv[0]
+        if Path(compiler).name != "musl-gcc" or Path(cargo).name != "cargo":
+            raise harness.HarnessError(f"{profile} public Theap compiler identity differs")
         client_flags = ("-DCRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY=1",) if args.guarded_only else ()
         common = [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
                   *m4.api_profile_flags(profile), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
@@ -350,19 +371,13 @@ def cli(argv=None):
         for label, expected in expected_commands.items():
             if records[label].get("command") != expected:
                 raise harness.HarnessError(f"{profile} public Theap {label} compiler/provider argv differs")
-        adapter_path = (output / "adapter-build.json").relative_to(work).as_posix()
-        link_case = next(case for case in receipt.cases if case["id"] == f"{profile}-rust-link")
-        if adapter_path not in link_case["logs"]:
-            raise harness.HarnessError(f"{profile} public Theap native compiler record is missing")
-        adapter = harness.read_json(logs / adapter_path)
-        harness.require_success(adapter, f"retained {profile} native adapter build")
         expected_adapter = [cargo, "build", "--locked", "--release", "--message-format=json",
             "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(output / "cargo-target"),
             *(("--features", ",".join(f"crabc-mimalloc/{feature}" for feature in m4.api_profile_features(profile))) if m4.api_profile_features(profile) else ())]
         artifact = adapter.get("artifact", {})
         retained_adapter = products / f"{profile}-adapter.a"
         if (adapter.get("command") != expected_adapter
-                or artifact.get("path") != library.relative_to(harness.ROOT).as_posix()
+                or artifact.get("path") != library.relative_to(producer_root).as_posix()
                 or artifact.get("bytes") != retained_adapter.stat().st_size
                 or artifact.get("sha256") != harness.sha256_file(retained_adapter)):
             raise harness.HarnessError(f"{profile} public Theap native selector or physical library differs")
