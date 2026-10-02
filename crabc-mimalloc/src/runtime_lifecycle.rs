@@ -12451,7 +12451,7 @@ pub unsafe fn native_thread_stats_print_out(
 
 /// Pinned `mi_stats_reset` (`src/stats.c:472-477`): on a thread with an
 /// initialized default Theap, merge its main-Heap Theap into the main Heap
-/// and the main Heap into the main subprocess.
+/// and the main Heap into its owning subprocess.
 #[doc(hidden)]
 pub fn native_stats_reset() {
     #[cfg(target_arch = "x86_64")]
@@ -12462,12 +12462,16 @@ pub fn native_stats_reset() {
     {
         return;
     }
-    merge_current_thread_theap_statistics();
-    // SAFETY: PROCESS_ACTIVE follows the permanent main-Heap publication.
-    let Some(main_heap) = (unsafe { RUNTIME_PROCESS.active_main_heap() }) else { return; };
-    let Ok(mut heap) = main_heap.lock_heap() else { return; };
-    let _ = heap.heap_mut().merge_main_heap_statistics_into_owning_subprocess_before_unlink();
-    let _ = heap.unlock();
+    let Some(main_heap) = core::ptr::NonNull::new(crate::source_heap_api::heap_main().cast::<crate::types::Heap>()) else { return; };
+    // SAFETY: the calling thread's subprocess membership retains its main
+    // Heap and caller-Theap roots. A null output still performs the getter's
+    // source Theap selection and merge before rejecting the output; reset
+    // needs that merge without copying an unused statistics image.
+    unsafe {
+        let _ = crate::types::Heap::copy_selected_statistics_into_source_image_at(
+            main_heap, crate::compiler_tls::default_theap(), core::ptr::null_mut());
+        let _ = crate::types::Heap::merge_statistics_into_owning_subprocess_at(main_heap);
+    }
 }
 
 /// Pinned `mi_stats_get_bin_size` (`src/stats.c:608-611`).
