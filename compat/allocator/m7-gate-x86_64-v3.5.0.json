@@ -297,6 +297,39 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--optional-isa-differential"],
       "scope": "CPU-qualified pinned-C/Rust scalar, MI_NO_OPT_ARCH, MI_OPT_ARCH, and MI_OPT_SIMD bitmap/allocation traces with AVX2 instruction selection."
     },
+    "differential:configuration-debug-3": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m7_gate.py",
+        "--offline",
+        "--configuration-differential",
+        "--configuration-profile",
+        "debug-3"
+      ],
+      "scope": "Exact source C and unoptimized native Rust test image compare numeric mode selection, padding, free-list encoding, page metadata selection, direct-page count and guarded option defaults. Retained executable hashes and raw compiler/runtime records support physical replay. This is selection evidence; allocation and assertion behavior remain separate requirements."
+    },
+    "differential:configuration-secure-5": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m7_gate.py",
+        "--offline",
+        "--configuration-differential",
+        "--configuration-profile",
+        "secure-5"
+      ],
+      "scope": "Exact source C and unoptimized native Rust test image compare numeric mode selection, padding, free-list encoding, page metadata selection, direct-page count and guarded option defaults. Retained executable hashes and raw compiler/runtime records support physical replay. This is selection evidence; allocation and assertion behavior remain separate requirements."
+    },
+    "differential:configuration-guarded-secure-5": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m7_gate.py",
+        "--offline",
+        "--configuration-differential",
+        "--configuration-profile",
+        "guarded-secure-5"
+      ],
+      "scope": "Exact source C and unoptimized native Rust test image compare numeric mode selection, padding, free-list encoding, page metadata selection, direct-page count and guarded option defaults. Retained executable hashes and raw compiler/runtime records support physical replay. This is selection evidence; allocation and assertion behavior remain separate requirements."
+    },
     "audit:default-baseline": {
       "command": [
         "python3",
@@ -540,7 +573,8 @@
         "differential:debug-padding-17",
         "differential:debug-padding-page",
         "differential:debug-remote-links",
-        "differential:show-errors-profile"
+        "differential:show-errors-profile",
+        "differential:configuration-debug-3"
       ],
       "blocked_by": [
         "The default-off `MI_DEBUG=1` and `MI_PADDING=1` profile covers ordinary allocation, regular-page fill and two-block remote-free reuse, padding checks, diagnostics, and statistics; its source-built differentials do not cover the remaining debug assertions or aligned/huge debug paths. Arena diagnostics have a separate release/debug source differential. MI_SHOW_ERRORS has a separate compile-time profile and differential.",
@@ -559,10 +593,11 @@
       ],
       "acceptance": "Each `MI_SECURE` level (encoded free lists, guard pages, randomized allocation, double-free and corruption detection) and `MI_FREE_IS_CHECKED` behave as the pinned source, including the `secure level` and free-list lines of `mi_options_print_out`.",
       "evidence": [
-        "differential:secure-profile"
+        "differential:secure-profile",
+        "differential:configuration-secure-5"
       ],
       "blocked_by": [
-        "The engine selects only `SECURE_LEVEL = 0`, unencoded free lists, and unchecked free."
+        "Secure levels 1 through 5 are implemented and have explicit native features. Complete current-source qualification of each applicable level, encoded free-list behavior, page ordering, randomized extension, diagnostics and MI_FREE_IS_CHECKED remains required; the existing secure operation producer selects only levels 1 and 2."
       ]
     },
     {
@@ -574,10 +609,11 @@
       ],
       "acceptance": "The `MI_GUARDED` profile selects its guarded sample-rate default, samples guard-page allocations from the guarded options through `_mi_theap_guarded_init`, disables `allow_large_os_pages` with the source warning in `_mi_options_init`, and prints the guarded build line.",
       "evidence": [
-        "differential:guarded-profile"
+        "differential:guarded-profile",
+        "differential:configuration-guarded-secure-5"
       ],
       "blocked_by": [
-        "The engine selects only `GUARDED = false`; no guarded allocation path, Theap guarded state, or guarded option effect exists."
+        "Guarded sampling, protected allocations, Theap state and option effects are implemented. Complete current-source behavioral and primitive-ownership qualification across the applicable guarded mode combinations remains required. Configuration selection alone does not prove allocation, protection, reclamation or visitation."
       ]
     },
     {

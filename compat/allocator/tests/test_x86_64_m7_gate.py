@@ -64,6 +64,66 @@ class M7GateContractTests(unittest.TestCase):
         self.assertIn("MI_GUARDED", modes)
         self.assertNotIn("MI_OVERRIDE", modes)
 
+    def test_configuration_profiles_select_exact_source_modes(self) -> None:
+        flags, features = gate.configuration_profile("guarded-secure-5")
+        self.assertEqual(features, ("mi-guarded", "mi-secure-5"))
+        for name, value in (("GUARDED", 1), ("SECURE", 5), ("DEBUG", 0), ("STAT", 0)):
+            self.assertIn(f"-DMI_{name}={value}", flags)
+            self.assertIn(f"-UMI_{name}", flags)
+        flags, features = gate.configuration_profile("debug-3")
+        self.assertEqual(features, ("mi-debug-3",))
+        self.assertIn("-DMI_DEBUG=3", flags)
+        self.assertIn("-DMI_STAT=2", flags)
+        with self.assertRaises(harness.HarnessError):
+            gate.configuration_profile("secure-6")
+
+    def test_retained_configuration_features_include_manifest_ancestry(self) -> None:
+        self.assertEqual(gate.configuration_feature_closure(("mi-guarded", "mi-secure-5")),
+                         {"mi-guarded", *(f"mi-secure-{level}" for level in range(1, 6))})
+        self.assertEqual(gate.configuration_feature_closure(("mi-debug-3",)),
+                         {"mi-debug-1", "mi-debug-2", "mi-debug-3", "mi-stat-1", "mi-stat-2"})
+        with self.assertRaises(harness.HarnessError):
+            gate.configuration_feature_closure(("mi-secure-6",))
+
+    def test_configuration_cli_keeps_producer_and_portable_replay_distinct(self) -> None:
+        with mock.patch.object(gate, "run_configuration_differential", return_value={"compared_key_count": 19}) as run:
+            self.assertEqual(gate.main(["--configuration-differential", "--configuration-profile", "debug-3"]), 0)
+            run.assert_called_once_with(False, "debug-3")
+        with mock.patch.object(gate, "replay_configuration") as replay:
+            self.assertEqual(gate.main(["--configuration-replay", "--configuration-profile", "guarded-secure-5",
+                                        "--scratch", ".work/copied-evidence"]), 0)
+            replay.assert_called_once_with("guarded-secure-5", Path(".work/copied-evidence"))
+
+    def test_configuration_trace_preserves_case_of_source_macro_names(self) -> None:
+        output = "BEGIN\nMI_GUARDED=1\nguarded_sample_rate=4000\nEND\n"
+        self.assertEqual(gate.parse_options_trace(output, "configuration", "BEGIN", "END"),
+                         {"MI_GUARDED": "1", "guarded_sample_rate": "4000"})
+        with self.assertRaisesRegex(harness.HarnessError, "repeated trace key"):
+            gate.parse_options_trace(output.replace("END", "MI_GUARDED=1\nEND"),
+                                     "configuration", "BEGIN", "END")
+
+    def test_configuration_replay_runs_from_a_relative_copied_directory(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            products = directory / "option-profile-products"
+            products.mkdir()
+            binary = products / "probe"
+            binary.write_text("#!/bin/sh\nprintf 'CRABC_GUARDED_CONFIG_BEGIN\\nMI_GUARDED=1\\nCRABC_GUARDED_CONFIG_END\\n'\n")
+            binary.chmod(0o755)
+            execution = {"execution_mode": "native", "host_architecture": "x86_64", "image_id": "selected-image"}
+            record = {"product": gate.engine.file_record(binary), "command": [str(binary)]}
+            report = {"profile": "guarded-secure-5", "status": "passed", "execution": execution,
+                      "provenance": {"pin": self.pin}, "inputs": [],
+                      "executions": {"c": record, "rust": record}, "trace": {"MI_GUARDED": "1"}}
+            (directory / "configuration-guarded-secure-5.json").write_text(json.dumps(report))
+            with mock.patch.object(harness, "require_native_x86_64", return_value=execution):
+                gate.replay_configuration("guarded-secure-5", directory.relative_to(ROOT))
+            binary.write_text("changed executable")
+            with mock.patch.object(harness, "require_native_x86_64", return_value=execution):
+                with self.assertRaisesRegex(harness.HarnessError, "input or executable differs"):
+                    gate.replay_configuration("guarded-secure-5", directory.relative_to(ROOT))
+
     def test_xmalloc_cli_selects_the_existing_profile_producer_and_replay(self) -> None:
         for option, replay in (("--xmalloc-profile-differential", False),
                                ("--xmalloc-profile-replay", True)):

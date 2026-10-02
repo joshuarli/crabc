@@ -29,6 +29,7 @@ import re
 import shutil
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -621,7 +622,7 @@ def parse_options_trace(
     trace: dict[str, str] = {}
     for line in output[start:stop].splitlines():
         key, separator, value = line.partition("=")
-        if not separator or not re.fullmatch(r"[a-z0-9_.-]+", key):
+        if not separator or not re.fullmatch(r"[A-Za-z0-9_.-]+", key):
             raise harness.HarnessError(f"{description} emitted a malformed trace line: {line[:80]}")
         if key in trace:
             raise harness.HarnessError(f"{description} repeated trace key {key}")
@@ -943,7 +944,7 @@ def c_oracle_trace(
 
 def rust_trace(
     test: str, subject: str, *, integration_test: bool = False, environment: Mapping[str, str] | None = None,
-    rust_features: Sequence[str] = (), retain_products: bool = False,
+    rust_features: Sequence[str] = (), retain_products: bool = False, retain_release: bool = True,
 ) -> dict[str, Any]:
     """Run one exact Rust trace test in the launcher's Cargo environment.
 
@@ -962,6 +963,9 @@ def rust_trace(
         *selection, "--nocapture", "--test-threads=1",
     ]
     ambient = {key: value for key, value in os.environ.items() if not key.lower().startswith("mimalloc_")}
+    if retain_products and not retain_release:
+        ambient.update(CARGO_PROFILE_TEST_OPT_LEVEL="0", CARGO_PROFILE_TEST_OVERFLOW_CHECKS="true",
+                       CARGO_PROFILE_TEST_DEBUG="2", CARGO_PROFILE_TEST_DEBUG_ASSERTIONS="true")
     build = None
     if retain_products:
         if integration_test:
@@ -969,19 +973,22 @@ def rust_trace(
         import x86_64_huge_numa_qualification as qualification
 
         build = harness.command_record(
-            [harness.require_tool("cargo"), "test", "--locked", "--release", "--target", RUST_TARGET,
-             "-p", "crabc-mimalloc", "--no-default-features", "--lib", "--no-run", "--message-format=json",
+            [harness.require_tool("cargo"), "test", "--locked", *(["--release"] if retain_release else []),
+             "--target", RUST_TARGET, "-p", "crabc-mimalloc", "--no-default-features", "--lib", "--no-run", "--message-format=json",
              *(["--features", ",".join(rust_features)] if rust_features else [])],
             cwd=harness.ROOT, env=ambient, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
-        harness.require_success(build, f"{subject} release library trace build")
+        harness.require_success(build, f"{subject} library trace build")
         binary = qualification.cargo_test_executable(str(build["stdout"]))
         images = [json.loads(line) for line in str(build["stdout"]).splitlines()]
         image = next(record for record in images if record.get("reason") == "compiler-artifact"
                      and record.get("executable") == str(binary))
-        if image.get("profile") != {**BASELINE_RELEASE_PROFILE, "test": True}:
-            raise harness.HarnessError("retained library trace changed its release compiler profile")
-        if image.get("features") != sorted(rust_features):
+        expected_profile = ({**BASELINE_RELEASE_PROFILE, "test": True} if retain_release else
+                            {"opt_level": "0", "debuginfo": 2, "debug_assertions": True,
+                             "overflow_checks": True, "test": True})
+        if image.get("profile") != expected_profile:
+            raise harness.HarnessError("retained library trace changed its compiler profile")
+        if set(image.get("features", ())) != set(configuration_feature_closure(rust_features)):
             raise harness.HarnessError("retained library trace changed its selected allocator features")
         digest = hashlib.sha256(binary.read_bytes()).hexdigest()
         product = ARTIFACTS / "option-profile-products" / f"rust-{digest}"
@@ -1013,6 +1020,7 @@ def run_trace_differential(
     require_complete: Any, report_name: str, integration_test: bool = False,
     environment: Mapping[str, str] | None = None, c_stderr_record: tuple[str, Any] | None = None,
     compile_defines: Sequence[str] = (), rust_features: Sequence[str] = (), retain_products: bool = False,
+    retain_release: bool = True,
 ) -> dict[str, Any]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
@@ -1024,7 +1032,7 @@ def run_trace_differential(
     rust_execution = rust_trace(
         test, subject, integration_test=integration_test, environment=environment,
         rust_features=rust_features,
-        retain_products=retain_products,
+        retain_products=retain_products, retain_release=retain_release,
     )
     retained = {}
     if retain_products:
@@ -1058,6 +1066,107 @@ def run_trace_differential(
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
     return report
+
+
+CONFIGURATION_PROFILES = tuple(
+    prefix + profile
+    for prefix in ("", "guarded-")
+    for profile in ("release", "debug-1", "debug-2", "debug-3", "stat-1", "stat-2",
+                    "secure-1", "secure-2", "secure-3", "secure-4", "secure-5")
+)
+
+
+def configuration_profile(profile: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Map numeric source modes to the feature selecting their highest level."""
+    if profile not in CONFIGURATION_PROFILES:
+        raise harness.HarnessError("unknown configuration profile")
+    guarded = profile.startswith("guarded-")
+    ordinary = profile.removeprefix("guarded-")
+    debug = int(ordinary[-1]) if ordinary.startswith("debug-") else 0
+    secure = int(ordinary[-1]) if ordinary.startswith("secure-") else 0
+    stat = 2 if debug else int(ordinary[-1]) if ordinary.startswith("stat-") else 0
+    flags = ("-O0", "-UNDEBUG", "-UMI_BUILD_RELEASE", *tuple(flag for name, value in (("DEBUG", debug), ("SECURE", secure),
+                                           ("STAT", stat), ("GUARDED", int(guarded)))
+                  for flag in (f"-UMI_{name}", f"-DMI_{name}={value}")))
+    features = (("mi-guarded",) if guarded else ())
+    if ordinary != "release":
+        features += (f"mi-{ordinary}",)
+    return flags, features
+
+
+def configuration_feature_closure(features: Sequence[str]) -> set[str]:
+    graph = tomllib.loads((harness.ROOT / "crabc-mimalloc/Cargo.toml").read_text())["features"]
+    selected, pending = set(), list(features)
+    while pending:
+        feature = pending.pop()
+        if feature in selected:
+            continue
+        if feature not in graph:
+            raise harness.HarnessError("unknown allocator feature in retained trace")
+        selected.add(feature)
+        pending.extend(edge for edge in graph[feature] if edge in graph)
+    return selected
+
+
+def run_configuration_differential(offline: bool, profile: str) -> dict[str, Any]:
+    """Compare selection and guarded defaults without allocating guarded clients."""
+    flags, features = configuration_profile(profile)
+    seal = integrated.source_seal()
+    if seal["dirty_paths"]:
+        raise harness.HarnessError("configuration probe requires clean allocator and primitive sources")
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    report = run_trace_differential(
+        offline, subject=f"configuration-{profile}",
+        oracle=harness.ALLOCATOR_ROOT / "x86_64_m7_configuration_oracle.c",
+        test="config::tests::selected_guarded_configuration_trace_for_pinned_c_comparison",
+        begin="CRABC_GUARDED_CONFIG_BEGIN", end="CRABC_GUARDED_CONFIG_END",
+        require_complete=None, report_name=f"configuration-{profile}.json",
+        compile_defines=flags, rust_features=features, retain_products=True,
+        retain_release=False,
+    )
+    if integrated.source_seal() != seal:
+        raise harness.HarnessError("configuration source changed during execution")
+    if report["compared_key_count"] != 19:
+        raise harness.HarnessError("configuration trace omitted source observations")
+    report["execution"] = execution
+    report["profile"] = profile
+    for original in (harness.fetch_archive(harness.load_pin(), offline),
+                     harness.ALLOCATOR_ROOT / "x86_64_m7_configuration_oracle.c",
+                     harness.ROOT / "Cargo.lock", harness.ROOT / "rust-toolchain.toml",
+                     harness.ROOT / "crabc-mimalloc/src/config.rs",
+                     harness.ROOT / "crabc-mimalloc/Cargo.toml"):
+        retained = ARTIFACTS / "option-profile-products" / original.name
+        shutil.copy2(original, retained)
+        report.setdefault("inputs", []).append(engine.file_record(retained))
+    path = ARTIFACTS / f"configuration-{profile}.json"
+    harness.write_json(path, report)
+    path.chmod(0o644)
+    return report
+
+
+def replay_configuration(profile: str, directory: Path) -> None:
+    """Authenticate retained files and rerun their original configuration probes."""
+    directory = directory.resolve()
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    report = harness.read_json(directory / f"configuration-{profile}.json")
+    if (report.get("profile") != profile or report.get("execution") != execution
+            or report.get("status") != "passed" or report["provenance"]["pin"] != harness.load_pin()):
+        raise harness.HarnessError("configuration replay source pin, mode or execution differs")
+    records = [*report["inputs"], *(record["product"] for record in report["executions"].values())]
+    for record in records:
+        path = directory / "option-profile-products" / Path(record["path"]).name
+        actual = engine.file_record(path)
+        if actual["sha256"] != record["sha256"] or actual["bytes"] != record["bytes"]:
+            raise harness.HarnessError("configuration replay input or executable differs")
+    for side, original in report["executions"].items():
+        product = directory / "option-profile-products" / Path(original["product"]["path"]).name
+        arguments = original["command"][1:]
+        current = harness.command_record([str(product), *arguments], cwd=directory, env={})
+        harness.require_success(current, f"configuration replay {side}")
+        trace = parse_options_trace(str(current["stdout"]), side,
+                                    "CRABC_GUARDED_CONFIG_BEGIN", "CRABC_GUARDED_CONFIG_END")
+        compare_options_traces(report["trace"], trace)
+    print(f"M7 {profile} retained configuration replay: passed")
 
 
 def run_secure_profile_differential(offline: bool, profile: str, *, replay: bool = False) -> None:
@@ -2657,9 +2766,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="authenticate and replay retained source allocation-error controls")
     mode.add_argument("--optional-isa-differential", action="store_true",
         help="compare scalar, arch-only, and AVX2 bitmap allocation paths with pinned C")
+    mode.add_argument("--configuration-differential", action="store_true",
+                      help="compare source mode selection and guarded option defaults")
+    mode.add_argument("--configuration-replay", action="store_true",
+                      help="authenticate and physically rerun retained configuration probes")
+    parser.add_argument("--configuration-profile", choices=CONFIGURATION_PROFILES)
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     arguments = parser.parse_args(argv)
+    if arguments.configuration_replay:
+        if arguments.configuration_profile is None:
+            parser.error("configuration replay requires --configuration-profile")
+        replay_configuration(arguments.configuration_profile, arguments.scratch or ARTIFACTS)
+        return 0
+    if arguments.configuration_differential:
+        if arguments.configuration_profile is None:
+            parser.error("configuration differential requires --configuration-profile")
+        report = run_configuration_differential(arguments.offline, arguments.configuration_profile)
+        print(f"M7 {arguments.configuration_profile} configuration: {report['compared_key_count']} keys passed")
+        return 0
+    if arguments.configuration_profile is not None:
+        parser.error("--configuration-profile requires configuration differential or replay")
     if arguments.secure_profile_differential or arguments.secure_profile_replay:
         if arguments.secure_profile is None:
             parser.error("secure differential/replay requires --secure-profile")
