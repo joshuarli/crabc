@@ -37,6 +37,8 @@ ROUNDS = 1200
 WORKERS = 8
 INTERVAL = 60
 WATCHDOG = 900
+UNAVAILABLE = (1 << 64) - 1
+SOURCE_ROOT_FIELDS = ("arenas", "live_threads", "later_theaps", "abandoned_pages")
 FIELD = re.compile(r"([a-z_]+)=([0-9]+)")
 MUSL_SPECS = Path("/opt/musl-1.2.6/lib/musl-gcc.specs")
 PIE_STARTFILE = "/opt/musl-1.2.6/lib/rcrt1.o"
@@ -86,6 +88,13 @@ def parse_soak(output: str, *, require_class_snapshot: bool = False) -> dict[str
             raise ValueError("the pinned C soak checkpoint did not drain")
         if point.get("page_map_entries", 0) <= 0 or point.get("page_map_submaps", 0) <= 0:
             raise ValueError("the pinned C PageMap observation is absent")
+    for point in checkpoints:
+        if any(key not in point or point[key] == UNAVAILABLE for key in SOURCE_ROOT_FIELDS):
+            raise ValueError("the pinned C source root observation is absent")
+        if not 0 < point["arenas"] <= 160:
+            raise ValueError("the pinned C source root arena count is outside its capacity")
+        if point["live_threads"] != 1 or point["later_theaps"] != 0:
+            raise ValueError("the pinned C joined checkpoint retains worker ownership")
     summaries = [fields(line) for line in lines if line.startswith("summary ")]
     if len(summaries) != 1 or summaries[0].get("allocations") != summaries[0].get("frees"):
         raise ValueError("the pinned C soak summary is missing or not drained")
@@ -98,10 +107,10 @@ def parse_soak(output: str, *, require_class_snapshot: bool = False) -> dict[str
         "second_half_max": second,
         "second_half_allowed_at_ten_percent": first + first // 10,
         "exceeds_ten_percent": second > first + first // 10,
-        "checkpoints": [
-            {"round": point["round"], "page_map_entries": point["page_map_entries"],
-             "page_map_submaps": point["page_map_submaps"]}
-            for point in checkpoints
+        "checkpoints": checkpoints,
+        "unavailable_fields": [
+            key for key in ("metadata_live", "metadata_high_water")
+            if any(point.get(key, UNAVAILABLE) == UNAVAILABLE for point in checkpoints)
         ],
         "summary": summaries[0],
         "page_map_stability": page_map_stability([point["page_map_entries"] for point in checkpoints]),
@@ -234,15 +243,64 @@ def build_product(artifacts: Path, link_mode: str) -> tuple[Path, dict[str, obje
     }
 
 
+def read_report(artifacts: Path) -> dict[str, object]:
+    """Authenticate the existing original product and recompute raw observations.
+
+    This reader never builds or runs an allocator. The source archive, workload,
+    bridge, executable and every raw stream must still match the producing
+    report before its normalized fields are admitted.
+    """
+    report = json.loads((artifacts / "report.json").read_text())
+    product = report["product"]
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline=True)
+    expected = {
+        "pinned_version": pin["version"],
+        "pinned_archive_sha256": digest(archive),
+        "fixture_sha256": digest(FIXTURE),
+        "bridge_sha256": digest(BRIDGE),
+    }
+    if any(product.get(key) != value for key, value in expected.items()):
+        raise ValueError("the pinned C report does not authenticate its current source inputs")
+    mode = product["link_mode"]
+    if mode not in ("musl-static", "musl-static-pie"):
+        raise ValueError("the pinned C report has an unsupported product")
+    binary = artifacts / ("soak-pinned-c-static-pie" if mode == "musl-static-pie"
+                          else "soak-pinned-c-static")
+    if digest(binary) != product["binary_sha256"]:
+        raise ValueError("the pinned C report executable changed")
+    replays = report["replays"]
+    if not 1 <= len(replays) <= 32:
+        raise ValueError("the pinned C report has no completed replay")
+    for index, replay in enumerate(replays, 1):
+        name = f"replay-{index:02}"
+        if replay.get("name") != name or (artifacts / f"{name}.status").read_text() != "0\n":
+            raise ValueError("the pinned C replay identity or exit status changed")
+        stdout, stderr = artifacts / f"{name}.stdout", artifacts / f"{name}.stderr"
+        if (digest(stdout) != replay.get("stdout_sha256")
+                or digest(stderr) != replay.get("stderr_sha256")):
+            raise ValueError("the pinned C raw replay streams changed")
+        observation = parse_soak(stdout.read_text(),
+                                 require_class_snapshot=report["class_snapshot_enabled"])
+        if any(replay.get(key) != value for key, value in observation.items()):
+            raise ValueError("the pinned C replay observation differs from its raw stream")
+    return report
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replays", type=int, default=1)
     parser.add_argument("--link-mode", choices=("static", "static-pie"), default="static")
     parser.add_argument("--class-snapshot", action="store_true")
+    parser.add_argument("--read", action="store_true", help="authenticate retained products and raw replays without execution")
     args = parser.parse_args()
     if not 1 <= args.replays <= 32:
         parser.error("--replays must be between 1 and 32")
     artifacts = artifact_dir(args.link_mode, class_snapshot=args.class_snapshot)
+    if args.read:
+        report = read_report(artifacts)
+        print(f"read-only pinned C replay: {len(report['replays'])} authenticated streams at {artifacts}")
+        return
     artifacts.mkdir(parents=True, exist_ok=True)
     binary, product = build_product(artifacts, args.link_mode)
     environment = os.environ.copy()
@@ -269,7 +327,8 @@ def main() -> None:
         if status != 0:
             raise ValueError(f"{name} exited {status}; raw output retained at {stdout}")
         observation = parse_soak(stdout.read_text(), require_class_snapshot=args.class_snapshot)
-        report["replays"].append({"name": name, **observation})
+        report["replays"].append({"name": name, "stdout_sha256": digest(stdout),
+                                  "stderr_sha256": digest(stderr), **observation})
         (artifacts / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print(f"{name}: first={observation['first_half_max']} "
               f"second={observation['second_half_max']} "

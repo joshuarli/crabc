@@ -1,6 +1,7 @@
 /* Read the pinned allocator's registered slice image after all soak workers
  * have joined. The unchanged workload calls this bridge only at checkpoints.
- * Other native allocator audit fields have no C equivalent here. */
+ * Metadata capability counters have no equivalent source field and remain
+ * explicitly unavailable; arena, thread, Theap and abandonment use source roots. */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -112,8 +113,30 @@ int __crabc_x86_owned_allocator_process_test_audit(struct process_audit *output)
     if (output == NULL) return -1;
     size_t registered, published;
     if (scan_page_map(&registered, &published, NULL) != 0) return -1;
+    mi_subproc_t *subproc = _mi_subproc_main();
+    mi_heap_t *heap = mi_atomic_load_acquire(&subproc->heap_main);
+    if (heap == NULL) return -1;
+    const size_t arena_count = mi_atomic_load_acquire(&subproc->arena_count);
+    if (arena_count > MI_MAX_ARENAS) return -1;
+    size_t arenas = 0;
+    for (size_t i = 0; i < arena_count; i++) {
+        if (mi_atomic_load_acquire(&subproc->arenas[i]) != NULL) arenas++;
+    }
+    size_t abandoned = 0;
+    for (size_t bin = 0; bin < MI_BIN_COUNT; bin++) {
+        abandoned += mi_atomic_load_relaxed(&heap->abandoned_count[bin]);
+    }
+    /* Joined workers have completed their source Theap-list removal. The
+     * initial TLD and detached metadata Theap remain source-lived roots,
+     * so neither is a retained later worker owner. */
+    const mi_theap_t *current = mi_theap_get_default();
+    size_t later_theaps = 0;
+    for (const mi_theap_t *theap = heap->theaps; theap != NULL; theap = theap->hnext) {
+        if (theap != subproc->theap_meta && theap->tld != current->tld) later_theaps++;
+    }
     *output = (struct process_audit) {
-        registered, published, SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX, SIZE_MAX
+        registered, published, arenas, mi_atomic_load_acquire(&subproc->thread_count),
+        SIZE_MAX, SIZE_MAX, later_theaps, abandoned
     };
     return 0;
 }

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import tempfile
 from pathlib import Path
 import sys
 import unittest
@@ -28,7 +30,9 @@ def output(*, first: int = 900, second: int = 990, missing: int | None = None,
         frees = round_ - 1 if round_ == undrained else round_
         lines.append(
             f"checkpoint round={round_} allocations={round_} frees={frees} "
-            f"page_map_entries={entries} page_map_submaps=3"
+            f"page_map_entries={entries} page_map_submaps=3 arenas=2 live_threads=1 "
+            f"later_theaps=0 abandoned_pages=0 metadata_live=18446744073709551615 "
+            f"metadata_high_water=18446744073709551615"
         )
     lines.append("summary allocations=1200 frees=1200 cleanup_runs=9600")
     if classes:
@@ -65,6 +69,58 @@ class PageMapSoakReaderTests(unittest.TestCase):
             soak.artifact_dir("static-pie", class_snapshot=True),
             soak.ARTIFACTS / "static-pie/classes",
         )
+
+    def test_source_roots_are_observed_without_promoting_missing_metadata(self) -> None:
+        result = soak.parse_soak(output())
+        self.assertEqual(result["checkpoints"][0]["arenas"], 2)
+        self.assertEqual(result["checkpoints"][0]["live_threads"], 1)
+        self.assertEqual(result["checkpoints"][0]["abandoned_pages"], 0)
+        self.assertEqual(result["unavailable_fields"], ["metadata_live", "metadata_high_water"])
+
+    def test_missing_or_sentinel_source_roots_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "source root"):
+            soak.parse_soak(output().replace(" arenas=2", "", 1))
+        with self.assertRaisesRegex(ValueError, "source root"):
+            soak.parse_soak(output().replace("arenas=2", "arenas=18446744073709551615", 1))
+
+    def test_joined_source_observation_rejects_retained_worker_theaps(self) -> None:
+        with self.assertRaisesRegex(ValueError, "joined"):
+            soak.parse_soak(output().replace("later_theaps=0", "later_theaps=1", 1))
+
+    def test_read_only_replay_authenticates_original_streams_and_product(self) -> None:
+        scratch = soak.ROOT / ".work/allocator-x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="pinned-c-reader-", dir=scratch) as temporary:
+            artifacts = Path(temporary)
+            binary = artifacts / "soak-pinned-c-static"
+            binary.write_bytes(b"isolated original product")
+            stdout, stderr = artifacts / "replay-01.stdout", artifacts / "replay-01.stderr"
+            stdout.write_text(output())
+            stderr.write_text("")
+            (artifacts / "replay-01.status").write_text("0\n")
+            pin = soak.harness.load_pin()
+            archive = soak.harness.fetch_archive(pin, offline=True)
+            report = {
+                "product": {
+                    "pinned_version": pin["version"],
+                    "pinned_archive_sha256": soak.digest(archive),
+                    "fixture_sha256": soak.digest(soak.FIXTURE),
+                    "bridge_sha256": soak.digest(soak.BRIDGE),
+                    "binary_sha256": soak.digest(binary), "link_mode": "musl-static",
+                },
+                "class_snapshot_enabled": False,
+                "replays": [{"name": "replay-01", "stdout_sha256": soak.digest(stdout),
+                             "stderr_sha256": soak.digest(stderr), **soak.parse_soak(output())}],
+            }
+            (artifacts / "report.json").write_text(json.dumps(report))
+            self.assertEqual(soak.read_report(artifacts), report)
+            stdout.write_text(output(second=991))
+            with self.assertRaisesRegex(ValueError, "raw replay"):
+                soak.read_report(artifacts)
+            stdout.write_text(output())
+            binary.write_bytes(b"changed product")
+            with self.assertRaisesRegex(ValueError, "executable changed"):
+                soak.read_report(artifacts)
 
     def test_equal_ten_percent_growth_is_within_the_existing_bound(self) -> None:
         result = soak.parse_soak(output())
