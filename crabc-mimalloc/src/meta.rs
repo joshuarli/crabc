@@ -5678,13 +5678,45 @@ impl<'owner> MetadataEngine<'owner> {
     pub(crate) fn reinitialize_detached_metadata_random_if_weak(
         self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
     ) -> Result<crate::random::RandomReinitialization, MetaError> {
-        let _entry = self.enter_for_main_subprocess(subprocess)?;
+        self.reinitialize_detached_metadata_random_if_weak_with_warning(subprocess, || {})
+    }
+
+    /// Retry the exact bound detached random image. End all metadata entry
+    /// projections before delivering a weak-entropy warning, then reacquire
+    /// the same source image and apply the already prepared entropy material.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn reinitialize_detached_metadata_random_if_weak_with_warning(
+        self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
+        warning: impl FnOnce(),
+    ) -> Result<crate::random::RandomReinitialization, MetaError> {
+        let entry = self.enter_for_main_subprocess(subprocess)?;
         self.validate_bound_detached_metadata_theap(subprocess)?;
         let pointer = NonNull::new(self.get_ref().detached_metadata_theap.load(Ordering::Acquire))
             .ok_or(MetaError::InitializationRetained)?;
-        // SAFETY: metadata entry plus the held source metadata lock exclude
-        // every other projection of this detached Theap's random field.
-        Ok(unsafe { Theap::reinitialize_random_if_weak_at(pointer) })
+        // SAFETY: the exact metadata entry excludes other random projections.
+        let weak = unsafe { Theap::with_os_reservation_random_at(pointer, |random|
+            random.map(|random| random.is_weak())) }
+            .ok_or(MetaError::InitializationRetained)?;
+        if !weak { return Ok(crate::random::RandomReinitialization::default()); }
+        let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+        drop(entry);
+        if prepared.requires_warning() { warning(); }
+        // SAFETY: the warning returned with no entry or source projection live.
+        let material = unsafe { prepared.after_warning() };
+        let _entry = self.enter_for_main_subprocess(subprocess)?;
+        self.validate_bound_detached_metadata_theap(subprocess)?;
+        if self.get_ref().detached_metadata_theap.load(Ordering::Acquire) != pointer.as_ptr() {
+            return Err(MetaError::InitializationRetained);
+        }
+        // SAFETY: reacquired entry retains the original validated image and
+        // excludes every other projection while applying prepared material.
+        let remains_weak = unsafe { Theap::with_os_reservation_random_at(pointer, |random| {
+            random.map(|random| {
+                random.initialize_prepared(material);
+                random.is_weak()
+            })
+        }) }.ok_or(MetaError::InitializationRetained)?;
+        Ok(crate::random::RandomReinitialization { attempted: true, remains_weak })
     }
 
     /// Test-only weak-random observation of the detached metadata Theap
