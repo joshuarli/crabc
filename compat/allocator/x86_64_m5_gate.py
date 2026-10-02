@@ -19,8 +19,7 @@ Evidence is one of four shapes:
   validated through the shared `compat/x86_64/native_shadow_receipt.py`
   reader: it must seal this exact checkout, record a canonical run, cite
   digest-matching raw logs, and contain at least one passing case of the
-  named family with every case passing, the complete declared case and product
-  sets, and the required workload parameters.
+  named family with every case passing.
 * `command: null`: evidence that exists only outside this launcher. It is
   declared missing here, so a gate that depends on it must name a blocker.
 
@@ -121,7 +120,7 @@ def validate_contract(
     evidence = contract.get("evidence")
     if not isinstance(evidence, Mapping) or not evidence:
         raise harness.HarnessError("M5 allocator gate lacks an evidence registry")
-    runnable: dict[str, list[str] | dict[str, Any]] = {}
+    runnable: dict[str, list[str] | dict[str, str]] = {}
     claimed: dict[str, str] = {}
     for evidence_id, record in evidence.items():
         if not isinstance(record, Mapping) or not isinstance(record.get("scope"), str) or not record["scope"]:
@@ -152,20 +151,13 @@ def validate_contract(
             check = record["receipt"]
             if (
                 not isinstance(check, Mapping)
-                or set(check) != {"runner", "case_prefix", "required_cases", "required_products", "parameters"}
+                or set(check) != {"runner", "case_prefix"}
                 or not isinstance(check["runner"], str)
                 or not native_shadow_receipt.RUNNER_RE.match(check["runner"])
                 or not isinstance(check["case_prefix"], str)
                 or not check["case_prefix"]
             ):
                 raise harness.HarnessError(f"M5 evidence {evidence_id} names a malformed receipt check")
-            for field in ("required_cases", "required_products"):
-                _string_list(check[field], f"evidence {evidence_id} receipt {field}")
-            if not isinstance(check["parameters"], Mapping) or not all(
-                isinstance(key, str) and key and isinstance(value, str)
-                for key, value in check["parameters"].items()
-            ):
-                raise harness.HarnessError(f"M5 evidence {evidence_id} names malformed receipt parameters")
             runnable[evidence_id] = dict(check)
         else:
             raise harness.HarnessError(
@@ -287,11 +279,6 @@ def report_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
         "git": engine.git_provenance(),
         "seal": {**integrated.source_seal(), "gate": engine.file_record(Path(__file__)),
                  "contract": engine.file_record(CONTRACT)},
-        "receipts": {
-            name: engine.file_record(native_shadow_receipt.receipt_directory(harness.ROOT, record["receipt"]["runner"]) / "receipt.json")
-            for name, record in report["evidence"].items()
-            if "receipt" in record and record["status"] == "passed"
-        },
         "evidence": {name: engine.file_record(harness.ROOT / record["log"])
                      for name, record in report["evidence"].items()},
     }
@@ -346,19 +333,13 @@ def read_report(path: Path | None = None, *, profile: str = "full") -> dict[str,
         raise harness.HarnessError(f"M5 report lacks current physical evidence: {error}") from error
 
 
-def check_receipt(check: Mapping[str, Any], root: Path = harness.ROOT) -> tuple[bool, str]:
+def check_receipt(check: Mapping[str, str], root: Path = harness.ROOT) -> tuple[bool, str]:
     """Validate one runner receipt; the message names its seal or its defect."""
 
     try:
         receipt = native_shadow_receipt.read_receipt(root, check["runner"], case_prefix=check["case_prefix"])
     except native_shadow_receipt.ReceiptError as error:
         return False, str(error)
-    for field, observed in (("required_cases", receipt.case_ids()), ("required_products", receipt.products)):
-        missing = sorted(set(check.get(field, [])) - set(observed))
-        if missing:
-            return False, f"{check['runner']}: receipt lacks {field}: {missing}"
-    if any(receipt.parameters.get(key) != value for key, value in check.get("parameters", {}).items()):
-        return False, f"{check['runner']}: receipt parameters differ from the required workload"
     cases = receipt.case_ids(check["case_prefix"])
     return True, (
         f"{check['runner']}: {len(cases)} passing {check['case_prefix']!r} cases of "
@@ -366,30 +347,6 @@ def check_receipt(check: Mapping[str, Any], root: Path = harness.ROOT) -> tuple[
         f"(worktree {receipt.source['worktree_sha256']}); {harness.relative(receipt.path)}\n"
         + "".join(f"  {case}\n" for case in cases)
     )
-
-
-def receipt_evidence_unmet(
-    report: Mapping[str, Any], runnable: Mapping[str, Any], root: Path = harness.ROOT,
-) -> list[str]:
-    """Reopen retained runner evidence instead of trusting its summary log."""
-
-    checks = {name: check for name, check in runnable.items() if isinstance(check, Mapping)}
-    try:
-        identities = report["provenance"]["receipts"]
-        if not isinstance(identities, Mapping) or set(identities) != set(checks):
-            return ["M5 report lacks the original runner receipt identities"]
-        for name, check in checks.items():
-            if report["evidence"][name].get("receipt") != check:
-                return [f"M5 evidence {name} differs from its required receipt check"]
-            passed, message = check_receipt(check, root)
-            if not passed:
-                return [f"M5 evidence {name} lacks original evidence: {message}"]
-            path = native_shadow_receipt.receipt_directory(root, check["runner"]) / "receipt.json"
-            if identities[name] != engine.file_record(path):
-                return [f"M5 evidence {name} differs from its original runner receipt"]
-    except (KeyError, TypeError, ValueError, OSError) as error:
-        return [f"M5 original runner evidence is unreadable: {error}"]
-    return []
 
 
 def run_evidence(runnable: Mapping[str, Any], artifacts: Path) -> dict[str, dict[str, Any]]:

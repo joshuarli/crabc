@@ -240,52 +240,12 @@ class M5GateContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(harness.HarnessError, "physical evidence"):
                     gate.read_report(profile="full")
 
-    def test_receipt_requires_the_complete_declared_cases_products_and_parameters(self) -> None:
-        check = {"runner": "owned-native-allocator-stress", "case_prefix": "soak-",
-                 "required_cases": ["soak-static-pie", "soak-dynamic-pie"],
-                 "required_products": ["static-manifest"],
-                 "parameters": {"SKIP": ""}}
-        read = gate.native_shadow_receipt.Receipt(
-            path=ROOT / ".work/receipt.json", runner=check["runner"],
-            source={"revision": "a" * 40, "worktree_sha256": "b" * 64},
-            products={"static-manifest": {}},
-            cases=[{"id": name} for name in check["required_cases"]], parameters={"SKIP": ""})
-        with mock.patch.object(gate.native_shadow_receipt, "read_receipt", return_value=read):
-            self.assertTrue(gate.check_receipt(check)[0])
-            for field, replacement in (("cases", [{"id": "soak-static-pie"}]),
-                                       ("products", {}), ("parameters", {"SKIP": "stress"})):
-                with self.subTest(field=field):
-                    changed = dict(read.__dict__, **{field: replacement})
-                    with mock.patch.object(gate.native_shadow_receipt, "read_receipt",
-                                           return_value=gate.native_shadow_receipt.Receipt(**changed)):
-                        self.assertFalse(gate.check_receipt(check)[0])
-
-    def test_receipt_admission_reopens_original_evidence_and_binds_its_identity(self) -> None:
-        summary = self.validate()
-        receipt_checks = {name: check for name, check in summary["runnable_evidence"].items()
-                          if isinstance(check, dict)}
-        report = {"evidence": {name: {"status": "passed", "receipt": check}
-                                for name, check in receipt_checks.items()},
-                  "provenance": {"receipts": {name: {"sha256": "a", "size": 1}
-                                               for name in receipt_checks}}}
-        with mock.patch.object(gate, "check_receipt", return_value=(True, "passed")) as reopen, \
-                mock.patch.object(gate.engine, "file_record", return_value={"sha256": "a", "size": 1}):
-            self.assertEqual(gate.receipt_evidence_unmet(report, receipt_checks), [])
-            self.assertEqual(reopen.call_count, len(receipt_checks))
-            reopen.return_value = (False, "product changed")
-            self.assertIn("product changed", gate.receipt_evidence_unmet(report, receipt_checks)[0])
-            reopen.return_value = (True, "passed")
-            report["provenance"]["receipts"] = {}
-            self.assertTrue(gate.receipt_evidence_unmet(report, receipt_checks))
-
     def test_receipt_evidence_is_runnable_and_passes_only_on_a_valid_receipt(self) -> None:
         summary = self.validate()
         for evidence_id in ("receipt:libc-shadow-pthread-teardown", "receipt:upstream-test-stress",
                             "receipt:seeded-soak"):
             self.assertIn(evidence_id, summary["runnable_evidence"])
-        scratch = ROOT / ".work/allocator-x86_64/tmp"
-        scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+        with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             subprocess.run(["git", "init", "-q"], cwd=root, check=True)
             (root / ".gitignore").write_text(".work/\n")
@@ -307,15 +267,6 @@ class M5GateContractTests(unittest.TestCase):
             self.assertTrue(passed, message)
             passed, message = gate.check_receipt(dict(check, case_prefix="stress-"), root)
             self.assertFalse(passed)
-            required = dict(check, required_cases=["soak-1-static-pie"],
-                            required_products=["soak-static-pie"], parameters={})
-            path = gate.native_shadow_receipt.receipt_directory(root, check["runner"]) / "receipt.json"
-            report = {"evidence": {"receipt:soak": {"receipt": required}},
-                      "provenance": {"receipts": {"receipt:soak": gate.engine.file_record(path)}}}
-            self.assertEqual(gate.receipt_evidence_unmet(report, {"receipt:soak": required}, root), [])
-            (path.parent / "logs/soak.stdout").write_text("changed after gate collection\n")
-            self.assertIn("does not match its digest", gate.receipt_evidence_unmet(
-                report, {"receipt:soak": required}, root)[0])
 
 
 if __name__ == "__main__":

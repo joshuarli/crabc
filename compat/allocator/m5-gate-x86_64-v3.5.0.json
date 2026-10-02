@@ -2,15 +2,8 @@
   "schema": "crabc-mimalloc-x86_64-m5-gate",
   "format": 1,
   "qualification_profiles": {
-    "full": {
-      "deferred_evidence": []
-    },
-    "correctness": {
-      "deferred_evidence": [
-        "codegen:hot-path-audit",
-        "perf:engine-early-proof"
-      ]
-    }
+    "full": {"deferred_evidence": []},
+    "correctness": {"deferred_evidence": ["codegen:hot-path-audit", "perf:engine-early-proof"]}
   },
   "upstream": {
     "version": "3.5.0",
@@ -344,198 +337,21 @@
     "receipt:libc-shadow-pthread-teardown": {
       "receipt": {
         "runner": "libc-native-mimalloc-shadow-pthread-teardown",
-        "case_prefix": "native-",
-        "required_cases": [
-          "native-worker-normal-return",
-          "native-worker-explicit-exit",
-          "native-internal-allocator-override",
-          "native-normal-main-return",
-          "native-auto-process-done-1",
-          "native-auto-process-done-2",
-          "runner"
-        ],
-        "required_products": [
-          "native-shadow-candidate",
-          "native-shadow-internal-allocator-override-candidate",
-          "native-shadow-normal-main-return-candidate",
-          "native-shadow-auto-process-done-candidate",
-          "source-runtime-primary-receipt.json",
-          "source-runtime-normal-main-receipt.json"
-        ],
-        "parameters": {
-          "EXECUTION_TIMEOUT": "20s"
-        }
+        "case_prefix": "native-"
       },
       "scope": "The current tree's receipt from `./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown`: selected libc native-mimalloc-shadow worker normal-return, explicit-exit, internal-allocator-override, and normal-main-return process-done cases through the owned static runtime, each against its pinned-musl reference."
     },
     "receipt:upstream-test-stress": {
       "receipt": {
         "runner": "owned-native-allocator-stress",
-        "case_prefix": "stress-",
-        "required_cases": [
-          "stress-1-1-1-oracle",
-          "stress-1-1-1-c-static-pie",
-          "stress-1-1-1-static-pie",
-          "stress-1-1-1-dynamic-pie",
-          "stress-2-1-1-oracle",
-          "stress-2-1-1-c-static-pie",
-          "stress-2-1-1-static-pie",
-          "stress-2-1-1-dynamic-pie",
-          "stress-4-1-1-oracle",
-          "stress-4-1-1-c-static-pie",
-          "stress-4-1-1-static-pie",
-          "stress-4-1-1-dynamic-pie",
-          "stress-8-1-1-oracle",
-          "stress-8-1-1-c-static-pie",
-          "stress-8-1-1-static-pie",
-          "stress-8-1-1-dynamic-pie",
-          "stress-1-10-10-oracle",
-          "stress-1-10-10-c-static-pie",
-          "stress-1-10-10-static-pie",
-          "stress-1-10-10-dynamic-pie",
-          "stress-2-10-10-oracle",
-          "stress-2-10-10-c-static-pie",
-          "stress-2-10-10-static-pie",
-          "stress-2-10-10-dynamic-pie",
-          "stress-4-10-10-oracle",
-          "stress-4-10-10-c-static-pie",
-          "stress-4-10-10-static-pie",
-          "stress-4-10-10-dynamic-pie",
-          "stress-8-10-10-oracle",
-          "stress-8-10-10-c-static-pie",
-          "stress-8-10-10-static-pie",
-          "stress-8-10-10-dynamic-pie",
-          "stress-1-50-20-oracle",
-          "stress-1-50-20-c-static-pie",
-          "stress-1-50-20-static-pie",
-          "stress-1-50-20-dynamic-pie",
-          "stress-2-50-20-oracle",
-          "stress-2-50-20-c-static-pie",
-          "stress-2-50-20-static-pie",
-          "stress-2-50-20-dynamic-pie",
-          "stress-4-50-20-oracle",
-          "stress-4-50-20-c-static-pie",
-          "stress-4-50-20-static-pie",
-          "stress-4-50-20-dynamic-pie",
-          "stress-8-50-20-oracle",
-          "stress-8-50-20-c-static-pie",
-          "stress-8-50-20-static-pie",
-          "stress-8-50-20-dynamic-pie",
-          "stress-1-50-50-oracle",
-          "stress-1-50-50-c-static-pie",
-          "stress-1-50-50-static-pie",
-          "stress-1-50-50-dynamic-pie",
-          "stress-2-50-50-oracle",
-          "stress-2-50-50-c-static-pie",
-          "stress-2-50-50-static-pie",
-          "stress-2-50-50-dynamic-pie",
-          "stress-4-50-50-oracle",
-          "stress-4-50-50-c-static-pie",
-          "stress-4-50-50-static-pie",
-          "stress-4-50-50-dynamic-pie",
-          "stress-8-50-50-oracle",
-          "stress-8-50-50-c-static-pie",
-          "stress-8-50-50-static-pie",
-          "stress-8-50-50-dynamic-pie",
-          "stress-1-101-5-oracle",
-          "stress-1-101-5-c-static-pie",
-          "stress-1-101-5-static-pie",
-          "stress-1-101-5-dynamic-pie",
-          "stress-2-101-5-oracle",
-          "stress-2-101-5-c-static-pie",
-          "stress-2-101-5-static-pie",
-          "stress-2-101-5-dynamic-pie",
-          "stress-4-101-5-oracle",
-          "stress-4-101-5-c-static-pie",
-          "stress-4-101-5-static-pie",
-          "stress-4-101-5-dynamic-pie",
-          "stress-8-101-5-oracle",
-          "stress-8-101-5-c-static-pie",
-          "stress-8-101-5-static-pie",
-          "stress-8-101-5-dynamic-pie",
-          "stress-1-150-20-oracle",
-          "stress-1-150-20-c-static-pie",
-          "stress-1-150-20-static-pie",
-          "stress-1-150-20-dynamic-pie",
-          "stress-2-150-20-oracle",
-          "stress-2-150-20-c-static-pie",
-          "stress-2-150-20-static-pie",
-          "stress-2-150-20-dynamic-pie",
-          "stress-4-150-20-oracle",
-          "stress-4-150-20-c-static-pie",
-          "stress-4-150-20-static-pie",
-          "stress-4-150-20-dynamic-pie",
-          "stress-8-150-20-oracle",
-          "stress-8-150-20-c-static-pie",
-          "stress-8-150-20-static-pie",
-          "stress-8-150-20-dynamic-pie",
-          "stress-32-50-50-oracle",
-          "stress-32-50-50-c-static-pie",
-          "stress-32-50-50-static-pie",
-          "stress-32-50-50-dynamic-pie"
-        ],
-        "required_products": [
-          "c-static-manifest",
-          "static-manifest",
-          "static-libc-provenance",
-          "dynamic-libc-provenance",
-          "stress-oracle",
-          "stress-c-static-pie",
-          "stress-static-pie",
-          "stress-dynamic-pie"
-        ],
-        "parameters": {
-          "STRESS_CASES": "1 1 1,2 1 1,4 1 1,8 1 1,1 10 10,2 10 10,4 10 10,8 10 10,1 50 20,2 50 20,4 50 20,8 50 20,1 50 50,2 50 50,4 50 50,8 50 50,1 101 5,2 101 5,4 101 5,8 101 5,1 150 20,2 150 20,4 150 20,8 150 20,32 50 50",
-          "STRESS_TIMEOUT": "300",
-          "SOAK_SEEDS": "0x5eed0001 0x5eed0002 0x5eed0003",
-          "SOAK_ROUNDS": "1200",
-          "SOAK_WORKERS": "8",
-          "SOAK_INTERVAL": "60",
-          "SOAK_WATCHDOG": "900",
-          "SKIP": ""
-        }
+        "case_prefix": "stress-"
       },
       "scope": "The current tree's canonical receipt from `./scripts/dev-x86_64.sh owned-native-allocator-stress`: unmodified pinned test-stress.c at 1-8 and 32 workers, including large-object mode, through audited native-shadow static-PIE and dynamic PIE and the pinned-C product, each reproducing musl's output."
     },
     "receipt:seeded-soak": {
       "receipt": {
         "runner": "owned-native-allocator-stress",
-        "case_prefix": "soak-",
-        "required_cases": [
-          "soak-0x5eed0001-oracle",
-          "soak-0x5eed0001-c-static-pie",
-          "soak-0x5eed0001-static-pie",
-          "soak-0x5eed0001-dynamic-pie",
-          "soak-0x5eed0002-oracle",
-          "soak-0x5eed0002-c-static-pie",
-          "soak-0x5eed0002-static-pie",
-          "soak-0x5eed0002-dynamic-pie",
-          "soak-0x5eed0003-oracle",
-          "soak-0x5eed0003-c-static-pie",
-          "soak-0x5eed0003-static-pie",
-          "soak-0x5eed0003-dynamic-pie",
-          "soak-growth"
-        ],
-        "required_products": [
-          "c-static-manifest",
-          "static-manifest",
-          "static-libc-provenance",
-          "dynamic-libc-provenance",
-          "soak-oracle",
-          "soak-c-static-pie",
-          "soak-static-pie",
-          "soak-dynamic-pie"
-        ],
-        "parameters": {
-          "STRESS_CASES": "1 1 1,2 1 1,4 1 1,8 1 1,1 10 10,2 10 10,4 10 10,8 10 10,1 50 20,2 50 20,4 50 20,8 50 20,1 50 50,2 50 50,4 50 50,8 50 50,1 101 5,2 101 5,4 101 5,8 101 5,1 150 20,2 150 20,4 150 20,8 150 20,32 50 50",
-          "STRESS_TIMEOUT": "300",
-          "SOAK_SEEDS": "0x5eed0001 0x5eed0002 0x5eed0003",
-          "SOAK_ROUNDS": "1200",
-          "SOAK_WORKERS": "8",
-          "SOAK_INTERVAL": "60",
-          "SOAK_WATCHDOG": "900",
-          "SKIP": ""
-        }
+        "case_prefix": "soak-"
       },
       "scope": "The same receipt's seeded, watchdog-bound soak: independent owners, remote free, transfer, exit-before-free, cleanup, and cancellation across small through huge sizes, with exact drained checkpoints and bounded PageMap, arena, metadata, and RSS growth."
     }

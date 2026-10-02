@@ -16,6 +16,13 @@ existing prerequisites pass. C mimalloc remains selected and public x86 support
 remains disabled until those transitions. Historical receipts are not current
 qualification, and deliberately deleted reports are not claimed as retained.
 
+User direction (2026-10-02): reduce qualification bookkeeping. Prioritize core
+product defects and direct regression evidence; reuse existing runners and
+results. Do not expand receipt schemas, duplicate case catalogs, pin helper
+revisions unnecessarily or require new administrative proof for each artifact.
+Use enough validation to catch real failures without making its machinery a
+separate product. Actual failures and unsupported host requirements stay open.
+
 `AGENTS.md` owns scope and working rules. This file is the sole implementation
 plan and progress handoff. User direction takes precedence over older gate or
 qualification requirements in repository instructions and manifests. Preserve
