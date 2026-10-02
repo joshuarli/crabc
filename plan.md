@@ -48,8 +48,10 @@ only its exact source, configuration, image, products, and execution context.
   selected-private. Completion requires 25 active families and seven ordered
   correctness gates. Performance remains outside scope. C mimalloc remains
   selected, public x86 support is disabled and AArch64 qualification is paused.
-  The usual sixteen-lane campaign is suspended while finishing the user's
-  cleanup and integration priority.
+  Sixteen `gpt-6.1-sol` medium lanes are active again after cleanup and
+  integration. Fresh worktrees bind clean `63d4e19d1`; source repairs and
+  installed-product qualification proceed together. The agent service rejected
+  one fresh spawn, so an existing completed lane agent owns its successor.
 - **Qualified runtime sources:** accepted-C `b2a903880` passes complete
   four-mode qualification, independent builds and extraction, both static suites
   and 219 installed/rebuilt/extracted dynamic executions with owning read-only
@@ -284,9 +286,9 @@ only its exact source, configuration, image, products, and execution context.
   open. Compare source-default reservation retention without converting source-lived
   roots into a false memory pass. Finish callable-provider closure and remaining
   runtime families, then replay all seven gates on one merged source before
-  default/public promotion. Resume the sixteen medium `gpt-6.1-sol` lanes after
-  settling the user's immediate cleanup/integration task; preserve exact inputs
-  and retire settled worktrees promptly. Performance remains outside scope. Git
+  default/public promotion. Keep the sixteen medium `gpt-6.1-sol` lanes occupied,
+  preserve exact inputs and retire settled worktrees promptly. Performance remains
+  outside scope. Git
   owns source history and this section owns the handoff.
 
 ## Parallel lanes
