@@ -608,30 +608,26 @@ mod tests {
         let mut options = VmOptions::uninitialized();
         options.initialize_all(|_| VmOptionEnvironment::Absent);
         let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
+        policy.finish_preloading();
         let subprocess = MainSubprocess::test_static_owner();
         let process = VmProcess::new(policy, subprocess);
         let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
         // SAFETY: this private empty registry has no publication or reader.
         assert!(unsafe { subprocess.arena_backing().registry()
             .bind_subprocess_before_publication(subprocess.as_ptr()) });
-        let mut mappings = std::vec::Vec::new();
         let mut identities = std::vec::Vec::new();
         for pinned in [false, true, false] {
-            let mapping = crate::os::Mapping::map_aligned_for_allocator(config,
-                crate::config::ARENA_MIN_SIZE, crate::config::ARENA_ALIGNMENT,
-                crate::os::MapAccess::Committed).unwrap();
-            // SAFETY: private mappings and the subprocess outlive every view.
-            let managed = unsafe { crate::arena::manage_external_in_place(
-                subprocess.arena_backing().registry(), mapping.base().unwrap(),
-                crate::config::ARENA_MIN_SIZE, config.page_size(),
-                true, false, true, -1, false, None,
+            // SAFETY: this isolated subprocess and frozen policy retain the
+            // source OS reservation, including actual metadata guard hooks,
+            // until every reclaim view ends and quiescent destruction runs.
+            let identity = unsafe { subprocess.arena_backing().reserve_os_memory_reporting_failure(
+                process, config, crate::config::ARENA_MIN_SIZE,
+                crate::os::MapAccess::Committed, false, false, None,
             ) }.unwrap();
-            let identity = managed.arena_id();
             // Simulate the source huge-arena pinned classification; no huge
             // mapping or NUMA policy operation participates in this test.
             unsafe { (*identity.as_ptr()).memid.is_pinned = pinned; }
             identities.push(identity.as_ptr());
-            mappings.push(mapping);
         }
         let backing = RuntimeFirstRegularPageBacking::source_registry(process, -1);
         let selected: std::vec::Vec<_> = backing.reclaim_arenas(ArenaId::none(), 1)
@@ -639,7 +635,10 @@ mod tests {
         assert_eq!(selected, [identities[1], identities[0], identities[2]],
             "source main-heap reclaim searches older regular and pinned arenas before the newest");
         drop(backing);
-        for mut mapping in mappings { mapping.unmap().unwrap(); }
+        // Restore the simulated classification before transferring original
+        // regular-OS ownership to the sole quiescent destruction boundary.
+        for identity in identities { unsafe { (*identity).memid.is_pinned = false; } }
+        assert!(unsafe { subprocess.arena_backing().destroy_all(&mut []) }.unwrap().is_released());
     }
 
     #[test]

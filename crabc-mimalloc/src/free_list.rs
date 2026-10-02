@@ -1104,12 +1104,22 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn default_extension_does_not_consume_thread_randomness() {
+    fn selected_extension_draws_random_only_for_secure_slice_threading() {
         let mut storage = Page([0; 64]);
         let mut state = TestPageState::fresh(true);
         let mut list = list_for(&mut state, &mut storage, 16, 4);
-        assert_eq!(list.extend_count_with_random(2, || panic!("default mode drew")), Ok(2));
-        assert_eq!(list.extend_with_random(|| panic!("available list drew")), Ok(0));
+        let mut draws = 0;
+        assert_eq!(list.extend_count_with_random(2, || {
+            draws += 1;
+            Some(0x1122_3344_5566_7788)
+        }), Ok(2));
+        assert_eq!(draws, usize::from(crate::config::SECURE_LEVEL >= 2));
+        let mut suffix_draws = 0;
+        assert_eq!(list.extend_with_random(|| {
+            suffix_draws += 1;
+            Some(0x8877_6655_4433_2211)
+        }), Ok(if crate::config::SECURE_LEVEL >= 2 { 2 } else { 0 }));
+        assert_eq!(suffix_draws, usize::from(crate::config::SECURE_LEVEL >= 2));
     }
 
     #[test]
@@ -1324,7 +1334,7 @@ mod tests {
     }
 
     #[test]
-    fn page_extend_count_covers_each_default_scalar_boundary() {
+    fn page_extend_count_covers_each_selected_scalar_boundary() {
         assert_eq!(LocalFreeList::page_extend_count(0, 0, 8), None);
         assert_eq!(LocalFreeList::page_extend_count(9, 8, 8), None);
         assert_eq!(LocalFreeList::page_extend_count(0, 8, 0), None);
@@ -1333,11 +1343,19 @@ mod tests {
         assert_eq!(LocalFreeList::page_extend_count(0, 1023, 8), Some(1023));
         assert_eq!(LocalFreeList::page_extend_count(0, 1024, 8), Some(1024));
         assert_eq!(LocalFreeList::page_extend_count(0, 1025, 8), Some(1024));
-        assert_eq!(LocalFreeList::page_extend_count(0, 3, 4096), Some(2));
-        assert_eq!(LocalFreeList::page_extend_count(0, 3, 4097), Some(1));
-        assert_eq!(LocalFreeList::page_extend_count(0, 2, 8191), Some(1));
-        assert_eq!(LocalFreeList::page_extend_count(0, 2, 8192), Some(1));
-        assert_eq!(LocalFreeList::page_extend_count(0, 2, 8193), Some(1));
+        if crate::config::SECURE_LEVEL >= 2 {
+            assert_eq!(LocalFreeList::page_extend_count(0, 3, 4096), Some(3));
+            assert_eq!(LocalFreeList::page_extend_count(0, 3, 4097), Some(3));
+            for block_size in [8191, 8192, 8193] {
+                assert_eq!(LocalFreeList::page_extend_count(0, 2, block_size), Some(2));
+            }
+        } else {
+            assert_eq!(LocalFreeList::page_extend_count(0, 3, 4096), Some(2));
+            assert_eq!(LocalFreeList::page_extend_count(0, 3, 4097), Some(1));
+            for block_size in [8191, 8192, 8193] {
+                assert_eq!(LocalFreeList::page_extend_count(0, 2, block_size), Some(1));
+            }
+        }
     }
 
     #[test]
