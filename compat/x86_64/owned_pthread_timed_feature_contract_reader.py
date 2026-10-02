@@ -2895,6 +2895,8 @@ def collect_native(
 
     root = root.resolve(strict=True)
     require(root == ROOT, "pthread native collector root differs from its source root")
+    require(live_image_manifest() == trusted_image_manifest(),
+            "live image inputs differ from trusted pthread image manifest")
     runner = root / "compat/x86_64/run_owned_pthread_timed_feature_contract.sh"
     require_regular(runner, "pthread native runner")
     command = [

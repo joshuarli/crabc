@@ -23,7 +23,7 @@ static PIE, musl dynamic PIE/non-PIE, and crabc dynamic PIE/non-PIE. A finite
 validator-owned pinned-image manifest seals every runner/oracle/compiler tool,
 including the invoked LLD path, bytes, and mode. The current manifest is
 `owned_pthread_timed_feature_image_inputs_current.json` for core image
-`sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`;
+`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`;
 it derives Rust and LLD paths from `rust-toolchain.toml`. The original
 `owned_pthread_timed_feature_image_inputs.json` remains unchanged for historical
 receipts. Static link receipts bind the
@@ -39,7 +39,8 @@ the eleven function bodies, local data and constant geometry, and their
 admitted PC-relative and PLT/GOT relocation forms.
 
 `owned_pthread_timed_feature_contract_reader.py --collect-native` is the sole
-receipt-producing entry point. Before Bash starts, it invokes the runner from
+receipt-producing entry point. Before Bash starts, it compares the live compiler,
+oracle and tool bytes with the current image manifest, then invokes the runner from
 a Python `subprocess.run` call with one literal allowlisted environment and
 `/dev/null` standard input. The sealed environment record includes the sole
 Git `safe.directory` configuration for `/workspace` and the four values Bash

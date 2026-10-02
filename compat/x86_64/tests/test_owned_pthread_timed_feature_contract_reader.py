@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 import tomllib
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
@@ -289,6 +290,43 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
                 "--static-product", "/workspace/.work/products/static",
                 "--dynamic-product", "/workspace/.work/products/dynamic",
             ))
+
+    def test_native_collection_rejects_changed_image_inputs_before_runner_start(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        trusted = {"image": reader.PINNED_IMAGE, "files": {"compiler": "original"}}
+        for changed in ({"image": "sha256:" + "0" * 64, "files": trusted["files"]},
+                        {"image": reader.PINNED_IMAGE, "files": {"compiler": "changed"}}):
+            with self.subTest(changed=changed), \
+                 mock.patch.object(reader, "trusted_image_manifest", return_value=trusted), \
+                 mock.patch.object(reader, "live_image_manifest", return_value=changed), \
+                 mock.patch.object(reader.subprocess, "run") as runner:
+                with self.assertRaisesRegex(reader.ReceiptError, "live image inputs differ"):
+                    reader.collect_native(ROOT, ROOT / ".work/uncreated-receipt",
+                        ROOT / ".work/products/report.json", ROOT / ".work/products/preparation.json",
+                        None, None, ROOT / ".work/products/static", ROOT / ".work/products/dynamic")
+                runner.assert_not_called()
+
+    def test_matching_image_inputs_enter_the_closed_native_runner(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            receipt = Path(temporary)
+            report = receipt / "report.json"
+            report.write_text("{}\n")
+            trusted = reader.trusted_image_manifest()
+            with mock.patch.object(reader, "live_image_manifest", return_value=trusted), \
+                 mock.patch.object(reader.subprocess, "run", return_value=
+                    subprocess.CompletedProcess([], 0, b"", b"")) as runner:
+                self.assertEqual(reader.collect_native(ROOT, receipt,
+                    ROOT / ".work/products/report.json", ROOT / ".work/products/preparation.json",
+                    None, None, ROOT / ".work/products/static", ROOT / ".work/products/dynamic"), report)
+            runner.assert_called_once()
+            argv = runner.call_args.args[0]
+            self.assertEqual(argv[:2], ["/bin/bash", str(ROOT / "compat/x86_64/run_owned_pthread_timed_feature_contract.sh")])
+            self.assertEqual(runner.call_args.kwargs["env"], reader.RUNNER_ENVIRONMENT)
+            self.assertEqual(runner.call_args.kwargs["stdin"], subprocess.DEVNULL)
+            self.assertEqual(runner.call_args.kwargs["cwd"], ROOT)
 
     def test_non_native_actions_reject_native_collection_options(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
