@@ -31,7 +31,8 @@
 //! child subprocess uses that child's Heap lifecycle. As in [`crate::source_api`], each
 //! allocation reports the errno effect of its source path as data.
 //!
-//! The `_mi_verbose_message` reservation reports are not provided.
+//! Completed regular reservation reports use the process verbose route after
+//! the calling arena and subprocess owner projections have ended.
 
 use core::ffi::{c_int, c_void};
 use core::ptr::{null_mut, NonNull};
@@ -2327,11 +2328,12 @@ pub unsafe fn reserve_os_memory_ex(
         // SAFETY: the caller's writable output.
         unsafe { arena_id.write(null_mut()) };
     }
+    let mut diagnostic = None;
     let reserved = if crate::subproc::lifecycle::current_thread_is_child_member() {
-        crate::subproc::lifecycle::native_child_reserve_os_memory(size, commit, allow_large, exclusive)
+        crate::subproc::lifecycle::native_child_reserve_os_memory(size, commit, allow_large, exclusive, &mut diagnostic)
             .unwrap_or(Err(crate::arena::ReserveOsMemoryFailure::Unmanaged))
     } else {
-        main_heaps::native_reserve_os_memory(size, commit, allow_large, exclusive)
+        main_heaps::native_reserve_os_memory(size, commit, allow_large, exclusive, &mut diagnostic)
     };
     match reserved {
         Ok(id) => {
@@ -2339,15 +2341,19 @@ pub unsafe fn reserve_os_memory_ex(
                 // SAFETY: as above.
                 unsafe { arena_id.write(id.as_ptr().cast()) };
             }
+            crate::source_options_api::regular_reservation_verbose(diagnostic);
             Sourced { value: 0, errno: SourceErrno::Unchanged }
         }
-        Err(failure) => Sourced {
-            value: Errno::NOMEM.raw(),
-            errno: match failure {
-                ReserveOsMemoryFailure::TooLarge => SourceErrno::error_message(Errno::OVERFLOW),
-                ReserveOsMemoryFailure::Os(error) => SourceErrno::Store(error),
-                ReserveOsMemoryFailure::Unmanaged => SourceErrno::Unchanged,
-            },
+        Err(failure) => {
+            crate::source_options_api::regular_reservation_verbose(diagnostic);
+            Sourced {
+                value: Errno::NOMEM.raw(),
+                errno: match failure {
+                    ReserveOsMemoryFailure::TooLarge => SourceErrno::error_message(Errno::OVERFLOW),
+                    ReserveOsMemoryFailure::Os(error) => SourceErrno::Store(error),
+                    ReserveOsMemoryFailure::Unmanaged => SourceErrno::Unchanged,
+                },
+            }
         },
     }
 }

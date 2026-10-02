@@ -1421,16 +1421,17 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 // leaving its slices free and clean.
                 let process = backing.process();
                 if !process.policy().disallow_arena_alloc() {
-                    use crate::bootstrap::TheapPageSession;
-                    session.with_os_random_source(|random| {
-                        // SAFETY: the process binding keeps its registry and
-                        // policy live for the process; this reserves only.
-                        unsafe {
-                            process.subprocess().arena_backing().reserve_first_arena_with_random(
-                                process, config, SMALL_PAGE_SIZE, true, Some(random),
-                            )
-                        }
-                    });
+                    // This ordinary initial session uses current compiler TLS
+                    // for placement draws. The adapter retains no session or
+                    // random-field projection across reservation diagnostics.
+                    let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+                    // SAFETY: the process binding keeps its registry and policy
+                    // live; this reserves only and each random draw is bounded.
+                    unsafe {
+                        process.subprocess().arena_backing().reserve_first_arena_with_random(
+                            process, config, SMALL_PAGE_SIZE, true, Some(&mut random),
+                        )
+                    }
                 }
                 self.state = MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
                     session,
@@ -2778,8 +2779,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         })
     }
 
-    /// Phase C of [`Self::begin_engine_less_generic_refusal`] and of an
-    /// engine-less `mi_theap_collect`: after an
+    /// Resumes an engine-less generic allocation refusal or `mi_theap_collect`: after an
     /// administration collection the refusal forces a collection; after the
     /// forced one the allocation completes without a block.
     fn resume_engine_less_generic_refusal(

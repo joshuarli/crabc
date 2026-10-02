@@ -23,7 +23,16 @@
 use core::ffi::{c_char, c_int, c_long, c_void};
 
 use crate::config::SourceOption;
-use crate::diagnostic_output::OutputOwner;
+use crate::diagnostic_output::{OutputOwner, RegularReservationDiagnostic};
+
+/// Delivers only scalar reservation facts, after the caller releases its
+/// mapping/publication locks and mutable owner projections.
+pub(crate) fn regular_reservation_verbose(diagnostic: Option<RegularReservationDiagnostic>) {
+    let (Some(owner), Some(diagnostic)) = (owner(), diagnostic) else { return };
+    // SAFETY: publication installed the table; runtime reservation admission
+    // retains callback lifetimes and ends owner projections before this call.
+    unsafe { owner.regular_reservation_verbose(diagnostic) };
+}
 
 /// `mi_output_fun`.
 pub type OutputFunction = unsafe extern "C" fn(*const c_char, *mut c_void);
@@ -262,4 +271,286 @@ pub const fn stats_get_bin_size(bin: usize) -> usize {
 /// `mi_stats_reset`.
 pub fn stats_reset() {
     crate::runtime_lifecycle::native_stats_reset();
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod regular_reservation_output_tests {
+    use super::*;
+    use core::ffi::CStr;
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use std::vec::Vec;
+
+    struct Capture {
+        messages: Mutex<Vec<Vec<u8>>>,
+        reenter_on: &'static [u8],
+        entered: AtomicBool,
+        nested_ok: AtomicBool,
+        thread_identity: AtomicUsize,
+        disable_verbose_on_failure: AtomicBool,
+    }
+
+    unsafe extern "C" fn discard(_: *const c_char) {}
+
+    unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+        // SAFETY: the fixture retains its serialized capture and every
+        // source fragment is a live NUL-terminated string during delivery.
+        let state = unsafe { &*argument.cast::<Capture>() };
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        state.thread_identity.store(crabc_core::thread::thread_pointer_identity(), Ordering::Relaxed);
+        state.messages.lock().unwrap().push(bytes.to_vec());
+        if bytes.starts_with(b"failed to reserve ") && state.disable_verbose_on_failure.load(Ordering::Relaxed) {
+            option_set(SourceOption::Verbose as c_int, 0);
+        }
+        if !state.reenter_on.is_empty() && bytes.starts_with(state.reenter_on)
+            && !state.entered.swap(true, Ordering::AcqRel)
+        {
+            let mut id = core::ptr::null_mut();
+            // SAFETY: this distinct reservation writes only the local ID;
+            // the outer callback retains the process arena owner.
+            let nested = unsafe { crate::source_heap_api::reserve_os_memory_ex(
+                crate::config::ARENA_MIN_SIZE, true, false, false, &mut id) };
+            state.nested_ok.store(nested.value == 0 && !id.is_null(), Ordering::Release);
+        }
+    }
+
+    fn setup(reenter_on: &'static [u8]) -> &'static Capture {
+        // SAFETY: the static no-op route stays callable for process lifetime.
+        assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+            4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) }));
+        assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+        option_set(SourceOption::ShowErrors as c_int, 0);
+        option_set(SourceOption::MaxWarnings as c_int, 0);
+        let state = std::boxed::Box::leak(std::boxed::Box::new(Capture {
+            messages: Mutex::new(Vec::new()), reenter_on,
+            entered: AtomicBool::new(false), nested_ok: AtomicBool::new(false),
+            thread_identity: AtomicUsize::new(0),
+            disable_verbose_on_failure: AtomicBool::new(false),
+        }));
+        // SAFETY: sole registration; this leaked capture remains live through
+        // all outer and nested synchronous reservations in the fresh process.
+        unsafe { register_output(Some(capture), core::ptr::from_ref(state).cast_mut().cast()) };
+        state.messages.lock().unwrap().clear();
+        state
+    }
+
+    fn reserve(size: usize) -> (c_int, bool) {
+        let mut id = core::ptr::null_mut();
+        // SAFETY: one local writable ID output.
+        let result = unsafe { crate::source_heap_api::reserve_os_memory_ex(
+            size, true, false, false, &mut id) };
+        (result.value, id.is_null())
+    }
+
+    fn print_trace(name: &str, state: &Capture, result: (c_int, bool)) {
+        let messages = state.messages.lock().unwrap();
+        let fragments: Vec<std::string::String> = messages.iter().map(|message| {
+            message.iter().map(|byte| std::format!("{byte:02x}")).collect()
+        }).collect();
+        std::println!("RESULT {name}={},{},{},{}", result.0, u8::from(result.1),
+            u8::from(state.entered.load(Ordering::Acquire)), u8::from(state.nested_ok.load(Ordering::Acquire)));
+        std::println!("TRACE {name}={}", fragments.join(":"));
+        std::println!("THREAD {name}={:x}", state.thread_identity.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn public_regular_reservation_verbose_success_preserves_fragments_and_signed_gate() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::regular_reservation_output_tests::public_regular_reservation_verbose_success_preserves_fragments_and_signed_gate",
+            || {
+                let state = setup(b"");
+                for verbose in [0, 1, -1] {
+                    option_set(SourceOption::Verbose as c_int, verbose);
+                    state.messages.lock().unwrap().clear();
+                    let result = reserve(crate::config::ARENA_MIN_SIZE + 1);
+                    assert_eq!(result, (0, false));
+                    let expected = if verbose == 0 { Vec::new() } else {
+                        std::vec![b"mimalloc: ".to_vec(), b"reserved 32832 KiB memory\n".to_vec()]
+                    };
+                    assert_eq!(*state.messages.lock().unwrap(), expected);
+                    print_trace(&std::format!("success.{verbose}"), state, result);
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn public_regular_reservation_manage_failure_emits_verbose_after_warning() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::regular_reservation_output_tests::public_regular_reservation_manage_failure_emits_verbose_after_warning",
+            || {
+                let state = setup(b"");
+                option_set(SourceOption::Verbose as c_int, 1);
+                let result = reserve(1);
+                assert_eq!(result, (crabc_core::Errno::NOMEM.raw(), true));
+                let messages = state.messages.lock().unwrap();
+                assert_eq!(messages.len(), 4);
+                assert!(messages[0].starts_with(b"mimalloc: warning: thread 0x"));
+                assert_eq!(messages[1], b"cannot use OS memory since it is not large enough (size 64 KiB, minimum required is 32768 KiB)");
+                assert_eq!(messages[2], b"mimalloc: ");
+                assert_eq!(messages[3], b"failed to reserve 64 KiB memory\n");
+                drop(messages);
+                print_trace("failure.1", state, result);
+            },
+        );
+    }
+
+    fn recursive_reservation(test: &'static str, outer_size: usize, body: &'static [u8], child: bool) {
+        crate::test_process::run_in_fresh_process(test, || {
+            let state = setup(body);
+            let child_id = child.then(|| crate::subproc::lifecycle::native_subproc_new().expect("live child"));
+            if !child { option_set(SourceOption::Verbose as c_int, 1); }
+            let (sent, received) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                // SAFETY: this worker retains its exact native TLS descriptor.
+                assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                if let Some(id) = child_id {
+                    // SAFETY: the parent retains this child through the worker
+                    // and the worker owns its compiler-TLS membership roots.
+                    assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_add_current_thread(id) },
+                        Ok(crate::subproc::lifecycle::NativeChildThreadAdd::Added));
+                    state.messages.lock().unwrap().clear();
+                    option_set(SourceOption::Verbose as c_int, 1);
+                }
+                let main_count = crate::subproc::MainSubprocess::global().arena_backing().registry().count();
+                sent.send(reserve(outer_size)).unwrap();
+                if child_id.is_some() {
+                    assert_eq!(crate::subproc::MainSubprocess::global().arena_backing().registry().count(), main_count);
+                    option_set(SourceOption::Verbose as c_int, 0);
+                    assert_eq!(crate::subproc::lifecycle::native_child_thread_done(), Some(Ok(())));
+                }
+            });
+            let result = received.recv_timeout(std::time::Duration::from_secs(3))
+                .expect("verbose callback permits a distinct regular reservation");
+            worker.join().unwrap();
+            assert_eq!(result, if outer_size == 1 { (crabc_core::Errno::NOMEM.raw(), true) } else { (0, false) });
+            assert!(state.entered.load(Ordering::Acquire));
+            assert!(state.nested_ok.load(Ordering::Acquire));
+            if let Some(id) = child_id {
+                // SAFETY: the sole child worker has completed; no child views
+                // or clients survive this final owner release.
+                assert_eq!(unsafe { crate::subproc::lifecycle::native_subproc_destroy(id) }, Ok(()));
+            }
+            let messages = state.messages.lock().unwrap();
+            assert_eq!(&messages[messages.len() - 2..], [b"mimalloc: ".to_vec(), b"reserved 32768 KiB memory\n".to_vec()]);
+            drop(messages);
+            if !child { print_trace(if outer_size == 1 { "recursive.failure" } else { "recursive.success" }, state, result); }
+        });
+    }
+
+    #[test]
+    fn public_regular_reservation_success_verbose_callback_permits_recursive_reservation() {
+        recursive_reservation(
+            "source_options_api::regular_reservation_output_tests::public_regular_reservation_success_verbose_callback_permits_recursive_reservation",
+            crate::config::ARENA_MIN_SIZE, b"reserved ", false);
+    }
+
+    #[test]
+    fn public_regular_reservation_failure_verbose_callback_permits_recursive_reservation() {
+        recursive_reservation(
+            "source_options_api::regular_reservation_output_tests::public_regular_reservation_failure_verbose_callback_permits_recursive_reservation",
+            1, b"failed to reserve ", false);
+    }
+
+    #[test]
+    fn child_regular_reservation_success_verbose_callback_permits_recursive_reservation() {
+        recursive_reservation(
+            "source_options_api::regular_reservation_output_tests::child_regular_reservation_success_verbose_callback_permits_recursive_reservation",
+            crate::config::ARENA_MIN_SIZE, b"reserved ", true);
+    }
+
+    #[test]
+    fn child_regular_reservation_failure_verbose_callback_permits_recursive_reservation() {
+        recursive_reservation(
+            "source_options_api::regular_reservation_output_tests::child_regular_reservation_failure_verbose_callback_permits_recursive_reservation",
+            1, b"failed to reserve ", true);
+    }
+
+    #[test]
+    fn automatic_regular_reservation_failure_verbose_callback_precedes_fallback_gate() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::regular_reservation_output_tests::automatic_regular_reservation_failure_verbose_callback_precedes_fallback_gate",
+            || {
+                let state = setup(b"failed to reserve ");
+                state.disable_verbose_on_failure.store(true, Ordering::Relaxed);
+                option_set(SourceOption::ArenaReserve as c_int, 512 * 1024);
+                option_set(SourceOption::ArenaEagerCommit as c_int, 0);
+                // SAFETY: the installed process output owner and option table
+                // remain live for the process; this isolated issuer retains
+                // its own complete arena group through every callback.
+                let policy = std::boxed::Box::leak(std::boxed::Box::new(unsafe {
+                    crate::os::VmPolicy::from_process_options(owner().unwrap())
+                }));
+                policy.finish_preloading();
+                let subprocess = std::boxed::Box::leak(std::boxed::Box::new(crate::subproc::MainSubprocess::new()));
+                let process = crate::os::VmProcess::new_main(policy, subprocess);
+                let config = crate::os::MemoryConfig::from_observations(
+                    crate::os::PageSize::new(4096).unwrap(), 1 << 20, true, false);
+                option_set(SourceOption::Verbose as c_int, 1);
+                let _fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Commit, 1, crabc_core::Errno::IO));
+                // SAFETY: this issuer owns the live policy, process, backing
+                // and every published range; no source random field is borrowed.
+                unsafe { subprocess.arena_backing().reserve_first_arena_with_random(
+                    process, config, crate::config::ARENA_SLICE_SIZE, false, None) };
+                assert!(state.entered.load(Ordering::Acquire));
+                assert!(state.nested_ok.load(Ordering::Acquire));
+                let arena = unsafe { subprocess.arena_backing().registry().arena_at(0) }.expect("fallback arena");
+                assert_eq!(arena.total_size, 4 * crate::config::ARENA_MIN_SIZE);
+                let messages = state.messages.lock().unwrap();
+                assert_eq!(&messages[messages.len() - 2..],
+                    [b"mimalloc: ".to_vec(), b"failed to reserve 524288 KiB memory\n".to_vec()]);
+                assert_eq!(option_get(SourceOption::Verbose as c_int), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn automatic_regular_reservation_success_verbose_callback_permits_recursive_reservation() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::regular_reservation_output_tests::automatic_regular_reservation_success_verbose_callback_permits_recursive_reservation",
+            || {
+                let state = setup(b"reserved ");
+                option_set(SourceOption::Verbose as c_int, 1);
+                let (sent, received) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its exact native TLS roots.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().expect("ready process binding");
+                    let backing = crate::subproc::MainSubprocess::global().arena_backing();
+                    let config = binding.page_map().memory_config().unwrap();
+                    let slices = crate::config::ARENA_MAX_CHUNK_OBJ_SIZE / crate::config::ARENA_SLICE_SIZE;
+                    let search = crate::arena::ArenaSearch {
+                        heap_sequence: 0, heap_count: 0, thread_sequence: 0, numa_node: -1,
+                        requested: crate::arena::ArenaId::none(), allow_pinned: false,
+                    };
+                    // Consume only existing complete chunks. The later normal
+                    // search must reserve without making an oversized bitmap
+                    // request or inventing an allocator failure.
+                    let mut existing = Vec::new();
+                    while let Some(claim) = unsafe { backing.try_find_free(
+                        search, slices, crate::config::ARENA_SLICE_SIZE, false) }
+                    {
+                        existing.push(claim);
+                    }
+                    // SAFETY: the process backing and policy are retained
+                    // through this sole live claim; no teardown can overlap.
+                    let claim = unsafe { backing.try_allocate_slices_with_random(
+                        binding.process(), config, search, slices,
+                        crate::config::ARENA_SLICE_SIZE, false, None) }.expect("automatic arena claim");
+                    assert!(claim.release());
+                    for claim in existing { assert!(claim.release()); }
+                    sent.send(()).unwrap();
+                });
+                received.recv_timeout(std::time::Duration::from_secs(3))
+                    .expect("automatic verbose delivery releases its reserve lock");
+                worker.join().unwrap();
+                assert!(state.entered.load(Ordering::Acquire));
+                assert!(state.nested_ok.load(Ordering::Acquire));
+            },
+        );
+    }
 }

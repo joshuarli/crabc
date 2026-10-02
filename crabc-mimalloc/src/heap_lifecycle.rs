@@ -828,7 +828,7 @@ mod tests {
                     assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
                     assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
                     let main = current_child_main_heap().expect("the child main Heap");
-                    let arena = native_child_reserve_os_memory(128 * 1024 * 1024, true, false, true)
+                    let arena = native_child_reserve_os_memory(128 * 1024 * 1024, true, false, true, &mut None)
                         .expect("a child member").expect("a selected arena");
                     let heap = native_child_heap_new_in_arena(arena).expect("a child member")
                         .expect("a live child").expect("a selected Heap");

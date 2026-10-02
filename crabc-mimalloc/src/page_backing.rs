@@ -678,6 +678,7 @@ mod tests {
             let identity = unsafe { subprocess.arena_backing().reserve_os_memory_reporting_failure(
                 process, config, crate::config::ARENA_MIN_SIZE,
                 crate::os::MapAccess::Committed, false, false, None,
+                &mut None,
             ) }.unwrap();
             // Simulate the source huge-arena pinned classification; no huge
             // mapping or NUMA policy operation participates in this test.

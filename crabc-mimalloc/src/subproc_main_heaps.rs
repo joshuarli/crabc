@@ -2415,8 +2415,10 @@ pub(crate) fn native_reserve_os_memory(
     commit: bool,
     allow_large: bool,
     exclusive: bool,
+    diagnostic: &mut Option<crate::diagnostic_output::RegularReservationDiagnostic>,
 ) -> Result<crate::arena::ArenaId, crate::arena::ReserveOsMemoryFailure> {
     use crate::arena::ReserveOsMemoryFailure::Unmanaged;
+    *diagnostic = None;
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter().ok_or(Unmanaged)?;
     let binding = binding().ok_or(Unmanaged)?;
     let config = binding.page_map().memory_config().map_err(|_| Unmanaged)?;
@@ -2430,7 +2432,7 @@ pub(crate) fn native_reserve_os_memory(
     // process lifetime; its reserve lock serializes the reservation.
     unsafe {
         MainSubprocess::global().arena_backing().reserve_os_memory_reporting_failure(
-            binding.process(), config, size, access, allow_large, exclusive, Some(&mut random),
+            binding.process(), config, size, access, allow_large, exclusive, Some(&mut random), diagnostic,
         )
     }
 }

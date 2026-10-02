@@ -26,6 +26,7 @@ use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS}
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, PublishedMappingView, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
 use crate::types::{Arena, MemoryId, MemoryKind, Page};
+use crate::diagnostic_output::RegularReservationDiagnostic;
 
 #[path = "arena_purge.rs"]
 mod purge;
@@ -1893,9 +1894,9 @@ impl ProcessArenaBacking {
         }
         let observed_count = self.registry.count();
         {
-            let _guard = self.reserve_lock.lock().ok()?;
+            let guard = self.reserve_lock.lock().ok()?;
             if observed_count == self.registry.count() {
-                let _ = unsafe { self.reserve_locked(process, config, requested_size, search.allow_pinned, random) };
+                let _ = unsafe { self.reserve_automatic_with_guard(process, config, requested_size, search.allow_pinned, random, guard) };
             }
         }
         unsafe { self.try_find_free(search, slice_count, alignment, commit) }
@@ -1920,9 +1921,9 @@ impl ProcessArenaBacking {
         if self.registry.count() != 0 || process.policy().disallow_os_alloc() {
             return;
         }
-        let Ok(_guard) = self.reserve_lock.lock() else { return };
+        let Ok(guard) = self.reserve_lock.lock() else { return };
         if self.registry.count() == 0 {
-            let _ = unsafe { self.reserve_locked(process, config, requested_size, allow_pinned, random) };
+            let _ = unsafe { self.reserve_automatic_with_guard(process, config, requested_size, allow_pinned, random, guard) };
         }
     }
 
@@ -2046,24 +2047,37 @@ impl ProcessArenaBacking {
         }
     }
 
-    /// Source `mi_arena_reserve`, called only under the source reserve lock.
+    /// Source automatic reservation sizes both attempts under its reserve
+    /// lock. Completed diagnostics temporarily release that lock before the
+    /// next source step: public callbacks can reserve another arena, while
+    /// this original issuer retains its precomputed primary/fallback sizes.
     ///
     /// # Safety
-    /// The caller holds `reserve_lock` and retains the borrowed process policy,
+    /// The caller transfers this backing's `reserve_lock` guard and retains the borrowed process policy,
     /// identity, and backing until `destroy_all` transfers all published or
     /// terminal owners. `random` is exclusively borrowed for each source draw.
-    unsafe fn reserve_locked(
+    unsafe fn reserve_automatic_with_guard(
         &self, process: VmProcess<'_>, config: MemoryConfig,
         requested_size: usize, allow_large: bool, mut random: crate::os::OsRandom<'_>,
+        guard: PrivateLockGuard<'_>,
     ) -> Option<ArenaId> {
         let plan = ArenaReservationPlan::for_policy(config, self.registry.count(), requested_size, process.policy())?;
-        for size in [Some(plan.primary_size), plan.fallback_size].into_iter().flatten() {
+        let mut guard = Some(guard);
+        let mut attempts = [Some(plan.primary_size), plan.fallback_size].into_iter().flatten().peekable();
+        while let Some(size) = attempts.next() {
             let stats = process.subprocess().vm_statistics();
             if plan.adjust_committed { stats.committed_adjust_decrease(size); }
             // Pinned `mi_arena_reserve` always reserves a shared arena.
-            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, false, random.as_deref_mut()) };
+            let mut diagnostic = None;
+            let result = unsafe { self.reserve_one_locked(process, config, size, plan.access, allow_large, false,
+                random.as_deref_mut(), &mut diagnostic) };
+            if diagnostic.is_some() {
+                drop(guard.take());
+                crate::source_options_api::regular_reservation_verbose(diagnostic);
+            }
             if let Ok(id) = result { return Some(id); }
             if plan.adjust_committed { stats.committed_adjust_increase(size); }
+            if guard.is_none() && attempts.peek().is_some() { guard = Some(self.reserve_lock.lock().ok()?); }
         }
         None
     }
@@ -2087,13 +2101,18 @@ impl ProcessArenaBacking {
         access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Errno> {
         // SAFETY: forwarded.
-        unsafe { self.reserve_os_memory_reporting_failure(process, config, size, access, allow_large, exclusive, random) }
-            .map_err(|_| Errno::NOMEM)
+        let mut diagnostic = None;
+        let result = unsafe { self.reserve_os_memory_reporting_failure(process, config, size, access,
+            allow_large, exclusive, random, &mut diagnostic) }.map_err(|_| Errno::NOMEM);
+        crate::source_options_api::regular_reservation_verbose(diagnostic);
+        result
     }
 
     /// [`Self::reserve_os_memory_for_process`] with the failing step: the
     /// public entry needs it for the C `errno` the source path leaves (the
-    /// failed OS primitive's code, or none).
+    /// failed OS primitive's code, or none). It also replaces `diagnostic`
+    /// with the completed scalar report, for delivery after caller-owned
+    /// subprocess projections end. A raw allocation failure has no report.
     ///
     /// # Safety
     /// As [`Self::reserve_os_memory_for_process`].
@@ -2101,7 +2120,9 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn reserve_os_memory_reporting_failure(
         &self, process: VmProcess<'_>, config: MemoryConfig, size: usize,
         access: MapAccess, allow_large: bool, exclusive: bool, random: crate::os::OsRandom<'_>,
+        diagnostic: &mut Option<RegularReservationDiagnostic>,
     ) -> Result<ArenaId, ReserveOsMemoryFailure> {
+        *diagnostic = None;
         // `mi_reserve_os_memory_ex2` rounds a representable size up to one
         // slice, then reports a size above `MI_MAX_ALLOC_SIZE` (the rounded
         // one when rounding produced it) and returns `ENOMEM`
@@ -2121,7 +2142,7 @@ impl ProcessArenaBacking {
         // Public explicit reservations have no automatic reserve-count
         // critical section. OS and metadata warnings may synchronously
         // reserve another arena; publication takes its own short lock.
-        unsafe { self.reserve_one(process, config, size, access, allow_large, exclusive, random, true) }
+        unsafe { self.reserve_one(process, config, size, access, allow_large, exclusive, random, true, diagnostic) }
             .map_err(|error| error.map_or(ReserveOsMemoryFailure::Unmanaged, ReserveOsMemoryFailure::Os))
     }
 
@@ -2132,18 +2153,19 @@ impl ProcessArenaBacking {
     /// fails; later reservations are unaffected.
     ///
     /// # Safety
-    /// The caller holds `reserve_lock` and satisfies `reserve_locked`'s
+    /// The caller holds `reserve_lock` and satisfies `reserve_automatic_with_guard`'s
     /// process/backing lifetime and random-access obligations.
     #[allow(clippy::too_many_arguments)]
     unsafe fn reserve_one_locked(
         &self, process: VmProcess<'_>, config: MemoryConfig,
         size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
         random: crate::os::OsRandom<'_>,
+        diagnostic: &mut Option<RegularReservationDiagnostic>,
     ) -> Result<ArenaId, Option<Errno>> {
         // SAFETY: the caller holds the automatic reservation lock and retains
         // the exact process pair through every diagnostic and release.
         unsafe { self.reserve_one(process, config, size, access, allow_large,
-            exclusive, random, false) }
+            exclusive, random, false, diagnostic) }
     }
 
     /// Runs the same OS map/manage/free sequence for automatic or explicit
@@ -2158,6 +2180,7 @@ impl ProcessArenaBacking {
         &self, process: VmProcess<'_>, config: MemoryConfig,
         size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
         random: crate::os::OsRandom<'_>, public: bool,
+        diagnostic: &mut Option<RegularReservationDiagnostic>,
     ) -> Result<ArenaId, Option<Errno>> {
         // Unpublished mapping ownership stays on this synchronous stack,
         // including the final source attempt after a full registry.
@@ -2195,7 +2218,10 @@ impl ProcessArenaBacking {
                         stored, config, size, mapping, memory, -1, exclusive) }
                 };
                 match installed {
-                    Ok(managed) => return Ok(managed.arena_id()),
+                    Ok(managed) => {
+                        *diagnostic = Some(RegularReservationDiagnostic::Reserved { size, is_pinned: memory.is_pinned() });
+                        return Ok(managed.arena_id());
+                    }
                     Err(failure) => { let (mapping, memory, _) = failure.into_parts(); (mapping, memory) }
                 }
             }
@@ -2214,7 +2240,9 @@ impl ProcessArenaBacking {
         let commit_size = if memory.initially_committed() {
             memory.os_memory().expect("unpublished arena failure retains OS provenance").size
         } else { 0 };
-        if let Err(error) = mapping.unmap_for_process_with_warning(process, commit_size, false, true) {
+        let released = mapping.unmap_for_process_with_warning(process, commit_size, false, true);
+        *diagnostic = Some(RegularReservationDiagnostic::Failed { size });
+        if let Err(error) = released {
             // Dropping the still-mapped non-RAII owner leaks it, as the
             // source does after its warning and statistics update.
             return Err(Some(error));
@@ -7303,10 +7331,9 @@ mod tests {
                                     // SAFETY: the lock excludes reservation, every
                                     // primitive fails before storing a process or
                                     // mapping owner, and no registry reader exists.
-                                    let result = unsafe { isolated.reserve_locked(
-                                        process, config, requested, false, None,
+                                    let result = unsafe { isolated.reserve_automatic_with_guard(
+                                        process, config, requested, false, None, guard,
                                     ) };
-                                    drop(guard);
                                     assert!(result.is_none());
                                     let (attempts, attempt_count) = capture.attempts().unwrap();
                                     drop(capture);
@@ -7370,7 +7397,7 @@ mod tests {
             std::println!("m2.reservation_warnings.{name}.messages={}", fragments.join(":"));
         }
         fn reserve(size: usize, commit: bool, allow_large: bool) -> i32 {
-            match crate::subproc::main_heaps::native_reserve_os_memory(size, commit, allow_large, false) {
+            match crate::subproc::main_heaps::native_reserve_os_memory(size, commit, allow_large, false, &mut None) {
                 Ok(_) => 0,
                 Err(_) => crabc_core::Errno::NOMEM.raw(),
             }

@@ -2770,8 +2770,10 @@ pub(crate) fn native_child_reserve_os_memory(
     commit: bool,
     allow_large: bool,
     exclusive: bool,
+    diagnostic: &mut Option<crate::diagnostic_output::RegularReservationDiagnostic>,
 ) -> Option<Result<crate::arena::ArenaId, crate::arena::ReserveOsMemoryFailure>> {
     use crate::arena::ReserveOsMemoryFailure::Unmanaged;
+    *diagnostic = None;
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
     let result = (|| {
@@ -2789,7 +2791,7 @@ pub(crate) fn native_child_reserve_os_memory(
                 owner.as_mut().and_then(|child| child.with_child_image(|image| {
                     let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
                     Some(image.identity().arena_backing().reserve_os_memory_reporting_failure(
-                        process.process(), config, size, access, allow_large, exclusive, Some(&mut random),
+                        process.process(), config, size, access, allow_large, exclusive, Some(&mut random), diagnostic,
                     ))
                 }).flatten())
             })

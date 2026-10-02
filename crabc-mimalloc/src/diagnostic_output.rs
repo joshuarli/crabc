@@ -13,7 +13,8 @@
 // information at `src/stats.c:151-430,568-597`, and its retained/physical
 // process ordering at `src/init.c:633-650` / `src/subproc.c:241-245`, and
 // request checks at `src/alloc-aligned.c:154-168` /
-// `include/mimalloc/internal.h:604-618`.
+// `include/mimalloc/internal.h:604-618`, and regular reservation verbose
+// bodies at `src/arena.c:1900,1903`.
 //
 // The C source keeps one 16 KiB delayed byte buffer, one lock, independently
 // published output function/argument pointers, and an AcqRel warning counter.
@@ -609,6 +610,32 @@ impl FinalProcessDiagnosticView {
 pub(crate) struct SourceFormattedMessage {
     bytes: [u8; SOURCE_FORMAT_STORAGE_BYTES],
     length: usize,
+}
+
+/// Scalar facts retained after a regular arena reservation has published its
+/// owner or released an unmanageable mapping. Output must wait until the
+/// caller has ended its reservation locks and mutable owner projections.
+#[derive(Clone, Copy)]
+pub(crate) enum RegularReservationDiagnostic {
+    Reserved { size: usize, is_pinned: bool },
+    Failed { size: usize },
+}
+
+impl RegularReservationDiagnostic {
+    fn message(self) -> SourceFormattedMessage {
+        let (size, is_pinned, failed) = match self {
+            Self::Reserved { size, is_pinned } => (size, is_pinned, false),
+            Self::Failed { size } => (size, false, true),
+        };
+        let mut message = SourceFormattedMessage::empty();
+        message.append(if failed { b"failed to reserve " } else { b"reserved " });
+        let kib = size / 1024 + usize::from(size % 1024 != 0);
+        append_mbind_unsigned_decimal(&mut message.bytes, &mut message.length, kib as u64);
+        message.append(b" KiB memory");
+        if is_pinned { message.append(b" (in large os pages)"); }
+        message.append(b"\n");
+        message
+    }
 }
 
 impl SourceFormattedMessage {
@@ -2258,6 +2285,21 @@ impl OutputOwner {
         self.fputs_default(None, message.as_c_str());
     }
 
+    /// Emits a completed regular reservation through the signed verbose
+    /// option alone. Lazy option warnings finish before the live gate value
+    /// is read; the prefix and body remain separate callback fragments.
+    ///
+    /// # Safety
+    /// The source option table is installed. The caller retains serialized
+    /// registration and callback lifetimes and has ended every mutable owner
+    /// projection and reservation lock before dispatch.
+    pub(crate) unsafe fn regular_reservation_verbose(&self, diagnostic: RegularReservationDiagnostic) {
+        // SAFETY: installed table; option delivery releases descriptor locks
+        // before invoking the retained output route.
+        if unsafe { self.option_value(SourceOption::Verbose) } == 0 { return; }
+        self.fputs_default(Some(VERBOSE_PREFIX), diagnostic.message().as_c_str());
+    }
+
     /// Selects whether the current source process-final phase prints
     /// statistics.
     ///
@@ -3271,6 +3313,23 @@ mod tests {
 
     const MAX_MESSAGES: usize = 80;
     const MAX_MESSAGE_BYTES: usize = 256;
+
+    #[test]
+    fn regular_reservation_verbose_preserves_source_size_rounding_and_pinned_suffix() {
+        use super::RegularReservationDiagnostic::{Failed, Reserved};
+        for size in [0, 1, 1023, 1024, 1025, 64 * 1024,
+            crate::config::MAX_ALLOC_SIZE & !(crate::config::ARENA_SLICE_SIZE - 1)]
+        {
+            let kib = size / 1024 + usize::from(size % 1024 != 0);
+            assert_eq!(Failed { size }.message().as_c_str().to_bytes(),
+                std::format!("failed to reserve {kib} KiB memory\n").as_bytes());
+            for is_pinned in [false, true] {
+                let suffix = if is_pinned { " (in large os pages)" } else { "" };
+                assert_eq!(Reserved { size, is_pinned }.message().as_c_str().to_bytes(),
+                    std::format!("reserved {kib} KiB memory{suffix}\n").as_bytes());
+            }
+        }
+    }
 
     struct Capture {
         count: AtomicUsize,
