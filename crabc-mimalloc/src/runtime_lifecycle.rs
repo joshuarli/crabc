@@ -5491,6 +5491,8 @@ pub struct NativeRuntimeFirstArenaPolicyAudit {
     pub process_arena_size: usize,
     pub process_arena_initially_committed: usize,
     pub page_map_registered_entry_count: usize,
+    pub page_map_published_submap_count: usize,
+    pub page_map_lazy_submap_allocation_count: usize,
     pub arena_registry_count: usize,
 }
 
@@ -6773,6 +6775,8 @@ pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFir
         process_arena_size: process_arena.size,
         process_arena_initially_committed: process_arena.initially_committed,
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
+        page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
+        page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),
         arena_registry_count: process_arena.registry_count,
     })
 }
