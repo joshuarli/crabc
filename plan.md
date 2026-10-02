@@ -62,10 +62,12 @@ Update this small section in place when the implementation frontier changes.
   interfaces. Free/unfull/retire/reclaim assertions and outer owner-exit delivery
   are integrated, including the typed completion split that ends diagnostic
   admissions before metadata teardown. The unused loader abort-personality stub
-  is removed; rebuilt loader clients and symbol ownership checks pass. Remaining
-  work is the secure fixture setup, source collection-prefix validation and
-  actual merged native-shadow debug products. No release or full-family
-  qualification is claimed.
+  is removed; rebuilt loader clients and symbol ownership checks pass. Secure
+  reclaim fixtures now retain real guard/process owners: conditional checks pass
+  32/32 and default checks pass 27/27, including read-only retained-program replay.
+  Remaining work is source collection-prefix validation across active and
+  engine-less paths and actual merged native-shadow debug products. No release
+  or full-family qualification is claimed.
 - **Merged correctness:** allocator early options, guarded initialization,
   false-force reclaim transfers, aligned null realloc and resolver construction
   boundaries are repaired. Native spawn needs only two free pipe descriptors;
