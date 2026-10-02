@@ -237,6 +237,12 @@ fn failed_huge_os_singleton_unmap_preserves_raw_range_while_medium_releases() {
         .map(|audit| audit.arena_registry_count == arena_count).unwrap_or(false);
     assert!(arena_count_stable);
     let after_medium_vm = vm_current();
+    assert_eq!(before.0 - after_huge_vm.0, HUGE_OS_SIZE as i64);
+    assert_eq!(before.1 - after_huge_vm.1, (HUGE_OS_SIZE - 64 * 1024) as i64,
+        "huge OS release retires its committed extent including a successful tail reset");
+    assert_eq!(after_huge_vm.0 - after_medium_vm.0, MEDIUM_OS_SIZE as i64);
+    assert_eq!(after_huge_vm.1 - after_medium_vm.1, (MEDIUM_OS_SIZE - 64 * 1024) as i64,
+        "medium OS release retires its committed extent including a successful tail reset");
 
     // SAFETY: the fault captured this exact still-mapped range. No client or
     // allocator owner may use it again; this isolated process performs only
