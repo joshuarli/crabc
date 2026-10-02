@@ -39,6 +39,10 @@ UNWIND_ABI = {
 # `-Zbuild-std`) never has to match the provider's crate hashes.
 PROVIDER_MEMBER = 'crabc-unwind.o'
 PROVIDER_C_ABI_IMPORTS = frozenset({'abort', 'bcmp', 'dl_iterate_phdr', 'memcmp', 'memcpy', 'memmove', 'memset'})
+# Pinned target core retains a personality-bearing abort guard at opt level
+# zero. The standalone panic handler always aborts, so C-only clients need no
+# personality. Rust std clients supply their real strong C ABI definition.
+DEBUG_PROVIDER_WEAK_C_ABI_IMPORTS = frozenset({'rust_eh_personality'})
 STANDALONE_CFG = 'crabc_unwinder_standalone'
 PATCHED_UNWINDING = 'unwinding'
 PATCHED_GIMLI = 'gimli'
@@ -75,7 +79,7 @@ PATCHED_UNWINDING_UPSTREAM_TREE_SHA256 = '8ce98e8ae23314ff1312aec0c3f6c627df256a
 PATCHED_UNWINDING_LICENSE = 'MIT OR Apache-2.0'
 CRATES_IO_REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
 
-def audit_provider_symbols(defined, undefined):
+def audit_provider_symbols(defined, undefined, *, profile='release'):
     """Require the localized provider to expose only the C unwind ABI.
 
     ``defined`` and ``undefined`` are ``llvm-nm`` listings of the final
@@ -91,8 +95,15 @@ def audit_provider_symbols(defined, undefined):
     if exported != UNWIND_ABI:
         raise ValueError(f'provider global definitions differ from the unwind ABI: {sorted(exported ^ UNWIND_ABI)}')
     imported = names(undefined)
-    if not imported <= PROVIDER_C_ABI_IMPORTS:
-        raise ValueError(f'provider imports symbols outside its C ABI: {sorted(imported - PROVIDER_C_ABI_IMPORTS)}')
+    weak_imports = {line.split()[-1] for line in undefined.splitlines()
+                    if len(line.split()) == 2 and line.split()[0] == 'w'}
+    optional = DEBUG_PROVIDER_WEAK_C_ABI_IMPORTS if profile == 'debug' else frozenset()
+    if not imported <= PROVIDER_C_ABI_IMPORTS | optional:
+        raise ValueError(f'provider imports symbols outside its C ABI: {sorted(imported - PROVIDER_C_ABI_IMPORTS - optional)}')
+    if imported & optional != weak_imports & optional:
+        raise ValueError('debug provider personality import must be weak and consumer-owned')
+    if weak_imports - optional:
+        raise ValueError('provider weakens a required C ABI import')
     if 'dl_iterate_phdr' not in imported:
         raise ValueError('provider does not discover frame metadata through dl_iterate_phdr')
 
@@ -516,7 +527,8 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     else:
         profile_arguments = ['--profile', 'dev']
         environment.update(CARGO_PROFILE_DEV_OPT_LEVEL='0', CARGO_PROFILE_DEV_LTO='fat',
-            CARGO_PROFILE_DEV_CODEGEN_UNITS='1', CARGO_PROFILE_DEV_PANIC='abort')
+            CARGO_PROFILE_DEV_CODEGEN_UNITS='1', CARGO_PROFILE_DEV_PANIC='abort',
+            CARGO_PROFILE_TEST_OPT_LEVEL='0')
     kwargs = {'cwd': ROOT, 'env': environment}
     source_manifest = ['--manifest-path', str(ROOT / 'Cargo.toml'), '--locked']
     metadata = json.loads(run([*cargo, 'metadata', *source_manifest, '--format-version=1', '--filter-platform', TARGET], **kwargs))
@@ -593,20 +605,36 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     member = directory / PROVIDER_MEMBER
     localized = directory / 'localized-provider.o' if profile == 'debug' else member
     subprocess.run([str(objcopy), f'--keep-global-symbols={keep}', str(fused), str(localized)], check=True)
+    section_gc_linker = None
     if profile == 'debug':
-        linker = llvm / 'rust-lld'
+        linker = Path('/usr/bin/ld.bfd')
         if not linker.is_file():
-            raise ValueError('pinned relocatable linker is unavailable')
+            raise ValueError('pinned GNU relocatable linker is unavailable')
+        version = run([linker, '--version'])
+        if not version.startswith('GNU ld '):
+            raise ValueError('debug provider section GC requires GNU ld')
+        section_gc_linker = {'path': str(linker), 'sha256': digest(linker), 'version': version}
         # Unoptimized fusion retains unreachable target-core sections whose
         # imports belong to other runtimes. Ordinary section GC rooted at the
         # complete unwind ABI drops those sections without optimizing code or
-        # adding a personality or compiler-helper owner to this provider.
-        subprocess.run([str(linker), '-flavor', 'gnu', '-r', '--gc-sections',
+        # adding a personality or compiler-helper owner to this provider. GNU
+        # ld prunes individual FDEs in a relocatable link; LLD instead discards
+        # the entire EH section, including the provider's live capture frames.
+        collected = directory / 'collected-provider.o'
+        subprocess.run([str(linker), '-r', '--gc-sections',
                         *[f'--undefined={symbol}' for symbol in sorted(UNWIND_ABI)],
-                        '-o', str(member), str(localized)], check=True)
+                        '-o', str(collected), str(localized)], check=True)
+        # GNU ld retains undefined symbol-table entries from discarded code.
+        # Strip those entries, while preserving every live relocation. The
+        # only optional reference is pinned core's panic_nounwind_fmt abort
+        # guard: the standalone panic handler never unwinds, and a Rust std
+        # client still binds this weak reference to its real personality.
+        subprocess.run([str(objcopy), '--strip-unneeded',
+                        '--weaken-symbol=rust_eh_personality', str(collected), str(member)], check=True)
     audit_provider_symbols(
         run([nm, '--defined-only', '--extern-only', member]),
         run([nm, '--undefined-only', member]),
+        profile=profile,
     )
     members = [member]
     archive = output / 'libcrabc-unwind.a'
@@ -616,7 +644,7 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     (output / 'defined-symbols.txt').write_text(symbols)
     undefined = run([nm, '--undefined-only', archive])
     (output / 'undefined-symbols.txt').write_text(undefined)
-    audit_provider_symbols(symbols, undefined)
+    audit_provider_symbols(symbols, undefined, profile=profile)
     provenance = {'schema': 1, 'target': TARGET, 'toolchain': run([*rustc, '-Vv'], **kwargs),
         'upstream_commit': '0e2de8fb536b1ca42066024609f58d708cf80e69',
         'archive': {'name': archive.name, 'sha256': digest(archive)}, 'dependencies': sources,
@@ -635,11 +663,14 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
         'unwind_abi': sorted(UNWIND_ABI), 'members': [{'name': p.name, 'sha256': digest(p)} for p in members],
         'fused_staticlib': {'member': fused_members[0], 'sha256': digest(fused),
                             'dropped_compiler_builtins_members': len(dropped_members)},
-        'c_abi_undefined': sorted(PROVIDER_C_ABI_IMPORTS & {
+        'c_abi_undefined': sorted((PROVIDER_C_ABI_IMPORTS | DEBUG_PROVIDER_WEAK_C_ABI_IMPORTS) & {
             line.split()[-1] for line in undefined.splitlines() if line.split()}),
+        'optional_weak_c_abi_undefined': sorted({line.split()[-1] for line in undefined.splitlines()
+            if len(line.split()) == 2 and line.split()[0] == 'w'}),
         'standalone_panic': 'abort', 'build_profile': profile,
         'opt_level': '0' if profile == 'debug' else '3',
         'standalone_section_gc': profile == 'debug',
+        'standalone_section_gc_linker': section_gc_linker,
         'native_build_products': False, 'personality_owner': 'consumer Rust std',
         'qualified': False}
     (output / 'provenance.json').write_text(json.dumps(provenance, indent=2) + '\n')

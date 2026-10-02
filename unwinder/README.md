@@ -14,7 +14,8 @@ Rust's compiler-builtins members are dropped (compiler helpers resolve against
 the consumer's owned `libcrabc-builtins.a`), and `llvm-objcopy` localizes every
 definition except `UNWIND_ABI`. `audit_provider_symbols` then requires the
 defined globals to equal that ABI and the imports to be C ABI only
-(`dl_iterate_phdr`, `abort`, and memory primitives). The provider therefore
+(`dl_iterate_phdr`, `abort`, and memory primitives, plus the optional debug
+personality reference described below). The provider therefore
 carries its own copy of the `core` code it uses: a consumer whose `core` has
 different crate hashes, such as a `-Zbuild-std` graph, still resolves only the
 `_Unwind_*` names against it, and a linker extracts the member exactly as it
@@ -53,9 +54,25 @@ one object; it does not select a consumer's build profile. After localization,
 the pinned relocatable linker discards unreachable sections with the exact
 17 unwind exports as roots. This removes unused target-core imports without
 optimizing the remaining instructions or admitting extra runtime owners.
-The debug archive still contains exactly `crabc-unwind.o`, with the same C ABI
-and ordinary archive extraction contract. Its existing provenance records the
-selected profile, opt level and section-GC choice; it remains unqualified.
+The debug partial link uses the pinned image's GNU `ld.bfd`, which prunes each
+unneeded FDE while retaining unwind records for the provider's own live capture
+frames. LLD's relocatable section GC discards the entire `.eh_frame`; without
+those records ordinary panic searches stop inside the provider with
+`END_OF_STACK`. LLVM objcopy removes only unused symbol-table entries left by
+GNU section GC. The archive still contains exactly `crabc-unwind.o` and exports
+exactly the 17 unwind functions. Provenance records the GNU linker identity,
+selected profile, opt level, section GC and actual imports; it remains unqualified.
+
+At opt level zero the pinned target `core` retains one personality-bearing FDE
+for its `panic_nounwind_fmt` abort guard. The standalone `#[panic_handler]`
+always calls C `abort` and cannot unwind, so that guard cannot enter a personality
+call during an ordinary unwind. Its `rust_eh_personality` C ABI reference is
+explicitly weak and optional in debug archives: C-only backtrace clients still
+link without Rust std, while Rust std clients bind their genuine strong
+personality definition. The symbol audit rejects a strong debug import, a
+provider personality definition and any weakened required C import. No
+personality implementation or fallback is added. The release import contract
+remains unchanged.
 
 Each build uses a fresh checkout-local `.work/x86_64/unwinder-builds/run-*`
 directory and the dispatcher's contained Cargo and temporary state. Explicit

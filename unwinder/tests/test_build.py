@@ -449,6 +449,29 @@ class StandaloneProviderSymbols(unittest.TestCase):
         builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
                                        self.undefined({'abort', 'dl_iterate_phdr', 'memcpy'}))
 
+    def test_debug_core_abort_guard_accepts_only_optional_weak_consumer_personality(self):
+        undefined = self.undefined({'abort', 'dl_iterate_phdr', 'memcpy'})
+        builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
+                                       undefined + '                 w rust_eh_personality\n',
+                                       profile='debug')
+        with self.assertRaisesRegex(ValueError, 'must be weak'):
+            builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
+                                           undefined + '                 U rust_eh_personality\n',
+                                           profile='debug')
+        with self.assertRaisesRegex(ValueError, 'outside its C ABI'):
+            builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
+                                           undefined + '                 w rust_eh_personality\n')
+
+    def test_debug_provider_does_not_weaken_required_runtime_imports(self):
+        with self.assertRaisesRegex(ValueError, 'weakens a required'):
+            builder.audit_provider_symbols(self.defined(builder.UNWIND_ABI),
+                                           '                 w dl_iterate_phdr\n', profile='debug')
+
+    def test_debug_provider_cannot_define_a_personality(self):
+        with self.assertRaisesRegex(ValueError, 'global definitions differ'):
+            builder.audit_provider_symbols(self.defined({*builder.UNWIND_ABI, 'rust_eh_personality'}),
+                                           self.undefined({'dl_iterate_phdr'}), profile='debug')
+
     def test_unlocalized_rust_symbol_is_rejected(self):
         extra = '_RNvNtNtNtCs8RSF2zGfTh7_9unwinding8unwinder4arch6x86_6412save_context'
         with self.assertRaisesRegex(ValueError, 'global definitions differ'):
