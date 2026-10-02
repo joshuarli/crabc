@@ -4,7 +4,7 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/options.c:15-16,111-178,347-549`,
+// Source map: pinned mimalloc v3.5.0 `src/options.c:15-16,111-203,275-337,347-549,623-696`,
 // its `mi_vfprintf_thread` prefix at `src/options.c:498-507`, the selected
 // `%tx` formatter route at `src/libc.c:254-261,285-307,313-397`, and Linux
 // thread identity at `include/mimalloc/prim-tls.h:170-190` /
@@ -195,6 +195,15 @@ struct SourceOptionSlot {
 const OPTION_UNINIT: u8 = 0;
 const OPTION_DEFAULTED: u8 = 1;
 const OPTION_INITIALIZED: u8 = 2;
+
+/// One descriptor retained before the embedding supplies process facts.
+/// Default setters change only its value; explicit setters also prevent a
+/// later environment observation from replacing the value.
+#[derive(Clone, Copy)]
+pub(crate) struct EarlySourceOption {
+    pub(crate) value: i64,
+    pub(crate) state: VmOptionState,
+}
 
 #[inline]
 const fn encode_option_state(state: VmOptionState) -> u8 {
@@ -1677,6 +1686,32 @@ impl OutputOwner {
         self.max_warning_count.store(options.max_warnings, Ordering::Relaxed);
     }
 
+    /// Installs descriptors without reading the environment or starting VM
+    /// state.
+    /// Retained setters preserve both their value and initialization state.
+    ///
+    /// # Safety
+    /// The caller exclusively owns this unpublished output owner, has never
+    /// installed its table, and supplies a process-lifetime environment reader
+    /// whose vector observations satisfy the raw C environment contract.
+    pub(crate) unsafe fn install_source_options(
+        &self,
+        environment_reader: VmOptionEnvironmentReader,
+        early: Option<&[EarlySourceOption; SOURCE_OPTION_COUNT]>,
+    ) {
+        let options = ProcessSourceOptions::new(environment_reader);
+        if let Some(early) = early {
+            for option in SourceOption::ALL {
+                let retained = early[option.index()];
+                options.store(option, retained.value, retained.state);
+            }
+        }
+        // SAFETY: exclusive ownership precedes the one installation and
+        // publication; the table is never replaced after readers can reach it.
+        unsafe { (*self.source_options.get()).write(options) };
+        self.source_options_ready.store(1, Ordering::Release);
+    }
+
     /// Performs the option prefix of `mi_process_init_once`
     /// (`src/init.c:540-544`): the verbose `process init` line, then
     /// `_mi_options_init` (`src/options.c:187-203`), before VM/OS work.
@@ -1686,8 +1721,9 @@ impl OutputOwner {
     /// initialized in table order, with each
     /// deprecated-spelling or invalid-value warning delivered before the next
     /// descriptor. Unavailable environment reads remain UNINIT, exactly for a
-    /// later lock-serialized source retry. The selected profile is not
-    /// `MI_GUARDED`, so the source's guarded large-page adjustment is absent.
+    /// later lock-serialized source retry. A guarded build disables large
+    /// OS pages only when its sampling rate is positive, after both message
+    /// caps have been selected.
     ///
     /// # Safety
     ///
@@ -1702,9 +1738,11 @@ impl OutputOwner {
         &self,
         environment_reader: VmOptionEnvironmentReader,
     ) {
-        let options = ProcessSourceOptions::new(environment_reader);
-        unsafe { (*self.source_options.get()).write(options) };
-        self.source_options_ready.store(1, Ordering::Release);
+        if self.source_options_ready.load(Ordering::Acquire) != 1 {
+            // SAFETY: an uninstalled owner has the caller's exclusive startup
+            // ownership; early public reads may already have installed it.
+            unsafe { self.install_source_options(environment_reader, None) };
+        }
 
         // `_mi_verbose_message("process init: 0x%zx\n", _mi_thread_id())`.
         let mut pending = PendingSourceWarnings::new();
@@ -1738,6 +1776,18 @@ impl OutputOwner {
         let max_warnings = unsafe { self.source_option_snapshot_unlocked() }.max_warnings;
         self.max_error_count.store(max_errors, Ordering::Relaxed);
         self.max_warning_count.store(max_warnings, Ordering::Relaxed);
+        if crate::config::GUARDED
+            && unsafe { self.option_value(SourceOption::GuardedSampleRate) } > 0
+            && unsafe { self.option_value(SourceOption::AllowLargeOsPages) } != 0
+        {
+            // SAFETY: the table is installed, and option_set releases its
+            // descriptor lock before the source warning can call foreign code.
+            if unsafe { self.option_set(SourceOption::AllowLargeOsPages, 0) }.is_ok() {
+                let mut message = SourceFormattedMessage::empty();
+                message.append(b"option 'allow_large_os_pages' is disabled to allow for guarded objects\n");
+                unsafe { self.warning_from_source_options(message) };
+            }
+        }
     }
 
     /// Emits through the retained descriptor state, retrying only entries that
@@ -2084,7 +2134,7 @@ impl OutputOwner {
     /// The raw `mi_options[option]` value/init pair, read without lazy
     /// initialization, for the pinned C table comparison.
     #[cfg(test)]
-    fn source_option_image_for_test(&self, option: SourceOption) -> (i64, VmOptionState) {
+    pub(crate) fn source_option_image_for_test(&self, option: SourceOption) -> (i64, VmOptionState) {
         assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let _guard = self.source_options_lock.lock().expect("test descriptor lock");
         // SAFETY: the table is installed and the lock excludes mutation.

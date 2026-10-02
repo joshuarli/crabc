@@ -360,7 +360,7 @@ impl ProcessMainInitializationStorage {
         &PROCESS_MAIN_INITIALIZATION
     }
 
-    /// The published process descriptor table, once `_mi_options_init` ran.
+    /// The installed process descriptor table, including lazy pre-start reads.
     #[cfg(target_arch = "x86_64")]
     #[inline]
     fn published_source_options(&self) -> Option<&'static OutputOwner> {
@@ -368,6 +368,30 @@ impl ProcessMainInitializationStorage {
         // this pointer's Release publication, and it is never moved or
         // reclaimed for the process lifetime.
         unsafe { self.diagnostic_output_ptr.load(Ordering::Acquire).as_ref() }
+    }
+
+    /// Installs the process-lifetime descriptor and delayed-output owner
+    /// without initializing any allocator VM or thread state. Publication and
+    /// retained setter transfer hold the same lock as pre-facts mutation.
+    #[cfg(target_arch = "x86_64")]
+    fn prepare_source_options(
+        &'static self,
+        environment_reader: VmOptionEnvironmentReader,
+        default_stderr_output: crate::diagnostic_output::DefaultStderrOutput,
+    ) -> Option<&'static OutputOwner> {
+        if let Some(output) = self.published_source_options() { return Some(output); }
+        crate::source_options_api::with_early_source_options(|early| {
+            if let Some(output) = self.published_source_options() { return output; }
+            let output = OutputOwner::new(default_stderr_output);
+            // SAFETY: the handoff lock excludes another installer and every
+            // retained early setter; no reader can reach this inline slot yet.
+            unsafe { (*self.diagnostic_output.get()).write(output) };
+            let pointer = unsafe { (*self.diagnostic_output.get()).as_mut_ptr() };
+            let output = unsafe { &*pointer };
+            unsafe { output.install_source_options(environment_reader, Some(early)) };
+            self.diagnostic_output_ptr.store(pointer, Ordering::Release);
+            output
+        })
     }
 
     /// Builds an isolated leaked process-lifetime startup fixture.
@@ -903,15 +927,11 @@ impl ProcessMainInitializationStorage {
                 VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(inputs, entry) => {
                     let source_errno_store = inputs.source_errno_store();
                     let (environment_reader, default_stderr_output) = inputs.into_parts();
-                    let output = OutputOwner::new(default_stderr_output);
-                    unsafe { (*self.diagnostic_output.get()).write(output) };
-                    let output = unsafe { (&mut *self.diagnostic_output.get()).assume_init_mut() };
+                    let Some(output) = self.prepare_source_options(environment_reader, default_stderr_output) else {
+                        self.publish_terminal_state_and_release(completion, RETAINED);
+                        return Err(ProcessMainInitError::Retained);
+                    };
                     unsafe { output.initialize_source_options(environment_reader) };
-                    let pointer: *mut OutputOwner = output;
-                    self.diagnostic_output_ptr.store(pointer, Ordering::Release);
-                    // SAFETY: the exclusive startup projection ended above;
-                    // the process-static owner is only shared from here on.
-                    let output: &'static OutputOwner = unsafe { &*pointer };
                     // SAFETY: `_mi_options_init` just installed this process
                     // table, and the owner lives in this process-static slot.
                     // Every VM read point is a source `mi_option_get`.
@@ -2019,12 +2039,23 @@ pub fn native_runtime_take_source_error_test_audit() -> Option<NativeSourceError
     (errno != 0).then_some(NativeSourceErrorAudit { code: code as i32, default_errno: errno as i32 })
 }
 
-/// The process diagnostic output owner and its option table, once x86
-/// startup has published them.
+/// The installed process diagnostic output owner and its option table.
+/// Public lazy option access may publish this owner before allocator startup.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 pub(crate) fn process_output_owner() -> Option<&'static OutputOwner> {
     ProcessMainInitializationStorage::global().published_source_options()
+}
+
+/// Supplies public option entries with the embedding's validated environment
+/// and FILE owner before process initialization. Absent facts keep descriptor
+/// reads retryable and leave pre-facts setters in their retained static image.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn prepare_process_source_options() -> Option<&'static OutputOwner> {
+    if let Some(output) = process_output_owner() { return Some(output); }
+    let facts = ProcessStartupFactsCell::global().published()?;
+    ProcessMainInitializationStorage::global().prepare_source_options(
+        facts.environment_reader(), facts.stderr_output().into_default_stderr_output())
 }
 
 /// `_mi_option_get_fast(option)` counterpart of [`process_source_option`].

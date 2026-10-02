@@ -4,7 +4,7 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/options.c:214-337,347-608`
+// Source map: pinned mimalloc v3.5.0 `src/options.c:187-204,214-337,347-608`
 // (`mi_options_print_out`, the `mi_option_*` accessors and mutators,
 // `mi_register_output`, `mi_register_error`), `src/page.c:999-1003`
 // (`mi_register_deferred_free`), `src/stats.c:640-653` (`mi_stats_get`),
@@ -16,14 +16,61 @@
 //! Each function is the source entry of the same `mi_` name, with a raw
 //! `mi_option_t` value where the source takes one: an out-of-range option
 //! reads as zero and ignores mutation, as `mi_option_get`/`mi_option_set`
-//! do. Before the process has published its option table (which x86 startup
-//! does before any allocation), reads return the pinned release default and
-//! mutations are ignored.
+//! do. Setters retain the static descriptor value and initialization state
+//! even before the embedding runtime supplies its environment reader.
+//! Publishing those facts makes lazy environment reads available without
+//! starting the allocator's VM or thread state.
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_void};
 
-use crate::config::SourceOption;
-use crate::diagnostic_output::{OutputOwner, RegularReservationDiagnostic};
+use crate::config::{SourceOption, VmOptionState, SOURCE_OPTION_COUNT};
+use crate::diagnostic_output::{EarlySourceOption, OutputOwner, RegularReservationDiagnostic};
+use crate::lock::PrivateLock;
+
+const fn initial_options() -> [EarlySourceOption; SOURCE_OPTION_COUNT] {
+    let mut options = [EarlySourceOption { value: 0, state: VmOptionState::Uninitialized }; SOURCE_OPTION_COUNT];
+    let mut index = 0;
+    while index < SOURCE_OPTION_COUNT {
+        options[index].value = SourceOption::ALL[index].default_value();
+        index += 1;
+    }
+    options
+}
+
+struct EarlySourceOptions {
+    lock: PrivateLock,
+    options: UnsafeCell<[EarlySourceOption; SOURCE_OPTION_COUNT]>,
+}
+
+// SAFETY: the handoff lock protects every access until the process owner is
+// published under that same lock. Its table permanently owns later accesses.
+unsafe impl Sync for EarlySourceOptions {}
+
+static EARLY_SOURCE_OPTIONS: EarlySourceOptions = EarlySourceOptions {
+    lock: PrivateLock::new(), options: UnsafeCell::new(initial_options()),
+};
+
+/// Serializes pre-facts access with transfer into the permanent process table.
+/// The transfer publishes the installed owner before releasing this lock;
+/// callers recheck that publication before changing the retained early image.
+pub(crate) fn with_early_source_options<R>(
+    operation: impl FnOnce(&mut [EarlySourceOption; SOURCE_OPTION_COUNT]) -> R,
+) -> Option<R> {
+    let _guard = EARLY_SOURCE_OPTIONS.lock.lock().ok()?;
+    // SAFETY: all accesses to this cell hold the same process-static lock,
+    // and neither the operation nor its result retains the borrowed image.
+    Some(operation(unsafe { &mut *EARLY_SOURCE_OPTIONS.options.get() }))
+}
+
+fn early_set(options: &mut [EarlySourceOption; SOURCE_OPTION_COUNT], option: SourceOption, value: i64) {
+    options[option.index()] = EarlySourceOption { value, state: VmOptionState::Initialized };
+    if option == SourceOption::GuardedMin && options[SourceOption::GuardedMax.index()].value < value {
+        early_set(options, SourceOption::GuardedMax, value);
+    } else if option == SourceOption::GuardedMax && options[SourceOption::GuardedMin.index()].value > value {
+        early_set(options, SourceOption::GuardedMin, value);
+    }
+}
 
 /// Delivers only scalar reservation facts, after the caller releases its
 /// mapping/publication locks and mutable owner projections.
@@ -46,7 +93,7 @@ const SOURCE_VERSION: c_int = 30_500;
 
 #[inline]
 fn owner() -> Option<&'static OutputOwner> {
-    crate::process_init::process_output_owner()
+    crate::process_init::prepare_process_source_options()
 }
 
 /// `mi_version`.
@@ -61,7 +108,16 @@ pub fn option_get(option: c_int) -> c_long {
         // SAFETY: a published owner has an installed table; a lazy retry's
         // warning is delivered through the process output route, as in C.
         Some(owner) => unsafe { owner.option_value(option) },
-        None => option.default_value(),
+        None => {
+            let access = with_early_source_options(|options| {
+                crate::process_init::process_output_owner().ok_or(options[option.index()].value)
+            });
+            match access {
+                Some(Ok(owner)) => unsafe { owner.option_value(option) },
+                Some(Err(value)) => value,
+                None => option.default_value(),
+            }
+        }
     }
 }
 
@@ -90,14 +146,28 @@ pub fn option_is_enabled(option: c_int) -> bool {
 
 /// `mi_option_set`.
 pub fn option_set(option: c_int, value: c_long) {
-    let (Some(option), Some(owner)) = (SourceOption::from_source_value(option), owner()) else { return };
+    let Some(option) = SourceOption::from_source_value(option) else { return };
+    let owner = owner().or_else(|| with_early_source_options(|options| {
+        if let Some(owner) = crate::process_init::process_output_owner() { return Some(owner); }
+        early_set(options, option, value);
+        None
+    }).flatten());
+    let Some(owner) = owner else { return };
     // SAFETY: a published owner; the lock serializes the store.
     let _ = unsafe { owner.option_set(option, value) };
 }
 
 /// `mi_option_set_default`.
 pub fn option_set_default(option: c_int, value: c_long) {
-    let (Some(option), Some(owner)) = (SourceOption::from_source_value(option), owner()) else { return };
+    let Some(option) = SourceOption::from_source_value(option) else { return };
+    let owner = owner().or_else(|| with_early_source_options(|options| {
+        if let Some(owner) = crate::process_init::process_output_owner() { return Some(owner); }
+        if options[option.index()].state != VmOptionState::Initialized {
+            options[option.index()].value = value;
+        }
+        None
+    }).flatten());
+    let Some(owner) = owner else { return };
     // SAFETY: as `option_set`.
     let _ = unsafe { owner.option_set_default(option, value) };
 }
@@ -271,6 +341,189 @@ pub const fn stats_get_bin_size(bin: usize) -> usize {
 /// `mi_stats_reset`.
 pub fn stats_reset() {
     crate::runtime_lifecycle::native_stats_reset();
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod option_initialization_tests {
+    use super::*;
+
+    #[cfg(feature = "mi-guarded")]
+    static GUARDED_MESSAGES: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>> = std::sync::Mutex::new(std::vec::Vec::new());
+
+    #[cfg(feature = "mi-guarded")]
+    unsafe extern "C" fn guarded_stderr(message: *const c_char) {
+        // SAFETY: the output owner delivers a live NUL-terminated fragment;
+        // this process-static capture is retained for the complete startup.
+        GUARDED_MESSAGES.lock().unwrap().push(unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes().to_vec());
+    }
+
+    unsafe extern "C" fn discard(_: *const c_char) {}
+
+    fn publish_facts() {
+        // SAFETY: these fixtures own their stable process environment and
+        // retain the static output primitive through all synchronous reads.
+        let facts = unsafe { crate::__crabc_runtime::NativeProcessStartupFacts::new(
+            4096, crate::runtime_lifecycle::test_host_process_environment,
+            crate::__crabc_runtime::RuntimeStderrOutput::new(discard)) }.unwrap();
+        assert!(crate::runtime_lifecycle::publish_native_process_startup_facts(facts));
+    }
+
+    #[test]
+    fn public_options_lazily_read_environment_before_allocator_startup() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::option_initialization_tests::public_options_lazily_read_environment_before_allocator_startup",
+            || {
+                // SAFETY: every mutation occurs on the sole native issuer,
+                // between synchronous option observations of the C vector.
+                unsafe {
+                    std::env::set_var("mimalloc_show_errors", "0");
+                    std::env::remove_var("mimalloc_purge_delay");
+                    std::env::set_var("mimalloc_reset_delay", "-17");
+                    std::env::set_var("mimalloc_generic_collect", "9223372036854775808");
+                    std::env::set_var("mimalloc_arena_reserve", "2MiB");
+                    std::env::set_var("mimalloc_arena_max_object_size", "9223372036854775807T");
+                    std::env::set_var("mimalloc_guarded_min", "TRUE");
+                    std::env::set_var("mimalloc_guarded_max", "0");
+                    std::env::set_var("mimalloc_arena_purge_mult", "7".repeat(65));
+                }
+                option_set_default(SourceOption::PurgeDelay as c_int, 77);
+                option_set_default(SourceOption::GenericCollect as c_int, 123);
+                publish_facts();
+                assert!(crate::process_init::ProcessMainInitializationStorage::global().test_is_cold());
+                assert_eq!(option_get(SourceOption::PurgeDelay as c_int), -17);
+                assert_eq!(option_get(SourceOption::GenericCollect as c_int), 123);
+                assert_eq!(option_get(SourceOption::ArenaReserve as c_int), 2048);
+                assert_eq!(option_get_size(SourceOption::ArenaReserve as c_int), 2 * crate::config::MIB);
+                assert_eq!(option_get(SourceOption::ArenaMaxObjectSize as c_int), (crate::config::MAX_ALLOC_SIZE / 1024) as i64);
+                assert_eq!(option_get(SourceOption::GuardedMin as c_int), 1);
+                assert_eq!(option_get(SourceOption::GuardedMax as c_int), 0);
+                assert_eq!(option_get(SourceOption::ArenaPurgeMult as c_int), 4);
+                let output = owner().unwrap();
+                assert_eq!(output.source_option_image_for_test(SourceOption::PurgeDelay).1, VmOptionState::Initialized);
+                assert_eq!(output.source_option_image_for_test(SourceOption::GenericCollect).1, VmOptionState::Defaulted);
+                assert_eq!(output.source_option_image_for_test(SourceOption::ArenaPurgeMult).1, VmOptionState::Uninitialized);
+                option_set_default(SourceOption::GenericCollect as c_int, 456);
+                option_set_default(SourceOption::ArenaPurgeMult as c_int, 19);
+                unsafe {
+                    std::env::set_var("mimalloc_generic_collect", "7");
+                    std::env::set_var("mimalloc_arena_purge_mult", "7");
+                    std::env::set_var("mimalloc_reset_delay", "41");
+                }
+                assert_eq!(option_get(SourceOption::GenericCollect as c_int), 456);
+                assert_eq!(option_get(SourceOption::ArenaPurgeMult as c_int), 7);
+                assert_eq!(option_get(SourceOption::PurgeDelay as c_int), -17);
+                assert!(crate::process_init::ProcessMainInitializationStorage::global().test_is_cold());
+                assert!(crate::runtime_lifecycle::initialize_process());
+                assert_eq!(option_get(SourceOption::GenericCollect as c_int), 456);
+                assert_eq!(option_get(SourceOption::GuardedMin as c_int), 1);
+                assert_eq!(option_get(SourceOption::GuardedMax as c_int), 0);
+                std::println!("OPTIONS lazy=-17,123,2048,9007199254740991,1,0,4;retry=-17,456,7;after_start=456,1,0");
+            },
+        );
+    }
+
+    #[test]
+    fn public_early_and_late_options_reach_native_allocation_reads() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::option_initialization_tests::public_early_and_late_options_reach_native_allocation_reads",
+            || {
+                option_set_enabled(SourceOption::ShowErrors as c_int, false);
+                option_set_enabled(SourceOption::DisallowOsAlloc as c_int, true);
+                option_set_enabled(SourceOption::DisallowArenaAlloc as c_int, true);
+                publish_facts();
+                assert!(crate::runtime_lifecycle::initialize_process());
+                assert!(crate::source_api::malloc(64).value.is_none());
+                option_set_enabled(SourceOption::DisallowOsAlloc as c_int, false);
+                let block = crate::source_api::malloc(64).value.expect("the late setter permits direct OS allocation");
+                // SAFETY: this is the exact live block from the successful
+                // public allocation; it is freed once by its issuing thread.
+                unsafe { crate::source_api::free(block.as_ptr()) };
+                std::println!("OPTIONS native_allocation=0,1");
+            },
+        );
+    }
+
+    #[cfg(feature = "mi-guarded")]
+    #[test]
+    fn guarded_startup_disables_large_pages_only_for_positive_sample_rate() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::option_initialization_tests::guarded_startup_disables_large_pages_only_for_positive_sample_rate",
+            || {
+                option_set(SourceOption::GuardedSampleRate as c_int, 1);
+                option_set(SourceOption::AllowLargeOsPages as c_int, 1);
+                option_set_enabled(SourceOption::ShowErrors as c_int, true);
+                // SAFETY: stable fresh-process environment and process-static
+                // FILE capture persist across the complete synchronous startup.
+                let facts = unsafe { crate::__crabc_runtime::NativeProcessStartupFacts::new(
+                    4096, crate::runtime_lifecycle::test_host_process_environment,
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(guarded_stderr)) }.unwrap();
+                assert!(crate::runtime_lifecycle::publish_native_process_startup_facts(facts));
+                assert_eq!(option_get(SourceOption::AllowLargeOsPages as c_int), 1);
+                assert!(crate::runtime_lifecycle::initialize_process());
+                assert_eq!(option_get(SourceOption::AllowLargeOsPages as c_int), 0);
+                let messages = GUARDED_MESSAGES.lock().unwrap();
+                assert_eq!(messages.len(), 1);
+                assert!(messages[0].starts_with(b"mimalloc: warning: thread 0x"));
+                assert!(messages[0].ends_with(b": option 'allow_large_os_pages' is disabled to allow for guarded objects\n"));
+                std::println!("OPTIONS guarded_large_pages=1,0");
+            },
+        );
+    }
+
+    #[cfg(feature = "mi-guarded")]
+    #[test]
+    fn guarded_startup_preserves_large_pages_when_sampling_is_disabled() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::option_initialization_tests::guarded_startup_preserves_large_pages_when_sampling_is_disabled",
+            || {
+                option_set(SourceOption::GuardedSampleRate as c_int, 0);
+                option_set(SourceOption::AllowLargeOsPages as c_int, 1);
+                publish_facts();
+                assert!(crate::runtime_lifecycle::initialize_process());
+                assert_eq!(option_get(SourceOption::AllowLargeOsPages as c_int), 1);
+                std::println!("OPTIONS guarded_disabled_large_pages=1");
+            },
+        );
+    }
+
+    #[test]
+    fn public_options_before_startup_preserve_setters_and_default_provenance() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::option_initialization_tests::public_options_before_startup_preserve_setters_and_default_provenance",
+            || {
+                assert!(owner().is_none());
+                // SAFETY: this fresh process has no native reader yet; the
+                // environment remains stable throughout synchronous startup.
+                unsafe {
+                    std::env::set_var("mimalloc_purge_delay", "41");
+                    std::env::set_var("mimalloc_arena_purge_mult", "3");
+                    std::env::remove_var("mimalloc_page_max_candidates");
+                }
+                option_set(SourceOption::PurgeDelay as c_int, 73);
+                assert_eq!(option_get(SourceOption::PurgeDelay as c_int), 73);
+                option_set_default(SourceOption::PurgeDelay as c_int, 11);
+                option_set_default(SourceOption::ArenaPurgeMult as c_int, 19);
+                option_set_default(SourceOption::PageMaxCandidates as c_int, 17);
+                assert_eq!(option_get(SourceOption::PageMaxCandidates as c_int), 17);
+                option_set(SourceOption::GuardedMax as c_int, 7);
+                option_set(SourceOption::GuardedMin as c_int, 9);
+                assert_eq!(option_get(SourceOption::GuardedMax as c_int), 9);
+                // SAFETY: static fixture output remains callable for process life.
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) }));
+                assert_eq!(option_get(SourceOption::PurgeDelay as c_int), 73);
+                assert_eq!(option_get(SourceOption::ArenaPurgeMult as c_int), 3);
+                assert_eq!(option_get(SourceOption::PageMaxCandidates as c_int), 17);
+                option_set_default(SourceOption::ArenaPurgeMult as c_int, 23);
+                assert_eq!(option_get(SourceOption::ArenaPurgeMult as c_int), 3);
+                option_set_default(SourceOption::PageMaxCandidates as c_int, 23);
+                assert_eq!(option_get(SourceOption::PageMaxCandidates as c_int), 23);
+                assert_eq!(option_get(SourceOption::GuardedMin as c_int), 9);
+                assert_eq!(option_get(SourceOption::GuardedMax as c_int), 9);
+                std::println!("OPTIONS prestartup=73,3,17;late_defaults=3,23;guarded=9,9");
+            },
+        );
+    }
 }
 
 #[cfg(all(test, target_arch = "x86_64"))]
