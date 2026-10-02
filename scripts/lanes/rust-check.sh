@@ -18,7 +18,9 @@ fi
 mkdir -p "$work/target-check" "$work/tmp"
 in_image() {
     # Arena tests lock their complete 32-MiB caller-owned reservation.
+    # Expected aborts retain status and stderr; core dumps can copy large mappings.
     docker run --rm --init --platform linux/amd64 --workdir /workspace \
+        --ulimit core=0:0 \
         --ulimit memlock=67108864:67108864 \
         --env CARGO_INCREMENTAL=0 \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \

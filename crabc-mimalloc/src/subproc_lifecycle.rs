@@ -4795,7 +4795,7 @@ pub(crate) mod tests {
             unsafe extern "C" { fn write(fd: i32, bytes: *const u8, size: usize) -> isize; }
             let probe = unsafe { &*argument.cast::<Probe>() };
             let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
-            if message.windows(b"used <= capacity".len()).any(|bytes| bytes == b"used <= capacity") {
+            if message.windows(b"page->used <= page->capacity".len()).any(|bytes| bytes == b"page->used <= page->capacity") {
                 assert_eq!(current_child_id(), Some(probe.id));
                 assert!(unsafe { probe.id.record() }.lock.try_lock().is_some(), "record projection ended before delivery");
                 assert_eq!(unsafe { probe.map.lookup_registered_page(probe.client.as_ptr()) }.unwrap(), Some(probe.page));
@@ -4853,7 +4853,7 @@ pub(crate) mod tests {
         let stderr = std::string::String::from_utf8_lossy(&result.stderr);
         assert_eq!(result.status.signal(), Some(6), "{stderr}");
         assert!(stderr.contains("original child live Page retained during native reentry"), "{stderr}");
-        assert!(stderr.contains("used <= capacity"), "{stderr}");
+        assert!(stderr.contains("page->used <= page->capacity"), "{stderr}");
         }
     }
 

@@ -18,8 +18,9 @@ The x86 allocator default switch and public x86-support promotion are deferred
 to a later release phase, as confirmed by the user. C mimalloc remains selected
 and public x86 support remains disabled during this feature phase. Performance
 investigation starts after feature completion. Existing release/performance
-contracts and historical evidence remain preserved outside this active plan;
-they are neither active prerequisites nor newly claimed passes.
+contracts and retained historical evidence stay outside this active plan;
+they are neither active prerequisites nor newly claimed passes. Reports removed
+during the authorized disk cleanup are not reconstructed or claimed as retained.
 
 `AGENTS.md` owns scope and working rules. This file is the sole implementation
 plan and progress handoff. User direction takes precedence over older gate or
@@ -50,15 +51,33 @@ Update this small section in place when the implementation frontier changes.
   Successor fixes add native facade synchronization, nullable unsigned divmod,
   signal errno ordering, bounded resolver replies, canonical PLT lookup, public huge
   reservation variants and partial-success errno, and secure Page geometry/guards.
-  Successful huge and multi-parent startup allocation already works and now has a
-  focused regression. Integrated debug lifecycle checks passed 72 tests; later
-  increments retain their focused source/context results until merged checks run.
-- **Feature frontier:** finish child-owned huge reservation/destruction retry and
-  nested child parent-custody teardown. Complete secure Page integration across
-  source paths, retained live-Page fatal assertion transport, and its caller regressions. The reproduced final medium-client refusal (42nd
+  Child-owned huge reservation, real Heap clients, exact failed-page teardown retry
+  and nested parent-custody teardown are integrated. Facade path components,
+  record locks and openat2, allocated loader COMMON symbols, and configured FILE
+  pushback storage are integrated too. Focused merged debug checks pass: six public
+  huge API cases, ten arena huge cases, two nested-child cases, two post-exit release
+  cases and ten facade cases. Merged prepared-child action/wait checks and two
+  loader COMMON checks also pass, as do 31 actual owned FILE pushback cases.
+  The earlier lifecycle check passed 72 tests. Loader COMMON uses its standalone
+  source test root; the interpreter Cargo unit harness is unsuitable for that check.
+- **Feature frontier:** retained live-Page assertion transport is integrated across
+  the engine, initial/auxiliary owners and child custody. Merged native debug
+  compilation, ordinary/child output reentry and child metadata Drop checks pass.
+  Outcome-sensitive partial-commit OS release now records actual
+  reset progress on the original claim/token and passes its merged lifecycle test.
+  The test independently identifies persistent PageMap submap charges instead of
+  assuming that every allocation changes only its client mapping. Fully committed
+  OS release already balances its guard debit/reset
+  credit and must not be changed to satisfy a guard-unaware counter expectation.
+  The reproduced final medium-client refusal (42nd
   client of 42) is fixed by respecting the Theap abandonment policy; both isolated
-  and small-history cases pass focused debug checks. Complete native facade modules still
-  gated to AArch64 and remaining selected source operations.
+  and small-history cases pass focused debug checks. Successor work covers remaining
+  selected runtime composition and source operations. Native prepared-child action
+  replacement/interrupted wait, nested-child Heap visitation and cross-codegen-unit
+  private pthread aliases are repaired. The alias fix preserves private providers
+  and weak public aliases; independent focused debug applications exercise all four
+  owned entry modes. Stale retry expectations must follow the existing source free
+  contract: failed terminal unmaps consume accounting and are not automatically retried.
 - **Active work recovery:** a container-path mismatch during Git worktree pruning
   removed the active registrations. All 16 registrations were reconstructed from
   their preserved branch refs without changing working files; expected edits were
@@ -170,7 +189,7 @@ completion prerequisites.
 | C compatibility and binding | Selected crypt/crypt-helpers through approved primitives, allocation, legacy compatibility, process globals, and final callable/data provider closure. Verify names, aliases, bindings, visibility, sizes, versions where selected, and static/shared ownership. Use ordinary archive extraction or an explicit structural oracle/builtin/consumer boundary—not hidden unresolved providers that happen not to be extracted. |
 | Loader | General admitted dependency graphs, not fixed fixture graphs: self-relocation/entry, kernel main image, search/RPATH/RUNPATH, mapping/protection/RELRO, supported RELA/RELR relocations, weak/global/protected scope, RuntimeV1, initial/runtime TLS, DTV growth, constructors/finalizers, and selected `dl*` introspection. Prove concurrency, callbacks/reentrancy, fork, retained handles, reopen, malformed input, and failed-load rollback. |
 | CRT, builtins, sysroot | Owned static/static-PIE and dynamic PIE/non-PIE entry, libc handoff, main lifecycle arrays, finalization, compiler helpers, deterministic link interface and installation. Exercise real application consumption with focused debug links. |
-| Rust facade and remaining families | Preserve and complete every other frozen family and exact semantic mapping, including direct native API, error, ownership, dependency, and LTO evidence. A C ABI pass does not prove the Rust-native path or vice versa. |
+| Rust facade and remaining families | Preserve and complete every other frozen family and exact semantic mapping, including direct native API, error, ownership, dependency and compiler-input ownership. A C ABI pass does not prove the Rust-native path or vice versa. |
 
 For pinned musl parity, successful `dlclose` validates a handle but does **not**
 unmap the object or invoke its destructors. Reopen observes retained state;

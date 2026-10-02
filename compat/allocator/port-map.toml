@@ -3,6 +3,22 @@ format = 1
 upstream_version = "3.5.0"
 upstream_revision = "18b08671c9302247bfb682286e6bf3cc1773f801"
 
+[[item]]
+upstream = "src/arena.c"
+name = "native-public-huge-reservation-variants"
+source_region = "mimalloc v3.5.0 src/arena.c:2170-2231 mi_reserve_huge_os_pages_at_ex, mi_reserve_huge_os_pages_at, mi_reserve_huge_os_pages_interleave, and deprecated mi_reserve_huge_os_pages"
+rust_module = "crabc_mimalloc::source_heap_api and crabc_mimalloc::arena::owned::huge"
+rust_item = "reserve_huge_os_pages_at_ex/at/interleave/reserve_huge_os_pages, retained child reservation admission, source distribution and original VM/metadata release owners"
+intentional_difference = "Native Rust entries return the existing typed errno effect and retain exact child metadata admission. Software fault witnesses exercise the actual reserve/publish/release implementation using synthetic mappings; they do not certify physical huge pages or NUMA placement. The public/default backend selection is unchanged."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/source_heap_api.rs", "crabc-mimalloc/src/arena_huge.rs", "crabc-mimalloc/src/arena_destroy.rs", "crabc-mimalloc/src/subproc_lifecycle.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
 [[unit]]
 upstream = "include/mimalloc.h"
 source_region = "public C API declarations"

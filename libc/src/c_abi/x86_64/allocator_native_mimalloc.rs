@@ -19,7 +19,7 @@ use core::ptr::null_mut;
 
 use super::errno;
 use crabc_mimalloc::__crabc_runtime::{
-    NativePageAllocationResult, NativePageFreeResult, native_allocate, native_allocate_aligned,
+    NativePageAllocationResult, native_allocate, native_allocate_aligned,
     native_free, native_reallocate,
 };
 
@@ -105,16 +105,13 @@ unsafe fn native_mimalloc_deallocate(pointer: *mut c_void) {
     }
     let saved_errno = unsafe { cabi_allocator_errno() };
     let block = unsafe { core::ptr::NonNull::new_unchecked(pointer.cast::<u8>()) };
-    match unsafe { native_free(block) } {
-        NativePageFreeResult::Freed => unsafe { cabi_set_allocator_errno(saved_errno) },
-        NativePageFreeResult::InvalidPointer
-        | NativePageFreeResult::Unavailable
-        | NativePageFreeResult::Retained => {
-            // Native-selected pointer ownership has become terminal. The C
-            // backend is not an error recovery path because it cannot own
-            // this exact pointer.
-            super::immediate_termination::_Exit(134)
-        }
+    if unsafe { native_free(block) }.permits_source_free_return() {
+        unsafe { cabi_set_allocator_errno(saved_errno) };
+    } else {
+        // Native-selected pointer ownership has become terminal. The C
+        // backend is not an error recovery path because it cannot own
+        // this exact pointer.
+        super::immediate_termination::_Exit(134)
     }
 }
 

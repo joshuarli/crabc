@@ -517,6 +517,20 @@ pub enum NativePageFreeResult {
     RejectedCorruption,
 }
 
+impl NativePageFreeResult {
+    /// Whether the C free boundary can return after this source outcome.
+    /// A reported padding refusal retains the client, while a completed free
+    /// consumes it. Both permit return; unavailable or terminal ownership does not.
+    pub const fn permits_source_free_return(self) -> bool {
+        match self {
+            Self::Freed => true,
+            Self::Unavailable | Self::InvalidPointer | Self::Retained => false,
+            #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+            Self::RejectedCorruption => true,
+        }
+    }
+}
+
 /// Result of one private scoped later-worker page-engine round trip.
 ///
 /// The operation is intentionally narrower than allocation routing: it
