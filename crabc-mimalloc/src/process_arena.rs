@@ -4829,7 +4829,12 @@ mod tests {
         let free = unsafe { view.slices_free() }.unwrap();
         let purge = unsafe { view.slices_purge() }.unwrap();
         let committed = unsafe { view.slices_committed() }.unwrap();
-        let setup = index == 265 && survivor_index == 266
+        // Source arena metadata grows with the Page image when debug or
+        // security adds free-list keys. The fourth 256-slice claim starts at
+        // this second arena's first usable slice, followed by these two
+        // neighboring one-slice claims; their offsets retain that geometry.
+        let setup = claims[3].slice_index() == second.info_slices
+            && index == second.info_slices + 256 && survivor_index == index + 1
             && committed.is_set_range(index, 1) == Some(true);
         let before = process.subprocess().statistics().snapshot();
         assert!(released.release());
@@ -5018,7 +5023,11 @@ mod tests {
         let free = unsafe { view.slices_free() }.unwrap();
         let purge = unsafe { view.slices_purge() }.unwrap();
         let committed = unsafe { view.slices_committed() }.unwrap();
-        let setup = index == 265 && survivor_index == 266
+        // Debug free-list keys increase the source Page image and can reserve
+        // another metadata slice. Keep these claims relative to the actual
+        // metadata prefix instead of assuming a normal-profile slice index.
+        let setup = claims[3].slice_index() == second.info_slices
+            && index == second.info_slices + 256 && survivor_index == index + 1
             && committed.is_set_range(index, 1) == Some(true);
         let before = process.subprocess().statistics().snapshot();
         warnings.before_purge_calls.store(before.vm.purge_calls, Ordering::Release);
