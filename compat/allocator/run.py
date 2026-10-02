@@ -1848,9 +1848,11 @@ EXPECTED_X86_64_ENGINE_DEPENDENCY_VERSIONS: Mapping[str, str] = {
     "inout": "0.2.2",
     "zeroize": "1.9.0",
     "cpufeatures": "0.3.0",
+    "rand_xoshiro": "0.8.1",
+    "rand_core": "0.10.1",
 }
 EXPECTED_X86_64_ENGINE_DEPENDENCY_EDGES: Mapping[str, tuple[str, ...]] = {
-    "crabc-mimalloc": ("chacha20", "crabc-core", "zeroize"),
+    "crabc-mimalloc": ("chacha20", "crabc-core", "rand_xoshiro", "zeroize"),
     "crabc-core": (),
     "chacha20": ("cfg-if", "cipher", "cpufeatures", "zeroize"),
     "cfg-if": (),
@@ -1862,6 +1864,8 @@ EXPECTED_X86_64_ENGINE_DEPENDENCY_EDGES: Mapping[str, tuple[str, ...]] = {
     "inout": ("hybrid-array",),
     "zeroize": (),
     "cpufeatures": (),
+    "rand_xoshiro": ("rand_core",),
+    "rand_core": (),
 }
 # The native x86-64 Docker path bind-mounts an initially empty Cargo cache.
 # `--locked` therefore gives the required reproducible resolution boundary,

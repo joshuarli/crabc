@@ -424,6 +424,21 @@ def x86_64_engine_dependency_metadata() -> dict[str, object]:
             "dep_kinds": [{"kind": None, "target": None}],
         }
     )
+    for name, version, dependencies in (
+        ("rand_xoshiro", "0.8.1", (("rand_core", "0.10.1"),)),
+        ("rand_core", "0.10.1", ()),
+    ):
+        package_id = f"{name} {version}"
+        packages.append({"id": package_id, "name": name, "version": version,
+                         "source": "registry+https://github.com/rust-lang/crates.io-index",
+                         "targets": [{"kind": ["lib"]}]})
+        nodes.append({"id": package_id, "deps": [
+            {"name": dependency, "pkg": f"{dependency} {dependency_version}",
+             "dep_kinds": [{"kind": None, "target": None}]}
+            for dependency, dependency_version in dependencies]})
+    engine = next(node for node in nodes if node["id"] == "crabc-mimalloc 0.3.0")
+    engine["deps"].append({"name": "rand_xoshiro", "pkg": "rand_xoshiro 0.8.1",
+                           "dep_kinds": [{"kind": None, "target": None}]})
     return metadata
 
 
@@ -925,11 +940,13 @@ class InventoryTests(unittest.TestCase):
             x86_64_engine_dependency_metadata()
         )
         self.assertEqual(report["target"], "x86_64-unknown-linux-musl")
-        self.assertEqual(report["external_package_count"], 10)
+        self.assertEqual(report["external_package_count"], 12)
         self.assertEqual(report["build_script_count"], 0)
         self.assertEqual(report["proc_macro_count"], 0)
         packages = {(package["name"], package["version"]) for package in report["packages"]}
         self.assertIn(("cpufeatures", "0.3.0"), packages)
+        self.assertIn(("rand_xoshiro", "0.8.1"), packages)
+        self.assertIn(("rand_core", "0.10.1"), packages)
         self.assertNotIn(("libc", "0.2.189"), packages)
 
     def test_x86_64_engine_dependency_graph_rejects_a_selected_libc_edge(self) -> None:
@@ -958,6 +975,14 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaisesRegex(
             RUNNER.HarnessError, "unexpected selected package: libc 0.2.189"
         ):
+            RUNNER.validate_x86_64_engine_dependency_graph(metadata)
+
+    def test_x86_64_engine_dependency_graph_requires_shuffle_primitive_core_edge(self) -> None:
+        metadata = x86_64_engine_dependency_metadata()
+        shuffle = next(node for node in metadata["resolve"]["nodes"]
+                       if node["id"] == "rand_xoshiro 0.8.1")
+        shuffle["deps"] = []
+        with self.assertRaisesRegex(RUNNER.HarnessError, "missing selected package: rand_core"):
             RUNNER.validate_x86_64_engine_dependency_graph(metadata)
 
     def test_x86_64_engine_dependency_graph_command_is_pinned_and_unfeatured(self) -> None:
