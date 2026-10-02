@@ -193,6 +193,8 @@ const NETLINK_BUFFER_LEN: usize = 8192;
 const MSG_TRUNC: u32 = 0x20;
 
 const NLM_F_REQUEST: u16 = 1;
+#[cfg(target_arch = "x86_64")]
+const NLM_F_DUMP_INTR: u16 = 0x10;
 const NLM_F_ROOT: u16 = 0x100;
 const NLM_F_MATCH: u16 = 0x200;
 const NLM_F_DUMP: u16 = NLM_F_ROOT | NLM_F_MATCH;
@@ -273,6 +275,20 @@ fn receive_netlink_packet(fd: &OwnedFd, packet: &mut [u8]) -> Result<usize> {
     checked_netlink_receive(received, message_flags, packet.len())
 }
 
+// A dump's completion message carries a signed status just like an error
+// reply. A zero status does not establish consistency when any dump message
+// reports interruption; do not publish that partial collection as success.
+#[cfg(target_arch = "x86_64")]
+fn check_netlink_dump_status(message: &[u8]) -> Result<()> {
+    if read_u16(message, 4)? == NLMSG_DONE {
+        parse_netlink_error(message)?;
+    }
+    if read_u16(message, 6)? & NLM_F_DUMP_INTR != 0 {
+        return Err(crate::Errno::INTR);
+    }
+    Ok(())
+}
+
 /// An owned Linux interface index/name pair.
 ///
 /// The index is nonzero by construction and the name owns its complete
@@ -341,6 +357,9 @@ impl InterfaceNameIndex {
 /// [`crate::Errno`] values. A netlink datagram larger than the fixed 8192-byte
 /// receive buffer returns [`crate::Errno::OVERFLOW`] before its partial prefix
 /// can reach `callback`; no libc, C ABI, allocator, or TLS `errno` is used.
+/// On x86, a negative dump-completion status is returned as its kernel error,
+/// and an inconsistent dump returns [`crate::Errno::INTR`]. Earlier callbacks
+/// may already have run; callers must discard those records before retrying.
 #[inline]
 pub fn for_each_link_name<F>(callback: F) -> Result<()>
 where
@@ -359,8 +378,10 @@ where
 /// Allocation is explicit in the `alloc` feature and failures are reported as
 /// [`crate::Errno::NOBUFS`]. A netlink datagram larger than the fixed 8192-byte
 /// receive buffer returns [`crate::Errno::OVERFLOW`] rather than a partial
-/// collection. Dropping the returned vector releases its owned records;
-/// [`if_freenameindex`] is provided as a named consuming counterpart for code
+/// collection. On x86, completion errors and inconsistent dumps return an
+/// error and discard the collected records; an inconsistent dump returns
+/// [`crate::Errno::INTR`] so the caller can retry. Dropping the returned vector
+/// releases its owned records; [`if_freenameindex`] is provided as a named consuming counterpart for code
 /// translating the musl operation.
 #[cfg(feature = "alloc")]
 #[inline]
@@ -726,6 +747,9 @@ mod interface_addresses {
     /// there is no C `freeifaddrs` analogue and no public C allocator boundary.
     /// A netlink datagram larger than the fixed 8192-byte receive buffer returns
     /// [`crate::Errno::OVERFLOW`] rather than yielding a partial snapshot.
+    /// On x86, dump-completion errors are preserved and inconsistent dumps
+    /// return [`crate::Errno::INTR`], discarding the partial snapshot. Callers
+    /// may retry collection when they receive that interruption error.
     #[derive(Debug, Clone, Eq, PartialEq)]
     pub struct InterfaceAddresses {
         entries: alloc::vec::Vec<InterfaceAddress>,
@@ -902,6 +926,8 @@ mod interface_addresses {
             }
             let message_type = read_u16(message, 4)?;
             let declared = &message[..length];
+            #[cfg(target_arch = "x86_64")]
+            check_netlink_dump_status(declared)?;
             match message_type {
                 NLMSG_NOOP => {}
                 NLMSG_DONE => done = true,
@@ -1319,6 +1345,52 @@ mod interface_addresses {
             );
         }
 
+        #[cfg(target_arch = "x86_64")]
+        #[test]
+        fn interface_dump_preserves_completion_errors() {
+            let mut entries = alloc::vec::Vec::new();
+            for (status, expected) in [
+                (-105i32, Err(crate::Errno::NOBUFS)),
+                (0, Ok(true)),
+                (1, Err(crate::Errno::BADMSG)),
+                (i32::MIN, Err(crate::Errno::BADMSG)),
+                (-4096, Err(crate::Errno::BADMSG)),
+            ] {
+                let packet = message(NLMSG_DONE, 1, &status.to_le_bytes());
+                assert_eq!(
+                    parse_interface_packet(&packet, InterfaceDump::Link, 1, &mut entries),
+                    expected
+                );
+            }
+            for length in 0..4 {
+                let packet = message(NLMSG_DONE, 1, &[0u8; 4][..length]);
+                assert_eq!(
+                    parse_interface_packet(&packet, InterfaceDump::Link, 1, &mut entries),
+                    Err(crate::Errno::BADMSG)
+                );
+            }
+            assert!(entries.is_empty());
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        #[test]
+        fn interface_dump_rejects_interruption_before_copying_records() {
+            let mut entries = alloc::vec::Vec::new();
+            let mut packet = message(NLMSG_DONE, 1, &0i32.to_le_bytes());
+            put_u16(&mut packet, 6, 0x10);
+            assert_eq!(
+                parse_interface_packet(&packet, InterfaceDump::Link, 1, &mut entries),
+                Err(crate::Errno::INTR)
+            );
+            let mut packet = link_message();
+            put_u16(&mut packet, 6, 0x10);
+            assert_eq!(
+                parse_interface_packet(&packet, InterfaceDump::Link, 1, &mut entries),
+                Err(crate::Errno::INTR)
+            );
+            assert!(entries.is_empty());
+        }
+
         #[test]
         fn malformed_attributes_and_unlinked_addresses_are_rejected_or_skipped() {
             let mut entries = alloc::vec::Vec::new();
@@ -1504,6 +1576,8 @@ where
             return Err(crate::Errno::BADMSG);
         }
         let message_type = read_u16(message, 4)?;
+        #[cfg(target_arch = "x86_64")]
+        check_netlink_dump_status(&message[..length])?;
         match message_type {
             NLMSG_NOOP => {}
             NLMSG_DONE => return Ok(()),
@@ -1672,6 +1746,70 @@ mod tests {
             checked_netlink_receive(9, 0, 8),
             Err(crate::Errno::OVERFLOW)
         );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn link_name_dump_preserves_completion_errors() {
+        let mut packet = [0u8; NLMSG_HEADER_LEN + 4];
+        write_u32(&mut packet, 0, (NLMSG_HEADER_LEN + 4) as u32);
+        write_u16(&mut packet, 4, super::NLMSG_DONE);
+        write_u32(&mut packet, 8, 1);
+        let mut called = false;
+        let mut callback = |_| { called = true; Ok(()) };
+        for (status, expected) in [
+            (-105i32, Err(crate::Errno::NOBUFS)),
+            (0, Ok(())),
+            (1, Err(crate::Errno::BADMSG)),
+            (i32::MIN, Err(crate::Errno::BADMSG)),
+            (-4096, Err(crate::Errno::BADMSG)),
+        ] {
+            packet[NLMSG_HEADER_LEN..].copy_from_slice(&status.to_le_bytes());
+            assert_eq!(
+                parse_netlink_packet(&packet, NetlinkDump::Link, 1, &mut callback),
+                expected
+            );
+        }
+        packet[NLMSG_HEADER_LEN..].fill(0);
+        for length in NLMSG_HEADER_LEN..NLMSG_HEADER_LEN + 4 {
+            write_u32(&mut packet, 0, length as u32);
+            let aligned = align4(length).unwrap();
+            assert_eq!(
+                parse_netlink_packet(&packet[..aligned], NetlinkDump::Link, 1, &mut callback),
+                Err(crate::Errno::BADMSG)
+            );
+        }
+        assert!(!called);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn link_name_dump_rejects_interruption_before_delivering_records() {
+        let mut packet = [0u8; NLMSG_HEADER_LEN + 4];
+        write_u32(&mut packet, 0, (NLMSG_HEADER_LEN + 4) as u32);
+        write_u16(&mut packet, 4, super::NLMSG_DONE);
+        write_u32(&mut packet, 8, 1);
+        write_u16(&mut packet, 6, 0x10);
+        let mut called = false;
+        let mut callback = |_| { called = true; Ok(()) };
+        assert_eq!(
+            parse_netlink_packet(&packet, NetlinkDump::Link, 1, &mut callback),
+            Err(crate::Errno::INTR)
+        );
+        let mut packet = [0u8; 40];
+        write_u32(&mut packet, 0, 39);
+        write_u16(&mut packet, 4, RTM_NEWLINK);
+        write_u16(&mut packet, 6, 0x10);
+        write_u32(&mut packet, 8, 1);
+        write_u32(&mut packet, 20, 1);
+        write_u16(&mut packet, 32, 7);
+        write_u16(&mut packet, 34, IFLA_IFNAME);
+        packet[36..39].copy_from_slice(b"lo\0");
+        assert_eq!(
+            parse_netlink_packet(&packet, NetlinkDump::Link, 1, &mut callback),
+            Err(crate::Errno::INTR)
+        );
+        assert!(!called);
     }
 
     #[test]
