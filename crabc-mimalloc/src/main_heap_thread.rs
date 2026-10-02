@@ -435,6 +435,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 MetaAllocator::global(),
                 config,
                 TheapPageMode::OrdinaryAbandoning,
+                None,
             )
         }
     }
@@ -454,9 +455,12 @@ impl<'main> MainHeapThreadAttachment<'main> {
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
         // SAFETY: the caller supplies the same source attachment inputs and
         // exact retained process identity required by this boundary.
-        let mut attachment = unsafe { Self::begin(main_heap, config) }?;
-        attachment.generic_collect_policy = Some(process.policy());
-        Ok(attachment)
+        // Select the policy in the shared constructor so the complete owner
+        // is returned once, without a second stack-resident attachment copy.
+        unsafe { Self::begin_with_metadata(
+            main_heap, MetaAllocator::global(), config,
+            TheapPageMode::OrdinaryAbandoning, Some(process.policy()),
+        ) }
     }
 
     /// Builds the same owner over an explicit process-lived metadata fixture.
@@ -545,7 +549,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
             })?;
         // SAFETY: test callers carry the same root/current-thread ownership
         // proof and retain the leaked metadata fixture for the full lifetime.
-        unsafe { Self::begin_with_metadata(main_heap, metadata, config, page_mode) }
+        unsafe { Self::begin_with_metadata(main_heap, metadata, config, page_mode, None) }
     }
 
     unsafe fn begin_with_metadata(
@@ -553,12 +557,13 @@ impl<'main> MainHeapThreadAttachment<'main> {
         metadata: core::pin::Pin<&'static MetaAllocator>,
         config: MemoryConfig,
         page_mode: TheapPageMode,
+        generic_collect_policy: Option<&'static crate::os::VmPolicy>,
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
-        let thread = current_thread_identity().ok_or(
-            MainHeapThreadAttachmentBeginError::Rejected(
+        let Some(thread) = current_thread_identity() else {
+            return Err(MainHeapThreadAttachmentBeginError::Rejected(
                 MainHeapThreadAttachmentError::InvalidCurrentThread,
-            ),
-        )?;
+            ));
+        };
         if !roots_are_pristine_for_later_main_attachment() {
             return Err(MainHeapThreadAttachmentBeginError::Rejected(
                 MainHeapThreadAttachmentError::RootsNotPristine,
@@ -579,12 +584,29 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 ));
             }
         };
+        Self::begin_with_thread_local_data(
+            main_heap, metadata, config, page_mode, generic_collect_policy, thread, tld,
+        )
+    }
+
+    /// Publishes the Theap after the TLD allocation has returned. Its owner
+    /// and failure-result temporaries must not reserve worker stack space
+    /// while the first TLD request initializes process metadata backing.
+    fn begin_with_thread_local_data(
+        main_heap: MainStaticHeapLease<'main>,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+        page_mode: TheapPageMode,
+        generic_collect_policy: Option<&'static crate::os::VmPolicy>,
+        thread: LiveThreadId,
+        tld: DynamicAttachedThreadLocalData,
+    ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
         let mut attachment = Self {
             main_heap,
             metadata,
             config,
             page_mode,
-            generic_collect_policy: None,
+            generic_collect_policy,
             tld: Some(tld),
             theap: None,
             thread,

@@ -10255,26 +10255,16 @@ fn install_native_attachment_only_owner(
     owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
     attachment: MainHeapThreadAttachment<'static>,
 ) -> Result<(), MainHeapThreadAttachment<'static>> {
-    let owner = NativePersistentThreadOwner {
-        attachment,
+    let mut attachment = Some(attachment);
+    let installed = owner_cell.install_with(|| NativePersistentThreadOwner {
+        attachment: attachment.take().expect("accepted owner construction consumes its attachment once"),
         state: NativePersistentThreadOwnerExitState::AttachmentOnly,
         #[cfg(target_arch = "x86_64")]
         generic_frequency_captures: 0,
-    };
-    match owner_cell.initialize(owner, |_| {
-        Ok::<(), Infallible>(())
-    }) {
+    });
+    match installed {
         Ok(()) => Ok(()),
-        Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
-        Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
-            let NativePersistentThreadOwner { attachment, state, .. } = owner;
-            debug_assert!(matches!(
-                state,
-                NativePersistentThreadOwnerExitState::AttachmentOnly
-            ));
-            drop(state);
-            Err(attachment)
-        }
+        Err(_) => Err(attachment.expect("refused owner construction preserves its attachment")),
     }
 }
 

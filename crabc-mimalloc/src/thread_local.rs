@@ -703,6 +703,42 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         }
     }
 
+    /// Constructs an owner only after this pinned cell accepts installation.
+    ///
+    /// Refusal never calls `create`, so the caller retains any source owner
+    /// that closure would consume. Returning only the scalar refusal avoids
+    /// carrying a complete owner through a stack-resident error payload.
+    /// Recursive entry during construction sees `Initializing`. If `create`
+    /// unwinds, no payload was written and the cell becomes vacant again;
+    /// after construction, the complete typed payload is written once and
+    /// stays pinned until its ordinary teardown. The constructor must not
+    /// publish this payload's address before returning it.
+    pub(crate) fn install_with(
+        self: Pin<&Self>,
+        create: impl FnOnce() -> T,
+    ) -> Result<(), PersistentCompilerTlsOwnerError> {
+        let cell = self.get_ref();
+        if cell.state.get() != PersistentCompilerTlsOwnerState::Vacant {
+            return Err(cell.state_error_for_initialization());
+        }
+        let Some(thread) = current_thread_identity() else {
+            return Err(PersistentCompilerTlsOwnerError::InvalidCurrentThread);
+        };
+        cell.thread.set(Some(thread));
+        cell.state.set(PersistentCompilerTlsOwnerState::Initializing);
+        let mut transition = PersistentCompilerTlsOwnerTransition::new(
+            cell, PersistentCompilerTlsOwnerState::Vacant,
+        );
+        let owner = create();
+        // SAFETY: no payload exists in the accepted vacant cell. The typed
+        // constructor completed every field before this single write, and
+        // Initializing excludes recursive access to the destination.
+        unsafe { (&mut *cell.owner.get()).write(owner) };
+        cell.state.set(PersistentCompilerTlsOwnerState::Active);
+        transition.disarm();
+        Ok(())
+    }
+
     /// Runs one direct local operation through the same in-place owner.
     ///
     /// The closure is synchronous. On normal return, the temporary exclusive
@@ -2589,6 +2625,48 @@ mod tests {
         })
         .join()
         .expect("the persistent compiler-TLS owner test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_constructor_refusal_preserves_source_input() {
+        thread::spawn(|| {
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
+            let cell = cell.as_ref();
+            let mut source = Some(42usize);
+            assert_eq!(cell.install_with(|| {
+                assert_eq!(cell.with_owner(|_| ()),
+                    Err(PersistentCompilerTlsOwnerError::Initializing));
+                source.take().unwrap()
+            }), Ok(()));
+            assert_eq!(source, None);
+            let mut refused_source = Some(17usize);
+            assert_eq!(cell.install_with(|| refused_source.take().unwrap()),
+                Err(PersistentCompilerTlsOwnerError::AlreadyActive));
+            assert_eq!(refused_source, Some(17));
+            assert_eq!(cell.with_owner(|owner| *owner.as_ref().get_ref()), Ok(42));
+            assert_eq!(cell.teardown(|owner| {
+                assert_eq!(*owner.as_ref().get_ref(), 42);
+                Ok::<(), ()>(())
+            }), Ok(()));
+        }).join().unwrap();
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_constructor_unwind_leaves_no_payload() {
+        thread::spawn(|| {
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::<usize>::new());
+            let cell = cell.as_ref();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = cell.install_with(|| panic!("constructor failed before returning a payload"));
+            }));
+            assert!(result.is_err());
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Vacant);
+            assert_eq!(cell.install_with(|| 42), Ok(()));
+            assert_eq!(cell.teardown(|owner| {
+                assert_eq!(*owner.as_ref().get_ref(), 42);
+                Ok::<(), ()>(())
+            }), Ok(()));
+        }).join().unwrap();
     }
 
     #[test]

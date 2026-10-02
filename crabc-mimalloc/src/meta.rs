@@ -6936,31 +6936,72 @@ impl<'owner> MetadataEngine<'owner> {
         // arena/OS selector, not a private map and a fixed-capacity arena.
         if let Some(backing) = unsafe { *this.process_backing.get() } {
             if unsafe { (*this.canonical_heap.get()).is_some() } {
-                // No whole-bootstrap reference is formed after source list
-                // publication. The session owns only metadata-local fields.
-                let pointer = unsafe { NonNull::new_unchecked(this.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
-                let session = unsafe { ExclusiveTheapBootstrap::begin_canonical_metadata_session_at(pointer) }
-                    .map_err(|_| {
-                        this.status.store(FAILED, Ordering::Release);
-                        MetaError::InitializationRetained
-                    })?;
-                let allocator = unsafe { CanonicalProcessMetadataPageAllocator::activate_canonical_process_metadata(
-                    session, backing.binding.process(), backing.page_map) };
-                unsafe { (*this.allocator.get()).write(MetadataPageAllocator::CanonicalProcess(allocator)); }
-                this.status.store(READY, Ordering::Release);
-                return Ok(());
+                return self.initialize_canonical_process_backing(backing);
             }
-            let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
-            let allocator = unsafe { ProcessMetadataPageAllocator::activate_process_metadata(
-                bootstrap, backing.binding.process(), backing.page_map) }
-                .map_err(|_| {
-                    this.status.store(FAILED, Ordering::Release);
-                    MetaError::InitializationRetained
-                })?;
-            unsafe { (*this.allocator.get()).write(MetadataPageAllocator::Process(allocator)) };
-            this.status.store(READY, Ordering::Release);
-            return Ok(());
+            return self.initialize_process_backing(backing);
         }
+        self.initialize_legacy_backing(entry, config, subprocess)
+    }
+
+    /// Activates the explicit process-backed session without reserving its
+    /// allocator temporaries in the canonical session's dispatch frame.
+    fn initialize_process_backing(
+        self: Pin<&'owner Self>,
+        backing: MetadataProcessBacking,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
+        let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
+        let allocator = unsafe { ProcessMetadataPageAllocator::activate_process_metadata(
+            bootstrap, backing.binding.process(), backing.page_map) }
+            .map_err(|_| {
+                this.status.store(FAILED, Ordering::Release);
+                MetaError::InitializationRetained
+            })?;
+        // SAFETY: the metadata entry excludes all other projections; BOUND
+        // leaves this final slot uninitialized until the complete allocator
+        // is written. READY publishes it only after this write.
+        unsafe { this.allocator.get().cast::<MetadataPageAllocator>().write(MetadataPageAllocator::Process(allocator)) };
+        this.status.store(READY, Ordering::Release);
+        Ok(())
+    }
+
+    /// Activates the canonical process metadata session separately from
+    /// legacy allocator variants so their unused aggregate temporaries do
+    /// not consume the selected worker's stack.
+    fn initialize_canonical_process_backing(
+        self: Pin<&'owner Self>,
+        backing: MetadataProcessBacking,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
+        // No whole-bootstrap reference is formed after source list
+        // publication. The session owns only metadata-local fields.
+        let pointer = unsafe { NonNull::new_unchecked(this.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
+        let session = unsafe { ExclusiveTheapBootstrap::begin_canonical_metadata_session_at(pointer) }
+            .map_err(|_| {
+                this.status.store(FAILED, Ordering::Release);
+                MetaError::InitializationRetained
+            })?;
+        let allocator = unsafe { CanonicalProcessMetadataPageAllocator::activate_canonical_process_metadata(
+            session, backing.binding.process(), backing.page_map) };
+        // SAFETY: the metadata entry retains the canonical session and the
+        // final uninitialized allocator slot. Write the complete typed value
+        // directly, before READY allows any allocator projection.
+        unsafe { this.allocator.get().cast::<MetadataPageAllocator>().write(MetadataPageAllocator::CanonicalProcess(allocator)); }
+        this.status.store(READY, Ordering::Release);
+        Ok(())
+    }
+
+    /// Builds the private explicit-config backing only when no process
+    /// backing was selected. Keeping its mapping and arena temporaries out
+    /// of the process-backed activation frame bounds worker bootstrap stack
+    /// use even when debug codegen reserves every branch's local storage.
+    fn initialize_legacy_backing(
+        self: Pin<&'owner Self>,
+        entry: &mut MetaEntry<'_, 'owner>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+    ) -> Result<(), MetaError> {
+        let this = self.get_ref();
         let page_map = match PageMap::initialize(config, MAX_VABITS, false) {
             Ok(page_map) => page_map,
             Err(PageMapInitializationError::Failed { .. }) => {
@@ -7064,7 +7105,7 @@ impl<'owner> MetadataEngine<'owner> {
         };
         // SAFETY: every reference captured by `allocator` names one prior
         // final static slot. No operation can observe it before READY.
-        unsafe { (*this.allocator.get()).write(MetadataPageAllocator::LegacySelectedArena(allocator)) };
+        unsafe { this.allocator.get().cast::<MetadataPageAllocator>().write(MetadataPageAllocator::LegacySelectedArena(allocator)) };
         this.status.store(READY, Ordering::Release);
         let _ = entry;
         Ok(())
