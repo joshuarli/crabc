@@ -902,7 +902,7 @@ fn same_arena_memory(left: MemoryId, right: MemoryId) -> bool {
 /// A process-owned continuation outcome for one remote free that won the
 /// source abandoned-page low bit after its former owner exited.
 ///
-/// This preserves remote-free terminal wrapper's linear capability boundary.  In particular, a
+/// This preserves the remote-free claim's linear capability boundary.  In particular, a
 /// retained regular result contains the original
 /// [`remote_free::ClaimedAbandonedRemoteFree`], while a retained singleton
 /// result contains the terminal wrapper that owns that same claim.  The OS
@@ -926,7 +926,7 @@ enum ProcessPostOwnerExitRemoteClaimResult {
         mutation: Option<ProcessPageMapMutationLease>,
     },
     Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult),
-    /// The singleton terminal callback retained remote-free terminal wrapper's exact wrapper. As with
+    /// The singleton terminal callback retained the exact terminal wrapper. As with
     /// the regular form, the optional mutation lease begins only at the
     /// source PageMap/list terminal tail.
     SingletonTerminalRetained {
@@ -935,7 +935,7 @@ enum ProcessPostOwnerExitRemoteClaimResult {
     },
     Singleton(abandoned::ClaimedPostOwnerExitSingletonFreeResult),
     /// The OS or external terminal tail crossed an irreversible source
-    /// boundary. The returned owner carries the remote-free terminal wrapper wrapper plus the exact
+    /// boundary. The returned owner carries the terminal wrapper plus the exact
     /// non-arena backing facts and last completed stage.
     SingletonNonArenaTerminalRetained {
         owner: ProcessPostOwnerExitNonArenaTerminalOwner,
@@ -1003,7 +1003,7 @@ impl<R> ProcessPostOwnerExitNonArenaTerminalOwner<R> {
     const fn stage(&self) -> ProcessPostOwnerExitNonArenaTerminalStage { self.stage }
 }
 
-/// Exact non-arena terminal backing retained with one opaque remote-free terminal wrapper wrapper.
+/// Exact non-arena terminal backing retained with one opaque terminal wrapper.
 ///
 /// This is private so the public terminal owner cannot be disassembled into a
 /// mapping release before its PageMap/alias/primary metadata predecessors are
@@ -1027,7 +1027,7 @@ struct ExternalPostOwnerExitTerminalFacts {
     page_map_size: usize,
 }
 
-/// One pre-terminal failure while continuing an exact remote-free terminal wrapper remote-free claim.
+/// One pre-terminal failure while continuing an exact remote-free claim.
 ///
 /// The claim is deliberately private until [`Self::into_parts`] consumes this
 /// error.  No failure branch exposes a raw `(Page, canonical_block)` pair.
@@ -1076,7 +1076,7 @@ pub(crate) enum ProcessPostOwnerExitPointerFreeDisposition {
 
 /// A source publication refusal before it changed an unowned remote head.
 ///
-/// The caller's allocation remains PageMap-owned and no remote-free terminal wrapper claim exists.
+/// The caller's allocation remains PageMap-owned and no remote-free claim exists.
 /// This is deliberately a scalar error: the caller may obtain a fresh typed
 /// PageMap observation if its enclosing dispatch contract permits it, but it
 /// cannot retain or reconstruct a raw page/block or post-exit owner here.
@@ -1121,13 +1121,13 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
 /// One exact terminal source owner sealed after an irreversible process post-exit terminal route tail.
 ///
 /// This is private on purpose.  It is the one process-lifetime destination
-/// for remote-free terminal wrapper's non-copy claim, singleton release wrapper, or post-list mapping
+/// for the non-copy remote-free claim, singleton release wrapper, or post-list mapping
 /// owner.  It has no accessor, retry, lookup, or drop surface: the generic
 /// one-way owner-exit transition leaves exactly one fail-closed owner; a
 /// replacement post-exit route could reopen a partially completed map tail.
 #[must_use = "a terminal W03 source owner must be sealed, never reconstructed"]
 enum ProcessPostOwnerExitTerminalRetained {
-    /// A claim path retained its remote-free terminal wrapper/source owner and, only when unregister
+    /// A claim path retained its remote-free source owner and, only when unregister
     /// may have made partial progress, its exclusive PageMap mutation lease.
     /// The latter prevents an unfinished map tail from being reopened by a
     /// copyable process-pair observer. There is no process-global slot: every
@@ -1166,7 +1166,7 @@ impl ProcessPostOwnerExitTerminalRetained {
 /// Test-only category of an opaque per-claim terminal retention event.
 ///
 /// This deliberately reports only the retained transition class. It never
-/// exposes the remote-free terminal wrapper claim, release wrapper, PageMap lease, page address,
+/// exposes the remote-free claim, release wrapper, PageMap lease, page address,
 /// block, mapping, or a way to take an owner back out of process post-exit terminal route.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1490,7 +1490,7 @@ enum ProcessPostOwnerExitRemoteClaimError {
     /// main Heap.  This is an identity failure, never a request to find a
     /// different owner or route.
     MainHeapSubprocessMismatch,
-    /// remote-free terminal wrapper's source continuation stopped while retaining the exact claim.
+    /// The source continuation stopped while retaining the exact claim.
     Continuation(AbandonError),
 }
 
@@ -1504,11 +1504,11 @@ enum ProcessPostOwnerExitRemoteClaimError {
 /// moves its exact claim directly here only after that CAS wins the abandoned
 /// low bit, and seals every retained outcome. It accepts no former owner, TLS state, registry, route,
 /// ledger, bare PageMap, or reconstructed page/block pair. The regular branch
-/// feeds remote-free terminal wrapper's `continue_post_owner_exit_remote_claim`; the singleton branch
-/// feeds remote-free terminal wrapper's `continue_post_owner_exit_singleton_remote_claim`. Both
+/// feeds `continue_post_owner_exit_remote_claim`; the singleton branch
+/// feeds `continue_post_owner_exit_singleton_remote_claim`. Both
 /// callbacks perform the actual source PageMap/arena/OS terminal transitions.
 ///
-/// The owner-exit coordinator owner-exit coordinator force-collects then false-collects the
+/// The owner-exit coordinator force-collects then false-collects the
 /// departing Theap before it publishes an abandoned identity. A pointer may
 /// also arrive from a different valid abandoned source state, so the remote-free terminal wrapper
 /// continuation repeats its narrow post-CAS false-force local-list phase
@@ -1518,7 +1518,7 @@ enum ProcessPostOwnerExitRemoteClaimError {
 ///
 /// # Safety
 ///
-/// `claim` must come directly from the current free's remote-free terminal wrapper claimed-publication
+/// `claim` must come directly from the current free's remote-free claimed-publication
 /// result. `process` and `main_heap` must be copied leases for that same live
 /// process image. The outer scalar composition seals every retained result or
 /// error in its private process-lifetime terminal retention mechanism before
@@ -1529,7 +1529,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     main_heap: MainStaticHeapLease<'static>,
     reclaim_on_free: impl FnOnce(ProcessReclaimOnFreeCandidate<'_>) -> abandoned::ReclaimOnFreeOutcome,
 ) -> Result<ProcessPostOwnerExitRemoteClaimResult, ProcessPostOwnerExitRemoteClaimFailure> {
-    // The exact remote-free terminal wrapper claim proves this page's range and lifetime. A PageMap
+    // The exact remote-free claim proves this page's range and lifetime. A PageMap
     // mutation lease is intentionally *not* acquired here: reabandon,
     // `StillLive`, and owner-transfer results do not touch plain PageMap
     // entries. Each terminal callback stages the lease immediately before its
@@ -1560,7 +1560,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     }
 
     // SAFETY: the claim owns the source low bit. This scalar decides only
-    // which remote-free terminal wrapper continuation consumes it; each continuation revalidates the
+    // which remote-free continuation consumes it; each continuation revalidates the
     // full abandoned identity and geometry before touching mutable state.
     let singleton = unsafe { Page::abandonment_state_at(claim.page()) }.reserved == 1;
     if !singleton {
@@ -1670,7 +1670,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                             }
                         }
                     }
-                    // SAFETY: this exact remote-free terminal wrapper claim serialized every plain
+                    // SAFETY: this exact remote-free claim serialized every plain
                     // operation on `page`; terminal release removed its range
                     // before metadata/slice release, while nonterminal paths
                     // never acquired this scoped lease.
@@ -1725,7 +1725,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     let mut failed_non_arena_release = None;
     let mut retained_mutation = None;
     let mut mutation_lease_release_failed = false;
-    // SAFETY: as above, the remote-free terminal wrapper claim is consumed exactly once. The terminal
+    // SAFETY: as above, the remote-free claim is consumed exactly once. The terminal
     // callback receives the same linear owner and may wait for the process post-exit terminal route-only
     // PageMap lease only immediately before its arena unregister or non-arena
     // OS-list tail; normal lifecycle admission remains nonblocking.
@@ -1760,7 +1760,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                         ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap => {
                             // No PageMap entry is known changed. A lock wake
                             // failure still poisons the short boundary, while
-                            // the exact remote-free terminal wrapper wrapper remains the retained
+                            // the exact terminal wrapper remains the retained
                             // terminal owner returned below.
                             let _ = mutation.finish_after_exact_post_owner_exit_operation();
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
@@ -1770,7 +1770,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                         ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation => {
                             // `unregister_range` may have partially changed
                             // plain entries, so keep this exact lease with the
-                            // remote-free terminal wrapper wrapper rather than reopening that range.
+                            // terminal wrapper rather than reopening that range.
                             retained_mutation = Some(mutation);
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
                                 release,
@@ -1779,7 +1779,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                         ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease => {
                             // The PageMap tail is complete; an arena-bit,
                             // metadata, or slice-release failure retains the
-                            // exact remote-free terminal wrapper wrapper without retaining a short map
+                            // exact terminal wrapper without retaining a short map
                             // lock that no later source step may use.
                             let _ = mutation.finish_after_exact_post_owner_exit_operation();
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
@@ -1810,7 +1810,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                             } else {
                                 // A failed `unregister_range` may have
                                 // changed a leading sub-range. Keep the exact
-                                // mutation lease with its remote-free terminal wrapper wrapper.
+                                // mutation lease with its terminal wrapper.
                                 retained_mutation = Some(mutation);
                             }
                             return abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(
@@ -2473,7 +2473,7 @@ unsafe fn publish_static_main_reabandoned_page(
 ///
 /// This is the sole process post-exit terminal route pointer-facing owner-exit continuation. Every normal
 /// state-qualified `allow_collect=true` source CAS runs first and remains
-/// page-local. Only a CAS that returns remote-free terminal wrapper's exact claim enters the process post-exit terminal route
+/// page-local. Only a CAS that returns the remote-free claim's exact claim enters the process post-exit terminal route
 /// post-CAS tail; that tail takes the scoped PageMap mutation lease only when
 /// it reaches a source map mutation. A retained tail publishes an
 /// exception-only scalar marker and seals its exact claim (and acquired map
@@ -2663,7 +2663,7 @@ unsafe fn continue_post_owner_exit_claimed_remote_free(
 }
 
 /// Forms the static-main mapped-abandoned bitmap/count capability only after
-/// remote-free terminal wrapper's exact claim lets the source tail read the page's arena provenance.
+/// the remote-free claim's exact claim lets the source tail read the page's arena provenance.
 fn select_process_main_mapped_abandoned_page(
     arena: &ArenaView<'static>,
     main_heap: MainStaticHeapLease<'static>,
@@ -2706,7 +2706,7 @@ fn select_process_main_mapped_abandoned_page(
 /// Stage-aware outcome of one arena terminal tail.
 ///
 /// An `unregister_range` failure may have changed a leading sub-range, so its
-/// mutation lease remains sealed with remote-free terminal wrapper's linear owner. Once unregister
+/// mutation lease remains sealed with the remote-free claim's linear owner. Once unregister
 /// succeeds, however, the PageMap transition is complete even if the later
 /// arena bit, metadata, or slice release fails. The latter terminal owner can
 /// release the short PageMap lease and remain mechanically auditable without
@@ -2720,7 +2720,7 @@ enum ClaimedProcessArenaTerminalRelease {
 }
 
 /// Completes `_mi_arenas_page_free` for one all-free claimed regular arena
-/// page after remote-free terminal wrapper has already discharged any mapped-abandoned identity.
+/// page after the remote-free claim has already discharged any mapped-abandoned identity.
 ///
 /// Source terminal order remains PageMap unregister -> ordinary arena bit
 /// clear -> metadata retirement -> exact slice release. The claim keeps the
@@ -2881,7 +2881,7 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear_and_sta
 }
 
 /// Completes the arena singleton `_mi_arenas_page_unabandon` then
-/// `_mi_arenas_page_free` tail for remote-free terminal wrapper's terminal singleton owner.
+/// `_mi_arenas_page_free` tail for the remote-free claim's terminal singleton owner.
 unsafe fn release_claimed_process_arena_singleton_page(
     page_map: &PageMap,
     backing: &impl PageBacking<'static>,
@@ -3020,11 +3020,11 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_s
     }
 }
 
-/// Terminal disposition after remote-free terminal wrapper passes its exact singleton release wrapper
+/// Terminal disposition after the remote-free claim supplies its exact singleton release wrapper
 /// to this lower process-owned non-arena seam.
 enum ClaimedProcessNonArenaPageRelease {
     Released,
-    /// No source list mutation completed, so remote-free terminal wrapper can retain its ordinary
+    /// No source list mutation completed, so the remote-free claim can retain its ordinary
     /// release wrapper and retry only from the unabandon boundary.
     RetainedBeforeList,
     /// The static Heap list mutation did complete. The opaque payload keeps
@@ -3033,7 +3033,7 @@ enum ClaimedProcessNonArenaPageRelease {
     RetainedAfterList(RetainedProcessNonArenaPage),
 }
 
-/// Private handoff from the terminal callback to its remote-free terminal wrapper wrapper result.
+/// Private handoff from the terminal callback to its terminal wrapper result.
 struct RetainedProcessNonArenaPage {
     backing: ProcessPostOwnerExitNonArenaTerminalBacking,
     stage: ProcessPostOwnerExitNonArenaTerminalStage,
@@ -3078,7 +3078,7 @@ unsafe fn non_arena_page_liveness_matches(
     expected_memory: MemoryId,
     regular: bool,
 ) -> bool {
-    // SAFETY: the remote-free terminal wrapper release wrapper retains this exact claimed page through
+    // SAFETY: the terminal release wrapper retains this exact claimed page through
     // the preflight. It grants observation only; no former Theap is read.
     let page_ref = unsafe { page.as_ref() };
     same_non_arena_memory(page_ref.memid(), expected_memory)
@@ -3119,7 +3119,7 @@ unsafe fn external_singleton_terminal_facts(
     let memory = expected_memory.os_memory()?;
     let page_map_start = NonNull::new(memory.base)?;
     let page_ref = unsafe { page.as_ref() };
-    // SAFETY: the validated singleton metadata and remote-free terminal wrapper release wrapper keep
+    // SAFETY: the validated singleton metadata and terminal release wrapper keep
     // this one source page area live through the terminal calculation.
     let page_start = unsafe { page_ref.start() };
     let page_start_offset = page_start.addr().checked_sub(page_map_start.as_ptr().addr())?;
@@ -3140,7 +3140,7 @@ unsafe fn external_singleton_terminal_facts(
     }
     for offset in (0..page_map_size).step_by(ARENA_SLICE_SIZE) {
         let address = page_map_start.as_ptr().addr().checked_add(offset)?;
-        // SAFETY: the exact remote-free terminal wrapper release wrapper serializes the retained
+        // SAFETY: the exact terminal release wrapper serializes the retained
         // external PageMap span before its source unregistration.
         if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
             return None;
@@ -3171,7 +3171,7 @@ unsafe fn preflight_non_arena_page(
         // `OsAlignedPageClaim` ownership image. Both therefore retain the remote-free terminal wrapper
         // terminal wrapper rather than treating a normal `munmap` as theirs.
         MemoryKind::Os => {
-            // SAFETY: the remote-free terminal wrapper terminal wrapper retains the page and exact
+            // SAFETY: the terminal wrapper retains the page and exact
             // source low bit while this validates the one published mapping.
             let published = unsafe {
                 if let Some(process) = process {
@@ -45229,7 +45229,7 @@ where
     /// lookup users are quiescent and unregister that range before release or
     /// reuse. Other owners may operate only on disjoint ranges. The initial
     /// persistent native owner uses this after its one-time arena/setup
-    /// transition so an unrelated process post-exit terminal route terminal release can take its own short
+    /// transition so an unrelated process post-exit terminal release can take its own short
     /// exact mutation boundary.
     ///
     /// # Safety
@@ -46051,7 +46051,7 @@ mod tests {
     /// pointer-continuation regressions.
     ///
     /// The fixture intentionally leaves the static process image retained at
-    /// thread exit. A process post-exit terminal route terminal regression may consume a source page and
+    /// thread exit. A process post-exit terminal regression may consume a source page and
     /// mapping independently, but it must never pretend that this permanent
     /// ticket-zero session can return to ordinary attachment teardown.
     fn with_w03_process_page_fixture(
@@ -46713,7 +46713,7 @@ mod tests {
             );
 
             let marker = ProcessPostOwnerExitTerminalMarker::new();
-            // SAFETY: this stale live pointer uses remote-free terminal wrapper's exact claim. The
+            // SAFETY: this stale live pointer uses the remote-free claim's exact claim. The
             // external backing remains owned by the test until the source
             // list/PageMap/metadata tail completes below.
             assert_eq!(
@@ -47018,7 +47018,7 @@ mod tests {
                 "each exceptional source claim seals its own opaque terminal owner"
             );
             // SAFETY: the successful source CAS leaves its low-bit owner with
-            // process post-exit terminal route's terminal type. The map/list must remain untouched because
+            // the terminal owner type. The map/list must remain untouched because
             // the marker was observed only after that CAS, before the lower
             // mutation callback.
             let producer = unsafe { Page::remote_free_producer_state_at(page) };
