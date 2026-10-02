@@ -33,80 +33,45 @@ paused AArch64 behavior. A real behavior failure remains a bug.
 
 Update this small section in place when the implementation frontier changes.
 
-- **Feature status:** the selected surface is implemented. Current-source
-  qualification preparation found an unresolved native-shadow opt0 worker
-  attachment failure on a legal 16-KiB pthread stack; accepted-C products and
-  larger native worker stacks pass. Constructor admission, metadata activation
-  and aggregate-copy reductions are integrated and pass focused unit/compiler
-  checks, but do not establish that this failure is repaired. The ordinary
-  opt0 native public-Theap consumer also terminates during its child-subprocess
-  phase; its compiler/link closure is repaired and the actual failure retained.
-  Correctness comes
-  before performance, release qualification, allocator-default and public-support
-  transitions. C remains selected; public x86 support remains disabled.
-- **Integration:** every open lane's coherent source changes are integrated on
-  `main`, including the reviewed initializer and diagnostic fixes. The redundant
-  lifecycle case catalog was discarded under the user's simpler-process direction.
-  Completed and interrupted lane worktrees are retired; their source branches
-  remain in Git. No running
-  lane or uncommitted source is left from this milestone. New work uses fresh
-  trees under `.work/worktrees/`.
-- **Cleanup:** the expanded milestone cleanup removed obsolete allocator build
-  roots and historical report snapshots, then retired 20 settled worktrees and
-  removed 18 redundant intermediate build directories. Free disk is about
-  1.1 TiB. The subsequent 12 preparation worktrees are also retired.
-  Retain source history, exact reusable input archives and compact
-  regression programs/raw evidence in the existing ignored report locations.
-  Deliberately deleted reports are not retained qualification. Other projects'
-  Docker containers and volumes remain outside this cleanup.
-- **Runtime accounting:** the immutable baseline still has 223 capabilities and
-  26 families. Full qualification is reactivated: eight ordered gates are ready,
-  zero are qualified. Structural validation does not certify runtime behavior,
-  release products, allocator promotion or public support.
-- **Merged readiness:** resumable candidate execution binds invocation, inputs
-  and product bytes; supplied Lua consumption binds the current release cohort
-  and backend. Installed pthread compiler provenance, nested C++ header linkage,
-  static-PIE LTO roots, clean dynamic text environments, POSIX interruption cleanup,
-  resolver cancellation network observations, and legal loader graph entries are
-  repaired. Current resolver/netdb, pthread, locale, syscall, utmpx and allocator
-  visibility tool authorities authenticate the restored image. Resolver and C
-  performance launches execute the inspected immutable ID; the C reader rejects
-  extra unsealed compiler inputs. Frozen ABI/header/coverage digests are unchanged.
-- **Allocator readiness:** M4 has isolated opt0 valid-client source-core builds;
-  M5 names all positive Loom outcomes and keeps controls separate; M6 rereads
-  original C ownership witnesses after relocation; M7 parses and replays the
-  three source configuration probes. Native source closure now selects the
-  actual feature graph and admits the already-reviewed pinned rand dependencies.
-  Secure/guarded option printing now matches pinned C, including encoded-list
-  keys and the selected guarded state. The private diagnostic context maps retained
-  page-validity failures and again compiles/runs in its ordinary/debug profiles.
-  These focused results do not close full milestone or physical requirements.
-- **Retained evidence:** main-checkout read-only replay passes the original Lua,
-  text, pthread/ABI six-entry consumers and loader TLS programs. M4 original
-  programs, M5 named-outcome reader, M6 ownership reader and three M7 configuration
-  profiles retain their actual checks. Compact programs, failures, source pins
-  and raw results survive independently of retired worktrees.
-- **Tools and inputs:** authenticated native core image `a635e97c4bb5` and
-  standalone allocator image `3d5e3a88e4f5` are restored. The core image has the
-  pinned nightly, musl 1.2.6 and 935 Linux UAPI headers; linked-worktree checks
-  mount read-only Git metadata while keeping the worktree's own index. All 59
-  exact package archives and their signed index authenticate. Pinned std/provider
-  vendors, Lua archive, Rustybench/Rustix offline inputs and both source-oracle
-  checkouts are restored. Historical image-qualified claims are not transferred.
-  Development image `5b43da01b755` and Miri image `40a5aff94eab` remain available
-  for their original focused scopes.
-- **Qualification frontier:** fix the remaining actual allocator/bootstrap and
-  child-subprocess failures before performance on an uncontended host and final
-  merged-source release qualification. Architecture throughput now uses the
-  existing qualified perf-engine measurements; metadata/route observations remain
-  unavailable and do not become passes through claims in a report. Keep preparation
-  minimal and use existing source runners/results rather than new case catalogs.
-  Full M10, the default switch with post-switch reruns and public promotion remain
-  open. No qualifying timing or full release-family pass is claimed.
-- **Physical environment:** the host lacks two allowed NUMA nodes and free 1-GiB
-  pages required by physical qualification. Preserve this open release prerequisite.
-  Do not repeat unchanged denied `mbind`, change shared pools/security policy,
-  rent resources or reboot without authorization.
+- **Feature status:** the selected surface is implemented. Two native opt0
+  failures remain open: worker attachment on a legal 16-KiB pthread stack and
+  the public-Theap consumer's child-subprocess phase. Accepted-C products and
+  larger native worker stacks pass. Constructor and aggregate-copy improvements
+  pass focused checks; they do not establish that either failure is repaired.
+- **Core fixes:** secure/guarded output matches pinned C; the private context
+  maps retained page-validity errors and counts a consumed free even when cleanup
+  fails. The bounded queue retry reuses its frame. Child images initialize directly
+  in final storage with the original cold state. Focused tests/compiler checks
+  establish these changes, not repair of the two open runtime failures. Debug
+  public-Theap compiler/link closure is repaired; its actual runtime failure remains.
+- **Integration and cleanup:** all prior lanes' coherent changes are on `main`;
+  the duplicate lifecycle case catalog was discarded. Their worktrees are retired
+  and source branches remain in Git. The three subsequent core lanes are also
+  integrated and retired; no lane remains active. New trees belong under `.work/worktrees/`.
+  Cleanup recovered about 1.1 TiB of free disk. Keep exact reusable inputs and
+  compact regression programs/raw evidence; deleted reports are not qualification.
+  Other projects' Docker state remains outside this cleanup.
+- **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
+  Eight ordered gates are ready, zero qualified. Structural validation certifies
+  no runtime or release behavior. C remains selected and public x86 support disabled.
+  Correctness precedes performance, release, the default switch and public promotion.
+- **Inputs and tooling:** authenticated core image `a635e97c4bb5` and allocator
+  image `3d5e3a88e4f5` are restored, alongside pinned source oracles, package
+  archives, std/provider vendors and Lua/Rustybench/Rustix inputs. Current tool
+  authorities authenticate these inputs; resolver and C performance launches use
+  the inspected immutable image ID. Frozen ABI/header/coverage digests are unchanged.
+- **Evidence:** existing ignored report locations retain original programs, source
+  pins, raw failures and focused C/native comparisons independently of retired
+  trees. Read-only replay covers the retained runtime consumers and bounded
+  allocator checks. Historical receipts are not transferred to current products.
+- **Next:** repair actual allocator failures, then investigate performance on an
+  uncontended host and qualify the final merged-source release cohort. Use existing
+  runners and direct regressions; avoid new catalogs or administrative proof layers.
+  Full allocator qualification, post-switch reruns and public promotion remain open.
+  No qualifying timing or full release-family pass is claimed.
+- **Host:** two allowed NUMA nodes and free 1-GiB pages are unavailable. Preserve
+  the physical prerequisite; do not repeat unchanged denied `mbind`, alter shared
+  pools/security policy, rent resources or reboot without authorization.
 
 ## Parallel lanes
 

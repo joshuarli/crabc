@@ -297,9 +297,9 @@ impl<'owner> MetaAllocation<'owner> {
             return None;
         }
         // SAFETY: the exact direct-zeroed capability is uniquely borrowed,
-        // has the image's exact size/alignment, and has no prior role. `new`
-        // writes every field before the pinned view is formed.
-        unsafe { self.pointer.as_ptr().cast::<Image>().write(Image::new()); }
+        // has the image's exact size/alignment, and has no prior role. The
+        // in-place initializer writes every field before the pinned view.
+        unsafe { Image::write_at(self.pointer.cast()); }
         self.child_subprocess_image_initialized = true;
         // SAFETY: the external capability owns this stable address until
         // release and the image is `!Unpin` after this projection.
@@ -1324,7 +1324,7 @@ impl ChildMetadataAllocation {
                     || pointer.as_ptr().addr() % align_of::<Image>() != 0 { return None; }
                 // SAFETY: this fresh zeroed exact block is uniquely owned,
                 // aligned, and retained until the child finishes teardown.
-                unsafe { pointer.as_ptr().cast::<Image>().write(Image::new()) };
+                unsafe { Image::write_at(pointer.cast()) };
                 *role = ChildMetadataRole::Context;
                 // SAFETY: the linear token retains this exact pinned image.
                 Some(unsafe { Pin::new_unchecked(&mut *pointer.as_ptr().cast::<Image>()) })

@@ -39345,7 +39345,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 alignment,
                 zero,
             } => self.allocate_os_aligned_singleton_checked(request, alignment, zero),
-            // Phase C ends a collection before any lookup; no block exists.
+            // Collection ends before any lookup; no block exists.
             DeferredFreeAllocationContinuation::Collection => Ok(None),
             // `mi_find_page` refuses this request on every attempt.
             DeferredFreeAllocationContinuation::Refused { .. } => Ok(None),
