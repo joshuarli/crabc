@@ -705,6 +705,15 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
         &mut self,
         task: crate::single_thread::PendingFreshOsPageInitialization,
     ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> { Err(task) }
+    /// Transfers an exact unselectable live Page assertion to its retained
+    /// issuer. The owner must keep the Page, PageMap and backing live and
+    /// latch the issuing session; this transfer grants neither rollback nor
+    /// release authority. A session without persistent task custody returns
+    /// the unchanged task so its caller can preserve that same refusal.
+    fn retain_unfinished_live_page_validity(
+        &mut self,
+        task: crate::single_thread::PendingLivePageValidity,
+    ) -> Result<(), crate::single_thread::PendingLivePageValidity> { Err(task) }
     /// Latches an unfinished engine without freeing or detaching page state.
     /// Static bootstrap sessions are inert; dynamic sessions poison their
     /// retained attachment so later teardown/re-entry cannot lie.
