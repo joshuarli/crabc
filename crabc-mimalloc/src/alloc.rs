@@ -782,6 +782,28 @@ mod tests {
     }
 
     #[test]
+    fn selected_security_padding_initializes_only_source_selected_bytes() {
+        #[repr(align(16))]
+        struct Storage([u8; 32]);
+        let mut storage = Storage([0x55; 32]);
+        let block = NonNull::from(&mut storage.0).cast::<u8>();
+        let keys = [0x11223344, 0x55667788];
+        // SAFETY: this exclusive initialized block retains its complete
+        // trailing record and stable page encoding through the free check.
+        unsafe {
+            assert_eq!(initialize_source_padding(block, 32, 19, 0x1000,
+                keys, false, false, selected_source_padding_policy()), Some(19));
+            assert_eq!(check_source_padding_on_free(block, 32, 0x1000, keys,
+                false, selected_source_padding_policy()), Ok(19));
+        }
+        assert_eq!(&storage.0[..19], &[if crate::config::DEBUG_LEVEL >= 1 {
+            0xd0
+        } else { 0x55 }; 19]);
+        assert_eq!(&storage.0[19..24], &[if crate::config::DEBUG_LEVEL >= 1
+            || crate::config::SECURE_LEVEL >= 5 { 0xde } else { 0x55 }; 5]);
+    }
+
+    #[test]
     fn debug_padding_canary_uses_independent_page_keys() {
         let page = 0x1000usize;
         let keys = [0x1234_5678_9ABC_DE0Dusize, 0xFEDC_BA98_7654_3210usize];

@@ -188,6 +188,20 @@ pub(crate) const fn reserved_object_count(
     Some(reserved as u16)
 }
 
+/// Counts regular-page blocks within the selected usable span. The complete
+/// slice span remains the backing owner's extent; its full-security tail is
+/// excluded before any initialized block range is published.
+#[inline]
+pub(crate) const fn page_reserved_object_count(
+    page_span_size: usize, block_start: usize, block_size: usize, os_page_size: PageSize,
+) -> Option<u16> {
+    let usable = match page_noguard_size(page_span_size, os_page_size) {
+        Some(size) => size,
+        None => return None,
+    };
+    reserved_object_count(usable, block_start, block_size)
+}
+
 /// Computes the relative byte offset used by `mi_page_block_at`.
 ///
 /// The source permits `index == reserved` to form its one-past-page endpoint;
@@ -654,6 +668,23 @@ use crate::os::PageSize;
         ).unwrap();
         assert_eq!(plan.commit_size, needed_commit - 16 * KIB);
         assert_eq!(usize::from(plan.next_slice_pcommitted), needed_commit / page_size);
+    }
+
+    #[test]
+    fn selected_security_page_geometry_preserves_source_extension_minimum() {
+        let os_page = PageSize::new(4096).unwrap();
+        let full_span = SMALL_PAGE_SIZE;
+        let usable = if crate::config::SECURE_LEVEL >= 5 {
+            full_span - os_page.bytes()
+        } else { full_span };
+        assert_eq!(page_noguard_size(full_span, os_page), Some(usable));
+        assert_eq!(page_reserved_object_count(full_span, 16, 16, os_page),
+            Some(((usable - 16) / 16) as u16));
+        let minimum = if crate::config::SECURE_LEVEL >= 2 {
+            8 * crate::config::SECURE_LEVEL
+        } else { 1 };
+        assert_eq!(page_extend_count(0, 100, 8192, 0), Some(minimum as u16));
+        assert_eq!(page_extend_count(0, 100, 8192, 1), Some(minimum.min(8) as u16));
     }
 
     #[test]
