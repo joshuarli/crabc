@@ -9,6 +9,9 @@ Each archive must match its pinned SHA-256 before it is kept. A matching file
 already present is kept; otherwise it is copied from the primary checkout's
 same input directory when that copy matches (lane worktrees share one primary
 checkout), and only then downloaded from the manifest's exact repository URL.
+Explicit `--mirror-base-url` repositories may recover unavailable archives at
+the same exact filenames; their bytes must still match the pinned SHA-256.
+Unavailable files are all reported after the remaining inputs are collected.
 
 The index is a mutable upstream snapshot and is not digest-pinned. An existing
 snapshot is kept unless `--refresh-index` is given; otherwise the primary
@@ -28,6 +31,7 @@ import sys
 import tempfile
 import tomllib
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,7 +65,8 @@ def primary_input() -> Path | None:
     return None if primary == ROOT else primary / INPUT
 
 
-def install(relative: str, expected: str | None, url: str, seed: Path | None, refresh: bool = False) -> str:
+def install(relative: str, expected: str | None, url: str, seed: Path | None, refresh: bool = False,
+            mirrors: tuple[str, ...] = ()) -> str:
     """Place one file at INPUT/relative, returning how it was obtained.
 
     `expected=None` admits any bytes (the unpinned index); otherwise the file
@@ -82,9 +87,21 @@ def install(relative: str, expected: str | None, url: str, seed: Path | None, re
                     shutil.copyfileobj(source, output)
                 origin = "primary checkout"
             else:
-                with urllib.request.urlopen(url, timeout=60) as response:
-                    shutil.copyfileobj(response, output)
-                origin = "download"
+                if expected is None and mirrors:
+                    raise FetchError("unpinned index snapshots cannot use archive mirrors")
+                candidates = (url, *mirrors)
+                for position, candidate in enumerate(candidates):
+                    try:
+                        response = urllib.request.urlopen(candidate, timeout=60)
+                    except OSError:
+                        if position + 1 == len(candidates):
+                            raise
+                        continue
+                    with response:
+                        shutil.copyfileobj(response, output)
+                    origin = "download" if candidate == url else f"mirror {candidate}"
+                    url = candidate
+                    break
         observed = sha256(temporary)
         if expected is not None and observed != expected:
             raise FetchError(f"{url}: SHA-256 {observed} differs from pinned {expected}")
@@ -98,25 +115,40 @@ def install(relative: str, expected: str | None, url: str, seed: Path | None, re
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--refresh-index", action="store_true", help="download a new index snapshot")
+    parser.add_argument("--mirror-base-url", action="append", default=[],
+                        help="HTTPS repository containing the same exact pinned APK filenames; repeatable")
     arguments = parser.parse_args(argv)
+    mirrors = tuple(base.rstrip("/") for base in arguments.mirror_base_url)
+    for base in mirrors:
+        parsed = urllib.parse.urlsplit(base)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
+            parser.error("--mirror-base-url must be an HTTPS repository URL without query or fragment")
     with MANIFEST.open("rb") as stream:
         manifest = tomllib.load(stream)
     repository = manifest["repository"]
     base = repository["base_url"].rstrip("/")
     seed = primary_input()
     origins: dict[str, int] = {}
-    try:
-        for name, expected in sorted(manifest["archive_roster"].items()):
-            origin = install(f"apks/{name}", expected, f"{base}/{name}", seed)
+    errors: list[str] = []
+    for name, expected in sorted(manifest["archive_roster"].items()):
+        try:
+            origin = install(f"apks/{name}", expected, f"{base}/{name}", seed,
+                             mirrors=tuple(f"{mirror}/{name}" for mirror in mirrors))
             origins[origin] = origins.get(origin, 0) + 1
+        except (FetchError, OSError) as error:
+            errors.append(f"{name}: {error}")
+    try:
         index_origin = install(INDEX_NAME, None, f"{base}/{repository['index_filename']}", seed,
                                refresh=arguments.refresh_index)
     except (FetchError, OSError) as error:
-        print(f"x86 corpus input: FAIL: {error}", file=sys.stderr)
-        return 1
-    extra = sorted(set(os.listdir(ROOT / INPUT / "apks")) - set(manifest["archive_roster"]))
+        errors.append(f"{INDEX_NAME}: {error}")
+    archive_directory = ROOT / INPUT / "apks"
+    extra = sorted(set(os.listdir(archive_directory)) - set(manifest["archive_roster"])) if archive_directory.is_dir() else []
     if extra:
-        print(f"x86 corpus input: FAIL: unpinned archives present: {', '.join(extra)}", file=sys.stderr)
+        errors.append(f"unpinned archives present: {', '.join(extra)}")
+    if errors:
+        for error in errors:
+            print(f"x86 corpus input: FAIL: {error}", file=sys.stderr)
         return 1
     summary = ", ".join(f"{count} {origin}" for origin, count in sorted(origins.items()))
     print(f"x86 corpus input: PASS ({len(manifest['archive_roster'])} pinned archives: {summary}; "
