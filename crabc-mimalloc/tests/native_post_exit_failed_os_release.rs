@@ -5,6 +5,7 @@ use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
+    native_collect, native_block_size, native_runtime_terminal_vm_current_test_audit, native_runtime_lifecycle_test_audit,
     TicketZeroPageAllocationResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_test_fail_next_unmap,
     prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
@@ -15,6 +16,27 @@ fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
+fn assert_failed_range_stays_mapped(range: (usize, usize)) {
+    let page_size = current_page_size();
+    assert_eq!(range.0 % page_size, 0);
+    assert_eq!(range.1 % page_size, 0);
+    assert!(range.1 > 0);
+    for offset in (0..range.1).step_by(page_size) {
+        let mut residency = 0u8;
+        // SAFETY: this kernel observation uses the captured raw mapping extent
+        // and a live output byte; it never dereferences the consumed client.
+        assert!(unsafe { crabc_core::mm::mincore_raw(
+            (range.0 + offset) as *mut u8, page_size, &mut residency,
+        ) }.is_ok(), "every page of the refused source release stays mapped");
+    }
+}
+
+fn vm_current() -> (i64, i64) {
+    let state = native_runtime_terminal_vm_current_test_audit()
+        .expect("the source subprocess retains its VM counters");
+    (state.reserved, state.committed)
+}
+
 
 /// Allocates a source-shaped mixed exit image, but returns only its
 /// OS-aligned client. The other live members make A follow normal
@@ -93,12 +115,44 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
         // its source owner exited. B has no owner or release capability for
         // this address; `native_free` must begin with the PageMap lookup.
         let os_singleton = unsafe { core::ptr::NonNull::new_unchecked(os_singleton as *mut u8) };
+        let before_map = native_runtime_lifecycle_test_audit().unwrap();
+        let before_vm = vm_current();
+        // SAFETY: the joined former owner left this exact singleton client live.
+        let committed_extent = unsafe { native_block_size(os_singleton) }.unwrap();
         let unmap_failure = native_runtime_test_fail_next_unmap();
+        let capture = unmap_failure.capture_range();
         assert_eq!(
             unsafe { native_free(os_singleton) },
-            NativePageFreeResult::Retained,
-            "the failed PageMap-derived source release stays fail-closed"
+            NativePageFreeResult::Freed,
+            "the failed raw unmap does not reopen the consumed source Page free"
         );
+        let failed_range = capture.single().expect("one exact refused source unmap");
+        let after_vm = vm_current();
+        assert_eq!(before_vm.0 - after_vm.0, failed_range.1 as i64,
+            "source release retires reserved bytes even when raw unmap fails");
+        assert_eq!(failed_range.0 + failed_range.1 - os_singleton.as_ptr().addr(), committed_extent,
+            "this singleton follows the uncommitted alignment prefix in its raw reservation");
+        assert_eq!(before_vm.1 - after_vm.1, committed_extent as i64,
+            "source release retires the committed Page extent, excluding its alignment prefix");
+        let after_map = native_runtime_lifecycle_test_audit().unwrap();
+        assert!(after_map.page_map_registered_entry_count < before_map.page_map_registered_entry_count,
+            "consumed source Page release removes its PageMap coverage");
+        assert_eq!(after_map.main_heap_os_abandoned_pages_empty, 1,
+            "unabandon removes the consumed source Page from the OS list");
+        assert_failed_range_stays_mapped(failed_range);
+        native_collect(true);
+        assert_eq!(vm_current(), after_vm, "collection cannot retire the failed source free twice");
+        assert_failed_range_stays_mapped(failed_range);
+        let recovery = match native_allocate_aligned(73, 16, false) {
+            NativePageAllocationResult::Allocated(block) => block,
+            _ => panic!("an independent client remains allocatable after consumed source release"),
+        };
+        assert_ne!(recovery, os_singleton);
+        // SAFETY: this distinct successful client is exclusively owned here.
+        unsafe { recovery.as_ptr().write_bytes(0x5a, 73) };
+        assert_eq!(unsafe { native_free(recovery) }, NativePageFreeResult::Freed);
+        native_collect(true);
+        assert_failed_range_stays_mapped(failed_range);
         assert_eq!(
             unmap_failure.observed(),
             1,
@@ -107,9 +161,9 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             1,
-            "the retained source does not manufacture a second worker admission"
+            "the consumed source does not manufacture a second worker admission"
         );
-        // The failed unmap retains its raw owner after PageMap removal, so
+        // The failed unmap leaves its raw range after consuming PageMap removal, so
         // this stale client can neither resolve a page nor retry the tail.
         assert_eq!(
             unsafe { native_free(os_singleton) },
@@ -117,11 +171,11 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
             "the completed PageMap removal rejects a retry through the old pointer"
         );
         let finish = finish_current_thread_native_after_user_destructors();
-        (unmap_failure.observed(), finish)
+        (unmap_failure.observed(), finish, failed_range)
     });
-    let (unmap_attempts, consumer_finish) = consumer
+    let (unmap_attempts, consumer_finish, failed_range) = consumer
         .join()
-        .expect("B finishes independently of A's terminal retained source");
+        .expect("B finishes independently of A's consumed terminal source");
     assert_eq!(
         unmap_attempts,
         1,
@@ -130,7 +184,7 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
     assert_eq!(
         consumer_finish,
         ThreadFinishResult::Finished,
-        "A's retained PageMap source does not retain B's independent owner"
+        "A's consumed source Page free does not retain B's independent owner"
     );
     assert_eq!(
         native_runtime_fork_admission_test_audit().active_later_thread_count,
@@ -138,7 +192,7 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
         "B's finish releases its own admission without reconstructing A's"
     );
 
-    // The retained raw mapping holds no PageMap mutation lease. An unrelated
+    // The refused raw mapping holds no source Page owner or PageMap mutation lease. An unrelated
     // initial owner can still allocate and free through its own page state.
     let independent = match ticket_zero_allocate(73, false) {
         TicketZeroPageAllocationResult::Allocated(block) => block,
@@ -149,4 +203,5 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
         TicketZeroPageFreeResult::Freed,
         "the independent owner still releases its local client"
     );
+    assert_failed_range_stays_mapped(failed_range);
 }
