@@ -2815,6 +2815,34 @@ def run_mixed_source_generated_compile_diagnostics(
     return output
 
 
+def run_debug(static_root: Path, dynamic_root: Path, provider: dict[str, Any], output: Path) -> Path:
+    """Run valid stock-std cleanup and backtrace calls with an explicit provider."""
+
+    source_before = source_snapshot()
+    products = {"static": product_snapshot(static_root, "static"),
+                "dynamic": product_snapshot(dynamic_root, "dynamic")}
+    output = work_child(output, "debug cleanup output")
+    output.mkdir(mode=0o755)
+    channel = tomllib.loads((CHECKOUT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    consumers = {}
+    for mode, product in products.items():
+        consumer = compile_mode(mode=mode, root=Path(product["root"]), provider=provider, channel=channel, output=output)
+        symbols = binary_unwind_symbols(Path(consumer["binary"]["path"]), clean_environment(),
+                                        output / mode / "symbols.log", f"{mode} cleanup symbols")
+        cleanup.assert_binary_unwind_symbols(set(symbols), set(provider["defined_unwind_abi"]))
+        consumer["defined_unwind_abi"] = symbols
+        execute_mode(mode, consumer, dynamic_root, output / mode)
+        consumers[mode] = consumer
+        assert_same_product(product, mode)
+    require(source_snapshot() == source_before, "cleanup source changed during execution")
+    receipt = {"schema": 1, "scope": "debug valid stock-std cleanup and backtrace consumers",
+               "source_inputs": source_before, "products": products, "provider": provider,
+               "stock_consumers": consumers, "source_built_consumers": {}, "qualified": False,
+               "family_completion": False, "promotion_ready": False, "public_support": False}
+    (output / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    return output
+
+
 def run(static_root: Path, dynamic_root: Path, provider_vendor_root: Path, output: Path | None = None) -> Path:
     require((platform.system(), platform.machine()) == ("Linux", "x86_64"), "native Linux/x86-64 required")
     # Retain failed executions through their logs, never checkout-root cores.

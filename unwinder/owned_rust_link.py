@@ -59,6 +59,7 @@ HOST_BUILD_SOURCES_ENV = "CRABC_OWNED_RUST_HOST_BUILD_SOURCES"
 # standard-library origin select ``link_cargo`` instead of the cleanup paths.
 CARGO_TARGET_ENV = "CRABC_OWNED_RUST_CARGO_TARGET"
 CARGO_STD_ENV = "CRABC_OWNED_RUST_CARGO_STD"
+CARGO_PROFILE_ENV = "CRABC_OWNED_RUST_CARGO_PROFILE"
 # Declared caller-owned DSOs (os.pathsep-separated physical ``lib*.so`` files)
 # that a Cargo consumer's ``-l<name>`` request may name as DT_NEEDED.
 CARGO_APPLICATION_DSOS_ENV = "CRABC_OWNED_RUST_APPLICATION_DSOS"
@@ -854,15 +855,15 @@ def _record_input(path: Path, *, members: list[str] | None = None) -> dict[str, 
     return record
 
 
-def _cargo_rust_root(path: Path, cargo_release: Path) -> bool:
-    """Cargo writes Rust units below ``release/build`` or ``release/deps``."""
+def _cargo_rust_root(path: Path, cargo_profile_root: Path) -> bool:
+    """Cargo writes Rust units below its selected profile's build or deps roots."""
 
-    return path.is_relative_to(cargo_release / "build") or path.is_relative_to(cargo_release / "deps")
+    return path.is_relative_to(cargo_profile_root / "build") or path.is_relative_to(cargo_profile_root / "deps")
 
 
 def parse_cargo_arguments(
     arguments: list[str], cargo_target: Path, stock_root: Path, std_origin: str,
-    application_dsos: tuple[Path, ...] = (),
+    application_dsos: tuple[Path, ...] = (), *, profile: str = "release",
 ) -> dict[str, object]:
     """Parse one Cargo final link of the consumer gate's ordinary rlib graph.
 
@@ -878,8 +879,10 @@ def parse_cargo_arguments(
 
     if std_origin not in {"build-std", "stock"}:
         raise LinkError(f"unsupported Cargo standard-library origin: {std_origin}")
-    cargo_release = cargo_target / TARGET / "release"
-    archive_roots = [cargo_release / "build", cargo_release / "deps"]
+    if profile not in {"debug", "release"}:
+        raise LinkError(f"unsupported Cargo consumer profile: {profile}")
+    cargo_profile_root = cargo_target / TARGET / profile
+    archive_roots = [cargo_profile_root / "build", cargo_profile_root / "deps"]
     if std_origin == "stock":
         archive_roots.append(stock_root)
     objects: list[Path] = []
@@ -905,9 +908,9 @@ def parse_cargo_arguments(
             if argument == "-o":
                 if output is not None:
                     raise LinkError("duplicate output")
-                output = confined_output(value, cargo_release / "build")
+                output = confined_output(value, cargo_profile_root / "build")
             else:
-                search_paths.append(confined(value, [cargo_release, stock_root], "Rust search path", directory=True))
+                search_paths.append(confined(value, [cargo_profile_root, stock_root], "Rust search path", directory=True))
         elif argument in {"-pie", "-static-pie"}:
             if rust_mode is not None:
                 raise LinkError("duplicate or conflicting Rust executable mode")
@@ -935,8 +938,8 @@ def parse_cargo_arguments(
             else:
                 archives.append(archive)
         elif argument.endswith(".o"):
-            path = confined(argument, [cargo_release / "build"], "Cargo Rust object")
-            if not _cargo_rust_root(path, cargo_release):
+            path = confined(argument, [cargo_profile_root / "build"], "Cargo Rust object")
+            if not _cargo_rust_root(path, cargo_profile_root):
                 raise LinkError(f"Cargo Rust object is outside its unit roots: {path}")
             objects.append(path)
         else:
@@ -1001,7 +1004,8 @@ def link_cargo(arguments: list[str]) -> None:
     )
     if any(not path.name.startswith("lib") or not path.name.endswith(".so") for path in application_dsos):
         raise LinkError("declared application DSOs must be named lib*.so")
-    parsed = parse_cargo_arguments(arguments, cargo_target, stock_root, std_origin, application_dsos)
+    profile = os.environ.get(CARGO_PROFILE_ENV, "release")
+    parsed = parse_cargo_arguments(arguments, cargo_target, stock_root, std_origin, application_dsos, profile=profile)
     rust_mode = parsed["rust_mode"]
     if (mode, rust_mode) not in {("static", "static-pie"), ("dynamic", "pie")}:
         raise LinkError(f"Rust {rust_mode} request does not match the owned {mode} product")
@@ -1050,6 +1054,7 @@ def link_cargo(arguments: list[str]) -> None:
         "mode": mode,
         "rust_requested_mode": rust_mode,
         "std_origin": std_origin,
+        "cargo_profile": profile,
         "product": {"root": str(root), "manifest": _record_input(manifest), "files": manifest_files},
         "native_requests": parsed["native_requests"],
         "unwind_requests": parsed["unwind_requests"],

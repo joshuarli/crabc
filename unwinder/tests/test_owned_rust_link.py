@@ -597,6 +597,20 @@ class CargoConsumerLinkContract(unittest.TestCase):
     def parse(self, arguments, origin="build-std"):
         return linker.parse_cargo_arguments(arguments, self.cargo, self.stock, origin)
 
+    def test_debug_cargo_units_use_only_the_selected_profile(self):
+        debug = self.cargo / linker.TARGET / "debug"
+        release = self.cargo / linker.TARGET / "release"
+        import shutil
+        shutil.copytree(release, debug)
+        arguments = [argument.replace(str(release), str(debug)) for argument in self.arguments()]
+        parsed = linker.parse_cargo_arguments(arguments, self.cargo, self.stock, "build-std", profile="debug")
+        self.assertTrue(parsed["output"].is_relative_to(debug))
+        self.assertTrue(all(path.is_relative_to(debug) for path in parsed["archives"]))
+        with self.assertRaises(linker.LinkError):
+            linker.parse_cargo_arguments(self.arguments(), self.cargo, self.stock, "build-std", profile="debug")
+        with self.assertRaises(linker.LinkError):
+            linker.parse_cargo_arguments(arguments, self.cargo, self.stock, "build-std", profile="unknown")
+
     def test_unwind_request_is_recorded_and_rust_unwind_bindings_stay_in_the_graph(self):
         for request in ("-lgcc_s", "-lunwind"):
             parsed = self.parse(self.arguments(unwind=request))

@@ -29,6 +29,43 @@ def execution(status: object, stdout: bytes, stderr: bytes = b"") -> dict[str, o
             "stderr": {"sha256": GATE.hashlib.sha256(stderr).hexdigest()}}
 
 
+class DebugRouteTests(unittest.TestCase):
+    def test_debug_cargo_invocation_is_opt0_and_declares_debug_link_roots(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            output = Path(temporary)
+            context = GATE.Context(output=output, retained=GATE.Retained(output),
+                                   toolchain={"target_libdir": "stock"},
+                                   provider={"archive": {"path": "provider"}}, cargo_home=output / "cargo",
+                                   products={"development": {"static": {"root": "static"}}},
+                                   consumer="development", debug=True)
+            failed = SimpleNamespace(returncode=1, stdout=b"", stderr=b"compile failed")
+            with mock.patch.object(GATE, "run", return_value=failed) as run:
+                GATE.cargo_consumer(context, output / "consumer", fixture="rust-std", build_std=False,
+                                    flags=("-C", "target-feature=+crt-static"),
+                                    link="owned-static", product="development")
+            command = run.call_args.args[0]
+            environment = run.call_args.kwargs["env"]
+            self.assertNotIn("--release", command)
+            self.assertIn("--offline", command)
+            self.assertEqual(environment[GATE.owned_rust_link.CARGO_PROFILE_ENV], "debug")
+            self.assertEqual(environment["CARGO_PROFILE_DEV_OPT_LEVEL"], "0")
+            self.assertIn("opt-level=0", environment["RUSTFLAGS"])
+            self.assertIn("lto=off", environment["RUSTFLAGS"])
+
+    def test_debug_route_requires_development_products_and_excludes_full_rosters(self):
+        base = ["run", "--debug", "--provider-vendor", "vendor", "--dependency-vendor", "deps",
+                "--output", "output"]
+        development = ["--development-static-sysroot", "static", "--development-dynamic-sysroot", "dynamic"]
+        args = GATE.parse_arguments(base + development)
+        self.assertTrue(args.debug)
+        self.assertEqual(args.select, ["rust-std", "rust-std-dependent", "unwind"])
+        with self.assertRaises(SystemExit):
+            GATE.parse_arguments(base + development + ["--select", "lto"])
+        with self.assertRaises(SystemExit):
+            GATE.parse_arguments(base + ["--static-preparation", "static", "--dynamic-qualification", "dynamic"])
+
+
 class ComparisonTests(unittest.TestCase):
     def test_raw_comparison_requires_a_successful_identical_oracle(self) -> None:
         self.assertTrue(GATE.raw_comparison(execution(0, b"a\n"), execution(0, b"a\n"))["passed"])

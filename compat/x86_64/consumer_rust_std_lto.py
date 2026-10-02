@@ -31,7 +31,10 @@ qualifying receipt. ``--allocator-evidence native-shadow`` admits a
 development pair only when both products record the native-shadow allocator
 backend (the Rust mimalloc port): its complete passing run is allocator
 promotion evidence and exits successfully, but its receipt is still not a
-qualifying consumer receipt. ``validate_receipt`` is the gate's reader.
+qualifying consumer receipt. ``--debug`` uses opt0 development consumers
+for std, dependencies, and valid cleanup/backtrace calls; its selected sections
+can pass independently and never qualify the gate. ``validate_receipt`` is the
+gate's reader.
 """
 
 from __future__ import annotations
@@ -323,9 +326,10 @@ def product_pair(label: str, static_root: Path, dynamic_root: Path) -> dict[str,
 
 class Context:
     def __init__(self, *, output: Path, retained: Retained, toolchain: dict[str, Any], provider: dict[str, Any],
-                 cargo_home: Path, products: dict[str, dict[str, Any]], consumer: str) -> None:
+                 cargo_home: Path, products: dict[str, dict[str, Any]], consumer: str, debug: bool = False) -> None:
         self.output = output
         self.consumer = consumer
+        self.debug = debug
         self.retained = retained
         self.toolchain = toolchain
         self.provider = provider
@@ -382,6 +386,9 @@ def cargo_consumer(
         "CARGO_INCREMENTAL": "0",
         "SOURCE_DATE_EPOCH": "0",
     }
+    if context.debug:
+        rustflags += ["-C", "opt-level=0", "-C", "lto=off"]
+        environment.update({"CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_DEV_LTO": "false"})
     if link == "oracle":
         rustflags += ORACLE_FLAGS
     else:
@@ -396,12 +403,13 @@ def cargo_consumer(
             "CRABC_OWNED_RUST_PROVIDER": context.provider["archive"]["path"],
             "CRABC_OWNED_RUST_CHANNEL": CHANNEL,
             owned_rust_link.CARGO_TARGET_ENV: str(target),
+            owned_rust_link.CARGO_PROFILE_ENV: "debug" if context.debug else "release",
             owned_rust_link.CARGO_STD_ENV: "build-std" if build_std else "stock",
             owned_rust_link.CARGO_APPLICATION_DSOS_ENV: os.pathsep.join(map(str, application_dsos)),
         })
     environment["RUSTFLAGS"] = " ".join(rustflags)
     command = [
-        "rustup", "run", CHANNEL, "cargo", "build", "--release", "--offline", "--target", TARGET,
+        "rustup", "run", CHANNEL, "cargo", "build", *(("--release",) if not context.debug else ()), "--offline", "--target", TARGET,
         "--manifest-path", str(manifest), "--message-format=json-render-diagnostics",
         *(BUILD_STD[panic_runtime] if build_std else ()), *(("--locked",) if locked else ()),
     ]
@@ -578,13 +586,13 @@ def expected_output(name: str, execution: Mapping[str, Any], expected: bytes) ->
     return []
 
 
-def compared_lane(context: Context, name: str, fixture: str, flags: Sequence[str]) -> dict[str, Any]:
-    """Build a dynamic candidate and its musl control; compare raw output."""
+def compared_lane(context: Context, name: str, fixture: str, flags: Sequence[str], *, static: bool = False) -> dict[str, Any]:
+    """Build an owned candidate and its musl control; compare raw output."""
 
     lane = context.output / "gates" / name
-    candidate = cargo_consumer(context, lane / "candidate", fixture=fixture, build_std=True, flags=flags,
-                               link="owned-dynamic", product=context.consumer)
-    oracle = cargo_consumer(context, lane / "oracle", fixture=fixture, build_std=True, flags=flags, link="oracle")
+    candidate = cargo_consumer(context, lane / "candidate", fixture=fixture, build_std=not static, flags=flags,
+                               link="owned-static" if static else "owned-dynamic", product=context.consumer)
+    oracle = cargo_consumer(context, lane / "oracle", fixture=fixture, build_std=not static, flags=flags, link="oracle")
     report: dict[str, Any] = {"candidate_build": candidate, "oracle_build": oracle}
     unmet = owned_link_conditions(name, candidate, provider=context.provider)
     if oracle.get("status") != "built":
@@ -592,7 +600,7 @@ def compared_lane(context: Context, name: str, fixture: str, flags: Sequence[str
     if unmet:
         report["unmet"] = unmet
         return report
-    report["candidate_elf"] = inspect_elf(context, Path(candidate["executable"]["path"]), dynamic=True)
+    report["candidate_elf"] = inspect_elf(context, Path(candidate["executable"]["path"]), dynamic=not static)
     unmet.extend(f"{name}: {problem}" for problem in report["candidate_elf"]["problems"])
     dynamic_root = context.root("dynamic")
     report["oracle"] = execute(context, lane, Path(oracle["executable"]["path"]), runtime="oracle", product=None,
@@ -610,6 +618,12 @@ def compared_lane(context: Context, name: str, fixture: str, flags: Sequence[str
 
 def gate_rust_std(context: Context, gate: str) -> dict[str, Any]:
     fixture = "rust-std" if gate == "rust-std" else "rust-std-dependent"
+    if context.debug:
+        return {"lanes": {
+            "stock-static": compared_lane(context, f"{gate}/stock-static", fixture,
+                                           ("-C", "target-feature=+crt-static"), static=True),
+            "build-std-dynamic": compared_lane(context, f"{gate}/build-std-dynamic", fixture, RUST_STD_FLAGS),
+        }}
     return {"lanes": {"stock-std": compared_lane(context, gate, fixture, RUST_STD_FLAGS)}}
 
 
@@ -827,7 +841,11 @@ def unwind_matrix(context: Context, provider_vendor: Path, labels: Sequence[str]
         output = context.output / "unwind" / label
         output.parent.mkdir(parents=True, exist_ok=True)
         try:
-            owned_cleanup.run(Path(pair["static"]["root"]), Path(pair["dynamic"]["root"]), provider_vendor, output)
+            if context.debug:
+                owned_cleanup.run_debug(Path(pair["static"]["root"]), Path(pair["dynamic"]["root"]),
+                                        context.provider, output)
+            else:
+                owned_cleanup.run(Path(pair["static"]["root"]), Path(pair["dynamic"]["root"]), provider_vendor, output)
         except (owned_cleanup.OwnedCleanupError, RuntimeError, OSError, subprocess.SubprocessError) as error:
             results[label] = {"output": str(output), "unmet": [f"unwind/{label}: {error}"]}
             continue
@@ -998,6 +1016,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         sys.executable, "-B", ROOT / "unwinder/build.py", "--output", output / "provider",
         "--stage-root", output / "provider" / "source-inputs", "--cargo-home", provider_sources["cargo_home"],
         "--registry-unwinding-source", registry_source["registry_source"],
+        *(("--profile", "debug") if arguments.debug else ()),
     ], env={**tool_environment(), **{k: v for k, v in os.environ.items() if k in {"RUSTUP_HOME"}}})
     retained.write("provider-build.log", build_result.stdout + build_result.stderr)
     require(build_result.returncode == 0, "provider build failed; see provider-build.log")
@@ -1012,7 +1031,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         output, rust_source, [(vendor, vendor_expected, "fixture")], cargo_home)
 
     context = Context(output=output, retained=retained, toolchain=toolchain, provider=provider,
-                      cargo_home=cargo_home, products=products, consumer=consumer_label)
+                      cargo_home=cargo_home, products=products, consumer=consumer_label, debug=arguments.debug)
     selected = arguments.select or list(SECTIONS)
     runners = {
         "rust-std": lambda: gate_rust_std(context, "rust-std"),
@@ -1034,7 +1053,8 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
                                                   "registry_source": registry_source["registry_source"]})
                    if "provider-regressions" in selected else {"lanes": {}})
 
-    unmet = [f"{section} was not selected" for section in SECTIONS if section not in selected]
+    unmet = ([] if arguments.debug else
+             [f"{section} was not selected" for section in SECTIONS if section not in selected])
     unmet += [item for report in gates.values() for item in lane_unmet(report)]
     unmet += [item for record in unwind.values() for item in record["unmet"]]
     unmet += lane_unmet(regressions)
@@ -1052,7 +1072,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
             unmet.append("product cohort changed during consumer execution")
     if qualification.source_digest() != source_before:
         unmet.append("source changed during consumer execution")
-    if cohort is None and not arguments.allocator_evidence:
+    if cohort is None and not arguments.allocator_evidence and not arguments.debug:
         unmet.append("development products are not a current-source installed/extracted cohort")
     report: dict[str, Any] = {
         "schema": SCHEMA,
@@ -1072,7 +1092,8 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         "provider_regressions": regressions,
         "unmet_conditions": unmet,
         "passed": not unmet,
-        "qualifying": cohort is not None,
+        "qualifying": cohort is not None and not arguments.debug,
+        "debug": arguments.debug,
         "allocator_evidence": arguments.allocator_evidence,
         "retained_files": dict(sorted(retained.files.items())),
     }
@@ -1198,6 +1219,8 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     gate.add_argument("--allocator-evidence", choices=("native-shadow",),
                       help="with --development-* sysroots recording this allocator backend: a complete passing "
                            "run is allocator evidence, never a qualifying receipt")
+    gate.add_argument("--debug", action="store_true",
+                      help="opt0 development std/dependency/valid-unwind consumers; never qualification")
     gate.add_argument("--select", action="append", choices=SECTIONS,
                       help="development only: run just these sections; the receipt cannot pass")
     validate = commands.add_parser("validate", help="reread one retained gate receipt")
@@ -1208,6 +1231,13 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
         development = (arguments.development_static_sysroot, arguments.development_dynamic_sysroot)
         if not ((all(cohort) and not any(development)) or (all(development) and not any(cohort))):
             parser.error("select either --static-preparation/--dynamic-qualification or both --development-* sysroots")
+        if arguments.debug:
+            if not all(development) or arguments.allocator_evidence:
+                parser.error("--debug requires development sysroots without allocator promotion evidence")
+            allowed = ["rust-std", "rust-std-dependent", "unwind"]
+            if arguments.select and any(section not in allowed for section in arguments.select):
+                parser.error("--debug permits only std, dependency, and valid unwind consumers")
+            arguments.select = arguments.select or allowed
         if arguments.allocator_evidence and not all(development):
             parser.error("--allocator-evidence takes the --development-* sysroots")
     return arguments
@@ -1230,6 +1260,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     for condition in report["unmet_conditions"]:
         print(f"unmet: {condition}", file=sys.stderr)
     print(f"receipt: {path}")
+    if report["passed"] and report["debug"]:
+        print("x86 debug std and valid unwind consumers: PASS (development)")
+        return 0
     if report["passed"] and report["qualifying"]:
         print(PASS_MARKER)
         return 0
