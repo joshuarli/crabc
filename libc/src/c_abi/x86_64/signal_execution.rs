@@ -219,10 +219,13 @@ static_archive_member! { raise_source {
         let result = unsafe {
             raw_syscall::syscall2(raw_syscall::SYS_TKILL, thread_id, i64::from(signal))
         };
-        // SAFETY: restore the exact pre-transaction kernel mask before publishing
-        // the delivery syscall result, matching musl's ordering.
+        // Publish a failed syscall's errno before unblocking pending handlers.
+        // A handler may inspect or replace errno during restoration; translating
+        // the raw result afterward would conceal the error and overwrite it.
+        let status = c_status(result);
+        // SAFETY: restore the exact pre-transaction kernel mask.
         unsafe { restore_application_signals(&saved_mask) };
-        c_status(result)
+        status
     }
 }}
 
@@ -261,10 +264,12 @@ static_archive_member! { sigqueue_source {
                 (&info as *const QueuedSigInfo) as usize as i64,
             )
         };
-        // SAFETY: restore the exact pre-transaction kernel mask before publishing
-        // the queue result, matching musl's ordering.
+        // Match syscall's errno publication before pending handlers can run.
+        // Their errno changes must survive restoration even when queuing failed.
+        let status = c_status(result);
+        // SAFETY: restore the exact pre-transaction kernel mask.
         unsafe { restore_application_signals(&saved_mask) };
-        c_status(result)
+        status
     }
 }}
 
