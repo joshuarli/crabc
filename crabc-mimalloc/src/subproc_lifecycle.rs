@@ -823,6 +823,122 @@ impl Drop for NativeChildCallbackLease {
     }
 }
 
+/// Actual admission to one child arena group and its detached metadata.
+/// It retains the original record independently of TLS and ends only after
+/// every reservation projection and diagnostic callback has ended.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct NativeChildArenaAdmission {
+    id: NativeSubprocessId,
+    binding: ProcessMainBackingBinding,
+    identity: core::ptr::NonNull<crate::subproc::SubprocessIdentity>,
+    config: crate::os::MemoryConfig,
+    _child: NativeChildCallbackLease,
+    _operation: crate::runtime_lifecycle::NativeSubprocessOperation,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildArenaAdmission {
+    /// Selects only the current actual child membership. A failed child
+    /// admission never supplies the process-main arena or metadata owner.
+    pub(crate) fn acquire_current() -> Option<Result<Self, NativeSubprocessError>> {
+        // SAFETY: the current thread alone owns this slot. Copy only its
+        // original identity and binding before taking any allocator lock.
+        let (id, binding) = {
+            let current = unsafe { current_child_member() }.as_ref()?;
+            (current.record_member.id(), current.binding)
+        };
+        Some(Self::acquire(id, binding))
+    }
+
+    fn acquire(id: NativeSubprocessId, binding: ProcessMainBackingBinding)
+        -> Result<Self, NativeSubprocessError> {
+        let operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+            .ok_or(NativeSubprocessError::Closed)?;
+        let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
+        let mut admitted = None;
+        // SAFETY: the actual caller retains the original id. This short
+        // projection validates its owner before independent custody begins.
+        let result = unsafe { id.with_owner(|owner| {
+            let child = owner.as_mut().ok_or(NativeSubprocessError::Gone)?;
+            if child.stage() != ChildMainHeapStage::HeapReady {
+                return Err(NativeSubprocessError::Retained);
+            }
+            let identity = core::ptr::NonNull::new(child.identity_pointer()
+                .ok_or(NativeSubprocessError::Gone)?).ok_or(NativeSubprocessError::Gone)?;
+            let count = &*core::ptr::addr_of!((*id.0.as_ptr()).callback_leases);
+            count.fetch_update(core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1))
+                .map_err(|_| NativeSubprocessError::Retained)?;
+            admitted = Some((identity, NativeChildCallbackLease(id.0)));
+            Ok(())
+        }) };
+        if !matches!(result, Ok(Ok(()))) {
+            // An unlock failure after actual custody changed cannot undo
+            // that admission or advertise an owner suitable for callbacks.
+            if let Some((_, lease)) = admitted { core::mem::forget(lease); }
+            return Err(result.err().unwrap_or(NativeSubprocessError::Retained));
+        }
+        let (identity, child) = admitted.expect("validated original child admission");
+        Ok(Self { id, binding, identity, config, _child: child, _operation: operation })
+    }
+
+    pub(crate) fn config(&self) -> crate::os::MemoryConfig { self.config }
+
+    /// # Safety
+    /// This actual admission must remain retained until every returned view,
+    /// reservation owner and cleanup continuation has ended. The static
+    /// spelling cannot itself establish the reclaimable child's lifetime.
+    pub(crate) unsafe fn process(&self) -> crate::os::VmProcess<'static> {
+        // SAFETY: the counted admission prevents original child retirement;
+        // the caller additionally retains it through every derived owner.
+        crate::os::VmProcess::new(self.binding.process().policy(), unsafe { self.identity.as_ref() })
+    }
+
+    /// # Safety
+    /// As for `process`: every derived arena or cleanup owner must retain
+    /// this admission until its final child-image access has ended.
+    pub(crate) unsafe fn backing(&self) -> &'static crate::arena::ProcessArenaBacking {
+        // SAFETY: this is the original admitted identity, never TLS reselected.
+        unsafe { self.identity.as_ref() }.arena_backing()
+    }
+
+    /// Issues a zeroed tracker from the original child's detached Theap.
+    /// The returned exact capability independently retains that child until
+    /// its storage has returned, including a failed metadata free.
+    pub(crate) fn allocate_tracker(&self, bytes: usize) -> Result<NativeChildArenaMetadata, MetaError> {
+        let retained = Self::acquire(self.id, self.binding).map_err(|_| MetaError::Closed)?;
+        let route = ChildParentMetadata::Child { id: self.id, binding: self.binding };
+        let allocation = route.allocate(bytes)?;
+        Ok(NativeChildArenaMetadata { route, allocation, admission: Some(retained) })
+    }
+}
+
+/// One child-issued huge-release tracker and its actual issuing admission.
+/// Failed storage return leaves the same capability and issuer retained.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct NativeChildArenaMetadata {
+    route: ChildParentMetadata,
+    allocation: crate::meta::ChildMetadataAllocation,
+    admission: Option<NativeChildArenaAdmission>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildArenaMetadata {
+    pub(crate) fn pointer(&self) -> core::ptr::NonNull<u8> {
+        assert!(self.admission.is_some(), "released tracker has no live projection");
+        self.allocation.pointer()
+    }
+
+    /// Returns the original capability once. A refusal consumes no admission
+    /// and permits only retrying this same metadata storage return.
+    pub(crate) fn free(&mut self) -> Result<(), MetaError> {
+        if self.admission.is_none() { return Err(MetaError::ForeignOwner); }
+        self.route.free(&mut self.allocation)?;
+        self.admission.take();
+        Ok(())
+    }
+}
+
 /// Retains the actual child owner across a synchronous callback, after the
 /// caller's page-engine and metadata projections have ended. Nested ordinary
 /// allocation is allowed: neither a private lock nor a TLS/member reference
@@ -3625,6 +3741,55 @@ pub(crate) mod tests {
                 assert_eq!((after.theaps.total - before.theaps.total, after.theaps.current - before.theaps.current), (2, 1));
                 stop_send.send(()).unwrap();
                 worker.join().expect("the orphaned member finishes");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_arena_admission_retains_original_metadata_across_failed_storage_return() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, NativePageFreeResult};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::child_arena_admission_retains_original_metadata_across_failed_storage_return",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                assert!(NativeChildArenaAdmission::acquire_current().is_none());
+                let id = native_subproc_new().expect("root child");
+                let worker = std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let admission = NativeChildArenaAdmission::acquire_current().expect("actual child").expect("retained arena admission");
+                    let original = unsafe { id.with_owner(|owner| owner.as_mut().unwrap().identity_pointer().unwrap()) }.unwrap();
+                    assert_eq!(unsafe { admission.process() }.subprocess() as *const _, original.cast_const());
+                    assert!(core::ptr::eq(unsafe { admission.backing() }, unsafe { &*original }.arena_backing()));
+                    assert!(unsafe { id.record() }.lock.try_lock().is_some(), "reservation admission parks owner lock");
+                    let mut tracker = admission.allocate_tracker(64).expect("original child metadata tracker");
+                    let pointer = tracker.pointer();
+                    assert!(unsafe { core::slice::from_raw_parts(pointer.as_ptr(), 64) }.iter().all(|byte| *byte == 0));
+                    assert_eq!(unsafe { id.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 2);
+                    // Ordinary allocation can reenter while the original arena
+                    // and metadata capabilities remain retained without locks.
+                    let Some(crate::runtime_lifecycle::NativePageAllocationResult::Allocated(client)) =
+                        native_child_thread_allocate(80, Some((16, 0)), false) else { panic!("child client"); };
+                    assert_eq!(unsafe { crate::runtime_lifecycle::native_free(client) }, NativePageFreeResult::Freed);
+                    unsafe { id.with_owner(|owner| owner.as_mut().unwrap().test_fail_next_metadata_session_setup()) }.unwrap();
+                    assert_eq!(tracker.free(), Err(MetaError::InitializationRetained));
+                    assert_eq!(tracker.pointer(), pointer, "failed return keeps the exact capability");
+                    assert_eq!(unsafe { id.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 2);
+                    tracker.free().expect("same original metadata release retries");
+                    assert_eq!(tracker.free(), Err(MetaError::ForeignOwner), "successful return cannot run twice");
+                    assert_eq!(unsafe { id.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 1);
+                    drop(admission);
+                    assert_eq!(unsafe { id.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
+                    assert_eq!(native_child_thread_done(), Some(Ok(())));
+                });
+                worker.join().expect("child reservation metadata controls");
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
     }
