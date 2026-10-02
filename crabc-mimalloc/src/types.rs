@@ -297,6 +297,45 @@ impl Heap {
         unsafe { (&*statistics).copy_into_source_image(destination) }
     }
 
+    /// Queries the calling thread's source Heap slot without initializing a
+    /// Theap or changing its cache. A missing regular slot remains missing
+    /// even when an initialized Theap is still linked on the TLD.
+    ///
+    /// # Safety
+    /// The caller retains this initialized Heap and the calling thread's
+    /// cached, fast and regular TLS roots, with their actual backing owners.
+    /// No TLS replacement, image retirement or teardown overlaps the query.
+    /// The returned pointer conveys identity only; the caller must retain its
+    /// actual Theap before projecting any fields from it.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn source_theap_peek_at(heap: NonNull<Self>) -> *mut Theap {
+        let cached = crate::compiler_tls::cached_theap();
+        // SAFETY: the retained calling-thread cache names a live image.
+        if unsafe { Theap::heap_at(cached) } == heap.as_ptr() {
+            return cached.as_ptr();
+        }
+        // SAFETY: these Heap selection fields are immutable while retained.
+        let source = unsafe { Self::source_snapshot_at(heap) };
+        if source.theap_slot == crate::thread_local::TLS_FAST_KEY_RAW as usize {
+            return crate::compiler_tls::fast_slot_peek()
+                .map_or(core::ptr::null_mut(), |theap| theap.cast::<Theap>().as_ptr());
+        }
+        let raw = source.theap_slot as u64;
+        let Some(index) = crate::thread_local::ThreadLocalSlotIndex::new(
+            (raw & crate::thread_local::TLS_INDEX_MASK) as usize,
+        ) else { return core::ptr::null_mut(); };
+        let Some(key) = crate::thread_local::ThreadLocalKey::from_parts(
+            index, raw >> crate::thread_local::TLS_INDEX_BITS,
+        ) else { return core::ptr::null_mut(); };
+        if core::ptr::eq(source.subprocess, crate::subproc::MainSubprocess::global().identity()) {
+            // SAFETY: the calling thread retains its actual main-domain slots.
+            unsafe { crate::subproc::main_heaps::source_regular_slot_peek(key) }.cast()
+        } else {
+            // SAFETY: a child domain uses this thread's installed slot image.
+            unsafe { crate::meta::source_regular_slot_peek(key) }.cast()
+        }
+    }
+
     /// Adds the full source-selected Heap image to a validated caller image.
     ///
     /// # Safety
@@ -4160,6 +4199,11 @@ pub(super) struct PageLocalCollectState {
 #[derive(Clone, Copy)]
 pub(crate) struct PageValiditySnapshot {
     pub(crate) page: NonNull<Page>,
+    pub(crate) heap: *mut Heap,
+    pub(crate) theap: *mut Theap,
+    pub(crate) thread_id: ThreadId,
+    pub(crate) in_full: bool,
+    pub(crate) is_huge: bool,
     pub(crate) area: NonNull<u8>,
     pub(crate) area_bytes: usize,
     pub(crate) block_size: usize,
@@ -4426,8 +4470,16 @@ impl Page {
             let reserved = core::ptr::addr_of!((*raw).reserved).read();
             let offset = core::ptr::addr_of!((*raw).page_offset).read();
             let remote = (&*core::ptr::addr_of!((*raw).xthread_free)).load(Ordering::Acquire) & !1;
+            let owner = (&*core::ptr::addr_of!((*raw).xthread_id)).load(Ordering::Relaxed);
+            let memory = core::ptr::addr_of!((*raw).memid).read();
             PageValiditySnapshot {
                 page,
+                heap: core::ptr::addr_of!((*raw).heap).read(),
+                theap: core::ptr::addr_of!((*raw).theap).read(),
+                thread_id: owner & !PAGE_FLAG_MASK,
+                in_full: owner & PAGE_IN_FULL_QUEUE != 0,
+                is_huge: reserved == 1 && (block_size > crate::config::LARGE_MAX_OBJ_SIZE
+                    || memory.os_memory().is_some_and(|os| os.base.addr() < raw.addr())),
                 area: NonNull::new_unchecked(raw.cast::<u8>().add(offset)),
                 area_bytes: usize::from(reserved).unchecked_mul(block_size),
                 block_size,
@@ -6988,6 +7040,23 @@ impl Theap {
                 allow_page_abandon: core::ptr::addr_of!((*raw).allow_page_abandon).read(),
                 memory_id: core::ptr::addr_of!((*raw).memid).read(),
             })
+        }
+    }
+
+    /// Copies the actual TLD identity used by page-owner validity. The
+    /// detached case follows the retained TLD field, not the Theap policy bit.
+    ///
+    /// # Safety
+    /// The caller retains this exact initialized Theap and its named live
+    /// TLD, excluding TLD replacement, thread teardown and identity mutation
+    /// for this short projection. Former post-exit TLD pointers cannot be
+    /// followed under this contract.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    pub(crate) unsafe fn page_validity_thread_id_at(theap: NonNull<Self>) -> ThreadId {
+        // SAFETY: only the retained owner pointer and TLD scalar are read.
+        unsafe {
+            let tld = core::ptr::addr_of!((*theap.as_ptr()).tld).read();
+            core::ptr::addr_of!((*tld).thread_id).read()
         }
     }
 

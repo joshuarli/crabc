@@ -619,6 +619,18 @@ fn thread_local_get(key: ThreadLocalKey) -> *mut () {
     with_published_slots(state, |owner| owner.get(key).ok()).flatten().unwrap_or(core::ptr::null_mut())
 }
 
+/// Reads one versioned regular slot through its actual main-subprocess
+/// backing owner, without initializing a Theap or changing the cache.
+///
+/// # Safety
+/// This runs on the retained calling thread. Its slot owner and all published
+/// slot values remain live, and no slot mutation or thread teardown overlaps
+/// the synchronous query. No allocator callback or output occurs here.
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+pub(crate) unsafe fn source_regular_slot_peek(key: ThreadLocalKey) -> *mut () {
+    thread_local_get(key)
+}
+
 /// `_mi_thread_local_set` on this thread's slot array, created on first use.
 fn thread_local_set(key: ThreadLocalKey, value: *mut ()) -> bool {
     let Some(config) = binding().and_then(|binding| binding.page_map().memory_config().ok()) else { return false };

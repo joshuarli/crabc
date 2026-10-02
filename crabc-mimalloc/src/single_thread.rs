@@ -39516,6 +39516,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &mut self, page: NonNull<Page>, request: usize, bin: usize,
         block_size: usize, zero: bool,
     ) -> Result<Option<NonNull<u8>>, GenericPathError> {
+        // The selected Page has completed initialization and joined its
+        // source queue. Only now can the full validity predicate inspect
+        // exact membership; a fresh unqueued Page used only init validity.
+        #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+        self.observe_live_page_validity(page, true)?;
         // Both source routes pop from their newly selected or reused page.
         // An absent immediate block is an invariant failure, never an OOM retry.
         let block = self
@@ -40298,17 +40303,38 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    /// Observes the source live-list predicate without carrying a metadata
+    /// Observes the source live-page predicate without carrying a metadata
     /// projection into output. Failure detaches the exact queue member while
     /// keeping its PageMap and backing publication retained.
     #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
-    fn observe_live_page_validity(&mut self, page: NonNull<Page>) -> Result<(), GenericPathError> {
+    fn observe_live_page_validity(&mut self, page: NonNull<Page>, queued: bool) -> Result<(), GenericPathError> {
         // SAFETY: this engine owns ordinary Page and local-list fields.
         // Remote producers keep published links immutable; no collector,
         // retirement or PageMap mutation overlaps this short observation.
         let failure = unsafe {
             let snapshot = Page::validity_snapshot_at(page);
-            crate::page_validity::source_page_lists_valid(&snapshot, self.page_map)
+            // Full membership takes precedence over the huge exception.
+            // Fresh initialization deliberately supplies no queue facts.
+            let bin = if snapshot.in_full { Some(BIN_FULL) }
+                else if snapshot.is_huge { Some(BIN_HUGE) }
+                else { size_class::bin(snapshot.block_size) };
+            let queue = if queued { bin.and_then(|bin| self.session.queue(bin)) } else { None };
+            let block_size = queue.map(|queue| queue.block_size());
+            let contains = queue.is_some_and(|queue| {
+                let mut current = queue.first();
+                for _ in 0..queue.count() {
+                    if current == page.as_ptr() { return true; }
+                    let Some(current_page) = NonNull::new(current) else { break; };
+                    // SAFETY: the same owner retains all live queue nodes;
+                    // local links cannot change during this bounded walk.
+                    current = Page::queue_next_at(current_page);
+                }
+                false
+            });
+            let owner = crate::page_validity::PageSourceOwnerSnapshot::observe_at(
+                &snapshot, contains, block_size,
+            );
+            crate::page_validity::source_page_is_valid(&snapshot, self.page_map, &owner, queued)
         };
         let Err(invariant) = failure else { return Ok(()); };
         let assertion = invariant.into_live_page_validity_assertion()
@@ -40365,7 +40391,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         page: NonNull<Page>,
     ) -> Result<(), GenericPathError> {
         #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
-        self.observe_live_page_validity(page)?;
+        self.observe_live_page_validity(page, false)?;
         #[cfg(feature = "mi-stat-1")]
         self.session.theap().record_page_extension_attempted();
         // SAFETY: callers name one selected active page while this engine owns
@@ -40398,13 +40424,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 self.session.theap().record_page_extension_published(extended as usize, block_size);
             }
             #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
-            self.observe_live_page_validity(page)?;
+            self.observe_live_page_validity(page, false)?;
             return Ok(());
         }
 
         self.extend_on_demand_page_before_allocation(page)?;
         #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
-        self.observe_live_page_validity(page)?;
+        self.observe_live_page_validity(page, false)?;
         Ok(())
     }
 

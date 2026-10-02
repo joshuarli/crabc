@@ -6,8 +6,8 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/page.c:43-148,724-729`
 // (page-list containment, owner-list accounting, and the fresh committed
-// area's initially-zero check). Queue and Heap/Theap membership validation
-// remains at the caller's separately locked lifecycle boundary.
+// area's initially-zero check). Owner binding and queue observations are
+// copied at the caller's retained, exclusively selected lifecycle boundary.
 
 use core::ffi::CStr;
 use core::ptr::NonNull;
@@ -22,6 +22,11 @@ pub(crate) enum SourcePageInvariant {
     BlockSize,
     UsedCapacity,
     CapacityReserved,
+    HeapNonNull,
+    HeapTheapBinding,
+    SecurePageKey,
+    QueueContains,
+    QueueBlockSize,
     FreeList,
     LocalFreeList,
     RemoteFreeList,
@@ -49,6 +54,11 @@ impl LivePageValidityAssertion {
             SourcePageInvariant::BlockSize => (c"include/mimalloc/internal.h", 812, c"mi_page_block_size"),
             SourcePageInvariant::UsedCapacity => (c"src/page.c", 86, c"mi_page_is_valid_init"),
             SourcePageInvariant::CapacityReserved => (c"src/page.c", 87, c"mi_page_is_valid_init"),
+            SourcePageInvariant::HeapNonNull => (c"src/page.c", 89, c"mi_page_is_valid_init"),
+            SourcePageInvariant::HeapTheapBinding => (c"src/page.c", 91, c"mi_page_is_valid_init"),
+            SourcePageInvariant::SecurePageKey => (c"src/page.c", 127, c"_mi_page_is_valid"),
+            SourcePageInvariant::QueueContains => (c"src/page.c", 136, c"_mi_page_is_valid"),
+            SourcePageInvariant::QueueBlockSize => (c"src/page.c", 137, c"_mi_page_is_valid"),
             SourcePageInvariant::FreeList => (c"src/page.c", 97, c"mi_page_is_valid_init"),
             SourcePageInvariant::LocalFreeList => (c"src/page.c", 98, c"mi_page_is_valid_init"),
             SourcePageInvariant::RemoteFreeList => (c"src/page.c", 111, c"mi_page_is_valid_init"),
@@ -272,6 +282,11 @@ impl SourcePageInvariant {
             Self::BlockSize => c"page->block_size > 0",
             Self::UsedCapacity => c"page->used <= page->capacity",
             Self::CapacityReserved => c"page->capacity <= page->reserved",
+            Self::HeapNonNull => c"page->heap!=NULL",
+            Self::HeapTheapBinding => c"page_theap == NULL || mi_page_theap(page)==page_theap || mi_page_theap(page)->tld->thread_id == MI_THREADID_DETACHED",
+            Self::SecurePageKey => c"page->keys[0] != 0",
+            Self::QueueContains => c"mi_page_queue_contains(pq, page)",
+            Self::QueueBlockSize => c"pq->block_size==mi_page_block_size(page) || mi_page_is_huge(page) || mi_page_is_in_full(page)",
             Self::FreeList => c"mi_page_list_is_valid(page,page->free)",
             Self::LocalFreeList => c"mi_page_list_is_valid(page,page->local_free)",
             Self::RemoteFreeList => c"mi_page_list_is_valid(page, tfree)",
@@ -282,6 +297,158 @@ impl SourcePageInvariant {
             Self::ObservationGeometry => return None,
         })
     }
+}
+
+/// Copied source owner and queue facts. No pointer from this image can be
+/// followed: the selected owner separately retains every actual image and
+/// finishes its short field and queue observations before assertion delivery.
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PageSourceOwnerSnapshot {
+    pub(crate) heap_present: bool,
+    pub(crate) heap_theap_absent: bool,
+    pub(crate) heap_theap_matches: bool,
+    pub(crate) page_theap_detached: bool,
+    pub(crate) secure_key: usize,
+    pub(crate) abandoned: bool,
+    pub(crate) queue_contains: bool,
+    pub(crate) queue_block_size: Option<usize>,
+    pub(crate) block_size: usize,
+    pub(crate) is_huge: bool,
+    pub(crate) in_full: bool,
+}
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+impl PageSourceOwnerSnapshot {
+    /// Copies the source owner disjunction after a retained Page projection.
+    /// Queue facts come from the same selected owner's stable queues.
+    ///
+    /// # Safety
+    /// The original Page, its Heap, Theap and named TLD are initialized and
+    /// continuously retained by this active operation. Their copied fields
+    /// and the calling thread's actual TLS roots cannot change or retire
+    /// during this query. A former owner's TLD cannot be followed here.
+    /// Queue facts must describe this exact Page under the same owner.
+    pub(crate) unsafe fn observe_at(
+        state: &PageValiditySnapshot, queue_contains: bool, queue_block_size: Option<usize>,
+    ) -> Self {
+        let heap_theap = match NonNull::new(state.heap) {
+            // SAFETY: the caller retains the actual Heap and current TLS owners.
+            Some(heap) => unsafe { crate::types::Heap::source_theap_peek_at(heap) },
+            None => core::ptr::null_mut(),
+        };
+        let page_theap_detached = if !heap_theap.is_null() && heap_theap != state.theap {
+            NonNull::new(state.theap).is_some_and(|theap| {
+                // SAFETY: this active Page operation retains its actual
+                // Theap and named TLD; no former post-exit pointer is read.
+                (unsafe { crate::types::Theap::page_validity_thread_id_at(theap) })
+                    == crate::types::THREAD_ID_DETACHED
+            })
+        } else { false };
+        Self {
+            heap_present: !state.heap.is_null(),
+            heap_theap_absent: heap_theap.is_null(),
+            heap_theap_matches: heap_theap == state.theap,
+            page_theap_detached,
+            secure_key: state.keys[0],
+            abandoned: state.thread_id <= crate::types::THREAD_ID_ABANDONED_MAPPED,
+            queue_contains, queue_block_size, block_size: state.block_size,
+            is_huge: state.is_huge, in_full: state.in_full,
+        }
+    }
+
+    fn valid_init(&self) -> Result<(), SourcePageInvariant> {
+        if !self.heap_present { return Err(SourcePageInvariant::HeapNonNull); }
+        if !self.heap_theap_absent && !self.heap_theap_matches && !self.page_theap_detached {
+            return Err(SourcePageInvariant::HeapTheapBinding);
+        }
+        Ok(())
+    }
+
+    fn valid_queued(&self) -> Result<(), SourcePageInvariant> {
+        if crate::config::SECURE_LEVEL != 0 && self.secure_key == 0 {
+            return Err(SourcePageInvariant::SecurePageKey);
+        }
+        if !self.abandoned {
+            // The initialization predicate already checked the identical
+            // Heap/Theap disjunction under this stable observation.
+            if !self.queue_contains { return Err(SourcePageInvariant::QueueContains); }
+            if self.queue_block_size != Some(self.block_size) && !self.is_huge && !self.in_full {
+                return Err(SourcePageInvariant::QueueBlockSize);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+#[derive(Clone, Copy)]
+struct LivePageOwnerValidityTestObserver {
+    observe: unsafe fn(&PageValiditySnapshot, &mut PageSourceOwnerSnapshot, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+}
+
+#[cfg(all(test, target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+std::thread_local! {
+    static LIVE_PAGE_OWNER_VALIDITY_TEST_OBSERVER:
+        core::cell::Cell<Option<LivePageOwnerValidityTestObserver>> = const { core::cell::Cell::new(None) };
+}
+
+/// Observes one native operation's copied owner and queue inputs. The test
+/// may alter these scalars while actual Page metadata and clients stay valid.
+/// The previous observer is restored on return or unwind.
+///
+/// # Safety
+/// The observer and its argument remain live through this same-thread
+/// synchronous operation, including assertion dispatch. It may inspect
+/// copied inputs and modify its own test state, but cannot retain snapshots
+/// or pointers, mutate allocator metadata or backing, allocate, emit output
+/// or reenter the allocator. This supplies no Page or issuer lifetime rights.
+#[cfg(all(test, target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+pub(crate) unsafe fn with_live_page_owner_validity_observer_for_test<R>(
+    observe: unsafe fn(&PageValiditySnapshot, &mut PageSourceOwnerSnapshot, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+    operation: impl FnOnce() -> R,
+) -> R {
+    struct RestoreObserver(Option<LivePageOwnerValidityTestObserver>);
+    impl Drop for RestoreObserver {
+        fn drop(&mut self) { LIVE_PAGE_OWNER_VALIDITY_TEST_OBSERVER.with(|slot| slot.set(self.0)); }
+    }
+    let _restore = RestoreObserver(LIVE_PAGE_OWNER_VALIDITY_TEST_OBSERVER.with(|slot| {
+        slot.replace(Some(LivePageOwnerValidityTestObserver { observe, argument }))
+    }));
+    operation()
+}
+
+/// Checks initialized owner/list validity and optionally the queued-page
+/// source assertions. Fresh initialized pages have no queue membership yet.
+///
+/// # Safety
+/// The same retained backing, immutable captured links, collector exclusion
+/// and stable PageMap obligations as `source_page_lists_valid` apply. `owner`
+/// was copied from this exact Page and its retained issuer under the same
+/// operation; its queue facts remain stable until this predicate returns.
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+pub(crate) unsafe fn source_page_is_valid(
+    state: &PageValiditySnapshot, map: &PageMap, owner: &PageSourceOwnerSnapshot, queued: bool,
+) -> Result<(), SourcePageInvariant> {
+    #[cfg(all(test, not(miri)))]
+    let observed_owner = {
+        let mut observed = *owner;
+        if let Some(observer) = LIVE_PAGE_OWNER_VALIDITY_TEST_OBSERVER.with(|slot| slot.get()) {
+            // SAFETY: this test scope retains its own argument and changes
+            // only copied assertion inputs, after every pointer projection.
+            unsafe { (observer.observe)(state, &mut observed, observer.argument) };
+        }
+        observed
+    };
+    #[cfg(all(test, not(miri)))]
+    let owner = &observed_owner;
+    // SAFETY: the caller retains the original Page and initialized links;
+    // the internal predicate reads no owner pointer from the scalar image.
+    unsafe { source_page_lists_valid_with_owner(state, map, Some(owner)) }?;
+    if queued { owner.valid_queued()?; }
+    Ok(())
 }
 
 #[cfg(all(test, target_arch = "x86_64", not(miri)))]
@@ -347,6 +514,16 @@ pub(crate) unsafe fn source_page_lists_valid(
     state: &PageValiditySnapshot,
     map: &PageMap,
 ) -> Result<(), SourcePageInvariant> {
+    // SAFETY: the caller's original list observation contract is unchanged;
+    // this leaf intentionally supplies no owner or queue observation.
+    unsafe { source_page_lists_valid_with_owner(state, map, None) }
+}
+
+unsafe fn source_page_lists_valid_with_owner(
+    state: &PageValiditySnapshot, map: &PageMap,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))] owner: Option<&PageSourceOwnerSnapshot>,
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-debug-3")))] _owner: Option<&()>,
+) -> Result<(), SourcePageInvariant> {
     #[cfg(all(test, target_arch = "x86_64", not(miri)))]
     let observed = {
         let mut observed = *state;
@@ -364,6 +541,8 @@ pub(crate) unsafe fn source_page_lists_valid(
     if state.block_size == 0 { return Err(SourcePageInvariant::BlockSize); }
     if state.used > usize::from(state.capacity) { return Err(SourcePageInvariant::UsedCapacity); }
     if state.capacity > state.reserved { return Err(SourcePageInvariant::CapacityReserved); }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    if let Some(owner) = owner { owner.valid_init()?; }
     // SAFETY: the caller supplies stable backing and initialized list links
     // with collection excluded and immutable published links; each walk
     // checks containment before reading its initialized link.
@@ -1133,6 +1312,57 @@ mod tests {
                 Err(SourcePageInvariant::InitiallyZero));
             assert_eq!(SourcePageInvariant::ObservationGeometry.into_live_page_validity_assertion(),
                 Err(SourcePageInvariant::ObservationGeometry));
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[test]
+    fn copied_owner_and_queue_inputs_preserve_source_validity_disjunctions() {
+        with_page(|page, map| unsafe {
+            let state = Page::validity_snapshot_at(page);
+            let owner = PageSourceOwnerSnapshot::observe_at(&state, true, Some(state.block_size));
+            assert_eq!(source_page_is_valid(&state, map, &owner, true), Ok(()));
+            let mut copied = owner;
+            copied.heap_present = false;
+            assert_eq!(source_page_is_valid(&state, map, &copied, false), Err(SourcePageInvariant::HeapNonNull));
+            copied = owner;
+            copied.heap_theap_absent = false;
+            copied.heap_theap_matches = false;
+            copied.page_theap_detached = false;
+            assert_eq!(source_page_is_valid(&state, map, &copied, false), Err(SourcePageInvariant::HeapTheapBinding));
+            copied.page_theap_detached = true;
+            assert_eq!(source_page_is_valid(&state, map, &copied, false), Ok(()));
+            copied.page_theap_detached = false;
+            copied.heap_theap_matches = true;
+            assert_eq!(source_page_is_valid(&state, map, &copied, false), Ok(()));
+            copied.heap_theap_matches = false;
+            copied.heap_theap_absent = true;
+            assert_eq!(source_page_is_valid(&state, map, &copied, false), Ok(()));
+            copied = owner;
+            copied.queue_contains = false;
+            assert_eq!(source_page_is_valid(&state, map, &copied, false), Ok(()));
+            assert_eq!(source_page_is_valid(&state, map, &copied, true), Err(SourcePageInvariant::QueueContains));
+            copied.abandoned = true;
+            assert_eq!(source_page_is_valid(&state, map, &copied, true), Ok(()));
+            copied = owner;
+            copied.queue_block_size = Some(state.block_size + crate::config::WORD_SIZE);
+            assert_eq!(source_page_is_valid(&state, map, &copied, true), Err(SourcePageInvariant::QueueBlockSize));
+            copied.is_huge = true;
+            assert_eq!(source_page_is_valid(&state, map, &copied, true), Ok(()));
+            copied.is_huge = false;
+            copied.in_full = true;
+            assert_eq!(source_page_is_valid(&state, map, &copied, true), Ok(()));
+            copied = owner;
+            copied.secure_key = 0;
+            let expected = if crate::config::SECURE_LEVEL == 0 { Ok(()) } else { Err(SourcePageInvariant::SecurePageKey) };
+            assert_eq!(source_page_is_valid(&state, map, &copied, true), expected);
+            // Only copied predicate inputs changed; the live Page, real
+            // initialized owner and complete backing remain untouched.
+            let restored = Page::validity_snapshot_at(page);
+            assert_eq!(restored.heap, state.heap);
+            assert_eq!(restored.theap, state.theap);
+            assert_eq!(restored.keys, state.keys);
+            assert_eq!(source_page_is_valid(&restored, map, &owner, true), Ok(()));
         });
     }
 

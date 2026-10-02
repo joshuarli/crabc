@@ -2653,6 +2653,31 @@ fn heap_theap_key(heap: NonNull<Heap>) -> Option<crate::thread_local::ThreadLoca
     crate::thread_local::ThreadLocalKey::from_parts(index, raw >> crate::thread_local::TLS_INDEX_BITS)
 }
 
+/// Reads a child-domain regular slot from the calling thread's installed
+/// source backing. Missing storage or a generation mismatch returns null.
+///
+/// # Safety
+/// The calling thread retains the actual installed child slot backing, its
+/// complete source flexible allocation and its allocation owner. No slot
+/// replacement, mutation or teardown
+/// overlaps this short query; no reference survives it. The root alone does
+/// not grant backing lifetime or authority to follow a returned Theap.
+#[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+pub(crate) unsafe fn source_regular_slot_peek(key: crate::thread_local::ThreadLocalKey) -> *mut () {
+    let Some(mut backing) = crate::compiler_tls::dynamic_backing_peek() else {
+        return core::ptr::null_mut();
+    };
+    // The count-zero root is immutable process storage, so reject it by
+    // identity before creating any mutable dynamic-image projection.
+    if crate::compiler_tls::is_empty_dynamic_backing(backing) {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: the retained calling-thread owner excludes all slot writers;
+    // this temporary projection ends before any callback or allocator entry.
+    let slots = crate::thread_local::ThreadLocalSlots::new(unsafe { backing.as_mut().slots_mut() });
+    slots.get(key)
+}
+
 impl ChildThreadOwner {
     #[inline]
     fn tld_pointer(&self) -> Option<NonNull<ThreadLocalData>> {
