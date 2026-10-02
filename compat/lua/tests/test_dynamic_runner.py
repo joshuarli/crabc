@@ -18,11 +18,6 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
-CHECKOUT_ROOT = (
-    ROOT.parents[2]
-    if ROOT.parent.name == "worktrees" and ROOT.parent.parent.name == ".work"
-    else ROOT
-)
 RUNNER_PATH = ROOT / "compat/lua/run_x86_dynamic.py"
 if str(RUNNER_PATH.parent) not in sys.path:
     sys.path.insert(0, str(RUNNER_PATH.parent))
@@ -429,7 +424,7 @@ class NativeDynamicExecutionRootTests(unittest.TestCase):
     # Worktrees live below the checkout's ignored .work directory.  Container
     # probes may own a worktree-local .work mount, so keep host-test scratch in
     # the checkout-wide mutable x86 work area instead.
-    scratch_root = CHECKOUT_ROOT / ".work/x86_64/tmp/lua-dynamic-execution-root-host-tests"
+    scratch_root = ROOT / ".work/x86_64/tmp/lua-dynamic-execution-root-host-tests"
 
     def setUp(self) -> None:
         self.scratch_root.mkdir(parents=True, exist_ok=True)
@@ -658,7 +653,7 @@ class NativeDynamicExecutionRootTests(unittest.TestCase):
 class NativeDynamicFailureRetentionTests(unittest.TestCase):
     """A failed runtime command still leaves its sealed build and raw output."""
 
-    scratch_root = CHECKOUT_ROOT / ".work/x86_64/tmp/lua-dynamic-failure-retention-host-tests"
+    scratch_root = ROOT / ".work/x86_64/tmp/lua-dynamic-failure-retention-host-tests"
 
     def setUp(self) -> None:
         self.scratch_root.mkdir(parents=True, exist_ok=True)
@@ -729,6 +724,61 @@ class NativeDynamicFailureRetentionTests(unittest.TestCase):
         self.assertEqual(report["reference"], reference["records"])
         self.assertEqual(report["workloads"], {"candidate_luac": failed_luac})
         self.assertEqual(report["error"], "candidate dynamic luac bytecode build failed: 127")
+
+
+class NativeDynamicDebugProfileTests(unittest.TestCase):
+    """Debug consumes one supplied product without invoking a producer."""
+
+    def test_debug_cli_runs_one_supplied_lane_and_keeps_a_private_report(self) -> None:
+        sysroot = ROOT / ".work/debug-sysroot"
+        work = ROOT / ".work/debug-lua"
+        report = work / "debug-report.json"
+        result = {"passed": True, "result": "pass"}
+        with (
+            mock.patch.object(RUNNER, "run_dynamic_dispatch") as dispatch,
+            mock.patch.object(RUNNER, "run_dynamic_lane", return_value=result) as lane,
+            mock.patch.object(RUNNER.LUA, "native_work_root", return_value=work),
+            mock.patch.object(RUNNER.LUA, "native_source_cache", return_value=work / "cache"),
+            mock.patch.object(RUNNER.LUA, "write_json_atomic") as write,
+        ):
+            status = RUNNER.main([
+                "--build-profile", "debug", "--sysroot", str(sysroot),
+                "--work-root", str(work), "--report", str(report), "--offline",
+            ])
+        self.assertEqual(status, 0)
+        dispatch.assert_not_called()
+        lane.assert_called_once_with(
+            sysroot_path=sysroot, work_root=work, cache=work / "cache",
+            offline=True, jobs=RUNNER.LUA.DEFAULT_JOBS, timeout=180.0,
+            build_profile="debug",
+        )
+        write.assert_called_once_with(report, result)
+
+    def test_debug_compilers_preserve_linux_modules_with_opt0(self) -> None:
+        flags = RUNNER.dynamic_flags("debug")
+        self.assertIn("-O0", flags)
+        self.assertNotIn("-O2", flags)
+        self.assertIn("-DLUA_USE_LINUX", flags)
+        self.assertIn("-O2", RUNNER.dynamic_flags())
+
+    def test_default_cli_preserves_the_release_dispatcher(self) -> None:
+        result = {"passed": True, "result": "pass"}
+        with (
+            mock.patch.object(RUNNER, "run_dynamic_dispatch", return_value=(result, Path("report.json"), Path("latest.json"))) as dispatch,
+            mock.patch.object(RUNNER, "run_dynamic_lane") as lane,
+        ):
+            self.assertEqual(RUNNER.main([]), 0)
+        dispatch.assert_called_once_with(jobs=RUNNER.LUA.DEFAULT_JOBS, timeout=180.0, offline=False)
+        lane.assert_not_called()
+
+    def test_debug_requires_a_supplied_product_and_release_rejects_consumer_options(self) -> None:
+        for arguments in (
+            ["--build-profile", "debug"],
+            ["--sysroot", "/supplied"],
+            ["--build-profile", "debug", "--sysroot", "/supplied", "--allocator-backend", "native-shadow"],
+        ):
+            with self.subTest(arguments=arguments), mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+                RUNNER.parse_args(arguments)
 
 
 if __name__ == "__main__":

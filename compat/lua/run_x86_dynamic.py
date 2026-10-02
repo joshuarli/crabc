@@ -151,12 +151,12 @@ def owned_dynamic_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict
     return root, wrapper, runtime, manifest
 
 
-def dynamic_flags() -> list[str]:
+def dynamic_flags(build_profile: str = "release") -> list[str]:
     """Select Lua's Linux module path while leaving target policy to the driver."""
 
     return [
         "-std=gnu99",
-        "-O2",
+        "-O0" if build_profile == "debug" else "-O2",
         "-fno-builtin",
         "-fno-stack-protector",
         "-DLUA_USE_LINUX",
@@ -720,13 +720,15 @@ def build_candidate(
     work: Path,
     timeout: float,
     jobs: int,
+    *,
+    build_profile: str = "release",
 ) -> dict[str, object]:
     """Build the complete selected dynamic Lua source graph through crabc-cc."""
 
     work.mkdir(parents=True, exist_ok=False)
     support, fixture_record = prepare_dynamic_modules(source)
     plan = dynamic_driver_plan(wrapper, sysroot, runtime, work, timeout)
-    flags = dynamic_flags()
+    flags = dynamic_flags(build_profile)
     header = dynamic_header_probe(wrapper, flags, work, sysroot, timeout)
     roster = dynamic_roster(source)
     records, objects = parallel_dynamic_compiles(
@@ -845,7 +847,8 @@ def reference_compile(
 
 
 def build_reference(
-    source: Path, support: Path, work: Path, timeout: float
+    source: Path, support: Path, work: Path, timeout: float,
+    *, build_profile: str = "release",
 ) -> dict[str, object]:
     """Build fresh pinned-musl source bytes; candidate bytes are never reused."""
 
@@ -857,7 +860,7 @@ def build_reference(
     objects_directory.mkdir(parents=True)
     libraries.mkdir()
     binaries.mkdir()
-    flags = dynamic_flags()
+    flags = dynamic_flags(build_profile)
     roster = dynamic_roster(source)
     records: dict[str, object] = {}
     objects: dict[str, Path] = {}
@@ -1671,16 +1674,19 @@ def run_dynamic_lane(
     offline: bool,
     jobs: int,
     timeout: float,
+    build_profile: str = "release",
 ) -> dict[str, object]:
     require_native_x86_64()
     root = LUA.native_work_root(work_root)
     manifest = LUA.load_manifest(MANIFEST)
     archive = LUA.fetch_archive(manifest, offline, cache)
     sysroot, wrapper, runtime, installed_manifest = owned_dynamic_sysroot(sysroot_path)
+    if build_profile == "debug" and installed_manifest.get("build_profile") != "debug":
+        raise LUA.RunnerError("debug Lua requires an explicitly debug-built owned sysroot")
     lane = Path(tempfile.mkdtemp(prefix="run-", dir=root))
     report: dict[str, object] = {
         "schema_version": 1,
-        "runner": "crabc-lua-native-x86-dynamic-source-build",
+        "runner": "crabc-lua-native-x86-dynamic-source-build" + ("-debug" if build_profile == "debug" else ""),
         "result": "fail",
         "passed": False,
         "manifest": {"path": str(MANIFEST), "sha256": LUA.sha256_file(MANIFEST), "contents": manifest},
@@ -1698,16 +1704,19 @@ def run_dynamic_lane(
             "jobs": jobs,
         },
     }
+    if build_profile == "debug":
+        report["build_profile"] = "debug"
     try:
         lua = manifest["lua"]
         assert isinstance(lua, dict)
         source = LUA.safe_extract(archive, lane / "source", str(lua["archive_root"]))
-        candidate = build_candidate(source, sysroot, wrapper, runtime, lane / "candidate", timeout, jobs)
+        candidate = build_candidate(source, sysroot, wrapper, runtime, lane / "candidate", timeout, jobs,
+                                    build_profile=build_profile)
         # The build graph itself is evidence even if its first execution child
         # fails.  Store it before workload commands can raise.
         report["candidate"] = candidate["records"]
         support = source / "src"
-        reference = build_reference(source, support, lane / "oracle", timeout)
+        reference = build_reference(source, support, lane / "oracle", timeout, build_profile=build_profile)
         report["reference"] = reference["records"]
         candidate_paths = candidate["paths"]
         reference_paths = reference["paths"]
@@ -1883,18 +1892,40 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--allocator-backend", choices=LUA.X86_ALLOCATOR_BACKENDS, default="accepted-c",
                         help="sysroot allocator backend; native-shadow runs never publish the latest report")
+    parser.add_argument("--build-profile", choices=("release", "debug"), default="release",
+                        help="debug consumes one supplied debug sysroot with source compilers at -O0")
+    parser.add_argument("--sysroot", type=Path, help="supplied sysroot for the debug consumer")
+    parser.add_argument("--work-root", type=Path, help="checkout-local state for the debug consumer")
+    parser.add_argument("--report", type=Path, help="private debug consumer report")
     args = parser.parse_args(argv)
     if args.jobs < 1 or args.jobs > LUA.MAX_JOBS:
         parser.error(f"--jobs must be an integer from 1 through {LUA.MAX_JOBS}")
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
         parser.error("--timeout must be > 0 and <= 300")
+    if args.build_profile == "debug":
+        if args.sysroot is None:
+            parser.error("--build-profile debug requires --sysroot")
+        if args.allocator_backend != "accepted-c":
+            parser.error("debug uses the supplied sysroot's allocator; --allocator-backend selects a release producer")
+    elif any(value is not None for value in (args.sysroot, args.work_root, args.report)):
+        parser.error("--sysroot, --work-root and --report require --build-profile debug")
     return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        if args.allocator_backend == "accepted-c":
+        if args.build_profile == "debug":
+            LUA.disable_core_dump_inheritance()
+            work = LUA.native_work_root(args.work_root or DEFAULT_WORK_ROOT.with_name(DEFAULT_WORK_ROOT.name + "-debug"))
+            report_path = args.report or work / "debug-report.json"
+            report = run_dynamic_lane(
+                sysroot_path=args.sysroot, work_root=work, cache=LUA.native_source_cache(work),
+                offline=args.offline, jobs=args.jobs, timeout=args.timeout, build_profile="debug",
+            )
+            LUA.write_json_atomic(report_path, report)
+            latest = None
+        elif args.allocator_backend == "accepted-c":
             report, report_path, latest = run_dynamic_dispatch(
                 jobs=args.jobs, timeout=args.timeout, offline=args.offline
             )

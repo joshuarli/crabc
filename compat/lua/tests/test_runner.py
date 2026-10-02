@@ -189,6 +189,7 @@ class NativeStaticContracts(unittest.TestCase):
         self.assertEqual(parsed.build_profile, "debug")
         self.assertIn("-O0", RUNNER.static_compiler_flags(parsed.build_profile))
         self.assertNotIn("-O2", RUNNER.static_compiler_flags(parsed.build_profile))
+        self.assertEqual(parsed.report, parsed.work_root / "debug-report.json")
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             RUNNER.parse_args(["--build-profile", "debug"])
 

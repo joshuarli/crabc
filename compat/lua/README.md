@@ -27,7 +27,22 @@ and checkout-local `--work-root` and `--report` paths. `--mode static` selects
 one entry mode. This consumes an existing explicitly debug-built sysroot and
 compiles both Lua tools and the independent musl reference at `-O0`; it never
 builds another runtime product. Its distinct debug report is not accepted by
-the release admission reader. AArch64's existing route is unchanged.
+the release admission reader. The default debug report is
+`--work-root/debug-report.json`, leaving the conventional release report in
+place. AArch64's existing route is unchanged.
+
+For the selected native dynamic graph, invoke `run_x86_dynamic.py` inside the
+pinned x86 environment with `--build-profile debug --sysroot ROOT`, plus
+checkout-local `--work-root` and optional `--report` paths. This validates and
+consumes one explicitly debug-built dynamic sysroot, then builds `liblua`,
+`lua`, `luac`, and the existing success, failure, and missing-symbol C-module
+graph at `-O0`. Its independent musl source build uses the same compiler
+profile. Source and bytecode workloads retain the existing DSO map, input,
+execution-root, and result checks. The default debug report is
+`--work-root/debug-report.json`; it uses a distinct debug runner identity and
+is not a release admission. This route creates no runtime product, cohort,
+package or extracted copy and publishes no conventional latest report. The
+default release dispatcher and supplied-cohort consumer remain unchanged.
 
 `run_x86_dynamic_supplied.py` is the separate consumer entry point for an
 already sealed dynamic cohort. It takes the frozen cohort checkout and its

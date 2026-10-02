@@ -2307,7 +2307,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.mode:
         args.mode = ["static-et-exec" if mode == "static" else mode for mode in args.mode]
     if args.report is None:
-        args.report = DEFAULT_X86_STATIC_REPORT if args.target == "x86_64-static" else DEFAULT_REPORT
+        if args.build_profile == "debug":
+            args.report = args.work_root / "debug-report.json"
+        else:
+            args.report = DEFAULT_X86_STATIC_REPORT if args.target == "x86_64-static" else DEFAULT_REPORT
     return args
 
 
