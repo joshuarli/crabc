@@ -5070,6 +5070,8 @@ mod tests {
     #[test]
     fn startup_failed_entropy_retry_warns_after_random_projection_ends() {
         std::thread_local! {
+            static RETRY_FAULT: core::cell::Cell<*const fault::Guard> = const { core::cell::Cell::new(core::ptr::null()) };
+            static CLOCK_AT_WARNING: core::cell::Cell<Option<usize>> = const { core::cell::Cell::new(None) };
             static WARNINGS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
             static METADATA: core::cell::Cell<Option<(core::pin::Pin<&'static MetaAllocator>, &'static MainSubprocess)>> =
                 const { core::cell::Cell::new(None) };
@@ -5080,6 +5082,11 @@ mod tests {
             if bytes.windows(b"unable to use secure randomness\n".len())
                 .any(|window| window == b"unable to use secure randomness\n")
             {
+                RETRY_FAULT.with(|slot| {
+                    // SAFETY: the test retains this stack guard throughout
+                    // synchronous startup output and clears the pointer afterward.
+                    CLOCK_AT_WARNING.with(|clock| clock.set(Some(unsafe { &*slot.get() }.secondary_observed())));
+                });
                 // SAFETY: the callback runs on the source initial thread;
                 // warning delivery must have ended its random projection.
                 let draw = unsafe { Theap::next_os_reservation_random_at(default_theap()) };
@@ -5124,12 +5131,17 @@ mod tests {
                         random.unwrap().initialize_weak();
                     }) };
                 }
-                let fault = fault::install(fault::Plan::at(
-                    fault::Point::Entropy, 1, crabc_core::Errno::NOMEM,
+                let fault = fault::install(fault::Plan::at_pair(
+                    fault::Point::Entropy, 1, fault::Point::Clock, 1, crabc_core::Errno::NOMEM,
                 ));
+                RETRY_FAULT.with(|slot| slot.set(&fault));
                 startup.complete().expect("failed entropy continues through weak initialization");
                 assert!(fault.observed() >= 1, "the source retry reaches the entropy fault");
                 WARNINGS.with(|count| assert_eq!(count.get(), 1));
+                CLOCK_AT_WARNING.with(|clock| assert_eq!(clock.get(), Some(0),
+                    "entropy refusal must warn before weak-key clock observations"));
+                assert_eq!(fault.secondary_observed(), 1);
+                RETRY_FAULT.with(|slot| slot.set(core::ptr::null()));
                 if detached {
                     assert_eq!(metadata.test_detached_metadata_random_is_weak(subprocess), Some(true));
                 } else {
