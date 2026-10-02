@@ -258,8 +258,9 @@ capture_tool_roster() {
     local output="$1"
     python3 -B - "$sysroot" "$ORACLE_CC" "$output" <<'PY'
 import hashlib
+import importlib.util
+from importlib.machinery import SourceFileLoader
 import json
-import shutil
 from pathlib import Path
 import sys
 
@@ -272,16 +273,27 @@ def identity(path):
     data = path.read_bytes()
     return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
 
-compiler = shutil.which("gcc")
-linker = shutil.which("ld.lld")
-if compiler is None or linker is None:
-    raise SystemExit("pthread lifecycle requires the pinned gcc and ld.lld")
-record = {
-    "oracle": identity(oracle),
-    "static_driver": identity(sysroot / "bin/crabc-cc"),
-    "compiler": identity(Path(compiler)),
-    "linker": identity(Path(linker)),
-}
+driver = sysroot / "bin/crabc-cc"
+if driver.is_symlink() or not driver.is_file():
+    raise SystemExit("pthread lifecycle installed driver is not a physical file")
+# The installed driver owns tool selection, including its pinned Rust linker
+# fallback. Caller PATH lookup can describe a tool the link never executed.
+loader = SourceFileLoader("pthread_lifecycle_tools", str(driver))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+if spec is None or spec.loader is None:
+    raise SystemExit("pthread lifecycle cannot load installed driver")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+try:
+    spec.loader.exec_module(module)
+    record = {
+        "oracle": identity(oracle),
+        "static_driver": identity(driver),
+        "compiler": identity(Path(module.compiler())),
+        "linker": identity(Path(module.linker(sysroot))),
+    }
+finally:
+    sys.modules.pop(spec.name, None)
 Path(output).write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY
 }

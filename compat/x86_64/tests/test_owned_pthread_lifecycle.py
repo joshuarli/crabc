@@ -27,6 +27,25 @@ class InstalledSmallStackAttachmentTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         cls.work = Path(tempfile.mkdtemp(prefix="attach-", dir=scratch))
 
+    def test_retained_lifecycle_captures_the_installed_drivers_linker_without_caller_path(self):
+        result = subprocess.run(
+            ["bash", str(ROOT / "compat/x86_64/run_owned_pthread_lifecycle.sh"),
+             "--static-sysroot", str(self.sysroot), "--retain"],
+            cwd=ROOT, env={**os.environ, "PATH": "/usr/bin:/bin", "TMPDIR": str(self.work)},
+            text=True, capture_output=True, check=False, timeout=120,
+        )
+        (self.work / "lifecycle-run.stdout").write_text(result.stdout)
+        (self.work / "lifecycle-run.stderr").write_text(result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        leaf = Path(next(line.removeprefix("evidence: ") for line in result.stdout.splitlines()
+                         if line.startswith("evidence: ")))
+        tools = json.loads((leaf / "tools-before.json").read_text())
+        self.assertEqual(tools, json.loads((leaf / "tools-after.json").read_text()))
+        for mode in ("installed-et-exec", "installed-static-pie"):
+            receipt = json.loads((leaf / mode / "link.receipt.json").read_text())
+            self.assertEqual(receipt["resolved_linker"],
+                             {key: tools["linker"][key] for key in ("path", "sha256")})
+
     def test_first_worker_attaches_before_callback_on_valid_16k_stack(self):
         for mode, name in (("-static", "et-exec"), ("-static-pie", "static-pie")):
             with self.subTest(mode=mode):
