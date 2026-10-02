@@ -647,6 +647,8 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     /// before returning the source arena slice claim.
     fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool;
     /// Publishes source primary ownership without consuming Page key draws.
+    /// Each session explicitly supplies allocation authority or a refusal;
+    /// free-only and draining owners cannot recreate a fresh Page.
     ///
     /// # Safety
     /// The actual source session retains the original fresh metadata and
@@ -656,16 +658,17 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     unsafe fn publish_fresh_primary_page(
         &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
         reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
-    ) -> Option<NonNull<Page>> { None }
+    ) -> Option<NonNull<Page>>;
 
     /// Draws Page keys after exact source PageMap and accounting registration.
+    /// Sessions without fresh publication authority explicitly refuse draws.
     ///
     /// # Safety
     /// The original fresh owner retains the Page, selected Theap and backing;
     /// all registration callbacks and projections have ended. Keys have not
     /// been initialized and no zero observation, list or client is published.
     #[cfg(target_arch = "x86_64")]
-    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool { false }
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool;
 
     unsafe fn publish_fresh_page(
         &mut self,

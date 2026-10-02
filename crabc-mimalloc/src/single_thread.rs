@@ -5062,6 +5062,17 @@ impl theap_page_session_sealed::Sealed for SourceRetainedTheapSession {}
 // queue before any ordinary mutation. This free-only session has no fresh
 // publication operation and survives only one synchronous engine call.
 unsafe impl TheapPageSession for SourceRetainedTheapSession {
+    // This captured owner admits only the original local free. It cannot
+    // publish a new Page or consume another allocation's key draws.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, _metadata: NonNull<Page>, _block_size: usize, _page_offset: usize,
+        _reserved: u16, _slice_pcommitted: u16, _free_is_zero: bool, _memid: MemoryId,
+    ) -> Option<NonNull<Page>> { None }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, _page: NonNull<Page>) -> bool { false }
+
     #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
 

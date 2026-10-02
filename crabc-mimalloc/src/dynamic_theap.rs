@@ -2682,6 +2682,32 @@ impl theap_page_session_sealed::Sealed for DynamicTheapPageDrainSession<'_, '_> 
 // and pinned Heap for every engine/producers' raw page lifetime.
 unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
     #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        let theap = self.local_field_theap_pointer();
+        // SAFETY: the actual session retains its typed Theap allocation and
+        // pinned Heap borrow. This short publication read creates no Heap
+        // reference and does not establish ownership from pointer equality.
+        let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+        // SAFETY: the caller retains the original fresh metadata and backing;
+        // the session retains its issuing Theap, TLD and Heap throughout Page
+        // registration and retirement. Primary publication draws no keys.
+        unsafe { Page::publish_fresh_primary_owner_at_with_pointers(metadata,
+            theap, heap, TheapOwner::Live(self.attachment.thread), block_size,
+            page_offset, reserved, slice_pcommitted, free_is_zero, memid) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the original session retains the fresh Page and its exact
+        // issuer. Registration callbacks have ended, and this session owns
+        // the random fields before free-list or client publication.
+        unsafe { Page::initialize_fresh_page_keys_at(page, self.local_field_theap_pointer()) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.attachment.theap.as_ref().and_then(DynamicTheapStorage::local_field_theap_pointer).expect("live dynamic session retains its typed Theap") }
 
     #[inline]
@@ -2829,6 +2855,17 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
 // precedes abandonment; no ordinary allocation entry point receives this
 // session type.
 unsafe impl TheapPageSession for DynamicTheapPageDrainSession<'_, '_> {
+    // The drain retains the original owner only for collection and release.
+    // Fresh publication would recreate allocations after source TLS teardown.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, _metadata: NonNull<Page>, _block_size: usize, _page_offset: usize,
+        _reserved: u16, _slice_pcommitted: u16, _free_is_zero: bool, _memid: MemoryId,
+    ) -> Option<NonNull<Page>> { None }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn initialize_fresh_page_keys(&mut self, _page: NonNull<Page>) -> bool { false }
+
     #[cfg(target_arch = "x86_64")]
     fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.attachment.theap.as_ref().and_then(DynamicTheapStorage::local_field_theap_pointer).expect("draining session retains its typed Theap") }
 
