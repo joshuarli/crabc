@@ -4429,6 +4429,95 @@ mod tests {
         .expect("the persistent initial OS-list regression remains current-thread local");
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[test]
+    fn initial_live_validity_phase_retains_the_original_page_and_issuer() {
+        struct Observation {
+            page: NonNull<crate::types::Page>,
+            observed: bool,
+        }
+        unsafe fn observe(
+            snapshot: &crate::types::PageValiditySnapshot,
+            argument: *mut core::ffi::c_void,
+        ) -> Option<usize> {
+            // SAFETY: the scoped synchronous operation retains this exact
+            // argument and the observer never retains its snapshot borrow.
+            let observation = unsafe { &mut *argument.cast::<Observation>() };
+            if observation.observed || snapshot.page != observation.page { return None; }
+            observation.observed = true;
+            Some(usize::from(snapshot.capacity) + 1)
+        }
+        thread::spawn(|| {
+            let subprocess = MainSubprocess::test_static_owner();
+            let owner = process_main_with_first_arena_options(
+                memory_config(), subprocess, 128 * 1024 * 1024, 2, 0,
+            );
+            let binding = owner.ready().unwrap().process_backing().unwrap();
+            let session = owner.begin_process_lifetime_page_session().unwrap();
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session, binding, ProcessSharedArenaStorage::test_static_owner(),
+            ).unwrap();
+            let request = crate::config::SMALL_MAX_OBJ_SIZE + crate::config::WORD_SIZE;
+            let client = allocator.allocate_current_initial_thread_local(request, false).unwrap();
+            // SAFETY: this valid client retains its original registered Page;
+            // the fixture serializes every lookup and owner operation.
+            let page = unsafe { binding.page_map().lookup_registered_page(client.as_ptr()) }
+                .unwrap().unwrap();
+            // SAFETY: this isolated owner serializes the raw scalar copy;
+            // no Page reference or borrowed field survives the next call.
+            let snapshot = unsafe { crate::types::Page::validity_snapshot_at(page) };
+            assert_eq!(snapshot.capacity, 1);
+            assert_eq!(snapshot.used, 1);
+            assert!(snapshot.free.is_null());
+            assert!(snapshot.reserved > snapshot.capacity);
+            let original_theap = allocator.allocation_theap().unwrap();
+            let mut observation = Observation { page, observed: false };
+            // SAFETY: only the copied used count is overridden. All actual
+            // metadata, list nodes, client bytes and backing remain valid.
+            let task = unsafe {
+                crate::page_validity::with_live_page_validity_observer_for_test(
+                    observe, core::ptr::addr_of_mut!(observation).cast(), || {
+                        let mut phase = allocator.begin_deferred_free_current_initial_thread_local(request, false).unwrap();
+                        for _ in 0..16 {
+                            phase = match phase {
+                                MainStaticDeferredFreeAllocationPhase::LiveValidity(task) => return task,
+                                MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation } => {
+                                    let frequency = allocator.allocation_process().unwrap().policy().generic_collect_frequency();
+                                    allocator.resume_generic_allocation_frequency_current_initial_thread_local(
+                                        source, request, frequency, continuation,
+                                    ).unwrap()
+                                }
+                                MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation } => {
+                                    allocator.resume_deferred_free_current_initial_thread_local(source, collection, continuation).unwrap()
+                                }
+                                MainStaticDeferredFreeAllocationPhase::Complete(_) => panic!("a source assertion must not become a completed allocation"),
+                                MainStaticDeferredFreeAllocationPhase::FreshInitialization(_) => panic!("a live-page assertion must not become fresh initialization"),
+                            };
+                        }
+                        panic!("the original source phase must reach its live-page assertion")
+                    },
+                )
+            };
+            assert!(observation.observed);
+            assert_eq!(task.page(), page);
+            assert!(task.matches_theap(original_theap));
+            assert!(task.belongs_to_subprocess(subprocess.identity()));
+            // SAFETY: retained backing keeps the existing client's map entry
+            // readable; no terminal free or overlapping writer has run.
+            assert_eq!(unsafe { binding.page_map().lookup_registered_page(client.as_ptr()) }.unwrap(), Some(page));
+            if let Err(task) = allocator.retain_live_page_validity_current_initial_thread_local(task) {
+                std::boxed::Box::leak(std::boxed::Box::new((allocator, owner, task)));
+                panic!("the original initial issuer must retain its exact task");
+            }
+            assert!(allocator.allocate_current_initial_thread_local(request, false).is_none());
+            assert_eq!(allocator.allocation_theap(), Some(original_theap));
+            // This fixture deliberately stops before fatal output delivery.
+            // Retain the original owner, live client and pending task together.
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        }).join().unwrap();
+    }
+
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
     #[test]
     fn source_initial_failed_mapping_keeps_active_engine_for_checked_canonical_retry() {
