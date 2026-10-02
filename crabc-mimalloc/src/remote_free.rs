@@ -1719,6 +1719,91 @@ mod tests {
         }
     }
 
+    #[test]
+    fn actual_page_remote_collection_preserves_backing_through_encoded_reuse() {
+        use core::mem::{MaybeUninit, size_of};
+        use crate::config::ARENA_SLICE_SIZE;
+        use crate::free_list::LocalFreeList;
+        use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData};
+
+        #[repr(C, align(65536))]
+        struct Storage {
+            metadata: MaybeUninit<Page>,
+            bytes: [u8; 2 * ARENA_SLICE_SIZE - size_of::<Page>()],
+        }
+        struct Client(NonNull<u8>);
+        // SAFETY: each wrapper owns a distinct current allocation. Its sole
+        // worker publishes that block exactly once and never accesses it again.
+        unsafe impl Send for Client {}
+        impl Client {
+            unsafe fn publish(self, producer: PageRemoteFreeProducerState) {
+                unsafe { push(producer, self.0) }.unwrap();
+            }
+        }
+
+        let mut storage = std::boxed::Box::new(Storage {
+            metadata: MaybeUninit::uninit(),
+            bytes: [0; 2 * ARENA_SLICE_SIZE - size_of::<Page>()],
+        });
+        // The allocation-wide pointer retains both metadata and block-area
+        // provenance; a borrow of the metadata field would cover only Page.
+        let page = unsafe { NonNull::new_unchecked(ptr::addr_of_mut!(*storage).cast::<Page>()) };
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let id = LiveThreadId::new(12).unwrap();
+        tld.attach_bootstrap_exclusive(id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        let memory = MemoryId::external(page.as_ptr().cast(), 2 * ARENA_SLICE_SIZE, true, false, true);
+        // SAFETY: metadata and the aligned block area are contained in one
+        // retained allocation. No observer exists before exclusive publication.
+        unsafe { Page::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
+            32, ARENA_SLICE_SIZE, 8, 0, true, memory) }.unwrap();
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        list.extend_count(8).unwrap();
+        let mut original = Vec::new();
+        let mut clients = Vec::new();
+        for _ in 0..8 {
+            let block = list.pop(false).unwrap().unwrap();
+            original.push(block.as_ptr().addr());
+            clients.push(Client(block));
+        }
+        drop(list);
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        thread::scope(|scope| {
+            for client in clients {
+                scope.spawn(move || unsafe { client.publish(producer) });
+            }
+        });
+        // Every producer has joined. This remains the sole live owner, and
+        // its actual source collector acquires and drains the published list.
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }.unwrap();
+        assert_eq!(unsafe { collect_live_page_false(owner) }, Ok(8));
+        assert_eq!(unsafe { owner.xthread_free.as_ref() }.load(Ordering::Relaxed), 1);
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 0);
+        assert!(unsafe { owner.local_free.as_ptr().read() }.is_null());
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        let mut reused = Vec::new();
+        for _ in 0..8 {
+            let block = list.pop(false).unwrap().unwrap();
+            // Legal renewed client ownership follows collection. This write
+            // also checks the acquired chain retained its backing capability.
+            unsafe { block.as_ptr().write(0xa5) };
+            reused.push(block);
+        }
+        let mut addresses: Vec<_> = reused.iter().map(|block| block.as_ptr().addr()).collect();
+        original.sort_unstable();
+        addresses.sort_unstable();
+        assert_eq!(addresses, original);
+        assert!(list.pop(false).unwrap().is_none());
+        for block in reused {
+            // SAFETY: collection returned each distinct block to a renewed
+            // allocation; this owner frees it once before backing destruction.
+            unsafe { list.push_local(block) }.unwrap();
+        }
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 0);
+    }
+
     unsafe fn test_block_next(page: NonNull<Page>, block: NonNull<Block>) -> *mut Block {
         // SAFETY: joined fixture observations retain the original initialized
         // page and the exact published node through the selected link read.
