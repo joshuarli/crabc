@@ -181,8 +181,12 @@ impl SourcePageInvariant {
 ///
 /// # Safety
 /// The snapshot's live metadata and complete block backing must remain
-/// retained. The caller excludes ordinary owner mutation and every remote
-/// producer/collector for this entire operation, not merely the head load.
+/// retained. The caller excludes ordinary owner mutation, collection, retirement and
+/// reuse throughout this operation. On an owned page, remote producers may
+/// prepend exclusively held clients: the captured remote head was acquired
+/// after release publication, and every node reachable from that head keeps
+/// its initialized link immutable until collection. Producers which can
+/// collect after publication, and every independent collector, are excluded.
 /// Each contained list node has an initialized readable link word. The map
 /// stays active and no overlapping registration changes during the reads.
 /// These obligations provide observation permission, never release rights.
@@ -194,7 +198,8 @@ pub(crate) unsafe fn source_page_lists_valid(
     if state.used > usize::from(state.capacity) { return Err(SourcePageInvariant::UsedCapacity); }
     if state.capacity > state.reserved { return Err(SourcePageInvariant::CapacityReserved); }
     // SAFETY: the caller supplies stable backing and initialized list links
-    // with all producers excluded; each walk checks containment before read.
+    // with collection excluded and immutable published links; each walk
+    // checks containment before reading its initialized link.
     unsafe {
         walk_list(state, state.free, SourcePageInvariant::FreeList, None)?;
         walk_list(state, state.local_free, SourcePageInvariant::LocalFreeList, None)?;
@@ -238,7 +243,8 @@ unsafe fn walk_list(
         count += 1;
         // SAFETY: containment and the readable-word bound above precede this
         // exact link read. The caller retains initialized node bytes and
-        // excludes every producer that could rewrite this word.
+        // excludes collection and reuse; a concurrent producer only prepends
+        // its own unpublished node and never rewrites this captured chain.
         #[cfg(not(any(feature = "mi-debug-1", feature = "mi-secure-3")))]
         { node = unsafe { node.cast::<*mut Block>().read_unaligned() }; }
         #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
@@ -1005,6 +1011,55 @@ mod tests {
     }
 
     #[test]
+    fn acquired_remote_chain_stays_valid_after_live_producer_prepends() {
+        with_page(|page, map| unsafe {
+            let mut list = LocalFreeList::from_page_at(page).unwrap();
+            list.extend_count(8).unwrap();
+            let mut clients = std::vec::Vec::new();
+            for _ in 0..8 { clients.push(list.pop(false).unwrap().unwrap()); }
+            drop(list);
+            let producer = Page::remote_free_producer_state_at(page);
+            crate::remote_free::push(producer, clients.remove(0)).unwrap();
+            let rendezvous = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let worker_barrier = rendezvous.clone();
+            struct OwnedClient(NonNull<u8>);
+            // SAFETY: each wrapper transfers one distinct exclusively held
+            // live client to the worker; the owner retains backing, and no
+            // client pointer is accessed after the worker publishes its link.
+            unsafe impl Send for OwnedClient {}
+            impl OwnedClient {
+                unsafe fn publish(self, producer: crate::types::PageRemoteFreeProducerState) {
+                    // SAFETY: the wrapper retains this exact exclusive client
+                    // until production publication transfers its ownership.
+                    unsafe { crate::remote_free::push(producer, self.0).unwrap(); }
+                }
+            }
+            let clients: std::vec::Vec<_> = clients.into_iter().map(OwnedClient).collect();
+            let worker = std::thread::spawn(move || {
+                for client in clients {
+                    worker_barrier.wait();
+                    unsafe { client.publish(producer); }
+                    worker_barrier.wait();
+                }
+            });
+            for _ in 1..8 {
+                let captured = Page::validity_snapshot_at(page);
+                rendezvous.wait();
+                rendezvous.wait();
+                // The worker has published a new head and stays live. The
+                // acquired old chain remains immutable; no collector can
+                // detach or reuse it while the owner observes either head.
+                assert_eq!(source_page_lists_valid(&captured, map), Ok(()));
+                let extended = Page::validity_snapshot_at(page);
+                assert_ne!(extended.remote, captured.remote);
+                assert_eq!(extended.used, 8);
+                assert_eq!(source_page_lists_valid(&extended, map), Ok(()));
+            }
+            worker.join().unwrap();
+        });
+    }
+
+    #[test]
     fn page_start_must_resolve_through_the_retained_actual_map() {
         with_page(|page, map| unsafe {
             let mut list = LocalFreeList::from_page_at(page).unwrap();
@@ -1029,6 +1084,138 @@ mod tests {
             let state = Page::validity_snapshot_at(page);
             assert_eq!(source_page_lists_valid(&state, map), Ok(()));
         });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_reachable_bin_pages_preserve_lists_through_full_local_reuse_and_release() {
+        use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
+        crate::test_process::run_in_fresh_process(
+            "page_validity::tests::native_reachable_bin_pages_preserve_lists_through_full_local_reuse_and_release", || {
+                // Keep full pages in their original local Theap so the
+                // sweep observes local reuse without an abandonment handoff.
+                std::env::set_var("mimalloc_page_full_retain", "-1");
+                // SAFETY: this no-op output primitive has no borrowed state.
+                unsafe extern "C" fn stderr(_message: *const core::ffi::c_char) {}
+                let output = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr) };
+                assert!(runtime::test_initialize_process_from_host_environment(4096, output));
+                let allocate = |size| {
+                    match runtime::native_allocate(size, false) {
+                        NativePageAllocationResult::Allocated(block) => block,
+                        NativePageAllocationResult::Unavailable => panic!("native allocation for {size}: unavailable"),
+                        NativePageAllocationResult::AllocationFailed => panic!("native allocation for {size}: allocation failed"),
+                        NativePageAllocationResult::Retained => panic!("native allocation for {size}: retained"),
+                    }
+                };
+                let seed = allocate(32);
+                assert_eq!(unsafe { runtime::native_free(seed) }, NativePageFreeResult::Freed);
+                unsafe { runtime::native_collect(true); }
+                for bin in 1..crate::config::BIN_HUGE {
+                    let block_size = crate::size_class::bin_size(bin).unwrap();
+                    if crate::size_class::bin(block_size) != Some(bin)
+                        || block_size <= crate::config::PADDING_SIZE { continue; }
+                    let request = block_size - crate::config::PADDING_SIZE;
+                    let first = allocate(request);
+                    let selected = crate::compiler_tls::default_theap();
+                    // SAFETY: live clients retain the current sole-thread owner,
+                    // its metadata and backing throughout admission. No remote
+                    // producer exists and no ordinary projection crosses calls.
+                    unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+                        let map = owner.page_map().unwrap().page_map().unwrap();
+                        let page = NonNull::new(map.checked_lookup(first.as_ptr())).unwrap();
+                        let observe = || {
+                            let state = Page::validity_snapshot_at(page);
+                            assert_eq!(state.block_size, block_size, "bin {bin}");
+                            assert_eq!(source_page_lists_valid(&state, map), Ok(()), "bin {bin}");
+                            state
+                        };
+                        let initial = observe();
+                        let mut blocks = std::vec![first];
+                        while blocks.len() < usize::from(initial.reserved) {
+                            let block = allocate(request);
+                            assert_eq!(map.checked_lookup(block.as_ptr()), page.as_ptr(), "bin {bin}");
+                            blocks.push(block);
+                        }
+                        let full = observe();
+                        assert_eq!(full.capacity, full.reserved);
+                        assert_eq!(full.used, usize::from(full.reserved));
+                        if blocks.len() > 1 {
+                            let returned = blocks.pop().unwrap();
+                            assert_eq!(runtime::native_free(returned), NativePageFreeResult::Freed);
+                            observe();
+                            let reused = allocate(request);
+                            assert_eq!(reused, returned, "local reuse in bin {bin}");
+                            blocks.push(reused);
+                            observe();
+                        }
+                        for block in blocks {
+                            assert_eq!(runtime::native_free(block), NativePageFreeResult::Freed);
+                        }
+                    }) }.unwrap();
+                }
+                unsafe { runtime::native_collect(true); }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn native_sampled_clients_retain_valid_page_lists_and_physical_tail_protection() {
+        use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
+        crate::test_process::run_in_fresh_process(
+            "page_validity::tests::native_sampled_clients_retain_valid_page_lists_and_physical_tail_protection", || {
+                unsafe extern "C" fn stderr(_message: *const core::ffi::c_char) {}
+                let output = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr) };
+                assert!(runtime::test_initialize_process_from_host_environment(4096, output));
+                let NativePageAllocationResult::Allocated(seed) = runtime::native_allocate(32, false)
+                    else { panic!("native owner seed"); };
+                let selected = crate::compiler_tls::default_theap();
+                // SAFETY: this isolated current owner has no concurrent sampler
+                // access. The live seed retains its initialized selected Theap.
+                unsafe {
+                    Theap::guarded_set_sample_rate_at(selected, 1, 1);
+                    Theap::guarded_set_size_bound_at(selected, 0, 100_000);
+                }
+                for request in [1, 81, 4096, 8193, 65_536] {
+                    let NativePageAllocationResult::Allocated(block) = runtime::native_allocate(request, false)
+                        else { panic!("sampled client for {request}"); };
+                    // SAFETY: this thread retains exact clients and the sole
+                    // owner; no collector, producer, teardown or map mutation
+                    // overlaps these short observations or the child access.
+                    unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+                        let root = owner.page_map().unwrap();
+                        let allocation = root.lookup_live_allocation(block).unwrap().unwrap();
+                        assert!(allocation.is_guarded());
+                        let tail = allocation.guarded_tail_page(4096).unwrap();
+                        assert!(allocation.usable_size() >= request);
+                        let state = Page::validity_snapshot_at(allocation.page());
+                        assert_eq!(source_page_lists_valid(&state, root.page_map().unwrap()), Ok(()));
+                        block.as_ptr().write_bytes(0x5a, request);
+                        unsafe extern "C" {
+                            fn fork() -> i32;
+                            fn waitpid(pid: i32, status: *mut i32, flags: i32) -> i32;
+                            fn _exit(status: i32) -> !;
+                        }
+                        let child = fork();
+                        assert!(child >= 0);
+                        if child == 0 {
+                            // Only the retained mapping is touched in the child;
+                            // no copied allocator owner, lock or callback runs.
+                            tail.as_ptr().write_volatile(1);
+                            _exit(0);
+                        }
+                        let mut status = 0;
+                        assert_eq!(waitpid(child, &mut status, 0), child);
+                        assert_eq!(status & 0x7f, 11, "actual guard must raise SIGSEGV");
+                        assert_eq!(source_page_lists_valid(&Page::validity_snapshot_at(allocation.page()),
+                            root.page_map().unwrap()), Ok(()));
+                    }) }.unwrap();
+                    assert_eq!(unsafe { runtime::native_free(block) }, NativePageFreeResult::Freed);
+                }
+                assert_eq!(unsafe { runtime::native_free(seed) }, NativePageFreeResult::Freed);
+                unsafe { runtime::native_collect(true); }
+            },
+        );
     }
 
     #[test]

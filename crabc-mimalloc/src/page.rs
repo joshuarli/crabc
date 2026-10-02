@@ -542,27 +542,30 @@ use crate::os::PageSize;
 
     #[test]
     fn capacity_extension_retains_the_default_eight_kib_touch_bound() {
+        let default_extend = |capacity, reserved, block_size, committed| {
+            page_extend_count_at_secure_level(capacity, reserved, block_size, committed, 0)
+        };
         assert!(page_counts_are_valid(0, 1));
         assert!(page_counts_are_valid(8, 8));
         assert!(!page_counts_are_valid(0, 0));
         assert!(!page_counts_are_valid(9, 8));
 
-        assert_eq!(page_extend_count(0, 1024, WORD_SIZE, 0), Some(1024));
-        assert_eq!(page_extend_count(0, 1025, WORD_SIZE, 0), Some(1024));
-        assert_eq!(page_extend_count(0, 3, 4096, 0), Some(2));
-        assert_eq!(page_extend_count(0, 3, 4097, 0), Some(1));
-        assert_eq!(page_extend_count(0, 2, 8192, 0), Some(1));
-        assert_eq!(page_extend_count(8, 8, WORD_SIZE, 0), Some(0));
-        assert_eq!(page_extend_count(9, 8, WORD_SIZE, 0), None);
-        assert_eq!(page_extend_count(0, 0, WORD_SIZE, 0), None);
+        assert_eq!(default_extend(0, 1024, WORD_SIZE, 0), Some(1024));
+        assert_eq!(default_extend(0, 1025, WORD_SIZE, 0), Some(1024));
+        assert_eq!(default_extend(0, 3, 4096, 0), Some(2));
+        assert_eq!(default_extend(0, 3, 4097, 0), Some(1));
+        assert_eq!(default_extend(0, 2, 8192, 0), Some(1));
+        assert_eq!(default_extend(8, 8, WORD_SIZE, 0), Some(0));
+        assert_eq!(default_extend(9, 8, WORD_SIZE, 0), None);
+        assert_eq!(default_extend(0, 0, WORD_SIZE, 0), None);
 
         // For the default `MI_MIN_EXTEND == 1`, on-demand commitment keeps
         // the same source result even when one block exceeds one arena slice.
         assert_eq!(
-            page_extend_count(0, 2, ARENA_SLICE_SIZE + 1, 1),
+            default_extend(0, 2, ARENA_SLICE_SIZE + 1, 1),
             Some(1),
         );
-        assert_eq!(page_extend_count(0, 2, usize::MAX, 1), None);
+        assert_eq!(default_extend(0, 2, usize::MAX, 1), None);
     }
 
     #[test]
@@ -600,10 +603,14 @@ use crate::os::PageSize;
             span,
         )
         .expect("the second source block has one page-area commit plan");
-        assert_eq!(plan.extend, 1);
+        let extend = if crate::config::SECURE_LEVEL >= 2 { 7 } else { 1 };
+        assert_eq!(plan.extend, extend);
         assert_eq!(plan.commit_offset, 16 * KIB);
-        assert_eq!(plan.commit_size, 16 * KIB);
-        assert_eq!(plan.next_slice_pcommitted, 8);
+        let needed_commit = invariants::align_up(
+            offset + (1 + usize::from(extend)) * block_size, 16 * KIB,
+        ).unwrap();
+        assert_eq!(plan.commit_size, needed_commit - 16 * KIB);
+        assert_eq!(usize::from(plan.next_slice_pcommitted), needed_commit / page_size);
     }
 
     #[test]
@@ -756,6 +763,13 @@ use crate::os::PageSize;
                 crate::source_options_api::option_set(SourceOption::PageCommitOnDemand as c_int, 1);
                 crate::source_options_api::option_set(SourceOption::ArenaEagerCommit as c_int, 0);
                 crate::source_options_api::option_set(SourceOption::ShowErrors as c_int, 1);
+                if std::env::var_os("CRABC_MI_STATISTICS_MATRIX").is_some() {
+                    crate::source_options_api::option_set(SourceOption::GuardedSampleRate as c_int, 0);
+                    let theap = crate::source_heap_api::theap_get_default();
+                    assert!(!theap.is_null());
+                    // SAFETY: this fresh thread exclusively retains its initialized Theap.
+                    unsafe { crate::source_heap_api::theap_guarded_set_sample_rate(theap, 0, 0) };
+                }
                 // SAFETY: the callback and null context remain valid until
                 // this fresh test process exits.
                 unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };
@@ -1284,6 +1298,13 @@ use crate::os::PageSize;
                 ));
                 crate::source_options_api::option_set(SourceOption::DisallowArenaAlloc as c_int, 1);
                 crate::source_options_api::option_set(SourceOption::ShowErrors as c_int, 1);
+                if std::env::var_os("CRABC_MI_STATISTICS_MATRIX").is_some() {
+                    crate::source_options_api::option_set(SourceOption::GuardedSampleRate as c_int, 0);
+                    let theap = crate::source_heap_api::theap_get_default();
+                    assert!(!theap.is_null());
+                    // SAFETY: this fresh thread exclusively retains its initialized Theap.
+                    unsafe { crate::source_heap_api::theap_guarded_set_sample_rate(theap, 0, 0) };
+                }
                 // SAFETY: the static callback and null context remain valid
                 // until this fresh process exits.
                 unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };

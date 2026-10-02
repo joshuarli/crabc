@@ -156,6 +156,7 @@
       "free_list::tests::",
       "size_class::tests::",
       "page::tests::",
+      "page_validity::tests::",
       "main_theap::tests::",
       "main_static_page::tests::",
       "main_heap_page::tests::",
@@ -179,6 +180,7 @@
     "module_prefixes": [
       "single_thread::local_trace::",
       "page::tests::",
+      "page_validity::tests::",
       "free_list::tests::source_bin_free_list_matrix_preserves_order_and_zeroing",
       "types::page_queue::tests::queue_bin_transition_matrix_preserves_source_owner_state",
       "local_fast_path::tests::foreign_free_declines_while_owner_updates_ordinary_page_state"
@@ -186,6 +188,7 @@
     "required_tests": [
       "single_thread::local_trace::emit_m3_local_trace",
       "single_thread::local_trace::m3_local_trace_is_deterministic_across_fresh_engines",
+      "page_validity::tests::acquired_remote_chain_stays_valid_after_live_producer_prepends",
       "free_list::tests::source_bin_free_list_matrix_preserves_order_and_zeroing",
       "types::page_queue::tests::queue_bin_transition_matrix_preserves_source_owner_state",
       "local_fast_path::tests::foreign_free_declines_while_owner_updates_ordinary_page_state"
@@ -255,10 +258,12 @@
       "-Zmiri-strict-provenance"
     ],
     "module_prefixes": [
-      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw"
+      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw",
+      "page_validity::tests::acquired_remote_chain_stays_valid_after_live_producer_prepends"
     ],
     "required_tests": [
-      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw"
+      "types::tests::source_page_keys_follow_registered_primary_and_intervening_original_random_draw",
+      "page_validity::tests::acquired_remote_chain_stays_valid_after_live_producer_prepends"
     ]
   },
   "rust_page_ownership_batch": {

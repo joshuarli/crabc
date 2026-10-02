@@ -4405,10 +4405,13 @@ impl Page {
     /// The caller retains initialized, address-stable metadata and its actual
     /// block backing. `page_offset` and `reserved * block_size` must describe
     /// that live area without overflow. Ordinary owner mutation, retirement,
-    /// reuse, and every remote producer or collector must be excluded during
-    /// this copy and any subsequent list traversal using its heads. Traversed
-    /// nodes must have initialized links. The Acquire load supplies no such
-    /// exclusion or release permission by itself.
+    /// reuse, and every collector must be excluded during this copy and any
+    /// subsequent traversal. On an owned page, producers may prepend their
+    /// exclusive clients: the Acquire head load observes release-published
+    /// initialized links which remain immutable until owner collection.
+    /// Producers allowed to collect after publication must be excluded.
+    /// Retained backing and collector exclusion keep the captured chain live;
+    /// the Acquire load alone grants neither lifetime nor release permission.
     #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn validity_snapshot_at(page: NonNull<Self>) -> PageValiditySnapshot {
         let raw = page.as_ptr();
