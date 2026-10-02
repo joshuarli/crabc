@@ -84,8 +84,12 @@ interposition coverage.
 ## Retained receipt and host replay
 
 `locale_alias_contract_receipt.py` wraps the existing runner; it does not turn
-an older shell transcript into current evidence. `locale-alias-contract-image-inputs.json`
-is the finite immutable image-input manifest. It binds the pinned image, musl
+an older shell transcript into current evidence. Current v4 receipts use
+`locale-alias-contract-image-inputs-v2.json`, whose image identity agrees with
+`core_image.py` and whose toolchain paths follow `rust-toolchain.toml`.
+`locale-alias-contract-image-inputs.json` retains the historical v3 image
+authority. Neither manifest transfers an older receipt to a newer image.
+The finite image-input manifests bind the selected image, musl
 1.2.6 archive/shared object/specs/compiler, the pinned target `llvm-ar`,
 `llvm-nm`, and `llvm-objdump`, and every runner or collector tool by physical
 path, bytes, and mode. Both static and dynamic product metadata must name those
@@ -109,9 +113,19 @@ consumer mode policies are all checked from retained bytes. The receipt also
 retains the compiled object and every linked consumer identity, before/after
 input snapshots, and complete static/dynamic product trees including directory
 and symlink modes. The descendant-tree convention intentionally omits each
-product root, so receipt schema v3 records the physical static and dynamic
+product root, so both receipt versions record the physical static and dynamic
 root modes separately. This preserves a dynamic setgid root such as `02755`
 without inventing a root mode from descendants.
+
+To check the current manifest independently of product construction, run
+`python3 -B compat/x86_64/locale_alias_contract_receipt.py image-input-manifest`
+inside the exact image named by `core_image.py`. The command observes each
+tool's resolved path, SHA-256, size and mode. Compare the result with
+`locale-alias-contract-image-inputs-v2.json`; an image-ID update alone cannot
+authenticate changed tool bytes. Collection authenticates those same physical
+files before retaining them, and the reader authenticates their retained bytes
+against the selected manifest. This image check does not qualify products or
+locale behavior.
 
 Collection accepts `collect --output DIR --static-product STATIC_ROOT
 --dynamic-product DYNAMIC_ROOT` for an existing product pair. Both roots are
