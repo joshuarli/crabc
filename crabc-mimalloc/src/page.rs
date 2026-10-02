@@ -1395,7 +1395,13 @@ use crate::os::PageSize;
                     let recollected = stats().0;
                     let unchanged = released.pages == recollected.pages && released.reserved == recollected.reserved && released.committed == recollected.committed;
                     assert!(unchanged);
-                    assert_eq!(unmaps.all().unwrap().1, 1);
+                    let (recollected_ranges, recollected_count) = unmaps.all().unwrap();
+                    assert_eq!(recollected_count, 1,
+                        "consumed target {:#x}; initial release {:?}; recollection {:?}; baseline pages/reserved/committed {:?}/{:?}/{:?}; released {:?}/{:?}/{:?}; recollected {:?}/{:?}/{:?}",
+                        block.as_ptr().addr(), ranges[0], &recollected_ranges[..recollected_count],
+                        before.0.pages, before.0.reserved, before.0.committed,
+                        released.pages, released.reserved, released.committed,
+                        recollected.pages, recollected.reserved, recollected.committed);
                     assert_eq!(fault.observed(), 1);
                     std::println!("recollect.no_unmap=1");
                     std::println!("recollect.mapping_present={}", mapping_present());
