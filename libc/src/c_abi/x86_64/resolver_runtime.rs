@@ -953,7 +953,11 @@ unsafe fn query_response(
     answer: *mut u8,
     answer_length: c_int,
 ) -> c_int {
-    if answer.is_null() || answer_length < 12 {
+    // The owned transport returns the full reply length after copying only
+    // the caller's prefix. Classification needs the flags and ANCOUNT bytes,
+    // so eight caller bytes suffice; the strict transport still needs twelve.
+    let minimum_answer_length = if cfg!(crabc_x86_owned_runtime) { 8 } else { 12 };
+    if answer.is_null() || answer_length < minimum_answer_length {
         unsafe {
             set_errno(EINVAL);
             set_h_errno(NO_RECOVERY);
@@ -984,7 +988,9 @@ unsafe fn query_response(
         unsafe { set_h_errno(TRY_AGAIN) };
         return -1;
     }
-    let response = unsafe { core::slice::from_raw_parts(answer, received as usize) };
+    // A successful short-buffer send may report more bytes than the caller
+    // owns. Borrow only the initialized header prefix inspected here.
+    let response = unsafe { core::slice::from_raw_parts(answer, 8) };
     match response[3] & 0x0f {
         0 if response[6] != 0 || response[7] != 0 => {
             // A positive answer leaves the caller's previous h_errno intact.
@@ -1409,3 +1415,72 @@ static_archive_member! { getaddrinfo_source {
 // address records in one validated response; following a CNAME-only chain is
 // intentionally deferred with the remaining resolver profile.
 const _: u16 = TYPE_CNAME;
+
+#[cfg(all(test, crabc_x86_owned_runtime))]
+mod query_buffer_tests {
+    use super::*;
+    use std::{net::UdpSocket, thread, time::Duration};
+
+    fn query_with_capacity<const N: usize>(rcode: u8, answers: u16) -> (c_int, c_int, [u8; N], usize) {
+        let server = UdpSocket::bind(("127.0.0.1", 0)).unwrap();
+        server.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let port = server.local_addr().unwrap().port();
+        let worker = thread::spawn(move || {
+            let mut query = [0u8; 512];
+            let (length, peer) = server.recv_from(&mut query).unwrap();
+            let mut reply = query[..length].to_vec();
+            reply[2] = 0x81;
+            reply[3] = 0x80 | rcode;
+            reply[6..8].copy_from_slice(&answers.to_be_bytes());
+            if answers != 0 {
+                reply.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 1]);
+            }
+            server.send_to(&reply, peer).unwrap();
+            reply.len()
+        });
+        let mut answer = [0xa5; N];
+        // SAFETY: this worker alone owns its resolver TLS, and the query's
+        // terminated name and exclusive answer array remain live through I/O.
+        unsafe {
+            reset_state();
+            RESOLVER_RES_STATE.options |= RES_INIT as c_ulong;
+            RESOLVER_RES_STATE.nscount = 1;
+            RESOLVER_RES_STATE.nsaddr_list[0] = SockaddrIn {
+                sin_family: AF_INET as u16, sin_port: port.to_be(),
+                sin_addr: InAddr { s_addr: u32::from_ne_bytes([127, 0, 0, 1]) },
+                sin_zero: [0; 8],
+            };
+            RESOLVER_RES_STATE.retrans = 1;
+            RESOLVER_RES_STATE.retry = 1;
+            set_h_errno(77);
+            let result = res_query(c"buffer.example.test".as_ptr(), CLASS_IN as c_int,
+                TYPE_A as c_int, answer.as_mut_ptr(), N as c_int);
+            assert_eq!(answer[2], 0x81, "the query did not receive its bounded reply prefix");
+            (result, current_h_errno(), answer, worker.join().unwrap())
+        }
+    }
+
+    #[test]
+    fn query_preserves_full_positive_length_with_only_the_inspected_header_bytes() {
+        let (result, status, answer, length) = query_with_capacity::<8>(0, 1);
+        assert_eq!(result, length as c_int);
+        assert_eq!(status, 77);
+        assert_eq!(&answer[6..8], &[0, 1]);
+    }
+
+    #[test]
+    fn query_classifies_negative_replies_from_a_short_caller_buffer() {
+        let (result, status, _, _) = query_with_capacity::<8>(3, 0);
+        assert_eq!((result, status), (-1, HOST_NOT_FOUND));
+        let (result, status, _, _) = query_with_capacity::<8>(0, 0);
+        assert_eq!((result, status), (-1, NO_DATA));
+    }
+
+    #[test]
+    fn query_keeps_short_and_full_answer_buffers_on_the_same_status_path() {
+        let (result, status, _, length) = query_with_capacity::<12>(0, 1);
+        assert_eq!((result, status), (length as c_int, 77));
+        let (result, status, _, length) = query_with_capacity::<512>(0, 1);
+        assert_eq!((result, status), (length as c_int, 77));
+    }
+}
