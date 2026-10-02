@@ -1402,7 +1402,22 @@ use crate::os::PageSize;
                         before.0.pages, before.0.reserved, before.0.committed,
                         released.pages, released.reserved, released.committed,
                         recollected.pages, recollected.reserved, recollected.committed);
-                    assert_eq!(fault.observed(), 1);
+                    let (base, length) = ranges[0];
+                    let mut mapped_pages = 0;
+                    for offset in (0..length).step_by(4096) {
+                        let mut residency = 0;
+                        // SAFETY: the captured extent is sampled without
+                        // accessing consumed client or retired Page bytes.
+                        let result = unsafe { crabc_core::mm::mincore_raw((base + offset) as *mut u8, 4096, &mut residency) };
+                        assert!(result.is_ok() || result == Err(crabc_core::Errno::NOMEM));
+                        mapped_pages += usize::from(result.is_ok());
+                    }
+                    assert_eq!(fault.observed(), 1,
+                        "consumed target {:#x}; initial release {:?}; captured ranges {:?}; remaining mapped pages {}/{}; baseline pages/reserved/committed {:?}/{:?}/{:?}; released {:?}/{:?}/{:?}; recollected {:?}/{:?}/{:?}",
+                        block.as_ptr().addr(), ranges[0], &recollected_ranges[..recollected_count], mapped_pages, length / 4096,
+                        before.0.pages, before.0.reserved, before.0.committed,
+                        released.pages, released.reserved, released.committed,
+                        recollected.pages, recollected.reserved, recollected.committed);
                     std::println!("recollect.no_unmap=1");
                     std::println!("recollect.mapping_present={}", mapping_present());
                     assert!(survivor_bytes());
