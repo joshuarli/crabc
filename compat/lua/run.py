@@ -1290,12 +1290,12 @@ def owned_static_sysroot(path: Path) -> tuple[Path, Path, dict[str, Path], dict[
     return root, wrapper, runtime_names, manifest
 
 
-def static_compiler_flags() -> list[str]:
+def static_compiler_flags(build_profile: str = "release") -> list[str]:
     """Keep Lua's POSIX behavior enabled without enabling runtime DSO loading."""
 
     return [
         "-std=gnu99",
-        "-O2",
+        "-O0" if build_profile == "debug" else "-O2",
         "-fno-builtin",
         "-fno-stack-protector",
         "-DLUA_USE_POSIX",
@@ -1695,11 +1695,13 @@ def build_static_candidate(
     work: Path,
     timeout: float,
     jobs: int,
+    *,
+    build_profile: str = "release",
 ) -> dict[str, object]:
     """Build both native Lua tools from a complete object roster through crabc-cc."""
 
     work.mkdir(parents=True, exist_ok=False)
-    flags = static_compiler_flags()
+    flags = static_compiler_flags(build_profile)
     header_object = work / "header-probe.o"
     header_probe = static_compile_record(
         wrapper,
@@ -1822,6 +1824,8 @@ def build_static_reference(
     support: Path,
     work: Path,
     timeout: float,
+    *,
+    build_profile: str = "release",
 ) -> dict[str, object]:
     """Build the independent ET_EXEC pinned-musl behavior oracle from source."""
 
@@ -1843,7 +1847,7 @@ def build_static_reference(
                 str(compiler),
                 reference_mode.driver_flag,
                 "-no-pie",
-                *static_compiler_flags(),
+                *static_compiler_flags(build_profile),
                 "-I",
                 str(source / "src"),
                 *(str(path) for path in [*shared, sources_by_name[main]]),
@@ -2007,12 +2011,16 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
     manifest = load_manifest(args.manifest)
     archive = fetch_archive(manifest, args.offline, native_source_cache(work_root))
     sysroot, wrapper, runtime, installed_manifest = owned_static_sysroot(args.sysroot)
+    build_profile = getattr(args, "build_profile", "release")
+    if build_profile == "debug" and installed_manifest.get("build_profile") != "debug":
+        raise RunnerError("debug Lua requires an explicitly debug-built owned sysroot")
     oracle = require_pinned_x86_musl_compiler()
     modes = selected_static_modes(args.mode)
     run_root = Path(tempfile.mkdtemp(prefix="run-", dir=work_root))
     report: dict[str, object] = {
         "schema_version": 2,
-        "runner": "crabc-lua-native-x86-static-source-build",
+        "runner": "crabc-lua-native-x86-static-source-build" + ("-debug" if build_profile == "debug" else ""),
+        "build_profile": build_profile,
         "result": "fail",
         "passed": False,
         "manifest": {"path": str(args.manifest), "sha256": sha256_file(args.manifest), "contents": manifest},
@@ -2052,9 +2060,11 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
         for mode in modes:
             mode_root = run_root / mode.identifier
             candidate = build_static_candidate(
-                source, support, sysroot, wrapper, mode, mode_root, args.timeout, args.jobs
+                source, support, sysroot, wrapper, mode, mode_root, args.timeout, args.jobs,
+                build_profile=build_profile,
             )
-            reference = build_static_reference(source, support, mode_root, args.timeout)
+            reference = build_static_reference(source, support, mode_root, args.timeout,
+                                               build_profile=build_profile)
             candidate_paths = candidate["paths"]
             reference_paths = reference["paths"]
             assert isinstance(candidate_paths, dict) and isinstance(reference_paths, dict)
@@ -2281,6 +2291,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--build-profile", choices=("release", "debug"), default="release",
+                        help="native x86 source compiler profile; debug requires a debug sysroot")
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args(argv)
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
@@ -2290,6 +2302,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             parser.error(f"--jobs must be an integer from 1 through {MAX_JOBS}")
     if args.target == "aarch64-dynamic" and args.mode:
         parser.error("--mode is available only with --target x86_64-static")
+    if args.target == "aarch64-dynamic" and args.build_profile != "release":
+        parser.error("--build-profile debug is available only with --target x86_64-static")
     if args.mode:
         args.mode = ["static-et-exec" if mode == "static" else mode for mode in args.mode]
     if args.report is None:

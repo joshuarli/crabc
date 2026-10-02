@@ -184,6 +184,14 @@ class NativeStaticContracts(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     RUNNER.parse_args(arguments)
 
+    def test_debug_source_profile_is_native_x86_only(self) -> None:
+        parsed = RUNNER.parse_args(["--target", "x86_64-static", "--build-profile", "debug"])
+        self.assertEqual(parsed.build_profile, "debug")
+        self.assertIn("-O0", RUNNER.static_compiler_flags(parsed.build_profile))
+        self.assertNotIn("-O2", RUNNER.static_compiler_flags(parsed.build_profile))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            RUNNER.parse_args(["--build-profile", "debug"])
+
     def test_timeout_limit_applies_to_both_runner_targets(self) -> None:
         for target in ("aarch64-dynamic", "x86_64-static"):
             for timeout in ("nan", "inf", "-inf", "0", "301"):

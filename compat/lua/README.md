@@ -21,6 +21,14 @@ Run it through the architecture-specific Docker entry point:
 python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
+For focused native static development, invoke `run.py` inside the pinned x86
+environment with `--target x86_64-static --build-profile debug --sysroot ROOT`
+and checkout-local `--work-root` and `--report` paths. `--mode static` selects
+one entry mode. This consumes an existing explicitly debug-built sysroot and
+compiles both Lua tools and the independent musl reference at `-O0`; it never
+builds another runtime product. Its distinct debug report is not accepted by
+the release admission reader. AArch64's existing route is unchanged.
+
 `run_x86_dynamic_supplied.py` is the separate consumer entry point for an
 already sealed dynamic cohort. It takes the frozen cohort checkout and its
 `qualification.json`, the exact installed and extracted roots declared by that
