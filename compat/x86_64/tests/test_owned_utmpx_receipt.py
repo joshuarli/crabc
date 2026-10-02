@@ -481,6 +481,17 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         self.assertEqual(old_path.read_bytes(), tracked)
         self.assertNotEqual(old["image"], current["image"])
 
+    def test_retained_manifest_cannot_reauthorize_another_image_with_current_tool_bytes(self) -> None:
+        manifest = receipt.trusted_image_manifest()
+        path = self.workspace / receipt.IMAGE_MANIFEST
+        self.write(path, manifest)
+        receipt.validate_retained_image_manifest(self.workspace, receipt.identity(self.workspace, path))
+        historical = receipt.read_json(ROOT / "compat/x86_64/owned_utmpx_image_inputs.json", "historical inputs")
+        manifest["image"] = historical["image"]
+        self.write(path, manifest)
+        with self.assertRaisesRegex(receipt.ReceiptError, "trusted immutable image inputs"):
+            receipt.validate_retained_image_manifest(self.workspace, receipt.identity(self.workspace, path))
+
     def test_selected_product_epoch_is_distinct_from_the_collector_epoch(self) -> None:
         collector = receipt.local_git_head(ROOT)
         selected = {"revision": "f" * 40, "content_sha256": "b" * 64}

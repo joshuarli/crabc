@@ -89,14 +89,15 @@ WEAK = ("endutent", "setutent", "getutent", "getutid", "getutline", "pututline",
 # only at this reviewed helper revision. Its TLS-free static-link and exact
 # weak RuntimeV1 zero-GOT cases are authority checks only; this component
 # still supplies its own finite function roster and trace/member admission.
-STATIC_LINK_AUTHORITY_COMMIT = "f76844d9fb49465691b88ad4ebb76e1e3b2b04b4"
-STATIC_LINK_AUTHORITY_SHA256 = "2d5143260e9105dd08fd8c2610a741a0c5c5f0791159bb4e4f6f385dcfa8eafe"
+STATIC_LINK_AUTHORITY_COMMIT = "6cc672d4e28f9cba17c12b87920d09b7eca0c90e"
+STATIC_LINK_AUTHORITY_SHA256 = "6d5ba48fee24c86804d228e9ce8fc0cefaf37362453f9d40ea79c5ac99b7ff53"
 TRUSTED_READER_SOURCES = (
     "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/loader_debug_abi_evidence.py",
     "compat/x86_64/owned_static_link_authority.py",
+    "compat/x86_64/owned_dynamic_elf.py",
 )
 SOURCES = (
     "libc/src/c_abi/x86_64/owned_utmpx.rs",
@@ -112,6 +113,7 @@ SOURCES = (
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/loader_debug_abi_evidence.py",
     "compat/x86_64/owned_static_link_authority.py",
+    "compat/x86_64/owned_dynamic_elf.py",
     IMAGE_MANIFEST,
     "rust-toolchain.toml",
     "scripts/rust_toolchain.py",

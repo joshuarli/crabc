@@ -105,10 +105,14 @@ python3 -B compat/x86_64/owned_utmpx_receipt.py collect \
 ```
 
 It is invoked only from the pinned native `/workspace` mount. The image is the
-fixed `crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`.
+fixed `crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
 `owned_utmpx_current_image_inputs.json` is a finite generated manifest of that image's
 runner commands, compiler support programs, musl oracle inputs, Rust compiler,
-and LLD. The older image's `owned_utmpx_image_inputs.json` remains frozen.
+and LLD. The older image's `owned_utmpx_image_inputs.json` remains frozen. The current
+manifest authenticates newly collected inputs; it does not admit products or
+receipts produced under another image. Read-only inspection of the restored
+image found identical compiler and pinned-musl inputs, while Python's executable
+bytes changed and are recorded with their actual digest.
 Collection regenerates the current manifest inside the exact image before
 and after the runner; the collector refuses a mismatch. It also refuses a
 dirty source revision, same or symlinked product inputs, a static preparation
@@ -167,8 +171,8 @@ bytes before joining `main`, `_start`, seven global providers, and nine weak
 providers to their fully relocated final ELF bytes. That last finite map and
 relocation proof uses the reviewed
 `compat/x86_64/owned_static_link_authority.py` revision from commit
-`f76844d9fb49465691b88ad4ebb76e1e3b2b04b4` (SHA-256
-`2d5143260e9105dd08fd8c2610a741a0c5c5f0791159bb4e4f6f385dcfa8eafe`).
+`6cc672d4e28f9cba17c12b87920d09b7eca0c90e` (SHA-256
+`6d5ba48fee24c86804d228e9ce8fc0cefaf37362453f9d40ea79c5ac99b7ff53`).
 That reviewed helper admits TLS-free static links only when selected inputs and
 the final ELF have no TLS geometry to prove, and proves the exact RuntimeV1
 weak-descriptor zero-GOT absence form, and joins an undefined hidden target to
@@ -176,6 +180,9 @@ its sibling archive-member definition. Those generic static-link authority
 checks also prove a selected hidden merged constant's final placement.
 They do not add utmpx semantics; the utmpx reader still admits the exact
 shared source byte and derives its eight-alias component projection itself.
+The helper's imported `owned_dynamic_elf.py` also belongs to the retained source
+roster, so its current inspector bytes cannot change independently of the
+selected source seal.
 
 The same source roster admits the exact
 `compat/x86_64/owned_posix_product_evidence.py` mode boundary from commit
