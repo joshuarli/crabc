@@ -732,8 +732,9 @@ def gate_lto(context: Context) -> dict[str, Any]:
                 if not report["ir"]["installed_libc_selected"]:
                     unmet.append("lto/D: trace does not select the installed libc.a")
             report["execution"] = execute(
-                context, lane, Path(build["executable"]["path"]), runtime="candidate",
-                product=context.root("dynamic"), label="run")
+                context, lane, Path(build["executable"]["path"]),
+                runtime="candidate" if dynamic else "candidate-static",
+                product=context.root("dynamic") if dynamic else None, label="run")
             unmet.extend(expected_output(f"lto/{key}", report["execution"], expected))
         report["unmet"] = unmet
         lanes[key] = report

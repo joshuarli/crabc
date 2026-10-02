@@ -98,6 +98,43 @@ class OwnedLinkConditionTests(unittest.TestCase):
         self.assertIn("E0425", unmet[0])
 
 
+class LtoExecutionTests(unittest.TestCase):
+    def test_static_pie_consumer_runs_without_dynamic_product_files(self) -> None:
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            output = Path(temporary)
+            context = GATE.Context(output=output, retained=GATE.Retained(output), toolchain={}, provider={},
+                                   cargo_home=output / "cargo", consumer="primary",
+                                   products={"primary": {"static": {"root": str(output / "static")},
+                                                         "dynamic": {"root": str(output / "dynamic")}}})
+            for name in ("lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so"):
+                artifact = output / "dynamic" / name
+                artifact.parent.mkdir(parents=True, exist_ok=True)
+                artifact.write_bytes(b"dynamic runtime")
+
+            def execute_root(_context, lane, _binary, *, runtime, product, label):
+                lane.mkdir(parents=True)
+                return {"runtime_files": GATE.execution_root(lane / f"root-{label}",
+                                                            runtime=runtime, product=product)}
+
+            build = {"status": "built", "executable": {"path": str(output / "consumer")},
+                     "link_facts": {"input_kinds": ["llvm-bitcode"], "linker_plugin_options": ["lto"],
+                                    "resolved_input_trace": str(output / "static/usr/lib/libc.a") + "(code.o)"}}
+            with mock.patch.object(GATE, "static_c_lane", return_value={"unmet": []}), \
+                    mock.patch.object(GATE, "cargo_consumer", return_value=build), \
+                    mock.patch.object(GATE, "owned_link_conditions", return_value=[]), \
+                    mock.patch.object(GATE, "inspect_elf", return_value={"problems": []}), \
+                    mock.patch.object(GATE, "expected_output", return_value=[]), \
+                    mock.patch.object(GATE.os, "mknod", side_effect=lambda path, *_: Path(path).touch()), \
+                    mock.patch.object(GATE, "execute", side_effect=execute_root):
+                report = GATE.gate_lto(context)
+            self.assertEqual(len(report["lanes"]["C"]["execution"]["runtime_files"]), 2)
+            self.assertEqual(report["lanes"]["D"]["execution"]["runtime_files"], [])
+            static_root = output / "gates/lto/D/root-run"
+            self.assertFalse((static_root / "lib/ld-crabc-x86_64.so.1").exists())
+            self.assertFalse((static_root / "usr/lib/libc.so").exists())
+
+
 class NativeRouteTests(unittest.TestCase):
     DISASSEMBLY = """
 0000000000001000 <crabc_rs_native_facade_getpid_witness>:
