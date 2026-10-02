@@ -3188,7 +3188,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         // retains no C11 cancellation state.
         unsafe {
             pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
-            pthread_cancel::run_current_selected_pthread_cleanup_handlers();
+            pthread_cancel::run_current_selected_thread_cleanup_handlers();
         }
         // SAFETY: this is the bootstrapped task's process-lifetime TSD
         // table. Destructors run before the musl-shaped list/last-thread
@@ -3234,15 +3234,14 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         #[cfg(feature = "native-mimalloc-shadow")]
         let native_finish;
         unsafe {
-            // Pthread cancellation and pthread_exit unwind active cleanup
-            // records before the already-selected TSD destructor phase. The
-            // helper independently admits only a pthread-mode current worker,
-            // so a C11-to-pthread cross-over remains an invalid result rather
-            // than acquiring cleanup ownership.
+            // Cancellation delivery remains pthread-only. Both typed exits
+            // drain cleanup before TSD: C11 call_once also registers rollback
+            // records that thrd_exit must run before destructors can retry.
+            // Result-kind validation remains in the shared publisher.
             if result.kind() == SelectedWorkerResultKind::Pthread {
                 pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
-                pthread_cancel::run_current_selected_pthread_cleanup_handlers();
             }
+            pthread_cancel::run_current_selected_thread_cleanup_handlers();
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
             #[cfg(feature = "native-mimalloc-shadow")]
             {

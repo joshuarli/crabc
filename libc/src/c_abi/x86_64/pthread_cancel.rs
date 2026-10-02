@@ -183,7 +183,7 @@ pub(super) fn mark_selected_worker_pending(
 }
 
 #[inline]
-fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
+fn current_cleanup_slot() -> Option<&'static SelectedWorkerCancellation> {
     #[cfg(crabc_x86_owned_runtime)]
     let state = {
         let pointer = super::pthread_identity::current_selected_cancellation_state();
@@ -196,6 +196,12 @@ fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
     // live until this task exits. This private reference is used only for the
     // immediate C ABI operation; no caller can retain it across that exit.
     let state = unsafe { &*state };
+    Some(state)
+}
+
+#[inline]
+fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
+    let state = current_cleanup_slot()?;
     (state.kind.load(Ordering::Acquire) == SLOT_PTHREAD).then_some(state)
 }
 
@@ -279,14 +285,14 @@ pub(super) fn restore_current_selected_pthread_condition_cancellation(state: u8)
     }
 }
 
-/// Execute all active cleanup handlers for the current selected pthread worker.
+/// Execute all active cleanup handlers for the current selected worker.
 ///
 /// The worker itself is the only mutator of its cleanup stack. This is called
-/// only on its selected pthread-exit path after current-worker validation; it
+/// only on its selected thread-exit path after current-worker validation; it
 /// detaches each node before invoking user code, preserving musl's LIFO and
 /// reentrant-push shape without retaining a stale caller-stack pointer.
-pub(super) fn run_current_selected_pthread_cleanup_handlers() {
-    let Some(slot) = current_pthread_slot() else {
+pub(super) fn run_current_selected_thread_cleanup_handlers() {
+    let Some(slot) = current_cleanup_slot() else {
         return;
     };
 
@@ -445,8 +451,11 @@ static_archive_member! { pthread_testcancel_source {
 
 // Musl's `src/thread/pthread_cleanup_push.c` object.
 static_archive_member! { pthread_cleanup_push_source {
-    /// Push one caller-owned cleanup node onto the current selected pthread worker.
+    /// Push one caller-owned cleanup node onto the current selected worker.
     ///
+    /// Owned C11 workers retain this chain too: `call_once` registers an undo
+    /// callback so `thrd_exit` can abandon an initializer before running TSS.
+    /// This does not admit C11 workers to pthread cancellation delivery.
     /// A null node or a caller outside the selected worker seam is ignored rather
     /// than inventing a foreign-TP cleanup registry. The macro's matching pop may
     /// still explicitly execute its callback when requested.
@@ -459,7 +468,7 @@ static_archive_member! { pthread_cleanup_push_source {
         if cleanup.is_null() {
             return;
         }
-        let Some(slot) = current_pthread_slot() else {
+        let Some(slot) = current_cleanup_slot() else {
             return;
         };
         // SAFETY: the cleanup macro owns writable stack storage for this node and
@@ -483,7 +492,7 @@ static_archive_member! { pthread_cleanup_push_source {
         if cleanup.is_null() {
             return;
         }
-        if let Some(slot) = current_pthread_slot() {
+        if let Some(slot) = current_cleanup_slot() {
             // SAFETY: matching push/pop ownership is a C macro contract. Like
             // musl's helper, this trusts the matching node and restores its next
             // link without searching or validating an arbitrary chain.
