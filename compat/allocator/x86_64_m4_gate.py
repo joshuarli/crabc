@@ -554,6 +554,8 @@ GUARDED_API_PROFILE_BASES = {
     "guarded-stat-1": "stat-1",
     "guarded-secure-1": "secure-1",
     "guarded-secure-2": "secure-2",
+    "guarded-secure-4": "secure-4",
+    "guarded-secure-5": "secure-5",
 }
 
 
@@ -564,12 +566,14 @@ def api_profile_flags(profile: str) -> tuple[str, ...]:
                 "-DMI_GUARDED=1")
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))
-                  and not (profile in ("secure-1", "secure-2", "secure-3") and flag.startswith("-DMI_SECURE=")))
+                  and not (profile.startswith("secure-") and flag.startswith("-DMI_SECURE=")))
     return (*flags, *{
         "release": ("-DMI_DEBUG=0", "-DMI_STAT=0"),
         "secure-1": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=1"),
         "secure-2": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=2"),
         "secure-3": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=3"),
+        "secure-4": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=4"),
+        "secure-5": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=5"),
         "stat-1": ("-DMI_DEBUG=0", "-DMI_STAT=1"),
         "stat-2": ("-DMI_DEBUG=0", "-DMI_STAT=2"),
         "debug-1": ("-DMI_DEBUG=1", "-DMI_STAT=2", "-DMI_PADDING=1"),
@@ -800,6 +804,8 @@ def run_operations_differential(offline: bool, scenario: str, *, build_profile: 
 
 
 API_PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+SOURCE_PROFILES = tuple(dict.fromkeys((*API_PROFILES, *GUARDED_API_PROFILE_BASES.values(),
+                                     *GUARDED_API_PROFILE_BASES)))
 PROFILE_SCENARIOS = (*DIFFERENTIAL_SCENARIOS, "api-modes")
 OPERATIONS_RUNNER = "allocator-operation-profiles"
 ASSERTION_CONTROLS = ("reallocarr-null", "reallocarr-zero-size", "aligned-invalid", "aligned-at-invalid")
@@ -901,7 +907,7 @@ def observe_operations_profile(output: Path, profile: str, scenario: str, driver
 
 
 def validate_valid_domain_option(profile: str, side: str, record: Mapping[str, Any]) -> None:
-    expected = 1 if profile == "debug-1" and side == "c" else 0
+    expected = int(profile.startswith("debug-") and side == "c")
     markers = re.findall(r"^valid-domain guarded_precise=(\d+)$", str(record.get("stderr", "")), re.MULTILINE)
     if markers != [str(expected)]:
         raise harness.HarnessError(f"{profile} {side} valid-client oracle option differs")
@@ -1358,7 +1364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--replay", action="store_true", help="authenticate and replay retained operation-profile products")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--build-profile", choices=("release", "debug"), default="release")
-    parser.add_argument("--source-profile", choices=API_PROFILES, default="release")
+    parser.add_argument("--source-profile", choices=SOURCE_PROFILES, default="release")
     parser.add_argument("--valid-clients-only", action="store_true",
                         help="retain a private differential without precondition controls or profile qualification")
     arguments = parser.parse_args(argv)

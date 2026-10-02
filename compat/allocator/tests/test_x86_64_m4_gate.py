@@ -57,7 +57,8 @@ class M4GateContractTests(unittest.TestCase):
                               ("guarded-secure-3", "secure-3"), ("guarded-stat-2", "stat-2"),
                               ("guarded-debug-2", "debug-2"), ("guarded-debug-3", "debug-3"),
                               ("guarded-stat-1", "stat-1"), ("guarded-secure-1", "secure-1"),
-                              ("guarded-secure-2", "secure-2")):
+                              ("guarded-secure-2", "secure-2"),
+                              ("guarded-secure-4", "secure-4"), ("guarded-secure-5", "secure-5")):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
                 flags = gate.api_profile_flags(profile)
                 ordinary = gate.api_profile_flags(base)
@@ -92,7 +93,8 @@ class M4GateContractTests(unittest.TestCase):
                 self.assertEqual(gate.API_PROFILES, ("release", "debug-1", "stat-1", "stat-2"))
 
     def test_secure_c_build_selects_one_exact_source_level(self) -> None:
-        for profile, level in (("secure-1", 1), ("secure-2", 2), ("secure-3", 3)):
+        for profile, level in (("secure-1", 1), ("secure-2", 2), ("secure-3", 3),
+                               ("secure-4", 4), ("secure-5", 5)):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
                 output = Path(directory)
                 with mock.patch.object(harness, "require_tool", return_value="/musl-gcc"), \
@@ -104,6 +106,15 @@ class M4GateContractTests(unittest.TestCase):
                                  [f"-DMI_SECURE={level}"])
                 self.assertIn("-DMI_DEBUG=0", command)
                 self.assertIn("-DMI_STAT=0", command)
+
+    def test_private_valid_client_command_accepts_selected_source_modes(self) -> None:
+        for profile in ("secure-4", "secure-5", "guarded-secure-5"):
+            with self.subTest(profile=profile), mock.patch.object(gate, "run_operations_differential",
+                    return_value={"compared_key_count": 1}) as run:
+                self.assertEqual(gate.main(["--differential", "operations", "--offline",
+                    "--build-profile", "debug", "--source-profile", profile, "--valid-clients-only"]), 0)
+                run.assert_called_once_with(True, "operations", build_profile="debug",
+                    source_profile=profile, valid_clients_only=True)
 
     def setUp(self) -> None:
         self.pin = harness.load_pin()
