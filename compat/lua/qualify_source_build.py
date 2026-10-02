@@ -69,25 +69,10 @@ def require_lane(result: tuple[Mapping[str, Any], Path], lane: str) -> dict[str,
 
 def require_current_products(args: argparse.Namespace, source: Mapping[str, str]) -> None:
     """Bind every supplied runtime root to this source and one release backend."""
-    backends = set()
-    for root, reader in (
-        (args.static_installed_sysroot, LUA.owned_static_sysroot),
-        (args.static_rebuilt_sysroot, LUA.owned_static_sysroot),
-        (args.static_extracted_sysroot, LUA.owned_static_sysroot),
-        (args.dynamic_installed_sysroot, DYNAMIC.owned_dynamic_sysroot),
-        (args.dynamic_extracted_sysroot, DYNAMIC.owned_dynamic_sysroot),
-    ):
-        manifest = reader(root)[3]
-        if reader is DYNAMIC.owned_dynamic_sysroot:
-            PRODUCT.product_identity(root)
-            manifest = {**manifest, **PRODUCT.read(root / "share/crabc/dynamic-product-state.json")}
-        require(manifest.get("source_sha256") == source["source_sha256"],
-                "Lua qualification product uses different source")
-        require(manifest.get("build_profile", "release") == "release",
-                "Lua qualification requires release products")
-        backends.add(manifest.get("allocator_backend"))
-    require(len(backends) == 1 and backends <= {"accepted-c", "native-shadow"},
-            "Lua qualification products use different or invalid allocator backends")
+    ADMISSION.require_current_supplied_products(
+        [args.static_installed_sysroot, args.static_rebuilt_sysroot, args.static_extracted_sysroot],
+        [args.dynamic_installed_sysroot, args.dynamic_extracted_sysroot], source,
+    )
 
 
 def qualify(args: argparse.Namespace) -> dict[str, object]:

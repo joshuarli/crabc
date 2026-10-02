@@ -291,6 +291,27 @@ def admit_dynamic(report_path: Path | None = None) -> dict[str, str]:
     return admission
 
 
+def require_current_supplied_products(
+    static_roots: Sequence[Path], dynamic_roots: Sequence[Path], source: Mapping[str, str],
+) -> None:
+    """Admission binds runtime and consumer bytes to one source, profile and backend."""
+    backends = set()
+    products = [(root, LUA.owned_static_sysroot) for root in static_roots]
+    products.extend((root, DYNAMIC.owned_dynamic_sysroot) for root in dynamic_roots)
+    for root, reader in products:
+        manifest = reader(root)[3]
+        if reader is DYNAMIC.owned_dynamic_sysroot:
+            QUALIFICATION.product_identity(root)
+            manifest = {**manifest, **QUALIFICATION.read(root / "share/crabc/dynamic-product-state.json")}
+        require(manifest.get("source_sha256") == source["source_sha256"],
+                "Lua qualification product uses different source")
+        require(manifest.get("build_profile", "release") == "release",
+                "Lua qualification requires release products")
+        backends.add(manifest.get("allocator_backend"))
+    require(len(backends) == 1 and backends <= {"accepted-c", "native-shadow"},
+            "Lua qualification products use different or invalid allocator backends")
+
+
 def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, object]:
     """Authenticate retained consumer reports against their original owned cohort."""
     import run_x86_static_dispatch as STATIC
@@ -331,6 +352,13 @@ def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, objec
         extracted=Path(cohort["roots"]["extracted"]["path"]), state=state, timeout=300.0,
     )
     require(current == cohort, "supplied dynamic Lua cohort changed")
+    source = LUA.current_source_identity()
+    require(cohort.get("source_sha256") == source["source_sha256"],
+            "supplied Lua runtime cohort uses different source than the consumer")
+    require_current_supplied_products(
+        [Path(context["roots"][label]) for label in STATIC.SUPPLIED_ROOTS],
+        [Path(cohort["roots"][label]["path"]) for label in ("installed", "extracted")], source,
+    )
     artifacts = {}
     for label in ("installed", "extracted"):
         lane = dynamic[label]
@@ -348,7 +376,8 @@ def admit_supplied(static_report: Path, dynamic_report: Path) -> dict[str, objec
         "extracted_artifacts": artifacts["extracted"],
         "contract": "identical Lua source artifacts through supplied installed and extracted dynamic roots",
     } and artifacts["installed"] == artifacts["extracted"], "supplied Lua artifact reproducibility differs")
-    return {"source_identity": LUA.current_source_identity(),
+    require(LUA.current_source_identity() == source, "source changed during supplied Lua admission")
+    return {"source_identity": source,
             "static": {"report_path": str(static_path.relative_to(ROOT)), "report_sha256": LUA.sha256_file(static_path)},
             "dynamic": {"report_path": str(dynamic_path.relative_to(ROOT)), "report_sha256": LUA.sha256_file(dynamic_path)}}
 

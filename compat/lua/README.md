@@ -109,7 +109,11 @@ The static consumer exercises all three prepared roots; the dynamic consumer
 exercises installed and extracted roots. Their private reports can be selected
 with `source_build_admission.py --static-report ... --dynamic-report ...
 --output ...`; the existing receipt reader authenticates them against the
-original cohort again. That frozen roster is exactly the
+original cohort again. Admission requires the cohort and consumer to use
+the same current source digest, release profile and allocator backend, so
+publishing a consumer report cannot carry an older runtime into qualification.
+Retained opt0 program replay is diagnostic evidence and uses its separate
+reader; it does not satisfy release admission. That frozen roster is exactly the
 AArch64 `lua` gate: static ET_EXEC and static-PIE `lua`/`luac` with linked
 preload modules, and the dynamic `liblua.so.5.4`, `lua`, `luac`, success,
 failure, and missing-symbol modules through installed and package-extracted

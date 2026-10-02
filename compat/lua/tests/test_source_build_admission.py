@@ -35,7 +35,9 @@ class SourceBuildAdmissionTests(unittest.TestCase):
             artifact = work / "program"
             artifact.write_bytes(b"retained Lua application artifact")
             artifact_record = ADMISSION.LUA.artifact_record(artifact)
-            manifest = {"files": {"program": artifact_record["sha256"]}}
+            manifest = {"files": {"program": artifact_record["sha256"]},
+                        "source_sha256": source["source_sha256"], "allocator_backend": "accepted-c",
+                        "build_profile": "release"}
             static = work / "static"
             dynamic = work / "dynamic"
             for product in (static / "sysroot", dynamic / "sysroot", dynamic / "extracted"):
@@ -103,7 +105,7 @@ class SourceBuildAdmissionTests(unittest.TestCase):
             report["consumer_source_before"] = report["consumer_source_after"] = {"revision": "1" * 40}
             report["dispatcher"]["state_root"] = str(dynamic.parent)
             report["dispatcher"]["authoritative_report"] = str(dynamic)
-            cohort = {"checkout": str(ROOT), "receipt": {"path": str(static)},
+            cohort = {"checkout": str(ROOT), "receipt": {"path": str(static)}, "source_sha256": "2" * 64,
                       "roots": {label: {"path": str(work / "dynamic" / directory)}
                                 for label, directory in (("installed", "sysroot"), ("extracted", "extracted"))}}
             report["dispatcher"]["cohort"] = cohort
@@ -113,10 +115,31 @@ class SourceBuildAdmissionTests(unittest.TestCase):
             dynamic.write_text(json.dumps(report))
             with (mock.patch.object(static_runner, "read_supplied"),
                   mock.patch.object(dynamic_runner, "consumer_source_seal", return_value=report["consumer_source_before"]),
-                  mock.patch.object(dynamic_runner, "validate_cohort", return_value=(cohort, {})) as reader):
+                  mock.patch.object(dynamic_runner, "validate_cohort", return_value=(cohort, {})) as reader,
+                  mock.patch.object(ADMISSION.QUALIFICATION, "read", return_value={
+                      "source_sha256": "2" * 64, "allocator_backend": "accepted-c",
+                      "build_profile": "release"}) as runtime_state):
                 receipt = ADMISSION.write_receipt(work / "supplied-admission", static_report=static, dynamic_report=dynamic)
                 ADMISSION.validate_receipt(ROOT, receipt)
                 self.assertEqual(reader.call_count, 2)
+                for changed, message in (({"source_sha256": "3" * 64}, "different source"),
+                                         ({"build_profile": "debug"}, "release products"),
+                                         ({"allocator_backend": "native-shadow"}, "different or invalid")):
+                    with self.subTest(runtime_state=changed):
+                        runtime_state.return_value = {"source_sha256": "2" * 64,
+                            "allocator_backend": "accepted-c", "build_profile": "release", **changed}
+                        with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, message):
+                            ADMISSION.validate_receipt(ROOT, receipt)
+                runtime_state.return_value = {"source_sha256": "2" * 64,
+                    "allocator_backend": "accepted-c", "build_profile": "release"}
+                stale_cohort = {**cohort, "source_sha256": "3" * 64}
+                report["dispatcher"]["cohort"] = stale_cohort
+                dynamic.write_text(json.dumps(report))
+                reader.return_value = (stale_cohort, {})
+                with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "runtime cohort uses different source"):
+                    ADMISSION.validate_receipt(ROOT, receipt)
+                report["dispatcher"]["cohort"] = cohort
+                dynamic.write_text(json.dumps(report))
                 reader.return_value = ({**cohort, "changed": True}, {})
                 with self.assertRaisesRegex(ADMISSION.LUA.RunnerError, "cohort changed"):
                     ADMISSION.validate_receipt(ROOT, receipt)
