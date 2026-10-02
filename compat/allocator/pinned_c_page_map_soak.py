@@ -95,6 +95,13 @@ def parse_soak(output: str, *, require_class_snapshot: bool = False) -> dict[str
             raise ValueError("the pinned C source root arena count is outside its capacity")
         if point["live_threads"] != 1 or point["later_theaps"] != 0:
             raise ValueError("the pinned C joined checkpoint retains worker ownership")
+        if (point.get("source_metadata_pages", 0) <= 0
+                or point.get("source_metadata_registered_slices", 0) < point["source_metadata_pages"]
+                or point["source_metadata_registered_slices"] > point["page_map_entries"]
+                or "source_metadata_used_blocks" not in point
+                or point.get("source_metadata_capacity_blocks", 0) < point["source_metadata_pages"]
+                or point["source_metadata_capacity_blocks"] < point["source_metadata_used_blocks"]):
+            raise ValueError("the pinned C source metadata observation is absent or inconsistent")
     summaries = [fields(line) for line in lines if line.startswith("summary ")]
     if len(summaries) != 1 or summaries[0].get("allocations") != summaries[0].get("frees"):
         raise ValueError("the pinned C soak summary is missing or not drained")
@@ -113,6 +120,11 @@ def parse_soak(output: str, *, require_class_snapshot: bool = False) -> dict[str
             if any(point.get(key, UNAVAILABLE) == UNAVAILABLE for point in checkpoints)
         ],
         "summary": summaries[0],
+        "source_metadata_checkpoint_high_water": {
+            key: max(point[key] for point in checkpoints)
+            for key in ("source_metadata_pages", "source_metadata_registered_slices",
+                        "source_metadata_used_blocks", "source_metadata_capacity_blocks")
+        },
         "page_map_stability": page_map_stability([point["page_map_entries"] for point in checkpoints]),
     }
     class_lines = [line for line in lines if line.startswith("class_snapshot ")]

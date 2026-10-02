@@ -4,6 +4,7 @@
  * explicitly unavailable; arena, thread, Theap and abandonment use source roots. */
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "mimalloc/internal.h"
 
@@ -30,6 +31,13 @@ struct page_class_audit {
     size_t nonprimary_slices;
     size_t medium_abandoned_slices, medium_detached_slices, medium_attached_slices;
     size_t medium_remote_pending_slices, medium_reusable_slices, medium_retired_slices;
+};
+
+/* Source `used` includes metadata blocks whose remote frees await collection;
+ * it is not the native Rust capability counter. The detached Theap and its
+ * registered reusable pages remain process-lived after workers have joined. */
+struct source_metadata_audit {
+    size_t pages, registered_slices, used_blocks, capacity_blocks;
 };
 
 static void classify_registered_slice(struct page_class_audit *audit, const mi_page_t *page) {
@@ -82,7 +90,8 @@ static void classify_registered_slice(struct page_class_audit *audit, const mi_p
 /* The caller has joined every worker and excludes allocation while this
  * scan reads source-plain page fields and the two atomic ownership heads. */
 static int scan_page_map(size_t *registered_out, size_t *published_out,
-                         struct page_class_audit *classes) {
+                         struct page_class_audit *classes,
+                         struct source_metadata_audit *metadata) {
     const mi_page_map_t *map = _mi_page_map();
     if (map == NULL || map->reserved_size < sizeof(mi_page_map_t)) return -1;
     const size_t bound = 1 + (map->reserved_size - sizeof(mi_page_map_t)) / sizeof(mi_submap_t);
@@ -92,13 +101,28 @@ static int scan_page_map(size_t *registered_out, size_t *published_out,
     if (classes != NULL) *classes = (struct page_class_audit) { 0 };
     size_t registered = 0;
     size_t published = 0;
+    const mi_subproc_t *subproc = _mi_subproc_main();
+    const mi_page_t *previous = NULL;
+    if (metadata != NULL) *metadata = (struct source_metadata_audit) { 0 };
     for (size_t i = 0; i < committed; i++) {
         mi_submap_t submap = _mi_page_map_at(map, i);
-        if (submap == NULL) continue;
+        if (submap == NULL) { previous = NULL; continue; }
         published++;
         for (size_t j = 0; j < MI_PAGE_MAP_SUB_COUNT; j++) {
             mi_page_t *page = submap[j];
-            if (page == NULL) continue;
+            if (page == NULL) { previous = NULL; continue; }
+            if (metadata != NULL && _mi_meta_is_meta_page(subproc, page)) {
+                metadata->registered_slices++;
+                /* Range registration places all slices of one source page
+                 * contiguously, including a range crossing a submap edge. */
+                if (page != previous) {
+                    if (page->used > page->capacity || page->capacity > page->reserved) return -1;
+                    metadata->pages++;
+                    metadata->used_blocks += page->used;
+                    metadata->capacity_blocks += page->capacity;
+                }
+            }
+            previous = page;
             registered++;
             if (classes != NULL) classify_registered_slice(classes, page);
         }
@@ -112,7 +136,8 @@ static int scan_page_map(size_t *registered_out, size_t *published_out,
 int __crabc_x86_owned_allocator_process_test_audit(struct process_audit *output) {
     if (output == NULL) return -1;
     size_t registered, published;
-    if (scan_page_map(&registered, &published, NULL) != 0) return -1;
+    struct source_metadata_audit metadata;
+    if (scan_page_map(&registered, &published, NULL, &metadata) != 0) return -1;
     mi_subproc_t *subproc = _mi_subproc_main();
     mi_heap_t *heap = mi_atomic_load_acquire(&subproc->heap_main);
     if (heap == NULL) return -1;
@@ -138,6 +163,11 @@ int __crabc_x86_owned_allocator_process_test_audit(struct process_audit *output)
         registered, published, arenas, mi_atomic_load_acquire(&subproc->thread_count),
         SIZE_MAX, SIZE_MAX, later_theaps, abandoned
     };
+    /* The unchanged fixture has already opened its checkpoint line before
+     * entering this joined audit, so append distinctly named source fields. */
+    printf(" source_metadata_pages=%zu source_metadata_registered_slices=%zu"
+           " source_metadata_used_blocks=%zu source_metadata_capacity_blocks=%zu", metadata.pages,
+           metadata.registered_slices, metadata.used_blocks, metadata.capacity_blocks);
     return 0;
 }
 
@@ -150,5 +180,5 @@ int __crabc_x86_owned_allocator_worker_owner_test_audit(struct owner_audit *outp
 int __crabc_x86_owned_allocator_page_class_test_audit(struct page_class_audit *output) {
     if (output == NULL) return -1;
     size_t registered, published;
-    return scan_page_map(&registered, &published, output);
+    return scan_page_map(&registered, &published, output, NULL);
 }

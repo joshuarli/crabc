@@ -32,7 +32,8 @@ def output(*, first: int = 900, second: int = 990, missing: int | None = None,
             f"checkpoint round={round_} allocations={round_} frees={frees} "
             f"page_map_entries={entries} page_map_submaps=3 arenas=2 live_threads=1 "
             f"later_theaps=0 abandoned_pages=0 metadata_live=18446744073709551615 "
-            f"metadata_high_water=18446744073709551615"
+            f"metadata_high_water=18446744073709551615 source_metadata_pages=2 "
+            f"source_metadata_registered_slices=2 source_metadata_used_blocks=0 source_metadata_capacity_blocks=64"
         )
     lines.append("summary allocations=1200 frees=1200 cleanup_runs=9600")
     if classes:
@@ -121,6 +122,23 @@ class PageMapSoakReaderTests(unittest.TestCase):
             binary.write_bytes(b"changed product")
             with self.assertRaisesRegex(ValueError, "executable changed"):
                 soak.read_report(artifacts)
+
+    def test_source_metadata_keeps_reusable_capacity_and_pending_use_distinct(self) -> None:
+        result = soak.parse_soak(output().replace("source_metadata_used_blocks=0",
+                                                "source_metadata_used_blocks=16", 1))
+        self.assertEqual(result["source_metadata_checkpoint_high_water"], {
+            "source_metadata_pages": 2, "source_metadata_registered_slices": 2,
+            "source_metadata_used_blocks": 16, "source_metadata_capacity_blocks": 64,
+        })
+        self.assertIn("metadata_live", result["unavailable_fields"])
+        with self.assertRaisesRegex(ValueError, "source metadata"):
+            soak.parse_soak(output().replace("source_metadata_registered_slices=2",
+                                            "source_metadata_registered_slices=1", 1))
+        with self.assertRaisesRegex(ValueError, "source metadata"):
+            soak.parse_soak(output().replace("source_metadata_used_blocks=0",
+                                            "source_metadata_used_blocks=65", 1))
+        with self.assertRaisesRegex(ValueError, "source metadata"):
+            soak.parse_soak(output().replace(" source_metadata_capacity_blocks=64", "", 1))
 
     def test_equal_ten_percent_growth_is_within_the_existing_bound(self) -> None:
         result = soak.parse_soak(output())
