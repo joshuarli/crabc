@@ -238,6 +238,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--llvm-objdump", default="llvm-objdump")
+    parser.add_argument("--profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--runtime-core", type=Path)
+    parser.add_argument("--runtime-compiler-builtins", type=Path)
     parser.add_argument(
         "--dynamic-main-thread-runtime-v1",
         action="store_true",
@@ -538,7 +541,7 @@ def portable_rustc_command(command: list[str], source: Path, destination: Path) 
     return portable
 
 
-def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
+def inspect_object(spec: ObjectSpec, path: Path, runtime_symbols: frozenset[str] = frozenset()) -> dict[str, object]:
     elf = parse_elf_object(path)
     sections = {section.name: section for section in elf.sections}
     metadata_sections = sorted(section.name for section in elf.sections if section.name.startswith(".rustc"))
@@ -563,7 +566,7 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
         if not any(item.section_index == SHN_UNDEF for item in symbols.get(name, [])):
             raise BuildError(f"{path}: missing required unresolved CRT boundary {name}")
     unresolved = {item.name for item in elf.symbols if item.name and item.section_index == SHN_UNDEF}
-    unexpected = sorted(unresolved.difference(spec.undefined_symbols))
+    unexpected = sorted(unresolved.difference(spec.undefined_symbols).difference(runtime_symbols))
     if unexpected:
         raise BuildError(f"{path}: unexpected runtime dependency symbols: {unexpected}")
     if spec.name == "Scrt1.o" or spec.entry_contract == "conventional-exec-entry":
@@ -587,6 +590,7 @@ def inspect_object(spec: ObjectSpec, path: Path) -> dict[str, object]:
         "defined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index != SHN_UNDEF),
         "undefined_symbols": sorted(item.name for item in elf.symbols if item.name and item.section_index == SHN_UNDEF),
         "relocation_types": sorted(set(elf.relocation_types)),
+        "source_core_dependencies": sorted(unresolved.intersection(runtime_symbols)),
     }
 
 
@@ -723,6 +727,19 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     write_json(commands_path, records)
     selected_nightly_sysroot(version, sysroot, environment)
 
+    debug = getattr(args, "profile", "release") == "debug"
+    runtime_symbols = frozenset()
+    runtime_arguments = []
+    if debug:
+        if args.runtime_core is None or args.runtime_compiler_builtins is None:
+            raise BuildError("debug CRT requires the source-runtime core and compiler-builtins metadata")
+        core_archive = args.runtime_core.with_suffix(".rlib")
+        nm = str(Path(objdump).with_name("llvm-nm"))
+        symbol_result = run_command([nm, "--defined-only", "--extern-only", str(core_archive)], environment)
+        if symbol_result["returncode"] != 0:
+            raise BuildError("debug CRT source-core symbol inventory failed")
+        runtime_symbols = frozenset(line.split()[-1] for line in symbol_result["stdout"].splitlines() if len(line.split()) >= 2 and not line.endswith(":"))
+        runtime_arguments = ["-Zunstable-options", "--extern", f"noprelude:core={args.runtime_core}", "--extern", f"noprelude:compiler_builtins={args.runtime_compiler_builtins}", "-L", f"dependency={args.runtime_core.parent}"]
     object_records: dict[str, dict[str, object]] = {}
     try:
         for spec in selected_objects(args):
@@ -735,13 +752,13 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 "--target",
                 TARGET,
                 "-C",
-                "panic=abort",
+                "panic=immediate-abort" if debug else "panic=abort",
                 "-C",
                 "force-unwind-tables=no",
                 "-C",
                 "debuginfo=0",
                 "-C",
-                "opt-level=2",
+                "opt-level=0" if debug else "opt-level=2",
                 "-C",
                 "overflow-checks=off",
                 "-C",
@@ -781,6 +798,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                     if spec.entry_contract == "conventional-exec-entry"
                     else []
                 ),
+                *runtime_arguments,
                 str(source),
                 "-o",
                 str(destination),
@@ -799,7 +817,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
                 raise BuildError(f"rustc failed while building {spec.name}: {record['stderr']}")
             if not destination.is_file():
                 raise BuildError(f"rustc reported success but did not create {destination}")
-            inspection = inspect_object(spec, destination)
+            inspection = inspect_object(spec, destination, runtime_symbols)
             if spec.entry_contract in {
                 "conventional-exec-entry",
                 "static-pie-entry",
@@ -832,6 +850,7 @@ def build(args: argparse.Namespace) -> dict[str, object]:
         "schema": 1,
         "target": TARGET,
         "scope": "bounded-static-and-private-dynamic-startup",
+        "profile": getattr(args, "profile", "release"),
         "dynamic_main_thread_runtime_v1": args.dynamic_main_thread_runtime_v1,
         "general_dynamic_lifecycle": args.general_dynamic_lifecycle,
         "owned_dynamic_sysroot": args.owned_dynamic_sysroot,

@@ -10,6 +10,7 @@ Neither selection is dynamic-product campaign completion.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shlex
@@ -429,7 +430,7 @@ def shared_libc_link_command(
     ]
 
 
-def loader_dependency_provenance(dependencies: Path, artifact: Path) -> list[dict[str, object]]:
+def loader_dependency_provenance(dependencies: Path, artifact: Path, *, object_dependencies: bool = False) -> list[dict[str, object]]:
     """Translate Cargo's one compiler dep-info rule into selected source inputs.
 
     Cargo emits this file beside the final cdylib.  It is the compiler's
@@ -445,6 +446,25 @@ def loader_dependency_provenance(dependencies: Path, artifact: Path) -> list[dic
     if not stat.S_ISREG(details.st_mode) or dependencies.is_symlink():
         raise common.BuildError("loader compiler dependency trace is not a regular file")
     lines = [line for line in text.replace("\\\n", " ").splitlines() if line.strip()]
+    if object_dependencies:
+        rules = []
+        for line in lines:
+            target, separator, sources = line.partition(":")
+            if not separator or ":" in sources:
+                raise common.BuildError("loader object dependency trace has an invalid rule")
+            rules.append((shlex.split(target), shlex.split(sources), line))
+        primary = [rule for rule in rules if rule[0] == [str(artifact)]]
+        if len(primary) != 1 or not primary[0][1]:
+            raise common.BuildError("loader object dependency trace does not bind its object")
+        for targets, sources, line in rules:
+            if line == primary[0][2]:
+                continue
+            if targets == [str(dependencies)] and sources == primary[0][1]:
+                continue
+            if len(targets) == 1 and targets[0] in primary[0][1] and not sources:
+                continue
+            raise common.BuildError("loader object dependency trace has an unrelated rule")
+        lines = [primary[0][2]]
     if len(lines) != 1:
         raise common.BuildError("loader compiler dependency trace must contain one rule")
     target, separator, inputs = lines[0].partition(":")
@@ -488,7 +508,7 @@ def loader_dependency_provenance(dependencies: Path, artifact: Path) -> list[dic
         seen.add(name)
         records.append(record)
     records.sort(key=lambda record: str(record["path"]))
-    required = {"ldso/build.rs", "ldso/src/lib.rs"}
+    required = {"ldso/src/lib.rs"} if object_dependencies else {"ldso/build.rs", "ldso/src/lib.rs"}
     if not required <= seen:
         raise common.BuildError("loader compiler dependency trace lacks build.rs or lib.rs")
     return records
@@ -588,7 +608,7 @@ def elf_symbols(nm: str, artifact: Path, selector: str) -> set[str]:
             if len(line.split()) >= 2 and not line.endswith(":")}
 
 
-def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False) -> None:
+def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release") -> None:
     common.assert_native_target()
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise common.BuildError("unknown dynamic allocator backend")
@@ -603,7 +623,7 @@ def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BAC
         raise common.BuildError("dynamic build state already exists; choose a fresh owned output")
     stage.mkdir(parents=True, mode=0o700)
     staged_output = stage / "installed"
-    build_staged_payload(staged_output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit)
+    build_staged_payload(staged_output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit, profile=profile)
     if qualification.source_digest() != source_before_build:
         raise common.BuildError("source changed during dynamic product build")
     try:
@@ -613,13 +633,18 @@ def build(output: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BAC
         raise common.BuildError(str(error)) from error
 
 
-def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False) -> None:
+def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = common.DEFAULT_ALLOCATOR_BACKEND, lifecycle_test_audit: bool = False, profile: str = "release") -> None:
     """Build the complete candidate privately; only build() may publish it.
 
     Failure retains diagnostic/build state under the dedicated .build owner,
     never a partially populated public output. The final manifest must pass
     the installed driver's exact validation before atomic no-replace rename.
     """
+    if profile == "debug":
+        build_debug_payload(output, stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit)
+        return
+    if profile != "release":
+        raise common.BuildError("unknown owned runtime build profile")
     recorded_backend = allocator_backend
     allocator_backend = common.backend_selection(allocator_backend, lifecycle_test_audit)
     environment = common.deterministic_environment()
@@ -719,7 +744,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     output.mkdir()
     library = output / "usr/lib"
     library.mkdir(parents=True)
-    common.copy_regular_tree(ROOT / "include", output / "usr/include")
+    headers = common.install_header_tree(output / "usr/include")
     # Musl's configure applies its dynamic list to libc.so only. It binds
     # ordinary internal libc calls locally while retaining its data and
     # allocation interposition scope. The two exact version scripts remain
@@ -873,12 +898,152 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     write_product_manifest(output, metadata)
 
 
-def write_product_manifest(output: Path, metadata: Path) -> None:
+def build_debug_payload(output: Path, stage: Path, *, allocator_backend: str, lifecycle_test_audit: bool) -> None:
+    """Link opt0 source-built runtime objects without using installed Rust runtimes."""
+    inputs = common.build_debug_runtime_inputs(stage, allocator_backend=allocator_backend,
+                                               lifecycle_test_audit=lifecycle_test_audit, dynamic=True)
+    tools = inputs["producer_tools"]
+    ar = common.producer_tool_path(tools, "llvm-ar")
+    nm = common.producer_tool_path(tools, "llvm-nm")
+    rustup = tools["rustup"]["path"]
+    sysroot = common.pinned_rustc_sysroot(Path(rustup))
+    lld = sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
+    run = common.run
+    objects = inputs["source_objects"]
+    builtins = inputs["builtins"]
+    core = inputs["source_core"]
+    compiler = inputs["source_compiler_builtins"]
+    selected = [row["name"] for row in inputs["libc_provenance"]["selected_members"]]
+    core_members = set(run([ar, "t", str(core)]).decode().splitlines())
+    private_core = stage / "libcrabc-source-core.a"
+    run([ar, "rcsD", str(private_core), *(str(objects / name) for name in selected if name in core_members)])
+    selected = [name for name in selected if name not in core_members]
+    output.mkdir()
+    library = output / "usr/lib"
+    library.mkdir(parents=True)
+    headers = common.install_header_tree(output / "usr/include")
+    accepted_c = common.backend_selection(allocator_backend, lifecycle_test_audit) == "accepted-c"
+    dynamic_list = shared_libc_dynamic_list()
+    errno_policy = shared_libc_errno_private_aliases(stage)
+    allocator_policy = shared_libc_mimalloc_hidden_exports(stage) if accepted_c else {"status": "not-selected-native-shadow"}
+    rust_private = stage / "libc-rust-private.exports"
+    rust_private.write_text("{ local: _R*; _ZN*; };\n")
+    libc_command = [str(lld), "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-soname", "libc.so",
+                    f"--dynamic-list={SHARED_LIBC_DYNAMIC_LIST}",
+                    f"--version-script={rust_private}",
+                    f"--version-script={stage / 'libc-errno-private.exports'}",
+                    *([f"--version-script={stage / 'libc-mimalloc-hidden.exports'}"] if accepted_c else []),
+                    "--exclude-libs=libcrabc-builtins.a,libcrabc-source-core.a", "--gc-sections",
+                    "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+                    *(str(objects / name) for name in selected), str(private_core), str(builtins),
+                    str(RUNTIME_DISCARD_UNWIND_SCRIPT), "-o", str(library / "libc.so")]
+    run(libc_command)
+    (library / "libc.so").chmod(0o755)
+    allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
+               "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
+               "__crabc_x86_64_reset_current_tls_v2", "__crabc_x86_64_loader_conventional_startup_v1",
+               "__crabc_x86_64_runtime_publish_initial_tid", "__crabc_x86_64_runtime_fork_prepare",
+               "__crabc_x86_64_runtime_fork_complete", "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
+               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address", "__crabc_x86_64_runtime_information",
+               "__crabc_x86_64_runtime_iterate"}
+    imports = elf_symbols(nm, library / "libc.so", "--undefined-only")
+    if imports - allowed:
+        raise common.BuildError(f"debug shared libc has unexpected unresolved symbols: {sorted(imports - allowed)}")
+    crt = inputs["crt_root"]
+    for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
+        common.copy_artifact(crt / name, library / name)
+    common.copy_artifact(builtins, library / builtins.name)
+    base = [rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021", "--crate-type=lib",
+            "--target", common.TARGET, "-Zunstable-options", "-Cpanic=immediate-abort", "-Copt-level=0",
+            "-Cforce-unwind-tables=no", "-Cdebuginfo=0", "-Coverflow-checks=off", "-Cdebug-assertions=off",
+            "-Crelocation-model=pic", "--remap-path-prefix", f"{ROOT}=/crabc",
+            "--extern", f"noprelude:core={core.with_suffix('.rmeta')}",
+            "--extern", f"noprelude:compiler_builtins={compiler.with_suffix('.rmeta')}",
+            "-L", f"dependency={core.parent}"]
+    attachment_parts = stage / "dynamic-attachment"
+    attachment_parts.mkdir()
+    attachment_commands = []
+    for source, name in ((ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs", "libc-attachment"),
+                         (ROOT / "crt/src/x86_64_owned_crt_handoff_attachment.rs", "crt-handoff-reader")):
+        command = [*base, "--emit=obj", "--crate-name", name.replace("-", "_"), str(source),
+                   "-o", str(attachment_parts / (name + ".o"))]
+        run(command)
+        attachment_commands.append(command)
+    parts = list(attachment_parts.glob("*.o"))
+    # CRT and helper calls must bind to the same freshly compiled core. Pull
+    # exactly their unresolved core providers into the main-resident role;
+    # section collection keeps unrelated core helpers outside the closure.
+    dependencies = set()
+    definitions = elf_symbols(nm, private_core, "--defined-only")
+    for artifact in [*parts, *(crt / name for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o")), builtins]:
+        dependencies.update(elf_symbols(nm, artifact, "--undefined-only") & definitions)
+    support = stage / "main-core-support.o"
+    support_command = [str(lld), "-r", "--gc-sections", *(f"--undefined={name}" for name in sorted(dependencies)),
+                       str(private_core), "-o", str(support)]
+    run(support_command)
+    attachment_command = [str(lld), "-r", *(str(part) for part in parts), str(support),
+                          "-o", str(library / "crabc-dynamic-attach.o")]
+    run(attachment_command)
+    loader_object = stage / "loader.o"
+    loader_dependencies = stage / "loader.d"
+    cfgs = [f'feature="{feature}"' for feature in (LOADER_FEATURE, "x86_64-general-initial-interpreter",
+             "x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter")]
+    cfgs.extend(("crabc_general_initial_graph", "crabc_general_initial_lifecycle",
+                 "crabc_general_initial_tls_materialization_v1", "crabc_general_loader_libc_tls_runtime_v1",
+                 "crabc_dynamic_main_thread_runtime_v1"))
+    loader_command = [*base, "--crate-name", "crabc_owned_debug_loader", f"--emit=obj,dep-info={loader_dependencies}",
+                      *(argument for cfg in cfgs for argument in ("--cfg", cfg)),
+                      str(ROOT / "ldso/src/lib.rs"), "-o", str(loader_object)]
+    run(loader_command)
+    private_exports = stage / "loader-private.exports"
+    private_exports.write_text("{ local: _R*; _ZN*; };\n")
+    interpreter = output / LOADER_ARTIFACT
+    interpreter.parent.mkdir()
+    loader_link = [str(lld), "-shared", "-Bsymbolic", "--hash-style=sysv", "-e", "_start", "--no-undefined",
+                   "-z", "now", "-z", "noexecstack", f"--version-script={private_exports}",
+                   "--exclude-libs=libcrabc-source-core.a,libcrabc-builtins.a", str(loader_object),
+                   str(private_core), str(builtins), str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(LOADER_BSS_LAYOUT_SCRIPT),
+                   "-o", str(interpreter)]
+    run(loader_link)
+    interpreter.chmod(0o755)
+    (interpreter.parent / "ld-musl-x86_64.so.1").symlink_to(interpreter.name)
+    metadata = output / "share/crabc"
+    metadata.mkdir(parents=True)
+    common.write_json(metadata / "headers.provenance.json", headers)
+    for source, name in ((crt / "objects.json", "crt.provenance.json"), (crt / "commands.json", "crt.commands.json"),
+                         (inputs["builtins_provenance"], "builtins.provenance.json")):
+        common.copy_artifact(source, metadata / name)
+    common.write_json(metadata / "producer-tools.json", tools)
+    common.write_json(metadata / "libc-shared.elf.json", audit_shared_elf(library / "libc.so"))
+    common.write_json(metadata / "loader.elf.json", audit_shared_elf(interpreter))
+    common.write_json(metadata / "libc-shared.provenance.json", {**inputs["libc_provenance"],
+        "shared_dynamic_list": dynamic_list, "shared_errno_private_aliases": errno_policy,
+        "shared_mimalloc_hidden_exports": allocator_policy, "libc_shared_link_command": libc_command,
+        "main_source_core_dependencies": sorted(dependencies), "main_source_core_link_command": support_command,
+        "attachment_compile_commands": attachment_commands, "attachment_link_command": attachment_command})
+    common.write_json(metadata / "loader.provenance.json", {"build_profile": "debug", "target": common.TARGET,
+        "compiler_command": loader_command, "link_command": loader_link,
+        "compiler_dependencies": loader_dependency_provenance(loader_dependencies, loader_object, object_dependencies=True),
+        "feature_configuration": _source_file_identity(ROOT / "ldso/build.rs", "loader feature configuration"),
+        "source_core_archive_sha256": common.sha256_file(core), "source_helper_archive_sha256": common.sha256_file(builtins),
+        "artifact": {"path": LOADER_ARTIFACT, "sha256": common.sha256_file(interpreter)}})
+    for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
+                         (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py"),
+                         (ROOT / "compat/x86_64/owned_dynamic_receipt.py", "share/crabc/owned_dynamic_receipt.py"),
+                         (ROOT / "compat/x86_64/owned_dynamic_elf.py", "share/crabc/owned_dynamic_elf.py")):
+        common.copy_artifact(source, output / name)
+    (output / "bin/crabc-cc-dynamic").chmod(0o755)
+    common.write_json(metadata / "dynamic-product-state.json", {"build_profile": "debug", "allocator_backend": allocator_backend,
+        "allocator_lifecycle_test_audit": lifecycle_test_audit, "status": "materialized-unqualified"})
+    write_product_manifest(output, metadata, profile="debug")
+
+
+def write_product_manifest(output: Path, metadata: Path, *, profile: str = "release") -> None:
     """Seal installed payload bytes together with their selected Rust toolchain."""
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     common.write_json(metadata / "manifest.json", {"schema": 1, "format": FORMAT,
-        "target": common.TARGET, "toolchain": common.PINNED_TOOLCHAIN, "files": files,
+        "target": common.TARGET, "toolchain": common.PINNED_TOOLCHAIN, "files": files, "build_profile": profile,
         "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}})
 
 
@@ -887,9 +1052,10 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=common.DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
+    parser.add_argument("--profile", choices=("release", "debug"), default="release")
     args = parser.parse_args()
     try:
-        build(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit)
+        build(args.output, allocator_backend=args.allocator_backend, lifecycle_test_audit=args.allocator_lifecycle_test_audit, profile=args.profile)
     except (common.BuildError, OSError) as error:
         print(f"owned dynamic sysroot: {error}", file=sys.stderr)
         return 1

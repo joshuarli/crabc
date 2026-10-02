@@ -74,6 +74,19 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
     def collect(self) -> dict[str, object]:
         return self.collect_at(self.stage, self.compiler_artifact, self.installed_artifact)
 
+    def test_source_object_dependencies_bind_object_and_reject_unrelated_rules(self) -> None:
+        artifact = self.compiler_artifact.with_suffix(".o")
+        artifact.write_bytes(b"owned loader object")
+        sources = [str(self.root / name) for name in ("ldso/src/lib.rs", "ldso/src/x86_64_initial_graph.rs")]
+        rule = f"{artifact}: {' '.join(sources)}\n"
+        rules = rule + f"{self.dependencies}: {' '.join(sources)}\n" + "".join(f"{source}:\n" for source in sources)
+        self.dependencies.write_text(rules)
+        records = producer.loader_dependency_provenance(self.dependencies, artifact, object_dependencies=True)
+        self.assertEqual({record["path"] for record in records}, {"ldso/src/lib.rs", "ldso/src/x86_64_initial_graph.rs"})
+        self.dependencies.write_text(rules + "/ambient/foreign.o: /ambient/foreign.rs\n")
+        with self.assertRaisesRegex(producer.common.BuildError, "unrelated rule"):
+            producer.loader_dependency_provenance(self.dependencies, artifact, object_dependencies=True)
+
     def collect_at(self, stage: Path, compiler_artifact: Path, installed_artifact: Path) -> dict[str, object]:
         command = [
             "/opt/pinned/rustup",

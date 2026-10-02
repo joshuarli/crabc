@@ -785,6 +785,8 @@ def execute(root: Path, arguments: list[str]) -> None:
             run([shared.compiler(), "-nostdinc",
                  *(item for directory in quote_include_dirs for item in ("-iquote", str(directory))),
                  "-isystem", str(root / "usr/include"),
+                 *(["-isystem", str(root / "usr/include/crabc-linux-uapi")]
+                   if (root / "usr/include/crabc-linux-uapi").is_dir() else []),
                  *shared.HOSTED_TRANSLATION_FLAGS,
                  *invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),
                  *(["-MD", "-MF", str(dependency_output)] if dependency_output is not None else []),

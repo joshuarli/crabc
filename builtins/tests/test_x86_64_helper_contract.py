@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tomllib
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILDER_PATH = ROOT / "build_x86_64.py"
@@ -18,6 +19,19 @@ SPEC.loader.exec_module(BUILDER)
 
 
 class NativeCompilerHelperContractTests(unittest.TestCase):
+    def test_debug_compilation_uses_opt0_and_the_explicit_source_runtime_metadata(self) -> None:
+        core = Path("/owned/core.rmeta")
+        compiler = Path("/owned/compiler_builtins.rmeta")
+        with mock.patch.object(BUILDER, "rustc", return_value=["pinned-rustc"]), mock.patch.object(BUILDER, "run"):
+            command = BUILDER.compile_object(Path("/owned/helper.o"), profile="debug", runtime_core=core,
+                                             runtime_compiler_builtins=compiler)
+        self.assertIn("opt-level=0", command)
+        self.assertNotIn("opt-level=2", command)
+        self.assertIn("panic=immediate-abort", command)
+        self.assertIn(f"noprelude:core={core}", command)
+        self.assertIn(f"noprelude:compiler_builtins={compiler}", command)
+        with self.assertRaisesRegex(BUILDER.BuildError, "source-runtime"):
+            BUILDER.compile_object(Path("/owned/helper.o"), profile="debug")
     def test_contract_is_the_exact_native_builder_symbol_roster(self) -> None:
         contract = BUILDER.load_native_contract()
         names = tuple(helper["name"] for helper in contract["helpers"])

@@ -199,7 +199,11 @@ def rustc() -> list[str]:
     return [tool("rustup"), "run", TOOLCHAIN, "rustc"]
 
 
-def compile_object(output: Path) -> list[str]:
+def compile_object(output: Path, *, profile: str = "release", runtime_core: Path | None = None, runtime_compiler_builtins: Path | None = None) -> list[str]:
+    if profile not in {"debug", "release"}:
+        raise BuildError("unknown compiler-helper build profile")
+    if profile == "debug" and (runtime_core is None or runtime_compiler_builtins is None):
+        raise BuildError("debug helpers require the source-runtime core and compiler-builtins metadata")
     command = [
         *rustc(),
         "--crate-name", "crabc_builtins_x86_64",
@@ -207,10 +211,10 @@ def compile_object(output: Path) -> list[str]:
         "--edition=2021",
         "--target", TARGET,
         "--emit=obj",
-        "-C", "panic=abort",
+        "-C", "panic=immediate-abort" if profile == "debug" else "panic=abort",
         "-C", "force-unwind-tables=no",
         "-C", "overflow-checks=off",
-        "-C", "opt-level=2",
+        "-C", "opt-level=0" if profile == "debug" else "opt-level=2",
         "-C", "codegen-units=1",
         "-C", "debuginfo=0",
         "-C", "relocation-model=pic",
@@ -219,6 +223,8 @@ def compile_object(output: Path) -> list[str]:
         "--remap-path-prefix", f"{ROOT}=/crabc/builtins",
         "-o", str(output), str(SOURCE),
     ]
+    if profile == "debug":
+        command.extend(["-Zunstable-options", "--extern", f"noprelude:core={runtime_core}", "--extern", f"noprelude:compiler_builtins={runtime_compiler_builtins}", "-L", f"dependency={runtime_core.parent}"])
     run(command)
     return command
 
@@ -257,7 +263,7 @@ def audit_object(llvm_readelf: str, object_path: Path) -> None:
         raise BuildError(f"local helper object contains unwind sections: {forbidden!r}")
 
 
-def build(output: Path) -> dict[str, object]:
+def build(output: Path, *, profile: str = "release", runtime_core: Path | None = None, runtime_compiler_builtins: Path | None = None, runtime_libc: Path | None = None) -> dict[str, object]:
     contract = load_native_contract()
     _require(native_source_definitions(SOURCE) == {row["name"]: row["rust_signature"] for row in contract["helpers"]},
              "native helper source definitions differ from contract")
@@ -271,7 +277,15 @@ def build(output: Path) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="crabc-builtins-x86_64-", dir=output.parent) as temporary:
         stage = Path(temporary)
         member = stage / MEMBER_NAME
-        compile_object(member)
+        compile_command = compile_object(member, profile=profile, runtime_core=runtime_core, runtime_compiler_builtins=runtime_compiler_builtins)
+        if profile == "debug":
+            private = symbols(llvm_nm, member, "--defined-only") - REQUIRED_SYMBOLS
+            if any(not name.startswith(("_R", "_ZN")) for name in private):
+                raise BuildError("debug helpers contain an unexpected non-Rust definition")
+            if private:
+                localize = stage / "private-symbols.txt"
+                localize.write_text("\n".join(sorted(private)) + "\n")
+                run([tool("llvm-objcopy"), f"--localize-symbols={localize}", str(member)])
         audit_object(llvm_readelf, member)
         staged = stage / ARCHIVE_NAME
         run([llvm_ar, "rcsD", str(staged), str(member)])
@@ -286,19 +300,31 @@ def build(output: Path) -> dict[str, object]:
         closure = stage / "closure.o"
         run([lld, "-r", "--whole-archive", str(staged), "--no-whole-archive", "-o", str(closure)])
         undefined = symbols(llvm_nm, closure, "--undefined-only")
-        if undefined:
+        runtime_dependencies = set()
+        if profile == "debug":
+            runtime_dependencies = symbols(llvm_nm, runtime_core.with_suffix(".rlib"), "--defined-only")
+            if runtime_libc is None or "memset" not in symbols(llvm_nm, runtime_libc, "--defined-only"):
+                raise BuildError("debug helpers require the source-built libc memset provider")
+            runtime_dependencies.add("memset")
+        if undefined - runtime_dependencies:
             raise BuildError(f"x86 helper archive requests an ambient runtime: {sorted(undefined)!r}")
         shutil.copyfile(staged, output)
         return {
+            "profile": profile,
+            "source_core_dependencies": sorted(undefined),
+            "source_core_archive_sha256": sha256(runtime_core.with_suffix(".rlib")) if runtime_core is not None else None,
+            "source_libc_archive_sha256": sha256(runtime_libc) if runtime_libc is not None else None,
+            "compile_command": compile_command,
             "contract": contract,
             "members": members,
             "defined_symbols": sorted(defined),
             "archive_sha256": sha256(output),
-            "portable_compile_command": [
+            "portable_compile_command": [argument.replace(str(stage), "$CRABC_BUILTINS_STAGE").replace(str(ROOT), "/crabc/builtins")
+                                         for argument in ["rustup", *compile_command[1:]]] if profile == "debug" else [
                 "rustup", "run", TOOLCHAIN, "rustc", "--crate-name", "crabc_builtins_x86_64",
                 "--crate-type=lib", "--edition=2021", "--target", TARGET, "--emit=obj",
-                "-C", "panic=abort", "-C", "force-unwind-tables=no", "-C", "overflow-checks=off",
-                "-C", "opt-level=2", "-C", "codegen-units=1", "-C", "debuginfo=0",
+                "-C", "panic=immediate-abort" if profile == "debug" else "panic=abort", "-C", "force-unwind-tables=no", "-C", "overflow-checks=off",
+                "-C", "opt-level=0" if profile == "debug" else "opt-level=2", "-C", "codegen-units=1", "-C", "debuginfo=0",
                 "-C", "relocation-model=pic", "-C", "embed-bitcode=no", "-C",
                 "metadata=crabc-builtins-x86_64-static-pie-v1", "--remap-path-prefix",
                 "/crabc/builtins=/crabc/builtins", "-o", "$CRABC_BUILTINS_STAGE/crabc-builtins.o",
@@ -311,6 +337,10 @@ def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--provenance", type=Path)
+    parser.add_argument("--profile", choices=("release", "debug"), default="release")
+    parser.add_argument("--runtime-core", type=Path)
+    parser.add_argument("--runtime-compiler-builtins", type=Path)
+    parser.add_argument("--runtime-libc", type=Path)
     parser.add_argument("--verify-reproducible", action="store_true")
     return parser.parse_args()
 
@@ -318,12 +348,12 @@ def arguments() -> argparse.Namespace:
 def main() -> int:
     parsed = arguments()
     output = parsed.output.resolve()
-    archive = build(output)
+    archive = build(output, profile=parsed.profile, runtime_core=parsed.runtime_core, runtime_compiler_builtins=parsed.runtime_compiler_builtins, runtime_libc=parsed.runtime_libc)
     reproducible = None
     if parsed.verify_reproducible:
         with tempfile.TemporaryDirectory(prefix="crabc-builtins-x86_64-repro-", dir=output.parent) as temporary:
             comparison = Path(temporary) / ARCHIVE_NAME
-            reproducible = archive["archive_sha256"] == build(comparison)["archive_sha256"]
+            reproducible = archive["archive_sha256"] == build(comparison, profile=parsed.profile, runtime_core=parsed.runtime_core, runtime_compiler_builtins=parsed.runtime_compiler_builtins, runtime_libc=parsed.runtime_libc)["archive_sha256"]
             if not reproducible:
                 raise BuildError("clean x86 helper archive builds produced different bytes")
     provenance = {

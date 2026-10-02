@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import contextlib
 import json
 import os
 import platform
@@ -504,6 +505,40 @@ def copy_regular_tree(source: Path, destination: Path) -> dict[str, str]:
     return records
 
 
+def install_header_tree(destination: Path) -> dict[str, object]:
+    """Install project headers and authenticated selected Linux kernel interfaces."""
+    from compat.x86_64 import header_callable_inventory as inventory
+    uapi = Path("/opt/linux-5.10-uapi/include")
+    inventory.require_pinned_linux_uapi_include(uapi)
+    manifest = uapi.parent / ".crabc-linux-uapi.headers.sha256"
+    if manifest.is_symlink() or not manifest.is_file() or sha256_file(manifest) != inventory.LINUX_UAPI_HEADER_MANIFEST_SHA256:
+        raise BuildError("pinned Linux UAPI hash manifest differs")
+    expected = {}
+    for line in manifest.read_text().splitlines():
+        value, relative = line.split("  ", 1)
+        validate_relative_path(Path(relative))
+        relative = Path(relative).as_posix()
+        if relative in expected:
+            raise BuildError("pinned Linux UAPI manifest repeats a header")
+        expected[relative] = value
+    if len(expected) != int(inventory.LINUX_UAPI_MARKER["header_count"]):
+        raise BuildError("pinned Linux UAPI header roster differs")
+    observed = regular_file_hashes(uapi)
+    if observed != expected:
+        raise BuildError("pinned Linux UAPI header bytes differ from their authenticated roster")
+    project = copy_regular_tree(ROOT / "include", destination)
+    installed_uapi = copy_regular_tree(uapi, destination / "crabc-linux-uapi")
+    if installed_uapi != expected:
+        raise BuildError("installed Linux UAPI header bytes changed during copying")
+    return {"schema": 1, "source": "include", "regular_file_count": len(project), "files": project,
+            "linux_uapi": {"version": inventory.LINUX_UAPI_VERSION,
+                           "source_sha256": inventory.LINUX_UAPI_SOURCE_SHA256,
+                           "manifest_sha256": sha256_file(manifest), "include_path": "usr/include/crabc-linux-uapi",
+                           "files": expected, "project_header_precedence": {
+                               name: {"project_sha256": project[name], "uapi_sha256": expected[name]}
+                               for name in sorted(project.keys() & expected.keys())}}}
+
+
 def classify_libc_members(
     members: Sequence[str], *, allocator_member: str | None = None
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -825,15 +860,15 @@ def accepted_allocator_pin() -> dict[str, str]:
     return dict(C_ALLOCATOR_PIN)
 
 
-def allocator_header_provenance(dependencies: Path, cargo_home: Path) -> dict[str, str]:
+def allocator_header_provenance(dependencies: Path, cargo_home: Path, *, vendor_root: Path | None = None) -> dict[str, str]:
     """Reject target headers outside the project and pinned allocator source."""
 
-    packages = list((cargo_home / "registry/src").glob("*/libmimalloc-sys-0.1.49"))
+    packages = (list((cargo_home / "registry/src").glob("*/libmimalloc-sys-0.1.49")) if vendor_root is None else list(vendor_root.glob("libmimalloc-sys-0.1.49")))
     if len(packages) != 1:
         raise BuildError("accepted allocator source package is absent or ambiguous")
     package = packages[0].resolve()
     source_root = package / "c_src/mimalloc/v3"
-    if not package.is_relative_to(cargo_home.resolve()):
+    if not package.is_relative_to((cargo_home if vendor_root is None else vendor_root).resolve()):
         raise BuildError("accepted allocator source package escapes the checkout cache")
     text = dependencies.read_text(encoding="utf-8").replace("\\\n", " ")
     _, separator, inputs = text.partition(":")
@@ -911,8 +946,8 @@ def allocator_dependency_graph(cargo: list[str], features: str, allocator_backen
             "c_allocator_selected": c_selected, "native_allocator_selected": native_selected}
 
 
-def selected_allocator_archive(cargo_root: Path, allocator_backend: str) -> Path | None:
-    build_root = cargo_root / TARGET / "release/build"
+def selected_allocator_archive(cargo_root: Path, allocator_backend: str, *, profile: str = "release") -> Path | None:
+    build_root = cargo_root / TARGET / profile / "build"
     # The pinned nightly uses `libmimalloc-sys/<hash>` instead of the older
     # single `libmimalloc-sys-<hash>` build-directory component. Keep the
     # archive selection exact for both layouts so the C backend remains
@@ -1072,8 +1107,148 @@ def replace_allocator_member(
         raise BuildError(f"pinned mimalloc object lacks symbols the accepted wrapper imports: {missing}")
 
 
+def build_debug_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
+                               lifecycle_test_audit: bool = False, dynamic: bool = False) -> dict[str, object]:
+    from compat.x86_64 import native_static_source_runtime_closure as closure
+    recorded_backend = allocator_backend
+    allocator_backend = backend_selection(allocator_backend, lifecycle_test_audit)
+    if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND:
+        raise BuildError("debug runtime selects the accepted C or native Rust backend")
+    accepted_c = allocator_backend == "accepted-c"
+    linkage = "dynamic" if dynamic else "static"
+    feature = f"x86-owned-{linkage}-runtime" if accepted_c else f"x86-owned-{linkage}-native-shadow"
+    if lifecycle_test_audit:
+        feature += ",x86-owned-allocator-lifecycle-test-audit"
+    tools = resolve_pinned_producer_tools()
+    ar = producer_tool_path(tools, "llvm-ar")
+    nm = producer_tool_path(tools, "llvm-nm")
+    objdump = producer_tool_path(tools, "llvm-objdump")
+    dependency_file = stage / "allocator.d"
+    flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC", "-ftls-model=initial-exec",
+             "-fstack-protector-strong", MIMALLOC_LIFECYCLE_C_FLAG, *MIMALLOC_INTERNAL_VM_C_FLAGS,
+             f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
+    c_environment = ({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc", "CC_SHELL_ESCAPED_FLAGS": "1",
+                      "CFLAGS_x86_64_unknown_linux_musl": shlex.join(flags)} if accepted_c else None)
+    graph = stage / "source-runtime"
+    arguments = closure.parser().parse_args(["build", "--work", str(graph.relative_to(ROOT / ".work/x86_64")),
+                                             "--features", feature, "--relocation-model", "pic"])
+    arguments.rustc_arguments = ["--cfg", "crabc_owned_static_sysroot", "--cfg", MIMALLOC_LIFECYCLE_RUST_CFG,
+                                "-Zmerge-functions=disabled", "--remap-path-prefix", f"{ROOT}=/crabc"]
+    previous = os.environ.get("CARGO_PROFILE_DEV_OPT_LEVEL")
+    os.environ["CARGO_PROFILE_DEV_OPT_LEVEL"] = "0"
+    try:
+        raw = closure.build(arguments, c_environment=c_environment)
+    finally:
+        if previous is None:
+            os.environ.pop("CARGO_PROFILE_DEV_OPT_LEVEL", None)
+        else:
+            os.environ["CARGO_PROFILE_DEV_OPT_LEVEL"] = previous
+    return collect_debug_runtime_inputs(stage, graph, raw, allocator_backend=recorded_backend,
+                                        lifecycle_test_audit=lifecycle_test_audit, dynamic=dynamic)
+
+
+def collect_debug_runtime_inputs(stage: Path, graph: Path, raw: Path, *, allocator_backend: str,
+                                 lifecycle_test_audit: bool = False, dynamic: bool = False) -> dict[str, object]:
+    """Assemble installed inputs from the producer's recorded source-built graph."""
+    from compat.x86_64 import native_static_source_runtime_closure as closure
+    recorded_backend = allocator_backend
+    allocator_backend = backend_selection(allocator_backend, lifecycle_test_audit)
+    accepted_c = allocator_backend == "accepted-c"
+    tools = resolve_pinned_producer_tools()
+    ar = producer_tool_path(tools, "llvm-ar")
+    nm = producer_tool_path(tools, "llvm-nm")
+    objdump = producer_tool_path(tools, "llvm-objdump")
+    dependency_file = stage / "allocator.d"
+    receipt = json.loads((graph / "receipt.json").read_text())
+    expected_features = f"x86-owned-{'dynamic' if dynamic else 'static'}-{'runtime' if accepted_c else 'native-shadow'}"
+    if lifecycle_test_audit:
+        expected_features += ",x86-owned-allocator-lifecycle-test-audit"
+    if (receipt["cargo_profile"] != "dev" or receipt["target"] != TARGET or receipt["toolchain"] != PINNED_TOOLCHAIN
+            or receipt["features"] != closure.normalized_features(expected_features)):
+        raise BuildError("debug runtime graph has a different profile, target or backend")
+    recorded_archive = receipt["staticlib_closure"]["archive"]
+    if recorded_archive["path"] != str(raw) or recorded_archive["sha256"] != sha256_file(raw):
+        raise BuildError("debug runtime archive differs from its source-built graph")
+    flags = shlex.split(receipt["c_environment"].get("CFLAGS_x86_64_unknown_linux_musl", ""))
+    cargo_root = graph / "cargo-target"
+    core = Path(receipt["source_runtime_artifacts"]["core"]["path"])
+    compiler = Path(receipt["source_runtime_artifacts"]["compiler_builtins"]["path"])
+    backend = selected_allocator_archive(cargo_root, allocator_backend, profile="debug")
+    headers = allocator_header_provenance(dependency_file, graph / "cargo-home", vendor_root=graph / "cargo-vendor") if accepted_c else None
+    environment = deterministic_environment()
+    runtime_arguments = ["--profile", "debug", "--runtime-core", str(core.with_suffix(".rmeta")),
+                         "--runtime-compiler-builtins", str(compiler.with_suffix(".rmeta"))]
+    crt = stage / "crt"
+    run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--out-dir", str(crt), "--llvm-objdump", objdump,
+         *runtime_arguments, *(["--owned-dynamic-sysroot"] if dynamic else [])], environment=environment)
+    builtins = stage / "builtins/libcrabc-builtins.a"
+    builtins.parent.mkdir()
+    builtins_provenance = builtins.parent / "provenance.json"
+    run([sys.executable, str(ROOT / "builtins/build_x86_64.py"), "--output", str(builtins),
+         "--provenance", str(builtins_provenance), *runtime_arguments, "--runtime-libc", str(raw)], environment=environment)
+    members = tuple(run([ar, "t", str(raw)]).decode().splitlines())
+    emitted = closure.emitted_artifacts(closure.cargo_records(graph / "cargo.stdout.jsonl"), cargo_root)
+    permitted = set()
+    compiler_members = set(run([ar, "t", str(compiler)]).decode().splitlines())
+    for artifact in emitted:
+        if artifact.suffix == ".rlib":
+            permitted.update(run([ar, "t", str(artifact)]).decode().splitlines())
+    selected = tuple(name for name in members if name not in compiler_members)
+    if any(not LIBC_MEMBER.fullmatch(name) and name not in permitted for name in selected):
+        raise BuildError("debug libc contains a member outside its audited source-built Cargo graph")
+    objects = stage / "debug-objects"
+    objects.mkdir()
+    run([ar, "x", str(raw), *selected], cwd=objects)
+    objcopy = str(Path(nm).with_name("llvm-objcopy"))
+    private_runtime = []
+    undefined = {line.split()[-1] for line in run([nm, "--undefined-only", str(raw)]).decode().splitlines()
+                 if len(line.split()) >= 2 and not line.endswith(":")}
+    for name in selected:
+        path = objects / name
+        original_sha256 = sha256_file(path)
+        bindings = global_definitions(nm, path)
+        panic = [symbol for symbol in bindings if symbol.endswith("17rust_begin_unwind") and "___rustc" in symbol]
+        allocation = [symbol for symbol in bindings if "___rustc" in symbol and
+                      symbol.endswith(("12___rust_alloc", "14___rust_dealloc", "14___rust_realloc", "19___rust_alloc_zeroed"))]
+        if set(panic) & undefined:
+            raise BuildError("debug runtime panic owner has unresolved callers outside its object")
+        if panic or allocation:
+            run([objcopy, *(f"--localize-symbol={symbol}" for symbol in panic),
+                 *(f"--weaken-symbol={symbol}" for symbol in allocation), str(path)])
+            after = global_definitions(nm, path)
+            if any(symbol in after for symbol in panic) or any(after.get(symbol) not in {"W", "V"} for symbol in allocation):
+                raise BuildError("debug private Rust runtime ownership rebinding failed")
+            if any(after.get(symbol) != binding for symbol, binding in bindings.items() if symbol not in panic + allocation):
+                raise BuildError("debug runtime changed an unrelated global binding")
+            private_runtime.append({"member": name, "private_panic": panic, "weak_allocator_shims": allocation,
+                                    "original_sha256": original_sha256, "packaged_sha256": sha256_file(path)})
+    libc = stage / "runtime/libc.a"
+    libc.parent.mkdir()
+    run([ar, "rcsD", str(libc), *(str(objects / name) for name in selected)])
+    required_symbols = REQUIRED_LIBC_SYMBOLS
+    if dynamic:
+        required_symbols = required_symbols - {"__crabc_x86_static_tls_bootstrap", "__stdio_exit"}
+    missing = required_symbols - archive_defined_symbols(nm, libc)
+    if missing:
+        raise BuildError(f"debug libc lacks selected runtime symbols: {sorted(missing)}")
+    provenance = {"archive": {"name": libc.name, "sha256": sha256_file(libc)}, "build_profile": "debug",
+                  "source_runtime": receipt, "allocator_backend": recorded_backend,
+                  "allocator_headers": headers, "allocator_flags": flags if accepted_c else [],
+                  "selected_members": [{"name": name, "sha256": sha256_file(objects / name)} for name in selected],
+                  "excluded_members": [name for name in members if name in compiler_members]}
+    provenance["rust_private_runtime_bindings"] = private_runtime
+    return {"build_profile": "debug", "allocator_backend": recorded_backend, "cargo_command": receipt["cargo_command"],
+            "crt_root": crt, "builtins": builtins, "builtins_provenance": builtins_provenance,
+            "libc": libc, "libc_provenance": provenance, "producer_tools": tools,
+            "source_core": core, "source_compiler_builtins": compiler, "source_objects": objects, "source_libc": raw}
+
+
 def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
-                         lifecycle_test_audit: bool = False) -> dict[str, object]:
+                         lifecycle_test_audit: bool = False, profile: str = "release") -> dict[str, object]:
+    if profile == "debug":
+        return build_debug_runtime_inputs(stage, allocator_backend=allocator_backend, lifecycle_test_audit=lifecycle_test_audit)
+    if profile != "release":
+        raise BuildError("unknown owned runtime build profile")
     recorded_backend = allocator_backend
     allocator_backend = backend_selection(allocator_backend, lifecycle_test_audit)
     producer_tools = resolve_pinned_producer_tools()
@@ -1292,11 +1467,13 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
 
 
 def build_commands_record(
-    cargo_command: list[str], producer_tools: dict[str, object]
+    cargo_command: list[str], producer_tools: dict[str, object], *, profile: str = "release",
+    source_core: Path | None = None, source_compiler_builtins: Path | None = None,
+    source_libc: Path | None = None,
 ) -> dict[str, object]:
     """Make the installed build record carry the exact producer identity."""
 
-    return {
+    record = {
         "schema": 1,
         "target": TARGET,
         "producer_tools": producer_tools,
@@ -1317,13 +1494,24 @@ def build_commands_record(
             ],
         },
     }
+    record["build_profile"] = profile
+    if profile == "debug":
+        if source_core is None or source_compiler_builtins is None or source_libc is None:
+            raise BuildError("debug build record lacks its source-runtime metadata")
+        arguments = ["--profile", "debug", "--runtime-core", str(source_core.with_suffix(".rmeta")),
+                     "--runtime-compiler-builtins", str(source_compiler_builtins.with_suffix(".rmeta"))]
+        record["commands"]["crt"].extend(arguments)
+        record["commands"]["builtins"].remove("--verify-reproducible")
+        record["commands"]["builtins"].extend(arguments)
+        record["commands"]["builtins"].extend(["--runtime-libc", str(source_libc)])
+    return record
 
 
 def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dict[str, object]:
     remove_owned_output(output)
     output.mkdir(parents=True)
     output.chmod(0o755)
-    include_manifest = copy_regular_tree(ROOT / "include", output / "usr" / "include")
+    include_manifest = install_header_tree(output / "usr" / "include")
     install_static_driver(output / STATIC_DRIVER_PATH)
     library_root = output / "usr" / "lib"
     library_root.mkdir(parents=True)
@@ -1352,19 +1540,16 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
     write_json(metadata_root / "libc-static.provenance.json", libc_provenance)
     write_json(
         metadata_root / "headers.provenance.json",
-        {
-            "schema": 1,
-            "source": "include",
-            "regular_file_count": len(include_manifest),
-            "files": include_manifest,
-        },
+        include_manifest,
     )
     cargo_command = inputs["cargo_command"]
     producer_tools = inputs["producer_tools"]
     assert isinstance(cargo_command, list) and isinstance(producer_tools, dict)
     write_json(
         metadata_root / "build.commands.json",
-        build_commands_record(cargo_command, producer_tools),
+        build_commands_record(cargo_command, producer_tools, profile=inputs.get("build_profile", "release"),
+                              source_core=inputs.get("source_core"), source_compiler_builtins=inputs.get("source_compiler_builtins"),
+                              source_libc=inputs.get("source_libc")),
     )
 
     manifest_path = metadata_root / "manifest.json"
@@ -1375,6 +1560,7 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
     manifest = installed_manifest(payload_hashes, producer_tools,
                                   allocator_backend=inputs.get("allocator_backend", DEFAULT_ALLOCATOR_BACKEND),
                                   source_sha256=source_sha256)
+    manifest["build_profile"] = inputs.get("build_profile", "release")
     write_json(manifest_path, manifest)
     installed_hashes = regular_file_hashes(output)
     expected = set(payload_hashes) | {manifest_path.relative_to(output).as_posix()}
@@ -1384,15 +1570,21 @@ def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dic
 
 
 def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
-          lifecycle_test_audit: bool = False) -> dict[str, object]:
+          lifecycle_test_audit: bool = False, profile: str = "release") -> dict[str, object]:
     assert_native_target()
     source_before_build = static_product_contract.source_digest()
     output = validate_output_path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="crabc-x86-owned-sysroot.", dir=output.parent) as temporary:
+    if profile == "debug":
+        stage = output.parent / (output.name + ".build")
+        stage.mkdir(mode=0o700)
+        stage_context = contextlib.nullcontext(str(stage))
+    else:
+        stage_context = tempfile.TemporaryDirectory(prefix="crabc-x86-owned-sysroot.", dir=output.parent)
+    with stage_context as temporary:
         temporary_root = Path(temporary)
         inputs = build_runtime_inputs(temporary_root, allocator_backend=allocator_backend,
-                                      lifecycle_test_audit=lifecycle_test_audit)
+                                      lifecycle_test_audit=lifecycle_test_audit, profile=profile)
         staged_output = temporary_root / "installed"
         manifest = assemble(staged_output, inputs, source_before_build)
         if static_product_contract.source_digest() != source_before_build:
@@ -1407,6 +1599,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS, default=DEFAULT_ALLOCATOR_BACKEND)
     parser.add_argument("--allocator-lifecycle-test-audit", action="store_true")
+    parser.add_argument("--profile", choices=("release", "debug"), default="release")
     return parser.parse_args(arguments)
 
 
@@ -1414,7 +1607,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         parsed = parse_args(arguments)
         manifest = build(parsed.output, allocator_backend=parsed.allocator_backend,
-                         lifecycle_test_audit=parsed.allocator_lifecycle_test_audit)
+                         lifecycle_test_audit=parsed.allocator_lifecycle_test_audit, profile=parsed.profile)
     except BuildError as error:
         print(f"x86 owned static sysroot failed: {error}", file=sys.stderr)
         return 1

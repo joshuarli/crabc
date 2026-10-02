@@ -35,6 +35,10 @@ import build_x86_64_owned_combined_sysroot as combined  # noqa: E402
 
 
 class BuildX86OwnedSysrootTests(unittest.TestCase):
+    def test_debug_profile_is_explicit_and_keeps_release_as_the_default(self) -> None:
+        self.assertEqual(builder.parse_args(["--profile", "debug"]).profile, "debug")
+        self.assertEqual(builder.parse_args([]).profile, "release")
+
     def test_default_installation_stays_in_checkout_work_state(self) -> None:
         self.assertEqual(
             builder.parse_args([]).output,

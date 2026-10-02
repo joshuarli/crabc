@@ -1079,6 +1079,8 @@ def compile_source(root: Path, mode: StaticMode, source: Path, output: Path, fla
             "-nostdinc",
             "-isystem",
             str(root / "usr" / "include"),
+            *(["-isystem", str(root / "usr/include/crabc-linux-uapi")]
+              if (root / "usr/include/crabc-linux-uapi").is_dir() else []),
             *HOSTED_TRANSLATION_FLAGS,
             *flags,
             # Place the mode last so an admitted optimization/debug flag cannot
