@@ -4109,6 +4109,10 @@ unsafe impl Send for PageRemoteFreeProducerState {}
 /// every pointer.
 #[derive(Clone, Copy)]
 pub(super) struct PageRemoteFreeOwnerState {
+    /// Pointer into the retained complete block backing. Integer remote heads
+    /// and encoded links recover their addresses with this provenance; the
+    /// caller retains that same backing throughout collection and reuse.
+    pub(super) area: NonNull<u8>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
     #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
     pub(super) page_address: usize,
@@ -5156,6 +5160,7 @@ impl Page {
             // phases. Each projection names a disjoint initialized field.
             let owner = unsafe {
                 PageRemoteFreeOwnerState {
+                    area: NonNull::new_unchecked(raw.cast::<u8>().wrapping_add((*raw).page_offset)),
                     xthread_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).xthread_free)),
                     #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
                     page_address: page.addr().get(),
@@ -5611,6 +5616,10 @@ impl Page {
         let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
         let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
+            // SAFETY: the caller retains the actual Page allocation and its
+            // complete block backing through collection. The owner-only
+            // offset selects that backing without exposing its provenance.
+            area: unsafe { NonNull::new_unchecked(page.cast::<u8>().wrapping_add((*page).page_offset)) },
             xthread_free,
             #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
@@ -5991,6 +6000,10 @@ impl Page {
         let used = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).used)) };
         let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
+            // SAFETY: the caller retains the actual Page allocation and its
+            // complete block backing through collection. The owner-only
+            // offset selects that backing without exposing its provenance.
+            area: unsafe { NonNull::new_unchecked(page.cast::<u8>().wrapping_add((*page).page_offset)) },
             xthread_free,
             #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
             page_address: page.addr(),
