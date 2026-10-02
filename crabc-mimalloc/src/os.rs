@@ -11911,6 +11911,63 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
     #[test]
+    fn secure_page_guard_reset_of_partial_commit_charges_only_the_successful_tail() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page_size = config.page_size();
+        let page = page_size.bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let before = subprocess.vm_statistics().snapshot();
+        let mapping = Mapping::map_for_process(process, config, 4 * page, 1,
+            MapAccess::Reserved, false, None).unwrap();
+        let mut allocation = NormalOsAllocation::from_mapping(mapping, 0).unwrap();
+        let base = allocation.base().unwrap();
+        let memory = allocation.memory_id().unwrap();
+        assert!(!memory.initially_committed());
+        let tail = base.wrapping_add(3 * page);
+        assert_eq!(allocation.mapping.commit_for_process(process, 0, page, 0),
+            Ok(Some(CommitOutcome::NotKnownZero)));
+        // SAFETY: exactly this prefix was successfully committed under the
+        // original owner; the still-reserved gap and tail are never accessed.
+        unsafe { base.write_volatile(0x63); }
+        let prefix = subprocess.vm_statistics().snapshot();
+        assert_eq!(prefix.committed_current - before.committed_current, page as i64);
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        // SAFETY: source reset operates on the complete retained tail even
+        // though this Page's original memory ID was initially uncommitted.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(
+            Some(process), page_size, tail, memory) }, Err(Errno::NOMEM));
+        let refused = subprocess.vm_statistics().snapshot();
+        assert_eq!(refused.committed_current, prefix.committed_current);
+        assert_eq!(refused.reserved_current, prefix.reserved_current);
+        assert_eq!(allocation.base(), Ok(base));
+        assert_eq!(decommit_mapping_permissions(tail), "---p");
+        fault.set(fault::Plan::disabled());
+        // SAFETY: the same owner retains the reserved tail through the retry.
+        assert_eq!(unsafe { crate::arena::secure_page_guard_reset_at(
+            Some(process), page_size, tail, memory) }, Ok(true));
+        let reset = subprocess.vm_statistics().snapshot();
+        assert_eq!(reset.committed_current - prefix.committed_current, page as i64);
+        assert_eq!(reset.commit_calls - prefix.commit_calls, 2);
+        assert_eq!(reset.reserved_current, prefix.reserved_current);
+        assert_eq!(decommit_mapping_permissions(tail), "rw-p");
+        assert_eq!(decommit_mapping_permissions(base.wrapping_add(page)), "---p");
+        // SAFETY: both client bytes are now accessible in this retained map;
+        // reset left the original prefix byte intact and restored the tail.
+        unsafe { assert_eq!(base.read_volatile(), 0x63); tail.write_volatile(0x64); }
+        // The test owner tracks both separate successful commitments. The
+        // inaccessible middle pages contribute no committed debit on release.
+        allocation.mapping.unmap_for_process(process, 2 * page, false).unwrap();
+        let after = subprocess.vm_statistics().snapshot();
+        assert_eq!(after.committed_current, before.committed_current);
+        assert_eq!(after.reserved_current, before.reserved_current);
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5", feature = "mi-stat-1"))]
+    #[test]
     fn secure_page_guard_tail_preserves_client_bytes_and_vm_accounting_through_reuse() {
         let fault = fault::install(fault::Plan::disabled());
         let config = MemoryConfig::detect(current_startup());
