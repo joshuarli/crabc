@@ -92,6 +92,7 @@ pub(crate) struct MainStaticProcessPageAllocator<'main> {
 /// page engine, session, or static owner.
 #[must_use = "an initial deferred-free allocation phase must be completed"]
 pub(crate) enum MainStaticDeferredFreeAllocationPhase {
+    FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
     Complete(Option<NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -114,6 +115,7 @@ fn initial_guarded_canonical_phase(
     phase: crate::single_thread::GuardedCanonicalAllocationPhase,
 ) -> Result<MainStaticDeferredFreeAllocationPhase, crate::single_thread::GuardedCanonicalAllocationRefusal> {
     phase.map(|phase| match phase {
+        DeferredFreeAllocationPhase::FreshInitialization(task) => MainStaticDeferredFreeAllocationPhase::FreshInitialization(task),
         DeferredFreeAllocationPhase::Complete(block) => MainStaticDeferredFreeAllocationPhase::Complete(block),
         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
             MainStaticDeferredFreeAllocationPhase::GenericFrequency { source, request, continuation }
@@ -2215,6 +2217,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
         self.allocate_with(request, |engine| {
             match engine.begin_deferred_free_allocation(request, zero) {
+                DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
@@ -2260,6 +2265,25 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
     }
 
+    /// Observes the actual issuer retained by this initial owner, independent
+    /// of compiler-TLS default or cached Theap selection. This creates no
+    /// image, initializes no engine and grants no allocation admission; the
+    /// caller must acquire its original owner scope before a candidate.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn allocation_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+        use crate::bootstrap::TheapPageSession;
+        match &self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => Some(active.engine.allocation_theap()),
+            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { session, .. }
+            | MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { session, .. } => {
+                Some(session.local_field_theap_pointer())
+            }
+            #[cfg(test)]
+            MainStaticRuntimeFirstArenaPageAllocatorState::ParkedActive(parked) => Some(parked.session.local_field_theap_pointer()),
+            _ => None,
+        }
+    }
+
     /// Compares one selected Theap with the permanent session retained in
     /// this owner state, without consulting compiler-TLS default caches.
     pub(crate) fn owns_theap(&self, selected: NonNull<crate::types::Theap>) -> bool {
@@ -2299,6 +2323,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         let request = source_size.checked_sub(crate::config::PADDING_SIZE)?;
         self.allocate_with(request, |engine| {
             match engine.begin_deferred_free_guarded_canonical(source_size) {
+                DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
@@ -2411,6 +2438,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         self.allocate_with(size, |engine| {
             match engine.begin_deferred_free_aligned_admission(size, alignment, offset, zero) {
                 DeferredFreeAlignedAdmission::Plain(plain) => Some(MainStaticDeferredFreeAlignedAdmission::Plain(plain)),
+                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::FreshInitialization(task)) => {
+                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)))
+                }
                 DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(block)) => {
                     Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Complete(block)))
                 }
@@ -2436,6 +2466,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     ) -> Option<MainStaticDeferredFreeAllocationPhase> {
         self.allocate_with(plain.requested_size(), |engine| {
             match engine.begin_deferred_free_aligned_plain(plain) {
+                DeferredFreeAllocationPhase::FreshInitialization(task) => Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)),
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
@@ -2489,6 +2520,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             }
         };
         match engine.begin_deferred_free_collection(force) {
+            DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+            }
             DeferredFreeAllocationPhase::Complete(block) => {
                 Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
             }
@@ -2528,6 +2562,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         }
         self.allocate_with(request, |engine| {
             match engine.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero) {
+                DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
@@ -2582,6 +2619,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             // SAFETY: the caller retains the original issuer across the
             // getter, and this engine still matches the captured source.
             match unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) } {
+                DeferredFreeAllocationPhase::FreshInitialization(task) => Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)),
                 DeferredFreeAllocationPhase::Complete(block) => Some(MainStaticDeferredFreeAllocationPhase::Complete(block)),
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::GenericFrequency { .. } => None,
@@ -2621,6 +2659,9 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 return None;
             }
             match engine.resume_deferred_free_allocation(collection, continuation) {
+                DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                    Some(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task))
+                }
                 DeferredFreeAllocationPhase::Complete(block) => {
                     Some(MainStaticDeferredFreeAllocationPhase::Complete(block))
                 }
@@ -3119,6 +3160,43 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 Some(unsafe { active.engine.free_captured_live_allocation_with_progress(allocation) })
             }
             _ => None,
+        }
+    }
+
+    /// Cleans up the exact unpublished claim under its retained original
+    /// initial engine. Foreign issuer and incomplete reversal return the task
+    /// unchanged at its current source progress; no diagnostic is delivered.
+    ///
+    /// # Safety
+    /// The actual originating initial owner admission was acquired before
+    /// this candidate and remains held, with its Heap, Theap, process and
+    /// original backing retained. No engine, page or owner projection crosses
+    /// entry. An observed source assertion still requires its original-owner
+    /// diagnostic disposition; cleanup cannot turn that assertion into null.
+    pub(crate) unsafe fn cleanup_fresh_initialization_current_initial_thread_local(
+        &mut self, task: crate::single_thread::PendingFreshOsPageInitialization,
+    ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => {
+                // SAFETY: the caller retains the original pre-candidate
+                // admission and all issuing images, rather than deriving
+                // cleanup authority from the task's scalar pointer checks.
+                unsafe { active.engine.cleanup_fresh_os_initialization(task) }
+            },
+            _ => Err(task),
+        }
+    }
+
+    /// Stores an unfinished original claim in the permanent initial engine
+    /// before its outer admission can end. Occupancy blocks allocation and
+    /// terminal retirement while preserving the actual initial Heap, Theap
+    /// and process ownership. Scalar issuer checks only refuse foreign tasks.
+    pub(crate) fn retain_fresh_initialization_current_initial_thread_local(
+        &mut self, task: crate::single_thread::PendingFreshOsPageInitialization,
+    ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
+        match &mut self.state {
+            MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => active.engine.retain_fresh_os_initialization(task),
+            _ => Err(task),
         }
     }
 
@@ -4310,10 +4388,11 @@ mod tests {
         fn complete(
             allocator: &mut MainStaticRuntimeFirstArenaPageAllocator,
             mut phase: MainStaticDeferredFreeAllocationPhase,
-        ) -> Option<NonNull<u8>> {
+        ) -> Result<Option<NonNull<u8>>, crate::single_thread::PendingFreshOsPageInitialization> {
             for _ in 0..16 {
                 phase = match phase {
-                    MainStaticDeferredFreeAllocationPhase::Complete(block) => return block,
+                    MainStaticDeferredFreeAllocationPhase::FreshInitialization(task) => return Err(task),
+                    MainStaticDeferredFreeAllocationPhase::Complete(block) => return Ok(block),
                     MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation } => {
                         allocator.resume_deferred_free_guarded_canonical_current_initial_thread_local(
                             source, collection, continuation,
@@ -4340,18 +4419,30 @@ mod tests {
             );
             let binding = owner.ready().unwrap().process_backing().unwrap();
             let session = owner.begin_process_lifetime_page_session().unwrap();
+            let original_theap = session.local_field_theap_pointer();
             let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
                 session, binding, ProcessSharedArenaStorage::test_static_owner(),
             ).unwrap();
             assert!(matches!(&allocator.state,
                 MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. }));
+            assert_eq!(allocator.allocation_theap(), Some(original_theap));
             // Process and PageMap setup has completed. Every backing mapping
             // of this first source canonical attempt now fails genuinely.
             let fault = fault::install(fault::Plan::every(fault::Point::Map, crabc_core::Errno::NOMEM));
             let phase = allocator.begin_deferred_free_guarded_canonical_checked_current_initial_thread_local(8192)
                 .expect("source registry preparation needs no backing mapping").unwrap();
-            assert_eq!(complete(&mut allocator, phase), None);
+            let completed = match complete(&mut allocator, phase) {
+                Ok(completed) => completed,
+                Err(task) => {
+                    // Preserve both the original claim and its genuine
+                    // issuer before reporting this unexpected source result.
+                    std::boxed::Box::leak(std::boxed::Box::new((allocator, owner, task)));
+                    panic!("mapping exhaustion must not create an unpublished source claim");
+                }
+            };
+            assert_eq!(completed, None);
             assert!(fault.observed() > 0, "the actual source backing attempted mapping");
+            assert_eq!(allocator.allocation_theap(), Some(original_theap));
             let original_engine = match &allocator.state {
                 MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => core::ptr::addr_of!(active.engine).addr(),
                 _ => panic!("completed first-map exhaustion preserves the active source engine"),
@@ -4359,11 +4450,20 @@ mod tests {
             fault.set(fault::Plan::disabled());
             let phase = allocator.begin_deferred_free_guarded_canonical_checked_current_initial_thread_local(8192)
                 .unwrap().unwrap();
-            let client = complete(&mut allocator, phase).expect("the original source owner retries successfully");
+            let client = match complete(&mut allocator, phase) {
+                Ok(completed) => completed.expect("the original source owner retries successfully"),
+                Err(task) => {
+                    // The same original owner retains the unexpected task;
+                    // panic must not retire its unpublished backing claim.
+                    std::boxed::Box::leak(std::boxed::Box::new((allocator, owner, task)));
+                    panic!("the source retry must not leave unfinished initialization");
+                }
+            };
             assert_eq!(match &allocator.state {
                 MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) => core::ptr::addr_of!(active.engine).addr(),
                 _ => panic!("successful retry retains its original source engine"),
             }, original_engine);
+            assert_eq!(allocator.allocation_theap(), Some(original_theap));
             let allocation = unsafe { binding.page_map().lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(unsafe {
                 allocator.free_captured_live_allocation_with_progress_current_initial_thread_local(allocation)

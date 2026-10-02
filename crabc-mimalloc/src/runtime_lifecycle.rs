@@ -1777,7 +1777,7 @@ impl<'main> TicketZeroOwnerExitFreeRoute<'main> {
     /// Runs one test-only B/C/D interleaving for the opaque group selected by
     /// the mixed regression builder, then resumes the generic ledger drain.
     ///
-    /// The callback is present only in the post-exit adapter witness. Its three
+    /// The callback is present only in the owner-exit adapter witness. Its three
     /// slots were allocated from either the covered direct-small page or the
     /// separately selected mapped, non-full medium page while A owned the
     /// live engine. B directly frees one; C and D receive only the two opaque
@@ -2360,7 +2360,7 @@ impl TicketZeroOwnerExitReclaimRoute {
     }
 }
 
-/// The adapter-supplied, joined B-side consumer for the private post-exit
+/// The adapter-supplied, joined B-side consumer for the private owner-exit
 /// witness. Outside this module, the route exposes only
 /// [`TicketZeroOwnerExitFreeRoute::free_remaining_in_fresh_runtime_worker`],
 /// which creates and finishes only B's new no-page attachment. The
@@ -2413,8 +2413,8 @@ impl<'owner> TicketZeroRemoteFreeProducerPair<'owner> {
     }
 }
 
-/// The adapter-supplied, joined two-publisher operation for the private Gate
-/// 5B witness. A higher-ranked function pointer proves the adapter cannot
+/// The adapter-supplied, joined two-publisher operation for the private remote-free
+/// witness. A higher-ranked function pointer proves the adapter cannot
 /// retain either capability beyond the owner's scoped engine lifetime.
 #[doc(hidden)]
 #[cfg(any(test, feature = "native-runtime-test-audit"))]
@@ -3873,6 +3873,10 @@ impl RuntimeProcessStorage {
 
     #[inline]
     fn prepare_quiescent_on_initial_thread_for_held_fork_gate(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.state.load(Ordering::Acquire) == PROCESS_ALLOCATABLE {
+            return self.prepare_original_source_attached_initializer_for_held_fork_gate();
+        }
         if !self.is_on_initial_thread() {
             return false;
         }
@@ -3927,6 +3931,55 @@ impl RuntimeProcessStorage {
             // Starting, a current operation, any parked page engine, and
             // retained source state all remain outside the child contract.
             PAGE_OWNER_STARTING | PAGE_OWNER_BUSY | PAGE_OWNER_RETAINED | _ => false,
+        }
+    }
+
+    /// Preserves the actual winning initializer's copied ordinary source
+    /// issuer. Its still-borrowed completion and paired attachment supply
+    /// admission; a TLS scope count or pointer alone cannot do so. The source
+    /// thread identity and private once guard survive normal fork unchanged.
+    /// No completed-process witness is constructed and no engine is moved.
+    #[cfg(target_arch = "x86_64")]
+    fn prepare_original_source_attached_initializer_for_held_fork_gate(&self) -> bool {
+        if !self.is_on_initial_allocation_thread()
+            || RUNTIME_FORK_ADMISSION.state.load(Ordering::Acquire)
+                & (FORK_GATE_HELD | FORK_GATE_COUNT_MASK) != FORK_GATE_HELD
+        { return false; }
+        let donor = THREAD_ATTACHMENT_ENTRY.source_attached_output.get();
+        if donor.is_null() { return false; }
+        // SAFETY: the synchronous installer retains the factory-issued
+        // winning scope, actual completion, published source attachment and
+        // allocator operation until this fork callback returns in each image.
+        // Revalidation below checks those actual owners rather than deriving
+        // permission from the copied TLS address or admission count.
+        let witness = unsafe { &*donor.cast::<crate::process_init::SourceAttachedRuntimeOutputWitness<'_>>() };
+        let Ok(original_process) = witness.process() else { return false; };
+        // SAFETY: allocation publication precedes this acquire observation,
+        // and the original initializer retains the immutable coordinator.
+        // This short projection ends before the engine is inspected.
+        let published_process = unsafe { (&*self.owner.get()).assume_init_ref() }
+            .allocation().ok().and_then(|allocation| allocation.vm_process().ok());
+        let Some(published_process) = published_process else { return false; };
+        if !core::ptr::eq(original_process.policy(), published_process.policy())
+            || !witness.matches_subprocess(published_process.subprocess())
+        { return false; }
+        match self.initial_owner.load(Ordering::Acquire) {
+            INITIAL_OWNER_ABSENT => true,
+            INITIAL_OWNER_INSTALLED => {
+                if !current_thread_has_native_initial_persistent_owner() { return false; }
+                let cell = current_thread_native_initial_persistent_owner_cell();
+                let selected = cell.as_ref().with_owner(|owner| owner.get_mut().allocator.allocation_theap())
+                    .ok().flatten();
+                let Some(selected) = selected else { return false; };
+                if !witness.matches_theap(selected) { return false; }
+                crate::local_fast_path::withdraw();
+                cell.with_owner(|owner| {
+                    let owner = owner.get_mut();
+                    owner.deferred_free_callback_active.load(Ordering::Acquire) == 0
+                        && owner.allocator.permits_surviving_initial_owner_fork()
+                }).unwrap_or(false)
+            }
+            _ => false,
         }
     }
 
@@ -4624,7 +4677,10 @@ impl RuntimeProcessStorage {
         // No owner/Theap projection survives publication. Reservation
         // callbacks can allocate through the ordinary initial owner; the
         // source once body completes before loader output callbacks run.
-        let tail = match startup.complete_once_body() {
+        // SAFETY: publication retained the actual initial source owner before
+        // this initializer enters its winning output scope. The scope's
+        // admission excludes teardown throughout reservation callbacks.
+        let tail = match unsafe { startup.complete_once_body_with_runtime_output() } {
             Ok(tail) => tail,
             Err(_) => {
                 self.retain();
@@ -7973,6 +8029,8 @@ enum NativePersistentThreadOwnerLocalAccessError {
 /// No variant retains an engine, attachment, session, TLD, or backing borrow.
 #[must_use = "a deferred-free native allocation phase must be invoked and resumed"]
 enum NativeDeferredFreeAllocationPhase {
+    #[cfg(target_arch = "x86_64")]
+    FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
     Complete(Option<core::ptr::NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -8128,6 +8186,29 @@ impl NativePersistentThreadOwner {
         Ok(result)
     }
 
+    /// Keeps a returned fresh task outside the short engine session's result
+    /// transport. A failed outer completion cannot drop its original claim or
+    /// expose it as source null; unknown publication state terminates while
+    /// retaining both the task and this actual persistent issuer.
+    fn with_local_allocation_phase(
+        &mut self,
+        operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>)
+            -> Result<DeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError>,
+    ) -> Result<DeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
+        let mut phase = None;
+        match self.with_local_allocator(|allocator| phase = Some(operation(allocator))) {
+            Ok(()) => phase.expect("a completed short engine operation supplied its phase"),
+            Err(error) => {
+                #[cfg(target_arch = "x86_64")]
+                if matches!(&phase, Some(Ok(DeferredFreeAllocationPhase::FreshInitialization(_)))) {
+                    let _original_task_and_issuer = (phase, self);
+                    crabc_core::process::exit_immediately(134);
+                }
+                Err(error)
+            }
+        }
+    }
+
     /// Runs phase A of one ordinary native allocation. Any selected callback
     /// is returned after the short owner-local page projection has ended.
     fn begin_deferred_free_allocation(
@@ -8135,8 +8216,8 @@ impl NativePersistentThreadOwner {
         request: usize,
         zero: bool,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
-        let phase = self.with_local_allocator(|allocator| {
-            allocator.begin_deferred_free_allocation(request, zero)
+        let phase = self.with_local_allocation_phase(|allocator| {
+            Ok(allocator.begin_deferred_free_allocation(request, zero))
         })?;
         self.defer_after_generic_allocation_phase(phase)
     }
@@ -8147,13 +8228,13 @@ impl NativePersistentThreadOwner {
         selected: core::ptr::NonNull<crate::types::Theap>,
         source_size: usize,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
-        let phase = self.with_local_allocator(|allocator| {
+        let phase = self.with_local_allocation_phase(|allocator| {
             if !allocator.owns_theap(selected) {
                 return Err(NativePersistentThreadOwnerLocalAccessError::Terminal);
             }
             allocator.begin_deferred_free_guarded_canonical_checked(source_size)
                 .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)
-        })??;
+        })?;
         self.defer_after_generic_allocation_phase(phase)
     }
 
@@ -8175,8 +8256,8 @@ impl NativePersistentThreadOwner {
         &mut self,
         force: bool,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
-        let phase = self.with_local_allocator(|allocator| {
-            allocator.begin_deferred_free_collection(force)
+        let phase = self.with_local_allocation_phase(|allocator| {
+            Ok(allocator.begin_deferred_free_collection(force))
         })?;
         self.defer_after_generic_allocation_phase(phase)
     }
@@ -8189,8 +8270,8 @@ impl NativePersistentThreadOwner {
         offset: usize,
         zero: bool,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
-        let phase = self.with_local_allocator(|allocator| {
-            allocator.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero)
+        let phase = self.with_local_allocation_phase(|allocator| {
+            Ok(allocator.begin_deferred_free_aligned_allocation_at(request, alignment, offset, zero))
         })?;
         self.defer_after_generic_allocation_phase(phase)
     }
@@ -8222,14 +8303,14 @@ impl NativePersistentThreadOwner {
                 .complete_deferred_free_callback(lease)
                 .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal)?;
         }
-        let phase = self.with_local_allocator(|allocator| {
+        let phase = self.with_local_allocation_phase(|allocator| {
             #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
             if path.is_guarded_canonical() {
                 return allocator.resume_deferred_free_guarded_canonical_checked(collection, continuation)
                     .map_err(|_| NativePersistentThreadOwnerLocalAccessError::Terminal);
             }
             Ok(allocator.resume_deferred_free_allocation(collection, continuation))
-        })??;
+        })?;
         self.defer_after_generic_allocation_phase(phase)
     }
 
@@ -8238,6 +8319,10 @@ impl NativePersistentThreadOwner {
         phase: DeferredFreeAllocationPhase,
     ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerLocalAccessError> {
         match phase {
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                Ok(NativeDeferredFreeAllocationPhase::FreshInitialization(task))
+            }
             DeferredFreeAllocationPhase::Complete(block) => {
                 Ok(NativeDeferredFreeAllocationPhase::Complete(block))
             }
@@ -8295,7 +8380,7 @@ impl NativePersistentThreadOwner {
         if self.generic_frequency_captures == 0 {
             return Err(NativePersistentThreadOwnerLocalAccessError::Terminal);
         }
-        let phase = self.with_local_allocator(|allocator| {
+        let phase = self.with_local_allocation_phase(|allocator| {
             #[cfg(feature = "mi-guarded")]
             if path.is_guarded_canonical() {
                 // SAFETY: the original counted issuer and source-clamped
@@ -8308,7 +8393,7 @@ impl NativePersistentThreadOwner {
             // and replacement of this original issuer. The getter returned
             // outside every owner/engine projection with its source value.
             Ok(unsafe { allocator.resume_generic_allocation_frequency(request, frequency, continuation) })
-        })??;
+        })?;
         self.generic_frequency_captures -= 1;
         self.defer_after_generic_allocation_phase(phase)
     }
@@ -8650,6 +8735,8 @@ impl NativeInitialDeferredFreeCall {
 /// owner borrow and may reenter normal initial allocation before phase C.
 #[must_use = "an initial deferred-free allocation phase must be resumed"]
 enum NativeInitialDeferredFreeAllocationPhase {
+    #[cfg(target_arch = "x86_64")]
+    FreshInitialization(crate::single_thread::PendingFreshOsPageInitialization),
     Complete(Option<core::ptr::NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -8847,6 +8934,10 @@ impl NativeInitialPersistentThreadOwner {
         phase: MainStaticDeferredFreeAllocationPhase,
     ) -> Option<NativeInitialDeferredFreeAllocationPhase> {
         match phase {
+            #[cfg(target_arch = "x86_64")]
+            MainStaticDeferredFreeAllocationPhase::FreshInitialization(task) => {
+                Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task))
+            }
             MainStaticDeferredFreeAllocationPhase::Complete(block) => {
                 Some(NativeInitialDeferredFreeAllocationPhase::Complete(block))
             }
@@ -9517,7 +9608,64 @@ impl DetachedOwnerExit {
 /// It is not the optional source `MI_TLS_RECURSE_GUARD` (disabled on our Linux
 /// release profile), nor permission to allocate before source publication.
 #[thread_local]
-static THREAD_ATTACHMENT_ENTRY: Cell<bool> = Cell::new(false);
+static THREAD_ATTACHMENT_ENTRY: NativeThreadEntryScopes = NativeThreadEntryScopes {
+    attachment: Cell::new(false),
+    #[cfg(target_arch = "x86_64")]
+    source_attached_output: Cell::new(core::ptr::null()),
+    #[cfg(target_arch = "x86_64")]
+    source_attached_output_scopes: Cell::new(0),
+};
+
+// The slot only locates a borrowed witness issued by the actual winning
+// initializer. Its enclosing scope retains that witness and the original
+// published owner; neither this pointer nor its count grants admission.
+// Keeping these independent cells in one named compiler-TLS object lets the
+// existing timer-reset span preserve every live native entry scope.
+struct NativeThreadEntryScopes {
+    attachment: Cell<bool>,
+    #[cfg(target_arch = "x86_64")]
+    source_attached_output: Cell<*const ()>,
+    #[cfg(target_arch = "x86_64")]
+    source_attached_output_scopes: Cell<usize>,
+}
+
+#[cfg(target_arch = "x86_64")]
+struct SourceAttachedRuntimeOutputScope {
+    previous: *const (),
+    previous_count: usize,
+    _not_send_or_sync: core::marker::PhantomData<*mut ()>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for SourceAttachedRuntimeOutputScope {
+    fn drop(&mut self) {
+        THREAD_ATTACHMENT_ENTRY.source_attached_output.set(self.previous);
+        THREAD_ATTACHMENT_ENTRY.source_attached_output_scopes.set(self.previous_count);
+    }
+}
+
+/// Retains the actual initializer's borrowed output witness for synchronous
+/// source-attached allocation callbacks. The winning factory keeps its
+/// completion, VM, PageMap and published initial owner live until return.
+/// Nested scopes restore the preceding donor in both ordinary fork images.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn with_source_attached_runtime_allocation_output<R>(
+    witness: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
+    operation: impl FnOnce() -> R,
+) -> Result<R, NativeAllocationOwnerAdmissionError> {
+    let _operation = NativeSubprocessOperation::enter()
+        .ok_or(NativeAllocationOwnerAdmissionError::Unavailable)?;
+    witness.output().map_err(|_| NativeAllocationOwnerAdmissionError::Invalid)?;
+    let previous_count = THREAD_ATTACHMENT_ENTRY.source_attached_output_scopes.get();
+    let count = previous_count.checked_add(1)
+        .ok_or(NativeAllocationOwnerAdmissionError::Invalid)?;
+    let previous = THREAD_ATTACHMENT_ENTRY.source_attached_output.replace(witness as *const _ as *const ());
+    THREAD_ATTACHMENT_ENTRY.source_attached_output_scopes.set(count);
+    let _scope = SourceAttachedRuntimeOutputScope {
+        previous, previous_count, _not_send_or_sync: core::marker::PhantomData,
+    };
+    Ok(operation())
+}
 
 struct ThreadAttachmentEntry {
     _not_send_or_sync: core::marker::PhantomData<*mut ()>,
@@ -9525,7 +9673,7 @@ struct ThreadAttachmentEntry {
 
 impl ThreadAttachmentEntry {
     fn claim() -> Option<Self> {
-        if THREAD_ATTACHMENT_ENTRY.replace(true) {
+        if THREAD_ATTACHMENT_ENTRY.attachment.replace(true) {
             None
         } else {
             Some(Self { _not_send_or_sync: core::marker::PhantomData })
@@ -9535,7 +9683,7 @@ impl ThreadAttachmentEntry {
 
 impl Drop for ThreadAttachmentEntry {
     fn drop(&mut self) {
-        THREAD_ATTACHMENT_ENTRY.set(false);
+        THREAD_ATTACHMENT_ENTRY.attachment.set(false);
     }
 }
 
@@ -10351,6 +10499,181 @@ fn capture_current_thread_native_generic_allocation_frequency_with_path(
     }
 }
 
+/// Selects the actual fixed worker issuer before any page candidate exists.
+/// Activation installs its original attachment in place; no default-cache
+/// pointer or allocation result can supply this admission.
+#[cfg(target_arch = "x86_64")]
+fn with_native_worker_fresh_allocation_owner<R>(
+    operation: impl FnOnce(&NativeAllocationOwner<'_>) -> Result<R, NativePersistentThreadOwnerAccessError>,
+) -> Result<R, NativePersistentThreadOwnerAccessError> {
+    let selected = with_current_thread_native_persistent_allocator(true, |allocator| allocator.allocation_theap())?;
+    // SAFETY: the actual persistent worker owns this initialized Theap and
+    // its Heap throughout the complete synchronous operation. Every engine
+    // projection ended before acquiring the original pre-candidate scope.
+    unsafe { with_native_allocation_owner(selected, |owner| operation(&owner)) }
+        .map_err(|_| NativePersistentThreadOwnerAccessError::Unavailable)?
+}
+
+/// The original diagnostic admission acquired before an ordinary page
+/// candidate. A winning source-attached initializer remains distinct from
+/// an allocation admitted by the completed runtime.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+enum NativeFreshAllocationOwner<'owner, 'scope> {
+    Ready(&'owner NativeAllocationOwner<'scope>),
+    SourceAttached(&'owner crate::process_init::SourceAttachedRuntimeOutputWitness<'scope>),
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeFreshAllocationOwner<'_, '_> {
+    fn selected_theap(self) -> core::ptr::NonNull<crate::types::Theap> {
+        match self {
+            Self::Ready(owner) => owner.selected_theap(),
+            Self::SourceAttached(owner) => owner.selected_theap(),
+        }
+    }
+
+    fn heap(self) -> core::ptr::NonNull<crate::types::Heap> {
+        match self {
+            Self::Ready(owner) => owner.heap,
+            Self::SourceAttached(owner) => owner.heap(),
+        }
+    }
+}
+
+/// Promotes the actual permanent initial issuer without creating a page.
+/// Startup callbacks retain the already-installed winning output scope;
+/// completed-runtime allocations acquire their own actual ready admission.
+#[cfg(target_arch = "x86_64")]
+fn with_native_initial_fresh_allocation_owner<R>(
+    operation: impl FnOnce(NativeFreshAllocationOwner<'_, '_>) -> Result<R, NativeInitialPersistentThreadOwnerAccessError>,
+) -> Result<R, NativeInitialPersistentThreadOwnerAccessError> {
+    let selected = with_current_thread_native_initial_persistent_allocator(true, |issuer| issuer.allocator.allocation_theap())?
+        .ok_or(NativeInitialPersistentThreadOwnerAccessError::Unavailable)?;
+    let source_attached = THREAD_ATTACHMENT_ENTRY.source_attached_output.get();
+    if !source_attached.is_null() {
+        // SAFETY: only the synchronous scope installer writes this slot. It
+        // retains the genuinely factory-issued witness, actual initializer
+        // completion and published source owner. Its admission count excludes
+        // teardown, and restoration occurs before the donor borrow can end.
+        // This reborrow is bounded by this synchronous operation and never
+        // extends the startup lifetime or acquires authority from the pointer.
+        let witness = unsafe { &*source_attached.cast::<crate::process_init::SourceAttachedRuntimeOutputWitness<'_>>() };
+        if THREAD_ATTACHMENT_ENTRY.source_attached_output_scopes.get() == 0 || !witness.matches_theap(selected) {
+            return Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable);
+        }
+        return operation(NativeFreshAllocationOwner::SourceAttached(witness));
+    }
+    // SAFETY: the permanent initial owner retains the exact initialized
+    // Theap/Heap; promotion and every projection ended before this admission.
+    unsafe { with_native_allocation_owner(selected, |owner| operation(NativeFreshAllocationOwner::Ready(&owner))) }
+        .map_err(|_| NativeInitialPersistentThreadOwnerAccessError::Unavailable)?
+}
+
+/// Settles the original unpublished OS task under the same admission acquired
+/// before its candidate. Quiet preparation failure never becomes source OOM.
+/// Successful cleanup consumes that task; a refused cleanup moves its exact
+/// remaining stages to its real persistent issuer before this scope can end.
+#[cfg(target_arch = "x86_64")]
+fn settle_native_fresh_initialization(
+    task: crate::single_thread::PendingFreshOsPageInitialization,
+    original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
+    initial: bool,
+) {
+    let Some(owner) = original_owner else {
+        // An already-begun administration adapter cannot manufacture original
+        // diagnostic admission. Keep the exact claim on this terminal stack
+        // rather than dropping it, looking up a late owner or reporting OOM.
+        let _original_task = task;
+        fail_stop_with_current_thread_native_owner();
+    };
+    let source_assertion = matches!(task.failure(),
+        crate::single_thread::FreshOsPageInitializationFailure::SourceObservation(
+            crate::page_validity::SourcePageInvariant::InitiallyZero,
+        ));
+    let mut task = Some(task);
+    if !source_assertion {
+        let mut consumed = false;
+        if initial {
+            let _completion = with_current_thread_native_initial_persistent_allocator(false, |issuer| {
+                let Some(original) = task.take() else { return; };
+                // SAFETY: the original pre-candidate scope retains this exact
+                // issuing Heap/Theap, VM, PageMap and unpublished claim; no
+                // diagnostic or metadata projection overlaps this cleanup.
+                match unsafe { issuer.allocator.cleanup_fresh_initialization_current_initial_thread_local(original) } {
+                    Ok(()) => consumed = true,
+                    Err(remaining) => task = Some(remaining),
+                }
+            });
+        } else {
+            let _completion = with_current_thread_native_persistent_owner(|issuer| {
+                issuer.with_local_allocator(|allocator| {
+                    let Some(original) = task.take() else { return; };
+                    // SAFETY: the same original issuing owner remains admitted
+                    // throughout this fresh short cleanup projection.
+                    match unsafe { allocator.cleanup_fresh_os_initialization(original) } {
+                        Ok(()) => consumed = true,
+                        Err(remaining) => task = Some(remaining),
+                    }
+                })
+            });
+        }
+        // Capture consumption before outer session completion: an error
+        // after cleanup cannot reconstruct this discharged original task.
+        if consumed { return; }
+    }
+    let mut original = task.take().unwrap_or_else(|| fail_stop_with_current_thread_native_owner());
+    #[cfg(any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3"))]
+    if source_assertion {
+        // SAFETY: the original pre-candidate owner and exact unmarked task remain
+        // retained; no allocator projection or lock spans source-fatal output.
+        original = match unsafe { match owner {
+            NativeFreshAllocationOwner::Ready(owner) => original.dispatch(owner),
+            NativeFreshAllocationOwner::SourceAttached(owner) => original.dispatch_source_attached(owner),
+        } } {
+            Ok(never) => match never {},
+            Err(remaining) => remaining,
+        };
+    }
+    // SAFETY: actual original Heap/Theap and admission were acquired before
+    // this claim; every engine projection has ended. This same linear task
+    // records whether the source retirement refusal was actually published.
+    if unsafe { original.ensure_retirement_refusal(owner.selected_theap(), owner.heap()) }.is_err() {
+        // Marker progress may include a failed unlock. Retain exact task and
+        // owner without invoking callbacks, destructors or a retrying engine.
+        let _original_task = original;
+        fail_stop_with_current_thread_native_owner();
+    }
+    let mut task = Some(original);
+    let mut stored = false;
+    if initial {
+        let _completion = with_current_thread_native_initial_persistent_allocator(false, |issuer| {
+            let Some(original) = task.take() else { return; };
+            match issuer.allocator.retain_fresh_initialization_current_initial_thread_local(original) {
+                Ok(()) => stored = true,
+                Err(remaining) => task = Some(remaining),
+            }
+        });
+    } else {
+        let _completion = with_current_thread_native_persistent_owner(|issuer| {
+            issuer.with_local_allocator(|allocator| {
+                let Some(original) = task.take() else { return; };
+                match allocator.retain_fresh_os_initialization(original) {
+                    Ok(()) => stored = true,
+                    Err(remaining) => task = Some(remaining),
+                }
+            })
+        });
+    }
+    // Successful inner transfer owns the task even if outer session completion
+    // fails. Occupied/foreign or unavailable issuer keeps this original claim
+    // in terminal caller-stack custody and never drops or retries it.
+    if !stored {
+        let _original_task = task;
+        fail_stop_with_current_thread_native_owner();
+    }
+}
+
 /// Drives the value-only generic allocation continuation through the source
 /// deferred-free callback boundary.
 ///
@@ -10363,8 +10686,16 @@ fn run_current_thread_native_deferred_free_allocation(
     request: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    #[cfg(target_arch = "x86_64")]
+    return with_native_worker_fresh_allocation_owner(|owner| {
+    let phase = begin_current_thread_native_deferred_free_allocation(request, zero)?;
+    run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(NativeFreshAllocationOwner::Ready(owner)))
+    });
+    #[cfg(not(target_arch = "x86_64"))]
+    {
     let phase = begin_current_thread_native_deferred_free_allocation(request, zero)?;
     run_current_thread_native_deferred_free_phase(phase)
+    }
 }
 
 /// Drives one already-selected callback phase. Both ordinary and aligned
@@ -10374,12 +10705,27 @@ fn run_current_thread_native_deferred_free_phase(phase: NativeDeferredFreeAlloca
 }
 
 fn run_current_thread_native_deferred_free_phase_with_path(
+    phase: NativeDeferredFreeAllocationPhase,
+    path: NativeGenericAllocationPath,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    run_current_thread_native_deferred_free_phase_with_owner(phase, path, #[cfg(target_arch = "x86_64")] None)
+}
+
+fn run_current_thread_native_deferred_free_phase_with_owner(
     mut phase: NativeDeferredFreeAllocationPhase,
     path: NativeGenericAllocationPath,
+    #[cfg(target_arch = "x86_64")] original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
     let mut forced = None;
     loop {
         phase = match phase {
+            #[cfg(target_arch = "x86_64")]
+            NativeDeferredFreeAllocationPhase::FreshInitialization(task) => {
+                {
+                    settle_native_fresh_initialization(task, original_owner, false);
+                    return Err(NativePersistentThreadOwnerAccessError::Retained);
+                }
+            }
             NativeDeferredFreeAllocationPhase::Complete(block) => {
                 if !path.is_guarded_canonical() { report_generic_allocation_failure(forced, block.is_none()); }
                 return Ok(block);
@@ -10482,6 +10828,18 @@ fn run_current_thread_native_deferred_free_aligned_allocation(
     offset: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativePersistentThreadOwnerAccessError> {
+    #[cfg(target_arch = "x86_64")]
+    return with_native_worker_fresh_allocation_owner(|owner| {
+    let phase = begin_current_thread_native_deferred_free_aligned_allocation(
+        request,
+        alignment,
+        offset,
+        zero,
+    )?;
+    run_current_thread_native_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(NativeFreshAllocationOwner::Ready(owner)))
+    });
+    #[cfg(not(target_arch = "x86_64"))]
+    {
     let phase = begin_current_thread_native_deferred_free_aligned_allocation(
         request,
         alignment,
@@ -10489,6 +10847,7 @@ fn run_current_thread_native_deferred_free_aligned_allocation(
         zero,
     )?;
     run_current_thread_native_deferred_free_phase(phase)
+    }
 }
 
 /// Starts phase A through the pinned initial compiler-TLS owner. The returned
@@ -10527,6 +10886,11 @@ fn native_initial_deferred_free_phase_result(
     >,
 ) -> Result<NativeInitialDeferredFreeAllocationPhase, NativeInitialPersistentThreadOwnerAccessError> {
     match projection {
+        #[cfg(target_arch = "x86_64")]
+        Ok((Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task)), true)) => {
+            let _original_task = task;
+            crabc_core::process::exit_immediately(134);
+        }
         Ok((Some(phase), false)) => Ok(phase),
         Ok((Some(_) | None, true)) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
         Ok((None, false)) => Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable),
@@ -10565,6 +10929,11 @@ fn resume_current_thread_native_initial_deferred_free_allocation_with_path(
             owner.is_retained(),
         )
     }) {
+        #[cfg(target_arch = "x86_64")]
+        Ok((Some(NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task)), true)) => {
+            let _original_task = task;
+            crabc_core::process::exit_immediately(134);
+        }
         Ok((Some(phase), false)) => Ok(phase),
         Ok((Some(_) | None, true)) => Err(NativeInitialPersistentThreadOwnerAccessError::Retained),
         Ok((None, false)) => Err(NativeInitialPersistentThreadOwnerAccessError::Unavailable),
@@ -10581,6 +10950,18 @@ fn run_current_thread_native_initial_deferred_free_aligned_allocation(
     offset: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
+    #[cfg(target_arch = "x86_64")]
+    return with_native_initial_fresh_allocation_owner(|owner| {
+    let phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
+        request,
+        alignment,
+        offset,
+        zero,
+    )?;
+    run_current_thread_native_initial_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(owner))
+    });
+    #[cfg(not(target_arch = "x86_64"))]
+    {
     let phase = begin_current_thread_native_initial_deferred_free_aligned_allocation(
         request,
         alignment,
@@ -10588,6 +10969,7 @@ fn run_current_thread_native_initial_deferred_free_aligned_allocation(
         zero,
     )?;
     run_current_thread_native_initial_deferred_free_phase(phase)
+    }
 }
 
 /// Drives one initial-owner ordinary allocation through the same phases.
@@ -10595,8 +10977,16 @@ fn run_current_thread_native_initial_deferred_free_allocation(
     request: usize,
     zero: bool,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
+    #[cfg(target_arch = "x86_64")]
+    return with_native_initial_fresh_allocation_owner(|owner| {
+    let phase = begin_current_thread_native_initial_deferred_free_allocation(request, zero)?;
+    run_current_thread_native_initial_deferred_free_phase_with_owner(phase, NativeGenericAllocationPath::Ordinary, Some(owner))
+    });
+    #[cfg(not(target_arch = "x86_64"))]
+    {
     let phase = begin_current_thread_native_initial_deferred_free_allocation(request, zero)?;
     run_current_thread_native_initial_deferred_free_phase(phase)
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -10637,12 +11027,27 @@ fn run_current_thread_native_initial_deferred_free_phase(phase: NativeInitialDef
 }
 
 fn run_current_thread_native_initial_deferred_free_phase_with_path(
+    phase: NativeInitialDeferredFreeAllocationPhase,
+    path: NativeGenericAllocationPath,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
+    run_current_thread_native_initial_deferred_free_phase_with_owner(phase, path, #[cfg(target_arch = "x86_64")] None)
+}
+
+fn run_current_thread_native_initial_deferred_free_phase_with_owner(
     mut phase: NativeInitialDeferredFreeAllocationPhase,
     path: NativeGenericAllocationPath,
+    #[cfg(target_arch = "x86_64")] original_owner: Option<NativeFreshAllocationOwner<'_, '_>>,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeInitialPersistentThreadOwnerAccessError> {
     let mut forced = None;
     loop {
         phase = match phase {
+            #[cfg(target_arch = "x86_64")]
+            NativeInitialDeferredFreeAllocationPhase::FreshInitialization(task) => {
+                {
+                    settle_native_fresh_initialization(task, original_owner, true);
+                    return Err(NativeInitialPersistentThreadOwnerAccessError::Retained);
+                }
+            }
             NativeInitialDeferredFreeAllocationPhase::Complete(block) => {
                 if !path.is_guarded_canonical() { report_generic_allocation_failure(forced, block.is_none()); }
                 return Ok(block);
@@ -13836,8 +14241,8 @@ unsafe fn native_guarded_canonical_allocate_selected(
                 (issuer.begin_guarded_canonical_allocation(selected, source_size), issuer.is_retained())
             }),
         );
-        return match phase.and_then(|phase| run_current_thread_native_initial_deferred_free_phase_with_path(
-            phase, NativeGenericAllocationPath::GuardedCanonical,
+        return match phase.and_then(|phase| run_current_thread_native_initial_deferred_free_phase_with_owner(
+            phase, NativeGenericAllocationPath::GuardedCanonical, Some(NativeFreshAllocationOwner::Ready(owner)),
         )) { Ok(block) => Complete(block), Err(_) => Refused };
     }
     let begin = || with_current_thread_native_persistent_owner(|issuer| {
@@ -13853,8 +14258,8 @@ unsafe fn native_guarded_canonical_allocate_selected(
         result => result,
     };
     match phase {
-        Ok(Ok(phase)) => match run_current_thread_native_deferred_free_phase_with_path(
-            phase, NativeGenericAllocationPath::GuardedCanonical,
+        Ok(Ok(phase)) => match run_current_thread_native_deferred_free_phase_with_owner(
+            phase, NativeGenericAllocationPath::GuardedCanonical, Some(NativeFreshAllocationOwner::Ready(owner)),
         ) { Ok(block) => Complete(block), Err(_) => Refused },
         _ => Refused,
     }
@@ -17452,7 +17857,7 @@ fn install_current_thread_page_owner(
     OwnerExitMappedRegularPageOwnerInstallResult::Installed
 }
 
-/// Builds the mixed post-exit source image through
+/// Builds the mixed owner-exit source image through
 /// [`install_current_thread_page_owner`]. The workload remains a regression
 /// fixture; it is not the runtime's page-owner state.
 #[cfg(test)]
@@ -17832,7 +18237,7 @@ fn free_remaining_persistent_remote_worker_blocks(
     Ok(())
 }
 
-/// Exercises live-owner remote frees. The first small page becomes full
+/// Exercises the live-owner remote-free workload. The first small page becomes full
 /// before two exact blocks transfer as logical remote publications; the
 /// joined owner's next ordinary allocations perform the source false
 /// collection, receive both exact blocks back, and finish with no client
@@ -18726,7 +19131,7 @@ fn ticket_zero_later_thread_owner_exit_reclaim_through_normal_finish(
     }
 }
 
-/// Runs the bounded post-exit lifecycle witness against the dormant
+/// Runs the bounded real-lifecycle owner-exit witness against the dormant
 /// ticket-zero process pair.
 ///
 /// A publishes two clients to joined B/C before it crosses the existing
@@ -18940,7 +19345,7 @@ enum OwnerExitReclaimWorkerResult {
     Poisoned(TicketZeroOwnerExitRoutePoisoned),
 }
 
-/// Runs source-valid post-exit reclamation against the
+/// Runs the source-valid post-exit reclamation workload against the
 /// dormant ticket-zero process pair.
 ///
 /// A owns one initially-nonfull medium page with a returned local free that
@@ -19846,14 +20251,43 @@ pub fn finish_current_thread_after_user_destructors() -> ThreadFinishResult {
 pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResult {
     #[cfg(target_arch = "x86_64")]
     {
+        // The actual winning initializer still borrows its original source
+        // owner. This transient admission is separate from an unfinished
+        // task's persistent retirement refusal.
+        if THREAD_ATTACHMENT_ENTRY.source_attached_output_scopes.get() != 0 {
+            return ThreadFinishResult::Retained;
+        }
         // A lazy source option callback can request thread finish. Its
         // suspended allocation still owns this exact issuer, so return the
         // ordinary retention result before auxiliary Theaps are dismantled.
         let captured_initial = with_current_thread_native_initial_persistent_owner(
-            |owner| owner.generic_frequency_captures != 0,
+            |owner| {
+                owner.generic_frequency_captures != 0
+                    || owner.allocator.allocation_theap().is_some_and(|theap| {
+                        // SAFETY: this actual persistent TLS owner retains its
+                        // original initialized Theap during the bounded read.
+                        // An unfinished task must refuse finish before any
+                        // auxiliary issuer is drained or detached.
+                        unsafe { crate::types::Theap::retains_fresh_initialization_at(theap) }
+                    })
+            },
         ).unwrap_or(false);
         let captured_worker = with_current_thread_native_persistent_owner(
-            |owner| owner.generic_frequency_captures != 0,
+            |owner| {
+                if owner.generic_frequency_captures != 0 { return true; }
+                let engine = match &owner.state {
+                    NativePersistentThreadOwnerExitState::PreDrain(engine)
+                    | NativePersistentThreadOwnerExitState::DeferredFreePending(engine)
+                    | NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) => engine,
+                    NativePersistentThreadOwnerExitState::AttachmentOnly => return false,
+                };
+                engine.allocation_theap().is_some_and(|theap| {
+                    // SAFETY: the actual persistent owner retains its sibling
+                    // attachment and original initialized Theap through this
+                    // bounded atomic observation. No engine session is opened.
+                    unsafe { crate::types::Theap::retains_fresh_initialization_at(theap) }
+                })
+            },
         ).unwrap_or(false);
         if captured_initial || captured_worker { return ThreadFinishResult::Retained; }
     }
@@ -20783,14 +21217,15 @@ fn finish_current_thread_page_owner_after_user_destructors(
 /// for the direct public `fork` path that just called [`before_fork`]. That
 /// explicit token, plus the gate, preserves the copied process owner only when
 /// no later bridge attachment was live or retained, the raw fork ran on the
-/// original ticket-zero TLS image, and its source owner was unmapped or
-/// all-free dormant in either the static staging slot or pinned initial TLS
-/// cell. It prevents another raw-fork caller from borrowing a concurrently
-/// copied gate. A preserving child may reactivate that dormant ticket-zero
-/// owner or attach a fresh pthread through the existing no-page path. Every
-/// other child remains disabled: this is intentionally not a general fork
-/// repair and never traverses inherited locks, roots, lists, or page
-/// ownership.
+/// original ticket-zero TLS image, and its actual source issuer was admitted
+/// by the held-gate preparation. That issuer may be unmapped/all-free dormant,
+/// or remain active under its retained generic continuation or actual winning
+/// startup scope. The copied original startup completion and attachment remain
+/// required until that initializer finishes; fork does not create READY
+/// authority. The explicit token prevents another raw-fork caller from
+/// borrowing a concurrently copied gate. Other copied children remain disabled
+/// until their own source repair proves admission; this function does not
+/// traverse inherited locks, roots, lists, or page ownership.
 #[doc(hidden)]
 pub fn after_fork_child(fork_was_prepared: bool) {
     #[cfg(target_arch = "x86_64")]
@@ -23111,6 +23546,242 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn source_attached_native_allocation_precedes_ready_and_survives_startup_completion() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::source_attached_native_allocation_precedes_ready_and_survives_startup_completion",
+            || {
+                let facts = host_startup_facts();
+                assert!(publish_native_process_startup_facts(facts));
+                assert!(admission::register_initial_descriptor());
+                let _operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                let completion = RUNTIME_PROCESS.begin_initialization_once().unwrap();
+                RUNTIME_PROCESS.state.store(PROCESS_INITIALIZING, Ordering::Release);
+                // SAFETY: the fixture uses the production process-lifetime
+                // environment/output providers while owning the actual once.
+                let inputs = unsafe { ProcessDiagnosticInputs::new(
+                    facts.environment_reader(), facts.stderr_output().into_default_stderr_output(),
+                ) };
+                let (owner, startup) = unsafe { ProcessMainInitializationStorage::global()
+                    .prepare_from_source_environment(memory_config(), inputs, ProcessStartEntry::RuntimeStartup) }
+                    .expect("the real initializer publishes its source attachment");
+                assert!(RUNTIME_PROCESS.publish_prepared_owner(owner));
+                assert!(!RUNTIME_PROCESS.is_active());
+                assert!(unsafe { RUNTIME_PROCESS.allocation_owner() }.unwrap().ready().is_err(),
+                    "source attachment grants allocation without a fabricated ready lease");
+                // SAFETY: the actual initializer retains its published
+                // source owner; this callback cannot retire that owner or
+                // destroy its Heap while the winning witness is borrowed.
+                let allocation = unsafe { startup.with_source_attached_runtime_output(|witness| {
+                    with_source_attached_runtime_allocation_output(witness, || {
+                        native_allocate_aligned(128 * 1024, 4096, false)
+                    }).expect("the original startup scope has actual runtime admission")
+                }) }.expect("the winning initializer supplies its original output witness");
+                let NativePageAllocationResult::Allocated(block) = allocation
+                    else { panic!("the actual source-attached initializer can allocate before READY"); };
+                // SAFETY: this initializer exclusively owns the completed client.
+                unsafe { block.as_ptr().write_bytes(0x73, 128 * 1024) };
+                let tail = startup.complete_once_body().expect("the actual source startup continues");
+                RUNTIME_PROCESS.state.store(PROCESS_ACTIVE, Ordering::Release);
+                completion.complete().unwrap();
+                tail.complete();
+                assert!(process_is_active());
+                assert!(unsafe { RUNTIME_PROCESS.active_owner() }.unwrap().ready().is_ok());
+                // SAFETY: the same original client survives startup publication
+                // and is consumed once only after its byte check completes.
+                assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 128 * 1024) }
+                    .iter().all(|byte| *byte == 0x73));
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn source_attached_fresh_zero_assertion_keeps_original_initializer_during_reentry() {
+        const CHILD: &str = "CRABC_SOURCE_ATTACHED_FRESH_ZERO_CHILD";
+        struct Probe {
+            map: crate::process_page_map::ProcessPageMapRoot,
+            observed: Cell<Option<(core::ptr::NonNull<crate::types::Page>, core::ptr::NonNull<u8>, usize)>>,
+        }
+        unsafe fn observe(
+            state: &crate::types::PageValiditySnapshot,
+            page: core::ptr::NonNull<crate::types::Page>,
+            argument: *mut core::ffi::c_void,
+        ) {
+            // SAFETY: the initializer retains this probe and the engine owns
+            // the original committed backing during this short observation.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            if probe.observed.get().is_some() { return; }
+            assert_eq!(state.page, page);
+            assert_eq!(state.used, 0);
+            assert_eq!(state.capacity, 0);
+            assert!(state.free.is_null());
+            assert_eq!(unsafe { probe.map.lookup_registered_page(state.area.as_ptr()) }.unwrap(), Some(page));
+            probe.observed.set(Some((page, state.area, state.area_bytes)));
+            // SAFETY: the observer may write this exclusively owned backing
+            // byte before the production source zero check reads it.
+            unsafe { state.area.as_ptr().write(0x5a) };
+        }
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            unsafe extern "C" { fn write(fd: core::ffi::c_int, bytes: *const u8, size: usize) -> isize; }
+            // SAFETY: the original startup callback retains this argument
+            // through the nonreturning source assertion dispatch.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if message.starts_with(b"mimalloc: assertion failed:") {
+                assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_ALLOCATABLE);
+                assert!(unsafe { RUNTIME_PROCESS.allocation_owner() }.unwrap().ready().is_err());
+                let (page, area, bytes) = probe.observed.get().unwrap();
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                let state = unsafe { crate::types::Page::validity_snapshot_at(page) };
+                assert_eq!((state.used, state.capacity), (0, 0));
+                assert!(state.free.is_null());
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x5a);
+                // All metadata observations finish before native reentry.
+                let NativePageAllocationResult::Allocated(nested) = native_allocate(96, false)
+                    else { panic!("the original source-attached assertion scope admits reentry"); };
+                assert!(nested.addr().get() < area.addr().get() || nested.addr().get() >= area.addr().get() + bytes);
+                assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x5a);
+                let marker = b"original source-attached initializer retained during native reentry\n";
+                assert_eq!(unsafe { write(2, marker.as_ptr(), marker.len()) }, marker.len() as isize);
+            }
+            assert_eq!(unsafe { write(2, message.as_ptr(), message.len()) }, message.len() as isize);
+        }
+        if std::env::var_os(CHILD).is_some() {
+            let facts = host_startup_facts();
+            assert!(publish_native_process_startup_facts(facts));
+            assert!(admission::register_initial_descriptor());
+            let _operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+            let _completion = RUNTIME_PROCESS.begin_initialization_once().unwrap();
+            RUNTIME_PROCESS.state.store(PROCESS_INITIALIZING, Ordering::Release);
+            // SAFETY: the actual winning initializer owns the process-lifetime
+            // environment and output providers for the entire assertion.
+            let inputs = unsafe { ProcessDiagnosticInputs::new(
+                facts.environment_reader(), facts.stderr_output().into_default_stderr_output(),
+            ) };
+            let (owner, startup) = unsafe { ProcessMainInitializationStorage::global()
+                .prepare_from_source_environment(memory_config(), inputs, ProcessStartEntry::RuntimeStartup) }.unwrap();
+            assert!(RUNTIME_PROCESS.publish_prepared_owner(owner));
+            // SAFETY: the actual initializer retains its original witness,
+            // published attachment and callback argument until source abort.
+            unsafe { startup.with_source_attached_runtime_output(|witness| {
+                let probe = Probe { map: witness.page_map().unwrap(), observed: Cell::new(None) };
+                witness.output().unwrap().register_output(Some(output), core::ptr::from_ref(&probe).cast_mut().cast());
+                with_source_attached_runtime_allocation_output(witness, || {
+                    crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                        observe, core::ptr::from_ref(&probe).cast_mut().cast(), || {
+                            let _ = native_allocate_aligned(7, 128 * 1024, false);
+                            panic!("the real fresh source assertion cannot return");
+                        });
+                }).unwrap();
+            }) }.unwrap();
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "runtime_lifecycle::tests::source_attached_fresh_zero_assertion_keeps_original_initializer_during_reentry",
+                "--nocapture", "--test-threads=1"])
+            .current_dir(std::env::temp_dir()).env(CHILD, "1").output().unwrap();
+        assert_eq!(result.status.signal(), Some(6), "{}", std::string::String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stderr, b"original source-attached initializer retained during native reentry\nmimalloc: assertion failed: at \"src/page.c\":729, _mi_page_init\n  assertion: \"mi_mem_is_zero(page_start, mi_page_committed(page))\"\n");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn source_attached_initializer_scope_completes_in_both_normal_fork_images() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::source_attached_initializer_scope_completes_in_both_normal_fork_images",
+            || {
+                struct ChildFailureExit(bool);
+                impl Drop for ChildFailureExit {
+                    fn drop(&mut self) {
+                        if self.0 { crabc_core::process::exit_immediately(1); }
+                    }
+                }
+                let facts = host_startup_facts();
+                assert!(publish_native_process_startup_facts(facts));
+                assert!(admission::register_initial_descriptor());
+                let operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                let completion = RUNTIME_PROCESS.begin_initialization_once().unwrap();
+                RUNTIME_PROCESS.state.store(PROCESS_INITIALIZING, Ordering::Release);
+                // SAFETY: the actual winning initializer retains the production
+                // process-lifetime environment and diagnostic providers.
+                let inputs = unsafe { ProcessDiagnosticInputs::new(
+                    facts.environment_reader(), facts.stderr_output().into_default_stderr_output(),
+                ) };
+                let (owner, startup) = unsafe { ProcessMainInitializationStorage::global()
+                    .prepare_from_source_environment(memory_config(), inputs, ProcessStartEntry::RuntimeStartup) }
+                    .unwrap();
+                assert!(RUNTIME_PROCESS.publish_prepared_owner(owner));
+                let original_identity = current_thread_identity().unwrap();
+                // SAFETY: both fork images keep the copied original startup
+                // completion and published attachment alive throughout this
+                // callback. Neither image deletes its Heap or ends the owner.
+                let (block, child, _child_failure_exit) = unsafe { startup.with_source_attached_runtime_output(|witness| {
+                    with_source_attached_runtime_allocation_output(witness, || {
+                        let original_theap = witness.selected_theap();
+                        let original_heap = witness.heap();
+                        let NativePageAllocationResult::Allocated(block) =
+                            native_allocate_aligned(128 * 1024, 4096, false)
+                            else { panic!("the original initializer allocates before fork"); };
+                        unsafe { block.as_ptr().write_bytes(0x73, 128 * 1024) };
+                        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Retained);
+                        before_fork();
+                        let child = match crabc_core::process::fork_raw() {
+                            Ok(child) => child,
+                            Err(error) => { after_fork_parent(); panic!("normal startup fork succeeds: {error:?}"); }
+                        };
+                        // A forked libtest worker cannot use its inherited
+                        // harness to report an unwind. Preserve failure as
+                        // a nonzero raw child status for the parent's wait.
+                        let child_failure_exit = ChildFailureExit(child == 0);
+                        if child == 0 { after_fork_child(true); } else { after_fork_parent(); }
+                        assert_eq!(current_thread_identity().unwrap(), original_identity);
+                        assert!(witness.output().is_ok(), "the copied original once still supplies its output");
+                        assert_eq!(witness.selected_theap(), original_theap);
+                        assert_eq!(witness.heap(), original_heap);
+                        assert_eq!(RUNTIME_PROCESS.state.load(Ordering::Acquire), PROCESS_ALLOCATABLE,
+                            "both images retain the actual source-attached initializer");
+                        assert!(unsafe { RUNTIME_PROCESS.allocation_owner() }.unwrap().ready().is_err(),
+                            "a copied startup scope does not grant completed process authority");
+                        assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 128 * 1024) }
+                            .iter().all(|byte| *byte == 0x73));
+                        assert!(native_round_trip(96), "both images allocate through the original startup scope");
+                        (block, child, child_failure_exit)
+                    }).unwrap()
+                }) }.unwrap();
+                let tail = startup.complete_once_body().unwrap();
+                RUNTIME_PROCESS.state.store(PROCESS_ACTIVE, Ordering::Release);
+                completion.complete().unwrap();
+                tail.complete().unwrap();
+                assert!(process_is_active());
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                assert!(native_round_trip(97));
+                drop(operation);
+                if child == 0 { crabc_core::process::exit_immediately(0); }
+                let mut status = 0;
+                let mut reaped = false;
+                for _ in 0..500 {
+                    let waited = unsafe { crabc_core::process::wait4_raw(child, &mut status, 1) }.unwrap();
+                    if waited == child {
+                        assert_eq!(status, 0, "the child completes its copied original initializer");
+                        reaped = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                if !reaped {
+                    let _ = crabc_core::process::kill(child, 9);
+                    let _ = unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) };
+                    panic!("the copied initializer exceeded its five-second deadline");
+                }
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn runtime_process_once_waits_for_terminal_startup_and_refuses_owner_reentry() {
         use std::time::{Duration, Instant};
 
@@ -23564,6 +24235,14 @@ mod tests {
         let mut selected = None;
         loop {
             phase = match phase {
+                #[cfg(target_arch = "x86_64")]
+                NativeDeferredFreeAllocationPhase::FreshInitialization(task) => {
+                    // This fixture has no source output admission. Keep the
+                    // original unfinished claim alive through terminal exit
+                    // instead of unwinding and dropping its backing custody.
+                    let _original_task = task;
+                    crabc_core::process::exit_immediately(134);
+                }
                 NativeDeferredFreeAllocationPhase::Complete(block) => return (block, selected),
                 #[cfg(target_arch = "x86_64")]
                 NativeDeferredFreeAllocationPhase::GenericFrequency { capture, request, continuation } => {
@@ -26105,6 +26784,7 @@ mod tests {
                 "an unmapped permanent ticket-zero owner remains quiescent for fork"
             );
 
+            std::eprintln!("legacy ticket zero: first 37-byte allocation");
             let block = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
                     owner.allocate(37, false)
@@ -26119,6 +26799,7 @@ mod tests {
                 !arena_storage.test_is_cold(),
                 "only the valid first miss publishes the default arena"
             );
+            std::eprintln!("legacy ticket zero: free first client");
             let free = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
                     // SAFETY: `block` is the exact live allocation returned
@@ -26127,11 +26808,13 @@ mod tests {
             })
                 .expect("the permanent owner remains callable after activation");
             assert!(free.is_ok(), "the exact ticket-zero allocation frees normally");
+            std::eprintln!("legacy ticket zero: all-free fork preparation");
             assert!(
                 is_preserved_at_quiescent_fork_boundary(),
                 "the all-free source finish restores the permanent owner to the quiescent fork image"
             );
 
+            std::eprintln!("legacy ticket zero: aligned 65-byte reactivation");
             let aligned = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
                     owner.allocate_aligned(65, 64, true)
@@ -26167,6 +26850,7 @@ mod tests {
                 "the aligned ticket-zero allocation returns to the dormant state"
             );
 
+            std::eprintln!("legacy ticket zero: reused 73-byte reactivation");
             let reused = runtime
                 .with_ticket_zero_page_owner_with_storage(arena_storage, |owner| {
                     owner.allocate(73, false)

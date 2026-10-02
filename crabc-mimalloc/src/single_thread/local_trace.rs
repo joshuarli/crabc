@@ -370,6 +370,13 @@ fn allocate_phased(
     let mut phase = allocator.begin_deferred_free_allocation(size, false);
     loop {
         match phase {
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::FreshInitialization(pending) => {
+                // SAFETY: this trace retains the original engine and backing
+                // continuously through preparation and cleanup.
+                unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                panic!("fresh initialization unexpectedly refused");
+            }
             DeferredFreeAllocationPhase::Complete(block) => return block,
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {

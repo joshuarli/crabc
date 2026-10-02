@@ -230,6 +230,79 @@ enum MainHeapTheapAllocation {
 
 const _: [(); 1] = [(); (size_of::<MainHeapTheapImage>() <= crate::config::ARENA_MIN_OBJ_SIZE) as usize];
 
+/// Independent custody acquired while the actual issuing source owner is
+/// admitted, before any candidate. Terminal task handoff moves this genuine
+/// Theap reference and operation guard; copied addresses never replace them.
+#[cfg(target_arch = "x86_64")]
+struct AuxiliaryAllocationIssuer {
+    heap: NonNull<Heap>,
+    theap: NonNull<Theap>,
+    _operation: crate::runtime_lifecycle::NativeSubprocessOperation,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl AuxiliaryAllocationIssuer {
+    /// # Safety
+    /// The caller's actual admitted source owner retains this Heap, Theap
+    /// and TLD continuously, with all conflicting projections ended.
+    unsafe fn capture(heap: NonNull<Heap>, theap: NonNull<Theap>) -> Option<Self> {
+        let operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+        unsafe { Theap::incref_at(theap) };
+        Some(Self { heap, theap, _operation: operation })
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for AuxiliaryAllocationIssuer {
+    fn drop(&mut self) {
+        // This independent reference ends before its enclosing original
+        // source admission. The caller's list/root references, or the stored
+        // task's independent issuer, still retain the image; this is not its
+        // final release and must not consume a protected list reference.
+        if unsafe { Theap::decref_at(self.theap) } {
+            crabc_core::process::exit_immediately(134);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+struct RetainedAuxiliaryFreshInitialization {
+    issuer: AuxiliaryAllocationIssuer,
+    task: crate::single_thread::PendingFreshOsPageInitialization,
+}
+
+fn has_retained_auxiliary_fresh_initialization() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    { unsafe { thread_heaps() }.pending_fresh_initialization.is_some() }
+    #[cfg(not(target_arch = "x86_64"))]
+    { false }
+}
+
+/// # Safety
+/// This is the actual issuer captured before this task's candidate. The
+/// enclosing original owner remains admitted throughout the terminal handoff.
+#[cfg(target_arch = "x86_64")]
+unsafe fn retain_auxiliary_fresh_initialization(
+    mut task: crate::single_thread::PendingFreshOsPageInitialization,
+    issuer: AuxiliaryAllocationIssuer,
+) {
+    let occupied = has_retained_auxiliary_fresh_initialization();
+    let marked = if occupied { false } else {
+        unsafe { task.ensure_retirement_refusal(issuer.theap, issuer.heap) }.is_ok()
+            || task.has_retirement_refusal_marker()
+    };
+    if !marked {
+        // A failed first publication cannot end the real originating scope.
+        // Both linear owners remain on this stack until process fail-stop;
+        // no source null or replacement admission is manufactured.
+        core::hint::black_box((&task, &issuer));
+        crabc_core::process::exit_immediately(134);
+    }
+    unsafe { thread_heaps() }.pending_fresh_initialization = Some(
+        RetainedAuxiliaryFreshInitialization { issuer, task },
+    );
+}
+
 /// The calling thread's state for its auxiliary allocated Theaps.
 ///
 /// Source keeps the slot array and the cached Theap in thread-local roots.
@@ -250,6 +323,10 @@ struct ThreadHeaps {
     /// The one retained raw-unmap retry of these Theaps, with the Theap whose
     /// engine it latched (`None` once that Theap is freed).
     pending_os_release: Option<(Option<NonNull<Theap>>, OsAlignedPageOwner)>,
+    /// The actual original issuer stays pinned with the terminal unpublished
+    /// claim. Its Heap marker and these live source roots forbid teardown.
+    #[cfg(target_arch = "x86_64")]
+    pending_fresh_initialization: Option<RetainedAuxiliaryFreshInitialization>,
 }
 
 #[thread_local]
@@ -259,6 +336,8 @@ static THREAD_HEAPS: UnsafeCell<ThreadHeaps> =
         backing: None,
         cached: core::ptr::null_mut(),
         pending_os_release: None,
+        #[cfg(target_arch = "x86_64")]
+        pending_fresh_initialization: None,
     });
 
 /// Preserve the live main-subprocess Heap slots until the pthread's source
@@ -309,7 +388,7 @@ impl CopiedThreadHeapTls {
     pub(crate) unsafe fn release_vanished_regular_backing(self) -> bool {
         // SAFETY: sole-child ownership of the pinned originating TLS field.
         let state = unsafe { self.state.as_ptr().as_mut() }.unwrap();
-        if state.pending_os_release.is_some() { return false; }
+        if state.pending_os_release.is_some() || state.pending_fresh_initialization.is_some() { return false; }
         if let Some(owner) = state.thread_locals.as_mut() {
             // The image is parked in this exact lifecycle outside a bounded
             // slot operation, rather than installed in the survivor's TLS.
@@ -546,6 +625,7 @@ fn thread_local_count() -> i64 {
 /// The fast slot is cleared after the regular table is released. A pre-release
 /// metadata failure keeps the table available for the next operation.
 pub(crate) fn release_current_thread_locals_for_child_destroy() -> bool {
+    if has_retained_auxiliary_fresh_initialization() { return false; }
     // SAFETY: this thread owns its regular TLS table, and the public child
     // destroy entry keeps native admission open through this transition.
     let state = unsafe { thread_heaps() };
@@ -663,6 +743,9 @@ unsafe fn retain_refused_main_heap_metadata(theap: NonNull<Theap>, allocation: M
 /// `theap` is live and holds the reference being dropped; a Theap freed here
 /// is on no list and no root names it.
 unsafe fn theap_decref(theap: NonNull<Theap>) {
+    #[cfg(target_arch = "x86_64")]
+    if unsafe { thread_heaps() }.pending_fresh_initialization.as_ref()
+        .is_some_and(|retained| retained.issuer.theap == theap) { return; }
     // SAFETY: forwarded.
     if !unsafe { Theap::decref_at(theap) } {
         return;
@@ -1099,6 +1182,7 @@ fn with_theap_engine<R>(
         >,
     ) -> R,
 ) -> Option<R> {
+    if has_retained_auxiliary_fresh_initialization() { return None; }
     let binding = binding()?;
     if !binding.is_active() || !binding.is_allocation_ready() {
         return None;
@@ -1108,11 +1192,15 @@ fn with_theap_engine<R>(
     // SAFETY: the live Heap's selected parent remains published during this
     // page operation and is fixed for the Heap lifetime.
     let requested_arena = unsafe { heap.as_ref() }.exclusive_arena_id()?;
+    #[cfg(target_arch = "x86_64")]
+    let issuer = unsafe { AuxiliaryAllocationIssuer::capture(heap, theap) }?;
     // SAFETY: this operation holds the owner's local queue authority and a
     // live source reference until after the page session is finished.
     let mut engine_state = unsafe { MainHeapPageEngineState::new(theap) };
     let page_engine = &mut engine_state.state;
     let mut pending_os_release = None;
+    #[cfg(target_arch = "x86_64")]
+    let mut pending_fresh_initialization = None;
     let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
     // SAFETY: this engine registers and unregisters only its own pages.
     let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }.ok()?;
@@ -1128,6 +1216,8 @@ fn with_theap_engine<R>(
             &mut pending_os_release, &mut *page_engine, &mut allocate_arena_pages,
         )
     }?;
+    #[cfg(target_arch = "x86_64")]
+    let session = unsafe { session.with_fresh_initialization_slot(&mut pending_fresh_initialization) }?;
     // SAFETY: the process registry backing and its PageMap are held for the
     // operation.
     let mut engine = unsafe {
@@ -1137,6 +1227,12 @@ fn with_theap_engine<R>(
     };
     let value = operation(&mut engine);
     let finished = engine.finish_owned_session().map_err(drop).is_ok();
+    #[cfg(target_arch = "x86_64")]
+    if let Some(task) = pending_fresh_initialization.take() {
+        // Session projections ended; move the exact before-candidate custody
+        // with this task, preserving any completed marker stage.
+        unsafe { retain_auxiliary_fresh_initialization(task, issuer) };
+    }
     if let Some(owner) = pending_os_release.take() {
         // SAFETY: the current thread's own state.
         let slot = unsafe { &mut thread_heaps().pending_os_release };
@@ -1148,6 +1244,34 @@ fn with_theap_engine<R>(
         }
     }
     finished.then_some(value)
+}
+
+/// Captures the linear phase outside a short engine projection. A refused
+/// session finish must still return its original unpublished claim to the
+/// retained issuer's driver instead of dropping it inside an Option adapter.
+fn with_theap_allocation_phase(
+    thread: MainThread,
+    theap: NonNull<Theap>,
+    operation: impl for<'session> FnOnce(
+        &mut crate::single_thread::PageAllocatorEngine<
+            'static,
+            'static,
+            crate::types::metadata_session::ChildOrdinaryTheapPageSession<'session, 'static>,
+            crate::page_backing::RuntimeFirstRegularPageBacking,
+        >,
+    ) -> crate::single_thread::GuardedCanonicalAllocationPhase,
+) -> Option<crate::single_thread::GuardedCanonicalAllocationPhase> {
+    let mut phase = None;
+    let finished = with_theap_engine(thread, theap, |engine| {
+        phase = Some(operation(engine));
+    });
+    if finished.is_some()
+        || matches!(&phase, Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(_))))
+    {
+        phase
+    } else {
+        None
+    }
 }
 
 /// Pinned `mi_heap_new()` (`heap.c:127-157`) on an ordinary thread of the
@@ -1326,15 +1450,19 @@ pub(crate) unsafe fn native_theap_allocate_guarded_canonical_progress(
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Refused;
     };
-    let Some(Ok(phase)) = with_theap_engine(thread, theap, |engine| {
-        engine.begin_deferred_free_guarded_canonical_checked(source_size)
-    }) else { return Refused };
-    // SAFETY: the caller retains this original selected owner through all
-    // callbacks and the native admission remains held beside this phase.
-    match unsafe { finish_guarded_canonical_allocation_on_theap(thread, theap, phase) } {
-        Ok(block) => Complete(block),
-        Err(()) => Refused,
-    }
+    // SAFETY: the caller retains this exact initialized source owner. The
+    // admission and independent issuer custody precede the first candidate.
+    unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+        let Some(issuer) = (unsafe { AuxiliaryAllocationIssuer::capture(heap, theap) }) else { return Refused; };
+        let mut issuer = Some(issuer);
+        let Some(Ok(phase)) = with_theap_allocation_phase(thread, theap, |engine| {
+            engine.begin_deferred_free_guarded_canonical_checked(source_size)
+        }) else { return Refused };
+        match unsafe { finish_guarded_canonical_allocation_on_theap(thread, theap, phase, &owner, &mut issuer) } {
+            Ok(block) => Complete(block),
+            Err(()) => Refused,
+        }
+    }) }.unwrap_or(Refused)
 }
 
 /// # Safety
@@ -1347,15 +1475,36 @@ unsafe fn allocate_on_theap(
     aligned: Option<(usize, usize)>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: this actual selected owner remains live throughout the
+        // callback, and admission precedes every candidate or source getter.
+        unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+            let mut issuer = Some(unsafe { AuxiliaryAllocationIssuer::capture(heap, theap) }?);
     // `_mi_malloc_generic`'s collections run `_mi_deferred_free` first; the
     // engine returns each selected collection so that the callback runs with
     // no engine or Theap projection live, then resumes.
-    let phase = with_theap_engine(thread, theap, |engine| match aligned {
+    let phase = with_theap_allocation_phase(thread, theap, |engine| Ok(match aligned {
         None => engine.begin_deferred_free_allocation(size, zero),
         Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
-    })?;
+    })).and_then(Result::ok)?;
+    // SAFETY: forwarded retained source-owner and admission obligations.
+    unsafe { finish_allocation_on_theap(thread, theap, phase, &owner, &mut issuer) }
+        }) }.ok().flatten()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+    // `_mi_malloc_generic`'s collections run `_mi_deferred_free` first; the
+    // engine returns each selected collection so that the callback runs with
+    // no engine or Theap projection live, then resumes.
+    let phase = with_theap_allocation_phase(thread, theap, |engine| Ok(match aligned {
+        None => engine.begin_deferred_free_allocation(size, zero),
+        Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
+    })).and_then(Result::ok)?;
     // SAFETY: forwarded retained source-owner and admission obligations.
     unsafe { finish_allocation_on_theap(thread, theap, phase) }
+    }
 }
 
 /// # Safety
@@ -1366,21 +1515,30 @@ unsafe fn finish_allocation_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
     mut phase: crate::single_thread::DeferredFreeAllocationPhase,
+    #[cfg(target_arch = "x86_64")] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(target_arch = "x86_64")] issuer: &mut Option<AuxiliaryAllocationIssuer>,
 ) -> Option<NonNull<u8>> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     loop {
         match phase {
+            DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                #[cfg(target_arch = "x86_64")]
+                unsafe { finish_auxiliary_fresh_initialization(thread, theap, task, owner, issuer) };
+                #[cfg(not(target_arch = "x86_64"))]
+                { core::hint::black_box(&task); crabc_core::process::exit_immediately(134); }
+                return None;
+            }
             DeferredFreeAllocationPhase::Complete(block) => return block,
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // The actual process binding and selected owner outlive this
                 // operation; no engine or TLS projection crosses the getter.
                 let frequency = binding()?.process().policy().generic_collect_frequency();
-                phase = with_theap_engine(thread, theap, |engine| {
+                phase = with_theap_allocation_phase(thread, theap, |engine| {
                     // SAFETY: the caller retained this original issuer
                     // across the getter, with native admission still held.
-                    unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) }
-                })?;
+                    Ok(unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) })
+                }).and_then(Result::ok)?;
             }
             DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                 let force = matches!(collection, GenericAllocationCollection::Force);
@@ -1391,9 +1549,9 @@ unsafe fn finish_allocation_on_theap(
                         crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() })
                     };
                 }
-                phase = with_theap_engine(thread, theap, |engine| {
-                    engine.resume_deferred_free_allocation(collection, continuation)
-                })?;
+                phase = with_theap_allocation_phase(thread, theap, |engine| {
+                    Ok(engine.resume_deferred_free_allocation(collection, continuation))
+                }).and_then(Result::ok)?;
             }
         }
     }
@@ -1408,17 +1566,23 @@ unsafe fn finish_guarded_canonical_allocation_on_theap(
     thread: MainThread,
     theap: NonNull<Theap>,
     mut phase: crate::single_thread::DeferredFreeAllocationPhase,
+    owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    issuer: &mut Option<AuxiliaryAllocationIssuer>,
 ) -> Result<Option<NonNull<u8>>, ()> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     loop {
         match phase {
+            DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                unsafe { finish_auxiliary_fresh_initialization(thread, theap, task, owner, issuer) };
+                return Err(());
+            }
             DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // The actual process binding and selected owner outlive this
                 // operation; no engine or TLS projection crosses the getter.
                 let frequency = binding().ok_or(())?.process().policy().generic_collect_frequency();
-                phase = with_theap_engine(thread, theap, |engine| {
+                phase = with_theap_allocation_phase(thread, theap, |engine| {
                     // SAFETY: the caller retained this original issuer
                     // across the getter, with native admission still held.
                     unsafe { engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation) }
@@ -1433,11 +1597,51 @@ unsafe fn finish_guarded_canonical_allocation_on_theap(
                         crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() })
                     };
                 }
-                phase = with_theap_engine(thread, theap, |engine| {
+                phase = with_theap_allocation_phase(thread, theap, |engine| {
                     engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)
                 }).ok_or(())?.map_err(|_| ())?;
             }
         }
+    }
+}
+
+/// # Safety
+/// `owner` and `issuer` are the actual original admissions retained from
+/// before this candidate. No engine, metadata or owner projection survives
+/// dispatch. Cleanup may run only before persistent terminal marking.
+#[cfg(target_arch = "x86_64")]
+unsafe fn finish_auxiliary_fresh_initialization(
+    thread: MainThread, theap: NonNull<Theap>,
+    task: crate::single_thread::PendingFreshOsPageInitialization,
+    owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    issuer: &mut Option<AuxiliaryAllocationIssuer>,
+) {
+    #[cfg(any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3"))]
+    let task = match unsafe { task.dispatch(owner) } {
+        Ok(never) => match never {},
+        Err(task) => task,
+    };
+    // An actually observed source assertion cannot be made into source null
+    // by cleanup after refused dispatch. Keep its exact original claim.
+    let source_assertion = matches!(task.failure(),
+        crate::single_thread::FreshOsPageInitializationFailure::SourceObservation(_));
+    let mut unresolved = Some(task);
+    if !source_assertion {
+        let _ = with_theap_engine(thread, theap, |engine| {
+            let task = unresolved.take().unwrap();
+            // SAFETY: the original READY owner and before-candidate custody
+            // remain admitted; this is its precise issuing engine projection.
+            if let Err(task) = unsafe { engine.cleanup_fresh_os_initialization(task) } {
+                unresolved = Some(task);
+            }
+        });
+    }
+    if let Some(task) = unresolved {
+        let Some(original) = issuer.take() else {
+            core::hint::black_box((&task, owner));
+            crabc_core::process::exit_immediately(134);
+        };
+        unsafe { retain_auxiliary_fresh_initialization(task, original) };
     }
 }
 
@@ -1834,6 +2038,7 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
 /// no block of a destroyed Heap is used again. The caller destroys the main
 /// Heap next.
 pub(crate) unsafe fn destroy_all_terminal() -> bool {
+    if has_retained_auxiliary_fresh_initialization() { return false; }
     let main_subprocess = MainSubprocess::global();
     let identity = main_subprocess.identity();
     let Some(main_heap) = NonNull::new(main_subprocess.ready_main_heap_pointer()) else { return false };
@@ -1918,6 +2123,7 @@ fn record_thread_done_branch(code: usize) {
 /// leaves its Heap and TLD and drops the Heap's reference. `false` when a
 /// Theap could not be drained.
 pub(crate) fn native_thread_done() -> bool {
+    if has_retained_auxiliary_fresh_initialization() { return false; }
     let Some(thread) = current_main_thread() else { return true };
     // SAFETY: the current thread's own state.
     let state = unsafe { thread_heaps() };
@@ -2161,6 +2367,342 @@ pub(crate) fn native_reserve_os_memory(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[test]
+    fn auxiliary_fresh_os_assertion_preserves_original_issuer_during_output_reentry() {
+        const CHILD: &str = "CRABC_AUXILIARY_FRESH_OS_ASSERTION";
+        struct Probe {
+            selected: NonNull<Theap>,
+            map: crate::process_page_map::ProcessPageMapRoot,
+            observed: core::cell::Cell<Option<(NonNull<Page>, NonNull<u8>, usize)>>,
+        }
+        unsafe fn observe(state: &crate::types::PageValiditySnapshot, page: NonNull<Page>, argument: *mut core::ffi::c_void) {
+            // SAFETY: the synchronous fixture and original engine retain
+            // this probe and exclusively own the unpublished committed byte.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            assert!(probe.observed.get().is_none());
+            assert_eq!((state.used, state.capacity), (0, 0));
+            assert!(state.free.is_null());
+            assert_eq!(unsafe { probe.map.lookup_registered_page(state.area.as_ptr()) }.unwrap(), Some(page));
+            probe.observed.set(Some((page, state.area, state.area_bytes)));
+            unsafe { state.area.as_ptr().write(0x5A) };
+        }
+        unsafe fn passive(_: &crate::types::PageValiditySnapshot, _: NonNull<Page>, _: *mut core::ffi::c_void) {}
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            unsafe extern "C" { fn write(fd: core::ffi::c_int, bytes: *const core::ffi::c_void, size: usize) -> isize; }
+            // SAFETY: the original pre-candidate READY scope and auxiliary
+            // Heap caller retain this probe through synchronous fatal output.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if message.starts_with(b"mimalloc: assertion failed:") {
+                let (page, area, bytes) = probe.observed.get().unwrap();
+                assert!(!has_retained_auxiliary_fresh_initialization(),
+                    "live fatal output is protected by its original scope, before persistent handoff");
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                let state = unsafe { Page::validity_snapshot_at(page) };
+                assert_eq!((state.used, state.capacity), (0, 0));
+                assert!(state.free.is_null());
+                assert!(state.local_free.is_null());
+                let nested = unsafe { crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                    passive, core::ptr::null_mut(), || native_theap_allocate(probe.selected, 96, false)
+                ) }.expect("the exact original auxiliary owner permits ordinary output reentry");
+                assert!(nested.addr().get() < area.addr().get() || nested.addr().get() >= area.addr().get() + bytes);
+                assert_eq!(unsafe { native_free(nested) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x5A);
+                let marker = b"original auxiliary fresh backing retained during native reentry\n";
+                assert_eq!(unsafe { write(2, marker.as_ptr().cast(), marker.len()) }, marker.len() as isize);
+            }
+            assert_eq!(unsafe { write(2, message.as_ptr().cast(), message.len()) }, message.len() as isize);
+        }
+        if std::env::var_os(CHILD).is_some() {
+            crabc_core::process::setrlimit_raw(4, &crabc_core::process::KernelRlimit64 { rlim_cur: 0, rlim_max: 0 }).unwrap();
+            assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+            }));
+            let heap = native_heap_new().unwrap();
+            let selected = native_heap_theap(heap).unwrap();
+            crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+            // SAFETY: the actual original READY admission precedes the
+            // candidate. The enclosing caller retains its auxiliary Heap and
+            // TLD throughout output, nested allocation and terminal dispatch.
+            unsafe { crate::runtime_lifecycle::with_native_allocation_owner(selected, |owner| {
+                let probe = Probe { selected, map: owner.page_map().unwrap(), observed: core::cell::Cell::new(None) };
+                owner.output().register_output(Some(output), core::ptr::from_ref(&probe).cast_mut().cast());
+                crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                    observe, core::ptr::from_ref(&probe).cast_mut().cast(), || {
+                        let _ = native_theap_allocate(selected, 2 * 1024 * 1024, false);
+                        panic!("an observed source assertion cannot return source null");
+                    },
+                );
+            }) }.unwrap();
+            return;
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "subproc::main_heaps::tests::auxiliary_fresh_os_assertion_preserves_original_issuer_during_output_reentry",
+                "--nocapture", "--test-threads=1"])
+            .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.work"))
+            .env(CHILD, "1").output().unwrap();
+        let stderr = std::string::String::from_utf8_lossy(&result.stderr);
+        assert_eq!(result.status.signal(), Some(6), "{stderr}");
+        assert!(stderr.contains("original auxiliary fresh backing retained during native reentry"), "{stderr}");
+        assert!(stderr.contains("mi_mem_is_zero(page_start, mi_page_committed(page))"), "{stderr}");
+    }
+
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3", not(miri)))]
+    #[test]
+    fn auxiliary_unpublished_fresh_task_retains_issuer_before_foreign_heap_destroy() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::auxiliary_unpublished_fresh_task_retains_issuer_before_foreign_heap_destroy",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                let heap = native_heap_new().unwrap();
+                let selected = native_heap_theap(heap).unwrap();
+                let foreign_heap = native_heap_new().unwrap();
+                let foreign = native_heap_theap(foreign_heap).unwrap();
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                let thread = current_main_thread().unwrap();
+                struct Observed {
+                    page: Option<NonNull<Page>>,
+                    area: Option<NonNull<u8>>,
+                    calls: usize,
+                }
+                unsafe fn disturb_initial_zero(
+                    state: &crate::types::PageValiditySnapshot, page: NonNull<Page>,
+                    argument: *mut core::ffi::c_void,
+                ) {
+                    // SAFETY: the synchronous observer retains this stack
+                    // state and the engine's exclusively owned committed claim.
+                    let observed = unsafe { &mut *argument.cast::<Observed>() };
+                    observed.page = Some(page);
+                    observed.area = Some(state.area);
+                    observed.calls += 1;
+                    unsafe { state.area.as_ptr().write(0x6D) };
+                }
+                let mut observed = Observed { page: None, area: None, calls: 0 };
+                // Both genuine READY owners precede the real candidate. The
+                // foreign owner may refuse dispatch but cannot replace its
+                // original Heap, Theap, process or OS claim.
+                unsafe { crate::runtime_lifecycle::with_native_allocation_owner(selected, |original_owner| {
+                    let issuer = AuxiliaryAllocationIssuer::capture(heap, selected).unwrap();
+                    crate::runtime_lifecycle::with_native_allocation_owner(foreign, |foreign_owner| {
+                        let task = crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                            disturb_initial_zero, core::ptr::addr_of_mut!(observed).cast(), || {
+                                use crate::single_thread::DeferredFreeAllocationPhase;
+                                let mut phase = with_theap_allocation_phase(thread, selected, |engine| {
+                                    Ok(engine.begin_deferred_free_allocation(2 * 1024 * 1024, false))
+                                }).unwrap().unwrap();
+                                loop {
+                                    phase = match phase {
+                                        DeferredFreeAllocationPhase::FreshInitialization(task) => break task,
+                                        DeferredFreeAllocationPhase::Complete(_) => panic!("the actual OS candidate must fail its observed source zero assertion"),
+                                        DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                                            let frequency = binding().unwrap().process().policy().generic_collect_frequency();
+                                            with_theap_allocation_phase(thread, selected, |engine| {
+                                                Ok(engine.resume_generic_allocation_frequency(request, frequency, continuation))
+                                            }).unwrap().unwrap()
+                                        }
+                                        DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                                            with_theap_allocation_phase(thread, selected, |engine| {
+                                                Ok(engine.resume_deferred_free_allocation(collection, continuation))
+                                            }).unwrap().unwrap()
+                                        }
+                                    };
+                                }
+                            },
+                        );
+                        assert_eq!(task.failure(), crate::single_thread::FreshOsPageInitializationFailure::SourceObservation(
+                            crate::page_validity::SourcePageInvariant::InitiallyZero));
+                        let task = match task.dispatch(&foreign_owner) {
+                            Err(task) => task,
+                            Ok(never) => match never {},
+                        };
+                        assert!(task.matches_theap(original_owner.selected_theap()));
+                        retain_auxiliary_fresh_initialization(task, issuer);
+                    }).unwrap();
+                }) }.unwrap();
+                assert_eq!(observed.calls, 1);
+                let page = observed.page.unwrap();
+                let area = observed.area.unwrap();
+                let refcount = unsafe { selected.as_ref().refcount() };
+                let page_count = unsafe { selected.as_ref().page_count() };
+                let backing = unsafe { thread_heaps() }.backing;
+                let cached = cached_theap();
+                // No client or list was published; the retained task owns the
+                // registered primary and its exact unchanged backing instead.
+                assert_eq!(unsafe { page.as_ref().used() }, 0);
+                assert_eq!(unsafe { page.as_ref().capacity() }, 0);
+                assert_eq!(unsafe { binding().unwrap().page_map().page_map().unwrap().checked_lookup(area.as_ptr()) }, page.as_ptr());
+                assert_eq!(unsafe { ThreadLocalData::has_linked_theap_member_blocking(thread.tld, selected.as_ptr()) }, Ok(true));
+                let address = heap.as_ptr().addr();
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(crate::runtime_lifecycle::attach_current_thread(), crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                    // SAFETY: the joined original thread retains the actual
+                    // Heap, source member and unpublished task throughout.
+                    let heap = NonNull::new(address as *mut Heap).unwrap();
+                    assert_eq!(unsafe { native_heap_release(heap, true) }, Err(HeapReleaseError::List(
+                        crate::types::heap_registry::SourceHeapRegistryError::RetainedFreshTask)));
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                }).join().unwrap();
+                assert!(!native_thread_done());
+                assert!(!release_current_thread_locals_for_child_destroy());
+                assert!(!unsafe { destroy_all_terminal() });
+                assert_eq!(unsafe { selected.as_ref().refcount() }, refcount);
+                assert_eq!(unsafe { selected.as_ref().page_count() }, page_count);
+                assert!(unsafe { heap.as_ref().has_exact_theap_member(selected.as_ptr()) });
+                assert_eq!(unsafe { ThreadLocalData::has_linked_theap_member_blocking(thread.tld, selected.as_ptr()) }, Ok(true));
+                assert_eq!(unsafe { thread_heaps() }.backing, backing);
+                assert_eq!(cached_theap(), cached);
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x6D);
+                assert_eq!(unsafe { binding().unwrap().page_map().page_map().unwrap().checked_lookup(area.as_ptr()) }, page.as_ptr());
+                let retained = unsafe { thread_heaps() }.pending_fresh_initialization.as_ref().unwrap();
+                assert_eq!(retained.issuer.heap, heap);
+                assert_eq!(retained.issuer.theap, selected);
+                assert!(retained.task.has_retirement_refusal_marker());
+                // This fresh subprocess ends with the exact terminal task
+                // retained. Marked source assertions are never quiet cleanup.
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    fn child_initial_sampler_tail_protection(entropy_refusal: bool) -> ([[bool; 3]; 2], usize) {
+        use crate::runtime_lifecycle::{finish_current_thread_native_after_user_destructors,
+            prepare_native_later_thread_arena, ThreadFinishResult};
+        use crate::subproc::lifecycle::{native_subproc_new, native_subproc_add_current_thread,
+            native_subproc_destroy, NativeChildThreadAdd};
+        assert!(prepare_native_later_thread_arena());
+        let id = native_subproc_new().expect("an actual live child subprocess");
+        let observations = std::thread::spawn(move || {
+            // SAFETY: this worker registers its own actual descriptor
+            // before entering the child's ordinary thread admission.
+            assert!(unsafe {
+                crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                    crate::runtime_lifecycle::current_native_allocator_thread_descriptor())
+            });
+            let injection = entropy_refusal.then(|| crate::os::fault::install(
+                crate::os::fault::Plan::at(crate::os::fault::Point::Entropy, 1, crabc_core::Errno::AGAIN),
+            ));
+            // SAFETY: the parent retains this actual child id until
+            // this worker joins, and only this worker owns its TLS roots.
+            assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+            let entropy_draws = injection.as_ref().map_or(0, |guard| guard.observed());
+            if let Some(guard) = injection.as_ref() { guard.set(crate::os::fault::Plan::disabled()); }
+            let base = crate::source_heap_api::theap_get_default();
+            let heap = crate::source_heap_api::heap_new();
+            assert!(!base.is_null() && !heap.is_null());
+            // SAFETY: the actual Heap and this worker's attached TLD
+            // remain retained until both clients have been released.
+            let other = unsafe { crate::source_heap_api::heap_theap(heap) };
+            assert!(!other.is_null());
+            // SAFETY: the worker retains these original initialized images
+            // and no allocator image projection overlaps these scalar reads.
+            for theap in [base, other] {
+                assert_eq!(unsafe { Theap::guarded_sample_rate_at(core::ptr::NonNull::new(theap.cast()).unwrap()) }, 1,
+                    "the original child image receives the live source sampling rate");
+            }
+            let maps = |address| {
+                std::fs::read_to_string("/proc/self/maps").unwrap().lines().find_map(|line| {
+                    let mut fields = line.split_whitespace();
+                    let (begin, end) = fields.next()?.split_once('-')?;
+                    let begin = usize::from_str_radix(begin, 16).ok()?;
+                    let end = usize::from_str_radix(end, 16).ok()?;
+                    (begin <= address && address < end).then(||
+                        std::string::String::from(fields.next().unwrap()))
+                }).expect("the actual allocation tail belongs to a process mapping")
+            };
+            let mut protected = [[false; 3]; 2];
+            for (index, theap) in [base, other].into_iter().enumerate() {
+                // SAFETY: both original Theaps are owned by this
+                // worker and remain attached through allocation/free.
+                for (size_index, size) in [79, 91, 97].into_iter().enumerate() {
+                    let block = unsafe { crate::source_api::theap_calloc(theap, 1, size) }
+                        .value.expect("a valid public child calloc succeeds");
+                    // SAFETY: this client has its requested initialized bytes
+                    // and stays retained through content/usable-size reads.
+                    unsafe {
+                        assert!(core::slice::from_raw_parts(block.as_ptr(), size).iter().all(|byte| *byte == 0));
+                        let tail = block.as_ptr().addr() + crate::source_api::usable_size(block.as_ptr());
+                        protected[index][size_index] = maps(tail).starts_with("---");
+                        crate::source_api::free(block.as_ptr());
+                    }
+                }
+            }
+            // SAFETY: all auxiliary clients were released, and this
+            // worker still retains the original actual Heap and member.
+            assert!(unsafe { crate::source_heap_api::heap_release(heap, false) });
+            assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+            (protected, entropy_draws)
+        }).join().expect("the actual child worker finishes");
+        // SAFETY: the worker ended all real TLS membership and client
+        // ownership before the parent destroys this exact child id.
+        assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+        observations
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn child_initial_theaps_inherit_live_process_guarded_sample_rate() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::child_initial_theaps_inherit_live_process_guarded_sample_rate",
+            || {
+                // The newly exec'd fixture selects this valid source option
+                // before any process owner or environment reader exists.
+                std::env::set_var("mimalloc_guarded_sample_rate", "1");
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert_eq!(child_initial_sampler_tail_protection(false).0, [[true; 3]; 2],
+                    "both child initial samplers inherit the live process rate before public allocation");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
+    #[test]
+    fn child_initial_sampler_reads_live_rate_and_bounds_after_entropy_warning() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::child_initial_sampler_reads_live_rate_and_bounds_after_entropy_warning",
+            || {
+                static WARNINGS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+                unsafe extern "C" fn output(message: *const core::ffi::c_char, _: *mut core::ffi::c_void) {
+                    // SAFETY: the actual synchronous source output route
+                    // supplies a live terminated fragment for this callback.
+                    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if !bytes.windows(b"unable to use secure randomness\n".len()).any(|window|
+                        window == b"unable to use secure randomness\n") { return; }
+                    WARNINGS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    use crate::config::SourceOption;
+                    crate::source_options_api::option_set(SourceOption::GuardedSampleRate as i32, 1);
+                    crate::source_options_api::option_set(SourceOption::GuardedMin as i32, 80);
+                    crate::source_options_api::option_set(SourceOption::GuardedMax as i32, 96);
+                }
+                // The real process table starts with sampling disabled. Only
+                // an actual OS entropy refusal's warning changes these values.
+                std::env::set_var("mimalloc_guarded_sample_rate", "0");
+                std::env::set_var("mimalloc_show_errors", "1");
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                // SAFETY: this permanent callback is installed before the
+                // worker begins; no competing registration changes its route.
+                unsafe { crate::source_options_api::register_output(Some(output), core::ptr::null_mut()); }
+                let (protected, entropy_draws) = child_initial_sampler_tail_protection(true);
+                assert_eq!(entropy_draws, 1, "the actual first child TLD head makes one entropy attempt");
+                assert_eq!(WARNINGS.load(core::sync::atomic::Ordering::Relaxed), 1);
+                assert_eq!(protected, [[false, true, false]; 2],
+                    "source getters observe the warning's live sample rate and both size bounds");
+            },
+        );
+    }
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(miri)))]
     #[test]

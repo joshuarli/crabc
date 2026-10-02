@@ -382,8 +382,9 @@ enum PageCommitError {
 /// queue invariant from being misread as OOM after it may already have
 /// detached a corrupt remote list. The allocator retains a persistent poison
 /// record before returning this error.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 enum GenericPathError {
+    FreshInitialization(PendingFreshOsPageInitialization),
     Collection(PageCollectError),
     Local(FreeListError),
     PageCommit(PageCommitError),
@@ -486,12 +487,253 @@ impl DeferredFreeAllocationContinuation {
     }
 }
 
+/// An original OS claim stopped before source queue or client publication.
+/// The aliases and primary are independent completed setup stages; cleanup
+/// advances them only after each exact original-claim reversal succeeds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FreshOsMetadataStage {
+    Registered { statistics_bin: usize },
+    Aliases { statistics_bin: Option<usize> },
+    Primary { statistics_bin: Option<usize> },
+    Retired { statistics_bin: Option<usize> },
+}
+
+/// The exact boundary that stopped an unfinished fresh OS page.
+/// Only an observed source zero invariant can authorize its assertion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FreshOsPageInitializationFailure {
+    SourceObservation(crate::page_validity::SourcePageInvariant),
+    PageKeysRefused,
+    FreeList(FreeListError),
+    ExtensionPlanUnavailable,
+    InitialPrefixNeedsCommit(usize),
+    ExtensionCountMismatch { expected: usize, actual: usize },
+}
+
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FreshTaskRetirementMarker {
+    Unmarked,
+    Marked { theap: NonNull<Theap>, heap: NonNull<Heap> },
+}
+
+#[must_use = "the original fresh claim must be dispatched or cleaned up"]
+pub(crate) struct PendingFreshOsPageInitialization {
+    claim: OsAlignedPageClaim,
+    page: NonNull<Page>,
+    theap: *mut Theap,
+    metadata_stage: FreshOsMetadataStage,
+    failure: FreshOsPageInitializationFailure,
+    #[cfg(target_arch = "x86_64")]
+    retirement_marker: FreshTaskRetirementMarker,
+}
+
+impl core::fmt::Debug for PendingFreshOsPageInitialization {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PendingFreshOsPageInitialization")
+            .field("failure", &self.failure)
+            .field("metadata_stage", &self.metadata_stage).finish_non_exhaustive()
+    }
+}
+
+impl PendingFreshOsPageInitialization {
+    /// Compares only the captured selected Theap address, without admission.
+    pub(crate) fn matches_theap(&self, theap: NonNull<Theap>) -> bool {
+        self.theap == theap.as_ptr()
+    }
+
+    /// Compares the original subprocess identity without borrowing metadata.
+    /// This observation cannot establish backing lifetime or dispatch authority.
+    pub(crate) fn belongs_to_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.claim.belongs_to_subprocess(subprocess)
+    }
+
+    /// Observes the exact failure without granting source assertion authority.
+    pub(crate) fn failure(&self) -> FreshOsPageInitializationFailure { self.failure }
+
+    /// Records this task's exact completed retirement-refusal publication.
+    /// Repeated handoffs of this same linear task skip the already completed
+    /// mark; a source bool observation never identifies an owning task.
+    ///
+    /// # Safety
+    /// The actual original issuing Theap and Heap remain continuously pinned
+    /// and admitted from preparation through this call and later settlement.
+    /// They have not retired, detached, rebound or been reused. All conflicting
+    /// source list projections have ended; one persistent task slot belongs to
+    /// this owner. A returned error does not release the task or its issuer.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn ensure_retirement_refusal(
+        &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>,
+    ) -> Result<(), crate::types::HeapTheapListError> {
+        use crate::types::HeapTheapListError;
+        if self.theap != theap.as_ptr() { return Err(HeapTheapListError::Membership); }
+        if let FreshTaskRetirementMarker::Marked { theap: original, heap: original_heap } = self.retirement_marker {
+            return if original == theap && original_heap == heap { Ok(()) }
+                else { Err(HeapTheapListError::Membership) };
+        }
+        // SAFETY: the caller retains the actual original images independently
+        // of the address guard; the source producer owns its heap-list lock.
+        let outcome = unsafe { Theap::mark_retained_fresh_task_at_with_progress(theap, heap) };
+        self.complete_retirement_refusal_mark(theap, heap, outcome)
+    }
+
+    // This consumes the actual producer's completed transition separately
+    // from its unlock acknowledgement. Neither branch reads a source bool or
+    // infers which task owns a previously published marker.
+    #[cfg(target_arch = "x86_64")]
+    fn complete_retirement_refusal_mark(
+        &mut self, theap: NonNull<Theap>, heap: NonNull<Heap>,
+        outcome: crate::types::RetainedFreshTaskMarkerOutcome,
+    ) -> Result<(), crate::types::HeapTheapListError> {
+        use crate::types::{HeapTheapListError, RetainedFreshTaskMarkerOutcome};
+        match outcome {
+            RetainedFreshTaskMarkerOutcome::Unchanged(error) => Err(error),
+            RetainedFreshTaskMarkerOutcome::Changed(result) => {
+                self.retirement_marker = FreshTaskRetirementMarker::Marked { theap, heap };
+                result.map_err(HeapTheapListError::Lock)
+            }
+        }
+    }
+
+    /// Observes only this task's completed marker stage. It grants no owner
+    /// lifetime or callback admission and does not inspect the source bool.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn has_retirement_refusal_marker(&self) -> bool {
+        matches!(self.retirement_marker, FreshTaskRetirementMarker::Marked { .. })
+    }
+
+    /// Delivers only the observed source zero assertion under its original admission.
+    /// Foreign admission and observation-boundary errors retain the entire claim.
+    ///
+    /// # Safety
+    /// `owner` must be the actual admission acquired before this candidate was
+    /// created and retained continuously with its Theap, Heap and backing. All
+    /// engine, metadata and member projections and allocator locks must have
+    /// ended. Output registration and callback arguments remain valid and
+    /// serialized through delivery; no nested operation may reuse this claim.
+    /// Address equality is only a refusal guard and does not prove admission.
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    pub(crate) unsafe fn dispatch(
+        self,
+        owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        if owner.selected_theap().as_ptr() != self.theap
+            || !self.claim.belongs_to_subprocess(owner.process().subprocess())
+            || !matches!(self.metadata_stage, FreshOsMetadataStage::Registered { .. }) {
+            return Err(self);
+        }
+        let FreshOsPageInitializationFailure::SourceObservation(failure) = self.failure else {
+            return Err(self);
+        };
+        let assertion = match failure.into_fresh_initialization_assertion() {
+            Ok(assertion) => assertion,
+            Err(_) => return Err(self),
+        };
+        // SAFETY: the caller retains the original admission; self still owns
+        // the original mapping, primary and aliases, with no list or client.
+        unsafe { assertion.dispatch(owner) }
+    }
+
+    /// Delivers the genuine fresh zero assertion under its original startup
+    /// or detached metadata witness, without creating a ready-runtime owner.
+    /// A refused witness or different failure returns this exact claim task.
+    ///
+    /// # Safety
+    /// `owner` was acquired before this candidate from its actual original
+    /// startup scope and metadata issuer. That scope, issuing Theap, Heap,
+    /// PageMap, VM and fresh backing remain retained through delivery. All
+    /// allocator projections and locks have ended; output registration and
+    /// callback argument lifetime remain serialized. Nested allocation cannot
+    /// reuse this registered candidate or observe an initialized free list.
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    pub(crate) unsafe fn dispatch_source_initialization(
+        self, owner: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        let Some(theap) = NonNull::new(self.theap) else { return Err(self); };
+        if !owner.matches_theap(theap)
+            || !matches!(self.metadata_stage, FreshOsMetadataStage::Registered { .. }) {
+            return Err(self);
+        }
+        let process = match owner.process() { Ok(process) => process, Err(_) => return Err(self) };
+        if !self.claim.belongs_to_subprocess(process.subprocess()) { return Err(self); }
+        let FreshOsPageInitializationFailure::SourceObservation(failure) = self.failure else {
+            return Err(self);
+        };
+        let assertion = match failure.into_fresh_initialization_assertion() {
+            Ok(assertion) => assertion, Err(_) => return Err(self),
+        };
+        // SAFETY: the original preallocation witness and exact Registered
+        // claim remain retained after every metadata projection has ended.
+        match unsafe { assertion.dispatch_source_initialization(owner) } {
+            Ok(never) => match never {},
+            Err(_) => Err(self),
+        }
+    }
+
+    /// Delivers the genuine fresh zero assertion while the ordinary initial
+    /// issuer is attached and its winning startup is still live. Refusal
+    /// preserves the original claim, failure and registration stage.
+    ///
+    /// # Safety
+    /// `owner` was acquired before this candidate from the actual winning
+    /// startup and original ordinary attachment. That scope and the exact
+    /// issuing Theap, Heap, VM, PageMap and backing remain continuously
+    /// retained; retirement, detachment, rebinding and address reuse are
+    /// excluded. All allocator projections and locks have ended. Output
+    /// registration and callback arguments remain valid and serialized;
+    /// nested operations cannot reuse this registered unfinished candidate.
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    pub(crate) unsafe fn dispatch_source_attached(
+        self, owner: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        let Some(theap) = NonNull::new(self.theap) else { return Err(self); };
+        if !owner.matches_theap(theap)
+            || !matches!(self.metadata_stage, FreshOsMetadataStage::Registered { .. })
+            || self.claim.metadata() != Some(self.page) {
+            return Err(self);
+        }
+        // SAFETY: the original attachment is retained independently of the
+        // address guard and cannot change its owner fields during delivery.
+        let Some(issuer) = (unsafe { Theap::owner_snapshot_at(theap) }) else {
+            return Err(self);
+        };
+        if issuer.heap != owner.heap() || issuer.is_detached { return Err(self); }
+        let process = match owner.process() { Ok(process) => process, Err(_) => return Err(self) };
+        if !self.claim.belongs_to_subprocess(process.subprocess())
+            || issuer.subprocess.as_ptr() != core::ptr::from_ref(process.subprocess()).cast_mut() {
+            return Err(self);
+        }
+        let map = match owner.page_map() { Ok(map) => map, Err(_) => return Err(self) };
+        let Some(start) = self.claim.slice_start() else { return Err(self); };
+        // SAFETY: this exact original claim and attachment exclude concurrent
+        // unregistration or reuse through the lookup and diagnostic callback.
+        if !matches!(unsafe { map.lookup_registered_page(start.as_ptr()) },
+            Ok(Some(page)) if page == self.page) {
+            return Err(self);
+        }
+        let FreshOsPageInitializationFailure::SourceObservation(failure) = self.failure else {
+            return Err(self);
+        };
+        let assertion = match failure.into_fresh_initialization_assertion() {
+            Ok(assertion) => assertion, Err(_) => return Err(self),
+        };
+        // SAFETY: every short projection ended, while the original winning
+        // scope and exact Registered claim remain retained through output.
+        match unsafe { assertion.dispatch_source_attached(owner) } {
+            Ok(never) => match never {},
+            Err(_) => Err(self),
+        }
+    }
+}
+
 /// One completed native generic allocation attempt or its source collection
 /// continuation. A force continuation is emitted only after the first exact
 /// page lookup returned the source no-page result; resuming it performs the
 /// one permitted retry and cannot manufacture a second force attempt.
 #[must_use = "a deferred generic allocation phase must be resumed after its callback"]
 pub(crate) enum DeferredFreeAllocationPhase {
+    #[cfg(target_arch = "x86_64")]
+    FreshInitialization(PendingFreshOsPageInitialization),
     Complete(Option<NonNull<u8>>),
     #[cfg(target_arch = "x86_64")]
     GenericFrequency {
@@ -3457,6 +3699,7 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession,
     // this private lifecycle. Keeping its unique owner here makes a failed
     // `munmap` retryable without inventing arena/page-map provenance.
     pending_os_release: Option<OsAlignedPageOwner>,
+    pending_fresh_initialization: Option<PendingFreshOsPageInitialization>,
     // A failed false-force collection may have detached remote state. This is
     // permanent in production: the retained record prevents every later
     // public allocator operation from crossing that ownership boundary.
@@ -3522,6 +3765,7 @@ pub(crate) struct PageAllocatorEngineFinishAudit {
     pub(crate) nonempty_direct_count: usize,
     pub(crate) collection_poisoned: bool,
     pub(crate) pending_os_release: bool,
+    pub(crate) pending_fresh_initialization: bool,
     collection_poison: Option<PageAllocatorEngineCollectionPoisonAudit>,
     page_commit_poisoned: bool,
     static_main_mapped_regular_claim_terminal: bool,
@@ -3586,6 +3830,7 @@ pub(crate) struct PageAllocatorEngineState<'arena, 'map,
     page_map: &'map PageMap,
     thread_sequence: usize,
     pending_os_release: Option<OsAlignedPageOwner>,
+    pending_fresh_initialization: Option<PendingFreshOsPageInitialization>,
     collection_poison: Option<RetainedPageCollectPoison>,
     page_commit_poison: bool,
     #[cfg(test)]
@@ -3658,6 +3903,7 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
             // for the child metadata Theap's page search.
             thread_sequence: 0,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -3683,7 +3929,7 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
     /// or page poison returns the engine so its Drop path can transfer/latch
     /// that ownership in the child context.
     pub(crate) fn finish_operation(mut self) -> Result<(), Self> {
-        if self.pending_os_release.is_some()
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.collection_poison.is_some()
             || self.page_commit_poison
         {
@@ -3738,7 +3984,7 @@ impl<'child, 'map, Session: TheapPageSession>
     /// caller destroys the child arenas next and never reuses this Theap's
     /// page state.
     pub(crate) unsafe fn detach_pages_for_subprocess_destroy(&mut self) -> bool {
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() || self.page_commit_poison {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.page_commit_poison {
             return false;
         }
         for bin in 0..BIN_COUNT {
@@ -3878,6 +4124,7 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
             page_map,
             thread_sequence: sequence.get(),
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -3899,7 +4146,7 @@ impl<'session, 'child, 'map> ChildOrdinaryPageAllocator<'session, 'child, 'map> 
     }
 
     pub(crate) fn finish_operation(mut self) -> Result<(), Self> {
-        if self.pending_os_release.is_some()
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.collection_poison.is_some()
             || self.page_commit_poison
         {
@@ -4047,7 +4294,7 @@ impl<'map, Session: TheapPageSession> PageAllocatorEngine<
     /// backing until the surrounding source destruction finishes. No external
     /// reference is revoked by consuming this engine.
     pub(crate) unsafe fn retire_process_metadata_quiescent(self) -> Result<(), Self> {
-        if self.pending_os_release.is_some() || self.collection_poison.is_some()
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.collection_poison.is_some()
             || self.page_commit_poison
         {
             return Err(self);
@@ -4068,6 +4315,7 @@ impl<'map, Session: TheapPageSession> PageAllocatorEngine<
             page_map,
             thread_sequence: 0,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -4954,6 +5202,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Sou
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -4980,7 +5229,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Sou
     /// it does not release the retained TLD, Theap, registration, or a source
     /// queue. A failed free leaves its process boundary terminal instead.
     pub(crate) fn finish_source_retained_local_free(mut self) -> Result<(), Self> {
-        if self.is_captured_local_free_unavailable() || self.pending_os_release.is_some() {
+        if self.is_captured_local_free_unavailable() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(self);
         }
         self.shutdown_complete = true;
@@ -5238,6 +5487,22 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
     fn clear_arena_page(&mut self, arena: &ArenaView<'_>, memory: MemoryId) -> bool {
         self.active_mut().clear_arena_page(arena, memory)
     }
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    unsafe fn publish_fresh_primary_page(
+        &mut self, metadata: NonNull<Page>, block_size: usize, page_offset: usize,
+        reserved: u16, slice_pcommitted: u16, free_is_zero: bool, memid: MemoryId,
+    ) -> Option<NonNull<Page>> {
+        // SAFETY: this facade retains the original active session admission.
+        unsafe { self.active_mut().publish_fresh_primary_page(metadata, block_size,
+            page_offset, reserved, slice_pcommitted, free_is_zero, memid) }
+    }
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    unsafe fn initialize_fresh_page_keys(&mut self, page: NonNull<Page>) -> bool {
+        // SAFETY: the original active source session owns this fresh Page.
+        unsafe { self.active_mut().initialize_fresh_page_keys(page) }
+    }
     #[inline]
     unsafe fn publish_fresh_page(
         &mut self,
@@ -5285,6 +5550,19 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
         // SAFETY: a present adapter pointer is installed only for the live
         // short source projection guarded by the enclosing engine call.
         unsafe { active.as_mut().retain_unfinished_os_release(owner) }
+    }
+    #[inline]
+    fn retain_unfinished_fresh_initialization(
+        &mut self,
+        task: PendingFreshOsPageInitialization,
+    ) -> Result<(), PendingFreshOsPageInitialization> {
+        let Some(mut active) = self.active else {
+            MainHeapThreadAttachment::latch_unfinished_owner_local_page_engine();
+            return Err(task);
+        };
+        // SAFETY: this adapter pointer is installed only while the selected
+        // original session's short projection remains live for this call.
+        unsafe { active.as_mut().retain_unfinished_fresh_initialization(task) }
     }
     #[inline]
     fn latch_unfinished_page_engine(&mut self) {
@@ -6792,6 +7070,7 @@ pub(crate) struct ThreadExitFullOsSingletonPagesPostExitParts<'main> {
     main_heap: MainStaticHeapLease<'main>,
     remaining_pages: usize,
     pending_os_release: Option<OsAlignedPageOwner>,
+    pending_fresh_initialization: Option<PendingFreshOsPageInitialization>,
     terminal: bool,
     // The route is movable but intentionally not shareable. Its consuming
     // free API plus the post-exit PageMap guard serialize each source low-bit
@@ -9939,6 +10218,7 @@ impl<'bootstrap, 'arena, 'map>
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -9981,6 +10261,7 @@ impl<'bootstrap, 'arena, 'map>
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             forced_collect_retired_call_count: 0,
@@ -10053,6 +10334,7 @@ impl<'bootstrap, 'arena, 'map>
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10096,6 +10378,7 @@ impl<'attach, 'heap, 'arena, 'map>
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10183,7 +10466,7 @@ impl<'attach, 'heap, 'arena, 'map>
         // terminally retained.
         let resuming_backing_release = self.session.is_awaiting_backing_release();
         if self.has_retained_collection_poison()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || (!resuming_backing_release && !self.session.permits_ordinary_page_operations())
         {
             return Err(DynamicThreadExitDrainFailure::Retained {
@@ -10224,7 +10507,7 @@ impl<'attach, 'heap, 'arena, 'map>
         block: NonNull<u8>,
     ) -> Result<DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>, DynamicMappedAbandonFailure<'attach, 'heap, 'arena, 'map>> {
         let reject = |engine, error| DynamicMappedAbandonFailure::Rejected { engine, error };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(self, DynamicMappedAbandonError::Collection));
         }
         // SAFETY: the consuming engine retains the exclusive PageMap borrow.
@@ -10457,6 +10740,7 @@ where
             // fresh sequence from a later attachment identity.
             thread_sequence: 0,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10508,6 +10792,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10654,7 +10939,7 @@ impl<'attachment, 'main, 'arena, 'map>
             MainHeapThreadAttachmentError,
         ),
     > {
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err((self, MainHeapThreadAttachmentError::Poisoned));
         }
         let (session, state) = self.into_session_and_state();
@@ -10702,6 +10987,7 @@ impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, Own
             page_map,
             thread_sequence,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -10873,7 +11159,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
     pub(crate) fn collect_abandon_owner_exit(mut self) -> Result<Self, Self> {
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
         {
             return Err(self);
         }
@@ -10904,6 +11190,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 main_heap: Some(main_heap),
                 heap,
                 pending_os_release: &mut self.pending_os_release,
+                pending_fresh_initialization: &mut self.pending_fresh_initialization,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
                 #[cfg(test)]
@@ -10945,7 +11232,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
                 && (0..PAGES_DIRECT)
                     .all(|index| theap.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
         };
-        if !complete || self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if !complete || self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             self.retain_terminal_thread_exit_route();
             return Err(self);
         }
@@ -10990,6 +11277,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -11003,11 +11291,13 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
             shutdown_complete,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         debug_assert!(shutdown_complete);
         drop(arena);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let attachment = unsafe { session.into_attachment_after_process_page_route() };
         unsafe { attachment.finish_after_detached_process_page_route() }
     }
@@ -11032,7 +11322,7 @@ impl<'attachment, 'main, 'arena, 'map>
     pub(crate) fn finish_after_all_free_thread_exit(mut self) -> Result<(), Self> {
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
         {
             return Err(self);
         }
@@ -11119,7 +11409,7 @@ impl<'attachment, 'main, 'arena, 'map>
 
         if retained_live_page
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(self);
@@ -11330,7 +11620,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
         {
             return Err(reject(
                 self,
@@ -11760,7 +12050,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // abandoned page has no queue/direct/page-count ownership left, while
         // the returned `parts` retain the independent map/arena/heap facts.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -11798,6 +12088,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -11811,9 +12102,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -11871,7 +12164,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -12103,7 +12396,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -12141,6 +12434,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -12154,9 +12448,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -12214,7 +12510,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -12446,7 +12742,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -12484,6 +12780,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -12497,9 +12794,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -12559,7 +12858,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -12799,7 +13098,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -12837,6 +13136,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -12850,9 +13150,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -12913,7 +13215,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitMappedRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitMappedRegularPostExitAbandonError::Collection,
@@ -13163,7 +13465,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // queue/direct/page-count image must be empty before the old Theap/TLD
         // can be torn down and the long PageMap lease can become short access.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -13201,6 +13503,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -13214,9 +13517,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -13275,7 +13580,7 @@ impl<'attachment, 'main, 'arena, 'map>
             ThreadExitFullRegularPostExitAbandonFailure::RetainedEngine { engine, error }
         };
         let expected_kind = expected_class.page_kind();
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullRegularPostExitAbandonError::Collection,
@@ -13526,7 +13831,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // attachment can tear down. The typed parts retain only the static
         // arena/Heap/span facts and the unmapped state machine.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -13564,6 +13869,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -13577,9 +13883,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -13717,7 +14025,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullNonDirectSmallPagesPostExitAbandonError::Collection,
@@ -14022,7 +14330,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -14060,6 +14368,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -14073,9 +14382,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -14126,7 +14437,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullDirectSmallPagesPostExitAbandonError::Collection,
@@ -14433,7 +14744,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -14471,6 +14782,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -14484,9 +14796,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -14536,7 +14850,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullSingletonPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullSingletonPagesPostExitAbandonError::Collection,
@@ -14798,7 +15112,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -14835,6 +15149,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -14848,9 +15163,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -14899,7 +15216,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullOsSingletonPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullOsSingletonPagesPostExitAbandonError::Collection,
@@ -15169,7 +15486,7 @@ impl<'attachment, 'main, 'arena, 'map>
             || detached_pages != expected_page_count
             || !list_has_members
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
             || (0..BIN_COUNT).any(|bin| {
                 !self
@@ -15198,6 +15515,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -15211,9 +15529,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -15223,6 +15543,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 main_heap,
                 remaining_pages: detached_pages,
                 pending_os_release: None,
+                pending_fresh_initialization: None,
                 terminal: false,
                 _not_sync: PhantomData,
             },
@@ -15266,7 +15587,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullMediumPagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullMediumPagesPostExitAbandonError::Collection,
@@ -15547,7 +15868,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -15585,6 +15906,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -15598,9 +15920,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -15649,7 +15973,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullMediumOrLargePagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullMediumOrLargePagesPostExitAbandonError::Collection,
@@ -15954,7 +16278,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -15992,6 +16316,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
@@ -16003,8 +16328,10 @@ impl<'attachment, 'main, 'arena, 'map>
             ..
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
 
         Ok(ThreadExitFullMediumOrLargePagesPostExitDetach {
@@ -16062,7 +16389,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 error,
             }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullSingletonOrRegularPagesPostExitAbandonError::Collection,
@@ -16404,7 +16731,7 @@ impl<'attachment, 'main, 'arena, 'map>
             || detached_singletons == 0
             || detached_regulars == 0
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
             || (0..BIN_COUNT).any(|queue_bin| {
                 !self
@@ -16430,6 +16757,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             #[cfg(test)]
             page_free_collect_failure_once: _,
@@ -16441,8 +16769,10 @@ impl<'attachment, 'main, 'arena, 'map>
             ..
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         // SAFETY: `singleton_arena_ptr` came from the engine's still-live
         // registry-published `ArenaView`; the detached route owns the same
@@ -16508,7 +16838,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let retained = |engine, error| {
             ThreadExitFullLargePagesPostExitAbandonFailure::RetainedEngine { engine, error }
         };
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(reject(
                 self,
                 ThreadExitFullLargePagesPostExitAbandonError::Collection,
@@ -16804,7 +17134,7 @@ impl<'attachment, 'main, 'arena, 'map>
         if detached_pages < 2
             || detached_pages != expected_page_count
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -16842,6 +17172,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -16855,9 +17186,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -16959,7 +17292,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // it owns the one failed raw release. Preserve that distinct terminal
         // outcome instead of reporting the source page release as failed.
         if !allows_page_abandon && !self.collect_full_pages_non_abandoning() {
-            return if self.pending_os_release.is_some() {
+            return if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
                 Ok(ThreadExitRetiredPagePrepassOutcome::PendingOsRelease)
             } else {
                 Err(ThreadExitRetiredPagePrepassError::Release)
@@ -17064,7 +17397,7 @@ impl<'attachment, 'main, 'arena, 'map>
         };
         if self.thread_exit_route_is_terminal()
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
         {
             return Err(reject(
                 self,
@@ -17729,7 +18062,7 @@ impl<'attachment, 'main, 'arena, 'map>
         // direct cache, or Theap page count may remain before attachment
         // teardown becomes sound.
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return Err(retained(
@@ -17813,6 +18146,7 @@ impl<'attachment, 'main, 'arena, 'map>
             page_map: _,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -17826,9 +18160,11 @@ impl<'attachment, 'main, 'arena, 'map>
             shutdown_complete: _,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         drop(pending_os_release);
+        drop(pending_fresh_initialization);
         let _ = collection_poison;
         let _ = page_commit_poison;
 
@@ -17884,6 +18220,7 @@ impl<'attachment, 'main, 'arena, 'map>
                 main_heap,
                 remaining_pages: detached_os_singletons,
                 pending_os_release: None,
+                pending_fresh_initialization: None,
                 terminal: false,
                 _not_sync: PhantomData,
             })
@@ -18654,7 +18991,7 @@ impl<'attachment, 'main, 'arena, 'map>
                         .engine
                         .release_queue_detached_abandoned_os_page(self.page),
                 };
-                if released && self.engine.pending_os_release.is_none() {
+                if released && (self.engine.pending_os_release.is_none() && self.engine.pending_fresh_initialization.is_none()) {
                     Ok(self.engine)
                 } else {
                     self.terminal = true;
@@ -19655,7 +19992,7 @@ impl<'main> ThreadExitFullOsSingletonPagesPostExitParts<'main> {
         ThreadExitFullOsSingletonPagesPostExitFreeOutcome,
         ThreadExitFullOsSingletonPagesPostExitFreeError,
     > {
-        if self.terminal || self.pending_os_release.is_some() {
+        if self.terminal || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return Err(ThreadExitFullOsSingletonPagesPostExitFreeError::Terminal);
         }
         if self.remaining_pages == 0 {
@@ -34148,7 +34485,7 @@ impl<'attach, 'heap, 'arena, 'map>
             terminal: _,
         } = self;
         let (session, state) = drain.engine.into_session_and_state();
-        if state.pending_os_release.is_some()
+        if state.pending_os_release.is_some() || state.pending_fresh_initialization.is_some()
             || state.collection_poison.is_some()
             || state.page_commit_poison
             || state.shutdown_complete
@@ -34215,6 +34552,7 @@ impl<'attach, 'heap, 'arena, 'map>
             page_map,
             thread_sequence: _,
             pending_os_release,
+            pending_fresh_initialization,
             collection_poison,
             page_commit_poison,
             #[cfg(test)]
@@ -34228,6 +34566,7 @@ impl<'attach, 'heap, 'arena, 'map>
             shutdown_complete,
         } = state;
         debug_assert!(pending_os_release.is_none());
+        debug_assert!(pending_fresh_initialization.is_none());
         debug_assert!(collection_poison.is_none());
         debug_assert!(!page_commit_poison);
         debug_assert!(!shutdown_complete);
@@ -34331,7 +34670,7 @@ impl<'attach, 'heap, 'arena, 'map>
                         .engine
                         .release_queue_detached_abandoned_os_page(self.page),
                 };
-                if released && self.drain.engine.pending_os_release.is_none() {
+                if released && (self.drain.engine.pending_os_release.is_none() && self.drain.engine.pending_fresh_initialization.is_none()) {
                     Ok(self.drain)
                 } else {
                     self.terminal = true;
@@ -37455,6 +37794,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             page_map,
             thread_sequence: sequence.get(),
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -37478,7 +37818,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Ends an operation of an engine from [`Self::activate_owned_session`];
     /// a failed one returns the engine, whose Drop retains its state.
     pub(crate) fn finish_owned_session(mut self) -> Result<(), Self> {
-        if self.pending_os_release.is_some() || self.collection_poison.is_some() || self.page_commit_poison {
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
             return Err(self);
         }
         self.shutdown_complete = true;
@@ -37512,7 +37852,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Declined;
         }
         if self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || !self.session.permits_ordinary_page_operations()
         {
             return Declined;
@@ -37606,7 +37946,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Checks only this engine's owned failure state under permanent process
     /// quiescence. It deliberately performs no current-thread/session lookup.
     pub(crate) fn permits_terminal_process_retirement(&self) -> bool {
-        self.pending_os_release.is_none() && self.collection_poison.is_none()
+        (self.pending_os_release.is_none() && self.pending_fresh_initialization.is_none()) && self.collection_poison.is_none()
             && !self.page_commit_poison && self.session.permits_terminal_process_retirement()
     }
 
@@ -37642,6 +37982,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 thread, theap, arena: &self.arena, arena_lifetime: PhantomData,
                 page_map: self.page_map, main_heap: Some(main_heap), heap,
                 pending_os_release: &mut self.pending_os_release,
+                pending_fresh_initialization: &mut self.pending_fresh_initialization,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
                 #[cfg(test)]
@@ -37690,7 +38031,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         theap: NonNull<Theap>,
         thread: LiveThreadId,
     ) -> bool {
-        if self.pending_os_release.is_some() || self.collection_poison.is_some() || self.page_commit_poison {
+        if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) || self.collection_poison.is_some() || self.page_commit_poison {
             return false;
         }
         // SAFETY: forwarded ownership of the live Theap.
@@ -37706,6 +38047,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 thread, theap, arena: &self.arena, arena_lifetime: PhantomData,
                 page_map: self.page_map, main_heap: None, heap,
                 pending_os_release: &mut self.pending_os_release,
+                pending_fresh_initialization: &mut self.pending_fresh_initialization,
                 collection_poison: &mut self.collection_poison,
                 page_commit_poison: self.page_commit_poison,
                 #[cfg(test)]
@@ -37730,7 +38072,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
                 && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
         };
-        empty && self.pending_os_release.is_none() && self.collection_poison.is_none()
+        empty && (self.pending_os_release.is_none() && self.pending_fresh_initialization.is_none()) && self.collection_poison.is_none()
     }
 
     /// Ends a successfully drained vanished engine without reopening its
@@ -37792,6 +38134,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     page_map: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_map)),
                     thread_sequence: core::ptr::read(core::ptr::addr_of!((*this_ptr).thread_sequence)),
                     pending_os_release: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_os_release)),
+                    pending_fresh_initialization: core::ptr::read(core::ptr::addr_of!((*this_ptr).pending_fresh_initialization)),
                     collection_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).collection_poison)),
                     page_commit_poison: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_commit_poison)),
                     #[cfg(test)]
@@ -37823,6 +38166,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             page_map: state.page_map,
             thread_sequence: state.thread_sequence,
             pending_os_release: state.pending_os_release,
+            pending_fresh_initialization: state.pending_fresh_initialization,
             collection_poison: state.collection_poison,
             page_commit_poison: state.page_commit_poison,
             #[cfg(test)]
@@ -37856,6 +38200,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.session.theap() as *const Theap as *mut Theap
     }
 
+    /// Returns the original source session pointer for preallocation owner
+    /// admission. No shared image projection or compiler-TLS lookup creates
+    /// this capability; its use remains bounded by the retained session.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn allocation_theap(&self) -> NonNull<Theap> {
+        self.session.local_field_theap_pointer()
+    }
+
+
     /// Returns the process retained by this allocation backing without
     /// evaluating options. The outer owner must remain admitted while the
     /// returned process is used after this engine projection ends.
@@ -37882,12 +38235,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// session, releases the artificial process PageMap exclusion, and may
     /// later reactivate only against the already-published first arena.
     pub(crate) fn finish_quiescent_in_place(&mut self) -> bool {
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return false;
         }
         if !self.collect_retired(true)
             || self.is_collection_poisoned()
-            || self.pending_os_release.is_some()
+            || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some())
             || self.session.theap().page_count() != 0
         {
             return false;
@@ -38323,6 +38676,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // result is final and must not schedule another force callback.
             GenericAllocationCollection::Force => match self.attempt_deferred_free_allocation(continuation) {
                 Ok(block) => Ok(DeferredFreeAllocationPhase::Complete(block)),
+                #[cfg(target_arch = "x86_64")]
+                Err(GenericPathError::FreshInitialization(pending)) => Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
                 Err(_) => Err(GuardedCanonicalAllocationRefusal),
             },
             GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
@@ -38480,6 +38835,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     if search_first {
                         match self.attempt_deferred_free_allocation(continuation) {
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
+                            #[cfg(target_arch = "x86_64")]
+                            Err(GenericPathError::FreshInitialization(pending)) => return Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
@@ -38498,6 +38855,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     if search_first {
                         match self.attempt_deferred_free_allocation(continuation) {
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
+                            #[cfg(target_arch = "x86_64")]
+                            Err(GenericPathError::FreshInitialization(pending)) => return Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
@@ -38581,6 +38940,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     ) -> GuardedCanonicalAllocationPhase {
         match self.attempt_deferred_free_allocation(continuation) {
             Ok(Some(block)) => Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
+            #[cfg(target_arch = "x86_64")]
+            Err(GenericPathError::FreshInitialization(pending)) => Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
             Err(_) => Err(GuardedCanonicalAllocationRefusal),
             Ok(None) => Ok(DeferredFreeAllocationPhase::Collect {
                 collection: GenericAllocationCollection::Force,
@@ -38624,7 +38985,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 request,
                 alignment,
                 zero,
-            } => Ok(self.allocate_os_aligned_singleton(request, alignment, zero)),
+            } => self.allocate_os_aligned_singleton_checked(request, alignment, zero),
             // Phase C ends a collection before any lookup; no block exists.
             DeferredFreeAllocationContinuation::Collection => Ok(None),
             // `mi_find_page` refuses this request on every attempt.
@@ -38817,7 +39178,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if search_first {
             match self.allocate_generic_once(request, bin, block_size, kind, zero) {
                 Ok(Some(block)) => return Some(block),
-                Err(_) => return None,
+                Err(error) => { self.cleanup_unphased_initialization_error(error); return None; },
                 Ok(None) => {}
             }
         }
@@ -38827,7 +39188,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // Only the source no-page/OOM result may force collection
                 // and retry. A collection/list/queue error can have crossed
                 // a private ownership boundary and must not take fallback.
-                Err(_) => return None,
+                Err(error) => { self.cleanup_unphased_initialization_error(error); return None; },
                 Ok(None) => {}
             }
             if attempt == 0 && !self.collect_all_pages_for_allocation_retry() {
@@ -38849,7 +39210,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // queue reuse. The fresh page enters the huge queue only long enough
         // for the source full-page transition below.
         let page = if bin == BIN_HUGE {
-            let Some(page) = self.allocate_fresh_page(block_size, kind) else {
+            let Some(page) = self.allocate_fresh_page(block_size, kind)? else {
                 return Ok(None);
             };
             {
@@ -38866,6 +39227,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             };
             page
         };
+        self.complete_selected_generic_page(page, request, bin, block_size, zero)
+    }
+
+    /// Completes one already selected source page without repeating lookup,
+    /// generic administration or fresh-page registration. An owned fresh-page
+    /// continuation must use this same pop and full-queue transition.
+    fn complete_selected_generic_page(
+        &mut self, page: NonNull<Page>, request: usize, bin: usize,
+        block_size: usize, zero: bool,
+    ) -> Result<Option<NonNull<u8>>, GenericPathError> {
         // Both source routes pop from their newly selected or reused page.
         // An absent immediate block is an invariant failure, never an OOM retry.
         let block = self
@@ -39053,7 +39424,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     unsafe { Page::set_retire_expire_at(candidate, 0) };
                     return Ok(Some(candidate));
                 }
-                Err(error) if Self::direct_page_commit_mapping_miss(error) => {}
+                Err(error) if Self::direct_page_commit_mapping_miss(&error) => {}
                 Ok(false) => return Err(GenericPathError::Lifecycle),
                 Err(error) => return Err(error),
             }
@@ -39082,7 +39453,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
         }
 
-        let Some(fresh) = self.allocate_fresh_page(block_size, kind) else {
+        let Some(fresh) = self.allocate_fresh_page(block_size, kind)? else {
             if first_try && self.arena.process().is_some() {
                 return self.find_generic_queue_page_with_first_try(bin, block_size, kind, false);
             }
@@ -39472,7 +39843,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 page,
                 GenericPathError::Lifecycle,
             )),
-            Err(error) if Self::direct_page_commit_mapping_miss(error) => {
+            Err(error) if Self::direct_page_commit_mapping_miss(&error) => {
                 match self.reabandon_reclaimed_regular_page(source, bin, page, map) {
                     Ok(
                         ReabandonReclaimedRegularOutcome::Reabandoned
@@ -39495,7 +39866,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// local, lifecycle, prefix, plan, or post-commit free-list failure stays
     /// terminal after its respective ownership transition.
     #[inline]
-    fn direct_page_commit_mapping_miss(error: GenericPathError) -> bool {
+    fn direct_page_commit_mapping_miss(error: &GenericPathError) -> bool {
         match error {
             GenericPathError::PageCommit(PageCommitError::ProcessMapping(_)) => true,
             #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
@@ -40057,21 +40428,30 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `MI_PAGE_META_ALIGNMENT`. This is intentionally not an arena fallback:
     /// the mapping owns its metadata prefix and its terminal release right.
     fn allocate_os_aligned_singleton(
+        &mut self, request: usize, alignment: usize, zero: bool,
+    ) -> Option<NonNull<u8>> {
+        match self.allocate_os_aligned_singleton_checked(request, alignment, zero) {
+            Ok(block) => block,
+            Err(error) => { self.cleanup_unphased_initialization_error(error); None }
+        }
+    }
+
+    fn allocate_os_aligned_singleton_checked(
         &mut self,
         request: usize,
         alignment: usize,
         zero: bool,
-    ) -> Option<NonNull<u8>> {
+    ) -> Result<Option<NonNull<u8>>, GenericPathError> {
         if !self.retry_pending_os_release() {
-            return None;
+            return Ok(None);
         }
         let config = self.page_map.memory_config();
-        let padded_request = request.checked_add(PADDING_SIZE)?;
+        let Some(padded_request) = request.checked_add(PADDING_SIZE) else { return Ok(None); };
         let block_size = config.good_alloc_size(padded_request);
         if block_size == 0 || block_size < padded_request {
-            return None;
+            return Ok(None);
         }
-        let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
+        let Some(page) = self.allocate_fresh_os_page_checked(block_size, alignment, true, true)? else { return Ok(None); };
         {
             // `mi_huge_page_alloc` records the fresh aligned singleton before
             // its sole block is popped or the full-page transition runs.
@@ -40088,16 +40468,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // like every other non-abandoning generic allocation.
                 if block_size > SMALL_MAX_OBJ_SIZE {
                     self.move_regular_to_full(BIN_HUGE, page.as_ptr(), Some(block))
-                        .ok()?;
+                        .map_err(GenericPathError::from)?;
                 }
-                Some(block)
+                Ok(Some(block))
             }
             Ok(None) | Err(_) => {
                 // The fresh helper extended exactly one block before queue
                 // publication, so this branch is an invariant failure. Its
                 // mapping has not escaped and must not remain queue-owned.
                 let _ = self.release_page(BIN_HUGE, page.as_ptr());
-                None
+                Ok(None)
             }
         }
     }
@@ -41125,7 +41505,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 }
                 // Preserve a detached OS release owner exactly as the forced
                 // visitor does; the remaining pages keep their ownership.
-                if self.pending_os_release.is_some() {
+                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
                     return false;
                 }
                 page = next;
@@ -41179,7 +41559,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // A successful semantic free can still retain its detached
                 // OS mapping after failed unmap. Stop without another release
                 // or allocation retry; the next page keeps all its ownership.
-                if self.pending_os_release.is_some() {
+                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
                     return false;
                 }
                 page = next;
@@ -41302,7 +41682,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     }
                     // As with the force visitor, preserve the one detached
                     // OS release owner and leave the next page queue-linked.
-                    if self.pending_os_release.is_some() {
+                    if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
                         return false;
                     }
                 } else {
@@ -41431,7 +41811,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     #[cfg(target_arch = "x86_64")]
     #[inline]
     pub(crate) fn local_fast_owner(&self) -> Option<crate::local_fast_path::LocalFastOwner> {
-        if self.is_collection_poisoned() || self.pending_os_release.is_some() {
+        if self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return None;
         }
         Some(crate::local_fast_path::LocalFastOwner {
@@ -41449,6 +41829,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // allocation, free, collection, finish, and remote-producer entry
         // from crossing the already-cleared regular heap-key boundary.
         self.has_retained_collection_poison()
+            || self.pending_fresh_initialization.is_some()
             || !self.session.permits_ordinary_page_operations()
     }
 
@@ -41473,7 +41854,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// departing compiler-TLS image without running `Drop`.
     #[inline]
     pub(crate) fn permits_process_done_source_retention(&self) -> bool {
-        !self.is_collection_poisoned() && self.pending_os_release.is_none()
+        !self.is_collection_poisoned() && (self.pending_os_release.is_none() && self.pending_fresh_initialization.is_none())
     }
 
     /// Records the first owner-side collection failure before its caller can
@@ -41537,11 +41918,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         page: NonNull<Page>,
         error: GenericPathError,
     ) -> GenericPathError {
-        let retained_error = match error {
-            GenericPathError::Collection(error) => error,
-            GenericPathError::Local(error) => PageCollectError::Local(error),
+        let retained_error = match &error {
+            GenericPathError::FreshInitialization(_) => return error,
+            GenericPathError::Collection(error) => *error,
+            GenericPathError::Local(error) => PageCollectError::Local(*error),
             GenericPathError::PageCommit(error) => {
-                PageCollectError::MappedAbandonedPageCommit(error)
+                PageCollectError::MappedAbandonedPageCommit(*error)
             }
             GenericPathError::Lifecycle => PageCollectError::Lifecycle,
         };
@@ -41712,6 +42094,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 .count(),
             collection_poisoned: self.is_collection_poisoned(),
             pending_os_release: self.pending_os_release.is_some(),
+            pending_fresh_initialization: self.pending_fresh_initialization.is_some(),
             collection_poison,
             page_commit_poisoned: self.page_commit_poison,
             static_main_mapped_regular_claim_terminal: self
@@ -41881,17 +42264,26 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn allocate_fresh_os_page(
+        &mut self, block_size: usize, alignment: usize, enqueue_singleton: bool, commit: bool,
+    ) -> Option<NonNull<Page>> {
+        match self.allocate_fresh_os_page_checked(block_size, alignment, enqueue_singleton, commit) {
+            Ok(page) => page,
+            Err(error) => { self.cleanup_unphased_initialization_error(error); None }
+        }
+    }
+
+    fn allocate_fresh_os_page_checked(
         &mut self,
         block_size: usize,
         alignment: usize,
         enqueue_singleton: bool,
         commit: bool,
-    ) -> Option<NonNull<Page>> {
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
         // A failed earlier OS-aligned release owns the sole pending slot. It
         // must be retried before claiming another mapping; ordinary arena
         // pages intentionally do not depend on this token.
-        if !self.retry_pending_os_release() {
-            return None;
+        if self.pending_fresh_initialization.is_some() || !self.retry_pending_os_release() {
+            return Ok(None);
         }
         let config = self.page_map.memory_config();
         let arena = &self.arena;
@@ -41920,7 +42312,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 if let Some(owner) = failure.into_owner() {
                     self.park_pending_os_release(owner);
                 }
-                return None;
+                return Ok(None);
             }
         };
         let layout = claim.layout();
@@ -41928,21 +42320,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Some(metadata) => metadata,
             None => {
                 self.release_unpublished_claim_or_park(claim);
-                return None;
+                return Ok(None);
             }
         };
         let slice_start = match claim.slice_start() {
             Some(slice_start) => slice_start,
             None => {
                 self.release_unpublished_claim_or_park(claim);
-                return None;
+                return Ok(None);
             }
         };
         let memory = match claim.memory_id() {
             Ok(memory) => memory,
             Err(_) => {
                 self.release_unpublished_claim_or_park(claim);
-                return None;
+                return Ok(None);
             }
         };
         let slice_pcommitted = if !memory.initially_committed() {
@@ -41956,14 +42348,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 Some(prefix_pages) => prefix_pages,
                 None => {
                     self.release_unpublished_claim_or_park(claim);
-                    return None;
+                    return Ok(None);
                 }
             };
             let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
                 Some(prefix_size) => prefix_size,
                 None => {
                     self.release_unpublished_claim_or_park(claim);
-                    return None;
+                    return Ok(None);
                 }
             };
             let committed = if let Some(process) = self.arena.process() {
@@ -41973,14 +42365,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             };
             if committed.is_err() {
                 self.release_unpublished_claim_or_park(claim);
-                return None;
+                return Ok(None);
             }
             prefix_pages
         } else {
             0
         };
         let page = match unsafe {
-            self.session.publish_fresh_page(
+            #[cfg(target_arch = "x86_64")]
+            let page = self.session.publish_fresh_primary_page(
                 metadata,
                 layout.block_size(),
                 layout.page_offset(),
@@ -41988,24 +42381,73 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 slice_pcommitted,
                 memory.initially_zero(),
                 memory,
-            )
+            );
+            #[cfg(not(target_arch = "x86_64"))]
+            let page = self.session.publish_fresh_page(
+                metadata,
+                layout.block_size(),
+                layout.page_offset(),
+                layout.reserved(),
+                slice_pcommitted,
+                memory.initially_zero(),
+                memory,
+            );
+            page
         } {
             Some(page) => page,
             None => {
                 self.release_unpublished_claim_or_park(claim);
-                return None;
+                return Ok(None);
             }
         };
         if unsafe { !claim.publish_secondary_metadata(page) } {
             self.rollback_fresh_os_aligned(claim, page, false, false);
-            return None;
+            return Ok(None);
         }
 
-        let initialized = (|| {
+        // SAFETY: the primary is fully initialized; the exact source-clipped
+        // range is the only part published to page-map lookup. Larger OS
+        // mappings retain their full extent solely in `MemoryId`.
+        if unsafe {
+            self.page_map
+                .register_range(slice_start.as_ptr(), layout.page_map_size(), page)
+        }
+        .is_err()
+        {
+            self.rollback_fresh_os_aligned(claim, page, true, false);
+            return Ok(None);
+        }
+        // `arena.c:1110-1118` records every fresh page, an OS-backed one
+        // included, after its PageMap registration; its terminal release
+        // records the matching decrease.
+        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) }
+            .expect("fresh source page has one statistics bin");
+        let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
+        debug_assert!(statistics_recorded);
+
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: actual PageMap and matched statistics publication completed;
+        // the original session retains this Page before zero or list writes.
+        if !unsafe { self.session.initialize_fresh_page_keys(page) } {
+            return Err(GenericPathError::FreshInitialization(PendingFreshOsPageInitialization {
+                claim, page, theap: self.theap_identity(),
+                metadata_stage: FreshOsMetadataStage::Registered { statistics_bin },
+                failure: FreshOsPageInitializationFailure::PageKeysRefused,
+                retirement_marker: FreshTaskRetirementMarker::Unmarked,
+            }));
+        }
+
+        // SAFETY: the exact original claim retains its entire readable
+        // committed area; no free-list link or client has been published.
+        let claim = unsafe { self.observe_fresh_os_initialization(claim, page, statistics_bin) }
+            .map_err(GenericPathError::FreshInitialization)?;
+
+        let initialized = (|| -> Result<(), FreshOsPageInitializationFailure> {
             // SAFETY: an on-demand claim committed its first page area above;
-            // a full claim committed the entire area. No queue or map observer
-            // sees the free-list links until this closure completes.
-            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
+            // a full claim committed the entire area. Metadata is registered,
+            // but no source queue or client can select its unfinished list.
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
+                .map_err(FreshOsPageInitializationFailure::FreeList)?;
             #[cfg(feature = "mi-stat-1")]
             self.session.theap().record_page_extension_attempted();
             if slice_pcommitted == 0 {
@@ -42019,11 +42461,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 });
                 #[cfg(not(target_arch = "x86_64"))]
                 let extension = free_list.extend();
-                let extended = extension.ok()?;
-                if extended == 0 { return None; }
+                let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
+                if extended == 0 {
+                    return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
+                        expected: 1, actual: 0,
+                    });
+                }
                 #[cfg(feature = "mi-stat-1")]
                 self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
-                return Some(());
+                return Ok(());
             }
             let plan = page::page_area_commit_plan(
                 0,
@@ -42033,9 +42479,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 config.page_size().bytes(),
                 layout.block_start_offset(),
                 layout.allocation_size(),
-            )?;
+            ).ok_or(FreshOsPageInitializationFailure::ExtensionPlanUnavailable)?;
             if plan.commit_size != 0 {
-                return None;
+                return Err(FreshOsPageInitializationFailure::InitialPrefixNeedsCommit(plan.commit_size));
             }
             #[cfg(target_arch = "x86_64")]
             let extension = free_list.extend_count_with_random(plan.extend, || {
@@ -42046,36 +42492,30 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             });
             #[cfg(not(target_arch = "x86_64"))]
             let extension = free_list.extend_count(plan.extend);
-            let extended = extension.ok()?;
-            if extended != plan.extend { return None; }
+            let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
+            if extended != plan.extend {
+                return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
+                    expected: usize::from(plan.extend), actual: usize::from(extended),
+                });
+            }
             #[cfg(feature = "mi-stat-1")]
             self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
-            Some(())
+            Ok(())
         })();
-        if initialized.is_none() {
-            self.rollback_fresh_os_aligned(claim, page, true, false);
-            return None;
+        if let Err(failure) = initialized {
+            #[cfg(target_arch = "x86_64")]
+            return Err(GenericPathError::FreshInitialization(PendingFreshOsPageInitialization {
+                claim, page, theap: self.theap_identity(),
+                metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
+                retirement_marker: FreshTaskRetirementMarker::Unmarked,
+            }));
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                let _ = failure;
+                self.rollback_fresh_os_aligned(claim, page, true, true);
+                return Ok(None);
+            }
         }
-
-        // SAFETY: the primary is fully initialized; the exact source-clipped
-        // range is the only part published to page-map lookup. Larger OS
-        // mappings retain their full extent solely in `MemoryId`.
-        if unsafe {
-            self.page_map
-                .register_range(slice_start.as_ptr(), layout.page_map_size(), page)
-        }
-        .is_err()
-        {
-            self.rollback_fresh_os_aligned(claim, page, true, false);
-            return None;
-        }
-        // `arena.c:1110-1118` records every fresh page, an OS-backed one
-        // included, after its PageMap registration; its terminal release
-        // records the matching decrease.
-        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) }
-            .expect("fresh source page has one statistics bin");
-        let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
-        debug_assert!(statistics_recorded);
 
         if enqueue_singleton { self.push_regular_page(BIN_HUGE, page); }
         // This is an infallible handoff under `OsAlignedPageClaim`'s private
@@ -42089,10 +42529,148 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Ok(_) => {}
             Err(_) => unreachable!("an unconsumed OS-aligned claim stays active"),
         }
-        Some(page)
+        Ok(Some(page))
     }
 
-    /// Reverses an unpublished OS-aligned fresh attempt without consulting the
+    /// Observes source initialization while retaining the original claim.
+    ///
+    /// # Safety
+    /// `page` is the initialized primary of this exact claim, with its aliases,
+    /// exact PageMap range and matched `statistics_bin` registration published
+    /// by this session. The entire source committed observation
+    /// region is initialized and readable, with no concurrent writes, free-list
+    /// publication, client access or protection change.
+    unsafe fn observe_fresh_os_initialization(
+        &self, claim: OsAlignedPageClaim, page: NonNull<Page>, statistics_bin: usize,
+    ) -> Result<OsAlignedPageClaim, PendingFreshOsPageInitialization> {
+        #[cfg(target_arch = "x86_64")]
+        if crate::config::DEBUG_LEVEL > 2 {
+            // SAFETY: the caller retains the original committed mapping and
+            // excludes writes and protection changes through this observation.
+            let state = unsafe { Page::validity_snapshot_at(page) };
+            #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+            if state.initially_zero {
+                // SAFETY: the observer is test-only and cannot allocate,
+                // output or reenter; the original claim exclusively retains
+                // this initialized readable region before all list writes.
+                unsafe { crate::page_validity::observe_fresh_page_initialization_for_test(&state, page) };
+            }
+            let observed = unsafe { crate::page_validity::source_initial_page_is_zero(
+                &state, self.page_map.memory_config().page_size().bytes(),
+            ) };
+            if let Err(failure) = observed {
+                return Err(PendingFreshOsPageInitialization {
+                    claim, page, theap: self.theap_identity(),
+                    metadata_stage: FreshOsMetadataStage::Registered { statistics_bin },
+                    failure: FreshOsPageInitializationFailure::SourceObservation(failure),
+                    retirement_marker: FreshTaskRetirementMarker::Unmarked,
+                });
+            }
+        }
+        Ok(claim)
+    }
+
+    /// Retains a refused cleanup at its exact remaining metadata stage.
+    /// No observation grants release or diagnostic authority; a foreign
+    /// selected session or occupied task slot returns the unchanged task.
+    pub(crate) fn retain_fresh_os_initialization(
+        &mut self, pending: PendingFreshOsPageInitialization,
+    ) -> Result<(), PendingFreshOsPageInitialization> {
+        if pending.theap != self.theap_identity() || self.pending_fresh_initialization.is_some() {
+            return Err(pending);
+        }
+        if let Some(process) = self.arena.process() {
+            if !pending.claim.belongs_to_subprocess(process.subprocess()) { return Err(pending); }
+        }
+        self.pending_fresh_initialization = Some(pending);
+        Ok(())
+    }
+
+    /// Transfers the exact original candidate retained by an unphased adapter.
+    pub(crate) fn take_pending_fresh_initialization(&mut self) -> Option<PendingFreshOsPageInitialization> {
+        self.pending_fresh_initialization.take()
+    }
+
+    /// Reverses only setup completed by the original unfinished OS claim.
+    /// A foreign issuer or failed alias/primary reversal returns its exact
+    /// remaining stages; physical release failure moves the original mapping
+    /// into this engine's existing release-retry slot. A task already marked
+    /// for persistent terminal retention returns unchanged before mutation.
+    ///
+    /// # Safety
+    /// The actual original issuing Theap, Heap, VM and PageMap owner must
+    /// remain admitted and retained continuously from preparation through
+    /// cleanup. No retirement, rebinding or same-address reuse may intervene.
+    /// This engine projects that original source session; all external claim
+    /// observers and callbacks have ended, and no queue or client escaped.
+    /// Captured address equality is a refusal guard, never a lifetime proof.
+    pub(crate) unsafe fn cleanup_fresh_os_initialization(
+        &mut self, mut pending: PendingFreshOsPageInitialization,
+    ) -> Result<(), PendingFreshOsPageInitialization> {
+        #[cfg(target_arch = "x86_64")]
+        if pending.has_retirement_refusal_marker() {
+            // A persistent failure already transferred this exact task into
+            // terminal issuer retention. No callback-phase cleanup may erase
+            // that completed refusal or reinterpret it as fresh admission.
+            return Err(pending);
+        }
+        if pending.theap != self.theap_identity() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
+            return Err(pending);
+        }
+        if let Some(process) = self.arena.process() {
+            if !pending.claim.belongs_to_subprocess(process.subprocess()) { return Err(pending); }
+        }
+        if let FreshOsMetadataStage::Registered { statistics_bin } = pending.metadata_stage {
+            let Some(start) = pending.claim.slice_start() else { return Err(pending); };
+            // SAFETY: this is the exact original source-clipped registration.
+            // No queue or client has been published from it.
+            if unsafe { self.page_map.unregister_range(
+                start.as_ptr(), pending.claim.layout().page_map_size(),
+            ) }.is_err() { return Err(pending); }
+            pending.metadata_stage = FreshOsMetadataStage::Aliases { statistics_bin: Some(statistics_bin) };
+        }
+        if let FreshOsMetadataStage::Aliases { statistics_bin } = pending.metadata_stage {
+            // SAFETY: the original claim and exact primary remain retained;
+            // no PageMap, queue, free list or escaped client names the span.
+            if !unsafe { pending.claim.clear_secondary_metadata(pending.page) } { return Err(pending); }
+            pending.metadata_stage = FreshOsMetadataStage::Primary { statistics_bin };
+        }
+        if let FreshOsMetadataStage::Primary { statistics_bin } = pending.metadata_stage {
+            // SAFETY: no observer remains and the exact selected session owns
+            // this original primary's terminal metadata transition.
+            if unsafe { self.session.retire_page(&mut *pending.page.as_ptr()) }.is_none() { return Err(pending); }
+            pending.metadata_stage = FreshOsMetadataStage::Retired { statistics_bin };
+        }
+        if let FreshOsMetadataStage::Retired { statistics_bin: Some(statistics_bin) } = pending.metadata_stage {
+            if !self.session.theap().record_page_released(statistics_bin) { return Err(pending); }
+            pending.metadata_stage = FreshOsMetadataStage::Retired { statistics_bin: None };
+        }
+        self.release_unpublished_claim_or_park(pending.claim);
+        Ok(())
+    }
+
+    fn cleanup_unphased_initialization_error(&mut self, error: GenericPathError) {
+        if let GenericPathError::FreshInitialization(pending) = error {
+            if matches!(pending.failure, FreshOsPageInitializationFailure::SourceObservation(
+                crate::page_validity::SourcePageInvariant::InitiallyZero,
+            )) {
+                // The diagnostic caller must extract this exact candidate
+                // after ending allocator projections. Keep its real map and
+                // statistics publication until original-admission delivery.
+                self.retain_fresh_os_initialization(pending)
+                    .expect("an original fresh attempt retains its unique task slot");
+                return;
+            }
+            // SAFETY: this unphased attempt has not left its original engine;
+            // its session, VM, PageMap and fresh claim remain retained here.
+            if let Err(pending) = unsafe { self.cleanup_fresh_os_initialization(pending) } {
+                self.retain_fresh_os_initialization(pending)
+                    .expect("an original fresh attempt retains its unique task slot");
+            }
+        }
+    }
+
+    /// Reverses an unfinished OS-aligned fresh attempt without consulting the
     /// arena bitmap. The order mirrors its publication: clear page-map state,
     /// then aliases, then primary metadata, then the still-local mapping.
     fn rollback_fresh_os_aligned(
@@ -42103,6 +42681,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         page_map_registered: bool,
     ) {
         let layout = claim.layout();
+        let statistics_bin = if page_map_registered {
+            // SAFETY: the registered private primary remains live here.
+            unsafe { page_statistics_bin(page.as_ref()) }
+        } else { None };
         if page_map_registered {
             let Some(slice_start) = claim.slice_start() else {
                 self.park_pending_os_release(claim.retain_failed_publication());
@@ -42134,6 +42716,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.park_pending_os_release(claim.retain_failed_publication());
             return;
         }
+        if let Some(statistics_bin) = statistics_bin {
+            let recorded = self.session.theap().record_page_released(statistics_bin);
+            debug_assert!(recorded);
+        }
         self.release_unpublished_claim_or_park(claim);
     }
 
@@ -42145,14 +42731,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &mut self,
         block_size: usize,
         kind: PageKind,
-    ) -> Option<NonNull<Page>> {
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
         let slice_count = match kind {
             PageKind::Small | PageKind::Medium | PageKind::Large => {
-                page::regular_page_slice_count(kind)?
+                match page::regular_page_slice_count(kind) { Some(count) => count, None => return Ok(None) }
             }
-            PageKind::Singleton => page::singleton_page_slice_count(block_size, self.page_map.memory_config().page_size())?,
+            PageKind::Singleton => match page::singleton_page_slice_count(block_size, self.page_map.memory_config().page_size()) { Some(count) => count, None => return Ok(None) },
         };
-        let allocation_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+        let Some(allocation_size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else { return Ok(None); };
         let process_commit = self.arena.process().map(|process| {
             let config = self.page_map.memory_config();
             let mode = process.policy().page_commit_on_demand();
@@ -42188,49 +42774,49 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Some(&mut random),
         );
         let Some(claim) = claim else {
-            return self.arena.process().and_then(|_| {
-                self.allocate_fresh_os_page(block_size, 1, false, commit)
-            });
+            return if self.arena.process().is_some() {
+                self.allocate_fresh_os_page_checked(block_size, 1, false, commit)
+            } else { Ok(None) };
         };
         let slice_start = claim.start();
         let memory = claim.memory_id();
         // SAFETY: the fresh linear claim retains this exact live arena.
         let arena = match unsafe { self.arena.arena_for_memory(memory) } {
             Some(arena) => arena,
-            None => { let _ = claim.release(); return None; }
+            None => { let _ = claim.release(); return Ok(None); }
         };
         // Source ensures the heap's arena-page image before committing this
         // page's partial prefix, so failure cannot orphan prefix accounting.
         if !self.session.ensure_arena_pages(&arena, self.page_map.memory_config()) {
             let _ = claim.release();
-            return None;
+            return Ok(None);
         }
         let metadata = match claim.page_metadata() {
             Some(metadata) => metadata,
             None => {
                 let _ = claim.release();
-                return None;
+                return Ok(None);
             }
         };
         let usable_offset = match page::page_usable_start_offset(block_size) {
             Some(offset) => offset,
             None => {
                 let _ = claim.release();
-                return None;
+                return Ok(None);
             }
         };
         let usable_start = match slice_start.addr().checked_add(usable_offset) {
             Some(start) => start,
             None => {
                 let _ = claim.release();
-                return None;
+                return Ok(None);
             }
         };
         let page_offset = match usable_start.checked_sub(metadata.as_ptr().addr()) {
             Some(offset) => offset,
             None => {
                 let _ = claim.release();
-                return None;
+                return Ok(None);
             }
         };
         let reserved = match kind {
@@ -42240,7 +42826,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     Some(reserved) => reserved,
                     None => {
                         let _ = claim.release();
-                        return None;
+                        return Ok(None);
                     }
                 }
             }
@@ -42262,19 +42848,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 Some(prefix_pages) => prefix_pages,
                 None => {
                     let _ = claim.release();
-                    return None;
+                    return Ok(None);
                 }
             };
             let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
                 Some(prefix_size) => prefix_size,
                 None => {
                     let _ = claim.release();
-                    return None;
+                    return Ok(None);
                 }
             };
             if !claim.commit_initial_page_prefix(prefix_size) {
                 let _ = claim.release();
-                return None;
+                return Ok(None);
             }
             prefix_pages
         } else {
@@ -42286,7 +42872,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // only mutable theap/heap image. Publication writes a fresh Page value
         // before any map or queue observer can reach it.
         let page = unsafe {
-            self.session.publish_fresh_page(
+            #[cfg(target_arch = "x86_64")]
+            let page = self.session.publish_fresh_primary_page(
                 metadata,
                 block_size,
                 page_offset,
@@ -42294,13 +42881,24 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 slice_pcommitted,
                 memory.initially_zero(),
                 memory,
-            )
+            );
+            #[cfg(not(target_arch = "x86_64"))]
+            let page = self.session.publish_fresh_page(
+                metadata,
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                memory.initially_zero(),
+                memory,
+            );
+            page
         };
         let Some(page) = page else {
             let _ = unsafe { self.arena.account_page_commit_before_release(memory,
                 usize::from(slice_pcommitted) * self.page_map.memory_config().page_size().bytes()) };
             let _ = claim.release();
-            return None;
+            return Ok(None);
         };
 
         let page_map_size = match arena_page_map_size(page, slice_start, allocation_size) {
@@ -42312,14 +42910,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let _ = self.account_page_commit_before_release(page, memory);
                 let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
                 let _ = unsafe { self.arena.release(memory) };
-                return None;
+                return Ok(None);
             }
         };
 
         let registered_in_arena = self.session.set_arena_page(&arena, memory);
         if !registered_in_arena {
             self.rollback_fresh(page, slice_start, page_map_size, memory, false, false);
-            return None;
+            return Ok(None);
         }
         // SAFETY: `page` is fully initialized and remains address-stable until
         // the matching unregister below. This serial lifecycle excludes a
@@ -42331,7 +42929,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         .is_err()
         {
             self.rollback_fresh(page, slice_start, page_map_size, memory, true, false);
-            return None;
+            return Ok(None);
         }
 
         // `arena.c:1110-1118` records the successful PageMap registration
@@ -42342,11 +42940,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
 
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this original fresh arena Page has completed source
+        // registration; no list, client or prior key draw has been published.
+        if !unsafe { self.session.initialize_fresh_page_keys(page) } {
+            self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
+            return Err(GenericPathError::Lifecycle);
+        }
+
         if self.extend_page_before_allocation(page).is_err() {
             self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
-            return None;
+            return Ok(None);
         }
-        Some(page)
+        Ok(Some(page))
     }
 
     // Fresh-page rollback and terminal release use the same page-local commit
@@ -43267,7 +43873,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // not detach another OS page or discard its PageMap/metadata while
         // that owner exists. The current empty page remains fully linked for
         // a later explicit collection after the pending release succeeds.
-        if matches!(&span, ReleaseSpan::Os(_)) && self.pending_os_release.is_some() {
+        if matches!(&span, ReleaseSpan::Os(_)) && (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
             return false;
         }
         let queue = match self.session.queue_mut(bin) {
@@ -43868,6 +44474,7 @@ struct ProductionOwnerExitCallbacks<'state, 'main, 'arena, 'map, B: PageBacking<
     main_heap: Option<MainStaticHeapLease<'main>>,
     heap: NonNull<Heap>,
     pending_os_release: &'state mut Option<OsAlignedPageOwner>,
+    pending_fresh_initialization: &'state mut Option<PendingFreshOsPageInitialization>,
     collection_poison: &'state mut Option<RetainedPageCollectPoison>,
     page_commit_poison: bool,
     #[cfg(test)]
@@ -43891,7 +44498,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
 
     #[inline]
     fn is_collection_poisoned(&self) -> bool {
-        self.collection_poison.is_some() || self.page_commit_poison
+        self.collection_poison.is_some() || self.page_commit_poison || self.pending_fresh_initialization.is_some()
     }
 
     /// Records the one non-retryable source collection boundary.  The outer
@@ -44116,7 +44723,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         let released = if memory_kind == MemoryKind::Arena {
             self.release_detached_arena_page(page)
         } else if memory_kind.is_os() {
-            self.release_detached_os_page(page) && self.pending_os_release.is_none()
+            self.release_detached_os_page(page) && (self.pending_os_release.is_none() && self.pending_fresh_initialization.is_none())
         } else {
             false
         };
@@ -44355,7 +44962,7 @@ impl<'arena, B: PageBacking<'arena>> ProductionOwnerExitCallbacks<'_, '_, 'arena
         match reclaimed {
             Ok(()) => true,
             Err(failure) => {
-                if self.pending_os_release.is_some() {
+                if (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()) {
                     return false;
                 }
                 *self.pending_os_release = Some(failure.into_owner());
@@ -44556,6 +45163,11 @@ impl<'main> PageAllocatorEngine<'static, 'static, MainStaticPageSession<'main>> 
     /// dedicated terminal slot.
     #[must_use = "a refused borrowed ticket-zero finish still owns its engine and PageMap lifecycle"]
     pub(crate) fn terminalize_borrowed_main_static_finish_failure(mut self) -> Self {
+        if let Some(task) = self.pending_fresh_initialization.take() {
+            if let Err(task) = self.session.retain_unfinished_fresh_initialization(task) {
+                core::mem::forget(task);
+            }
+        }
         if let Some(owner) = self.pending_os_release.take() {
             if let Err(owner) = self.session.retain_unfinished_os_release(owner) {
                 // A prior terminal owner already occupies the attachment's
@@ -44606,6 +45218,7 @@ where
             page_map,
             thread_sequence: 0,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             collection_poison: None,
             page_commit_poison: false,
             #[cfg(test)]
@@ -44686,6 +45299,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 {
     fn drop(&mut self) {
         if !self.shutdown_complete {
+            if let Some(task) = self.pending_fresh_initialization.take() {
+                if let Err(task) = self.session.retain_unfinished_fresh_initialization(task) {
+                    // A session without a persistent issuer slot cannot perform
+                    // rollback in Drop or manufacture later admission. Retain
+                    // this exact original task terminally, including metadata,
+                    // registrations and backing, before latching the session.
+                    core::mem::forget(task);
+                }
+            }
             if let Some(owner) = self.pending_os_release.take() {
                 if let Err(owner) = self.session.retain_unfinished_os_release(owner) {
                     // Static sessions have no longer-lived attachment in
@@ -45029,6 +45651,13 @@ mod tests {
                 let mut phase = allocator.begin_deferred_free_guarded_canonical(source_size);
                 let base = loop {
                     match phase {
+                        #[cfg(target_arch = "x86_64")]
+                        DeferredFreeAllocationPhase::FreshInitialization(pending) => {
+                            // SAFETY: this fixture retains the original source engine and
+                            // backing continuously through the unfinished attempt.
+                            unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                            panic!("fresh initialization unexpectedly refused");
+                        }
                         DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                         #[cfg(target_arch = "x86_64")]
                         DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
@@ -45079,7 +45708,14 @@ mod tests {
             let mut phase = allocator.begin_deferred_free_aligned_plain(plain);
             let first = loop {
                 match phase {
-                    DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
+                    #[cfg(target_arch = "x86_64")]
+                    DeferredFreeAllocationPhase::FreshInitialization(pending) => {
+                            // SAFETY: this fixture retains the original source engine and
+                            // backing continuously through the unfinished attempt.
+                            unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                            panic!("fresh initialization unexpectedly refused");
+                        }
+                        DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                         // SAFETY: this fixture retains its original engine, session
@@ -45103,7 +45739,14 @@ mod tests {
             let mut phase = allocator.begin_deferred_free_aligned_plain(plain);
             let adjusted = loop {
                 match phase {
-                    DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
+                    #[cfg(target_arch = "x86_64")]
+                    DeferredFreeAllocationPhase::FreshInitialization(pending) => {
+                            // SAFETY: this fixture retains the original source engine and
+                            // backing continuously through the unfinished attempt.
+                            unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                            panic!("fresh initialization unexpectedly refused");
+                        }
+                        DeferredFreeAllocationPhase::Complete(block) => break block.unwrap(),
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                         // SAFETY: this fixture retains its original engine, session
@@ -50135,6 +50778,232 @@ mod tests {
         });
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn fresh_os_task_changed_marker_acknowledgement_retains_original_child_custody() {
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        unsafe fn observe(state: &crate::types::PageValiditySnapshot,
+            _: NonNull<Page>, argument: *mut core::ffi::c_void) {
+            // SAFETY: the actual scoped observer owns this counter, and only
+            // the original readable fresh region changes before any client.
+            unsafe { *argument.cast::<usize>() += 1; }
+            assert_eq!(state.used, 0);
+            assert_eq!(state.capacity, 0);
+            assert!(state.free.is_null());
+            unsafe { state.area.as_ptr().write(0x5a); }
+        }
+        crate::test_process::run_in_fresh_process(
+            "single_thread::tests::fresh_os_task_changed_marker_acknowledgement_retains_original_child_custody", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                let id = crate::subproc::lifecycle::native_subproc_new().unwrap();
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                let mut observations = 0usize;
+                let result = unsafe { id.with_owner(|owner| {
+                    let owner = owner.as_mut().unwrap();
+                    let mut captured = None;
+                    let result = crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                        observe, core::ptr::from_mut(&mut observations).cast(), || {
+                            owner.with_metadata_page_engine(binding, |_, engine| {
+                                // The detached metadata session uses its
+                                // actual unphased allocation entry. It does
+                                // not admit ordinary callback continuations.
+                                assert!(engine.allocate_aligned(7, 128 * 1024).is_none());
+                                let mut task = engine.take_pending_fresh_initialization()
+                                    .expect("actual fresh source observation required");
+                                            let theap = engine.allocation_theap();
+                                            // The actual child owner, source session and original
+                                            // process binding retain both issuer images here.
+                                            let heap = Theap::owner_snapshot_at(theap).unwrap().heap;
+                                            let page = task.page;
+                                            let start = task.claim.slice_start().unwrap();
+                                            let map = NonNull::from(engine.page_map);
+                                            assert_eq!(task.failure(), FreshOsPageInitializationFailure::SourceObservation(
+                                                crate::page_validity::SourcePageInvariant::InitiallyZero));
+                                            assert!(!task.has_retirement_refusal_marker());
+                                            let changed = Theap::mark_retained_fresh_task_at_with_progress(theap, heap);
+                                            assert!(matches!(changed, crate::types::RetainedFreshTaskMarkerOutcome::Changed(Ok(()))));
+                                            // The real producer executed publication and unlock.
+                                            // This models only a late acknowledgement error at
+                                            // the pure consumer boundary, not a kernel failure.
+                                            assert_eq!(task.complete_retirement_refusal_mark(theap, heap,
+                                                crate::types::RetainedFreshTaskMarkerOutcome::Changed(Err(Errno::IO))),
+                                                Err(crate::types::HeapTheapListError::Lock(Errno::IO)));
+                                            assert_eq!(task.retirement_marker, FreshTaskRetirementMarker::Marked { theap, heap });
+                                            assert!(task.ensure_retirement_refusal(theap, heap).is_ok());
+                                            let task = engine.cleanup_fresh_os_initialization(task).unwrap_err();
+                                            assert_eq!(task.page, page);
+                                            assert_eq!(task.theap, theap.as_ptr());
+                                            assert_eq!(task.claim.slice_start(), Some(start));
+                                            assert!(matches!(task.metadata_stage, FreshOsMetadataStage::Registered { .. }));
+                                            assert_eq!(engine.page_map.checked_lookup(start.as_ptr()), page.as_ptr());
+                                            captured = Some((theap, heap, page, start, map));
+                                            assert!(engine.retain_fresh_os_initialization(task).is_ok());
+                            })
+                        });
+                    assert!(owner.test_has_pending_fresh_initialization());
+                    assert_eq!(owner.test_page_engine_state(), crate::meta::ChildPageEngineState::Poisoned);
+                    let (theap, heap, page, start, map) = captured.unwrap();
+                    // The persistent task slot retains the actual original child
+                    // owner and process map after the transient engine is gone.
+                    assert_eq!(Theap::owner_snapshot_at(theap).unwrap().heap, heap);
+                    assert_eq!(map.as_ref().checked_lookup(start.as_ptr()), page.as_ptr());
+                    assert!(matches!(owner.with_metadata_page_engine(binding, |_, _| ()),
+                        Err(crate::meta::ChildMetadataPageEngineError::InvalidTransition)));
+                    result
+                }) }.unwrap();
+                assert_eq!(observations, 1);
+                assert!(matches!(result, Err(crate::meta::ChildMetadataPageEngineError::EngineRetained)));
+            });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    #[test]
+    fn fresh_os_initialization_retains_original_claim_on_foreign_refusal_then_retries_release() {
+        // The owner is allocated before every arena, bitmap, Theap session
+        // and PageMap user. Exact claim cleanup and force collection end those
+        // users before their scopes drop, then the original owner is freed.
+        fn with_scoped_claim_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
+            let owner = crate::subproc::MainSubprocess::test_scoped_owner();
+            let mut region = AlignedRegion::zeroed();
+            let registry = ArenaRegistry::new(owner.as_ref().get_ref().as_ptr());
+            let managed = unsafe {
+                manage_external_in_place(
+                    &registry,
+                    region.as_ptr(),
+                    ARENA_MIN_SIZE,
+                    PageSize::new(4096).unwrap(),
+                    true,
+                    true,
+                    true,
+                    -1,
+                    false,
+                    None,
+                )
+            }
+            .unwrap();
+            let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+            let config = MemoryConfig::from_observations(
+                PageSize::new(4096).unwrap(),
+                1024 * 1024,
+                false,
+                false,
+            );
+            let mut page_map = PageMap::initialize(config, 0, true).unwrap();
+            let bootstrap = ExclusiveTheapBootstrap::new();
+            let mut bootstrap = core::pin::pin!(bootstrap);
+            let mut allocator = SingleThreadAllocator::activate(
+                bootstrap.as_mut(),
+                LiveThreadId::new(12).unwrap(),
+                arena,
+                ArenaId::none(),
+                &mut page_map,
+                0,
+            )
+            .unwrap();
+
+            test(&mut allocator);
+            assert!(allocator.pending_fresh_initialization.is_none());
+            assert!(!allocator.has_pending_os_release());
+            assert!(allocator.collect_retired(true));
+            drop(allocator);
+            // SAFETY: force collection removed every page-map entry and all local
+            // users before the explicit page-map destruction boundary.
+            unsafe { page_map.destroy() }.unwrap();
+        }
+
+        let fault = fault::install(fault::Plan::disabled());
+        with_scoped_claim_allocator(|allocator| {
+            for byte in [0u8, 0x6D] {
+                let claim = OsAlignedPageClaim::allocate(
+                    allocator.page_map.memory_config(), 128 * KIB, 128 * KIB,
+                ).ok().unwrap();
+                let layout = claim.layout();
+                let memory = claim.memory_id().unwrap();
+                let start = claim.slice_start().unwrap();
+                // SAFETY: this fixture owns the original private claim and
+                // publishes only its primary and aliases, never a list/client.
+                let primary = unsafe { allocator.session.publish_fresh_primary_page(
+                    claim.metadata().unwrap(), layout.block_size(), layout.page_offset(),
+                    layout.reserved(), 0, memory.initially_zero(), memory,
+                ) }.unwrap();
+                assert!(unsafe { claim.publish_secondary_metadata(primary) });
+                assert!(unsafe { allocator.page_map.register_range(
+                    start.as_ptr(), layout.page_map_size(), primary,
+                ) }.is_ok());
+                let statistics_bin = unsafe { page_statistics_bin(primary.as_ref()) }.unwrap();
+                assert!(allocator.session.theap().record_page_registered(statistics_bin));
+                // SAFETY: the actual fresh owner remains selected after its
+                // exact PageMap and statistics registration, before lists.
+                assert!(unsafe { allocator.session.initialize_fresh_page_keys(primary) });
+                let state = unsafe { Page::validity_snapshot_at(primary) };
+                // The negative control is initialized readable private backing
+                // whose byte disagrees with the claimed source zero property.
+                // No allocated client or list is modified by this fixture.
+                unsafe { state.area.as_ptr().write(byte); }
+                let observed = unsafe { allocator.observe_fresh_os_initialization(claim, primary, statistics_bin) };
+                if byte == 0 {
+                    let claim = observed.unwrap();
+                    allocator.rollback_fresh_os_aligned(claim, primary, true, true);
+                    continue;
+                }
+                let pending = observed.err().unwrap();
+                allocator.cleanup_unphased_initialization_error(
+                    GenericPathError::FreshInitialization(pending),
+                );
+                let pending = allocator.take_pending_fresh_initialization()
+                    .expect("unphased source assertion retains its original registered candidate");
+                assert_eq!(pending.failure(), FreshOsPageInitializationFailure::SourceObservation(crate::page_validity::SourcePageInvariant::InitiallyZero));
+                assert_eq!(unsafe { allocator.page_map.checked_lookup(start.as_ptr()) }, primary.as_ptr());
+                assert_eq!(unsafe { primary.as_ref().capacity() }, 0);
+                assert_eq!(unsafe { primary.as_ref().used() }, 0);
+                let mut returned = None;
+                with_scoped_claim_allocator(|foreign| {
+                    // Both real scopes retain their original images; foreign
+                    // cleanup refuses before changing any claim metadata.
+                    returned = Some(unsafe { foreign.cleanup_fresh_os_initialization(pending) }.unwrap_err());
+                    assert!(!foreign.has_pending_os_release());
+                    assert_eq!(foreign.test_page_count(), 0);
+                });
+                let pending = returned.unwrap();
+                assert_eq!(pending.metadata_stage, FreshOsMetadataStage::Registered { statistics_bin });
+                assert_eq!(unsafe { state.area.as_ptr().read() }, byte);
+                fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+                // SAFETY: this fixture retains the original source engine and
+                            // backing continuously through the unfinished attempt.
+                            unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                assert!(allocator.has_pending_os_release());
+                let OsAlignedPageOwner::Claim(claim) = allocator.pending_os_release.as_ref().unwrap()
+                    else { panic!("unpublished fresh cleanup retains its original claim") };
+                for index in 0..layout.metadata_slot_count() {
+                    assert!(unsafe { claim.metadata_slot(index).unwrap().as_ref().aligned_alias_owner() }.is_null());
+                }
+                fault.set(fault::Plan::disabled());
+                assert!(allocator.retry_pending_os_release());
+                assert!(!allocator.has_pending_os_release());
+            }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn with_foreign_fresh_initialization_cleanup(
+        pending: PendingFreshOsPageInitialization,
+    ) -> PendingFreshOsPageInitialization {
+        let mut returned = None;
+        with_allocator(|foreign| {
+            // SAFETY: both original and foreign source images remain retained;
+            // the foreign guard refuses before any metadata projection.
+            returned = Some(unsafe { foreign.cleanup_fresh_os_initialization(pending) }.unwrap_err());
+            assert!(!foreign.has_pending_os_release());
+            assert_eq!(foreign.test_page_count(), 0);
+        });
+        returned.unwrap()
+    }
+
     #[test]
     fn os_claim_page_map_failure_rolls_back_metadata_before_retryable_release() {
         let fault = fault::install(fault::Plan::disabled());
@@ -51117,7 +51986,14 @@ mod tests {
         let mut phase = allocator.begin_deferred_free_aligned_allocation(size, alignment, false);
         loop {
             match phase {
-                DeferredFreeAllocationPhase::Complete(block) => {
+                #[cfg(target_arch = "x86_64")]
+                DeferredFreeAllocationPhase::FreshInitialization(pending) => {
+                            // SAFETY: this fixture retains the original source engine and
+                            // backing continuously through the unfinished attempt.
+                            unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                            panic!("fresh initialization unexpectedly refused");
+                        }
+                        DeferredFreeAllocationPhase::Complete(block) => {
                     return block.expect("the phased aligned allocation succeeds");
                 }
                 #[cfg(target_arch = "x86_64")]

@@ -346,6 +346,10 @@ mod ordinary_layout_tests {
 ///
 /// The metadata prefix and full block span are committed before construction
 /// returns. Bytes between those ranges retain the source reserved protection.
+/// This mapping claim alone does not publish a primary Page, its aliases,
+/// PageMap reachability, or page registration statistics. Those are distinct
+/// engine transitions. Source page initialization follows registration and
+/// accounting; constructing a mapping claim cannot stand in for that progress.
 pub(crate) struct OsAlignedPageClaim {
     mapping: Mapping,
     layout: OsAlignedPageLayout,

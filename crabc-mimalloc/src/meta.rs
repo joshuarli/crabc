@@ -1998,6 +1998,9 @@ pub(crate) struct ChildMainHeapContextOwner<'heap> {
     context: ChildContextOwner,
     heap_storage: Option<ChildHeapStorage<'heap>>,
     pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
+    // This owner retains the original issuing images while an unpublished
+    // claim remains terminal; the claim's raw identities grant no lifetime.
+    pending_fresh_initialization: Option<crate::single_thread::PendingFreshOsPageInitialization>,
     page_engine: ChildPageEngineState,
     metadata_pages_may_exist: bool,
     stage: ChildMainHeapStage,
@@ -2038,11 +2041,14 @@ pub(crate) enum ChildThreadTeardownError {
 ///
 /// The owner does not borrow its child context, so the context can be shared
 /// with other child threads while this thread allocates. Its registration
-/// lease keeps the child's live thread count raised until [`Self::teardown`],
-/// and child destruction refuses while that count is nonzero: this is what
-/// keeps the child image and main Heap alive for the owner. Dropping an owner
-/// that did not complete teardown leaves the count raised, so the child is
-/// retained rather than destroyed under its live TLD/Theap.
+/// lease keeps the child's live thread count raised until [`Self::teardown`].
+/// Ordinary owned destruction refuses a live thread. Native terminal destruction
+/// can instead retain an orphan control under permanent worker quiescence;
+/// allocation therefore also requires the caller to exclude that destruction.
+/// A retained unfinished owner keeps its original TLD/Theap clients and any
+/// unpublished page claim alive; terminal destruction must preserve those
+/// issuing images until orphan completion rather than infer lifetime from a
+/// thread count or a raw address.
 ///
 /// Each thread keeps its own page-engine state (pending raw unmap retry and
 /// engine poison), as source keeps page state per Theap.
@@ -2059,6 +2065,9 @@ pub(crate) struct ChildThreadOwner {
     sequence: ThreadSequence,
     state: ChildThreadOwnerState,
     pending_os_release: Option<crate::os_page::OsAlignedPageOwner>,
+    // This owner retains the original issuing images while an unpublished
+    // claim remains terminal; the claim's raw identities grant no lifetime.
+    pending_fresh_initialization: Option<crate::single_thread::PendingFreshOsPageInitialization>,
     page_engine: ChildPageEngineState,
     /// This thread's regular dynamic thread-local slots
     /// (`mi_thread_locals_t`), allocated from the child's metadata as
@@ -2069,6 +2078,7 @@ pub(crate) struct ChildThreadOwner {
     /// Heaps, with the Theap whose engine it latched `RetryPending` (`None`
     /// once that Theap is freed); see [`ChildHeapTheapImage`].
     heap_theap_pending_os_release: Option<(Option<NonNull<Theap>>, crate::os_page::OsAlignedPageOwner)>,
+    heap_theap_pending_fresh_initialization: Option<(NonNull<Theap>, crate::single_thread::PendingFreshOsPageInitialization)>,
 }
 
 /// One child-thread Theap for a non-main Heap: the source `mi_theap_t` at
@@ -2110,6 +2120,24 @@ impl ChildThreadOwner {
     #[inline]
     pub(crate) fn theap_pointer(&self) -> Option<NonNull<Theap>> {
         self.theap.as_ref().map(|block| block.pointer.cast())
+    }
+
+    /// An original unpublished claim prevents member/image retirement before
+    /// source registration, TLD lists or cache references are changed.
+    pub(crate) fn has_pending_fresh_page_initialization(&self) -> bool {
+        self.pending_fresh_initialization.is_some()
+            || self.heap_theap_pending_fresh_initialization.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_has_main_pending_fresh_initialization(&self) -> bool {
+        self.pending_fresh_initialization.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_has_heap_theap_pending_fresh_initialization(&self, theap: NonNull<Theap>) -> bool {
+        self.heap_theap_pending_fresh_initialization.as_ref()
+            .is_some_and(|(issuer, _)| *issuer == theap)
     }
 
     /// Whether `child` is the context owner that admitted this thread.
@@ -2223,7 +2251,7 @@ impl ChildThreadOwner {
     ) -> Result<R, ChildMetadataPageEngineError> {
         if self.state != ChildThreadOwnerState::Attached
             || self.registration.is_none()
-            || self.pending_os_release.is_some()
+            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || self.page_engine != ChildPageEngineState::Active
             || !binding.is_active()
             || !binding.is_allocation_ready()
@@ -2240,7 +2268,7 @@ impl ChildThreadOwner {
         let theap = self.theap.as_ref()
             .map(|block| block.pointer.cast::<Theap>())
             .ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
-        let Self { image, heap, thread, sequence, pending_os_release, page_engine, .. } = self;
+        let Self { image, heap, thread, sequence, pending_os_release, pending_fresh_initialization, page_engine, .. } = self;
         // SAFETY: see `with_child_image`; the registration was checked above.
         let child_ref = unsafe { Pin::new_unchecked(image.as_ref()) };
         let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
@@ -2261,7 +2289,7 @@ impl ChildThreadOwner {
             crate::types::metadata_session::ChildOrdinaryTheapPageSession::new(
                 child_ref, tld, theap, *heap, *thread, *sequence,
                 pending_os_release, page_engine,
-            )
+            ).and_then(|session| session.with_fresh_initialization_slot(pending_fresh_initialization))
         }.ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
         let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
         // SAFETY: the validated child pair and session are held through the
@@ -2298,7 +2326,8 @@ impl ChildThreadOwner {
         child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildThreadTeardownError> {
-        if self.state != ChildThreadOwnerState::Attached || !self.belongs_to(child) {
+        if self.has_pending_fresh_page_initialization()
+            || self.state != ChildThreadOwnerState::Attached || !self.belongs_to(child) {
             return Err(ChildThreadTeardownError::InvalidTransition);
         }
         // A live allocation leaves its page attached and the owner retryable.
@@ -2402,6 +2431,131 @@ impl ChildThreadOwner {
         self.state = ChildThreadOwnerState::Complete;
         Ok(())
     }
+}
+
+/// The original child-thread blocks and registration awaiting source
+/// option and random phases. Dropping this owner never guesses teardown.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct PendingChildThreadInitialization {
+    keeper: ChildThreadInitializationOwner,
+    phase: crate::types::PreparedTheapInitialization,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PendingChildThreadInitialization {
+    pub(crate) fn into_phase(self) -> (ChildThreadInitializationOwner, crate::types::PreparedTheapInitialization) {
+        (self.keeper, self.phase)
+    }
+}
+
+/// Actual allocation and registration custody independent of the raw
+/// initializer phase. The enclosing admission retains the original child.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct ChildThreadInitializationOwner(ChildThreadOwner);
+
+#[cfg(target_arch = "x86_64")]
+impl ChildThreadInitializationOwner {
+    pub(crate) fn retain_refusal(mut self) -> ChildThreadStartFailure {
+        self.0.state = ChildThreadOwnerState::Terminal;
+        ChildThreadStartFailure::Retained { owner: self.0, error: ChildThreadStartError::InvalidTransition }
+    }
+
+    pub(crate) fn retain(mut self, error: crate::types::TheapMainStaticInitError) -> ChildThreadStartFailure {
+        self.0.state = ChildThreadOwnerState::Terminal;
+        ChildThreadStartFailure::Retained { owner: self.0,
+            error: ChildThreadStartError::TheapInitialization(child_dynamic_init_error(error)) }
+    }
+
+    /// Counts and publishes this original candidate, then admits its thread
+    /// owner. Every callback phase has already ended before this transition.
+    ///
+    /// # Safety
+    /// `ready` derives from this keeper's exact preparation. The caller retains
+    /// the original child admission and excludes competing image/list mutation.
+    pub(crate) unsafe fn complete_source(
+        mut self, ready: crate::types::ReadyTheapInitialization,
+    ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
+        if self.0.with_child_image(|image| image.get_ref().identity().record_statistics_theap_linked()).is_none() {
+            return Err(self.retain(crate::types::TheapMainStaticInitError::InvalidInput));
+        }
+        // SAFETY: the original candidate and its child registration stay
+        // retained through the source counter and final list publication.
+        if let Err(error) = unsafe { ready.publish_heap() } { return Err(self.retain(error)); }
+        self.0.state = ChildThreadOwnerState::Attached;
+        Ok(self.0)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn child_dynamic_init_error(error: crate::types::TheapMainStaticInitError) -> crate::types::TheapDynamicInitError {
+    use crate::types::{TheapDynamicInitError as Dynamic, TheapMainStaticInitError as Static};
+    match error {
+        Static::InvalidInput => Dynamic::InvalidInput,
+        Static::ThreadList(error) => Dynamic::ThreadList(error),
+        Static::HeapList(error) => Dynamic::HeapList(error),
+    }
+}
+
+/// A checked existing child Theap or the exact new candidate awaiting
+/// source getters. Existing cache/slot selection creates no initializer.
+#[cfg(target_arch = "x86_64")]
+pub(crate) enum ChildHeapTheapSelection {
+    Existing(NonNull<Theap>),
+    Pending(PendingChildHeapTheapInitialization),
+    Retained(ChildHeapTheapInitializationFailure),
+}
+
+/// The original child metadata or requested-arena allocation, together with
+/// its prepared phase. Neither field borrows a member or child projection.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct PendingChildHeapTheapInitialization {
+    keeper: ChildHeapTheapInitializationOwner,
+    phase: crate::types::PreparedTheapInitialization,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PendingChildHeapTheapInitialization {
+    pub(crate) fn into_phase(self) -> (ChildHeapTheapInitializationOwner, crate::types::PreparedTheapInitialization) {
+        (self.keeper, self.phase)
+    }
+}
+
+/// Exact candidate storage and source selection carried through callback
+/// windows. The enclosing real admission retains the child, Heap and TLD.
+/// Dropping this keeper deliberately leaves its original storage retained.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct ChildHeapTheapInitializationOwner {
+    block: ChildMetadataImageBlock,
+    heap: NonNull<Heap>,
+    tld: NonNull<ThreadLocalData>,
+    image: NonNull<crate::subproc::ChildSubprocessImage>,
+    key: crate::thread_local::ThreadLocalKey,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl ChildHeapTheapInitializationOwner {
+    pub(crate) fn retain(self, error: crate::types::TheapMainStaticInitError) -> ChildHeapTheapInitializationFailure {
+        ChildHeapTheapInitializationFailure { keeper: self,
+            error: ChildHeapTheapError::TheapInitialization(child_dynamic_init_error(error)) }
+    }
+
+    pub(crate) fn retain_refusal(self) -> ChildHeapTheapInitializationFailure {
+        ChildHeapTheapInitializationFailure { keeper: self, error: ChildHeapTheapError::InvalidTransition }
+    }
+}
+
+/// A refused phase carrying the original allocated candidate. Its caller
+/// retains the actual child admission rather than inferring lifetime from
+/// this ticket's addresses or forgetting a partially linked source image.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) struct ChildHeapTheapInitializationFailure {
+    pub(crate) keeper: ChildHeapTheapInitializationOwner,
+    pub(crate) error: ChildHeapTheapError,
 }
 
 /// Why a child thread's Theap for a non-main Heap could not be found,
@@ -2613,6 +2767,16 @@ impl ChildThreadOwner {
         binding: crate::process_init::ProcessMainBackingBinding,
         theap: NonNull<Theap>,
     ) -> Result<(), ChildHeapTheapError> {
+        // The task slot retains the original issuing allocation, including
+        // the reference that this path would otherwise consume. Refuse before
+        // decrementing: a scalar task identity cannot replace that custody
+        // after the image has reached its final-reference release boundary.
+        if self.pending_fresh_initialization.as_ref().is_some_and(|task| task.matches_theap(theap))
+            || self.heap_theap_pending_fresh_initialization.as_ref()
+                .is_some_and(|(issuer, _)| *issuer == theap)
+        {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
         // SAFETY: forwarded.
         if !unsafe { Theap::decref_at(theap) } {
             return Ok(());
@@ -2689,6 +2853,186 @@ impl ChildThreadOwner {
         // SAFETY: forwarded; `theap` is this thread's live Theap for `heap`.
         unsafe { self.cached_set(child, binding, theap) }?;
         Ok(theap)
+    }
+
+    /// Ends ordinary allocation after an initializer retains a partial
+    /// image on this member's actual TLD. The caller must keep the original
+    /// admission and failure keeper; this changes state, not lifetime custody.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn retain_heap_theap_initialization_failure(
+        &mut self, failure: &ChildHeapTheapInitializationFailure,
+    ) -> bool {
+        if self.image != failure.keeper.image || self.tld_pointer() != Some(failure.keeper.tld) {
+            return false;
+        }
+        self.state = ChildThreadOwnerState::Terminal;
+        self.page_engine = ChildPageEngineState::Poisoned;
+        true
+    }
+
+    /// Selects an existing source member or allocates the exact incoming
+    /// Theap without publishing it. Callback stages consume the returned
+    /// owned ticket after all child/member/metadata projections have ended.
+    ///
+    /// # Safety
+    /// This is the current thread's actual member, and `heap` belongs to its
+    /// retained child. The caller retains both and the TLD across all phases;
+    /// each image/list transition excludes overlapping projections, while
+    /// callbacks may perform independently admitted source operations.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_heap_theap_selection(
+        &mut self, child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding, heap: NonNull<Heap>,
+    ) -> Result<ChildHeapTheapSelection, ChildHeapTheapError> {
+        if self.state != ChildThreadOwnerState::Attached || !self.belongs_to(child) {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
+        let cached = crate::compiler_tls::cached_theap();
+        // SAFETY: this actual member retains every cached source reference.
+        if unsafe { Theap::heap_at(cached) } == heap.as_ptr() {
+            return Ok(ChildHeapTheapSelection::Existing(cached));
+        }
+        let key = heap_theap_key(heap).ok_or(ChildHeapTheapError::InvalidTransition)?;
+        if let Some(theap) = NonNull::new(self.thread_local_get(key).cast::<Theap>()) {
+            // SAFETY: the checked slot and existing cache are this member's
+            // retained live Theaps, and no callback crosses the transition.
+            unsafe { self.cached_set(child, binding, theap) }?;
+            return Ok(ChildHeapTheapSelection::Existing(theap));
+        }
+        let tld = self.tld_pointer().ok_or(ChildHeapTheapError::InvalidTransition)?;
+        // SAFETY: this member and child retain the incoming block's allocator
+        // and requested arena; its source memory identity remains stored.
+        let (block, refusal) = unsafe { self.allocate_heap_theap_candidate(child, binding, heap, tld) }?;
+        let keeper = ChildHeapTheapInitializationOwner {
+            block: ChildMetadataImageBlock { pointer: block.cast(), size: size_of::<ChildHeapTheapImage>() },
+            heap, tld, image: self.image, key,
+        };
+        if let Some(error) = refusal {
+            return Ok(ChildHeapTheapSelection::Retained(ChildHeapTheapInitializationFailure { keeper, error }));
+        }
+        // SAFETY: the actual allocated block remains in this keeper, and the
+        // caller retains the original child, Heap and member's TLD admission.
+        let phase = unsafe { Theap::prepare_initialization_at(block, heap, tld,
+            crate::types::TheapInitializationKind::Dynamic {
+                page_mode: crate::types::TheapPageMode::OrdinaryAbandoning,
+                tld_may_have_theaps: true,
+            }) };
+        match phase {
+            Ok(phase) => Ok(ChildHeapTheapSelection::Pending(PendingChildHeapTheapInitialization { keeper, phase })),
+            Err(error) => Ok(ChildHeapTheapSelection::Retained(keeper.retain(error))),
+        }
+    }
+
+    /// Publishes this exact candidate and only then installs its source TLS
+    /// slot/cache. A failed phase returns the allocated keeper terminally.
+    ///
+    /// # Safety
+    /// `ready` derives from `keeper`'s exact preparation. The caller retains
+    /// the original member/child/Heap admission across every callback and
+    /// excludes competing lifecycle operations through this final transition.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn complete_heap_theap_initialization(
+        &mut self, child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        keeper: ChildHeapTheapInitializationOwner, ready: crate::types::ReadyTheapInitialization,
+    ) -> Result<NonNull<Theap>, ChildHeapTheapInitializationFailure> {
+        if self.state != ChildThreadOwnerState::Attached || !self.belongs_to(child)
+            || self.image != keeper.image || self.tld_pointer() != Some(keeper.tld)
+            || heap_theap_key(keeper.heap) != Some(keeper.key) {
+            return Err(keeper.retain_refusal());
+        }
+        if child.context.with_image(|image| image.identity().record_statistics_theap_linked()).is_none() {
+            return Err(keeper.retain_refusal());
+        }
+        // SAFETY: the original allocated block and actual admission retain
+        // these exact lists through source accounting and publication.
+        if let Err(error) = unsafe { ready.publish_heap() } { return Err(keeper.retain(error)); }
+        let theap = keeper.block.pointer.cast::<Theap>();
+        // SAFETY: the exact incoming source image is now initialized; the
+        // checked member owns both its slot table and cached references.
+        let installed = unsafe { self.thread_local_set(child, binding, keeper.key, theap.as_ptr().cast()) }
+            .and_then(|()| unsafe { self.cached_set(child, binding, theap) });
+        match installed {
+            Ok(()) => Ok(theap),
+            Err(error) => Err(ChildHeapTheapInitializationFailure { keeper, error }),
+        }
+    }
+
+    /// Allocates the child source image and records exact concrete memory
+    /// provenance before any list can name it. A partial candidate is retained.
+    ///
+    /// # Safety
+    /// The caller owns this member's allocation operation and retains its
+    /// child, Heap, TLD and any requested parent arena through initialization.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn allocate_heap_theap_candidate(
+        &mut self, child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        heap: NonNull<Heap>, tld: NonNull<ThreadLocalData>,
+    ) -> Result<(NonNull<Theap>, Option<ChildHeapTheapError>), ChildHeapTheapError> {
+        let size = size_of::<ChildHeapTheapImage>();
+        // SAFETY: the retained Heap's arena identity is immutable.
+        let requested = unsafe { heap.as_ref() }.exclusive_arena_id()
+            .ok_or(ChildHeapTheapError::InvalidTransition)?;
+        let prefix = |block: NonNull<u8>, memory: MemoryId| {
+            let image = block.cast::<ChildHeapTheapImage>().as_ptr();
+            // SAFETY: this exact fresh zeroed allocation is exclusively
+            // owned. Both Rust fields precede any source list publication.
+            unsafe {
+                core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
+                core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
+                let incoming = &mut (*image).theap;
+                if requested.as_ptr().is_null() {
+                    incoming.set_dynamic_metadata_memid(memory)
+                } else {
+                    incoming.set_requested_arena_metadata_memid(memory)
+                }
+            }
+        };
+        if requested.as_ptr().is_null() {
+            let mut allocated = None;
+            let page_result = child.with_metadata_page_engine(binding, |_child, engine| {
+                allocated = engine.allocate_zeroed(size);
+            });
+            let Some(block) = allocated else {
+                return Err(page_result.err().map(ChildHeapTheapError::PageEngine)
+                    .unwrap_or(ChildHeapTheapError::TheapAllocation));
+            };
+            let provenance = prefix(block, MemoryId::malloc(block.as_ptr(), size, true));
+            // A session can refuse completion after issuing its exact block.
+            // Keep that block visible to the terminal keeper on every refusal.
+            let refusal = page_result.err().map(ChildHeapTheapError::PageEngine)
+                .or_else(|| (!provenance).then_some(ChildHeapTheapError::InvalidTransition));
+            Ok((block.cast(), refusal))
+        } else {
+            let config = binding.page_map().memory_config().map_err(|_| ChildHeapTheapError::InvalidTransition)?;
+            child.with_child_image(|image| {
+                let process = crate::os::ChildVmProcess::new(binding.process(), image)
+                    .map_err(|_| ChildHeapTheapError::InvalidTransition)?;
+                let search = crate::arena::ArenaSearch {
+                    heap_sequence: 0, heap_count: 1, thread_sequence: self.sequence.get(),
+                    numa_node: unsafe { tld.as_ref() }.numa_node(), requested, allow_pinned: true,
+                };
+                // SAFETY: this real child process and requested arena remain
+                // retained while the exact source minimum object is claimed.
+                let claim = unsafe { image.identity().arena_backing().try_allocate_requested_arena_object(
+                    process.process(), config, search, size.next_multiple_of(crate::config::ARENA_MIN_OBJ_SIZE),
+                    crate::config::ARENA_SLICE_SIZE, 0, true,
+                ) }.map_err(|_| ChildHeapTheapError::TheapAllocation)?;
+                let block = NonNull::new(claim.start()).expect("a claimed arena slice has a start");
+                if !prefix(block, claim.memory_id()) {
+                    // No source phase or list operation has begun, so this
+                    // exact claim can be returned after clearing its Rust image.
+                    unsafe { core::ptr::drop_in_place(block.cast::<ChildHeapTheapImage>().as_ptr()); }
+                    return if claim.release() { Err(ChildHeapTheapError::InvalidTransition) }
+                        else { Err(ChildHeapTheapError::TheapAllocation) };
+                }
+                // The exact memory ID now owns this claimed span through the
+                // pending source image. Refused later phases must retain it.
+                core::mem::forget(claim);
+                Ok((block.cast(), None))
+            }).ok_or(ChildHeapTheapError::InvalidTransition)?
+        }
     }
 
     /// `_mi_theap_create(heap, tld)` (`theap.c:307-341`) as a
@@ -2806,7 +3150,8 @@ impl ChildThreadOwner {
             (owner.image, owner.tld_pointer(), owner.thread, owner.sequence, owner.state, owner.config, owner.parent_subprocess)
         };
         let tld = tld.ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
-        if state != ChildThreadOwnerState::Attached
+        if unsafe { (*this).heap_theap_pending_fresh_initialization.is_some() }
+            || state != ChildThreadOwnerState::Attached
             || !binding.is_active()
             || !binding.is_allocation_ready()
             || binding.process().main_subprocess().is_none_or(|main| !core::ptr::eq(main, parent))
@@ -2820,6 +3165,7 @@ impl ChildThreadOwner {
         // SAFETY: the Theap's own state field, used only by its engine.
         let page_engine = unsafe { &mut (*theap_image).page_engine };
         let mut pending_os_release = None;
+        let mut pending_fresh_initialization = None;
         // SAFETY: the owner's registration keeps the child image allocated.
         let child_ref = unsafe { Pin::new_unchecked(image.as_ref()) };
         let child_process = crate::os::ChildVmProcess::new(binding.process(), child_ref)
@@ -2851,7 +3197,7 @@ impl ChildThreadOwner {
             crate::types::metadata_session::ChildOrdinaryTheapPageSession::new_for_non_main_heap(
                 child_ref, tld, theap, heap, thread, sequence,
                 &mut pending_os_release, &mut *page_engine, &mut allocate_arena_pages,
-            )
+            ).and_then(|session| session.with_fresh_initialization_slot(&mut pending_fresh_initialization))
         }
         .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
         let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
@@ -2867,6 +3213,18 @@ impl ChildThreadOwner {
         // A refused finish's Drop transfers any unfinished OS release into
         // `pending_os_release` and latches the engine state.
         let finished = engine.finish_operation().map_err(drop).is_ok();
+        if let Some(task) = pending_fresh_initialization.take() {
+            // The engine has ended its projections. This original thread
+            // owner retains the auxiliary image and its Heap; terminal state
+            // prevents either from being retired while this claim persists.
+            let slot = unsafe { &mut (*this).heap_theap_pending_fresh_initialization };
+            if slot.is_none() {
+                *slot = Some((theap, task));
+            } else {
+                core::mem::forget(task);
+            }
+            *page_engine = ChildPageEngineState::Poisoned;
+        }
         if let Some(owner) = pending_os_release.take() {
             // See `ChildHeapTheapImage`: the thread keeps one retry slot.
             // SAFETY: the engine is gone; the owner is not otherwise borrowed.
@@ -2900,6 +3258,10 @@ impl ChildThreadOwner {
         child: *mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildHeapTheapError> {
+        // Refuse before freeing source locals or unlinking any issuer image.
+        if unsafe { (*this).has_pending_fresh_page_initialization() } {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
         // SAFETY: forwarded; the owner and child are not otherwise borrowed.
         unsafe { (*this).free_thread_locals(&mut *child, binding) }?;
         // SAFETY: short reads of this owner's identities.
@@ -2943,6 +3305,9 @@ impl ChildThreadOwner {
         child: &mut ChildMainHeapContextOwner<'_>,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildHeapTheapError> {
+        if self.has_pending_fresh_page_initialization() {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
         // SAFETY: the immutable source empty Theap is process-static.
         let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
         // SAFETY: forwarded.
@@ -3322,6 +3687,7 @@ impl ChildContextOwner {
             context: self,
             heap_storage: Some(heap),
             pending_os_release: None,
+            pending_fresh_initialization: None,
             page_engine: ChildPageEngineState::Active,
             metadata_pages_may_exist: false,
             stage: ChildMainHeapStage::Registered,
@@ -3444,6 +3810,11 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_has_pending_fresh_initialization(&self) -> bool {
+        self.pending_fresh_initialization.is_some()
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_is_heap_ready(&self) -> bool {
         self.stage == ChildMainHeapStage::HeapReady
     }
@@ -3486,7 +3857,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         owner: crate::os_page::OsAlignedPageOwner,
     ) -> Result<(), crate::os_page::OsAlignedPageOwner> {
-        if self.pending_os_release.is_some() || self.stage == ChildMainHeapStage::Terminal {
+        if self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.stage == ChildMainHeapStage::Terminal {
             return Err(owner);
         }
         let belongs_to_child = self.context.with_image(|child| {
@@ -3548,7 +3919,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             MemoryId,
         ) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some()
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || !self.page_engine.permits_page_projection() { return None; }
         let Self { context, heap_storage, .. } = self;
         let heap = heap_storage.as_mut()?;
@@ -3564,7 +3935,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         operation: impl for<'theap> FnOnce(&'theap mut Theap) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some()
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || !self.page_engine.permits_page_projection() { return None; }
         self.context.with_lease(|mut lease| lease.with_metadata_theap(operation))
     }
@@ -3582,7 +3953,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             MemoryId,
         ) -> R,
     ) -> Option<R> {
-        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some()
+        if self.stage != ChildMainHeapStage::HeapReady || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || !self.page_engine.permits_page_projection() { return None; }
         let Self { context, heap_storage, .. } = self;
         let heap_storage = heap_storage.as_mut()?;
@@ -3613,7 +3984,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             return Err(ChildMetadataPageEngineError::SessionNotReady);
         }
         if self.stage != ChildMainHeapStage::HeapReady
-            || self.pending_os_release.is_some()
+            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || self.page_engine != ChildPageEngineState::Active
             || !binding.is_active()
             || !binding.is_allocation_ready()
@@ -3629,6 +4000,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             context,
             heap_storage,
             pending_os_release,
+            pending_fresh_initialization,
             page_engine,
             metadata_pages_may_exist,
             ..
@@ -3668,7 +4040,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                     pending_os_release,
                     page_engine,
                     metadata_pages_may_exist,
-                )
+                ).and_then(|session| session.with_fresh_initialization_slot(pending_fresh_initialization))
             }
             .ok_or(ChildMetadataPageEngineError::SessionNotReady)?;
             let backing = crate::page_backing::ChildMetadataArenaBacking::new(pair);
@@ -3712,9 +4084,102 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
+        // SAFETY: this direct compatibility transition owns the current
+        // thread's candidate and excludes concurrent child operations.
+        let mut owner = unsafe { self.allocate_child_thread_owner(binding) }?;
+        let tld_pointer = owner.tld.as_ref().expect("stored child TLD block").pointer;
+        let theap_pointer = owner.theap.as_ref().expect("stored child Theap block").pointer;
+        let initialize = self.heap_storage.as_mut().and_then(|storage| storage.with_heap(|mut heap| {
+            // SAFETY: the original candidate blocks remain exclusively owned
+            // and no image or list projection overlaps this initialization.
+            let tld = unsafe { &mut *tld_pointer.as_ptr().cast::<ThreadLocalData>() };
+            let theap = unsafe { &mut *theap_pointer.as_ptr().cast::<Theap>() };
+            let memory = MemoryId::malloc(theap_pointer.as_ptr(), size_of::<Theap>(), true);
+            unsafe {
+                if !theap.set_dynamic_metadata_memid(memory) {
+                    return Err(crate::types::TheapDynamicInitError::InvalidInput);
+                }
+                theap.initialize_dynamic_metadata(heap.as_mut().get_unchecked_mut(), tld,
+                    crate::types::TheapPageMode::OrdinaryAbandoning)
+            }
+        }));
+        match initialize {
+            Some(Ok(())) => {
+                owner.state = ChildThreadOwnerState::Attached;
+                owner.with_child_image(|image| image.get_ref().identity().record_statistics_theap_linked());
+                Ok(owner)
+            }
+            Some(Err(error)) => {
+                owner.state = ChildThreadOwnerState::Terminal;
+                Err(ChildThreadStartFailure::Retained { owner,
+                    error: ChildThreadStartError::TheapInitialization(error) })
+            }
+            None => {
+                owner.state = ChildThreadOwnerState::Terminal;
+                Err(ChildThreadStartFailure::Retained { owner,
+                    error: ChildThreadStartError::InvalidTransition })
+            }
+        }
+    }
+
+    /// Allocates and prepares the original child-thread images without
+    /// publishing a Heap predicate or retaining an image projection.
+    ///
+    /// # Safety
+    /// The caller retains this child and the actual current-thread operation
+    /// across every option and warning callback. No competing child or TLS
+    /// lifecycle operation may retire the resulting candidate or registration.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_child_thread_initialization(
+        &mut self, binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<PendingChildThreadInitialization, ChildThreadStartFailure> {
+        // SAFETY: this candidate uses the same exact allocation and
+        // registration route while the caller owns the child operation.
+        let mut owner = unsafe { self.allocate_child_thread_owner(binding) }?;
+        let theap = owner.theap.as_ref().expect("stored child Theap block").pointer.cast::<Theap>();
+        let tld = owner.tld.as_ref().expect("stored child TLD block").pointer.cast::<ThreadLocalData>();
+        // SAFETY: this owner retains the original allocated blocks and
+        // registration; the caller's actual child admission retains its Heap.
+        let prepared = unsafe {
+            // The metadata allocation supplies zeroed storage. Establish the
+            // empty Theap image before the typed initializer validates it.
+            core::ptr::write(theap.as_ptr(), Theap::empty());
+            if (*theap.as_ptr()).set_dynamic_metadata_memid(
+                MemoryId::malloc(theap.as_ptr().cast(), size_of::<Theap>(), true)) {
+                Theap::prepare_initialization_at(theap, owner.heap, tld,
+                    crate::types::TheapInitializationKind::Dynamic {
+                        page_mode: crate::types::TheapPageMode::OrdinaryAbandoning,
+                        tld_may_have_theaps: false,
+                    })
+            } else {
+                Err(crate::types::TheapMainStaticInitError::InvalidInput)
+            }
+        };
+        match prepared {
+            Ok(phase) => Ok(PendingChildThreadInitialization {
+                keeper: ChildThreadInitializationOwner(owner), phase,
+            }),
+            Err(error) => {
+                owner.state = ChildThreadOwnerState::Terminal;
+                Err(ChildThreadStartFailure::Retained { owner,
+                    error: ChildThreadStartError::TheapInitialization(child_dynamic_init_error(error)) })
+            }
+        }
+    }
+
+    /// Allocates and registers the candidate while the real child operation
+    /// owns its metadata entry. The returned owner remains unpublished.
+    ///
+    /// # Safety
+    /// The caller owns current-thread TLS admission and excludes competing
+    /// child operations until the allocated blocks and registration are retained.
+    unsafe fn allocate_child_thread_owner(
+        &mut self,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
         if self.stage != ChildMainHeapStage::HeapReady
             || self.page_engine != ChildPageEngineState::Active
-            || self.pending_os_release.is_some()
+            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
         {
             return Err(ChildThreadStartFailure::Rejected(
                 ChildThreadStartError::InvalidTransition,
@@ -3740,9 +4205,11 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             parent_subprocess: self.context.parent_subprocess,
             config: self.context.config,
             pending_os_release: None,
+            pending_fresh_initialization: None,
             page_engine: ChildPageEngineState::Active,
             thread_locals: None,
             heap_theap_pending_os_release: None,
+            heap_theap_pending_fresh_initialization: None,
             tld: None,
             theap: None,
             registration: None,
@@ -3803,59 +4270,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 owner.theap = Some(theap);
                 owner.registration = Some(registration);
                 owner.sequence = sequence;
-                let tld_pointer = owner.tld.as_ref().expect("stored child TLD block").pointer;
-                let theap_pointer = owner.theap.as_ref().expect("stored child Theap block").pointer;
-                let initialize = self
-                    .heap_storage
-                    .as_mut()
-                    .and_then(|heap_storage| heap_storage.with_heap(|mut heap| {
-                        // SAFETY: both addresses are exact fresh blocks from
-                        // this child's metadata Theap; their owner tokens stay
-                        // in `owner`, and this operation is the sole child
-                        // thread initializer for the pinned child Heap.
-                        let tld = unsafe { &mut *tld_pointer.as_ptr().cast::<ThreadLocalData>() };
-                        let theap = unsafe { &mut *theap_pointer.as_ptr().cast::<Theap>() };
-                        let theap_memid = MemoryId::malloc(
-                            theap_pointer.as_ptr(),
-                            size_of::<Theap>(),
-                            true,
-                        );
-                        unsafe {
-                            if !theap.set_dynamic_metadata_memid(theap_memid) {
-                                return Err(crate::types::TheapDynamicInitError::InvalidInput);
-                            }
-                            theap.initialize_dynamic_metadata(
-                                heap.as_mut().get_unchecked_mut(),
-                                tld,
-                                crate::types::TheapPageMode::OrdinaryAbandoning,
-                            )
-                        }
-                    }));
-                match initialize {
-                    Some(Ok(())) => {
-                        owner.state = ChildThreadOwnerState::Attached;
-                        // theap.c:296-298: a non-detached Theap counts in its
-                        // subprocess once `_mi_theap_init` has linked it.
-                        owner.with_child_image(|image| {
-                            image.get_ref().identity().record_statistics_theap_linked();
-                        });
-                        Ok(owner)
-                    }
-                    Some(Err(error)) => {
-                        owner.state = ChildThreadOwnerState::Terminal;
-                        Err(ChildThreadStartFailure::Retained {
-                            owner,
-                            error: ChildThreadStartError::TheapInitialization(error),
-                        })
-                    }
-                    None => {
-                        owner.state = ChildThreadOwnerState::Terminal;
-                        Err(ChildThreadStartFailure::Retained {
-                            owner,
-                            error: ChildThreadStartError::InvalidTransition,
-                        })
-                    }
-                }
+                Ok(owner)
             }
         }
     }
@@ -4096,7 +4511,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<(), ChildMetadataPageEngineError> {
         if self.page_engine == ChildPageEngineState::RetryComplete {
-            if self.pending_os_release.is_some() || self.metadata_pages_may_exist {
+            if self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.metadata_pages_may_exist {
                 return Err(ChildMetadataPageEngineError::InvalidTransition);
             }
             let result = self.context.with_image(|child| {
@@ -4342,7 +4757,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Result<(), ChildMetadataTheapError> {
         if self.stage != ChildMainHeapStage::RegistryUnlinked
             || self.metadata_pages_may_exist
-            || self.pending_os_release.is_some()
+            || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || !self.page_engine.permits_teardown() {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         }
@@ -4376,7 +4791,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn release_metadata_theap_after_detach(
         &mut self,
     ) -> Result<(), ChildMainHeapReleaseError> {
-        if self.stage != ChildMainHeapStage::TheapDetached || self.pending_os_release.is_some()
+        if self.stage != ChildMainHeapStage::TheapDetached || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || !self.page_engine.permits_teardown() {
             return Err(ChildMainHeapReleaseError::InvalidTransition);
         }
@@ -4433,7 +4848,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn unlink_child_heap(
         &mut self,
     ) -> Result<(), crate::types::heap_registry::SourceHeapRegistryError> {
-        if self.stage != ChildMainHeapStage::MetadataTheapReleased || self.pending_os_release.is_some()
+        if self.stage != ChildMainHeapStage::MetadataTheapReleased || self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || !self.page_engine.permits_teardown() {
             return Err(crate::types::heap_registry::SourceHeapRegistryError::InvalidImage);
         }
@@ -4505,7 +4920,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         let retained = |owner, stage, error| {
             Err(ChildMainHeapReleaseFailure::Retained { owner, stage, error })
         };
-        if self.pending_os_release.is_some()
+        if self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some()
             || self.metadata_pages_may_exist
             || !self.page_engine.permits_teardown()
             || !matches!(
@@ -4754,6 +5169,18 @@ enum MetadataPageAllocator<'owner> {
 }
 
 impl MetadataPageAllocator<'_> {
+    /// Moves the exact original claim retained by a direct allocation adapter.
+    /// The caller keeps its preallocation issuer admission through settlement.
+    #[cfg(target_arch = "x86_64")]
+    fn take_pending_fresh_initialization(&mut self)
+        -> Option<crate::single_thread::PendingFreshOsPageInitialization> {
+        match self {
+            Self::LegacySelectedArena(engine) => engine.take_pending_fresh_initialization(),
+            Self::Process(engine) => engine.take_pending_fresh_initialization(),
+            Self::CanonicalProcess(engine) => engine.take_pending_fresh_initialization(),
+        }
+    }
+
     unsafe fn initialize_child_metadata_theap(
         &mut self,
         parent: &'static MainSubprocess,
@@ -4910,6 +5337,22 @@ impl SourceInitializationOutputWitness<'_, '_, '_> {
             || self.issuer.allocator.get_ref().detached_metadata_theap.load(Ordering::Acquire) != self.theap.as_ptr()
         { return Err(Error::OriginMismatch); }
         Ok(())
+    }
+
+    /// Moves a failed candidate from the same preadmitted persistent issuer.
+    /// The returned original task carries no replacement diagnostic admission;
+    /// settlement retains this witness and all actual issuing owners. The
+    /// metadata entry ends before the caller receives the claim.
+    pub(crate) fn take_retained_initialization_task(&self)
+        -> Result<Option<crate::single_thread::PendingFreshOsPageInitialization>,
+            SourceInitializationOutputAdmissionError> {
+        self.validate()?;
+        let mut entry = self.issuer.allocator.enter()
+            .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
+        if entry.status() != READY { return Ok(None); }
+        entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess)
+            .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
+        Ok(entry.allocator().take_pending_fresh_initialization())
     }
 
     /// Revalidates this original domain after all allocator projections end.
@@ -6696,6 +7139,93 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn child_metadata_engine_drop_retains_original_fresh_os_claim() {
+        use crate::subproc::lifecycle::*;
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        struct Probe {
+            map: crate::process_page_map::ProcessPageMapRoot,
+            observations: core::cell::Cell<usize>,
+            theap: core::cell::Cell<Option<NonNull<Theap>>>,
+            baseline: core::cell::Cell<Option<crate::statistics::FinalStatCount>>,
+        }
+        unsafe fn observe(state: &crate::types::PageValiditySnapshot,
+            page: NonNull<crate::types::Page>, argument: *mut core::ffi::c_void) {
+            // SAFETY: the scoped observer owns its stack probe, and the engine
+            // retains this exact initialized committed region before lists or
+            // clients are published. Only one owned backing byte changes.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            probe.observations.set(probe.observations.get() + 1);
+            let theap = probe.theap.get().expect("original metadata issuer");
+            let baseline = probe.baseline.get().unwrap();
+            let registered = unsafe { probe.map.lookup_registered_page(state.area.as_ptr()) }.unwrap();
+            let pages = unsafe { Theap::final_statistics_at(theap) }.unwrap().1.pages;
+            assert_eq!((registered, pages.total, pages.current),
+                (Some(page), baseline.total + 1, baseline.current + 1),
+                "original PageMap and statistics are registered before the genuine source refusal");
+            assert_eq!(state.used, 0);
+            assert_eq!(state.capacity, 0);
+            assert!(state.free.is_null());
+            unsafe { state.area.as_ptr().write(0x5a) };
+        }
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::child_metadata_engine_drop_retains_original_fresh_os_claim", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                let id = native_subproc_new().expect("actual child issuer");
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                let probe = Probe { map: binding.page_map(), observations: core::cell::Cell::new(0),
+                    theap: core::cell::Cell::new(None), baseline: core::cell::Cell::new(None) };
+                let result = unsafe { id.with_owner(|owner| {
+                    let owner = owner.as_mut().unwrap();
+                    // SAFETY: the probe and actual child issuer remain live
+                    // throughout this synchronous engine operation. The
+                    // callback neither allocates nor reenters the allocator.
+                    let result = crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                        observe, core::ptr::from_ref(&probe).cast_mut().cast(), || {
+                            owner.with_metadata_page_engine(binding, |child, engine| {
+                                let original_theap = engine.allocation_theap();
+                                probe.theap.set(Some(original_theap));
+                                probe.baseline.set(Some(Theap::final_statistics_at(original_theap).unwrap().1.pages));
+                                // Detached metadata has no ordinary caller-stack
+                                // frequency phase. Its actual allocation entry
+                                // retains the failed candidate in this engine.
+                                assert!(engine.allocate_aligned(7, 128 * 1024).is_none());
+                                let task = engine.take_pending_fresh_initialization()
+                                    .expect("actual failed source initialization retains its original claim");
+                                assert!(task.matches_theap(original_theap));
+                                assert!(task.belongs_to_subprocess(child.identity()));
+                                assert_eq!(task.failure(), crate::single_thread::FreshOsPageInitializationFailure::SourceObservation(
+                                    crate::page_validity::SourcePageInvariant::InitiallyZero));
+                                assert!(!task.has_retirement_refusal_marker());
+                                assert!(engine.retain_fresh_os_initialization(task).is_ok());
+                            })
+                        });
+                    assert!(owner.pending_fresh_initialization.is_some(),
+                        "engine Drop transfers the original claim to its retained issuer");
+                    let retained = owner.pending_fresh_initialization.as_ref().unwrap();
+                    assert!(retained.matches_theap(probe.theap.get().unwrap()));
+                    assert!(retained.has_retirement_refusal_marker());
+                    assert!(owner.context.with_image(|child|
+                        retained.belongs_to_subprocess(child.identity())).unwrap());
+                    assert_eq!(owner.page_engine, ChildPageEngineState::Poisoned);
+                    assert!(matches!(owner.with_metadata_page_engine(binding, |_, _| ()),
+                        Err(ChildMetadataPageEngineError::InvalidTransition)));
+                    result
+                }) }.expect("actual child lock");
+                assert_eq!(probe.observations.get(), 1);
+                assert!(matches!(result, Err(ChildMetadataPageEngineError::EngineRetained)));
+                // The actual child control, Heap, metadata Theap and PageMap
+                // remain retained with the terminal task; no fabricated retry
+                // or diagnostic admission is created from their addresses.
+            });
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]

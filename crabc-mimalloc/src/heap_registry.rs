@@ -17,6 +17,8 @@ use crabc_core::Errno;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SourceHeapRegistryError {
     InvalidImage,
+    #[cfg(target_arch = "x86_64")]
+    RetainedFreshTask,
     ListLockAcquire(Errno),
     ListLockRelease(Errno),
 }
@@ -671,6 +673,14 @@ impl super::ThreadLocalData {
                     }
                 }
             };
+            #[cfg(target_arch = "x86_64")]
+            if unsafe { (&*core::ptr::addr_of!((*current).retained_fresh_task)) }.load(Ordering::Acquire) {
+                if let Some(guard) = heap_guard {
+                    guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                }
+                tld_guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                return Err(SourceHeapRegistryError::RetainedFreshTask);
+            }
             if heap_guard.is_some() {
                 // SAFETY: both locks protect the two intrusive lists; this
                 // Theap still carries its Heap-list reference for the caller.
@@ -731,6 +741,12 @@ impl super::ThreadLocalData {
             let heap = unsafe { &*heap };
             match heap.theaps_lock.try_lock() {
                 Some(guard) => {
+                    #[cfg(target_arch = "x86_64")]
+                    if unsafe { (&*core::ptr::addr_of!((*theap).retained_fresh_task)) }
+                        .load(Ordering::Acquire) {
+                        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                        return Err(SourceHeapRegistryError::RetainedFreshTask);
+                    }
                     // SAFETY: the held Heap lock serializes its list.
                     unsafe {
                         heap.statistics.merge_from_and_reset(&(*theap).statistics);
@@ -799,6 +815,24 @@ impl Heap {
     ) -> Result<(), SourceHeapRegistryError> {
         loop {
             let guard = self.theaps_lock.lock().map_err(SourceHeapRegistryError::ListLockAcquire)?;
+            // Preflight the complete list before modifying any TLD link.
+            // The actual issuer slot retains each marked task and its image
+            // owners; this bit only rejects retirement under their list lock.
+            #[cfg(target_arch = "x86_64")]
+            {
+                let mut current = unsafe { self.theaps.get().read() };
+                while let Some(theap) = core::ptr::NonNull::new(current) {
+                    // SAFETY: the caller retains every listed image, and the
+                    // held Heap lock serializes marker and link changes.
+                    unsafe {
+                        if (&*core::ptr::addr_of!((*theap.as_ptr()).retained_fresh_task)).load(Ordering::Acquire) {
+                            guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                            return Err(SourceHeapRegistryError::RetainedFreshTask);
+                        }
+                        current = *(*theap.as_ptr()).hnext.get();
+                    }
+                }
+            }
             let mut all_detached = true;
             let mut current = unsafe { self.theaps.get().read() };
             while let Some(theap) = core::ptr::NonNull::new(current) {

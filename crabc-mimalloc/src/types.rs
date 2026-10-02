@@ -48,6 +48,8 @@ use core::mem::{align_of, size_of};
 use core::num::NonZeroUsize;
 use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize, Ordering};
+#[cfg(target_arch = "x86_64")]
+use core::sync::atomic::AtomicBool;
 
 use crate::config::{
     BIN_COUNT, BIN_FULL, LARGE_MAX_OBJ_WSIZE, MAX_ARENAS, PAGES_DIRECT,
@@ -1255,6 +1257,11 @@ impl Heap {
                 let _ = guard.unlock();
                 return Err(HeapTheapListError::Membership);
             }
+            #[cfg(target_arch = "x86_64")]
+            if (&*core::ptr::addr_of!((*theap).retained_fresh_task)).load(Ordering::Acquire) {
+                guard.unlock().map_err(HeapTheapListError::Lock)?;
+                return Err(HeapTheapListError::RetainedFreshTask);
+            }
             let next = *(*theap).hnext.get();
             let previous = *(*theap).hprev.get();
             if !next.is_null() {
@@ -1587,7 +1594,28 @@ impl Heap {
 pub(crate) enum HeapTheapListError {
     Busy,
     Membership,
+    #[cfg(target_arch = "x86_64")]
+    RetainedFreshTask,
     Lock(crabc_core::Errno),
+}
+
+/// Actual progress of a persistent task's retirement-refusal transition.
+/// An unlock error after the bit changed does not undo that publication.
+/// Neither disposition grants allocation lifetime or identifies a task.
+#[cfg(target_arch = "x86_64")]
+pub(crate) enum RetainedFreshTaskMarkerOutcome {
+    Unchanged(HeapTheapListError),
+    Changed(Result<(), crabc_core::Errno>),
+}
+
+#[cfg(target_arch = "x86_64")]
+impl RetainedFreshTaskMarkerOutcome {
+    fn into_result(self) -> Result<(), HeapTheapListError> {
+        match self {
+            Self::Unchanged(error) => Err(error),
+            Self::Changed(result) => result.map_err(HeapTheapListError::Lock),
+        }
+    }
 }
 
 /// A rejected mutation of the private `heap->os_abandoned_pages` list.
@@ -3332,6 +3360,15 @@ impl ThreadLocalData {
             ));
         }
 
+        #[cfg(target_arch = "x86_64")]
+        if unsafe { (&*core::ptr::addr_of!((*theap).retained_fresh_task)) }.load(Ordering::Acquire) {
+            let _ = tld_guard.unlock();
+            let _ = heap_guard.unlock();
+            return Err(ChildTheapDetachError::BeforeTldUnlink(
+                ThreadLocalTheapListError::Heap(HeapTheapListError::RetainedFreshTask),
+            ));
+        }
+
         // Match `_mi_heap_detach_theaps`: remove and clear the TLD relation
         // while the Heap edge and Release `heap` publication are still live.
         unsafe {
@@ -3467,6 +3504,13 @@ impl ThreadLocalData {
             let _ = tld_guard.unlock();
             let _ = heap_guard.unlock();
             return Err(ThreadLocalTheapListError::Membership);
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        if unsafe { (&*core::ptr::addr_of!((*theap).retained_fresh_task)) }.load(Ordering::Acquire) {
+            let _ = tld_guard.unlock();
+            let _ = heap_guard.unlock();
+            return Err(ThreadLocalTheapListError::Heap(HeapTheapListError::RetainedFreshTask));
         }
 
         // SAFETY: the validated member is the current TLD head. This is the
@@ -6817,6 +6861,11 @@ pub(crate) struct Theap {
     // internal alignment gap; the page queues retain their source offset.
     #[cfg(target_arch = "x86_64")]
     main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle,
+    // One actual issuer slot retains an unfinished task and its original
+    // owners. This bit only refuses retirement; it never grants lifetime or
+    // callback admission. Changes and list detachment share the Heap lock.
+    #[cfg(target_arch = "x86_64")]
+    retained_fresh_task: AtomicBool,
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
     guarded_size_min: usize,
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
@@ -6829,6 +6878,20 @@ pub(crate) struct Theap {
     memid: MemoryId,
     statistics: HeapTheapStatistics,
 }
+
+// The source's three flag bytes precede the next word-aligned field. Both
+// private lifecycle bytes and the refusal bit must fit that existing gap.
+#[cfg(target_arch = "x86_64")]
+const _: () = {
+    let gap_end = core::mem::offset_of!(Theap, page_full_retain)
+        + core::mem::size_of::<isize>() + core::mem::align_of::<usize>();
+    assert!(core::mem::offset_of!(Theap, retained_fresh_task)
+        + core::mem::size_of::<AtomicBool>() <= gap_end);
+    #[cfg(feature = "mi-guarded")]
+    assert!(core::mem::offset_of!(Theap, guarded_size_min) == gap_end);
+    #[cfg(not(feature = "mi-guarded"))]
+    assert!(core::mem::offset_of!(Theap, pages) == gap_end);
+};
 
 /// The collection continuation selected by source generic-allocation
 /// administration.
@@ -7057,6 +7120,8 @@ impl Theap {
             is_detached: true,
             #[cfg(target_arch = "x86_64")]
             main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle::empty(),
+            #[cfg(target_arch = "x86_64")]
+            retained_fresh_task: AtomicBool::new(false),
             #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
             guarded_size_min: 0,
             #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
@@ -8187,6 +8252,119 @@ impl Theap {
     pub(crate) unsafe fn main_heap_lifecycle_at(theap: NonNull<Self>)
         -> *mut crate::subproc::main_heaps::MainHeapTheapLifecycle {
         unsafe { core::ptr::addr_of_mut!((*theap.as_ptr()).main_heap_lifecycle) }
+    }
+
+    /// Observes persistent unfinished-task refusal before owner teardown.
+    /// This does not replace the Heap-list-locked retirement preflight.
+    ///
+    /// # Safety
+    /// The caller retains the original initialized Theap allocation through
+    /// this bounded atomic read. A pointer recovered from lookup or matching
+    /// identity alone does not establish that lifetime. The result grants no
+    /// task, mutation, cancellation or subsequent image-access authority.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn retains_fresh_initialization_at(theap: NonNull<Self>) -> bool {
+        unsafe { (&*core::ptr::addr_of!((*theap.as_ptr()).retained_fresh_task)).load(Ordering::Acquire) }
+    }
+
+    /// Marks the single unfinished task transferred into this issuer's
+    /// persistent owner slot. Ordinary nested callback allocations do not
+    /// mark this bit. A second retained task is refused without changing it.
+    ///
+    /// # Safety
+    /// The actual selected owner retains the original Heap, Theap and TLD
+    /// allocations before the candidate and throughout this call. Its typed
+    /// persistent slot must retain that exact unfinished task and those
+    /// owners before the outer admission ends, including on an unlock error
+    /// after publication. Pointer equality and this bit grant no ownership.
+    /// A failed publication cannot release or abandon the retained task.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn mark_retained_fresh_task_at(
+        theap: NonNull<Self>, heap: NonNull<Heap>,
+    ) -> Result<(), HeapTheapListError> {
+        unsafe { Self::mark_retained_fresh_task_at_with_progress(theap, heap) }.into_result()
+    }
+
+    /// Preserves whether the mark was published before any unlock error.
+    ///
+    /// # Safety
+    /// All original-owner and exact persistent-slot obligations of
+    /// `mark_retained_fresh_task_at` apply. A changed outcome belongs only to
+    /// that actual task's linear producer state, not another matching pointer.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn mark_retained_fresh_task_at_with_progress(
+        theap: NonNull<Self>, heap: NonNull<Heap>,
+    ) -> RetainedFreshTaskMarkerOutcome {
+        unsafe { Self::change_retained_fresh_task_at(theap, heap, false) }
+    }
+
+    /// Ends refusal only after the exact retained task has settled once.
+    ///
+    /// # Safety
+    /// The actual slot still retains the original issuer and Heap, and the
+    /// task no longer owns unfinished metadata, callbacks or cleanup. No
+    /// other task can occupy the slot until this operation completes. The
+    /// marker is not cancellation or permission to discard task ownership.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn clear_retained_fresh_task_at(
+        theap: NonNull<Self>, heap: NonNull<Heap>,
+    ) -> Result<(), HeapTheapListError> {
+        unsafe { Self::clear_retained_fresh_task_at_with_progress(theap, heap) }.into_result()
+    }
+
+    /// Preserves whether the refusal ended before any unlock error.
+    ///
+    /// # Safety
+    /// All exact-task settlement and original-owner obligations of
+    /// `clear_retained_fresh_task_at` apply. A changed outcome does not admit
+    /// any further access to an issuer whose task has already settled.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn clear_retained_fresh_task_at_with_progress(
+        theap: NonNull<Self>, heap: NonNull<Heap>,
+    ) -> RetainedFreshTaskMarkerOutcome {
+        unsafe { Self::change_retained_fresh_task_at(theap, heap, true) }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn change_retained_fresh_task_at(
+        theap: NonNull<Self>, heap: NonNull<Heap>, expected: bool,
+    ) -> RetainedFreshTaskMarkerOutcome {
+        // SAFETY: the original owner retains both images; only synchronized
+        // list and initialized scalar fields are projected under this lock.
+        let guard = match unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).theaps_lock) }.lock() {
+            Ok(guard) => guard,
+            Err(error) => return RetainedFreshTaskMarkerOutcome::Unchanged(HeapTheapListError::Lock(error)),
+        };
+        let raw = theap.as_ptr();
+        let is_member = unsafe {
+            if (*raw).heap.load(Ordering::Acquire) != heap.as_ptr() {
+                false
+            } else {
+                // Only the matching publication selects the lock governing
+                // these ordinary links; a foreign Heap grants no such read.
+                let previous = *(*raw).hprev.get();
+                let next = *(*raw).hnext.get();
+                !core::ptr::addr_of!((*raw).tld).read().is_null()
+                    && (if previous.is_null() { (*heap.as_ptr()).theaps.get().read() == raw }
+                        else { *(*previous).hnext.get() == raw })
+                    && (next.is_null() || *(*next).hprev.get() == raw)
+            }
+        };
+        if !is_member {
+            return RetainedFreshTaskMarkerOutcome::Unchanged(match guard.unlock() {
+                Ok(()) => HeapTheapListError::Membership,
+                Err(error) => HeapTheapListError::Lock(error),
+            });
+        }
+        let marker = unsafe { &*core::ptr::addr_of!((*raw).retained_fresh_task) };
+        if marker.load(Ordering::Acquire) != expected {
+            return RetainedFreshTaskMarkerOutcome::Unchanged(match guard.unlock() {
+                Ok(()) => HeapTheapListError::Busy,
+                Err(error) => HeapTheapListError::Lock(error),
+            });
+        }
+        marker.store(!expected, Ordering::Release);
+        RetainedFreshTaskMarkerOutcome::Changed(guard.unlock())
     }
 
     /// Reads the source Heap link after it becomes retained-list storage.
@@ -10174,6 +10352,13 @@ mod tests {
         let theap = Theap::empty();
         assert!(theap.main_heap_lifecycle.engine == MainHeapTheapEngineState::Active);
         assert!(theap.main_heap_lifecycle.metadata == MainHeapTheapMetadataOwnership::Unowned);
+        assert!(!theap.retained_fresh_task.load(Ordering::Acquire));
+        let refusal_end = core::mem::offset_of!(Theap, retained_fresh_task)
+            + core::mem::size_of::<AtomicBool>();
+        #[cfg(feature = "mi-guarded")]
+        assert!(refusal_end <= core::mem::offset_of!(Theap, guarded_size_min));
+        #[cfg(not(feature = "mi-guarded"))]
+        assert!(refusal_end <= core::mem::offset_of!(Theap, pages));
         std::println!("size={}", core::mem::size_of::<Theap>());
         std::println!("alignment={}", core::mem::align_of::<Theap>());
         std::println!("offset.pages_free_direct={}", core::mem::offset_of!(Theap, pages_free_direct));

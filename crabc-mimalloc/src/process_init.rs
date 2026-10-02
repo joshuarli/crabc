@@ -1148,6 +1148,14 @@ impl ProcessMainInitializationStorage {
             config,
             subprocess,
         };
+        #[cfg(target_arch = "x86_64")]
+        let startup_owner = match attachment.startup_owner_binding() {
+            Ok(binding) => binding,
+            Err(error) => {
+                self.publish_terminal_state_and_release(completion, RETAINED);
+                return Err(ProcessMainInitError::InitialThread(error));
+            }
+        };
         let owner = ProcessMainThread {
             storage: self,
             attachment: Some(attachment),
@@ -1159,6 +1167,8 @@ impl ProcessMainInitializationStorage {
             storage: self, completion: Some(completion), config, vm_process, metadata,
             #[cfg(target_arch = "x86_64")]
             subprocess,
+            #[cfg(target_arch = "x86_64")]
+            startup_owner,
             #[cfg(target_arch = "x86_64")]
             diagnostics,
             #[cfg(target_arch = "x86_64")]
@@ -1651,13 +1661,98 @@ pub(crate) struct ProcessMainStartup {
     #[cfg(target_arch = "x86_64")]
     subprocess: &'static MainSubprocess,
     #[cfg(target_arch = "x86_64")]
+    startup_owner: crate::main_theap::MainStaticStartupOwnerBinding,
+    #[cfg(target_arch = "x86_64")]
     diagnostics: ProcessStartupDiagnostics<'static>,
     #[cfg(target_arch = "x86_64")]
     entry: ProcessStartEntry,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
+/// Output authority for an allocation issued by the ordinary initial
+/// Theap after attachment and before the winning startup completes. The
+/// borrowed completion and original owner binding remain live through the
+/// synchronous callback; no Heap, Theap, or random reference crosses output.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct SourceAttachedRuntimeOutputWitness<'startup> {
+    startup: &'startup ProcessMainStartup,
+    process: VmProcess<'static>,
+    output: &'static OutputOwner,
+    page_map: ProcessPageMapRoot,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl SourceAttachedRuntimeOutputWitness<'_> {
+    fn validate(&self) -> Result<(), BootstrapOutputAdmissionError> {
+        let startup = self.startup;
+        let thread = current_thread_identity().ok_or(BootstrapOutputAdmissionError::Invalid)?;
+        let once_thread = OnceThreadId::new(thread.get()).ok_or(BootstrapOutputAdmissionError::Invalid)?;
+        if startup.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED
+            || thread.get() != startup.storage.initializing_thread.load(Ordering::Relaxed)
+            || !startup.completion.as_ref().is_some_and(|completion|
+                completion.matches_active_owner(&startup.storage.process_once, once_thread))
+            || !core::ptr::eq(startup.storage.diagnostic_output_ptr.load(Ordering::Acquire), self.output)
+            || !core::ptr::eq(startup.storage.vm_policy_ptr.load(Ordering::Acquire), self.process.policy())
+            || !self.process.main_subprocess().is_some_and(|owner| core::ptr::eq(owner, startup.subprocess))
+            || startup.storage.page_map_storage.load(Ordering::Acquire).is_null()
+            // SAFETY: the factory caller retains the actual attachment and
+            // excludes teardown throughout this synchronous witness scope.
+            || !unsafe { startup.startup_owner.validate(startup.subprocess) }
+        { return Err(BootstrapOutputAdmissionError::Invalid); }
+        Ok(())
+    }
+
+    pub(crate) fn selected_theap(&self) -> NonNull<crate::types::Theap> { self.startup.startup_owner.theap }
+    pub(crate) fn heap(&self) -> NonNull<crate::types::Heap> { self.startup.startup_owner.heap }
+    pub(crate) fn process(&self) -> Result<VmProcess<'_>, BootstrapOutputAdmissionError> {
+        self.validate()?; Ok(self.process)
+    }
+    pub(crate) fn output(&self) -> Result<&OutputOwner, BootstrapOutputAdmissionError> {
+        self.validate()?; Ok(self.output)
+    }
+    pub(crate) fn page_map(&self) -> Result<ProcessPageMapRoot, BootstrapOutputAdmissionError> {
+        self.validate()?; Ok(self.page_map)
+    }
+    pub(crate) fn matches_theap(&self, theap: NonNull<crate::types::Theap>) -> bool {
+        self.validate().is_ok() && self.selected_theap() == theap
+    }
+    pub(crate) fn matches_subprocess(&self, subprocess: &crate::subproc::SubprocessIdentity) -> bool {
+        self.validate().is_ok() && core::ptr::eq(self.process.subprocess(), subprocess)
+    }
+}
+
 impl ProcessMainStartup {
+    /// Runs one synchronous operation with the original ordinary startup
+    /// issuer and the winning completion. Refusal never falls back to a
+    /// completed-process owner or to the current TLS default Theap.
+    ///
+    /// # Safety
+    /// The exact ProcessMainThread produced with this startup is already in
+    /// its final runtime owner slot and remains retained throughout callback.
+    /// The caller holds actual process/initial-thread admission and excludes
+    /// attachment teardown, selected Heap deletion, and client reuse. The
+    /// callback holds no image projections across output and cannot persist
+    /// this witness or consume the startup completion.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn with_source_attached_runtime_output<R>(
+        &self,
+        callback: impl for<'scope> FnOnce(&SourceAttachedRuntimeOutputWitness<'scope>) -> R,
+    ) -> Result<R, BootstrapOutputAdmissionError> {
+        let process = self.vm_process.ok_or(BootstrapOutputAdmissionError::Unavailable)?;
+        let output = match self.diagnostics {
+            ProcessStartupDiagnostics::Selected(output) => output,
+            ProcessStartupDiagnostics::Unconnected => return Err(BootstrapOutputAdmissionError::Unavailable),
+        };
+        let page_map = self.storage.allocation_lease(self.config, self.subprocess)
+            .and_then(|lease| lease.page_map()).map_err(|_| BootstrapOutputAdmissionError::Invalid)?;
+        let witness = SourceAttachedRuntimeOutputWitness {
+            startup: self, process, output, page_map, _not_send_or_sync: PhantomData,
+        };
+        witness.validate()?;
+        Ok(callback(&witness))
+    }
+
     pub(crate) fn complete(self) -> Result<(), ProcessMainInitError> {
         self.complete_with_hook(|| {})
     }
@@ -1674,7 +1769,26 @@ impl ProcessMainStartup {
         self.complete_once_body_with_hook(|| {})
     }
 
-    fn complete_once_body_with_hook(mut self, before_release: impl FnOnce()) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
+    fn complete_once_body_with_hook(self, before_release: impl FnOnce()) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
+        self.complete_once_body_inner_with_hook(before_release, false)
+    }
+
+    /// Completes source reservations with the original ordinary startup
+    /// output issuer installed only for their synchronous callback scope.
+    ///
+    /// # Safety
+    /// The paired initial ProcessMainThread is retained in its final runtime
+    /// slot. Its actual process and thread admission exclude teardown while
+    /// reservations and their callbacks run. No owner/image projections are
+    /// held across this call.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn complete_once_body_with_runtime_output(self) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
+        self.complete_once_body_inner_with_hook(|| {}, true)
+    }
+
+    fn complete_once_body_inner_with_hook(mut self, before_release: impl FnOnce(), runtime_output: bool) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = runtime_output;
         self.storage.ensure_allocation_ready()?;
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
             return Err(ProcessMainInitError::Retained);
@@ -1696,9 +1810,20 @@ impl ProcessMainStartup {
                 // SAFETY: this source once winner still owns startup; the
                 // retained output owner predates VM/OS/arena work. Initial-thread
                 // callback allocation is admitted without borrowing this owner.
-                unsafe { process.subprocess().arena_backing().reserve_startup_options_with_mbind_warning(
+                let mut reserve = || unsafe { process.subprocess().arena_backing().reserve_startup_options_with_mbind_warning(
                     process, config, metadata, Some(&mut random), MbindWarningRoute::new(output),
-                ) }
+                ) };
+                if runtime_output {
+                    // SAFETY: the runtime-specific entry retains the paired
+                    // published owner and excludes teardown; the installer
+                    // holds its actual admission until this callback returns.
+                    unsafe { self.with_source_attached_runtime_output(|witness| {
+                        crate::runtime_lifecycle::with_source_attached_runtime_allocation_output(witness, reserve)
+                    }) }.map_err(|_| ProcessMainInitError::Retained)?
+                        .map_err(|_| ProcessMainInitError::Retained)?
+                } else {
+                    reserve()
+                }
             }
             (Some(process), ProcessStartupDiagnostics::Unconnected) => {
                 unsafe { process.subprocess().arena_backing().reserve_startup_options(process,
@@ -4776,125 +4901,169 @@ mod tests {
         }).join().unwrap();
     }
 
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn startup_metadata_output_factory_retains_original_issuer_before_ready() {
-        use crate::meta::SourceInitializationOutputAdmissionError as Error;
-        std::thread_local! {
-            static ISSUER: core::cell::Cell<Option<(core::pin::Pin<&'static MetaAllocator>, &'static MainSubprocess)>> =
-                const { core::cell::Cell::new(None) };
-            static CALLBACKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-            static IN_CALLBACK: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-            static NESTED_CALLBACKS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-            static RESULTS: core::cell::Cell<(usize, Option<MetaError>)> = const { core::cell::Cell::new((0, None)) };
-        }
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    fn with_startup_metadata_output_fixture<R>(
+        operation: impl FnOnce(
+            &ScopedBootstrapOutput<'_>, crate::meta::MetaAllocatorBound<'static>,
+            core::pin::Pin<&'static MetaAllocator>, &'static ProcessMainInitializationStorage,
+            &'static MainSubprocess,
+        ) -> R,
+    ) -> R {
         unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
-        unsafe extern "C" fn reenter(_: *const core::ffi::c_char, _: *mut core::ffi::c_void) {
-            // A first fresh allocation can itself emit mapping warnings. Its
-            // pending candidate must not be recursively reused by this callback.
-            if IN_CALLBACK.with(|active| active.replace(true)) {
-                NESTED_CALLBACKS.with(|count| count.set(count.get() + 1));
-                return;
-            }
-            ISSUER.with(|slot| {
-                if let Some((metadata, subprocess)) = slot.get() {
-                    let result = metadata.zalloc_for_main_subprocess(memory_config(), subprocess, 32)
-                        .and_then(|mut nested| metadata.free(&mut nested));
-                    RESULTS.with(|results| {
-                        let (successes, previous_error) = results.get();
-                        results.set(match result {
-                            Ok(()) => (successes + 1, previous_error),
-                            Err(error) => (successes, previous_error.or(Some(error))),
-                        });
-                    });
-                }
-            });
-            CALLBACKS.with(|count| count.set(count.get() + 1));
-            IN_CALLBACK.with(|active| active.set(false));
+        let (storage, completion, diagnostics, process, subprocess) = bootstrap_output_prefix(discard);
+        let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
+        let metadata = MetaAllocator::test_static_owner();
+        let mut selection = subprocess.reserve_static_bootstrap().unwrap();
+        let foundation = MainStaticHeapFoundation::initialize(
+            MainStaticAttachmentStorage::test_static_owner(), subprocess, &mut selection,
+        ).unwrap();
+        // SAFETY: these actual pinned owners and the original winning scope
+        // remain retained throughout source initialization and its callbacks.
+        let bound = unsafe { metadata.prepare_for_main_heap_with_bootstrap_output(
+            memory_config(), subprocess, foundation, &scope,
+        ) }.unwrap();
+        let map_storage = ProcessPageMapStorage::test_static_owner();
+        let map = map_storage.initialize_for_process(memory_config(), subprocess, process).unwrap();
+        // SAFETY: the winning completion excludes every process-ready reader
+        // while these final slots select the original backing tuple.
+        unsafe { (*storage.config.get()).write(memory_config()) };
+        storage.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
+        storage.page_map_storage.store(core::ptr::from_ref(map_storage).cast_mut(), Ordering::Release);
+        metadata.bind_process_backing(ProcessMainBackingBinding::new(storage, process, map)).unwrap();
+        let result = operation(&scope, bound, metadata, storage, subprocess);
+        selection.retain();
+        storage.publish_terminal_state_and_release(completion, RETAINED);
+        result
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn startup_fresh_page_assertion_dispatch_retains_original_source_candidate() {
+        const CHILD: &str = "CRABC_MI_STARTUP_PAGE_ASSERTION_CHILD";
+        const TEST: &str = "process_init::tests::startup_fresh_page_assertion_dispatch_retains_original_source_candidate";
+        struct Audit<'witness, 'scope, 'startup> {
+            witness: &'witness crate::meta::SourceInitializationOutputWitness<'scope, 'startup, 'static>,
+            metadata: core::pin::Pin<&'static MetaAllocator>,
+            storage: &'static ProcessMainInitializationStorage,
+            subprocess: &'static MainSubprocess,
+            theap: NonNull<Theap>,
+            initial_pages: i64,
+            observed: core::cell::Cell<Option<crate::types::PageValiditySnapshot>>,
+            observations: core::cell::Cell<usize>,
+            in_callback: core::cell::Cell<bool>,
         }
-        thread::spawn(|| {
-            let (storage, completion, diagnostics, process, subprocess) = bootstrap_output_prefix(discard);
-            let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
-            let metadata = MetaAllocator::test_static_owner();
-            let main_static = MainStaticAttachmentStorage::test_static_owner();
-            let mut selection = subprocess.reserve_static_bootstrap().unwrap();
-            let foundation = MainStaticHeapFoundation::initialize(main_static, subprocess, &mut selection).unwrap();
-            // SAFETY: the winning scope and original pinned static images are
-            // retained, and no allocator projection crosses source callbacks.
-            let bound = unsafe { metadata.prepare_for_main_heap_with_bootstrap_output(
-                memory_config(), subprocess, foundation, &scope,
-            ) }.unwrap();
-            assert!(matches!(unsafe { bound.capture_startup_source_initialization_output(&scope) },
-                Err(Error::BackingUnavailable)));
-            let map_storage = ProcessPageMapStorage::test_static_owner();
-            let map = map_storage.initialize_for_process(memory_config(), subprocess, process).unwrap();
-            // SAFETY: the winning completion still exclusively owns these
-            // final slots before any process readiness publication.
-            unsafe { (*storage.config.get()).write(memory_config()) };
-            storage.subprocess.store(subprocess.owner_ptr(), Ordering::Release);
-            storage.page_map_storage.store(core::ptr::from_ref(map_storage).cast_mut(), Ordering::Release);
-            metadata.bind_process_backing(ProcessMainBackingBinding::new(storage, process, map)).unwrap();
-            assert_eq!(storage.state.load(Ordering::Acquire), INITIALIZING);
-            assert_eq!(metadata.test_allocation_audit().high_water_capability_count, 0);
-            // SAFETY: the actual bound issuer and its original winning scope
-            // precede the first candidate and remain retained through delivery.
-            let witness = unsafe { bound.capture_startup_source_initialization_output(&scope) }.unwrap();
-            assert!(core::ptr::eq(witness.process().unwrap(), &process));
-            assert!(core::ptr::eq(witness.page_map().unwrap(), map.page_map().unwrap()));
-            let theap = NonNull::new(subprocess.identity().test_published_metadata_theap()).unwrap();
-            assert!(witness.matches_theap(theap));
-            assert!(!witness.matches_theap(NonNull::dangling()));
-            let (foreign_storage, foreign_completion, foreign_diagnostics, foreign_process, foreign_subprocess) =
-                bootstrap_output_prefix(discard);
-            let foreign_scope = foreign_storage.scoped_bootstrap_output(
-                &foreign_completion, &foreign_diagnostics, &foreign_process, foreign_subprocess,
-            ).unwrap();
-            assert!(matches!(unsafe { bound.capture_startup_source_initialization_output(&foreign_scope) },
-                Err(Error::OriginMismatch)));
-            let foreign_metadata = MetaAllocator::test_static_owner();
-            let mut foreign_selection = foreign_subprocess.reserve_static_bootstrap().unwrap();
-            let foreign_foundation = MainStaticHeapFoundation::initialize(
-                MainStaticAttachmentStorage::test_static_owner(), foreign_subprocess, &mut foreign_selection,
-            ).unwrap();
-            // SAFETY: the independent winning scope retains this different
-            // actual issuer; none of its projections cross source callbacks.
-            let foreign_bound = unsafe { foreign_metadata.prepare_for_main_heap_with_bootstrap_output(
-                memory_config(), foreign_subprocess, foreign_foundation, &foreign_scope,
-            ) }.unwrap();
-            assert!(matches!(unsafe { foreign_bound.capture_startup_source_initialization_output(&scope) },
-                Err(Error::OriginMismatch)));
-            foreign_selection.retain();
-            foreign_storage.publish_terminal_state_and_release(foreign_completion, RETAINED);
-            ISSUER.with(|slot| slot.set(Some((metadata, subprocess))));
-            let output = witness.output().unwrap();
-            // SAFETY: the same thread retains the original issuer and scope,
-            // callback argument is absent, and every image projection ended.
-            unsafe {
-                output.register_output(Some(reenter), core::ptr::null_mut());
-                output.warning_from_source_options(
-                    crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(c"startup issuer reentry\n"),
-                );
-                output.register_output(None, core::ptr::null_mut());
+        unsafe fn corrupt(state: &crate::types::PageValiditySnapshot,
+            page: NonNull<crate::types::Page>, argument: *mut core::ffi::c_void) {
+            // SAFETY: the scoped observer retains this live stack audit. The
+            // actual fresh claim owns this committed byte before list/client
+            // publication, and no allocation or output occurs in this observer.
+            let audit = unsafe { &*argument.cast::<Audit<'_, '_, '_>>() };
+            assert_eq!(state.page, page);
+            assert_eq!((state.used, state.capacity), (0, 0));
+            assert!(state.free.is_null() && state.local_free.is_null() && state.remote.is_null());
+            audit.observed.set(Some(*state));
+            audit.observations.set(audit.observations.get() + 1);
+            unsafe { state.area.as_ptr().write(0x5a) };
+        }
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            // SAFETY: registration retains this exact stack audit and the
+            // output owner supplies a live NUL-terminated source fragment.
+            let audit = unsafe { &*argument.cast::<Audit<'_, '_, '_>>() };
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"assertion failed".len()).any(|part| part == b"assertion failed")
+                || audit.in_callback.replace(true) { return; }
+            let Some(original) = audit.observed.get() else { return; };
+            // SAFETY: the original task still retains its registered claim;
+            // no page, engine or queue projection survives this scalar audit.
+            let (registered, unfinished, statistics) = unsafe {
+                let state = crate::types::Page::validity_snapshot_at(original.page);
+                let registered = audit.witness.page_map().is_ok_and(|map|
+                    map.checked_lookup(original.area.as_ptr()) == original.page.as_ptr());
+                let unfinished = state.area == original.area && state.used == 0 && state.capacity == 0
+                    && state.free.is_null() && state.local_free.is_null() && state.remote.is_null()
+                    && state.area.as_ptr().read() == 0x5a
+                    && Theap::local_page_count_at(audit.theap) == 0;
+                let statistics = Theap::final_statistics_at(audit.theap)
+                    .is_some_and(|(_, stats)| stats.pages.current == audit.initial_pages + 1);
+                (registered, unfinished, statistics)
+            };
+            let origin = audit.storage.state.load(Ordering::Acquire) == INITIALIZING
+                && audit.witness.matches_theap(audit.theap)
+                && audit.witness.process().is_ok_and(|process|
+                    core::ptr::eq(process.subprocess(), audit.subprocess.identity()));
+            // The observer ended before dispatch. This different request may
+            // allocate through the original issuer but cannot reuse the task's
+            // unpublished registered candidate or its uninitialized free list.
+            let nested = audit.metadata.zalloc_for_main_subprocess(memory_config(), audit.subprocess, 32)
+                .and_then(|mut allocation| audit.metadata.free(&mut allocation));
+            std::println!("startup.assertion.audit registered={registered} unfinished={unfinished} statistics={statistics} origin={origin} nested={nested:?}");
+            std::println!("{}", std::string::String::from_utf8_lossy(bytes));
+            audit.in_callback.set(false);
+        }
+        if let Some(mode) = std::env::var_os(CHILD) {
+            with_startup_metadata_output_fixture(|scope, bound, metadata, storage, subprocess| {
+                // SAFETY: this actual scope and issuer precede the first
+                // candidate, and remain retained through fatal source output.
+                let witness = unsafe { bound.capture_startup_source_initialization_output(scope) }.unwrap();
+                let source_output = witness.output().unwrap();
+                unsafe { source_output.option_set(crate::config::SourceOption::ShowErrors,
+                    if mode == "quiet" { 0 } else { 1 }).unwrap(); }
+                let theap = NonNull::new(subprocess.identity().test_published_metadata_theap()).unwrap();
+                let audit = Audit { witness: &witness, metadata, storage, subprocess, theap,
+                    initial_pages: unsafe { Theap::final_statistics_at(theap) }.unwrap().1.pages.current,
+                    observed: core::cell::Cell::new(None), observations: core::cell::Cell::new(0),
+                    in_callback: core::cell::Cell::new(false) };
+                let argument = core::ptr::from_ref(&audit).cast_mut().cast();
+                // SAFETY: registration and observation stay on this original
+                // source thread; the audit outlives every synchronous callback.
+                unsafe { source_output.register_output(Some(output), argument) };
+                let allocation = unsafe { crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                    corrupt, argument, || metadata.zalloc_aligned_for_main_subprocess(
+                        memory_config(), subprocess, 7, 128 * 1024,
+                    ),
+                ) };
+                assert!(matches!(allocation, Err(MetaError::AllocationUnavailable)));
+                assert_eq!(audit.observations.get(), 1);
+                let task = witness.take_retained_initialization_task().unwrap().unwrap();
+                assert_eq!(task.failure(), crate::single_thread::FreshOsPageInitializationFailure::SourceObservation(
+                    crate::page_validity::SourcePageInvariant::InitiallyZero));
+                assert!(task.matches_theap(theap) && task.belongs_to_subprocess(subprocess.identity()));
+                let task = with_startup_metadata_output_fixture(|foreign_scope, foreign_bound, _, _, _| {
+                    let foreign = unsafe { foreign_bound.capture_startup_source_initialization_output(foreign_scope) }.unwrap();
+                    // SAFETY: both genuine startup issuers remain retained.
+                    // Foreign admission must return the original task intact.
+                    unsafe { task.dispatch_source_initialization(&foreign) }.unwrap_err()
+                });
+                assert!(task.matches_theap(theap) && task.belongs_to_subprocess(subprocess.identity()));
+                assert_eq!(storage.state.load(Ordering::Acquire), INITIALIZING);
+                std::println!("startup.assertion.original-task-ready mode={}", mode.to_string_lossy());
+                // SAFETY: the exact retained Registered source-observation
+                // task and its preallocation witness remain live; no allocator
+                // projection or guard spans the source's fatal callback.
+                let refused = unsafe { task.dispatch_source_initialization(&witness) };
+                panic!("actual original source dispatch refused: {refused:?}");
+            });
+            return;
+        }
+        use std::os::unix::process::ExitStatusExt;
+        for mode in ["quiet", "loud"] {
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+                .env(CHILD, mode)
+                .current_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join(".work/tmp"));
+            for (name, _) in std::env::vars_os() {
+                if name.to_string_lossy().starts_with("mimalloc_") { command.env_remove(name); }
             }
-            CALLBACKS.with(|count| assert_eq!(count.get(), 3,
-                "source delivery flushes the empty buffer, then sends separate warning prefix and body"));
-            RESULTS.with(|results| assert_eq!(results.get(), (3, None),
-                "factory validation ends its metadata entry before callback reentry"));
-            NESTED_CALLBACKS.with(|count| std::println!("nested source mapping callbacks: {}", count.get()));
-            ISSUER.with(|slot| slot.set(None));
-            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
-            storage.state.store(RETAINED, Ordering::Release);
-            assert!(matches!(witness.output(), Err(Error::OriginMismatch)));
-            assert!(matches!(witness.process(), Err(Error::OriginMismatch)));
-            assert!(matches!(witness.page_map(), Err(Error::OriginMismatch)));
-            assert!(!witness.matches_theap(theap));
-            assert!(matches!(unsafe { bound.capture_startup_source_initialization_output(&scope) },
-                Err(Error::Bootstrap(BootstrapOutputAdmissionError::Invalid))));
-            // The unfinished source initialization retains its actual static
-            // images; completing the once token cannot reopen these owners.
-            selection.retain();
-            storage.publish_terminal_state_and_release(completion, RETAINED);
-        }).join().unwrap();
+            let result = command.output().unwrap();
+            let stdout = std::string::String::from_utf8_lossy(&result.stdout);
+            let stderr = std::string::String::from_utf8_lossy(&result.stderr);
+            std::println!("{stdout}{stderr}");
+            assert_eq!(result.status.signal(), Some(6), "{stdout}{stderr}");
+            assert!(stdout.contains("startup.assertion.original-task-ready"), "{stdout}{stderr}");
+            assert!(stdout.contains("registered=true unfinished=true statistics=true origin=true nested=Ok(())"), "{stdout}{stderr}");
+            assert!(stdout.contains("src/page.c\":729, _mi_page_init"), "{stdout}{stderr}");
+            assert!(stdout.contains("mi_mem_is_zero(page_start, mi_page_committed(page))"), "{stdout}{stderr}");
+        }
     }
 
     #[cfg(target_arch = "x86_64")]

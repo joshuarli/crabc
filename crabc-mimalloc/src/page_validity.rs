@@ -37,12 +37,86 @@ pub(crate) enum SourcePageInvariant {
 /// Identifies only the fresh committed-region assertion at page initialization.
 /// This descriptor carries no Page reference, backing ownership or release
 /// permission; the allocation caller separately retains the original candidate.
+/// Source fresh-page creation has already registered PageMap reachability and
+/// charged page registration statistics before reaching this assertion. Engine
+/// paths that initialize lists before those transitions expose a different
+/// callback-visible state. A primary Page or its aliases cannot certify that
+/// registration/accounting happened; the caller retains its actual progress.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct FreshPageInitializationAssertion {
     _private: (),
 }
 
 impl FreshPageInitializationAssertion {
+    /// Delivers the source assertion for the original ordinary startup Theap.
+    /// An output admission refusal preserves the descriptor for its caller.
+    ///
+    /// # Safety
+    /// `witness` was captured from the actual winning startup before creating
+    /// this candidate. The caller continuously retains that completion, the
+    /// original ordinary Theap, Heap and TLD attachment, its process/output/map
+    /// binding, and the owned fresh backing with its actual registration
+    /// progress until dispatch terminates or returns refusal. Startup cannot
+    /// finish and the attachment cannot be torn down or rebound during this
+    /// scope. Every allocator, Page, Heap, Theap, TLD and random projection or
+    /// lock ends before entry. Output callback registration and arguments stay
+    /// valid and serialized; nested operations cannot reuse the candidate or
+    /// select it as an initialized free list.
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    pub(crate) unsafe fn dispatch_source_attached(
+        self,
+        witness: &crate::process_init::SourceAttachedRuntimeOutputWitness<'_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        let output = match witness.output() {
+            Ok(output) => output,
+            Err(_) => return Err(self),
+        };
+        // SAFETY: the retained winning startup revalidated its original
+        // output after projections ended; backing and callback arguments
+        // remain live continuously through terminal delivery.
+        unsafe { crate::diagnostic_output::source_assert_fail(
+            output,
+            c"mi_mem_is_zero(page_start, mi_page_committed(page))",
+            c"src/page.c",
+            729,
+            Some(c"_mi_page_init"),
+        ) }
+    }
+
+    /// Delivers the same source assertion within the original startup domain.
+    /// An output admission refusal preserves the descriptor for its caller.
+    ///
+    /// # Safety
+    /// The caller retains the original owned fresh backing and its actual
+    /// registration progress until dispatch terminates or returns refusal.
+    /// `witness` is the actual startup scope captured before that candidate;
+    /// its original process, pinned metadata issuer and selected PageMap
+    /// remain live, without teardown or rebinding. Every allocator, metadata,
+    /// Page, Heap, Theap, TLD and random projection or lock ends before entry.
+    /// Output callback registration and arguments remain valid and serialized
+    /// throughout delivery. Nested operations must not reuse the retained
+    /// candidate or select it as an initialized free list.
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3")))]
+    pub(crate) unsafe fn dispatch_source_initialization(
+        self,
+        witness: &crate::meta::SourceInitializationOutputWitness<'_, '_, '_>,
+    ) -> Result<core::convert::Infallible, Self> {
+        let output = match witness.output() {
+            Ok(output) => output,
+            Err(_) => return Err(self),
+        };
+        // SAFETY: the original startup witness revalidated its own output
+        // domain after projections ended; the caller retains backing and
+        // callback arguments continuously through terminal delivery.
+        unsafe { crate::diagnostic_output::source_assert_fail(
+            output,
+            c"mi_mem_is_zero(page_start, mi_page_committed(page))",
+            c"src/page.c",
+            729,
+            Some(c"_mi_page_init"),
+        ) }
+    }
+
     /// Delivers the source assertion after initialization observations end.
     ///
     /// # Safety
@@ -212,6 +286,74 @@ pub(crate) unsafe fn source_initial_page_is_zero(
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+#[derive(Clone, Copy)]
+struct FreshInitializationTestObserver {
+    observe: unsafe fn(&PageValiditySnapshot, NonNull<crate::types::Page>, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+}
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+std::thread_local! {
+    static FRESH_INITIALIZATION_TEST_OBSERVER:
+        core::cell::Cell<Option<FreshInitializationTestObserver>> = const { core::cell::Cell::new(None) };
+}
+
+/// Installs one observer only for a synchronous native test operation.
+/// The previous observer is restored on return or unwind. This supplies no
+/// Page, claim, admission, registration, or release authority to the operation.
+///
+/// # Safety
+/// `argument` and everything the observer accesses remain valid throughout
+/// `operation`. The observer runs only at the engine's actual original fresh
+/// claim boundary. It may inspect the copied snapshot and exclusively owned
+/// initialized committed backing, including writing an owned backing byte.
+/// It must not allocate, emit output, reenter the allocator, mutate metadata
+/// or registration, change protection, or retain the snapshot reference.
+/// `operation` must not transfer the observer or argument to another thread.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) unsafe fn with_fresh_page_initialization_observer_for_test<R>(
+    observe: unsafe fn(&PageValiditySnapshot, NonNull<crate::types::Page>, *mut core::ffi::c_void),
+    argument: *mut core::ffi::c_void,
+    operation: impl FnOnce() -> R,
+) -> R {
+    struct RestoreObserver(Option<FreshInitializationTestObserver>);
+    impl Drop for RestoreObserver {
+        fn drop(&mut self) {
+            FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| slot.set(self.0));
+        }
+    }
+    let _restore = RestoreObserver(FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| {
+        slot.replace(Some(FreshInitializationTestObserver { observe, argument }))
+    }));
+    operation()
+}
+
+/// Observes actual fresh-page initialization for one isolated native control.
+/// The observer supplies no publication, admission, allocation or release right.
+///
+/// # Safety
+/// `state` was copied from `page`, the initialized primary of the caller's
+/// original fresh OS claim. The caller exclusively retains its metadata and
+/// complete committed backing while this synchronous observer runs. The
+/// observer's argument remains live; it may inspect copied fields and actual
+/// registration/statistics, and modify an owned backing byte, but may not
+/// allocate, emit output, reenter the allocator, mutate metadata or registration,
+/// change protection, or retain a reference to the snapshot after returning.
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) unsafe fn observe_fresh_page_initialization_for_test(
+    state: &PageValiditySnapshot,
+    page: NonNull<crate::types::Page>,
+) {
+    FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| {
+        if let Some(observer) = slot.get() {
+            // SAFETY: the caller retains the original claim and serialized
+            // observer argument for this short, nonreentrant observation.
+            unsafe { (observer.observe)(state, page, observer.argument) };
+        }
+    });
 }
 
 #[cfg(test)]
@@ -572,6 +714,155 @@ mod tests {
             assert_eq!(result.status.signal(), Some(6), "{kind}");
             assert_eq!(result.stderr, b"\noriginal backing retained during reentry\nmimalloc: assertion failed: at \"src/page.c\":729, _mi_page_init\n  assertion: \"mi_mem_is_zero(page_start, mi_page_committed(page))\"\n", "{kind}");
         }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    struct NativeFreshProbe {
+        map: crate::process_page_map::ProcessPageMapRoot,
+        theap: NonNull<Theap>,
+        heap: *mut Heap,
+        baseline: crate::statistics::FinalStatCount,
+        observed: core::cell::Cell<Option<(NonNull<Page>, NonNull<u8>, usize)>>,
+        poison: bool,
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    impl NativeFreshProbe {
+        fn new(owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>, poison: bool) -> Self {
+            let theap = owner.selected_theap();
+            // SAFETY: the actual preadmitted owner retains initialized roots;
+            // these short projections end before any native allocator call.
+            Self { map: owner.page_map().unwrap(), theap,
+                heap: unsafe { Theap::heap_at(theap) },
+                baseline: unsafe { Theap::final_statistics_at(theap) }.unwrap().1.pages,
+                observed: core::cell::Cell::new(None), poison }
+        }
+
+        unsafe fn observe(state: &PageValiditySnapshot, page: NonNull<Page>, argument: *mut core::ffi::c_void) {
+            // SAFETY: installation retains this probe through the synchronous
+            // call; the engine retains the original claim and selected Heap.
+            let probe = unsafe { &*argument.cast::<Self>() };
+            if unsafe { Page::heap_identity_at(page) } != probe.heap { return; }
+            assert!(probe.observed.get().is_none(), "one real fresh OS candidate");
+            assert_eq!(state.page, page);
+            assert_eq!(state.used, 0);
+            assert_eq!(state.capacity, 0);
+            assert!(state.free.is_null());
+            assert!(state.local_free.is_null());
+            assert!(state.remote.is_null());
+            let registered = unsafe { probe.map.lookup_registered_page(state.area.as_ptr()) }.unwrap();
+            let pages = unsafe { Theap::final_statistics_at(probe.theap) }.unwrap().1.pages;
+            assert_eq!((registered, pages.total, pages.current),
+                (Some(page), probe.baseline.total + 1, probe.baseline.current + 1),
+                "actual PageMap identity and registration counters before source initialization");
+            probe.observed.set(Some((page, state.area, state.area_bytes)));
+            if probe.poison {
+                // SAFETY: only this test observer and the engine own this
+                // still-uninitialized committed block backing.
+                unsafe { state.area.as_ptr().write(0x5a) };
+            }
+        }
+
+        fn install(&self) -> NativeFreshProbeGuard<'_> {
+            let previous = FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| slot.replace(Some(
+                FreshInitializationTestObserver { observe: Self::observe,
+                    argument: core::ptr::from_ref(self).cast_mut().cast() })));
+            NativeFreshProbeGuard { previous, retained: core::marker::PhantomData }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    struct NativeFreshProbeGuard<'a> {
+        previous: Option<FreshInitializationTestObserver>,
+        retained: core::marker::PhantomData<&'a NativeFreshProbe>,
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    impl Drop for NativeFreshProbeGuard<'_> {
+        fn drop(&mut self) {
+            FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| slot.set(self.previous));
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn native_fresh_os_initialization_publishes_map_and_stats_before_lists() {
+        crate::test_process::run_in_fresh_process(
+            "page_validity::tests::native_fresh_os_initialization_publishes_map_and_stats_before_lists", || {
+                with_fresh_assertion_owner(|owner| {
+                    use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
+                    let probe = NativeFreshProbe::new(&owner, false);
+                    let guard = probe.install();
+                    let NativePageAllocationResult::Allocated(client) = runtime::native_allocate_aligned(7, 128 * 1024, false)
+                        else { panic!("actual aligned native ingress"); };
+                    drop(guard);
+                    let (page, area, _) = probe.observed.get().expect("actual engine observation");
+                    // SAFETY: this actual client and original admission retain
+                    // the registered page until its native free consumes it.
+                    assert_eq!(unsafe { probe.map.lookup_registered_page(client.as_ptr()) }.unwrap(), Some(page));
+                    assert_eq!(unsafe { runtime::native_free(client) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), None);
+                    let after = unsafe { Theap::final_statistics_at(probe.theap) }.unwrap().1.pages;
+                    assert_eq!(after.current, probe.baseline.current);
+                    assert_eq!(after.total, probe.baseline.total + 1);
+                });
+            });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn native_fresh_os_zero_assertion_retains_registered_backing_during_reentry() {
+        const CHILD: &str = "CRABC_NATIVE_FRESH_ZERO_CHILD";
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            use crate::runtime_lifecycle::{self as runtime, NativePageAllocationResult, NativePageFreeResult};
+            unsafe extern "C" { fn write(fd: core::ffi::c_int, bytes: *const u8, size: usize) -> isize; }
+            // SAFETY: the registered argument and actual pending claim remain
+            // live until the nonreturning assertion dispatch finishes.
+            let probe = unsafe { &*argument.cast::<NativeFreshProbe>() };
+            let message = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if message.starts_with(b"mimalloc: assertion failed:") {
+                FRESH_INITIALIZATION_TEST_OBSERVER.with(|slot| slot.set(None));
+                let (page, area, bytes) = probe.observed.get().expect("production observation precedes dispatch");
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                let pages = unsafe { Theap::final_statistics_at(probe.theap) }.unwrap().1.pages;
+                assert_eq!(pages.current, probe.baseline.current + 1);
+                assert_eq!(pages.total, probe.baseline.total + 1);
+                let state = unsafe { Page::validity_snapshot_at(page) };
+                assert_eq!(state.used, 0);
+                assert_eq!(state.capacity, 0);
+                assert!(state.free.is_null());
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x5a);
+                // No Page/Heap/Theap reference or engine projection survives
+                // these copied observations into the callback's native reentry.
+                let NativePageAllocationResult::Allocated(nested) = runtime::native_allocate(96, false)
+                    else { panic!("actual pending source assertion permits callback reentry"); };
+                assert!(nested.addr().get() < area.addr().get() || nested.addr().get() >= area.addr().get() + bytes);
+                assert_eq!(unsafe { runtime::native_free(nested) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x5a);
+                let marker = b"registered fresh backing retained during native reentry\n";
+                assert_eq!(unsafe { write(2, marker.as_ptr(), marker.len()) }, marker.len() as isize);
+            }
+            assert_eq!(unsafe { write(2, message.as_ptr(), message.len()) }, message.len() as isize);
+        }
+        if std::env::var_os(CHILD).is_some() {
+            with_fresh_assertion_owner(|owner| {
+                let probe = NativeFreshProbe::new(&owner, true);
+                let _guard = probe.install();
+                // SAFETY: the actual preadmitted owner and scoped probe remain
+                // live through production dispatch and its output callback.
+                unsafe { owner.output().register_output(Some(output), core::ptr::from_ref(&probe).cast_mut().cast()) };
+                let _ = crate::runtime_lifecycle::native_allocate_aligned(7, 128 * 1024, false);
+                panic!("actual source zero assertion cannot return");
+            });
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "page_validity::tests::native_fresh_os_zero_assertion_retains_registered_backing_during_reentry",
+                "--nocapture", "--test-threads=1"])
+            .current_dir(std::env::temp_dir()).env(CHILD, "1").output().unwrap();
+        assert_eq!(result.status.signal(), Some(6), "{}", std::string::String::from_utf8_lossy(&result.stderr));
+        assert_eq!(result.stderr, b"\nregistered fresh backing retained during native reentry\nmimalloc: assertion failed: at \"src/page.c\":729, _mi_page_init\n  assertion: \"mi_mem_is_zero(page_start, mi_page_committed(page))\"\n");
     }
 
     #[test]

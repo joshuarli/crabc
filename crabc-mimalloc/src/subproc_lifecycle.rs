@@ -934,6 +934,161 @@ pub(crate) unsafe fn try_with_native_child_callback_owner<R>(
     Ok(result)
 }
 
+/// An actual child admission for a private, not-yet-initialized Theap.
+/// The pending initializer owns its allocation separately; this admission
+/// retains the original child, selected Heap, and process across callbacks.
+/// It grants no initialized-Theap allocation authority.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildInitializationAdmission {
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    output: &'static crate::diagnostic_output::OutputOwner,
+    _child: NativeChildCallbackLease,
+    _operation: crate::runtime_lifecycle::NativeSubprocessOperation,
+}
+
+/// Synchronous initializer admissions share the existing thread-owned TLS
+/// root. Each actual ticket retains its own admission, including nested
+/// initializers of the same Heap; no scalar count supplies their lifetime.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildInitializationScope {
+    admission: Option<NativeChildInitializationAdmission>,
+    previous: *const Self,
+    _pinned: core::marker::PhantomPinned,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildInitializationScope {
+    /// Keeps a failed original initializer's admission after its exact keeper
+    /// has been retained terminally. No linked image is rolled back or freed.
+    unsafe fn retain_at(scope: core::ptr::NonNull<Self>) {
+        let admission = unsafe { (*scope.as_ptr()).admission.take() }
+            .expect("original initializer admission retained once");
+        // SAFETY: a short current-thread field projection after all callback
+        // and metadata projections ended. A nested failure may already own
+        // the terminal slot; its independent admission must remain retained.
+        let slot = unsafe { &mut (*CURRENT_CHILD_MEMBER.get()).retained_initialization };
+        if slot.is_none() { *slot = Some(admission); }
+        else { core::mem::forget(admission); }
+    }
+
+    /// Reads the original route without retaining a scope projection across
+    /// any option getter or entropy warning.
+    unsafe fn output_at(scope: core::ptr::NonNull<Self>) -> &'static crate::diagnostic_output::OutputOwner {
+        unsafe { (*scope.as_ptr()).admission.as_ref() }
+            .expect("live original initializer admission").output
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for NativeChildInitializationScope {
+    fn drop(&mut self) {
+        // SAFETY: the scope is pinned and synchronous nested admissions have
+        // ended before this stack entry is removed. No projection survives.
+        unsafe {
+            assert_eq!((*CURRENT_CHILD_MEMBER.get()).initialization, self as *const _);
+            (*CURRENT_CHILD_MEMBER.get()).initialization = self.previous;
+        }
+    }
+}
+
+/// Admits the original child before allocating a private initializer image.
+/// No record, child, member, Heap, or metadata projection crosses callbacks.
+///
+/// # Safety
+/// The id and selected published Heap are live and belong to the same child.
+/// The caller retains its actual pending initializer keeper across callbacks
+/// and supplies that same keeper to completion. An auxiliary initializer's
+/// actual member and TLD remain retained until completion or terminal custody.
+#[cfg(target_arch = "x86_64")]
+unsafe fn with_native_child_initialization_scope<R>(
+    id: NativeSubprocessId,
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    operation: impl FnOnce(core::ptr::NonNull<NativeChildInitializationScope>) -> R,
+) -> Result<R, NativeSubprocessError> {
+    if unsafe { (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() } {
+        return Err(NativeSubprocessError::Retained);
+    }
+    let admitted_operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeSubprocessError::Closed)?;
+    let output = crate::process_init::process_output_owner().ok_or(NativeSubprocessError::NotReady)?;
+    let mut lease = None;
+    // SAFETY: the original id and Heap remain live. This short record
+    // projection ends before preparation, option reads, or warning delivery.
+    let admitted = unsafe { id.with_owner(|owner| {
+        let child = owner.as_mut().ok_or(NativeSubprocessError::Gone)?;
+        if child.stage() != ChildMainHeapStage::HeapReady
+            || child.identity_pointer() != Some(crate::types::Heap::subprocess_pointer_at(heap))
+        { return Err(NativeSubprocessError::Retained); }
+        let count = &*core::ptr::addr_of!((*id.0.as_ptr()).callback_leases);
+        count.fetch_update(core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1))
+            .map_err(|_| NativeSubprocessError::Retained)?;
+        lease = Some(NativeChildCallbackLease(id.0));
+        Ok(())
+    }) };
+    if !matches!(admitted, Ok(Ok(()))) {
+        if let Some(lease) = lease { core::mem::forget(lease); }
+        return Err(admitted.err().unwrap_or(NativeSubprocessError::Retained));
+    }
+    let previous = unsafe { (*CURRENT_CHILD_MEMBER.get()).initialization };
+    let mut scope = core::pin::pin!(NativeChildInitializationScope {
+        admission: Some(NativeChildInitializationAdmission { heap, output,
+            _child: lease.expect("actual initializer record admission"), _operation: admitted_operation }),
+        previous, _pinned: core::marker::PhantomPinned,
+    });
+    let pointer = unsafe { core::ptr::NonNull::from(scope.as_mut().get_unchecked_mut()) };
+    unsafe { (*CURRENT_CHILD_MEMBER.get()).initialization = pointer.as_ptr(); }
+    Ok(operation(pointer))
+}
+
+/// Completes one original prepared child image through the selected live
+/// source options. The keeper and actual admission remain held while entropy
+/// warnings run; guarded reads occur afterward so callback changes are visible.
+///
+/// # Safety
+/// The caller owns the exact initializer keeper that produced `phase` and
+/// retains it, the original child admission, and any existing member/TLD.
+/// No record, member, Heap, Theap, TLD, or metadata projection crosses this
+/// call. The same keeper must consume the ready phase or retain its failure.
+#[cfg(target_arch = "x86_64")]
+unsafe fn initialize_native_child_theap_source(
+    scope: core::ptr::NonNull<NativeChildInitializationScope>,
+    phase: crate::types::PreparedTheapInitialization,
+) -> Result<crate::types::ReadyTheapInitialization, crate::types::TheapMainStaticInitError> {
+    let output = unsafe { NativeChildInitializationScope::output_at(scope) };
+    let options = unsafe { crate::types::SourceTheapOptions::capture_from_output(output) };
+    let linked = match unsafe { phase.apply_source_options_and_attach_with_failure_owner(options) }
+        .map_err(|failure| failure.error())?
+    {
+        crate::types::TheapRandomInitialization::SplitComplete(linked) => linked,
+        crate::types::TheapRandomInitialization::FirstHead(first) => {
+            let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+            if prepared.requires_warning() {
+                // SAFETY: the actual initialization admission and original
+                // keeper remain owned; all allocator projections have ended.
+                unsafe { output.warning_from_source_options(
+                    crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                        c"unable to use secure randomness\n",
+                    ),
+                ) };
+            }
+            // SAFETY: genuine entropy refusal completed its source warning;
+            // a complete strong fill has no warning obligation.
+            let material = unsafe { prepared.after_warning() };
+            unsafe { first.finish_random_initialization(material) }
+        }
+    };
+    #[cfg(feature = "mi-guarded")]
+    {
+        let sample = unsafe { crate::types::GuardedSampleOptions::capture_from_output(output) };
+        let sampled = unsafe { linked.apply_guarded_sample_options(sample) };
+        let bounds = unsafe { crate::types::GuardedSizeOptions::capture_from_output(output) };
+        Ok(unsafe { sampled.apply_guarded_size_options(bounds) })
+    }
+    #[cfg(not(feature = "mi-guarded"))]
+    Ok(linked.finish_without_guarded_options())
+}
+
 /// Production pinned `mi_subproc_new` (`subproc.c:158-194`) for a root
 /// child of the process main subprocess, on any runtime thread that may
 /// allocate: the child main Heap image is an ordinary allocation through
@@ -1054,11 +1209,29 @@ struct CurrentChildMember {
     member: ChildThreadMember,
     #[cfg(target_arch = "x86_64")]
     generic_frequency_captures: usize,
+    #[cfg(target_arch = "x86_64")]
+    allocation_scope: *const NativeChildAllocationScope,
+    #[cfg(target_arch = "x86_64")]
+    retained_fresh_issuer: Option<NativeChildRetainedFreshIssuer>,
+}
+
+struct NativeChildThreadSlot {
+    member: Option<CurrentChildMember>,
+    #[cfg(target_arch = "x86_64")]
+    initialization: *const NativeChildInitializationScope,
+    #[cfg(target_arch = "x86_64")]
+    retained_initialization: Option<NativeChildInitializationAdmission>,
 }
 
 #[thread_local]
-static CURRENT_CHILD_MEMBER: core::cell::UnsafeCell<Option<CurrentChildMember>> =
-    core::cell::UnsafeCell::new(None);
+static CURRENT_CHILD_MEMBER: core::cell::UnsafeCell<NativeChildThreadSlot> =
+    core::cell::UnsafeCell::new(NativeChildThreadSlot {
+        member: None,
+        #[cfg(target_arch = "x86_64")]
+        initialization: core::ptr::null(),
+        #[cfg(target_arch = "x86_64")]
+        retained_initialization: None,
+    });
 
 /// A child-subprocess membership is an attached pthread owner, so a timer
 /// callback's application TLS reset cannot replace this live membership.
@@ -1077,7 +1250,7 @@ pub(crate) fn native_timer_tls_span() -> crate::runtime_lifecycle::NativeAllocat
 unsafe fn current_child_member() -> &'static mut Option<CurrentChildMember> {
     // SAFETY: a `#[thread_local]` is reachable only from its own thread;
     // the caller guarantees exclusive use.
-    unsafe { &mut *CURRENT_CHILD_MEMBER.get() }
+    unsafe { &mut (*CURRENT_CHILD_MEMBER.get()).member }
 }
 
 /// Whether the current thread belongs to a child subprocess. This is the
@@ -1085,14 +1258,14 @@ unsafe fn current_child_member() -> &'static mut Option<CurrentChildMember> {
 #[inline]
 pub(crate) fn current_thread_is_child_member() -> bool {
     // SAFETY: a short read of the current thread's own slot.
-    unsafe { (*CURRENT_CHILD_MEMBER.get()).is_some() }
+    unsafe { (*CURRENT_CHILD_MEMBER.get()).member.is_some() }
 }
 
 /// The child the current thread belongs to (`mi_subproc_current` for a
 /// member), or `None` for a thread of the process main subprocess.
 pub(crate) fn current_child_id() -> Option<NativeSubprocessId> {
     // SAFETY: a short read of the current thread's own slot.
-    unsafe { (*CURRENT_CHILD_MEMBER.get()).as_ref().map(|member| member.record_member.id()) }
+    unsafe { (*CURRENT_CHILD_MEMBER.get()).member.as_ref().map(|member| member.record_member.id()) }
 }
 
 /// The main Heap of the current thread's child (`mi_heap_main` for a
@@ -1133,6 +1306,108 @@ pub(crate) enum NativeChildThreadAdd {
     Failed(ChildThreadStartError),
 }
 
+/// Native child admission stages source callbacks outside the original
+/// record and metadata projections. The direct owner route remains useful
+/// for isolated lifecycle fixtures and the non-x86 implementation.
+///
+/// # Safety
+/// The id is live, and this thread owns its default/cached/fast TLS roots.
+#[cfg(target_arch = "x86_64")]
+unsafe fn add_native_child_thread_source(
+    id: NativeSubprocessId, binding: ProcessMainBackingBinding,
+) -> Result<(Result<ChildThreadAddOutcome, ChildThreadStartFailure>, Option<NativeChildRecordMember>), NativeSubprocessError> {
+    let (heap, identity) = unsafe { id.with_owner(|owner| {
+        let child = owner.as_mut().ok_or(NativeSubprocessError::Gone)?;
+        if child.stage() != ChildMainHeapStage::HeapReady { return Err(NativeSubprocessError::Retained); }
+        Ok((child.main_heap_pointer().ok_or(NativeSubprocessError::Retained)?,
+            child.identity_pointer().ok_or(NativeSubprocessError::Retained)?))
+    }) }??;
+    // SAFETY: only this thread reads its own original default root.
+    if let Some(subprocess) = unsafe { Theap::initialized_default_subprocess_at(default_theap()) } {
+        return Ok((Ok(ChildThreadAddOutcome::AlreadyInitialized {
+            in_other_subprocess: !subprocess.is_null() && subprocess != identity,
+        }), None));
+    }
+    unsafe { with_native_child_initialization_scope(id, heap, |scope| {
+        let mut prepared = None;
+        let entered = unsafe { id.with_owner(|owner| {
+            if let Some(child) = owner.as_mut() {
+                // Capture actual custody before a later record unlock can
+                // fail; an outer error never drops an issued initializer.
+                prepared = Some(unsafe { child.prepare_child_thread_initialization(binding) });
+            }
+        }) };
+        if entered.is_err() {
+            if let Some(candidate) = prepared.take() {
+                match candidate {
+                    Ok(pending) => core::mem::forget(pending),
+                    Err(ChildThreadStartFailure::Retained { owner, .. }) => core::mem::forget(owner),
+                    Err(ChildThreadStartFailure::Rejected(_)) => {}
+                }
+            }
+            unsafe { NativeChildInitializationScope::retain_at(scope) };
+            return Err(entered.err().expect("failed original record operation"));
+        }
+        let pending = match prepared {
+            Some(Ok(pending)) => pending,
+            Some(Err(failure)) => {
+                if matches!(&failure, ChildThreadStartFailure::Retained { .. }) {
+                    unsafe { NativeChildInitializationScope::retain_at(scope) };
+                }
+                return Ok((Err(failure), None));
+            }
+            None => return Err(NativeSubprocessError::Gone),
+        };
+        let (keeper, phase) = pending.into_phase();
+        let ready = match unsafe { initialize_native_child_theap_source(scope, phase) } {
+            Ok(ready) => ready,
+            Err(error) => {
+                let failure = keeper.retain(error);
+                unsafe { NativeChildInitializationScope::retain_at(scope) };
+                return Ok((Err(failure), None));
+            }
+        };
+        // SAFETY: this ready phase belongs to the exact keeper retained
+        // across all callbacks by the original child initialization admission.
+        let mut owner = match unsafe { keeper.complete_source(ready) } {
+            Ok(owner) => owner,
+            Err(failure) => {
+                unsafe { NativeChildInitializationScope::retain_at(scope) };
+                return Ok((Err(failure), None));
+            }
+        };
+        let Some(theap) = owner.theap_pointer() else {
+            unsafe { NativeChildInitializationScope::retain_at(scope) };
+            return Ok((Err(ChildThreadStartFailure::Retained {
+                owner, error: ChildThreadStartError::InvalidTransition,
+            }), None));
+        };
+        let mut token = None;
+        let counted = unsafe { id.with_owner(|_| {
+            let members = &mut *(*id.0.as_ptr()).members.get();
+            let next = members.checked_add(1).ok_or(NativeSubprocessError::Retained)?;
+            *members = next;
+            token = Some(NativeChildRecordMember { id: Some(id) });
+            Ok(())
+        }) };
+        if let Err(error) = counted.and_then(|result| result) {
+            // This exact initialized owner and any already-issued token
+            // remain retained even when final record administration failed.
+            core::mem::forget(owner);
+            if let Some(token) = token { core::mem::forget(token); }
+            unsafe { NativeChildInitializationScope::retain_at(scope) };
+            return Err(error);
+        }
+        set_default_theap(theap);
+        set_fast_slot(Some(theap.cast()));
+        let counted = owner.with_child_image(|image| {
+            image.get_ref().identity().record_statistics_thread_attached();
+        });
+        debug_assert!(counted.is_some(), "an attached child owner projects its image");
+        Ok((Ok(ChildThreadAddOutcome::Added(ChildThreadMember { owner })), token))
+    }) }?
+}
+
 /// Production `mi_subproc_add_current_thread` for a child from
 /// [`native_subproc_new`]; see [`add_current_thread`]. On success the
 /// member moves into the current thread's slot, so the native runtime
@@ -1156,6 +1431,9 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
         .ok_or(NativeSubprocessError::NotReady)?;
     // SAFETY: forwarded id and current-thread obligations; the record lock
     // excludes every other operation on the child context.
+    #[cfg(target_arch = "x86_64")]
+    let (outcome, record_member) = unsafe { add_native_child_thread_source(id, binding) }?;
+    #[cfg(not(target_arch = "x86_64"))]
     let (outcome, record_member) = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
             Some(child) => {
@@ -1184,13 +1462,21 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
                 record_member: record_member.expect("actual admission issued its record token"), binding, member,
                 #[cfg(target_arch = "x86_64")]
                 generic_frequency_captures: 0,
+                #[cfg(target_arch = "x86_64")]
+                allocation_scope: core::ptr::null(),
+                #[cfg(target_arch = "x86_64")]
+                retained_fresh_issuer: None,
             });
             NativeChildThreadAdd::Added
         }
         Ok(ChildThreadAddOutcome::AlreadyInitialized { in_other_subprocess }) => {
             NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess }
         }
-        Err(ChildThreadStartFailure::Rejected(error) | ChildThreadStartFailure::Retained { error, .. }) => {
+        Err(ChildThreadStartFailure::Rejected(error)) => NativeChildThreadAdd::Failed(error),
+        Err(ChildThreadStartFailure::Retained { owner, error }) => {
+            // The actual initialization admission retains the child, and this
+            // exact terminal owner retains its allocated images/registration.
+            core::mem::forget(owner);
             NativeChildThreadAdd::Failed(error)
         }
     })
@@ -1200,11 +1486,19 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
 /// [`ChildThreadMember::thread_done`]. The slot is cleared only on success.
 /// Returns `None` when the thread is not a child member.
 pub(crate) fn native_child_thread_done() -> Option<Result<(), NativeChildThreadDoneError>> {
+    #[cfg(target_arch = "x86_64")]
+    if unsafe { !(*CURRENT_CHILD_MEMBER.get()).initialization.is_null()
+        || (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() }
+    {
+        return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
+    }
     // SAFETY: current-thread slot, no other reference live.
     let slot = unsafe { current_child_member() };
     let current = slot.as_mut()?;
     #[cfg(target_arch = "x86_64")]
-    if current.generic_frequency_captures != 0 {
+    if current.generic_frequency_captures != 0
+        || !current.allocation_scope.is_null() || current.retained_fresh_issuer.is_some()
+    {
         return Some(Err(NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)));
     }
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
@@ -1460,6 +1754,126 @@ impl NativeChildGenericFrequencyCapture {
     }
 }
 
+/// A real child source admission acquired while the original READY owner
+/// is held. The actual member owns its issuing TLD/Theap; the child lease
+/// retains its context and source registration independently of projections.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildOriginalIssuer {
+    id: NativeSubprocessId,
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    _child: NativeChildCallbackLease,
+    _operation: crate::runtime_lifecycle::NativeSubprocessOperation,
+}
+
+/// Terminal original custody, including a task that a refused engine could
+/// not take. A marker can refuse teardown but never replaces this admission.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildRetainedFreshIssuer {
+    issuer: NativeChildOriginalIssuer,
+    _task: Option<crate::single_thread::PendingFreshOsPageInitialization>,
+}
+
+/// A stack-pinned synchronous selected-issuer scope. Linked scopes allow
+/// nested allocation on the same or another Heap without a capacity bound.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildAllocationScope {
+    issuer: Option<NativeChildOriginalIssuer>,
+    previous: *const Self,
+    installed: bool,
+    _pin: core::marker::PhantomPinned,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildAllocationScope {
+    unsafe fn issuer_at(scope: core::ptr::NonNull<Self>)
+        -> (core::ptr::NonNull<crate::types::Theap>, core::ptr::NonNull<crate::types::Heap>) {
+        // SAFETY: the original stack owner keeps this scope pinned; this short
+        // issuer projection ends before any callback or source operation.
+        let issuer = unsafe { &*core::ptr::addr_of!((*scope.as_ptr()).issuer) }
+            .as_ref().expect("the active scope retains its original issuer");
+        (issuer.theap, issuer.heap)
+    }
+
+    unsafe fn retain_at(scope: core::ptr::NonNull<Self>, task: Option<crate::single_thread::PendingFreshOsPageInitialization>) {
+        // SAFETY: no projection or callback is live; the scope excludes this
+        // member's finish and replacement. Its exact admission moves once.
+        let current = unsafe { current_child_member() }.as_mut().expect("the admitted member is retained");
+        assert!(current.retained_fresh_issuer.is_none());
+        assert_eq!(current.record_member.id(), unsafe { &*core::ptr::addr_of!((*scope.as_ptr()).issuer) }
+            .as_ref().expect("one original issuer").id);
+        current.retained_fresh_issuer = Some(NativeChildRetainedFreshIssuer {
+            issuer: unsafe { &mut *core::ptr::addr_of_mut!((*scope.as_ptr()).issuer) }
+                .take().expect("one original issuer"), _task: task,
+        });
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for NativeChildAllocationScope {
+    fn drop(&mut self) {
+        if !self.installed { return; }
+        // SAFETY: the pinned scope is current-thread-only and synchronous;
+        // nested scopes ended first and no member projection remains live.
+        let current = unsafe { current_child_member() }.as_mut().expect("the scope retains its member");
+        assert_eq!(current.allocation_scope, core::ptr::from_ref(self));
+        current.allocation_scope = self.previous;
+    }
+}
+
+/// # Safety
+/// The original READY owner was acquired before any candidate. Its caller
+/// retains the actual selected Heap, Theap and member through this scope;
+/// pointer checks only refuse a different original issuer.
+#[cfg(target_arch = "x86_64")]
+unsafe fn with_native_child_allocation_scope<R>(
+    owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    operation: impl FnOnce(core::ptr::NonNull<NativeChildAllocationScope>) -> R,
+) -> Result<R, NativeChildAllocationRefusal> {
+    let theap = owner.selected_theap();
+    // SAFETY: this original owner retains the initialized selected Theap.
+    let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(theap) })
+        .ok_or(NativeChildAllocationRefusal::Retained)?;
+    let (id, main_theap) = {
+        // SAFETY: a short projection of the actual current member, before
+        // any source callback or candidate; no reference escapes this block.
+        let current = unsafe { current_child_member() }.as_ref().ok_or(NativeChildAllocationRefusal::Unavailable)?;
+        if current.retained_fresh_issuer.is_some() { return Err(NativeChildAllocationRefusal::Retained); }
+        (current.record_member.id(), current.member.theap_pointer().ok_or(NativeChildAllocationRefusal::Unavailable)?)
+    };
+    if unsafe { crate::types::Theap::tld_at(theap) != crate::types::Theap::tld_at(main_theap) } {
+        return Err(NativeChildAllocationRefusal::Retained);
+    }
+    let admitted_operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
+        .ok_or(NativeChildAllocationRefusal::Retained)?;
+    // SAFETY: the original READY child lease already retains this exact
+    // record and registration. The short record lock verifies its original
+    // context before acquiring independent actual custody, without callbacks.
+    let child = unsafe { id.with_owner(|child| {
+        let child = child.as_mut()?;
+        if child.identity_pointer()? != owner.process().subprocess() as *const _ as *mut _ { return None; }
+        let record = id.record();
+        record.callback_leases.fetch_update(core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1)).ok()?;
+        Some(NativeChildCallbackLease(id.0))
+    }) }.map_err(|_| NativeChildAllocationRefusal::Retained)?.ok_or(NativeChildAllocationRefusal::Retained)?;
+    let mut scope = core::pin::pin!(NativeChildAllocationScope {
+        issuer: Some(NativeChildOriginalIssuer { id, theap, heap, _child: child, _operation: admitted_operation }),
+        previous: core::ptr::null(), installed: false, _pin: core::marker::PhantomPinned,
+    });
+    // SAFETY: the stack pin keeps the intrusive current-thread link stable.
+    // The operation may change custody fields but never moves this scope.
+    let scope = unsafe { scope.as_mut().get_unchecked_mut() };
+    let current = unsafe { current_child_member() }.as_mut().ok_or(NativeChildAllocationRefusal::Retained)?;
+    scope.previous = current.allocation_scope;
+    current.allocation_scope = core::ptr::from_ref(scope);
+    scope.installed = true;
+    let original = core::ptr::NonNull::from(scope);
+    // No scope or member projection survives the callback. Its original stack
+    // owner retains the pin while the driver uses only short field operations.
+    Ok(operation(original))
+}
+
 /// Source request selected before entering an exact child Theap engine.
 /// Canonical guarded requests enter the counted generic path directly.
 enum NativeChildAllocationRequest {
@@ -1536,14 +1950,68 @@ unsafe fn native_child_theap_allocate_request(
     theap: core::ptr::NonNull<crate::types::Theap>,
     request: NativeChildAllocationRequest,
 ) -> Result<Option<core::ptr::NonNull<u8>>, NativeChildAllocationRefusal> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the caller retains its actual initialized member and selected
+        // Heap, TLD and Theap. READY admission precedes the candidate and stays
+        // live through every callback, source observation and terminal outcome.
+        return unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+            with_native_child_allocation_scope(&owner, |scope| {
+                native_child_theap_allocate_request_in_owner(theap, request, &owner, scope)
+            })?
+        }) }.map_err(|_| NativeChildAllocationRefusal::Retained)?;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe { native_child_theap_allocate_request_in_owner(theap, request) }
+}
+
+/// Captures phase custody before the original short engine finishes. A late
+/// outer failure cannot erase an unfinished original task returned inside it.
+///
+/// # Safety
+/// The caller continuously retains the exact issuing member, Heap, TLD and
+/// Theap; no callback or projection spans this engine operation.
+unsafe fn with_native_child_allocation_phase(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    operation: impl for<'session, 'image> FnOnce(
+        &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'image, 'static>,
+    ) -> Result<crate::single_thread::DeferredFreeAllocationPhase, NativeChildAllocationRefusal>,
+) -> Result<crate::single_thread::DeferredFreeAllocationPhase, NativeChildAllocationRefusal> {
+    let mut phase = None;
+    let entered = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
+        phase = Some(operation(engine));
+    }) }.is_some();
+    match phase {
+        #[cfg(target_arch = "x86_64")]
+        Some(Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(task))) =>
+            Ok(crate::single_thread::DeferredFreeAllocationPhase::FreshInitialization(task)),
+        Some(result) if entered => result,
+        _ => Err(NativeChildAllocationRefusal::Unavailable),
+    }
+}
+
+/// Drives the source phases under the actual original admission acquired
+/// before the candidate. This path never creates a startup metadata witness.
+///
+/// # Safety
+/// The caller retains the actual selected member, Heap, TLD and Theap for
+/// this complete synchronous operation; every short projection ends before
+/// callbacks. On x86 the supplied READY owner was admitted before allocation.
+unsafe fn native_child_theap_allocate_request_in_owner(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    request: NativeChildAllocationRequest,
+    #[cfg(target_arch = "x86_64")] owner: &crate::runtime_lifecycle::NativeAllocationOwner<'_>,
+    #[cfg(target_arch = "x86_64")] scope: core::ptr::NonNull<NativeChildAllocationScope>,
+) -> Result<Option<core::ptr::NonNull<u8>>, NativeChildAllocationRefusal> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     #[cfg(target_arch = "x86_64")]
     let canonical = matches!(&request, NativeChildAllocationRequest::GuardedCanonical { .. });
+    #[cfg(not(target_arch = "x86_64"))]
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
         .ok_or(NativeChildAllocationRefusal::Retained)?;
     // SAFETY: forwarded exact current-thread Theap lifetime. Each engine
     // projection ends before a deferred-free callback can reenter allocation.
-    let mut phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| match request {
+    let mut phase = unsafe { with_native_child_allocation_phase(theap, |engine| match request {
         NativeChildAllocationRequest::Ordinary { size, aligned, zero } => Ok::<_, NativeChildAllocationRefusal>(match aligned {
             None => engine.begin_deferred_free_allocation(size, zero),
             Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
@@ -1552,10 +2020,73 @@ unsafe fn native_child_theap_allocate_request(
         NativeChildAllocationRequest::GuardedCanonical { source_size } =>
             engine.begin_deferred_free_guarded_canonical_checked(source_size)
                 .map_err(|_| NativeChildAllocationRefusal::Retained),
-    }) }.ok_or(NativeChildAllocationRefusal::Unavailable)??;
+    }) }?;
     loop {
         match phase {
             DeferredFreeAllocationPhase::Complete(block) => return Ok(block),
+            #[cfg(target_arch = "x86_64")]
+            DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                let (original_theap, heap) = unsafe { NativeChildAllocationScope::issuer_at(scope) };
+                if original_theap != theap || !task.matches_theap(original_theap) {
+                    unsafe { NativeChildAllocationScope::retain_at(scope, Some(task)) };
+                    return Err(NativeChildAllocationRefusal::Retained);
+                }
+                #[cfg(any(feature = "mi-debug-1", feature = "mi-debug-2", feature = "mi-debug-3"))]
+                let task = if matches!(task.failure(), crate::single_thread::FreshOsPageInitializationFailure::SourceObservation(_)) {
+                    // SAFETY: the actual READY owner predates this candidate;
+                    // all engine/member projections and locks ended. The task
+                    // still retains its original registration and backing.
+                    match unsafe { task.dispatch(owner) } {
+                        Ok(never) => match never {},
+                        Err(mut task) => {
+                            // SAFETY: this actual original admission moves the
+                            // one unfinished task into its persistent member
+                            // slot before the outer owner ends. A mark error
+                            // can follow publication; custody remains retained.
+                            let _ = unsafe { task.ensure_retirement_refusal(theap, heap) };
+                            unsafe { NativeChildAllocationScope::retain_at(scope, Some(task)) };
+                            return Err(NativeChildAllocationRefusal::Retained);
+                        }
+                    }
+                } else { task };
+                let mut pending = Some(task);
+                let mut retained = false;
+                // SAFETY: this same actual original owner still retains its
+                // issuer. The external task slot survives both cleanup refusal
+                // and any later outer engine-finish failure.
+                let _ = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
+                    let task = pending.take().expect("one original fresh task");
+                    match unsafe { engine.cleanup_fresh_os_initialization(task) } {
+                        Ok(()) => {},
+                        Err(task) => {
+                            retained = true;
+                            if let Err(task) = engine.retain_fresh_os_initialization(task) {
+                                pending = Some(task);
+                            }
+                        }
+                    }
+                }) };
+                if retained || pending.is_some() {
+                    if pending.is_some() {
+                        // SAFETY: this member accepts the exact unconsumed
+                        // original task. Engine Drop did not transfer it to
+                        // a session slot, so this is its sole marker publisher.
+                        // A mark error never drops task or issuer custody.
+                        let _ = unsafe { pending.as_mut().expect("one unaccepted original task")
+                            .ensure_retirement_refusal(theap, heap) };
+                    }
+                    // Engine Drop marks and transfers an accepted task into
+                    // its original persistent slot. An unaccepted task moves
+                    // with this actual member's retained admission. Neither
+                    // path guesses ownership from the marker or replays free.
+                    unsafe { NativeChildAllocationScope::retain_at(scope, pending) };
+                    return Err(NativeChildAllocationRefusal::Retained);
+                }
+                // Cleanup consumed the task before any later finish error.
+                // An OS release retry remains with its existing source owner;
+                // it must not recreate or mark an unfinished metadata task.
+                return Err(NativeChildAllocationRefusal::Retained);
+            }
             #[cfg(target_arch = "x86_64")]
             DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                 // SAFETY: the originating engine projection ended above. The
@@ -1579,15 +2110,14 @@ unsafe fn native_child_theap_allocate_request(
                 // SAFETY: the capture retained the same actual member and the
                 // caller retained its selected Heap/Theap throughout the getter.
                 // A fresh short engine resumes the originating request only.
-                let Some(resumed) = (unsafe { with_native_child_heap_theap_engine(capture.theap, |engine| {
+                let resumed = unsafe { with_native_child_allocation_phase(capture.theap, |engine| {
                     if canonical {
                         unsafe { engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation) }
                             .map_err(|_| NativeChildAllocationRefusal::Retained)
                     } else {
                         Ok(unsafe { engine.resume_generic_allocation_frequency(request, frequency, continuation) })
                     }
-                }) }) else { return Err(NativeChildAllocationRefusal::Retained); };
-                let resumed = resumed?;
+                }) }?;
                 // SAFETY: the getter and fresh engine projection both ended;
                 // the request was consumed by that exact admitted issuer.
                 if !unsafe { capture.complete() } { return Err(NativeChildAllocationRefusal::Retained); }
@@ -1601,14 +2131,14 @@ unsafe fn native_child_theap_allocate_request(
                 if let Ok(invocation) = crate::deferred_free::begin_process(theap, tld, force) {
                     let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
                 }
-                phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
+                phase = unsafe { with_native_child_allocation_phase(theap, |engine| {
                     #[cfg(target_arch = "x86_64")]
                     if canonical {
                         return engine.resume_deferred_free_guarded_canonical_checked(collection, continuation)
                             .map_err(|_| NativeChildAllocationRefusal::Retained);
                     }
                     Ok::<_, NativeChildAllocationRefusal>(engine.resume_deferred_free_allocation(collection, continuation))
-                }) }.ok_or(NativeChildAllocationRefusal::Unavailable)??;
+                }) }?;
             }
         }
     }
@@ -1627,6 +2157,8 @@ unsafe fn with_native_child_heap_theap_engine<R>(
         &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'image, 'static>,
     ) -> R,
 ) -> Option<R> {
+    #[cfg(target_arch = "x86_64")]
+    if unsafe { (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() } { return None; }
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
     let (id, binding) = (current.record_member.id(), current.binding);
@@ -1694,6 +2226,125 @@ pub(crate) unsafe fn native_child_theap_free_captured_with_progress(
     })
 }
 
+/// Retains a failed original auxiliary image and poisons its actual member
+/// before ending the initializer's callback scope. No image is reselected.
+#[cfg(target_arch = "x86_64")]
+unsafe fn retain_native_child_heap_initializer(
+    scope: core::ptr::NonNull<NativeChildInitializationScope>,
+    id: NativeSubprocessId,
+    failure: crate::meta::ChildHeapTheapInitializationFailure,
+) {
+    // SAFETY: the actual scope excludes finish/replacement of this member;
+    // no allocator projection or callback survives this short settlement.
+    if let Some(current) = unsafe { current_child_member() }.as_mut() {
+        if current.record_member.id() == id {
+            let retained = current.member.owner_mut().retain_heap_theap_initialization_failure(&failure);
+            debug_assert!(retained, "the failure keeper belongs to its original member");
+        }
+    }
+    core::mem::forget(failure);
+    unsafe { NativeChildInitializationScope::retain_at(scope) };
+}
+
+/// # Safety
+/// The selected Heap and this thread's actual member/TLD remain retained
+/// across preparation, callbacks, and completion of the same owned ticket.
+#[cfg(target_arch = "x86_64")]
+unsafe fn native_child_heap_theap_source(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+) -> Option<core::ptr::NonNull<crate::types::Theap>> {
+    if unsafe { (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() } { return None; }
+    let (id, binding) = {
+        let current = unsafe { current_child_member() }.as_ref()?;
+        (current.record_member.id(), current.binding)
+    };
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let main = unsafe { id.with_owner(|owner| {
+        let child = owner.as_mut()?;
+        if child.identity_pointer() != Some(crate::types::Heap::subprocess_pointer_at(heap)) { return None; }
+        Some(child.main_heap_pointer() == Some(heap))
+    }) }.ok().flatten()?;
+    if main {
+        return unsafe { id.with_owner(|owner| {
+            let child = owner.as_mut()?;
+            let current = current_child_member().as_mut()?;
+            if current.record_member.id() != id { return None; }
+            let owner = current.member.owner_mut();
+            let base = owner.theap_pointer()?;
+            if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) != Some(base)
+                || crate::types::Theap::heap_at(base) != heap.as_ptr() { return None; }
+            owner.cached_set(child, binding, base).ok()?;
+            Some(base)
+        }) }.ok().flatten();
+    }
+    unsafe { with_native_child_initialization_scope(id, heap, |scope| {
+        let mut selection = None;
+        let entered = unsafe { id.with_owner(|owner| {
+            let Some(child) = owner.as_mut() else { return; };
+            let Some(current) = current_child_member().as_mut() else { return; };
+            if current.record_member.id() != id { return; }
+            selection = Some(current.member.owner_mut().prepare_heap_theap_selection(child, binding, heap));
+        }) };
+        if entered.is_err() {
+            if let Some(Ok(selection)) = selection.take() {
+                let failure = match selection {
+                    crate::meta::ChildHeapTheapSelection::Pending(pending) => Some(pending.into_phase().0.retain_refusal()),
+                    crate::meta::ChildHeapTheapSelection::Retained(failure) => Some(failure),
+                    crate::meta::ChildHeapTheapSelection::Existing(_) => None,
+                };
+                if let Some(failure) = failure {
+                    unsafe { retain_native_child_heap_initializer(scope, id, failure) };
+                    return None;
+                }
+            }
+            unsafe { NativeChildInitializationScope::retain_at(scope) };
+            return None;
+        }
+        let pending = match selection?.ok()? {
+            crate::meta::ChildHeapTheapSelection::Existing(theap) => return Some(theap),
+            crate::meta::ChildHeapTheapSelection::Pending(pending) => pending,
+            crate::meta::ChildHeapTheapSelection::Retained(failure) => {
+                unsafe { retain_native_child_heap_initializer(scope, id, failure) };
+                return None;
+            }
+        };
+        let (keeper, phase) = pending.into_phase();
+        let ready = match unsafe { initialize_native_child_theap_source(scope, phase) } {
+            Ok(ready) => ready,
+            Err(error) => {
+                unsafe { retain_native_child_heap_initializer(scope, id, keeper.retain(error)) };
+                return None;
+            }
+        };
+        let mut original = Some((keeper, ready));
+        let mut completed = None;
+        let finished = unsafe { id.with_owner(|owner| {
+            let Some(child) = owner.as_mut() else { return; };
+            let Some(current) = current_child_member().as_mut() else { return; };
+            if current.record_member.id() != id { return; }
+            let (keeper, ready) = original.take().expect("original initializer consumed once");
+            completed = Some(current.member.owner_mut().complete_heap_theap_initialization(child, binding, keeper, ready));
+        }) };
+        if let Some((keeper, _ready)) = original {
+            unsafe { retain_native_child_heap_initializer(scope, id, keeper.retain_refusal()) };
+            return None;
+        }
+        match completed {
+            Some(Ok(theap)) if finished.is_ok() => Some(theap),
+            Some(Err(failure)) => {
+                unsafe { retain_native_child_heap_initializer(scope, id, failure) };
+                None
+            }
+            Some(Ok(_)) | None => {
+                // Publication may have completed before the outer unlock
+                // failed. Retain actual admission; never replay the keeper.
+                unsafe { NativeChildInitializationScope::retain_at(scope) };
+                None
+            }
+        }
+    }) }.ok().flatten()
+}
+
 /// Resolve the current child thread's Theap for a live Heap. The child main
 /// Heap keeps its fixed-slot Theap; a non-main Heap may create a per-thread
 /// Theap. Both paths publish the selected Theap in the cache.
@@ -1704,6 +2355,10 @@ pub(crate) unsafe fn native_child_theap_free_captured_with_progress(
 pub(crate) unsafe fn native_child_heap_theap(
     heap: core::ptr::NonNull<crate::types::Heap>,
 ) -> Option<core::ptr::NonNull<crate::types::Theap>> {
+    #[cfg(target_arch = "x86_64")]
+    { return unsafe { native_child_heap_theap_source(heap) }; }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
     // SAFETY: the current thread alone accesses its membership slot.
     let current = (unsafe { current_child_member() }).as_mut()?;
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
@@ -1744,6 +2399,7 @@ pub(crate) unsafe fn native_child_heap_theap(
         })
     };
     selected.ok().flatten()
+    }
 }
 
 /// Collect an exact live Theap of this child member without resolving its
@@ -2031,6 +2687,39 @@ pub(crate) unsafe fn native_child_heap_release(
         NativeSubprocessError,
     >,
 > {
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: every linked initializer owns its exact original admission
+        // and remains pinned until its synchronous nested scopes have ended.
+        let slot = unsafe { &*CURRENT_CHILD_MEMBER.get() };
+        if slot.retained_initialization.is_some() {
+            return Some(Err(NativeSubprocessError::Retained));
+        }
+        let mut initialization = slot.initialization;
+        while !initialization.is_null() {
+            let scope = unsafe { &*initialization };
+            if scope.admission.as_ref().is_some_and(|admission| admission.heap == heap) {
+                return Some(Err(NativeSubprocessError::Retained));
+            }
+            initialization = scope.previous;
+        }
+        // SAFETY: a short current-thread read of actual scoped custody; every
+        // linked scope is pinned until synchronous nested scopes have ended.
+        let current = unsafe { current_child_member() }.as_ref();
+        if let Some(current) = current {
+            if current.retained_fresh_issuer.as_ref().is_some_and(|retained| retained.issuer.heap == heap) {
+                return Some(Err(NativeSubprocessError::Retained));
+            }
+            let mut scope = current.allocation_scope;
+            while !scope.is_null() {
+                let retained = unsafe { &*scope };
+                if retained.issuer.as_ref().is_some_and(|issuer| issuer.heap == heap) {
+                    return Some(Err(NativeSubprocessError::Retained));
+                }
+                scope = retained.previous;
+            }
+        }
+    }
     // Read only the caller's identity before any selector can borrow its
     // member slot again. No member projection crosses the target record lock.
     let current_id = unsafe { current_child_member() }.as_ref().map(|member| member.record_member.id());
@@ -3264,6 +3953,112 @@ pub(crate) mod tests {
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
+    #[test]
+    fn child_fresh_os_assertion_retains_original_issuer_during_output_reentry() {
+        use crate::process_page_map::ProcessPageMapRoot;
+        use crate::types::{Page, PageValiditySnapshot, Theap};
+        use core::ptr::NonNull;
+        const CHILD: &str = "CRABC_CHILD_FRESH_OS_ASSERTION";
+        struct Probe {
+            id: NativeSubprocessId,
+            theap: NonNull<Theap>,
+            map: ProcessPageMapRoot,
+            observed: core::cell::Cell<Option<(NonNull<Page>, NonNull<u8>, usize)>>,
+        }
+        unsafe fn observe(state: &PageValiditySnapshot, page: NonNull<Page>, argument: *mut core::ffi::c_void) {
+            // SAFETY: the scoped fixture and engine retain this probe and the
+            // original fresh committed backing. No client or list is published.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            assert!(probe.observed.get().is_none());
+            assert_eq!(state.used, 0);
+            assert_eq!(state.capacity, 0);
+            assert!(state.free.is_null());
+            assert_eq!(unsafe { probe.map.lookup_registered_page(state.area.as_ptr()) }.unwrap(), Some(page));
+            probe.observed.set(Some((page, state.area, state.area_bytes)));
+            // SAFETY: only the engine and observer own this initialized byte
+            // of the unpublished committed block area.
+            unsafe { state.area.as_ptr().write(0x5a) };
+        }
+        unsafe fn passive(_: &PageValiditySnapshot, _: NonNull<Page>, _: *mut core::ffi::c_void) {}
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            unsafe extern "C" { fn write(fd: core::ffi::c_int, bytes: *const u8, size: usize) -> isize; }
+            // SAFETY: synchronous assertion delivery retains the registered
+            // argument, original candidate, selected issuer and child admission.
+            let probe = unsafe { &*argument.cast::<Probe>() };
+            let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if message.starts_with(b"mimalloc: assertion failed:") {
+                let (page, area, bytes) = probe.observed.get().expect("real observation before dispatch");
+                assert_eq!(current_child_id(), Some(probe.id));
+                assert!(matches!(native_child_thread_done(), Some(Err(
+                    NativeChildThreadDoneError::Subprocess(NativeSubprocessError::Retained)))));
+                let heap = NonNull::new(unsafe { Theap::heap_at(probe.theap) }).unwrap();
+                // SAFETY: the actual scope retains this Heap. Release is an
+                // admission attempt and must refuse before any detach or free.
+                assert!(matches!(unsafe { native_child_heap_release(heap, true) },
+                    Some(Err(NativeSubprocessError::Retained))));
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                let state = unsafe { Page::validity_snapshot_at(page) };
+                assert_eq!((state.used, state.capacity), (0, 0));
+                assert!(state.free.is_null());
+                assert!(state.local_free.is_null());
+                // Every engine/member projection ended before this actual
+                // native reentry; the unfinished candidate remains registered.
+                let nested = unsafe { crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                    passive, core::ptr::null_mut(), || native_child_theap_allocate(probe.theap, 96, false)
+                ) }.unwrap().expect("original selected child issuer permits ordinary reentry");
+                assert!(nested.addr().get() < area.addr().get() || nested.addr().get() >= area.addr().get() + bytes);
+                assert_eq!(unsafe { crate::runtime_lifecycle::native_free(nested) },
+                    crate::runtime_lifecycle::NativePageFreeResult::Freed);
+                assert_eq!(unsafe { probe.map.lookup_registered_page(area.as_ptr()) }.unwrap(), Some(page));
+                assert_eq!(unsafe { area.as_ptr().read() }, 0x5a);
+                let marker = b"original child fresh backing retained during native reentry\n";
+                assert_eq!(unsafe { write(2, marker.as_ptr(), marker.len()) }, marker.len() as isize);
+            }
+            assert_eq!(unsafe { write(2, message.as_ptr(), message.len()) }, message.len() as isize);
+        }
+        if let Some(selected) = std::env::var_os(CHILD) {
+            assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(no_output) }));
+            assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+            let id = native_subproc_new().expect("actual child source owner");
+            std::thread::spawn(move || {
+                assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                    crate::runtime_lifecycle::current_native_allocator_thread_descriptor()) });
+                assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                let heap = if selected == "auxiliary" { native_child_heap_new().unwrap().unwrap().unwrap() }
+                    else { current_child_main_heap().unwrap() };
+                let theap = unsafe { native_child_heap_theap(heap) }.unwrap();
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                // SAFETY: actual READY owner admission precedes the candidate,
+                // with this worker retaining its original member and Heap.
+                unsafe { crate::runtime_lifecycle::with_native_allocation_owner(theap, |owner| {
+                    let probe = Probe { id, theap, map: owner.page_map().unwrap(),
+                        observed: core::cell::Cell::new(None) };
+                    owner.output().register_output(Some(output), core::ptr::from_ref(&probe).cast_mut().cast());
+                    crate::page_validity::with_fresh_page_initialization_observer_for_test(
+                        observe, core::ptr::from_ref(&probe).cast_mut().cast(), || {
+                            let _ = native_child_theap_allocate_variant(theap, 7, Some((128 * 1024, 0)), false);
+                            panic!("actual source zero assertion cannot return");
+                        });
+                }) }.expect("original selected child READY admission");
+            }).join().unwrap();
+            return;
+        }
+        use std::os::unix::process::ExitStatusExt;
+        for selected in ["main", "auxiliary"] {
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "subproc::lifecycle::tests::child_fresh_os_assertion_retains_original_issuer_during_output_reentry",
+                    "--nocapture", "--test-threads=1"])
+                .current_dir(std::env::temp_dir()).env(CHILD, selected).output().unwrap();
+            let stderr = std::string::String::from_utf8_lossy(&result.stderr);
+            assert_eq!(result.status.signal(), Some(6), "{selected}: {stderr}");
+            assert!(stderr.contains("original child fresh backing retained during native reentry"), "{selected}: {stderr}");
+            assert!(stderr.contains("mi_mem_is_zero(page_start, mi_page_committed(page))"), "{selected}: {stderr}");
+        }
     }
 
     /// A live Heap of one child cannot become another child's cached Theap.

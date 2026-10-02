@@ -232,6 +232,10 @@ extern crate std;
 #[must_use = "an owner-local page engine must finish or be retained with its attachment"]
 pub(crate) struct MainHeapThreadOwnerLocalPageEngine<'main> {
     engine: Option<OwnerLocalMainHeapPageAllocator<'static, 'static, RuntimeFirstRegularPageBacking>>,
+    /// Original issuer identity captured while its attachment session was
+    /// admitted. The paired attachment separately retains image lifetime.
+    #[cfg(target_arch = "x86_64")]
+    allocation_theap: NonNull<crate::types::Theap>,
     /// Exact process-main Heap whose ordinary user allocation route backs
     /// child main-Heap images. The lease keeps that parent image alive without
     /// borrowing its mutable fields across child operations.
@@ -2289,6 +2293,14 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
 }
 
 impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
+    /// Observes the original issuing address without binding or finishing
+    /// a mutable page session. The actual paired attachment remains retained;
+    /// this scalar grants neither image lifetime nor allocation admission.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn allocation_theap(&self) -> Option<NonNull<crate::types::Theap>> {
+        self.engine.as_ref().map(|_| self.allocation_theap)
+    }
+
     /// Drains a vanished worker using its retained canonical engine, then
     /// consumes its borrows without touching the survivor's local-engine slot.
     ///
@@ -2413,6 +2425,8 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
             .page_session()
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
         let parent_heap = session.main_heap_lease();
+        #[cfg(target_arch = "x86_64")]
+        let allocation_theap = session.local_field_theap_pointer();
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
         let mapped_abandoned_claim =
@@ -2430,6 +2444,8 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         };
         Ok(Self {
             engine: Some(engine),
+            #[cfg(target_arch = "x86_64")]
+            allocation_theap,
             parent_heap,
             mapped_abandoned_claim,
             lifecycle,
@@ -2465,6 +2481,8 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         let session = attachment.page_session()
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Session)?;
         let parent_heap = session.main_heap_lease();
+        #[cfg(target_arch = "x86_64")]
+        let allocation_theap = session.local_field_theap_pointer();
         let numa_node = session.theap().tld_numa_node()
             .ok_or(MainHeapThreadOwnerLocalPageEngineBeginError::MissingNumaNode)?;
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
@@ -2479,7 +2497,10 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
                 ArenaId::none(), page_map,
             )
         };
-        Ok(Self { engine: Some(engine), parent_heap, mapped_abandoned_claim, lifecycle,
+        Ok(Self { engine: Some(engine),
+            #[cfg(target_arch = "x86_64")]
+            allocation_theap,
+            parent_heap, mapped_abandoned_claim, lifecycle,
             _not_send_or_sync: PhantomData })
     }
 
@@ -2926,6 +2947,40 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     #[inline]
     pub(crate) fn owns_theap(&self, selected: NonNull<crate::types::Theap>) -> bool {
         self.engine.owns_theap(selected)
+    }
+
+    /// Observes this engine's selected Theap without granting its lifetime or
+    /// allocation admission. The original owner must remain retained before
+    /// a caller validates that issuer and begins any page candidate.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn allocation_theap(&self) -> NonNull<crate::types::Theap> {
+        self.engine.allocation_theap()
+    }
+
+    /// Returns an original unpublished claim to this persistent issuing engine.
+    /// A foreign or occupied slot returns the same task without rebuilding
+    /// allocation or diagnostic admission from its captured addresses.
+    pub(crate) fn retain_fresh_os_initialization(
+        &mut self,
+        task: crate::single_thread::PendingFreshOsPageInitialization,
+    ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
+        self.engine.retain_fresh_os_initialization(task)
+    }
+
+    /// Reverses only setup completed by this original unpublished claim.
+    ///
+    /// # Safety
+    /// The actual original Theap, Heap, VM and PageMap owner remains admitted
+    /// continuously from preparation through cleanup. No image retirement,
+    /// rebinding or reuse intervened, and every callback and conflicting
+    /// projection has ended. Address equality grants no lifetime authority.
+    pub(crate) unsafe fn cleanup_fresh_os_initialization(
+        &mut self,
+        task: crate::single_thread::PendingFreshOsPageInitialization,
+    ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> {
+        // SAFETY: the retained original admission is the caller's obligation;
+        // this local wrapper projects that same persistent issuing engine.
+        unsafe { self.engine.cleanup_fresh_os_initialization(task) }
     }
 
     /// Returns a value-only canonical phase; protection and warnings run
@@ -3401,7 +3456,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     }
 
     /// Prepares two distinct current blocks for joined remote publication
-    /// while this owner remains live. The pair is the bounded Gate 5B
+    /// while this owner remains live. The pair is the bounded remote-free
     /// multiple-producer route, not a general asynchronous owner API.
     ///
     /// # Safety
@@ -3420,7 +3475,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
 
     /// Returns the source capacity of one exact current local allocation's
     /// page. This private lifecycle observation never exposes the page or its
-    /// metadata: its only caller sizes the bounded Gate 5B owner workload
+    /// metadata: its only caller sizes the bounded remote-free owner workload
     /// before transferring one block to a remote producer.
     ///
     /// # Safety

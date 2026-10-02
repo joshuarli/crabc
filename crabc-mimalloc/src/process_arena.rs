@@ -1115,9 +1115,9 @@ impl ProcessSharedArenaStorage {
 /// can retain the function pointer. A commit reports the conservative
 /// `is_zero = false` observation because [`Mapping::commit`] cannot prove
 /// zeroed bytes. A decommit callback's boolean instead means
-/// `needs_recommit`; the frozen Linux `MADV_DONTNEED` path leaves a range
-/// accessible, so both its successful outcome and its no-failure-channel
-/// error case return false.
+/// `needs_recommit`: forward the physical outcome, including the source
+/// protection requirement that survives an advisory error. This callback
+/// cannot report decommit failure or transfer its retained mapping owner.
 #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 unsafe extern "C" fn process_owned_mapping_commit(
     commit: bool,
@@ -1155,11 +1155,14 @@ unsafe extern "C" fn process_owned_mapping_commit(
         }
         true
     } else {
-        // The callback ABI has no decommit failure result: false specifically
-        // says no recommit is needed. Mapping::decommit either preserves the
-        // accessible default Linux mapping or leaves it untouched on error.
-        let _ = mapping.decommit(offset, size);
-        false
+        // The callback ABI carries the source recommit requirement rather
+        // than an advisory success flag. Debug protection is attempted even
+        // after advisory failure, so an error cannot imply accessibility.
+        match mapping.decommit(offset, size) {
+            Ok(Some(crate::os::DecommitOutcome::NeedsRecommit)) => true,
+            Ok(Some(crate::os::DecommitOutcome::DoesNotNeedRecommit)) | Ok(None) => false,
+            Err(_) => crate::os::decommit_needs_recommit(),
+        }
     }
 }
 
@@ -6564,9 +6567,60 @@ mod tests {
             unsafe { arena.slices_committed() }
                 .expect("the source commitment bitmap remains readable")
                 .is_set_range(slice, 1),
-            Some(true),
-            "the default Linux decommit callback reports that reuse needs no recommit"
+            Some(!crate::os::decommit_needs_recommit()),
+            "the callback preserves its physical decommit requirement in the source bitmap"
         );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-1"))]
+    #[test]
+    fn process_owned_decommit_clears_commitment_before_reuse() {
+        let fault = fault::install(fault::Plan::disabled());
+        for fail_advice in [false, true] {
+            let config = memory_config();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = initialized_map(config, subprocess);
+            let storage = ProcessSharedArenaStorage::test_static_owner();
+            let mapping = Mapping::map_aligned_for_allocator(
+                config, ARENA_MIN_SIZE, ARENA_ALIGNMENT, MapAccess::Reserved,
+            ).unwrap();
+            let base = mapping.base().unwrap();
+            let lease = match storage.install_one_owned_external_arena(page_map, mapping) {
+                Ok(lease) => lease,
+                Err(_) => panic!("the original reserved mapping must publish"),
+            };
+            let arena = lease.arena().unwrap();
+            let claim = arena.try_claim_suitable_slices(ArenaId::none(), 1, true, 0).unwrap();
+            let slice = claim.slice_index();
+            let start = claim.start();
+            assert!(claim.memory_id().initially_committed());
+            // SAFETY: this exact committed claim owns the complete writable
+            // slice; no Page or client has been published into it.
+            unsafe { start.write(0x5a) };
+            assert!(claim.release());
+            if fail_advice { fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO)); }
+            assert!(arena.collect_scheduled_purge(config.page_size(), true));
+            if fail_advice { assert_eq!(fault.observed(), 1); }
+            assert_eq!(unsafe { arena.slices_committed() }.unwrap().is_set_range(slice, 1),
+                Some(false), "debug decommit requires recommit even after advisory failure");
+            fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+            assert!(arena.try_claim_suitable_slices(ArenaId::none(), 1, true, 0).is_none(),
+                "reuse must reach physical commitment before returning a writable claim");
+            assert_eq!(fault.observed(), 1);
+            assert_eq!(unsafe { arena.slices_free() }.unwrap().is_set_range(slice, 1), Some(true));
+            fault.set(fault::Plan::disabled());
+            let retry = arena.try_claim_suitable_slices(ArenaId::none(), 1, true, 0).unwrap();
+            assert_eq!(retry.slice_index(), slice);
+            assert_eq!(retry.start(), start);
+            assert!(retry.memory_id().initially_committed());
+            // SAFETY: the successful real recommit precedes this returned
+            // claim; the same original slice remains exclusively owned.
+            unsafe { start.write(0x6b); assert_eq!(start.read(), 0x6b); }
+            assert!(retry.release());
+            assert!(arena.collect_scheduled_purge(config.page_size(), true));
+            assert_eq!(unsafe { storage.mapping_for_commit() }.base().unwrap(), base);
+            assert_eq!(lease.test_registry_count().unwrap(), 1);
+        }
     }
 
     #[test]

@@ -906,7 +906,58 @@ pub(crate) struct MainStaticTheapAttachment {
     inject_busy_heap_before_detach: bool,
 }
 
+/// Original ticket-zero images selected while their attachment is owned.
+/// This binding grants no independent lifetime or allocation admission. Its
+/// consumer must retain the actual published attachment through every use.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct MainStaticStartupOwnerBinding {
+    storage: &'static MainStaticAttachmentStorage,
+    subprocess: &'static MainSubprocess,
+    thread: crate::types::LiveThreadId,
+    pub(crate) theap: NonNull<Theap>,
+    pub(crate) heap: NonNull<Heap>,
+    tld: NonNull<ThreadLocalData>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl MainStaticStartupOwnerBinding {
+    /// # Safety
+    /// The original attachment and its TLD keeper remain owned and cannot
+    /// tear down during this observation. No image projection is retained.
+    pub(crate) unsafe fn validate(&self, subprocess: &MainSubprocess) -> bool {
+        if self.storage.state.load(Ordering::Acquire) != THREAD_READY
+            || current_thread_identity() != Some(self.thread)
+            || !core::ptr::eq(self.subprocess, subprocess)
+        { return false; }
+        // SAFETY: the caller retains the original attachment and excludes
+        // teardown; these are short copied fields of its original images.
+        let Some(owner) = (unsafe { Theap::owner_snapshot_at(self.theap) }) else {
+            return false;
+        };
+        owner.heap == self.heap && owner.tld == self.tld.as_ptr()
+            && owner.subprocess.as_ptr() == subprocess.identity_ptr()
+            && !owner.is_detached
+    }
+}
+
 impl MainStaticTheapAttachment {
+    /// Captures the original initialized images before the attachment moves
+    /// into its published runtime owner. Copying this binding does not keep
+    /// the attachment or its TLD alive.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn startup_owner_binding(&self) -> Result<MainStaticStartupOwnerBinding, MainStaticTheapError> {
+        self.ensure_current()?;
+        let tld = self.tld.as_ref().ok_or(MainStaticTheapError::TldOwnership)?;
+        Ok(MainStaticStartupOwnerBinding {
+            storage: self.storage, subprocess: self.subprocess, thread: self.thread,
+            // SAFETY: these process-static slots are never relocated.
+            theap: unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) },
+            heap: unsafe { NonNull::new_unchecked(self.storage.heap.image.get()) },
+            tld: tld.source_initialization_pointer(),
+        })
+    }
+
     /// Validates the current-thread and compiler-TLS conditions which must
     /// hold before process initialization reserves the source ticket-zero
     /// branch. This deliberately changes no source storage or ticket count.

@@ -695,6 +695,13 @@ pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
         &mut self,
         owner: OsAlignedPageOwner,
     ) -> Result<(), OsAlignedPageOwner>;
+    /// Transfers the exact original unpublished claim to its retained issuer.
+    /// A session without persistent issuer custody returns the unchanged task;
+    /// neither address matching nor this transfer grants diagnostic admission.
+    fn retain_unfinished_fresh_initialization(
+        &mut self,
+        task: crate::single_thread::PendingFreshOsPageInitialization,
+    ) -> Result<(), crate::single_thread::PendingFreshOsPageInitialization> { Err(task) }
     /// Latches an unfinished engine without freeing or detaching page state.
     /// Static bootstrap sessions are inert; dynamic sessions poison their
     /// retained attachment so later teardown/re-entry cannot lie.
