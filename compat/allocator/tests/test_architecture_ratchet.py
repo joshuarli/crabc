@@ -47,10 +47,9 @@ class ArchitectureRatchetTests(unittest.TestCase):
         ]
         self.assertEqual(lease["reachable_indicator_count"], 0, lease["matches"])
         dispatch = report["caller_identity_first_free_dispatch"]
-        # The selected source intentionally changes while W01 replaces the
-        # direct realloc seam. The focused fixture below owns the exact
-        # before/after source-routing assertions; this report test protects
-        # its stable schema without promoting either source state.
+        # The focused dispatch fixtures own the exact before/after routing
+        # assertions. This report test protects the stable schema without
+        # promoting a source-routing observation into runtime evidence.
         self.assertIn(
             dispatch["status"],
             {"forbidden", "no_caller_identity_dispatch", "phase_a_bridge", "pointer_dispatch_first"},
@@ -1145,7 +1144,7 @@ pub enum NativePostExitFreeRoute {
                 if mutation == "missing":
                     del features["mi-debug-1"]
                 elif mutation == "unknown":
-                    features["mi-guarded"] = False
+                    features["unreviewed-allocator-mode"] = False
                 elif mutation == "debug":
                     features["mi-debug-1"] = True
                 else:
@@ -1157,7 +1156,11 @@ pub enum NativePostExitFreeRoute {
         profiles = (
             (), ("mi-stat-1",), ("mi-stat-1", "mi-stat-2"),
             ("mi-debug-1", "mi-stat-1", "mi-stat-2"),
-            ("mi-show-errors",), ("mi-opt-simd",),
+            ("mi-debug-1", "mi-debug-2", "mi-stat-1", "mi-stat-2"),
+            ("mi-debug-1", "mi-debug-2", "mi-debug-3", "mi-stat-1", "mi-stat-2"),
+            ("mi-show-errors",), ("mi-opt-simd",), ("mi-xmalloc",), ("mi-guarded",),
+            *(tuple(f"mi-secure-{level}" for level in range(1, highest + 1))
+              for highest in range(1, 6)),
         )
         for enabled in profiles:
             with self.subTest(features=enabled):
@@ -1217,7 +1220,7 @@ fn debug_path() { parked.resume(attachment); }
 #[cfg(allocator_magic)]
 fn hidden_or_selected() {}
 """
-        for predicate in ("allocator_magic", 'feature = "mi-guarded"'):
+        for predicate in ("allocator_magic", 'feature = "unreviewed-allocator-mode"'):
             with self.subTest(predicate=predicate):
                 with self.assertRaisesRegex(RATCHET.RatchetError, "unknown production cfg"):
                     RATCHET.production_rust_source(
