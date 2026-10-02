@@ -35,38 +35,40 @@ Update this small section in place when the implementation frontier changes.
   Performance, release builds, release qualification, allocator-default changes
   and public-support promotion are deferred. Broad producers were stopped with
   their actual interruption statuses and original partial evidence preserved.
-- **Cleanup:** 20 old campaign worktrees and 20 unused Docker build-cache volumes
-  were removed; the volumes reclaimed 103.64 GiB. Source refs, original programs,
-  raw evidence and existing reader results survive under the established ignored
-  report locations. Retire completed successor worktrees after integration.
+- **Cleanup:** the user's expanded authorization removed 54 older registered
+  evidence worktrees, eight obsolete top-level archives and 1,285 old build/report
+  paths, plus two unused AArch64 Docker build-cache volumes. The earlier cleanup
+  removed 20 campaign worktrees and 20 unused Docker volumes. Free disk is now
+  about 1 TiB. Broad cleanup is stopped at the user's request. Historical build
+  products and reports were deliberately discarded; source commits remain in Git.
 - **Runtime accounting:** frozen inventory remains 223 capabilities and 26 families;
-  25 families have functional scope. Existing release ledgers report 180 implemented
-  and 43 selected-private capabilities, with 9 families foundation-verified.
-  Those qualification labels do not define feature completion. Inspect actual
-  implementation and focused behavior before classifying a feature as missing.
-- **Integrated baseline:** `63d4e19d1` settled the resumed bootstrap/child/Fresh-Page
-  graph, explicit dynamic fresh publication/key authority and source-consumed
-  failed OS-Page frees. All historical tests and reports qualify their recorded
-  source/context only. `main` is currently `185aac0af` before successor integration.
-- **Ready repairs:** queue `f45ca5f93` fixes padded direct-cache owner-exit refusal;
-  initializer `7a4cb38fa`/`d6664d787` plus metadata dependencies fix weak-entropy
-  warning order and callback reentry; model/Page branches repair acquired-chain
-  pointer provenance. Native lifecycle, pthread composition, DNS fixture causality,
-  unwinder evidence retention and secure-padding comparison patches are ready.
-  Integrate coherent increments and use focused checks, without release reruns.
-- **Feature frontier:** finish coallocated child metadata ownership and its narrow
-  shared projections; implement source-secure levels 4/5 with real Page-tail
-  protection, reset and padding; complete huge reservation APIs, child ownership
-  and successful huge startup-arena consumption; finish actual CRT provider
-  ownership. Preserve the all-small-history/first-medium allocation diagnostic
-  until a legal isolated caller establishes its cause. Complete remaining runtime,
-  allocator and facade features from the frozen/source inventories.
-- **Evidence custody:** `.work/allocator-x86_64/reports/allocator/x86_64/` and
-  `.work/x86_64/reports/integrated-lanes/` retain original source/programs/raw
-  failures. The interrupted `63d4e19d1` cohort has complete static evidence and
-  partial dynamic execution, not a complete qualification result. Pinned Docker
-  images disappeared during the latest work; restore a development environment
-  when needed for a focused compiler/Miri check, without release qualification.
+  25 families have functional scope. Historical release labels do not establish
+  feature completion. Inspect actual source paths and focused behavior.
+- **Integrated implementation:** all coherent 106 repairs are on `main`, including
+  direct-cache exit validation, entropy-warning ordering, child control coallocation,
+  provider ownership, remote provenance, lifecycle regressions and DNS fixture order.
+  Successor fixes add native facade synchronization, nullable unsigned divmod,
+  signal errno ordering, bounded resolver replies, canonical PLT lookup, public huge
+  reservation variants and partial-success errno, and secure Page geometry/guards.
+  Successful huge and multi-parent startup allocation already works and now has a
+  focused regression. Integrated debug lifecycle checks passed 72 tests; later
+  increments retain their focused source/context results until merged checks run.
+- **Feature frontier:** finish child-owned huge reservation/destruction retry and
+  nested child parent-custody teardown. Complete secure Page integration across
+  source paths, retained live-Page fatal assertion transport, and its caller regressions. The reproduced final medium-client refusal (42nd
+  client of 42) is fixed by respecting the Theap abandonment policy; both isolated
+  and small-history cases pass focused debug checks. Complete native facade modules still
+  gated to AArch64 and remaining selected source operations.
+- **Active work recovery:** a container-path mismatch during Git worktree pruning
+  removed the active registrations. All 16 registrations were reconstructed from
+  their preserved branch refs without changing working files; expected edits were
+  verified and lanes resumed. Current worktrees are under `.work/worktrees/`.
+- **Evidence and tools:** retain compact current regression inputs/programs/raw
+  failures in the existing allocator/runtime reports, rather than historical build
+  graphs. Development image `5b43da01b755` replaces the deleted historical image
+  only for focused debug work via `CRABC_X86_64_CORE_IMAGE`; original image-qualified
+  claims are not transferred. Derived Miri image `40a5aff94eab` supports focused
+  strict-provenance checks. Performance/release qualification remains deferred.
 - **Physical environment:** the host lacks the two allowed NUMA nodes/free 1-GiB
   pages required by the historical physical qualification job. Implement and
   test software behavior with available mechanisms; physical certification belongs

@@ -1,5 +1,7 @@
 //! Exercise failed signal delivery while an unrelated application signal becomes pending.
 
+#![cfg(all(target_os = "linux", target_arch = "x86_64"))]
+
 use core::ffi::c_int;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
