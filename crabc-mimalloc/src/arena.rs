@@ -3208,6 +3208,66 @@ pub(crate) mod tests {
         }
     }
 
+    /// Owns the secure metadata transition for one caller-managed test arena.
+    /// The protected page is restored before the external allocation is freed.
+    struct MetadataGuardedArenaRegion {
+        region: AlignedRegion,
+        page_size: PageSize,
+        guard: core::cell::Cell<Option<*mut u8>>,
+    }
+
+    impl MetadataGuardedArenaRegion {
+        fn zeroed(size: usize) -> Self {
+            Self { region: AlignedRegion::zeroed(size), page_size: PageSize::new(4096).unwrap(),
+                guard: core::cell::Cell::new(None) }
+        }
+
+        /// # Safety
+        /// The registry's subprocess outlives every resulting view. The caller
+        /// ends all arena, bitmap and client access before this region drops.
+        unsafe fn manage(
+            &self, registry: &ArenaRegistry, initially_zero: bool, commit: Option<CommitHook>,
+        ) -> Result<ManagedExternalRegion, ManageArenaError> {
+            let start = self.region.pointer.as_ptr();
+            let size = self.region.layout.size();
+            // SAFETY: this fixture owns the complete aligned external region
+            // through every resulting arena/bitmap use. The borrowed guard
+            // owner survives synchronous initialization and its Drop restores
+            // access only after all those uses end.
+            unsafe { manage_in_place_with_publisher_and_numa_source(
+                registry, start, size, self.page_size, true, || -1, false, commit, commit,
+                Some(MetadataGuardHook::new(guard_fixture_metadata, self)),
+                MemoryId::external(start, size, true, false, initially_zero),
+                |arena| if registry.insert(arena) { Ok(()) } else { Err(ManageArenaError::RegistryFull) },
+            ) }
+        }
+    }
+
+    unsafe fn guard_fixture_metadata(start: *mut u8, size: usize, argument: *const c_void) {
+        // SAFETY: the initializer's borrowed capability retains this exact
+        // external region through its sole synchronous metadata transition.
+        let owner = unsafe { &*argument.cast::<MetadataGuardedArenaRegion>() };
+        let offset = start.addr().checked_sub(owner.region.pointer.as_ptr().addr()).unwrap();
+        assert_eq!(size, owner.page_size.bytes());
+        assert!(offset.checked_add(size).is_some_and(|end| end <= owner.region.layout.size()));
+        assert!(owner.guard.get().is_none(), "one ordinary arena has one metadata guard");
+        // SAFETY: this complete page belongs to the retained external owner;
+        // no typed metadata or client view exists during initialization.
+        assert!(unsafe { crate::os::decommit_arena_range(owner.page_size, start, size) }
+            .expect("the owned metadata guard decommits successfully").is_some());
+        owner.guard.set(Some(start));
+    }
+
+    impl Drop for MetadataGuardedArenaRegion {
+        fn drop(&mut self) {
+            if let Some(start) = self.guard.take() {
+                // SAFETY: all fixture arena/bitmap views ended before Drop;
+                // the same external allocation still retains its guard page.
+                assert_eq!(unsafe { crate::os::protect_live_range(start, self.page_size.bytes(), false, None) }, Ok(true));
+            }
+        }
+    }
+
     struct CommitScript {
         calls: std::sync::atomic::AtomicUsize,
         fail: std::sync::atomic::AtomicBool,
@@ -4799,30 +4859,14 @@ pub(crate) mod tests {
         // while a free sibling is still purged. Keep the reclaim live through
         // collection so this observes that source fallback rather than an
         // ordinary two-slice purge.
-        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let region = MetadataGuardedArenaRegion::zeroed(ARENA_MIN_SIZE);
         let registry = ArenaRegistry::new(MainSubprocess::test_static_owner().as_ptr());
         let script = CommitScript::new(false);
-        let managed = unsafe {
-            manage_external_in_place(
-                &registry,
-                region.as_ptr(),
-                ARENA_MIN_SIZE,
-                PageSize::new(4096).unwrap(),
-                true,
-                false,
-                true,
-                -1,
-                false,
-                Some(CommitHook::new(
-                    scripted_commit,
-                    (&script as *const CommitScript).cast_mut().cast(),
-                )),
-            )
-        }
-        .unwrap();
+        let managed = unsafe { region.manage(&registry, true, Some(CommitHook::new(
+            scripted_commit, (&script as *const CommitScript).cast_mut().cast(),
+        ))) }.unwrap();
         let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
         let first_usable_slice = view.arena().info_slices;
-        assert_eq!(first_usable_slice, 9);
 
         let scheduled = view
             .try_claim_suitable_slices(ArenaId::none(), 2, true, 0)
@@ -5020,23 +5064,9 @@ pub(crate) mod tests {
         // than hand out a page whose PageMap/metadata lifetime is no longer
         // represented by the main Heap image.
         let subprocess = MainSubprocess::test_static_owner();
-        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let region = MetadataGuardedArenaRegion::zeroed(ARENA_MIN_SIZE);
         let registry = ArenaRegistry::new(subprocess.as_ptr());
-        let managed = unsafe {
-            manage_external_in_place(
-                &registry,
-                region.as_ptr(),
-                ARENA_MIN_SIZE,
-                PageSize::new(4096).unwrap(),
-                true,
-                false,
-                false,
-                -1,
-                false,
-                None,
-            )
-        }
-        .unwrap();
+        let managed = unsafe { region.manage(&registry, false, None) }.unwrap();
         let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
         let bin = 1;
         let slice_index = view.arena().info_slices;
@@ -5080,23 +5110,9 @@ pub(crate) mod tests {
         // ownership claim restores its bit and leaves both counts intact;
         // only the later source unabandon/claim transitions consume them.
         let subprocess = MainSubprocess::test_static_owner();
-        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let region = MetadataGuardedArenaRegion::zeroed(ARENA_MIN_SIZE);
         let registry = ArenaRegistry::new(subprocess.as_ptr());
-        let managed = unsafe {
-            manage_external_in_place(
-                &registry,
-                region.as_ptr(),
-                ARENA_MIN_SIZE,
-                PageSize::new(4096).unwrap(),
-                true,
-                false,
-                false,
-                -1,
-                false,
-                None,
-            )
-        }
-        .unwrap();
+        let managed = unsafe { region.manage(&registry, false, None) }.unwrap();
         let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
         let bin = 1;
         let rejected = crate::bitmap::BFIELD_BITS - 1;

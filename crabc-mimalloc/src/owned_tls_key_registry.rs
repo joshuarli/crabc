@@ -645,6 +645,18 @@ mod tests {
         metadata
             .prepare_for_main_subprocess(config(), subprocess)
             .expect("the isolated source process publishes metadata before registry demand");
+        let storage = crate::process_init::ProcessMainInitializationStorage::test_static_owner();
+        let page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        // SAFETY: the isolated process-lifetime owners are configured exactly
+        // once before metadata demand; their policy and map retain the actual
+        // secure metadata guard transition through every registry operation.
+        let binding = unsafe { storage.test_prepare_vm_process_backing_binding(
+            config(), options, subprocess, page_map,
+        ) }.expect("the registry fixture owns metadata policy and its shared map");
+        metadata.bind_process_backing(binding)
+            .expect("registry metadata uses the source process backing");
         (
             OwnedThreadLocalKeyRegistry::test_static_owner(),
             metadata,
