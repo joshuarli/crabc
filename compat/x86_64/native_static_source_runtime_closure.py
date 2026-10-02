@@ -96,6 +96,7 @@ EXTERN_MODIFIER_MATRIX: dict[str, dict[str, tuple[str, ...]]] = {
         "compiler_builtins": ("noprelude", "nounused"),
         "core": ("noprelude", "nounused"),
         "crabc_core": (),
+        "rand_xoshiro": (),
         "zeroize": (),
     },
     "crabc-libc": {
@@ -889,7 +890,11 @@ def staticlib_closure(ar: pathlib.Path, nm: pathlib.Path, archive: pathlib.Path,
     }
 
 
-def build(arguments: argparse.Namespace) -> pathlib.Path:
+def build(arguments: argparse.Namespace, *, c_environment: dict[str, str] | None = None) -> pathlib.Path:
+    if c_environment is not None:
+        allowed = {"CC_x86_64_unknown_linux_musl", "CFLAGS_x86_64_unknown_linux_musl", "CC_SHELL_ESCAPED_FLAGS"}
+        if set(c_environment) != allowed or c_environment["CC_x86_64_unknown_linux_musl"] != "/usr/bin/gcc" or c_environment["CC_SHELL_ESCAPED_FLAGS"] != "1":
+            fail("source-runtime C environment must name only the pinned target compiler and its flags")
     arguments.features = normalized_features(arguments.features)
     profile = source_runtime_profile(arguments.features)
     flags = runtime_flags(arguments.relocation_model)
@@ -898,6 +903,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
     work = work_child(work_root, pathlib.Path(arguments.work), "source-runtime closure work")
     work.mkdir(mode=0o755)
     rustup, base_environment = pinned_environment()
+    base_environment.update(c_environment or {})
     sysroot_result = subprocess.run([rustup["argv0"], "run", TOOLCHAIN, "rustc", "--print", "sysroot"], cwd=ROOT,
                                     env=base_environment, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE, text=True, check=False)
@@ -1009,6 +1015,7 @@ def build(arguments: argparse.Namespace) -> pathlib.Path:
         "cargo_command": command,
         "cargo_profile_dev_debug": 0,
         "cargo_profile_dev_codegen_units": DEV_CODEGEN_UNITS,
+        "c_environment": c_environment or {},
         "runtime_flags": list(flags),
         "cargo_stdout": file_record(stdout_path, "source-runtime Cargo JSON stream"),
         "cargo_stderr": file_record(stderr_path, "source-runtime Cargo diagnostics"),

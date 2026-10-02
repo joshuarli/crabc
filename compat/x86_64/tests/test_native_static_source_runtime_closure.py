@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,22 @@ SPEC.loader.exec_module(CLOSURE)
 
 
 class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
+    def test_target_c_environment_rejects_unapproved_overrides_before_building(self) -> None:
+        approved = {
+            "CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
+            "CFLAGS_x86_64_unknown_linux_musl": "-nostdinc",
+            "CC_SHELL_ESCAPED_FLAGS": "1",
+        }
+        for override in (
+            dict(approved, PATH="/ambient"),
+            dict(approved, CC_x86_64_unknown_linux_musl="gcc"),
+            dict(approved, CC_SHELL_ESCAPED_FLAGS="0"),
+            {key: value for key, value in approved.items() if key != "CFLAGS_x86_64_unknown_linux_musl"},
+        ):
+            with self.subTest(override=override):
+                with self.assertRaisesRegex(CLOSURE.ClosureError, "pinned target compiler"):
+                    CLOSURE.build(argparse.Namespace(), c_environment=override)
+
     def test_selected_static_c_profiles_exclude_optional_runtime_dependencies(self) -> None:
         for features in ("", "x86-legacy-misc"):
             with self.subTest(features=features):
@@ -473,6 +490,18 @@ class NativeStaticSourceRuntimeClosureTests(unittest.TestCase):
             [record["runtime_externs"][name]["modifiers"] for name in sorted(runtime)],
             [["noprelude", "nounused"], ["noprelude", "nounused"], ["noprelude", "nounused"]],
         )
+
+    def test_mimalloc_record_accepts_its_pinned_xoshiro_dependency_without_privileged_modifiers(self) -> None:
+        matrix = dict(CLOSURE.EXTERN_MODIFIER_MATRIX["crabc-mimalloc"], rand_xoshiro=())
+        command, target, runtime, artifacts, source = self._command(
+            immediate_abort=True, record_crate="crabc-mimalloc", extern_matrix=matrix,
+        )
+        record = CLOSURE.command_record(command, target, runtime, self._emitted(artifacts), "crabc-mimalloc", source)
+        self.assertEqual(record["all_externs"]["rand_xoshiro"]["modifiers"], [])
+        marker = f"rand_xoshiro={artifacts['rand_xoshiro']}"
+        command[command.index(marker)] = f"priv:{marker}"
+        with self.assertRaisesRegex(CLOSURE.ClosureError, "modifier sequence differs"):
+            CLOSURE.command_record(command, target, runtime, self._emitted(artifacts), "crabc-mimalloc", source)
 
     def test_primary_record_rejects_abort_profile_without_immediate_abort(self) -> None:
         command, target, runtime, artifacts, source = self._command(immediate_abort=False)
