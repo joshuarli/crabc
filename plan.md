@@ -32,10 +32,13 @@ paused AArch64 behavior. A real behavior failure remains a bug.
 
 Update this small section in place when the implementation frontier changes.
 
-- **Active direction:** feature implementation and focused debug correctness.
-  Performance, release builds, release qualification, allocator-default changes
-  and public-support promotion are deferred. Broad producers were stopped with
-  their actual interruption statuses and original partial evidence preserved.
+- **Feature status:** selected native runtime, Rust facade, allocator source
+  operations and owned integration are complete in the active feature scope.
+  All demonstrated defects are repaired with focused debug evidence. No feature
+  lanes remain open. Performance, release builds, release qualification,
+  allocator-default changes and public-support promotion remain deferred.
+  Interrupted historical producers retain their actual statuses and available
+  original partial evidence.
 - **Cleanup:** the user's expanded authorization removed 54 older registered
   evidence worktrees, eight obsolete top-level archives and 1,285 old build/report
   paths, plus two unused AArch64 Docker build-cache volumes. The earlier cleanup
@@ -52,7 +55,7 @@ Update this small section in place when the implementation frontier changes.
   debug OS reset, regular reservation callback/diagnostic ordering, and live-Page
   assertion ownership. Compact original failures and focused proving programs
   are retained in the existing ignored reports.
-- **Feature frontier:** owned opt0 debug sysroots now support all four entry
+- **Completed integration:** owned opt0 debug sysroots support all four entry
   modes with sealed Linux UAPI headers. Installed header checks and actual
   loader graph/finalization consumers pass. Rust std's duplicate private panic
   and allocator-symbol link failure is fixed. The debug provider packaging now
@@ -70,9 +73,10 @@ Update this small section in place when the implementation frontier changes.
   shadow opt0 debug static/dynamic products pass worker/TSD/deferred exit,
   allocator policy, late FILE cleanup and initial/worker prepared fork through
   all four link modes and kernel/direct dynamic entry. The debug producer now
-  records its actual compiled lifecycle-audit feature. Final work is evidence
-  custody, product ownership audit and settled worktree retirement. No release
-  or full-family qualification is claimed.
+  records its actual compiled lifecycle-audit feature. Product ownership audits
+  exclude C allocator recovery and dummy loader personalities. Actual retained
+  programs replay from the main checkout's read-only reports; all settled
+  worktrees are retired. No release or full-family qualification is claimed.
 - **Merged correctness:** allocator early options, guarded initialization,
   false-force reclaim transfers, aligned null realloc and resolver construction
   boundaries are repaired. Native spawn needs only two free pipe descriptors;
@@ -100,10 +104,11 @@ Update this small section in place when the implementation frontier changes.
 ## Parallel lanes
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
-lane instructions. Keep 16 `gpt-6.1-sol` high lanes occupied while useful
+lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
 feature work remains, with one difficult deliverable and an exclusive file
-boundary per lane. New assignments use high thinking as authorized by the user;
-existing assignments may finish their current increment. The parent alone integrates to `main` and updates this file.
+boundary per lane. New assignments use medium thinking as directed by the user;
+existing assignments may finish at their current setting. The parent alone
+integrates to `main` and updates this file.
 Each lane works in `.work/worktrees/lane-<id>`, owns its mutable build state and
 uses focused debug checks. The user's feature-first instruction overrides skill
 requirements to repeat broad qualification or release checks before handoff.
