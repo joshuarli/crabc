@@ -8516,6 +8516,27 @@ pub(crate) mod tests {
         (page_map, arena)
     }
 
+    fn bind_selected_fixture_metadata(
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        page_map: ProcessPageMapRoot,
+    ) {
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        // SAFETY: the selected main attachment and this exact initialized
+        // PageMap remain live for every metadata allocation in the fixture.
+        let binding = unsafe {
+            crate::process_init::ProcessMainInitializationStorage::test_static_owner()
+                .test_bind_vm_process_to_existing_page_map(config, options, subprocess, page_map)
+        }
+        .expect("metadata uses the fixture's selected process and PageMap");
+        metadata.prepare_for_main_subprocess(config, subprocess)
+            .expect("the selected source metadata Theap initializes");
+        metadata.bind_process_backing(binding)
+            .expect("the actual process policy owns metadata arena initialization");
+    }
+
     pub(crate) fn with_owner_local_fixture(
         finish_main: bool,
         operation: impl for<'main> FnOnce(
@@ -18207,6 +18228,7 @@ pub(crate) mod tests {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
             }
             .expect("ticket zero attaches the source-static main images");
+            bind_selected_fixture_metadata(metadata, config, subprocess, page_map);
             let main_heap = main.shared_main_heap_lease().unwrap();
 
             thread::scope(|scope| {
@@ -28460,6 +28482,7 @@ pub(crate) mod tests {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
             }
             .expect("ticket zero attaches the source-static main images");
+            bind_selected_fixture_metadata(metadata, config, subprocess, page_map);
             let main_heap = main.shared_main_heap_lease().unwrap();
 
             thread::scope(|scope| {
