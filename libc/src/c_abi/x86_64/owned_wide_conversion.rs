@@ -45,15 +45,8 @@ unsafe fn decode_bounded(destination: *mut c_int, source: *mut *const c_char,
             if chunk < capacity && chunk <= 32 { break; }
             if chunk >= capacity { chunk = capacity; }
             let before = cursor;
-            let pending = state.cast::<u32>().read() != 0;
             let converted = locale_multibyte::mbsrtowcs(output, &mut cursor, chunk, state);
             if converted == usize::MAX {
-                // musl mbsrtowcs.c::resume backs up one byte if the saved
-                // partial character fails before it can complete. The frozen
-                // helper leaves this pending-error cursor detail unselected;
-                // restore it at this owned caller's newly selected boundary.
-                // No byte is read through the adjusted diagnostic pointer.
-                if pending && cursor == before { cursor = cursor.wrapping_sub(1); }
                 count = converted;
                 capacity = 0;
                 break;

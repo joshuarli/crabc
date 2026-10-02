@@ -941,12 +941,11 @@ static_archive_member! { mbsrtowcs_source {
     /// C string. When `destination` is non-null it must hold `count` wide slots.
     /// `state` must be null or point to initialized writable x86 `mbstate_t`
     /// storage.
-    /// Initial-state source/destination/count behavior and a caller-owned,
-    /// noninitial UTF-8 resume with positive output capacity are selected,
-    /// including a one-byte source rewind on a malformed resumed continuation.
-    /// A caller-owned noninitial `mbsrtowcs` state with zero output capacity is
-    /// deliberately outside this artifact; ordinary null-state conversions use no
-    /// hidden state, as in musl's `mbsrtowcs`.
+    /// A non-null destination with zero capacity converts nothing and preserves
+    /// source, state, output, and errno, including a pending UTF-8 character.
+    /// Positive-capacity resumed errors retain musl's one-byte source rewind;
+    /// callers must retain the original backing object before dereferencing that
+    /// diagnostic cursor. Null-state conversions use no hidden state, as in musl.
     #[no_mangle]
     pub unsafe extern "C" fn mbsrtowcs(
         destination: *mut c_int,
@@ -954,6 +953,12 @@ static_archive_member! { mbsrtowcs_source {
         count: usize,
         state: *mut MbState,
     ) -> usize {
+        // Stop before reading input or clearing a pending state when no wide
+        // slot is available. Musl's resume label precedes its capacity check;
+        // this boundary preserves the output limit and the resumable sequence.
+        if !destination.is_null() && count == 0 {
+            return 0;
+        }
         // SAFETY: source is a caller-owned readable pointer-to-pointer object.
         let mut cursor = unsafe { core::ptr::read(source) }.cast::<u8>();
         let utf8_now = locale_ctype_is_utf8();
@@ -1061,17 +1066,8 @@ static_archive_member! { mbsrtowcs_source {
                 }
                 return MB_RET_ILSEQ;
             }
-            // The normal branch established remaining > 0. A pending resume with
-            // zero count is not a selected caller pattern; complete its one code
-            // point only when the caller supplied output capacity.
-            if remaining == 0 {
-                // SAFETY: caller-owned source pointer remains valid on this
-                // bounded rejected resume case; report no conversion rather than
-                // creating a Rust out-of-bounds write.
-                unsafe { core::ptr::write(source, cursor.cast()) };
-                return initial_count;
-            }
-            // SAFETY: destination has one remaining wchar_t slot.
+            // SAFETY: the capacity check precedes both initial-state decoding
+            // and a pending resume, so one wchar_t slot remains available.
             unsafe { core::ptr::write(output, outcome.wide) };
             output = unsafe { output.add(1) };
             cursor = unsafe { cursor.add(outcome.result) };
