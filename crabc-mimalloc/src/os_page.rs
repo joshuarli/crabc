@@ -126,6 +126,7 @@ pub(crate) struct OsAlignedPageLayout {
     alignment: usize,
     slice_count: usize,
     allocation_size: usize,
+    page_noguard_size: usize,
     mapping_length: usize,
     metadata_offset: usize,
     metadata_commit_size: usize,
@@ -213,12 +214,14 @@ impl OsAlignedPageLayout {
         }
 
         let block_start_offset = page::page_usable_start_offset(block_size)?;
+        let page_noguard_size = page::page_noguard_size(allocation_size, config.page_size())?;
         let reserved = if block_alignment > PAGE_MAX_OVERALLOC_ALIGN {
+            if block_start_offset.checked_add(block_size)? > page_noguard_size { return None; }
             1
         } else {
-            u16::try_from(allocation_size.checked_sub(block_start_offset)? / block_size).ok()?
+            page::page_reserved_object_count(allocation_size, block_start_offset,
+                block_size, config.page_size())?
         };
-        if reserved == 0 { return None; }
         let page_offset = alignment
             .checked_add(block_start_offset)?
             .checked_sub(metadata_offset)?;
@@ -242,6 +245,7 @@ impl OsAlignedPageLayout {
             alignment,
             slice_count,
             allocation_size,
+            page_noguard_size,
             mapping_length,
             metadata_offset,
             metadata_commit_size,
@@ -272,6 +276,11 @@ impl OsAlignedPageLayout {
     pub(crate) const fn allocation_size(self) -> usize {
         self.allocation_size
     }
+
+    /// The legal page prefix before the selected full-security tail. The
+    /// complete allocation extent remains separately owned for release.
+    #[inline]
+    pub(crate) const fn page_noguard_size(self) -> usize { self.page_noguard_size }
 
     #[inline]
     pub(crate) const fn mapping_length(self) -> usize {
@@ -317,6 +326,21 @@ mod ordinary_layout_tests {
     extern crate std;
     use super::*;
     use crate::os::PageSize;
+
+    #[test]
+    fn os_regular_layout_reserves_only_the_selected_legal_client_extent() {
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
+            1 << 20, false, false);
+        for block_size in [16, 256, 8192, 32 * 1024] {
+            let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, 1).unwrap();
+            let usable = if crate::config::SECURE_LEVEL >= 5 {
+                layout.allocation_size() - config.page_size().bytes()
+            } else { layout.allocation_size() };
+            assert_eq!(usize::from(layout.reserved()),
+                (usable - layout.block_start_offset()) / block_size);
+            assert!(layout.block_start_offset() + usize::from(layout.reserved()) * block_size <= usable);
+        }
+    }
 
     #[test]
     fn emit_native_fresh_os_page_geometry_trace() {
@@ -959,7 +983,7 @@ impl OsAlignedPageClaim {
             || self.initially_committed
             || self.release_commit_size != 0
             || size == 0
-            || size > self.layout.allocation_size()
+            || size > self.layout.page_noguard_size()
         {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
         }
@@ -981,7 +1005,7 @@ impl OsAlignedPageClaim {
     ) -> Result<(), OsAlignedPageError> {
         if self.process_identity != Some(NonNull::from(process.subprocess()))
             || !self.ready || self.initially_committed || self.release_commit_size != 0
-            || size == 0 || size > self.layout.allocation_size()
+            || size == 0 || size > self.layout.page_noguard_size()
         {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
         }
@@ -1297,6 +1321,24 @@ unsafe fn published_os_page_geometry(
     })
 }
 
+/// Copies the validated full OS page area and its immutable source memory
+/// identity. These scalars grant no protection, commitment or release right.
+///
+/// # Safety
+/// The caller retains the live initialized primary, its original OS mapping
+/// and exclusive ordinary page ownership throughout this short projection.
+/// No metadata, mapping or protection transition overlaps the read. The
+/// returned extent still includes any full-security tail; callers use the
+/// selected legal prefix separately before client or commit publication.
+pub(crate) unsafe fn published_os_page_area_geometry(
+    config: MemoryConfig, primary: NonNull<Page>,
+) -> Option<(NonNull<u8>, usize, MemoryId)> {
+    // SAFETY: the caller retains the same original primary and mapping while
+    // the existing source layout validator copies their immutable geometry.
+    let geometry = unsafe { published_os_page_geometry(config, primary, true) }?;
+    Some((geometry.slice_start, geometry.layout.allocation_size(), geometry.memory))
+}
+
 /// Returns the one source page area that a process-owned on-demand OS page
 /// may commit after its `Mapping` has been published.
 ///
@@ -1319,7 +1361,7 @@ pub(crate) unsafe fn published_on_demand_os_page_area_for_process(
     let geometry = unsafe { published_os_page_geometry(config, primary, true) }?;
     let committed = usize::from(page.slice_pcommitted())
         .checked_mul(config.page_size().bytes())?;
-    if committed > geometry.layout.allocation_size() {
+    if committed > geometry.layout.page_noguard_size() {
         return None;
     }
     Some(PublishedOnDemandOsPageArea {
@@ -1413,7 +1455,7 @@ impl PublishedOsAlignedPage {
             } else {
                 let committed = usize::from(page.slice_pcommitted())
                     .checked_mul(config.page_size().bytes())?;
-                if committed == 0 || committed > geometry.layout.allocation_size() {
+                if committed == 0 || committed > geometry.layout.page_noguard_size() {
                     return None;
                 }
                 committed
@@ -2035,6 +2077,26 @@ mod tests {
             std::println!("block.rollback.{name}={value}");
         }
         assert_eq!(values, [131072, 0, -131072, 2, 4, 1, 1, 1, 1, 1, 1]);
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-5"))]
+    #[test]
+    fn full_security_os_initial_prefix_rejects_tail_extent_before_commit() {
+        let fault = fault::install(fault::Plan::disabled());
+        let process = process(false);
+        let mut claim = OsAlignedPageClaim::allocate_on_demand_for_process(
+            process, config(4 * KIB), 256, 1, crate::arena::ArenaId::none(),
+        ).unwrap_or_else(|_| panic!("reserved source OS page"));
+        let layout = claim.layout();
+        let before = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let error = claim.commit_initial_page_prefix(layout.allocation_size()).unwrap_err();
+        assert_eq!(error.stage(), OsAlignedPageFailureStage::Publish);
+        assert_eq!(fault.observed(), 0);
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        fault.set(fault::Plan::disabled());
+        claim.commit_initial_page_prefix(layout.page_noguard_size()).unwrap();
+        claim.release().unwrap_or_else(|_| panic!("exact original claim release"));
     }
 
     #[test]
