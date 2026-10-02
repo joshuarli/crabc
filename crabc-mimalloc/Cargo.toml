@@ -266,6 +266,8 @@ mi-secure-2 = ["mi-secure-1"]
 # Level three adds encoded free lists and canary records without enabling
 # debug byte filling or statistics.
 mi-secure-3 = ["mi-secure-2"]
+mi-secure-4 = ["mi-secure-3"]
+mi-secure-5 = ["mi-secure-4"]
 # Private x86 guarded object configuration keeps debug, secure, and statistics
 # selection independent. Default builds leave guarded sampling disabled.
 mi-guarded = []
