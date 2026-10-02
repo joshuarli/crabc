@@ -1,8 +1,8 @@
 //! Private deterministic core for the owned x86 wordexp C adapter.
 //!
 //! The selected owned_wordexp provider owns the C status and result-record
-//! transaction. This core has no exported C symbol. Its contract is in
-//! compat/x86_64/owned-wordexp-engine.md.
+//! transaction. This core has no exported C symbol; parsing and evaluation
+//! retain quote provenance and call-local variable state across each word.
 //!
 //! The core recognizes shell-word expressions, keeps command substitutions as
 //! opaque source spans, and delegates command/path behavior through private
@@ -726,23 +726,34 @@ impl SyntaxParser<'_> {
                 inherited_flags & !NODE_PARAMETER_WORD == 0
             {
                 let mut end = index + 1;
+                let mut literal_prefix = true;
                 while end < range.end {
                     // SAFETY: range bound guards this read.
                     let next = unsafe { self.byte(end) };
-                    if matches!(next, b'/' | b'\'' | b'"' | b'$' | b'\x60' | b'\\') ||
-                        (outer && matches!(next, b' ' | b'\t'))
+                    if next == b'/' || (outer && matches!(next, b' ' | b'\t')) {
+                        break;
+                    }
+                    if matches!(next, b'\'' | b'"' | b'$' | b'\x60' | b'\\') ||
+                        (outer && (next == b'\n' || unquoted_control(next)))
                     {
+                        literal_prefix = false;
                         break;
                     }
                     end += 1;
                 }
-                self.append_node(word, SyntaxNode {
-                    kind: NODE_TILDE, flags: 0, span: Span { start: index + 1, end },
-                    payload: NONE, next: NONE,
-                })?;
-                index = end;
-                at_start = false;
-                continue;
+                // A quote or expansion before the first slash belongs to the
+                // tilde prefix itself, so it cannot select HOME or a username.
+                // Leave this source to ordinary parsing, which also validates
+                // forbidden root characters instead of hiding them in a name.
+                if literal_prefix {
+                    self.append_node(word, SyntaxNode {
+                        kind: NODE_TILDE, flags: 0, span: Span { start: index + 1, end },
+                        payload: NONE, next: NONE,
+                    })?;
+                    index = end;
+                    at_start = false;
+                    continue;
+                }
             }
             let start = index;
             index = self.consume_literal(index, range.end, outer, inherited_flags)?;
@@ -6907,6 +6918,35 @@ mod tests {
             &mut paths,
         ).unwrap();
         assert_words(&words, &[b"a' b'", b"'quoted'", b"~one two"]);
+    }
+
+    #[test]
+    fn tilde_prefix_requires_literal_unquoted_bytes_before_the_first_slash() {
+        let mut context = WordexpContext::new();
+        context.set_initial(b"HOME", Some(b"/home/owner"), false).unwrap();
+        context.set_initial(b"NAME", Some(b"tester"), false).unwrap();
+        let mut commands = TestCommands::new(b"tester");
+        let mut paths = TestPaths::plain();
+        let words = evaluate(
+            b"~\"\" ~'tester' ~\\tester ~$NAME ~${NAME} ~$(name) ~/\"suffix\" ~tester/\"suffix\"",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(&words, &[
+            b"~", b"~tester", b"~tester", b"~tester", b"~tester", b"~tester",
+            b"/home/owner/suffix", b"/home/tester/suffix",
+        ]);
+        assert_eq!(commands.calls, 1);
+    }
+
+    #[test]
+    fn tilde_prefix_cannot_hide_unquoted_forbidden_root_characters() {
+        for input in [b"~;x".as_slice(), b"~|x", b"~&x", b"~<x", b"~>x",
+            b"~(x)", b"~{x}", b"~\nx", b"~tester;x"]
+        {
+            assert!(matches!(WordexpSyntax::parse(input), Err(WordexpError::BadCharacter)));
+        }
     }
 
     #[test]

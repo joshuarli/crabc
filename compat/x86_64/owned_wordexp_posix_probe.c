@@ -323,6 +323,30 @@ static int posix_nocmd_case(void)
     if (posix_no_marker_command_case(
             "${WORDEXP_NOCMD_LITERAL_OPEN-{}$(printf marker > /wordexp-nocmd-marker)") != 0)
         return 20;
+    /* Quoting or expanding any byte before the first slash keeps the tilde
+     * literal. Once that slash ends the prefix, suffix quotes are ordinary. */
+    if (setenv("HOME", "/home/wordexp-tilde", 1) != 0 ||
+        setenv("WORDEXP_TILDE_NAME", "suffix", 1) != 0)
+        return 21;
+    {
+        static const char *const expected[] = {
+            "~", "~suffix", "~suffix", "~suffix", "~suffix",
+            "~/home/wordexp-tilde", "/home/wordexp-tilde/suffix"
+        };
+        if (posix_check_words(
+                "~\"\" ~'suffix' ~\\suffix ~$WORDEXP_TILDE_NAME "
+                "~${WORDEXP_TILDE_NAME} ~${HOME} ~/\"suffix\"", expected, 7) != 0)
+            return 22;
+    }
+    if (!check_initial_error("~;word", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~|word", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~&word", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~<word", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~>word", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~(word)", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~{word}", WRDE_NOCMD, WRDE_BADCHAR) ||
+        !check_initial_error("~\nword", WRDE_NOCMD, WRDE_BADCHAR))
+        return 23;
     return 0;
 }
 
