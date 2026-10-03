@@ -23,7 +23,7 @@
 //! relaxed sequencing and live-count state; callers cannot inject a sequence.
 
 use core::marker::PhantomData;
-use core::mem::size_of;
+use core::mem::{MaybeUninit, size_of};
 use core::pin::Pin;
 
 use crate::compiler_tls::current_thread_identity;
@@ -394,6 +394,50 @@ impl ThreadLocalDataOwner {
         metadata: Pin<&'static MetaAllocator>,
         config: MemoryConfig,
     ) -> Result<DynamicAttachedThreadLocalData, ThreadLocalDataError> {
+        let mut owner = MaybeUninit::<Option<DynamicAttachedThreadLocalData>>::uninit();
+        // SAFETY: the local slot is exclusive, aligned, and uninitialized.
+        // Success initializes exactly one Some owner before it is consumed.
+        unsafe {
+            Self::begin_later_dynamic_attachment_with_main_and_metadata_into(
+                core::ptr::NonNull::from(&mut owner).cast(), subprocess, metadata, config,
+            )?;
+            Ok(owner.assume_init().expect("successful later TLD creation writes its owner"))
+        }
+    }
+
+    /// Creates one later-main TLD directly in its caller's owner slot.
+    ///
+    /// # Safety
+    /// The destination is exclusive aligned uninitialized storage for the
+    /// Option. The caller retains the ordinary later-main thread, subprocess,
+    /// metadata and attachment obligations. Failure leaves the slot untouched;
+    /// success writes one Some owner whose linear custody passes to the caller.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn begin_later_main_heap_attachment_with_metadata_into(
+        destination: core::ptr::NonNull<Option<DynamicAttachedThreadLocalData>>,
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<(), ThreadLocalDataError> {
+        // SAFETY: the caller owns the uninitialized slot and the selected
+        // later-main lifecycle through complete construction or refusal.
+        unsafe { Self::begin_later_dynamic_attachment_with_main_and_metadata_into(
+            destination, subprocess, metadata, config,
+        ) }
+    }
+
+    /// Success initializes the destination only after metadata and registration
+    /// have completed; every earlier refusal retains the original cleanup path.
+    ///
+    /// # Safety
+    /// The destination is exclusive aligned uninitialized Option storage and
+    /// the caller owns this thread's complete later-ticket TLD lifecycle.
+    unsafe fn begin_later_dynamic_attachment_with_main_and_metadata_into(
+        destination: core::ptr::NonNull<Option<DynamicAttachedThreadLocalData>>,
+        subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+    ) -> Result<(), ThreadLocalDataError> {
         let thread = current_thread_identity().ok_or(ThreadLocalDataError::InvalidCurrentThread)?;
         let numa = i32::try_from(numa_node()).map_err(|_| ThreadLocalDataError::NumaNodeOutOfRange)?;
         // This selection gate is intentionally before the source creation
@@ -450,7 +494,10 @@ impl ThreadLocalDataOwner {
             _not_send_or_sync: PhantomData,
         };
         debug_assert!(owner.current_mut().is_ok_and(|tld| tld.is_subprocess_attached_no_theap()));
-        Ok(owner)
+        // SAFETY: no field is live in the exclusive output slot before this
+        // complete write, and no fallible operation follows registration.
+        unsafe { destination.as_ptr().write(Some(owner)) };
+        Ok(())
     }
 
     #[inline]

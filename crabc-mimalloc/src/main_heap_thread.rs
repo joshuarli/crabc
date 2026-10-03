@@ -658,22 +658,45 @@ impl<'main> MainHeapThreadAttachment<'main> {
             ));
         }
 
-        let tld = match unsafe {
-            ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata(
-                main_heap.subprocess(), metadata, config,
-            )
-        } {
-            Ok(tld) => tld,
-            Err(error) => {
-                return Err(MainHeapThreadAttachmentBeginIntoError::Rejected(
-                    MainHeapThreadAttachmentError::ThreadLocalData(error),
-                ));
-            }
-        };
-        // SAFETY: TLD creation succeeded and the destination is still
-        // exclusively uninitialized. This helper writes every field once.
-        unsafe { Self::begin_with_thread_local_data_into(destination, main_heap,
-            metadata, config, page_mode, generic_collect_policy, thread, tld) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: this raw field is aligned uninitialized Option storage
+            // inside the caller's exclusive destination. No attachment view
+            // exists until its remaining fields are initialized below.
+            let tld_slot = unsafe { NonNull::new_unchecked(
+                core::ptr::addr_of_mut!((*destination.as_ptr()).tld),
+            ) };
+            // SAFETY: accepted admission owns this thread and its later TLD;
+            // a refusal leaves every destination field uninitialized.
+            unsafe { ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata_into(
+                tld_slot, main_heap.subprocess(), metadata, config,
+            ) }.map_err(|error| MainHeapThreadAttachmentBeginIntoError::Rejected(
+                MainHeapThreadAttachmentError::ThreadLocalData(error),
+            ))?;
+            // SAFETY: the TLD field alone is initialized. This infallible field
+            // prefix completes the wrapper before any attachment projection.
+            unsafe { Self::begin_with_thread_local_data_into(destination, main_heap,
+                metadata, config, page_mode, generic_collect_policy, thread) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            let tld = match unsafe {
+                ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata(
+                    main_heap.subprocess(), metadata, config,
+                )
+            } {
+                Ok(tld) => tld,
+                Err(error) => {
+                    return Err(MainHeapThreadAttachmentBeginIntoError::Rejected(
+                        MainHeapThreadAttachmentError::ThreadLocalData(error),
+                    ));
+                }
+            };
+            // SAFETY: TLD creation succeeded and the destination is still
+            // exclusively uninitialized. This helper writes every field once.
+            unsafe { Self::begin_with_thread_local_data_into(destination, main_heap,
+                metadata, config, page_mode, generic_collect_policy, thread, tld) }
+        }
     }
 
     /// Publishes the Theap after the TLD allocation has returned, building
@@ -682,9 +705,11 @@ impl<'main> MainHeapThreadAttachment<'main> {
     ///
     /// # Safety
     ///
-    /// The destination is exclusively writable uninitialized storage. `tld`
-    /// is this current thread's exact active later-main TLD and every other
-    /// input retains the source identity accepted by the admission prepass.
+    /// The destination is exclusively writable storage. On x86-64 its TLD
+    /// field already owns this current thread's exact active later-main TLD;
+    /// every remaining field is uninitialized. Other targets transfer that
+    /// owner through `tld` into wholly uninitialized storage. Every other input
+    /// retains the source identity accepted by the admission prepass.
     unsafe fn begin_with_thread_local_data_into(
         destination: NonNull<Self>,
         main_heap: MainStaticHeapLease<'main>,
@@ -693,14 +718,15 @@ impl<'main> MainHeapThreadAttachment<'main> {
         page_mode: TheapPageMode,
         generic_collect_policy: Option<&'static crate::os::VmPolicy>,
         thread: LiveThreadId,
+        #[cfg(not(target_arch = "x86_64"))]
         tld: DynamicAttachedThreadLocalData,
     ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
         let destination = destination.as_ptr();
         #[cfg(target_arch = "x86_64")]
-        // SAFETY: construction owns the accepted inputs and uninitialized
-        // destination. The field writer returns before metadata allocation.
+        // SAFETY: construction owns the accepted inputs and initialized TLD
+        // slot. The remaining field writer returns before metadata allocation.
         unsafe { Self::write_preparing_fields(destination, main_heap, metadata,
-            config, page_mode, generic_collect_policy, thread, tld) };
+            config, page_mode, generic_collect_policy, thread) };
         #[cfg(not(target_arch = "x86_64"))]
         // SAFETY: every field is written exactly once before any attachment
         // reference is formed. These writes cannot invoke a fallible callback
@@ -748,16 +774,17 @@ impl<'main> MainHeapThreadAttachment<'main> {
         }
     }
 
-    /// Writes the complete Preparing image before allocation or publication.
+    /// Completes the Preparing image before allocation or publication.
     /// Typed Some/None field values are confined to this returned call;
     /// no allocator, callback, cancellation or root publication runs here.
     ///
     /// # Safety
     ///
-    /// `destination` is aligned, exclusively writable uninitialized storage
-    /// retained for the complete attachment lifetime. The caller transfers its
-    /// exact current-thread TLD and accepted main Heap, metadata and policy
-    /// inputs. Every field is written once, leaving sole custody in destination.
+    /// `destination` is aligned, exclusively writable storage retained for the
+    /// complete attachment lifetime. Its TLD field already owns the exact
+    /// current-thread TLD; all remaining fields are uninitialized. The accepted
+    /// main Heap, metadata and policy inputs pass into those remaining fields
+    /// exactly once, leaving sole custody in destination.
     #[cfg(target_arch = "x86_64")]
     #[inline(never)]
     unsafe fn write_preparing_fields(
@@ -768,9 +795,8 @@ impl<'main> MainHeapThreadAttachment<'main> {
         page_mode: TheapPageMode,
         generic_collect_policy: Option<&'static crate::os::VmPolicy>,
         thread: LiveThreadId,
-        tld: DynamicAttachedThreadLocalData,
     ) {
-        // SAFETY: every field is written exactly once before any attachment
+        // SAFETY: every remaining field is written once before any attachment
         // reference is formed. These writes cannot invoke a fallible callback
         // or publish the destination's address.
         unsafe {
@@ -779,7 +805,6 @@ impl<'main> MainHeapThreadAttachment<'main> {
             core::ptr::addr_of_mut!((*destination).config).write(config);
             core::ptr::addr_of_mut!((*destination).page_mode).write(page_mode);
             core::ptr::addr_of_mut!((*destination).generic_collect_policy).write(generic_collect_policy);
-            core::ptr::addr_of_mut!((*destination).tld).write(Some(tld));
             core::ptr::addr_of_mut!((*destination).theap).write(None);
             core::ptr::addr_of_mut!((*destination).thread).write(thread);
             core::ptr::addr_of_mut!((*destination).counted_in_main_heap).write(false);
