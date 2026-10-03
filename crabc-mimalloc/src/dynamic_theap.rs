@@ -1013,6 +1013,34 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 ));
             }
         };
+        // Complete TLD demand before reserving the larger attachment and its
+        // retained-failure result temporaries on the current worker's stack.
+        // SAFETY: this constructor retains its exclusive pinned Heap proof;
+        // the TLD and roots above belong to the same unchanged current thread.
+        unsafe { Self::begin_with_thread_local_data(
+            config, heap, subprocess, metadata, registry, page_mode,
+            requested_arena, arena_allocation_allowed, thread, roots, tld,
+        ) }
+    }
+
+    /// Completes the source attachment after TLD allocation and registration.
+    /// Keeping this phase out of the TLD-demand frame avoids retaining the
+    /// larger attachment temporaries during metadata backing initialization.
+    ///
+    /// # Safety
+    /// The caller retains the exclusive current-thread, pinned Heap, metadata
+    /// and key-registry lifetimes required by the attachment constructor.
+    /// `tld` is this thread's registered no-Theap owner for `subprocess`, and
+    /// `roots` is the unchanged compiler-TLS image captured before its demand.
+    #[inline(never)]
+    unsafe fn begin_with_thread_local_data(
+        config: MemoryConfig, heap: Pin<&'heap mut Heap>,
+        subprocess: &'static MainSubprocess, metadata: Pin<&'static MetaAllocator>,
+        registry: &'static OwnedThreadLocalKeyRegistry, page_mode: TheapPageMode,
+        requested_arena: Option<ArenaView<'heap>>,
+        arena_allocation_allowed: bool, thread: LiveThreadId, roots: UnrelatedRoots,
+        tld: DynamicAttachedThreadLocalData,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
         let requested_arena_pointer = requested_arena.as_ref()
             .map(|arena| core::ptr::from_ref(arena.arena()).cast_mut());
         let mut attachment = Self {

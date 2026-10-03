@@ -156,8 +156,8 @@ impl ThreadLocalDataOwner {
     /// gate: it never consumes ticket zero merely to discover that a dynamic
     /// Theap cannot own the process-static main branch. The resulting TLD is
     /// initialized through the same direct-zeroed image and consuming
-    /// registration transition as the generic owner, then moves out of this
-    /// owner before any Theap list entry is installed. The generic
+    /// registration transition as the generic owner, constructing its final
+    /// metadata owner before any Theap list entry is installed. The generic
     /// `ThreadLocalDataOwner` therefore retains its no-theap invariant.
     ///
     /// # Safety
@@ -436,37 +436,21 @@ impl ThreadLocalDataOwner {
             // SAFETY: `tld` has the matching later ticket's sequence/thread.
             unsafe { ticket.activate_after_initialized_tld(tld, thread) }
         };
-        let owner = Self {
+        // The later-ticket branch already owns the exact metadata allocation
+        // and live registration. Build its final owner directly instead of
+        // constructing and consuming an intermediate generic storage owner.
+        let mut owner = DynamicAttachedThreadLocalData {
             metadata,
             subprocess,
             thread,
             sequence,
-            storage: Some(ThreadLocalDataStorage::Metadata(allocation)),
+            allocation: Some(allocation),
             registration: Some(registration),
             state: ThreadLocalDataState::Active,
             _not_send_or_sync: PhantomData,
         };
-        Ok(owner.into_dynamic_attached())
-    }
-
-    fn into_dynamic_attached(mut self) -> DynamicAttachedThreadLocalData {
-        debug_assert!(self.current_mut().is_ok());
-        let allocation = match self.storage.take() {
-            Some(ThreadLocalDataStorage::Metadata(allocation)) => allocation,
-            Some(ThreadLocalDataStorage::MainStatic(_)) | None => {
-                unreachable!("only the nonzero metadata TLD branch may attach dynamically")
-            }
-        };
-        DynamicAttachedThreadLocalData {
-            metadata: self.metadata,
-            subprocess: self.subprocess,
-            thread: self.thread,
-            sequence: self.sequence,
-            allocation: Some(allocation),
-            registration: self.registration.take(),
-            state: ThreadLocalDataState::Active,
-            _not_send_or_sync: PhantomData,
-        }
+        debug_assert!(owner.current_mut().is_ok_and(|tld| tld.is_subprocess_attached_no_theap()));
+        Ok(owner)
     }
 
     #[inline]
@@ -1268,6 +1252,45 @@ mod tests {
             assert_eq!(subprocess.live_thread_count(), 0);
         })
         .join().unwrap();
+    }
+
+    #[test]
+    fn later_dynamic_tld_registers_final_owner_and_retires_exact_metadata() {
+        thread::spawn(|| {
+            let (subprocess, metadata) = fixture();
+            let identity = current_thread_identity().unwrap();
+            // SAFETY: this native thread exclusively owns the isolated
+            // process fixture's first TLD and retains it through retirement.
+            let mut first = unsafe {
+                ThreadLocalDataOwner::begin_with_test_metadata(
+                    subprocess, metadata, memory_config(),
+                )
+            }.unwrap();
+            let roots = (dynamic_backing_peek(), fast_slot_peek(), default_theap(), cached_theap());
+            // SAFETY: the same thread owns the isolated later TLD through
+            // retirement; no Theap or external pointer is published from it.
+            let mut later = unsafe {
+                ThreadLocalDataOwner::begin_later_dynamic_attachment_with_metadata(
+                    subprocess, metadata, memory_config(),
+                )
+            }.expect("the later ticket creates its final metadata TLD owner");
+            {
+                let tld = later.current_mut().unwrap();
+                assert_eq!(tld.thread_id(), identity.get());
+                assert_eq!(tld.thread_sequence().get(), 1);
+                assert_eq!(tld.memory_id().kind(), MemoryKind::Malloc);
+                assert!(tld.is_attached_to_main_subprocess(subprocess));
+                assert!(tld.is_subprocess_attached_no_theap());
+            }
+            assert_eq!(subprocess.live_thread_count(), 2);
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 1);
+            assert_eq!(roots, (dynamic_backing_peek(), fast_slot_peek(), default_theap(), cached_theap()));
+            later.teardown_after_theap_detached().unwrap();
+            assert_eq!(subprocess.live_thread_count(), 1);
+            assert_eq!(metadata.test_allocation_audit().live_capability_count, 0);
+            first.teardown().unwrap();
+            assert_eq!(subprocess.live_thread_count(), 0);
+        }).join().unwrap();
     }
 
     #[test]
