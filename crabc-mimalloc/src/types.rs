@@ -2220,6 +2220,27 @@ impl ThreadLocalData {
         ThreadSequence(self.thread_seq)
     }
 
+    /// Copies the retained TLD's immutable source thread identity.
+    ///
+    /// # Safety
+    /// The initialized TLD stays resident and its identity is not replaced
+    /// through this read. List administration and recursion-marker changes
+    /// may proceed independently under their own authority.
+    #[inline]
+    pub(crate) unsafe fn thread_id_at(tld: NonNull<Self>) -> ThreadId {
+        unsafe { core::ptr::addr_of!((*tld.as_ptr()).thread_id).read() }
+    }
+
+    /// Copies the sequence issued for this original TLD image.
+    ///
+    /// # Safety
+    /// The caller retains the initialized TLD and excludes sequence reset or
+    /// replacement through the read; list and marker fields are not borrowed.
+    #[inline]
+    pub(crate) unsafe fn thread_sequence_at(tld: NonNull<Self>) -> ThreadSequence {
+        ThreadSequence(unsafe { core::ptr::addr_of!((*tld.as_ptr()).thread_seq).read() })
+    }
+
     /// Returns the NUMA node selected by the pinned Unix primitive.
     #[inline]
     pub(crate) const fn numa_node(&self) -> i32 {
@@ -8845,6 +8866,31 @@ impl Theap {
         Some(unsafe { core::ptr::addr_of!((*tld.as_ptr()).thread_seq).read() })
     }
 
+    /// Copies the source sequence from this retained Theap's associated TLD.
+    ///
+    /// # Safety
+    /// The caller retains both original initialized images and excludes TLD
+    /// reassociation, clear, sequence replacement, and teardown. Heap and TLD
+    /// list fields may be administered independently under their own locks.
+    #[inline]
+    pub(crate) unsafe fn thread_sequence_at(theap: NonNull<Self>) -> Option<usize> {
+        let tld = NonNull::new(unsafe { Self::tld_at(theap) })?;
+        Some(unsafe { ThreadLocalData::thread_sequence_at(tld) }.get())
+    }
+
+    /// Copies the exact TLD pairing only while the source Heap is initialized.
+    /// This observation does not admit an owner or retain either image.
+    ///
+    /// # Safety
+    /// The caller retains the original initialized Theap and its TLD and
+    /// excludes reassociation, clear, and teardown throughout this projection.
+    /// Independently locked Heap-list fields are not borrowed.
+    #[inline]
+    pub(crate) unsafe fn deferred_free_tld_at(theap: NonNull<Self>) -> Option<NonNull<ThreadLocalData>> {
+        if unsafe { Self::heap_at(theap) }.is_null() { return None; }
+        NonNull::new(unsafe { Self::tld_at(theap) })
+    }
+
     /// Returns the exact TLD pointer recorded by a still-initialized Theap
     /// for a caller-stack deferred-free identity. This is not a reusable TLD
     /// owner: the caller must retain the source Theap/TLD lifetime and
@@ -10944,6 +10990,19 @@ mod tests {
             assert_eq!(theap.page_allocation_numa_node(), Some(2));
         }
         assert_eq!(theap.heap.load(Ordering::Acquire), heap_pointer.as_ptr());
+        // SAFETY: the fixture retains the three original initialized images;
+        // only the atomic Heap identity changes before the final observation.
+        unsafe {
+            let pointer = NonNull::from(&theap);
+            let tld = Theap::deferred_free_tld_at(pointer).unwrap();
+            assert_eq!(Some(tld), theap.deferred_free_tld());
+            assert_eq!(Theap::thread_sequence_at(pointer), theap.thread_sequence());
+            assert_eq!(ThreadLocalData::thread_sequence_at(tld).get(), theap.thread_sequence().unwrap());
+            assert_eq!(ThreadLocalData::thread_id_at(tld), THREAD_ID_DETACHED);
+            theap.heap.store(core::ptr::null_mut(), Ordering::Relaxed);
+            assert!(Theap::deferred_free_tld_at(pointer).is_none());
+            assert_eq!(Theap::thread_sequence_at(pointer), theap.thread_sequence());
+        }
     }
 
     #[test]
