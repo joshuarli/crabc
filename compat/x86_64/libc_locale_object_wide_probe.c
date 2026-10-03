@@ -16,6 +16,7 @@
 #endif
 
 struct worker_observation {
+    locale_t c;
     locale_t utf8;
     int result;
 };
@@ -102,6 +103,41 @@ static int check_multibyte_selection(locale_t c_locale, locale_t utf8_locale)
     return 0;
 }
 
+struct worker_cleanup {
+    struct worker_observation *observation;
+    mbstate_t *pending;
+};
+
+static void worker_locale_cleanup(void *argument)
+{
+    struct worker_cleanup *cleanup = argument;
+    struct worker_observation *observation = cleanup->observation;
+    static const char tail[] = { (char)0x82, (char)0xac };
+    static const char byte[] = { (char)0xc3 };
+    mbstate_t c_state = { 0 };
+    wchar_t wide = 0;
+    locale_t saved;
+
+    observation->result = 3;
+    if (uselocale(NULL) != observation->utf8 || MB_CUR_MAX != 4 ||
+        !string_equal(nl_langinfo(CODESET), "UTF-8") || mbsinit(cleanup->pending))
+        return;
+    saved = uselocale(observation->c);
+    if (saved != observation->utf8 || MB_CUR_MAX != 1 ||
+        mbrtowc(&wide, byte, 1, &c_state) != 1 || wide != (wchar_t)0xdfc3 ||
+        !mbsinit(&c_state))
+        return;
+    if (uselocale(saved) != observation->c || MB_CUR_MAX != 4)
+        return;
+    errno = EINTR;
+    if (mbrtowc(&wide, tail, sizeof tail, cleanup->pending) != sizeof tail ||
+        wide != 0x20ac || !mbsinit(cleanup->pending) || errno != EINTR ||
+        uselocale(NULL) != observation->utf8 ||
+        !string_equal(nl_langinfo(CODESET), "UTF-8"))
+        return;
+    observation->result = 0;
+}
+
 static void *worker_main(void *argument)
 {
     struct worker_observation *observation = argument;
@@ -119,21 +155,38 @@ static void *worker_main(void *argument)
         observation->result = 2;
         return NULL;
     }
-    observation->result = 0;
+    state = (mbstate_t){ 0 };
+    {
+        static const char lead[] = { (char)0xe2 };
+        struct worker_cleanup cleanup = { observation, &state };
+        if (mbrtowc(&wide, lead, sizeof lead, &state) != (size_t)-2 || mbsinit(&state)) {
+            observation->result = 4;
+            return NULL;
+        }
+        /* pthread_exit runs this cleanup while the worker's locale and its
+         * stack-owned restartable conversion state are still live. */
+        pthread_cleanup_push(worker_locale_cleanup, &cleanup);
+        pthread_exit(NULL);
+        pthread_cleanup_pop(0);
+    }
     return NULL;
 }
 
-static int check_thread_isolation(locale_t utf8_locale)
+static int check_thread_isolation(locale_t c_locale, locale_t utf8_locale)
 {
-    struct worker_observation observation = { utf8_locale, -1 };
+    struct worker_observation observation = { c_locale, utf8_locale, -1 };
     pthread_t thread;
+    unsigned generation;
 
     if (uselocale(utf8_locale) != LC_GLOBAL_LOCALE)
         return 1;
-    if (pthread_create(&thread, NULL, worker_main, &observation) != 0)
-        return 2;
-    if (pthread_join(thread, NULL) != 0 || observation.result != 0)
-        return 3;
+    for (generation = 0; generation != 2; ++generation) {
+        observation.result = -1;
+        if (pthread_create(&thread, NULL, worker_main, &observation) != 0)
+            return 2;
+        if (pthread_join(thread, NULL) != 0 || observation.result != 0)
+            return 3;
+    }
     if (uselocale(NULL) != utf8_locale || MB_CUR_MAX != 4 ||
         uselocale(LC_GLOBAL_LOCALE) != utf8_locale)
         return 4;
@@ -241,7 +294,7 @@ int crabc_x86_64_locale_object_wide_probe(void)
     result = check_multibyte_selection(c_locale, utf8_locale);
     if (result != 0)
         return 30 + result;
-    result = check_thread_isolation(utf8_locale);
+    result = check_thread_isolation(c_locale, utf8_locale);
     if (result != 0)
         return 40 + result;
     result = check_localized_wide(c_locale, utf8_locale, &fingerprint);
