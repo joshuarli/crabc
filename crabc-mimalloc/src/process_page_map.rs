@@ -1412,6 +1412,38 @@ impl ProcessPageMapRoot {
         Ok(allocation)
     }
 
+    /// Copies the source page block stride of one exact live client.
+    ///
+    /// Pinned `mi_page_block_size` reads the immutable stride directly; it
+    /// does not recover an adjusted client's canonical block or inspect the
+    /// page's current ownership word.
+    ///
+    /// # Safety
+    ///
+    /// `client` must be an exact current native allocation. Its lifetime must
+    /// retain the registered page, immutable header, mapping, and selected
+    /// plain PageMap entry throughout this observation, excluding an
+    /// overlapping entry write. This scalar grants no page, owner, mutation,
+    /// or release authority and does not validate an arbitrary C pointer.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn lookup_live_block_size(
+        self,
+        client: NonNull<u8>,
+    ) -> Result<Option<usize>, ProcessPageMapError> {
+        self.ensure_ready()?;
+        // SAFETY: READY publishes the initialized active map; the exact live
+        // client retains its source submap and excludes an overlapping entry
+        // write. The selected source lookup keeps its normal or checked mode.
+        let page = unsafe { self.storage.page_map_ref().lookup_retained_live_page(client.as_ptr()) };
+        let Some(page) = NonNull::new(page) else { return Ok(None); };
+        // SAFETY: publication fixes block_size through final unregistration.
+        // The retained client pins this raw prefix without borrowing ordinary
+        // Page fields that its owner may mutate concurrently.
+        let block_size = unsafe { (*page.as_ptr().cast::<PagePointerGeometry>()).block_size };
+        Ok((block_size != 0).then_some(block_size))
+    }
+
     /// Starts the one explicit mutable PageMap lifecycle for this process
     /// root.
     ///
@@ -2202,6 +2234,9 @@ mod tests {
             }
             let allocation = unsafe { lease.lookup_live_allocation(canonical) }.unwrap().unwrap();
             assert_eq!(allocation.usable_size(), 128);
+            // SAFETY: this exact live client retains its registered page and
+            // physical stride even though padding shortens its usable extent.
+            assert_eq!(unsafe { lease.lookup_live_block_size(canonical) }, Ok(Some(allocation.block_size())));
             // A valid caller may fill every byte of the reported public
             // extent without corrupting the source's trailing record.
             unsafe { core::ptr::write_bytes(canonical.as_ptr(), 0x59, allocation.usable_size()); }
@@ -2214,6 +2249,9 @@ mod tests {
             let client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(16)) };
             let aligned = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(aligned.usable_size(), 112);
+            // SAFETY: the same live adjusted client retains the complete
+            // physical source block, including its adjustment and padding.
+            assert_eq!(unsafe { lease.lookup_live_block_size(client) }, Ok(Some(aligned.block_size())));
             let copy = aligned.into_reallocation_copy_source(512);
             assert_eq!(copy.copy_prefix_len(), 112);
             assert_eq!(copy.canonical_block_for_release(), canonical);
@@ -2318,6 +2356,10 @@ mod tests {
                 // SAFETY: the retained current client pins its source-plain
                 // entry and immutable Page geometry through this observation.
                 let facts = unsafe { root.lookup_live_allocation(self.0) }.unwrap().unwrap();
+                #[cfg(target_arch = "x86_64")]
+                // SAFETY: this same retained client excludes writes to its
+                // entry and immutable stride while disjoint pages change.
+                assert_eq!(unsafe { root.lookup_live_block_size(self.0) }, Ok(Some(facts.block_size())));
                 assert_eq!(unsafe { root.lookup_page_for_live_client(self.0) }.unwrap(),
                     Some(facts.page()));
                 (facts.page().as_ptr().addr(), facts.block_size())
@@ -2694,6 +2736,10 @@ mod tests {
         ));
         assert!(!normal.has_interior_pointers());
         assert_eq!(normal.block_size(), BLOCK_SIZE);
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the same exact normal client pins the registered page and
+        // immutable stride through this scalar-only observation.
+        assert_eq!(unsafe { lease.lookup_live_block_size(block) }, Ok(Some(normal.block_size())));
         assert_eq!(normal.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE);
 
         // SAFETY: the fixture owns the page exclusively until map
@@ -2723,6 +2769,10 @@ mod tests {
         assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.block_size(), BLOCK_SIZE);
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this exact adjusted client remains in the registered source
+        // block; its stride is independent of canonical-block recovery.
+        assert_eq!(unsafe { lease.lookup_live_block_size(client) }, Ok(Some(pointer.block_size())));
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
         // The final public client byte belongs to this canonical block and
         // leaves exactly one usable byte before any source padding record.
@@ -2733,6 +2783,10 @@ mod tests {
             .expect("the final interior client resolves through the source page map");
         assert_eq!(last.canonical_block(), block);
         assert_eq!(last.usable_size(), 1);
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the fixture retains this exact final-byte client and its
+        // source page throughout both immutable observations.
+        assert_eq!(unsafe { lease.lookup_live_block_size(last_client) }, Ok(Some(last.block_size())));
 
         store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE);
         assert_eq!(pointer.xthread_id(), thread_id.get() | PAGE_HAS_INTERIOR_POINTERS);
