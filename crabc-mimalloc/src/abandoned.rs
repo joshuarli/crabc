@@ -3077,12 +3077,13 @@ pub(crate) unsafe fn abandon<M: MappedAbandonedPages + ?Sized>(
 ) -> Result<AbandonResult, AbandonError> {
     // SAFETY: caller supplies the owner/lifetime proof for the pre-abandon
     // collection. It validates the live associated identity before ordinary
-    // local state is touched.
+    // local state is touched. Source abandonment completes the non-force
+    // local transfer before changing identity or releasing the owner bit.
     let owner = unsafe { Page::remote_free_owner_state_at(page) }
         .ok_or(AbandonError::NotAbandoned)?;
-    unsafe { remote_free::collect(owner) }.map_err(AbandonError::RemoteFree)?;
-    // SAFETY: caller retains the page lifecycle proof and has collected the
-    // pre-abandon remote list. This projects raw fields only.
+    unsafe { remote_free::collect_live_page_false(owner) }.map_err(AbandonError::RemoteFree)?;
+    // SAFETY: caller retains the page lifecycle proof and has completed both
+    // pre-abandon collection phases. This projects raw fields only.
     unsafe { abandon_after_collect(page, map) }
 }
 
@@ -6172,6 +6173,36 @@ mod tests {
         assert!(map.is_published(17));
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
         assert_eq!(page.remote_free_test_head() & 1, 1);
+    }
+
+    #[test]
+    fn abandonment_transfers_remote_and_local_frees_before_unownership() {
+        let mut storage = BitmapStorage::uninit();
+        let mut arena = map_fixture(&mut storage);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(1).unwrap();
+        let mut page = mapped_page(&mut arena, 3);
+        let mut first = TestBlock([0; 16]);
+        let mut second = TestBlock([0; 16]);
+        let first_block = first.pointer().cast::<crate::types::Block>().as_ptr();
+        let second_block = second.pointer().cast::<crate::types::Block>().as_ptr();
+        let page_raw = NonNull::from(&mut page);
+        // SAFETY: the sole owner retains the page and both distinct block
+        // fixtures through publication, collection, and abandonment.
+        let producer = unsafe { Page::remote_free_producer_state_at(page_raw) };
+        let owner = unsafe { Page::remote_free_owner_state_at(page_raw) }.unwrap();
+        assert_eq!(unsafe { remote_free::push(producer, first.pointer()) }, Ok(()));
+        assert_eq!(unsafe { remote_free::collect(owner) }, Ok(1));
+        assert_eq!(page.remote_free_test_local_free(), first_block);
+        assert_eq!(unsafe { remote_free::push(producer, second.pointer()) }, Ok(()));
+
+        assert_eq!(unsafe { abandon(page_raw, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        assert_eq!(page.remote_free_test_used(), 1);
+        assert_eq!(page.remote_free_test_head(), 0);
+        assert!(map.is_published(17));
+        assert_eq!(page.remote_free_test_free(), second_block);
+        assert!(page.remote_free_test_local_free().is_null());
+        assert!(!page.remote_free_test_free_is_zero());
     }
 
     #[test]
