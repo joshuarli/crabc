@@ -20,6 +20,9 @@ static _Thread_local int zeroed;
 static _Thread_local unsigned char *allocation;
 static pthread_key_t key;
 static atomic_int callbacks, destructors, cleaned, cancel_ready, timer_tid;
+static unsigned char *retained_client;
+static atomic_int retained_clients_checked;
+static const size_t retained_client_size = 8193;
 static int cancel_pipe[2];
 static pthread_t worker;
 static timer_t callback_timer;
@@ -86,6 +89,23 @@ static void notify(union sigval value)
     allocation = malloc(4097);
     CHECK(allocation != NULL);
     memset(allocation, 0x5a, 4097);
+    /* A malloc client can outlive a logical notification's TLS reset. Keep
+       its pointer in process storage and consume it on the same worker's
+       next notification after return, exit, or cancellation cleanup. */
+    if (callback_mode != 3) {
+        if (!(n & 1)) {
+            CHECK(retained_client == NULL);
+            retained_client = malloc(retained_client_size);
+            CHECK(retained_client != NULL && retained_client != allocation);
+            memset(retained_client, 0xa7, retained_client_size);
+        } else {
+            CHECK(retained_client != NULL && retained_client != allocation);
+            for (size_t i = 0; i < retained_client_size; ++i) CHECK(retained_client[i] == 0xa7);
+            free(retained_client);
+            retained_client = NULL;
+            atomic_fetch_add(&retained_clients_checked, 1);
+        }
+    }
     CHECK(pthread_setspecific(key, (void *)1) == 0);
     errno = 67;
     pthread_cleanup_push(cleanup, &worker);
@@ -128,6 +148,8 @@ static void thread_timer(void)
     for (callback_mode = 0; callback_mode < 6; ++callback_mode) {
         plugin_initialized_address = plugin_zeroed_address = plugin_dtv = NULL;
         atomic_store(&cancel_ready, 0);
+        CHECK(retained_client == NULL);
+        atomic_store(&retained_clients_checked, 0);
         atomic_store(&callbacks, 0); atomic_store(&destructors, 0); atomic_store(&cleaned, 0);
         struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_value.sival_int = 91, .sigev_notify_function = notify};
         pthread_attr_t attr;
@@ -155,6 +177,8 @@ static void thread_timer(void)
                 nanosleep(&delay, NULL);
             }
         }
+        CHECK(retained_client == NULL);
+        CHECK(atomic_load(&retained_clients_checked) == (callback_mode == 3 ? 0 : 2));
         if (callback_mode != 3) {
             CHECK(timer_gettime(timer, &old) == 0);
             CHECK(timer_getoverrun(timer) >= 0);
