@@ -82,6 +82,20 @@ if [ -z "$ordinary" ]; then
     truncate -s 1 "$work/candidate-root/usr/lib/libgraph-malformed.so" "$work/oracle/libgraph-malformed.so"
 fi
 
+# The two successful named roots and every extra root stay mapped through
+# close/reopen and run one finalizer each at process exit. The failed root
+# must never enter either lifecycle transition.
+{
+    printf 'scope graph: shared leaf initialized\n'
+    for ((index=0; index<extra+2; index++)); do
+        printf 'scope graph: root initialized\n'
+    done
+    printf 'scope graph: rollback, breadth-first handles, retained state, promotion\n'
+    for ((index=0; index<extra+2; index++)); do
+        printf 'scope graph: retained root finalized\n'
+    done
+} >"$work/expected.stdout"
+
 for mode in --dynamic-pie --dynamic-non-pie; do
     name="consumer${mode#--dynamic}"
     case "$mode" in --dynamic-pie) oracle_flags=(-fPIE -pie) ;; *) oracle_flags=(-fno-pie -no-pie) ;; esac
@@ -99,8 +113,7 @@ for mode in --dynamic-pie --dynamic-non-pie; do
             >"$work/$name.$entry.stdout" 2>"$work/$name.$entry.stderr"
         cmp "$work/$name.$entry.stdout" "$work/$name.oracle.stdout"
         cmp "$work/$name.$entry.stderr" "$work/$name.oracle.stderr"
-        [ "$(<"$work/$name.$entry.stdout")" = \
-            'scope graph: rollback, breadth-first handles, retained state, promotion' ]
+        cmp "$work/$name.$entry.stdout" "$work/expected.stdout"
     done
 done
 printf 'owned loader scope graph: PASS (%s extra roots, PIE/non-PIE, kernel/direct, pinned-musl differential); evidence: %s\n' "$extra" "$work"

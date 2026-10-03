@@ -29,6 +29,16 @@ static int value(void *handle)
     return get ? get() : -1;
 }
 
+static int lifecycle(void *handle)
+{
+    const char *names[] = { "graph_root_lifecycle", "graph_node_lifecycle", "graph_leaf_lifecycle" };
+    for (unsigned index = 0; index < sizeof names / sizeof names[0]; ++index) {
+        int (*get)(void) = (int (*)(void))dlsym(handle, names[index]);
+        if (!get || !get()) return 0;
+    }
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     int ordinary = argc == 4 && strcmp(argv[3], "--ordinary-only") == 0;
@@ -49,6 +59,7 @@ int main(int argc, char **argv)
     void *ab = dlopen("libgraph-ab.so", RTLD_NOW | RTLD_LOCAL);
     void *ba = dlopen("libgraph-ba.so", RTLD_NOW | RTLD_LOCAL);
     if (!ab || !ba || ab == ba) return 6;
+    if (!lifecycle(ab) || !lifecycle(ba)) return 27;
     if (dlopen(argv[2], RTLD_NOW | RTLD_LOCAL) != ab) return 26;
     if (value(ab) != 11 || value(ba) != 22) return 7;
     if (dlsym(RTLD_DEFAULT, "graph_value") != NULL) return 8;
@@ -59,9 +70,11 @@ int main(int argc, char **argv)
     if (value(ab) != 12 || value(ba) != 22) return 10;
     if (dlclose(ab) || dlclose(ba)) return 11;
     if (object_count() <= initial) return 12;
+    if (!lifecycle(ab) || !lifecycle(ba)) return 28;
     if (dlopen("libgraph-ab.so", RTLD_NOW | RTLD_LOCAL) != ab) return 13;
     if (dlopen("libgraph-ba.so", RTLD_NOW | RTLD_GLOBAL) != ba) return 14;
     if (value(ab) != 12 || value(ba) != 22) return 15;
+    if (!lifecycle(ab) || !lifecycle(ba)) return 29;
     if (value(RTLD_DEFAULT) != 22) return 16;
     if (dlopen("libgraph-ab.so", RTLD_NOW | RTLD_GLOBAL) != ab) return 17;
     if (value(RTLD_DEFAULT) != 22 || value(ab) != 12) return 18;
@@ -70,13 +83,13 @@ int main(int argc, char **argv)
         char name[32];
         if (snprintf(name, sizeof name, "libgraph-%02d.so", index) <= 0) return 20;
         void *handle = dlopen(name, RTLD_NOW | RTLD_LOCAL);
-        if (!handle || value(handle) != (index % 2 ? 22 : 12)) return 21;
+        if (!handle || value(handle) != (index % 2 ? 22 : 12) || !lifecycle(handle)) return 21;
         extra_handles[index] = handle;
         if (dlclose(handle)) return 22;
         if (dlopen(name, RTLD_NOW | RTLD_NOLOAD | RTLD_LOCAL) != handle) return 23;
     }
     for (int index = extra - 1; index >= 0; --index) {
-        if (value(extra_handles[index]) != (index % 2 ? 22 : 12)) return 24;
+        if (value(extra_handles[index]) != (index % 2 ? 22 : 12) || !lifecycle(extra_handles[index])) return 24;
     }
     if (value(RTLD_DEFAULT) != 22) return 25;
 
