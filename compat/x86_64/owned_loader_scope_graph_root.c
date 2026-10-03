@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+#include <dlfcn.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -32,4 +34,12 @@ __attribute__((destructor)) static void graph_root_finalize(void)
 int graph_marker(void)
 {
     return 1;
+}
+
+/* RTLD_NEXT starts after this calling root in physical load order. Its first
+   dependency provides the value even when another root is promoted first. */
+int graph_next_value(void)
+{
+    int (*get)(void) = (int (*)(void))dlsym(RTLD_NEXT, "graph_value");
+    return get ? get() : -1;
 }

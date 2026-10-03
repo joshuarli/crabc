@@ -62,12 +62,14 @@ int main(int argc, char **argv)
     if (!lifecycle(ab) || !lifecycle(ba)) return 27;
     if (dlopen(argv[2], RTLD_NOW | RTLD_LOCAL) != ab) return 26;
     if (value(ab) != 11 || value(ba) != 22) return 7;
+    int (*next)(void) = (int (*)(void))dlsym(ab, "graph_next_value");
+    if (!next || next() != 11) return 30;
     if (dlsym(RTLD_DEFAULT, "graph_value") != NULL) return 8;
 
     void (*advance)(void) = (void (*)(void))dlsym(ab, "graph_advance");
     if (!advance) return 9;
     advance();
-    if (value(ab) != 12 || value(ba) != 22) return 10;
+    if (value(ab) != 12 || value(ba) != 22 || next() != 12) return 10;
     if (dlclose(ab) || dlclose(ba)) return 11;
     if (object_count() <= initial) return 12;
     if (!lifecycle(ab) || !lifecycle(ba)) return 28;
@@ -77,7 +79,7 @@ int main(int argc, char **argv)
     if (!lifecycle(ab) || !lifecycle(ba)) return 29;
     if (value(RTLD_DEFAULT) != 22) return 16;
     if (dlopen("libgraph-ab.so", RTLD_NOW | RTLD_GLOBAL) != ab) return 17;
-    if (value(RTLD_DEFAULT) != 22 || value(ab) != 12) return 18;
+    if (value(RTLD_DEFAULT) != 22 || value(ab) != 12 || next() != 12) return 18;
 
     for (int index = 0; index < extra; ++index) {
         char name[32];
