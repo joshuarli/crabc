@@ -382,11 +382,12 @@ impl ProcessMainInitializationStorage {
         if let Some(output) = self.published_source_options() { return Some(output); }
         crate::source_options_api::with_early_source_options(|early| {
             if let Some(output) = self.published_source_options() { return output; }
-            let output = OutputOwner::new(default_stderr_output);
             // SAFETY: the handoff lock excludes another installer and every
-            // retained early setter; no reader can reach this inline slot yet.
-            unsafe { (*self.diagnostic_output.get()).write(output) };
+            // retained early setter; this aligned permanent inline slot is
+            // still uninitialized and no reader can reach it yet. Initialize
+            // directly here so its delayed buffer needs no temporary image.
             let pointer = unsafe { (*self.diagnostic_output.get()).as_mut_ptr() };
+            unsafe { OutputOwner::initialize_at(NonNull::new_unchecked(pointer), default_stderr_output) };
             let output = unsafe { &*pointer };
             unsafe { output.install_source_options(environment_reader, Some(early)) };
             self.diagnostic_output_ptr.store(pointer, Ordering::Release);
@@ -3098,6 +3099,49 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn repeated_source_options_install_preserves_owner_descriptors_and_delayed_output() {
+        use crate::config::SourceOption;
+        use crate::diagnostic_output::SourceFormattedMessage;
+        static FIRST_MATCHES: AtomicUsize = AtomicUsize::new(0);
+        static SECOND_CALLS: AtomicUsize = AtomicUsize::new(0);
+        unsafe fn environment() -> *const *const core::ffi::c_char {
+            core::ptr::null()
+        }
+        unsafe extern "C" fn first_stderr(message: *const core::ffi::c_char) {
+            // SAFETY: the output owner supplies one live NUL-terminated
+            // fragment for the duration of this synchronous invocation.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            FIRST_MATCHES.fetch_add(usize::from(bytes == c"retained startup bytes".to_bytes()), Ordering::Relaxed);
+        }
+        unsafe extern "C" fn second_stderr(_: *const core::ffi::c_char) {
+            SECOND_CALLS.fetch_add(1, Ordering::Relaxed);
+        }
+        let storage = ProcessMainInitializationStorage::test_static_owner();
+        let first = storage.prepare_source_options(environment, first_stderr).unwrap();
+        // SAFETY: this isolated fixture exclusively owns its installed table
+        // and delayed output; the permanent providers retain no fragments.
+        unsafe {
+            first.option_set(SourceOption::Verbose, 0).unwrap();
+            first.option_set(SourceOption::ShowErrors, 0).unwrap();
+            first.initialize_source_options(environment);
+            first.option_set(SourceOption::ArenaReserve, 73).unwrap();
+            first.raw_message(SourceFormattedMessage::from_source_formatted(c"retained startup bytes"));
+        }
+        assert_eq!(FIRST_MATCHES.load(Ordering::Relaxed), 0);
+        let repeated = storage.prepare_source_options(environment, second_stderr).unwrap();
+        assert!(core::ptr::eq(first, repeated));
+        assert!(storage.test_is_cold(), "installing options grants no process readiness");
+        // SAFETY: the same installed table remains exclusive to this fixture.
+        assert_eq!(unsafe { repeated.option_get(SourceOption::ArenaReserve) }.unwrap(), 73);
+        // SAFETY: the isolated startup table is initialized, no registration
+        // or concurrent diagnostic dispatch exists, and this is its only tail.
+        unsafe { repeated.post_init(); }
+        assert_eq!(FIRST_MATCHES.load(Ordering::Relaxed), 1);
+        assert_eq!(SECOND_CALLS.load(Ordering::Relaxed), 0);
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
