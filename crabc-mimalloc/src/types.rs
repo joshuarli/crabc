@@ -2377,6 +2377,19 @@ impl ThreadLocalData {
         self.is_in_threadpool
     }
 
+    /// Copies the selected thread's source thread-pool policy bit.
+    ///
+    /// # Safety
+    /// The caller retains the initialized TLD through this read and excludes
+    /// thread-pool policy changes, image replacement, and teardown. List and
+    /// recursion-marker administration may proceed independently.
+    #[inline]
+    pub(crate) unsafe fn is_in_threadpool_at(tld: NonNull<Self>) -> bool {
+        // SAFETY: only this retained policy scalar is read; no whole-TLD
+        // reference covers independently mutable lists or callback markers.
+        unsafe { core::ptr::addr_of!((*tld.as_ptr()).is_in_threadpool).read() }
+    }
+
     /// Returns the metadata provenance of this exact TLD allocation.
     #[inline]
     pub(crate) const fn memory_id(&self) -> MemoryId {
@@ -4249,6 +4262,32 @@ pub(super) struct PageLocalCollectState {
     pub(super) free_is_zero: NonNull<bool>,
 }
 
+/// Copied ordinary fields for an already selected page owner.
+///
+/// The values carry no owner claim, list traversal permission, or release
+/// authority. They become stale when the owner changes the page; a later
+/// transition must observe its required fields again. Remote publication can
+/// proceed through the disjoint atomic free head while these fields are copied.
+#[derive(Clone, Copy)]
+pub(crate) struct PageOwnerSnapshot {
+    pub(crate) page: NonNull<Page>,
+    pub(crate) start: *mut u8,
+    pub(crate) block_size: usize,
+    pub(crate) page_offset: usize,
+    pub(crate) capacity: u16,
+    pub(crate) reserved: u16,
+    pub(crate) used: usize,
+    pub(crate) slice_pcommitted: u16,
+    pub(crate) retire_expire: u8,
+    pub(crate) free: *mut Block,
+    pub(crate) local_free: *mut Block,
+    pub(crate) free_is_zero: bool,
+    pub(crate) heap: *mut Heap,
+    pub(crate) theap: *mut Theap,
+    pub(crate) memory_id: MemoryId,
+    pub(crate) xthread_id: usize,
+}
+
 /// Source facts for a quiescent page and its initialized block area.
 ///
 /// This carries no owner claim, memory provenance capability, or release
@@ -4485,6 +4524,127 @@ unsafe impl Send for Arena {}
 unsafe impl Sync for Arena {}
 
 impl Page {
+    /// Copies the preflight state of a page whose owner is already selected.
+    ///
+    /// # Safety
+    /// The caller retains the original initialized, address-stable Page and
+    /// excludes ordinary field mutation, owner changes, image replacement,
+    /// reuse, and release through this copy. Remote producers may access their
+    /// own live blocks and disjoint Page atomics; remote collectors must be
+    /// excluded. This does not establish ownership for a foreign page. The
+    /// copied pointers grant no authority to traverse or modify their targets.
+    #[inline]
+    pub(crate) unsafe fn owner_snapshot_at(page: NonNull<Self>) -> PageOwnerSnapshot {
+        let raw = page.as_ptr();
+        // SAFETY: owner exclusion keeps these initialized ordinary fields
+        // stable. The short atomic projection preserves the owner load's
+        // Acquire ordering without borrowing the rest of the Page.
+        unsafe {
+            let page_offset = core::ptr::addr_of!((*raw).page_offset).read();
+            PageOwnerSnapshot {
+                page,
+                start: raw.cast::<u8>().wrapping_add(page_offset),
+                block_size: core::ptr::addr_of!((*raw).block_size).read(),
+                page_offset,
+                capacity: core::ptr::addr_of!((*raw).capacity).read(),
+                reserved: core::ptr::addr_of!((*raw).reserved).read(),
+                used: core::ptr::addr_of!((*raw).used).read(),
+                slice_pcommitted: core::ptr::addr_of!((*raw).slice_pcommitted).read(),
+                retire_expire: core::ptr::addr_of!((*raw).retire_expire).read(),
+                free: core::ptr::addr_of!((*raw).free).read(),
+                local_free: core::ptr::addr_of!((*raw).local_free).read(),
+                free_is_zero: core::ptr::addr_of!((*raw).free_is_zero).read(),
+                heap: core::ptr::addr_of!((*raw).heap).read(),
+                theap: core::ptr::addr_of!((*raw).theap).read(),
+                memory_id: core::ptr::addr_of!((*raw).memid).read(),
+                xthread_id: (&*core::ptr::addr_of!((*raw).xthread_id)).load(Ordering::Acquire),
+            }
+        }
+    }
+
+    /// Copies immutable source block geometry without borrowing owner fields.
+    ///
+    /// # Safety
+    /// The original initialized Page remains live and its block geometry is
+    /// fixed. Image replacement, reuse, and release are excluded for this read;
+    /// ordinary owner-local list and count changes may proceed independently.
+    #[inline]
+    pub(crate) unsafe fn block_size_at(page: NonNull<Self>) -> usize {
+        // SAFETY: only the retained immutable block-size scalar is copied.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).block_size).read() }
+    }
+
+    /// Copies immutable source capacity geometry without borrowing lists.
+    ///
+    /// # Safety
+    /// The original initialized Page remains live with fixed reserved capacity;
+    /// image replacement, reuse, and release are excluded for this read.
+    #[inline]
+    pub(crate) unsafe fn reserved_at(page: NonNull<Self>) -> u16 {
+        // SAFETY: only the retained immutable reserved-count scalar is copied.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).reserved).read() }
+    }
+
+    /// Copies the fixed offset from source metadata to its block area.
+    ///
+    /// # Safety
+    /// The original initialized Page remains live with fixed area geometry;
+    /// image replacement, reuse, and release are excluded for this read.
+    #[inline]
+    pub(crate) unsafe fn page_offset_at(page: NonNull<Self>) -> usize {
+        // SAFETY: only the retained immutable area-offset scalar is copied.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).page_offset).read() }
+    }
+
+    /// Derives the source block-area address from original metadata provenance.
+    /// The returned pointer grants no block access or ownership authority.
+    ///
+    /// # Safety
+    /// The original initialized Page and backing remain live with fixed area
+    /// geometry. The offset describes its actual block area; image replacement,
+    /// reuse, and release are excluded for this read.
+    #[inline]
+    pub(crate) unsafe fn start_at(page: NonNull<Self>) -> *mut u8 {
+        // SAFETY: the caller retains the metadata and its immutable offset.
+        page.as_ptr().cast::<u8>().wrapping_add(unsafe { Self::page_offset_at(page) })
+    }
+
+    /// Copies the source allocation provenance without projecting owner lists.
+    ///
+    /// # Safety
+    /// The original initialized Page stays live with stable memory provenance;
+    /// ownership relinquishment, image replacement, reuse, and release are
+    /// excluded for this read. The copy grants no memory-release authority.
+    #[inline]
+    pub(crate) unsafe fn memory_id_at(page: NonNull<Self>) -> MemoryId {
+        // SAFETY: only the retained provenance field is copied.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).memid).read() }
+    }
+
+    /// Copies the current owner's initialized block count.
+    ///
+    /// # Safety
+    /// The original initialized Page stays live. The caller owns or serializes
+    /// capacity changes and excludes image replacement, reuse, and release.
+    /// Remote producers may access only their disjoint blocks and atomics.
+    #[inline]
+    pub(crate) unsafe fn capacity_at(page: NonNull<Self>) -> u16 {
+        // SAFETY: owner exclusion keeps the initialized capacity scalar stable.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).capacity).read() }
+    }
+
+    /// Copies the current owner's source on-demand committed-page count.
+    ///
+    /// # Safety
+    /// The original initialized Page stays live. The caller owns or serializes
+    /// committed-prefix changes and excludes image replacement, reuse, and
+    /// release. Remote producers use disjoint blocks and atomics.
+    #[inline]
+    pub(crate) unsafe fn slice_pcommitted_at(page: NonNull<Self>) -> u16 {
+        // SAFETY: owner exclusion keeps the initialized prefix scalar stable.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).slice_pcommitted).read() }
+    }
+
     /// Copies the source arena renderer's ordinary geometry and atomic owner.
     ///
     /// # Safety
@@ -8583,7 +8743,35 @@ impl Theap {
         // SAFETY: every initialized Theap constructor retains its matched
         // ThreadLocalData for the Theap lifetime; callers separately prove
         // the current static-owner relation before observing this field.
-        Some(unsafe { self.tld.as_ref()? }.numa_node())
+        let tld = NonNull::new(self.tld)?;
+        // SAFETY: the retained TLD's node is fixed through this observation;
+        // its independently locked list and recursion marker are not borrowed.
+        Some(unsafe { core::ptr::addr_of!((*tld.as_ptr()).numa_node).read() })
+    }
+
+    /// Copies the stored source TLD NUMA node through narrow field reads.
+    ///
+    /// # Safety
+    /// The caller retains this initialized Theap and its live TLD, excluding
+    /// TLD replacement, teardown, and NUMA-field changes for this read. Local
+    /// queue changes and locked Heap-list changes may proceed independently.
+    #[inline]
+    pub(crate) unsafe fn tld_numa_node_at(theap: NonNull<Self>) -> Option<i32> {
+        // SAFETY: only the retained TLD pointer and its fixed node are copied.
+        let tld = NonNull::new(unsafe { core::ptr::addr_of!((*theap.as_ptr()).tld).read() })?;
+        Some(unsafe { core::ptr::addr_of!((*tld.as_ptr()).numa_node).read() })
+    }
+
+    /// Copies the owning thread's source reclaim policy.
+    ///
+    /// # Safety
+    /// The caller retains the initialized Theap and excludes policy changes,
+    /// image replacement, detachment, and release for this read. Local queues
+    /// and locked Heap-list links are not projected.
+    #[inline]
+    pub(crate) unsafe fn allows_page_reclaim_at(theap: NonNull<Self>) -> bool {
+        // SAFETY: only the retained source policy scalar is copied.
+        unsafe { core::ptr::addr_of!((*theap.as_ptr()).allow_page_reclaim).read() }
     }
 
     /// Heap affinity takes precedence over the stored TLD node for each
@@ -8608,7 +8796,10 @@ impl Theap {
     /// it never turns the TLD pointer into a reusable thread owner.
     #[inline]
     pub(crate) fn thread_sequence(&self) -> Option<usize> {
-        Some(unsafe { self.tld.as_ref()? }.thread_sequence().get())
+        let tld = NonNull::new(self.tld)?;
+        // SAFETY: attachment retains the fixed source sequence; concurrent
+        // list administration does not need a whole-TLD shared reference.
+        Some(unsafe { core::ptr::addr_of!((*tld.as_ptr()).thread_seq).read() })
     }
 
     /// Returns the exact TLD pointer recorded by a still-initialized Theap
@@ -8625,8 +8816,10 @@ impl Theap {
     fn matches_owner(&self, owner: TheapOwner) -> bool {
         // The only constructors use `DETACHED_THREAD_LOCAL` or a pinned
         // exclusive bootstrap field, both live for this reference.
-        let tld = unsafe { self.tld.as_ref() };
-        matches!(tld, Some(tld) if tld.matches_owner(owner))
+        let Some(tld) = NonNull::new(self.tld) else { return false; };
+        // SAFETY: the retained TLD's thread identity remains fixed through
+        // owner matching; its mutable lists and marker are not projected.
+        unsafe { core::ptr::addr_of!((*tld.as_ptr()).thread_id).read() == owner.thread_id() }
     }
 
     #[inline]
@@ -8812,7 +9005,8 @@ impl Theap {
         };
         // SAFETY: the source collector's caller owns the same initialized
         // Theap/Heap lifetime exclusion required by `_mi_theap_merge_stats`.
-        unsafe { heap.as_ref() }.statistics.merge_from_and_reset(&self.statistics);
+        let statistics = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) };
+        statistics.merge_from_and_reset(&self.statistics);
         true
     }
 
@@ -12988,6 +13182,27 @@ mod tests {
                 // and the ordinary `used`/`local_free` fields.
                 unsafe { local.push_local(local_block) }
                     .expect("owner local free");
+                // SAFETY: only this owner changes ordinary fields and no
+                // producer collects. Its clients retain disjoint atomic
+                // projections while these copied owner facts are observed.
+                let observed = unsafe { Page::owner_snapshot_at(page) };
+                assert_eq!(observed.page, page);
+                assert_eq!(observed.used, producer_count);
+                assert_eq!((observed.capacity, observed.reserved), (reserved, reserved));
+                assert!(observed.free.is_null());
+                assert_eq!(observed.local_free.cast::<u8>(), local_block.as_ptr());
+                assert_eq!(observed.xthread_id & !PAGE_FLAG_MASK, 12);
+                // SAFETY: the source block geometry stays immutable while
+                // the owner recycles its block and producers publish theirs.
+                unsafe {
+                    assert_eq!(Page::block_size_at(page), BLOCK_SIZE);
+                    assert_eq!(Page::reserved_at(page), reserved);
+                    assert_eq!(Page::page_offset_at(page), PAGE_OFFSET);
+                    assert_eq!(Page::start_at(page), observed.start);
+                    assert_eq!(Page::capacity_at(page), reserved);
+                    assert_eq!(Page::slice_pcommitted_at(page), observed.slice_pcommitted);
+                    assert_eq!(Page::memory_id_at(page).kind(), observed.memory_id.kind());
+                }
                 assert!(local.quick_collect().expect("owner quick collect"));
                 assert_eq!(
                     local.pop(false).expect("owner local allocation"),
