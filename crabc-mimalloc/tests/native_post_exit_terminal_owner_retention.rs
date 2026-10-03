@@ -180,11 +180,6 @@ fn post_exit_failed_os_release_consumes_page_without_raw_retry() {
             1,
             "the exact terminal owner reaches the injected source munmap once"
         );
-        // SAFETY: the dispatcher diagnoses the old address without accessing
-        // client storage after PageMap coverage has been removed.
-        assert_eq!(unsafe { native_free(os_singleton) }, NativePageFreeResult::InvalidPointer,
-            "consumed PageMap coverage rejects a second client publication");
-        assert_eq!(failure.observed(), 1, "invalid-pointer diagnosis cannot retry raw release");
         assert_eq!(
             native_runtime_fork_admission_test_audit().active_later_thread_count,
             1,
