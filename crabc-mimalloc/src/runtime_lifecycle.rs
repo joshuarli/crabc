@@ -12079,6 +12079,40 @@ impl NativeSubprocessOperation {
             _operation: admission::NativeAllocatorOperationGuard::enter().ok()?,
         })
     }
+
+    /// Performs the source protection and padding ingress before a captured
+    /// metadata free. This admission remains held through preparation; the
+    /// caller retains it through the subsequent consumption decision.
+    /// Success may mark padding freed and overwrite payload bytes. A prepared
+    /// client can be consumed later, but preparation must not be repeated and
+    /// its overwritten payload cannot be projected as an initialized image.
+    ///
+    /// # Safety
+    /// `block` is this operation's exact exclusively held live native client.
+    /// Its Page and Heap/member stay retained. No owner or metadata projection
+    /// may span this call: protection warnings and padding reports can invoke
+    /// application callbacks. Those callbacks cannot free this in-flight client
+    /// or tear down its Heap/member. Neither outcome consumes the client.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_client_for_free(
+        &self,
+        block: core::ptr::NonNull<u8>,
+    ) -> Result<(), NativeFreePreparationError> {
+        // SAFETY: this live operation supplies admission; the caller retains
+        // the exact client and excludes projections through callbacks.
+        unsafe { prepare_native_live_client_for_free(block) }
+    }
+}
+
+/// A source free ingress refusal before any client publication or consumption.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeFreePreparationError {
+    /// Padding marking and payload filling have not completed. Guard-page
+    /// protection may already have changed; the client remains unconsumed.
+    Retained,
+    #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+    PaddingRejected,
 }
 
 /// Allocates one C-facing native-shadow block on the current thread.
@@ -13597,14 +13631,16 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         return NativePageFreeResult::Retained;
     };
     #[cfg(target_arch = "x86_64")]
-    if crate::config::GUARDED {
-        // SAFETY: the consumed live client retains its Page and actual owner;
-        // no engine projection exists before this protection/warning phase.
-        if unsafe { unguard_native_live_client(block) }.is_none() {
-            return NativePageFreeResult::Retained;
-        }
+    // SAFETY: the admission above retains this exact live client; no owner
+    // or metadata projection exists through the source warning/report phase.
+    if let Err(error) = unsafe { prepare_native_live_client_for_free(block) } {
+        return match error {
+            NativeFreePreparationError::Retained => NativePageFreeResult::Retained,
+            #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+            NativeFreePreparationError::PaddingRejected => NativePageFreeResult::RejectedCorruption,
+        };
     }
-    #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
+    #[cfg(all(not(target_arch = "x86_64"), feature = "mi-debug-1"))]
     {
         // SAFETY: forwarded exact live-client requirement. The check has no
         // owner projection and ends before error callbacks may reenter.
@@ -13643,6 +13679,39 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     }
     // SAFETY: forwarded exact-live-allocation contract.
     unsafe { native_free_pointer_first(block) }
+}
+
+/// Runs source free ingress without activating an engine or consuming a client.
+/// Protection removal precedes padding validation and source debug filling.
+///
+/// # Safety
+/// The caller holds native operation admission and retains this exact live
+/// client, Page and Heap/member. No owner or metadata projection spans warning
+/// or error callbacks, which cannot free this client or tear down its owner.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn prepare_native_live_client_for_free(
+    block: core::ptr::NonNull<u8>,
+) -> Result<(), NativeFreePreparationError> {
+    if crate::config::GUARDED {
+        // SAFETY: the caller retains the exact client and its actual owner;
+        // all projections have ended before protection warnings can reenter.
+        if unsafe { unguard_native_live_client(block) }.is_none() {
+            return Err(NativeFreePreparationError::Retained);
+        }
+    }
+    #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+    // SAFETY: the caller retains the live client; the padding observation
+    // ends before an error report can invoke application callbacks.
+    match unsafe { check_source_native_free_padding(block) } {
+        Ok(()) => {}
+        Err(Some(report)) => {
+            let _ = crate::process_init::process_error_message(report);
+            return Err(NativeFreePreparationError::PaddingRejected);
+        }
+        Err(None) => return Err(NativeFreePreparationError::Retained),
+    }
+    Ok(())
 }
 
 /// Validates source padding before any local or remote free changes a page.
