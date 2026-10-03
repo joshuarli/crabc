@@ -2483,6 +2483,12 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         let parent_heap = session.main_heap_lease();
         #[cfg(target_arch = "x86_64")]
         let allocation_theap = session.local_field_theap_pointer();
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the live attachment retains its initialized Theap and TLD;
+        // this copies only the TLD NUMA field before owner-local activation.
+        let numa_node = unsafe { crate::types::Theap::tld_numa_node_at(allocation_theap) }
+            .ok_or(MainHeapThreadOwnerLocalPageEngineBeginError::MissingNumaNode)?;
+        #[cfg(not(target_arch = "x86_64"))]
         let numa_node = session.theap().tld_numa_node()
             .ok_or(MainHeapThreadOwnerLocalPageEngineBeginError::MissingNumaNode)?;
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)

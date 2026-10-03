@@ -239,6 +239,34 @@ fn page_is_huge_at(page: NonNull<Page>, state: &crate::types::PageAbandonmentSta
                 .is_some_and(|memory| memory.base.addr() < page.as_ptr().addr()))
 }
 
+/// Derives the source queue bin from retained geometry and its atomic flag.
+///
+/// # Safety
+/// The original initialized Page remains live and unreused. Its immutable
+/// block geometry and source mapping ID are fixed, and no owner transition
+/// changes the ordinary Theap field while the source facts are copied.
+unsafe fn source_page_queue_bin_at(page: NonNull<Page>) -> Option<usize> {
+    // SAFETY: the state copies only immutable geometry and atomic-field
+    // pointers; it does not read owner-local lists or queue links.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    let flags = unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed);
+    if flags & crate::types::PAGE_IN_FULL_QUEUE != 0 { Some(BIN_FULL) }
+    else if page_is_huge_at(page, &state) { Some(BIN_HUGE) }
+    else { size_class::bin(state.block_size) }
+}
+
+/// Copies `_mi_page_stats_bin` geometry without borrowing owner-local fields.
+///
+/// # Safety
+/// The original initialized Page remains retained, with block geometry and
+/// mapping ID fixed throughout this read; release and reuse are excluded.
+unsafe fn source_page_statistics_bin_at(page: NonNull<Page>) -> Option<usize> {
+    // SAFETY: the retained immutable geometry is the only ordinary state read.
+    let state = unsafe { Page::abandonment_state_at(page) };
+    if page_is_huge_at(page, &state) { Some(BIN_HUGE) }
+    else { size_class::bin(state.block_size) }
+}
+
 /// Returns the source queue that currently owns `page`.
 ///
 /// `mi_page_queue_of` chooses `BIN_FULL` before its huge-page exception. A
@@ -1019,17 +1047,16 @@ pub(crate) fn arena_page_map_size(
 ) -> Option<usize> {
     // SAFETY: every caller retains the initialized page while validating or
     // mutating its private PageMap lifecycle.
-    let page_ref = unsafe { page.as_ref() };
     // SAFETY: the same caller proof keeps the page's published block area
     // live, so the source `mi_page_start` address is an integer geometry fact.
-    let page_start = unsafe { page_ref.start() };
+    let page_start = unsafe { Page::start_at(page) };
     let page_start_offset = page_start.addr().checked_sub(slice_start.addr())?;
     if page_start_offset >= ARENA_SLICE_SIZE || page_start_offset >= arena_span_size {
         return None;
     }
     let slice_count = page::page_map_slice_count(
-        page_ref.block_size(),
-        page_ref.reserved(),
+        unsafe { Page::block_size_at(page) },
+        unsafe { Page::reserved_at(page) },
         page_start_offset,
     )?;
     let map_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
@@ -11391,7 +11418,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
         // SAFETY: `owner_exit_theap_pointer` proved this exact live draining
         // attachment/Theap pairing. This is a scalar Heap identity read
         // before the exclusive coordinator borrow begins.
-        let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
+        let heap = match NonNull::new(unsafe { Theap::heap_at(theap) }) {
             Some(heap) => heap,
             None => return Err(self),
         };
@@ -11441,13 +11468,7 @@ impl<'attachment, 'main, 'arena, 'map, B: PageBacking<'arena>>
         // The coordinator has returned and its callback context is gone.
         // It therefore cannot overlap this final source queue/direct image
         // check.  No page is dereferenced here.
-        let complete = unsafe {
-            let theap = theap.as_ref();
-            theap.page_count() == 0
-                && (0..=BIN_FULL).all(|bin| theap.queue(bin).is_some_and(|queue| queue.is_empty()))
-                && (0..PAGES_DIRECT)
-                    .all(|index| theap.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
-        };
+        let complete = unsafe { source_theap_local_queues_empty_at(theap) };
         if !complete || self.is_collection_poisoned() || (self.pending_os_release.is_some() || self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some()) {
             self.retain_terminal_thread_exit_route();
             return Err(self);
@@ -38184,16 +38205,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(thread) = self.session.thread_id() else {
             return Declined;
         };
-        let theap = self.session.theap();
-        if theap.heap() != candidate.page_heap() || !theap.allows_page_reclaim() {
+        let Some(theap) = NonNull::new(self.theap_identity()) else { return Declined; };
+        // SAFETY: this initialized owner attachment retains the Theap and its
+        // TLD; these projections copy only the source reclaim policy fields.
+        if unsafe { Theap::heap_at(theap) } != candidate.page_heap()
+            || !unsafe { Theap::allows_page_reclaim_at(theap) }
+        {
             return Declined;
         }
-        let Some(tld) = theap.deferred_free_tld() else {
+        let Some(tld) = NonNull::new(unsafe { Theap::tld_at(theap) }) else {
             return Declined;
         };
-        // SAFETY: an initialized Theap keeps its owning TLD live.
-        let in_threadpool = unsafe { tld.as_ref() }.is_in_threadpool();
-        let max_reclaim = if core::ptr::eq(theap, candidate.originating_theap()) {
+        let in_threadpool = unsafe { crate::types::ThreadLocalData::is_in_threadpool_at(tld) };
+        let max_reclaim = if theap.as_ptr() == candidate.originating_theap() {
             process_source_option_fast(if in_threadpool {
                 SourceOption::PageCrossThreadMaxReclaim
             } else {
@@ -38218,10 +38242,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 return Declined;
             }
         }
-        #[cfg(target_arch = "x86_64")]
-        let theap = self.session.local_field_theap_pointer();
-        #[cfg(not(target_arch = "x86_64"))]
-        let theap = NonNull::from(theap);
         // SAFETY: `theap` is this engine's own Theap for the page's Heap and
         // `thread` its owner; the page is appended to its queue immediately.
         let page = match unsafe { candidate.reclaim_into(theap, thread) } {
@@ -38247,10 +38267,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `_mi_arena_memid_is_suitable(page->memid,
     /// _mi_theap_heap(theap)->exclusive_arena)` for this engine's Theap.
     fn page_memory_is_suitable_for_theap(&self, memory: crate::types::MemoryId) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        let Some(heap) = NonNull::new(unsafe { Theap::heap_at(self.allocation_theap()) }) else { return false; };
+        #[cfg(not(target_arch = "x86_64"))]
         let Some(heap) = NonNull::new(self.session.theap().heap()) else { return false; };
-        // SAFETY: an initialized Theap's Heap outlives it; `exclusive_arena`
-        // is fixed when the Heap is created.
-        let Some(requested) = (unsafe { heap.as_ref() }).exclusive_arena_id() else { return false; };
+        // SAFETY: the initialized Theap retains its Heap and the published
+        // exclusive arena identity is immutable for that Heap's lifetime.
+        #[cfg(target_arch = "x86_64")]
+        let requested = unsafe {
+            crate::arena::ArenaId::from_arena(Heap::source_snapshot_at(heap).exclusive_arena)
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let requested = unsafe { heap.as_ref() }.exclusive_arena_id();
+        let Some(requested) = requested else { return false; };
         // SAFETY: the page's arena and the Heap's arena are live published
         // arenas of this process.
         unsafe { crate::arena::memory_is_suitable(memory, requested) }
@@ -38298,7 +38327,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         main_heap: MainStaticHeapLease<'_>,
     ) -> bool {
         if !self.permits_terminal_process_retirement() { return false; }
-        let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
+        let heap = match NonNull::new(unsafe { Theap::heap_at(theap) }) {
             Some(heap) => heap,
             None => return false,
         };
@@ -38330,12 +38359,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             unsafe { theap_collect_abandon_queues_at(theap, prepass, &mut callbacks) }
         };
         if result.is_err() { return false; }
-        let empty = unsafe {
-            let image = theap.as_ref();
-            image.page_count() == 0
-                && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
-                && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
-        };
+        // SAFETY: source traversal ended; this owner retains only its local
+        // queue, direct-cache, and page-count fields for the final check.
+        let empty = unsafe { source_theap_local_queues_empty_at(theap) };
         if !empty || !self.permits_terminal_process_retirement() { return false; }
         self.shutdown_complete = true;
         true
@@ -38366,7 +38392,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
         if !self.retain_collection_prefix_failure() { return false; }
         // SAFETY: forwarded ownership of the live Theap.
-        let heap = match NonNull::new(unsafe { theap.as_ref().heap() }) {
+        let heap = match NonNull::new(unsafe { Theap::heap_at(theap) }) {
             Some(heap) => heap,
             None => return false,
         };
@@ -38401,12 +38427,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             unsafe { theap_collect_abandon_queues_at(theap, prepass, &mut callbacks) }
         };
         if result.is_err() { return false; }
-        let empty = unsafe {
-            let image = theap.as_ref();
-            image.page_count() == 0
-                && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
-                && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
-        };
+        // SAFETY: source traversal ended; this owner retains only its local
+        // queue, direct-cache, and page-count fields for the final check.
+        let empty = unsafe { source_theap_local_queues_empty_at(theap) };
         empty && (self.pending_os_release.is_none() && self.pending_fresh_initialization.is_none()) && self.collection_poison.is_none()
     }
 
@@ -38534,7 +38557,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// abandoned page's origin pointer.
     #[inline]
     pub(crate) fn theap_identity(&self) -> *mut Theap {
-        self.session.theap() as *const Theap as *mut Theap
+        #[cfg(target_arch = "x86_64")]
+        { self.session.local_field_theap_pointer().as_ptr() }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.session.theap() as *const Theap as *mut Theap }
     }
 
     /// Returns the original source session pointer for preallocation owner
@@ -38631,7 +38657,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
         // SAFETY: the map-published page remains initialized for this short
         // immutable fact read; a producer does not access this ordinary field.
-        Some(unsafe { page.as_ref().capacity() as usize })
+        Some(unsafe { Page::capacity_at(page) as usize })
     }
 
     /// Returns the fixed reserved client count of one current allocation's
@@ -38654,7 +38680,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let page = NonNull::new(unsafe { self.page_map.checked_lookup(block.as_ptr()) })?;
         // SAFETY: the map-published page remains initialized for this short
         // immutable fact read; a producer does not access this ordinary field.
-        Some(unsafe { page.as_ref().reserved() as usize })
+        Some(unsafe { Page::reserved_at(page) as usize })
     }
 
     /// Returns whether one exact current allocation's page will have an
@@ -39362,11 +39388,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `adjustment` is its checked client offset; when it covers one word,
     /// that entire prefix remains exclusively writable by this allocator.
     unsafe fn publish_ordinary_aligned_interior(
-        page: &Page,
+        page: NonNull<Page>,
         base: NonNull<u8>,
         adjustment: usize,
     ) {
-        page.set_has_interior_pointers(true);
+        // SAFETY: the live allocation retains the page; only its atomic flag
+        // is accessed while remote producers may update other page fields.
+        unsafe { Page::abandonment_state_at(page).xthread_id.as_ref() }
+            .fetch_or(crate::types::PAGE_HAS_INTERIOR_POINTERS, Ordering::Relaxed);
         if crate::config::GUARDED && adjustment >= WORD_SIZE {
             // SAFETY: the checked prefix precedes the client's accessible
             // bytes and retains the canonical allocation's provenance.
@@ -39410,11 +39439,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // this engine. The page-map entry remains live while the
                 // source interior-pointer bit is published.
                 let page = unsafe { self.page_map.checked_lookup(base.as_ptr()) };
-                let Some(page) = (unsafe { page.as_ref() }) else {
+                let Some(page) = NonNull::new(page) else {
                     let _ = unsafe { self.free(base) };
                     return None;
                 };
-                if !self.owns_page(page) {
+                if !self.owns_page_at(page) {
                     let _ = unsafe { self.free(base) };
                     return None;
                 }
@@ -39575,7 +39604,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             {
                 // `mi_huge_page_alloc` records the fresh page before the
                 // singleton block is popped or its queue becomes full.
-                let physical_size = unsafe { page.as_ref().block_size() };
+                let physical_size = unsafe { Page::block_size_at(page) };
                 self.session.theap().record_malloc_huge_allocated(physical_size);
             }
             self.push_regular_page(bin, page);
@@ -39609,8 +39638,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // Huge pages always become full after their sole pop. Ordinary medium
         // and large pages move only when the source used/reserved pair is full.
         if bin == BIN_HUGE || (block_size > SMALL_MAX_OBJ_SIZE && unsafe {
-            let page = page.as_ref();
-            page.used() == page.reserved() as usize
+            Page::owner_used_at(page) == usize::from(Page::reserved_at(page))
         }) {
             self.move_regular_to_full(bin, page.as_ptr(), Some(block))
                 .map_err(GenericPathError::from)?;
@@ -39662,7 +39690,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     Ok(true) => {
                         #[cfg(target_arch = "x86_64")]
                         if crate::config::SECURE_LEVEL >= 2
-                            && unsafe { first.as_ref().capacity() < first.as_ref().reserved() }
+                            && unsafe { Page::capacity_at(first) < Page::reserved_at(first) }
                         {
                             // The selected session owns its random field and the
                             // available head. Source extension refusal keeps that
@@ -39948,14 +39976,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.update_direct_cache(bin);
         self.session.note_page_added();
         // SAFETY: the page is now a member of this engine's queue.
-        if !unsafe { page.as_ref() }.free_list_head().is_null() {
+        if !unsafe { Page::owner_snapshot_at(page) }.free.is_null() {
             return Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page));
         }
-        if unsafe { page.as_ref() }.capacity() >= unsafe { page.as_ref() }.reserved() {
+        if unsafe { Page::capacity_at(page) } >= unsafe { Page::reserved_at(page) } {
             return Err(GenericPathError::Lifecycle);
         }
         match self.extend_page_before_allocation(page) {
-            Ok(()) if !unsafe { page.as_ref() }.free_list_head().is_null() => {
+            Ok(()) if !unsafe { Page::owner_snapshot_at(page) }.free.is_null() => {
                 Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page))
             }
             Ok(()) => Err(GenericPathError::Lifecycle),
@@ -39985,7 +40013,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         map: &M,
     ) -> Result<(), GenericPathError> {
         self.page_free_collect_false(page).map_err(GenericPathError::Collection)?;
-        if unsafe { page.as_ref() }.used() == 0 {
+        if unsafe { Page::owner_used_at(page) } == 0 {
             return self.release_page(bin, page.as_ptr()).then_some(()).ok_or(GenericPathError::Lifecycle);
         }
         let queue = self.session.queue_mut(bin).ok_or(GenericPathError::Lifecycle)? as *mut _;
@@ -40108,19 +40136,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     let valid = {
                         // SAFETY: adoption holds this exact low-owner page
                         // while the scoped map validates every arena entry.
-                        let page_ref = unsafe { page.as_ref() };
-                        page_ref.theap() == target_theap.as_ptr()
-                            && page_ref.heap() == self.session.theap().heap()
-                            && page_ref.memid().kind() == MemoryKind::Arena
-                            && page_ref.block_size() == block_size
-                            && size_class::page_kind_for_block_size(page_ref.block_size())
-                                == Some(kind)
-                            && size_class::bin(page_ref.block_size()) == Some(bin)
-                            && page_ref.reserved() != 0
-                            && page_ref.capacity() <= page_ref.reserved()
-                            && page_ref.used() < usize::from(page_ref.reserved())
-                            && !page_is_in_full(page_ref)
-                            && page_ref.is_queue_detached()
+                        let state = unsafe { Page::owner_snapshot_at(page) };
+                        state.theap == target_theap.as_ptr()
+                            && state.heap == unsafe { Theap::heap_at(target_theap) }
+                            && state.memory_id.kind() == MemoryKind::Arena
+                            && state.block_size == block_size
+                            && size_class::page_kind_for_block_size(state.block_size) == Some(kind)
+                            && size_class::bin(state.block_size) == Some(bin)
+                            && state.reserved != 0
+                            && state.capacity <= state.reserved
+                            && state.used < usize::from(state.reserved)
+                            && state.xthread_id & crate::types::PAGE_IN_FULL_QUEUE == 0
+                            && unsafe { Page::queue_next_at(page) }.is_null()
+                            && unsafe { Page::queue_prev_at(page) }.is_null()
                             && matches!(
                                 self.release_span_with_page_map(page.as_ptr(), access.page_map()),
                                 Some(ReleaseSpan::Arena { .. })
@@ -40196,10 +40224,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         unsafe { page_queue_push_at_end_metadata(&mut *queue, page.as_ptr()) };
         self.update_direct_cache(bin);
         self.session.note_page_added();
-        if !unsafe { page.as_ref() }.free_list_head().is_null() {
+        if !unsafe { Page::owner_snapshot_at(page) }.free.is_null() {
             return Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page));
         }
-        if unsafe { page.as_ref() }.capacity() >= unsafe { page.as_ref() }.reserved() {
+        if unsafe { Page::capacity_at(page) } >= unsafe { Page::reserved_at(page) } {
             return Err(self.retain_transferred_mapped_abandoned_claim_failure(
                 source,
                 page,
@@ -40207,7 +40235,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             ));
         }
         match self.extend_page_before_allocation(page) {
-            Ok(()) if !unsafe { page.as_ref() }.free_list_head().is_null() => {
+            Ok(()) if !unsafe { Page::owner_snapshot_at(page) }.free.is_null() => {
                 Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page))
             }
             Ok(()) => Err(self.retain_transferred_mapped_abandoned_claim_failure(
@@ -40276,7 +40304,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the source candidate remains current and its immutable
         // geometry stays stable between local quick collection and this read;
         // producer capabilities access only their atomics and distinct blocks.
-        let expandable = unsafe { page.as_ref().capacity() < page.as_ref().reserved() };
+        let expandable = unsafe { Page::capacity_at(page) < Page::reserved_at(page) };
         if expandable {
             self.extend_page_before_allocation(page)?;
             return self
@@ -40311,7 +40339,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         // `_mi_page_abandon` releases an all-free queue member before it
         // removes a live member for the mapped-abandoned publication path.
-        if unsafe { page.as_ref() }.used() == 0 {
+        if unsafe { Page::owner_used_at(page) } == 0 {
             if self.release_page(bin, page.as_ptr()) {
                 return Ok(ReabandonReclaimedRegularOutcome::Released);
             }
@@ -40550,7 +40578,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.session.theap().record_page_extension_attempted();
         // SAFETY: callers name one selected active page while this engine owns
         // its queue, PageMap lifecycle, and ordinary local-list fields.
-        let slice_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
+        let slice_pcommitted = unsafe { Page::slice_pcommitted_at(page) };
         if slice_pcommitted == 0 {
             // SAFETY: the normal committed-page path borrows no mapping or
             // queue state while it extends the source local free list.
@@ -40574,7 +40602,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             {
                 // SAFETY: the page stays live and exclusively selected while
                 // its newly initialized blocks become immediate free-list capacity.
-                let block_size = unsafe { page.as_ref().block_size() };
+                let block_size = unsafe { Page::block_size_at(page) };
                 self.session.theap().record_page_extension_published(extended as usize, block_size);
             }
             #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
@@ -40602,15 +40630,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let (capacity, reserved, block_size, slice_pcommitted, page_offset, memory, free) = {
             // SAFETY: the caller retains exclusive ownership of this selected
             // active page until the extension has published its local list.
-            let page_ref = unsafe { page.as_ref() };
+            let state = unsafe { Page::owner_snapshot_at(page) };
             (
-                page_ref.capacity(),
-                page_ref.reserved(),
-                page_ref.block_size(),
-                page_ref.slice_pcommitted(),
-                page_ref.page_offset(),
-                page_ref.memid(),
-                page_ref.free_list_head(),
+                state.capacity,
+                state.reserved,
+                state.block_size,
+                state.slice_pcommitted,
+                state.page_offset,
+                state.memory_id,
+                state.free,
             )
         };
         if slice_pcommitted == 0 || (!free.is_null() && crate::config::SECURE_LEVEL < 2) {
@@ -40929,13 +40957,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     // page-map entry and metadata are live for this exact
                     // source interior-pointer flag transition.
                     let page = unsafe { self.page_map.checked_lookup(base.as_ptr()) };
-                    let Some(page) = (unsafe { page.as_ref() }) else {
+                    let Some(page) = NonNull::new(page) else {
                         // SAFETY: `base` is still current despite the failed
                         // publication proof, so it can be balanced locally.
                         let _ = unsafe { self.free(base) };
                         return None;
                     };
-                    if !self.owns_page(page) {
+                    if !self.owns_page_at(page) {
                         let _ = unsafe { self.free(base) };
                         return None;
                     }
@@ -40986,7 +41014,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             // `mi_huge_page_alloc` records the fresh aligned singleton before
             // its sole block is popped or the full-page transition runs.
-            let physical_size = unsafe { page.as_ref().block_size() };
+            let physical_size = unsafe { Page::block_size_at(page) };
             self.session.theap().record_malloc_huge_allocated(physical_size);
         }
         match self.pop_or_extend(page, request, zero) {
@@ -41036,12 +41064,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         // SAFETY: the direct cache is owned exclusively by this lifecycle and
         // names only its current regular pages.
-        let page_ref = unsafe { page.as_ref() }?;
-        let head = NonNull::new(page_ref.free_list_head().cast::<u8>())?;
+        let page = NonNull::new(page)?;
+        let head = NonNull::new(unsafe { Page::owner_snapshot_at(page) }.free.cast::<u8>())?;
         if head.as_ptr().addr().wrapping_add(offset) & (alignment - 1) != 0 {
             return None;
         }
-        let block = self.pop_or_extend(NonNull::new(page)?, size, zero).ok()??;
+        let block = self.pop_or_extend(page, size, zero).ok()??;
         debug_assert_eq!(block, head);
         Some(block)
     }
@@ -41370,11 +41398,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the caller's live-allocation contract excludes concurrent
         // page-map mutation and keeps the mapped metadata alive.
         let page = unsafe { self.page_map.checked_lookup(block.as_ptr()) };
-        let page = unsafe { page.as_ref() }?;
-        if !self.owns_page(page) {
+        let page = NonNull::new(page)?;
+        if !self.owns_page_at(page) {
             return None;
         }
-        let base = self.canonical_block_start(page, block)?;
+        let base = self.canonical_block_start_at(page, block)?;
         let adjustment = block.as_ptr().addr().checked_sub(base.as_ptr().addr())?;
         if crate::config::GUARDED && adjustment >= WORD_SIZE
             // SAFETY: canonical recovery retained the original allocation's
@@ -41382,21 +41410,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // and remains readable while the trailing guard is protected.
             && unsafe { base.cast::<usize>().as_ptr().read() } == usize::MAX
         {
-            return page.block_size()
+            return unsafe { Page::block_size_at(page) }
                 .checked_sub(self.page_map.memory_config().page_size().bytes())?
                 .checked_sub(adjustment);
         }
         #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
-        let canonical_usable = page.block_size();
+        let canonical_usable = unsafe { Page::block_size_at(page) };
         #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         let canonical_usable = {
-            let page_pointer = NonNull::from(page);
+            let page_pointer = page;
             // SAFETY: the exact live local block retains its page and key.
             let key = unsafe { Page::source_page_keys_at(page_pointer) };
             // SAFETY: the caller retains the full block and its trailing
             // record while this source-local usable-size observation runs.
             unsafe { alloc::source_padding_usable_size(
-                base, page.block_size(), page_pointer.as_ptr().addr(), key,
+                base, unsafe { Page::block_size_at(page) }, page_pointer.as_ptr().addr(), key,
             ) }
         };
         aligned::usable_size(canonical_usable, block.as_ptr().addr(), base.as_ptr().addr())
@@ -41478,7 +41506,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: this short immutable owner check ends before ordinary local
         // fields are raw-mutated below. Producer atomics may coexist with the
         // shared read because they are `UnsafeCell` subobjects.
-        if !self.owns_page(unsafe { page.as_ref() }) {
+        if !self.owns_page_at(page) {
             return Err(FreeError::ForeignPage);
         }
         // SAFETY: the exact live client keeps immutable geometry and metadata
@@ -41578,10 +41606,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let page = allocation.page();
         // SAFETY: the held client keeps these geometry fields initialized.
-        let page_ref = unsafe { page.as_ref() };
-        if !self.owns_page(page_ref)
-            || allocation.block_size() != page_ref.block_size()
-            || allocation.has_interior_pointers() != page_ref.has_interior_pointers()
+        let state = unsafe { Page::abandonment_state_at(page) };
+        let flags = unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed);
+        if !self.owns_page_at(page)
+            || allocation.block_size() != state.block_size
+            || allocation.has_interior_pointers() != (flags & crate::types::PAGE_HAS_INTERIOR_POINTERS != 0)
         {
             return LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::ForeignPage);
         }
@@ -41604,7 +41633,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     ) -> bool {
         // SAFETY: the held pointer-first observation keeps the page metadata
         // initialized for this comparison and gives no mutable projection.
-        self.owns_page(unsafe { allocation.page().as_ref() })
+        (unsafe { Page::abandonment_state_at(allocation.page()).theap.as_ptr().read() })
+            == self.theap_identity()
     }
 
     #[cfg(feature = "mi-stat-1")]
@@ -41660,12 +41690,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // SAFETY: this read-only fact snapshot ends before the owner raw-
             // mutates ordinary local-list fields. Live producer accesses are
             // confined to the page's atomic subobjects.
-            let page_ref = unsafe { page.as_ref() };
+            let block_size = unsafe { Page::block_size_at(page) };
+            let queue_bin = unsafe { source_page_queue_bin_at(page) };
             (
-                page_is_in_full(page_ref),
-                page_queue_bin(page_ref),
-                size_class::bin(page_ref.block_size()),
-                page_ref.block_size(),
+                queue_bin == Some(BIN_FULL),
+                queue_bin,
+                size_class::bin(block_size),
+                block_size,
             )
         };
         #[cfg(feature = "mi-stat-1")]
@@ -41699,7 +41730,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // Pinned `free.c:49-52` does not re-retire an already retired
                 // page: its partly elapsed countdown and interior marker stay.
                 // SAFETY: this owner exclusively controls the ordinary byte.
-                if unsafe { page.as_ref() }.retire_expire() != 0 {
+                if unsafe { Page::retire_expire_at(page) } != 0 {
                     return Ok(());
                 }
                 // A full page and a huge singleton both bypass retirement. The
@@ -41803,7 +41834,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let page = NonNull::new(page).ok_or(RemoteFreePreparationError::Unmapped)?;
         // SAFETY: this immutable owner check ends before the raw local-list
         // projection below and no reference escapes the preflight.
-        if !self.owns_page(unsafe { page.as_ref() }) {
+        if !self.owns_page_at(page) {
             return Err(RemoteFreePreparationError::ForeignPage);
         }
         // SAFETY: exclusive owner preflight keeps this initialized page-map
@@ -41844,17 +41875,25 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// the page and derives the block base using `_mi_page_ptr_unalign`; the
     /// resulting raw pointer preserves the caller allocation's provenance.
     fn canonical_block_start(&self, page: &Page, block: NonNull<u8>) -> Option<NonNull<u8>> {
-        if !page.has_interior_pointers() {
+        self.canonical_block_start_at(NonNull::from(page), block)
+    }
+
+    fn canonical_block_start_at(&self, page: NonNull<Page>, block: NonNull<u8>) -> Option<NonNull<u8>> {
+        // SAFETY: the caller retains the exact current source client and its
+        // immutable Page geometry. Only the source flag word is shared.
+        let state = unsafe { Page::abandonment_state_at(page) };
+        let flags = unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed);
+        if flags & crate::types::PAGE_HAS_INTERIOR_POINTERS == 0 {
             return Some(block);
         }
         // SAFETY: the caller already proved this live page's allocation
         // contract. `Page::start` is valid for its source-described block
         // area, and this helper only derives the same allocation's base.
-        let page_start = unsafe { page.start() };
+        let page_start = unsafe { Page::start_at(page) };
         let base_address = aligned::recover_block_start(
             block.as_ptr().addr(),
             page_start.addr(),
-            page.block_size(),
+            state.block_size,
         )?;
         let adjustment = block.as_ptr().addr().checked_sub(base_address)?;
         NonNull::new(block.as_ptr().wrapping_sub(adjustment))
@@ -42680,7 +42719,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         // SAFETY: the page remains selected and exclusively owned after the
         // local-list borrow above was dropped.
-        let expandable = unsafe { page.as_ref().capacity() < page.as_ref().reserved() };
+        let expandable = unsafe { Page::capacity_at(page) < Page::reserved_at(page) };
         if expandable {
             self.extend_page_before_allocation(page)?;
             // SAFETY: successful extension published the immediate list; the
@@ -42741,10 +42780,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // SAFETY: the free-list projection has ended. This owner retains
             // the selected page and the popped block exclusively until return.
             let (block_size, huge) = unsafe {
-                let page_ref = page.as_ref();
-                let block_size = page_ref.block_size();
-                let memory = page_ref.memid();
-                let huge = page_ref.reserved() == 1 && (block_size > LARGE_MAX_OBJ_SIZE
+                let block_size = Page::block_size_at(page);
+                let memory = Page::memory_id_at(page);
+                let huge = Page::reserved_at(page) == 1 && (block_size > LARGE_MAX_OBJ_SIZE
                     || (memory.is_os() && memory.os_memory().is_some_and(|os| os.base.addr() < page.as_ptr().addr())));
                 (block_size, huge)
             };
@@ -42768,7 +42806,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             // SAFETY: the selected page is owned by this exact local Theap
             // throughout the pop, and its immutable block size remains live.
-            let block_size = unsafe { page.as_ref().block_size() };
+            let block_size = unsafe { Page::block_size_at(page) };
             if block_size - PADDING_SIZE <= LARGE_MAX_OBJ_SIZE {
                 self.session.theap().record_malloc_normal_allocated(block_size - PADDING_SIZE);
                 #[cfg(feature = "mi-stat-2")]
@@ -42958,7 +42996,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // `arena.c:1110-1118` records every fresh page, an OS-backed one
         // included, after its PageMap registration; its terminal release
         // records the matching decrease.
-        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) }
+        let statistics_bin = unsafe { source_page_statistics_bin_at(page) }
             .expect("fresh source page has one statistics bin");
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
@@ -43266,7 +43304,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let layout = claim.layout();
         let statistics_bin = if page_map_registered {
             // SAFETY: the registered private primary remains live here.
-            unsafe { page_statistics_bin(page.as_ref()) }
+            unsafe { source_page_statistics_bin_at(page) }
         } else { None };
         if page_map_registered {
             let Some(slice_start) = claim.slice_start() else {
@@ -43543,7 +43581,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // `arena.c:1110-1118` records the successful PageMap registration
         // before the following page-local extension. A later rollback takes
         // the matched terminal-release record in `rollback_fresh`.
-        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) }
+        let statistics_bin = unsafe { source_page_statistics_bin_at(page) }
             .expect("fresh source page has one statistics bin");
         let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
         debug_assert!(statistics_recorded);
@@ -43574,7 +43612,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn account_page_commit_before_release(&self, page: NonNull<Page>, memory: MemoryId) -> bool {
         // SAFETY: callers retain the detached page until its prefix has been
         // reconciled, before any whole-page metadata retirement.
-        let committed = usize::from(unsafe { page.as_ref().slice_pcommitted() })
+        let committed = usize::from(unsafe { Page::slice_pcommitted_at(page) })
             * self.page_map.memory_config().page_size().bytes();
         unsafe { self.arena.account_page_commit_before_release(memory, committed) }
     }
@@ -43588,7 +43626,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         arena_registered: bool,
         page_map_registered: bool,
     ) {
-        let statistics_bin = unsafe { page_statistics_bin(page.as_ref()) };
+        let statistics_bin = unsafe { source_page_statistics_bin_at(page) };
         if page_map_registered {
             // SAFETY: this serial rollback writes the same range just
             // registered above; no allocation was handed out.
@@ -43666,7 +43704,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // session's ordinary abandoning option alone. In particular,
             // `mi_page_is_huge` routes an aligned OS singleton through
             // `BIN_HUGE` even when its block size has an ordinary class.
-            let is_os = unsafe { page.as_ref().memid().is_os() };
+            let is_os = unsafe { Page::memory_id_at(page) }.is_os();
             if is_os {
                 return self.abandon_selected_main_os_page_from_full(
                     bin,
@@ -43675,7 +43713,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 );
             }
             if matches!(
-                size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size()),
+                size_class::page_kind_for_block_size(unsafe { Page::block_size_at(page) }),
                 Some(PageKind::Singleton)
             ) {
                 return self.abandon_selected_main_arena_singleton_page_from_full(
@@ -43754,11 +43792,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: callers hold the unique live page-engine borrow and this
         // is the pre-transition read of one queue-linked page. A producer can
         // touch only the disjoint atomic remote-free projection.
-        let page = unsafe { page.as_ref() };
-        if page_is_in_full(page) {
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if unsafe { state.xthread_id.as_ref() }.load(core::sync::atomic::Ordering::Relaxed) & crate::types::PAGE_IN_FULL_QUEUE != 0 {
             return Err(SelectedMainArenaRegularFullPreflightError::AlreadyFull);
         }
-        if page.theap() != self.session.theap() as *const _ as *mut _ {
+        if unsafe { state.theap.as_ptr().read() } != self.theap_identity() {
             return Err(SelectedMainArenaRegularFullPreflightError::ForeignTheap);
         }
         Ok(())
@@ -43779,12 +43817,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         // SAFETY: the common preflight above retained the same exclusive page
         // borrow through this class-specific read.
-        let page = unsafe { page.as_ref() };
-        if page.memid().kind() != MemoryKind::Arena {
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if state.memid.kind() != MemoryKind::Arena {
             return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotArena);
         }
         if !matches!(
-            size_class::page_kind_for_block_size(page.block_size()),
+            size_class::page_kind_for_block_size(state.block_size),
             Some(PageKind::Small | PageKind::Medium | PageKind::Large)
         ) {
             return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotRegular);
@@ -43807,14 +43845,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         // SAFETY: the common preflight above retained the same exclusive page
         // borrow through this class-specific read.
-        let page = unsafe { page.as_ref() };
-        if page.memid().kind() != MemoryKind::Arena {
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if state.memid.kind() != MemoryKind::Arena {
             return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotArena);
         }
-        if size_class::page_kind_for_block_size(page.block_size()) != Some(PageKind::Singleton) {
+        if size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Singleton) {
             return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotSingleton);
         }
-        if size_class::bin(page.block_size()) != Some(BIN_HUGE) {
+        if size_class::bin(state.block_size) != Some(BIN_HUGE) {
             return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
         }
         Ok(())
@@ -43832,20 +43870,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.selected_main_arena_full_page_preflight(page)?;
         // SAFETY: the common preflight retained the same exclusive page
         // borrow through the memory and queue geometry projections.
-        let page = unsafe { page.as_ref() };
-        if !page.memid().is_os() {
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if !state.memid.is_os() {
             return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotOs);
         }
         // Mapping placement can make an ordinary size class a singleton.
         // Otherwise the original regular queue is the source detach owner.
-        if page_is_huge(page) {
+        if page_is_huge_at(page, &state) {
             if bin != BIN_HUGE {
                 return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
             }
-        } else if bin >= ARENA_BIN_COUNT || size_class::bin(page.block_size()) != Some(bin) {
+        } else if bin >= ARENA_BIN_COUNT || size_class::bin(state.block_size) != Some(bin) {
             return Err(SelectedMainArenaRegularFullPreflightError::NonArenaQueue);
         } else if !matches!(
-            size_class::page_kind_for_block_size(page.block_size()),
+            size_class::page_kind_for_block_size(state.block_size),
             Some(PageKind::Small | PageKind::Medium | PageKind::Large)
         ) {
             return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotRegular);
@@ -43884,7 +43922,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
-        let reserved = unsafe { page.as_ref() }.reserved() as usize;
+        let reserved = unsafe { Page::reserved_at(page) } as usize;
         if used > reserved {
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
@@ -43909,8 +43947,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         // SAFETY: this engine retains the just-detached source page. Resolve
         // its actual arena rather than assuming a process has only one.
-        let page_arena = unsafe { self.arena.arena_for_memory(page.as_ref().memid()) };
-        let heap = NonNull::new(self.session.theap().heap());
+        let page_arena = unsafe { self.arena.arena_for_memory(Page::memory_id_at(page)) };
+        let heap = NonNull::new(self.theap_identity())
+            .and_then(|theap| NonNull::new(unsafe { Theap::heap_at(theap) }));
         // Pinned `_mi_arenas_page_abandon` decides mapped versus unmapped
         // after the initial false collection, then `mi_abandoned_page_unown`
         // may collect a late remote publication before releasing the owner
@@ -43926,7 +43965,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // the pinned `page.c` then `arena.c` abandonment order.
         let result = match (page_arena, heap) {
             // SAFETY: the session retains its live Heap.
-            (Some(arena), Some(heap)) if unsafe { heap.as_ref() }.is_subprocess_main() => arena
+            (Some(arena), Some(heap)) if unsafe { source_heap_is_subprocess_main_at(heap) } => arena
                 .main_heap_abandoned_page(heap, bin)
                 .map(|map| unsafe {
                     abandoned::abandon_after_collect_with_before_unown(page, Some(&map), || {
@@ -44014,7 +44053,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
-        if used != 1 || unsafe { page.as_ref() }.reserved() != 1 {
+        if used != 1 || unsafe { Page::reserved_at(page) } != 1 {
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
@@ -44107,7 +44146,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
-        if used > usize::from(unsafe { page.as_ref().reserved() })
+        if used > usize::from(unsafe { Page::reserved_at(page) })
             || (unsafe { page_is_huge(page.as_ref()) } && used != 1)
         {
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
@@ -44190,7 +44229,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return false;
         }
         // SAFETY: the raw immutable memory kind distinguishes a shared
-        // OS-list member before this arena-only classifier can form `&Page`.
+        // OS-list member before reading arena-owned ordinary queue fields.
         // No list link is observed by this projection.
         if unsafe { Page::abandonment_state_at(page).memid.kind() } != MemoryKind::Arena {
             return false;
@@ -44198,12 +44237,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the preceding provenance check excludes the OS-list case;
         // this exact arena direct-free session excludes a concurrent ordinary
         // page transition through the remaining classifier reads.
-        let page_ref = unsafe { page.as_ref() };
-        if size_class::page_kind_for_block_size(page_ref.block_size())
-                != Some(PageKind::Singleton)
-            || size_class::bin(page_ref.block_size()) != Some(BIN_HUGE)
-            || !page_ref.is_queue_detached()
-            || page_ref.theap() != self.session.theap() as *const _ as *mut _
+        let state = unsafe { Page::abandonment_state_at(page) };
+        if size_class::page_kind_for_block_size(state.block_size) != Some(PageKind::Singleton)
+            || size_class::bin(state.block_size) != Some(BIN_HUGE)
+            || !unsafe { Page::queue_next_at(page) }.is_null()
+            || !unsafe { Page::queue_prev_at(page) }.is_null()
+            || unsafe { state.theap.as_ptr().read() } != self.theap_identity()
         {
             return false;
         }
@@ -44320,7 +44359,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         {
             // `mi_stat_free` runs before the selected abandoned singleton's
             // remote publication and uses its physical page block size.
-            let physical_size = unsafe { page.as_ref().block_size() };
+            let physical_size = unsafe { Page::block_size_at(page) };
             self.record_client_free_statistics(physical_size);
         }
         // SAFETY: the caller retained the exact source-abandoned singleton
@@ -44451,21 +44490,22 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: this short immutable check precedes every owner mutation.
         // Source `used == 0` is the concrete proof that no valid live client
         // can retain a producer projection into terminal retirement.
-        if unsafe { page.as_ref() }.used() != 0 {
+        if unsafe { Page::owner_used_at(page) } != 0 {
             return false;
         }
         // SAFETY: zero use excludes a live client retaining an interior
         // pointer; the source clears this flag only after validity succeeds.
-        unsafe { page.as_ref() }.set_has_interior_pointers(false);
+        unsafe { Page::abandonment_state_at(page).xthread_id.as_ref() }
+            .fetch_and(!crate::types::PAGE_HAS_INTERIOR_POINTERS, core::sync::atomic::Ordering::Relaxed);
         let count = match self.session.queue(bin) {
             Some(queue) => queue.count(),
             None => return false,
         };
         if bin < BIN_HUGE
             && count <= RETIRE_MAX_PAGES
-            && (count == 1 || unsafe { page.as_ref() }.block_size() < SMALL_SIZE_MAX)
+            && (count == 1 || unsafe { Page::block_size_at(page) } < SMALL_SIZE_MAX)
         {
-            let cycles = if unsafe { page.as_ref() }.block_size() <= SMALL_MAX_OBJ_SIZE {
+            let cycles = if unsafe { Page::block_size_at(page) } <= SMALL_MAX_OBJ_SIZE {
                 RETIRE_CYCLES
             } else {
                 RETIRE_CYCLES / 4
@@ -44487,11 +44527,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
         if !self.retain_live_page_transition_failure(page_pointer) { return false; }
-        let statistics_bin = unsafe { page_statistics_bin(page_pointer.as_ref()) };
+        let statistics_bin = unsafe { source_page_statistics_bin_at(page_pointer) };
         // SAFETY: the caller retains initialized queue-linked metadata. This
         // short read occurs before link mutation and encodes the source
         // no-live-client condition required before terminal whole-page reset.
-        if unsafe { page_pointer.as_ref() }.used() != 0 {
+        if unsafe { Page::owner_used_at(page_pointer) } != 0 {
             return false;
         }
         let Some(span) = self.release_span(page) else {
@@ -44689,13 +44729,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the linear mapped-page handoff remains the sole owner of
         // this initialized page until this terminal transition completes.
         // Snapshot release accounting before the later exclusive retirement
-        // and keep this shared observation in the nested scope only.
-        let statistics_bin = {
-            let page_ref = unsafe { page.as_ref() };
-            if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+        // using only the owner fields needed for the terminal transition.
+        let statistics_bin = unsafe {
+            if Page::owner_used_at(page) != 0
+                || !Page::queue_next_at(page).is_null()
+                || !Page::queue_prev_at(page).is_null()
+            {
                 return false;
             }
-            page_statistics_bin(page_ref)
+            source_page_statistics_bin_at(page)
         };
         let Some(page_map_size) = arena_page_map_size(page, slice_start, size) else {
             return false;
@@ -44750,15 +44792,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // SAFETY: list removal and the claimed low owner bit leave this
         // terminal handoff with exclusive ordinary-page authority. Capture
-        // the statistics geometry before retirement clears it, and end the
-        // shared page observation before forming the exclusive retirement
-        // reference below.
-        let statistics_bin = {
-            let page_ref = unsafe { page.as_ref() };
-            if page_ref.used() != 0 || !page_ref.is_queue_detached() {
+        // the statistics geometry before retirement clears it without
+        // creating a reference to unrelated producer fields.
+        let statistics_bin = unsafe {
+            if Page::owner_used_at(page) != 0
+                || !Page::queue_next_at(page).is_null()
+                || !Page::queue_prev_at(page).is_null()
+            {
                 return false;
             }
-            page_statistics_bin(page_ref)
+            source_page_statistics_bin_at(page)
         };
         let layout = published.layout();
         let expected_memory = published.memory_id();
@@ -44859,8 +44902,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: each caller retains the exact initialized page through this
         // preflight, either by exclusive queue ownership or by its linear
         // queue-detached abandoned-page handoff.
-        let page_ref = unsafe { page.as_ref() };
-        let memory = page_ref.memid();
+        let memory = unsafe { Page::memory_id_at(page) };
         if memory.is_os() {
             // SAFETY: this preflight holds exclusive live-page ownership and
             // serializes the page-map observations named by the constructor.
@@ -44882,7 +44924,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let slice_count = arena_memory.slice_count as usize;
         let size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
         let slice_start = arena.slice_start(slice_index)?;
-        let block_size = page_ref.block_size();
+        let block_size = unsafe { Page::block_size_at(page) };
         let kind = size_class::page_kind_for_block_size(block_size)?;
         let expected_slice_count = match kind {
             PageKind::Small | PageKind::Medium | PageKind::Large => {
@@ -44905,12 +44947,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             PageKind::Singleton => 1,
         };
-        if page_ref.reserved() != expected_reserved {
+        if unsafe { Page::reserved_at(page) } != expected_reserved {
             return None;
         }
         let expected_start = slice_start.addr().checked_add(usable_offset)?;
         if expected_start >= slice_start.addr().checked_add(size)?
-            || expected_start.checked_sub(page.as_ptr().addr())? != page_ref.page_offset()
+            || expected_start.checked_sub(page.as_ptr().addr())? != unsafe { Page::page_offset_at(page) }
         {
             return None;
         }
@@ -45048,14 +45090,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // SAFETY: this same exclusive pre-publication validation keeps
         // target's initialized immutable geometry stable.
-        let target_ref = unsafe { target.as_ref() };
-        if bin == BIN_HUGE && !page_is_huge(target_ref) {
+        let geometry = unsafe { Page::abandonment_state_at(target) };
+        if bin == BIN_HUGE && !page_is_huge_at(target, &geometry) {
             return false;
         }
         if bin != BIN_FULL && bin != BIN_HUGE {
             // SAFETY: this same exclusive pre-publication validation keeps
             // target's initialized immutable geometry stable.
-            if queue.block_size() != target_ref.block_size() {
+            if queue.block_size() != geometry.block_size {
                 return false;
             }
         }
@@ -45070,7 +45112,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             // SAFETY: the exclusive owner keeps every link stable during
             // this bounded queue-membership validation.
-            page = unsafe { (*page).next() };
+            page = unsafe { Page::queue_next_at(NonNull::new_unchecked(page)) };
             remaining -= 1;
         }
         false
@@ -45084,14 +45126,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn page_has_active_collection_route(&self, page: NonNull<Page>) -> bool {
         // SAFETY: callers first prove the map-published live page under this
         // exclusive allocator borrow; this reads immutable owner metadata.
-        let page_ref = unsafe { page.as_ref() };
-        if page_is_in_full(page_ref) {
-            return self.page_is_active_queue_member(BIN_FULL, page);
-        }
-        let Some(bin) = page_queue_bin(page_ref) else {
+        let Some(bin) = (unsafe { source_page_queue_bin_at(page) }) else {
             return false;
         };
-        bin < BIN_HUGE && self.page_is_active_queue_member(bin, page)
+        (bin == BIN_FULL || bin < BIN_HUGE) && self.page_is_active_queue_member(bin, page)
     }
 
     /// Binds the static main Heap's installed in-place arena bitmap to its
@@ -45101,12 +45139,63 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &self,
         bin: usize,
     ) -> Option<MainArenaMappedAbandonedPage<'arena>> {
-        let heap = NonNull::new(self.session.theap().heap())?;
+        let theap = NonNull::new(self.theap_identity())?;
+        let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
         self.arena.selected_arena()?.main_heap_abandoned_page(heap, bin)
     }
 
+    fn owns_page_at(&self, page: NonNull<Page>) -> bool {
+        // SAFETY: callers retain the original initialized Page and exclude
+        // source reassociation for this short source-owner pointer read.
+        (unsafe { Page::abandonment_state_at(page).theap.as_ptr().read() })
+            == self.theap_identity()
+    }
+
     fn owns_page(&self, page: &Page) -> bool {
-        page.theap() == self.session.theap() as *const _ as *mut _
+        page.theap() == self.theap_identity()
+    }
+}
+
+/// Classifies a retained Heap using only its immutable source identities.
+///
+/// # Safety
+/// The initialized Heap remains live and its immutable identities are published.
+unsafe fn source_heap_is_subprocess_main_at(heap: NonNull<Heap>) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let state = unsafe { Heap::source_snapshot_at(heap) };
+        state.theap_slot == crate::thread_local::TLS_FAST_KEY_RAW as usize
+            && !state.subprocess.is_null()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    { unsafe { heap.as_ref() }.is_subprocess_main() }
+}
+
+/// Copies only owner-local completion facts after source queue traversal.
+///
+/// # Safety
+/// The original initialized Theap remains retained, and the caller owns its
+/// ordinary queue, direct-cache, and page-count fields without a concurrent
+/// writer. Source Heap-list links may change independently.
+unsafe fn source_theap_local_queues_empty_at(theap: NonNull<Theap>) -> bool {
+    #[cfg(not(target_arch = "x86_64"))]
+    // SAFETY: the retained non-native source session excludes whole-image
+    // mutation while observing its original queue and direct-cache image.
+    return unsafe {
+        let image = theap.as_ref();
+        image.page_count() == 0
+            && (0..=BIN_FULL).all(|bin| image.queue(bin).is_some_and(|queue| queue.is_empty()))
+            && (0..PAGES_DIRECT).all(|index| image.direct_page(index) == Some(EMPTY_PAGE.as_ptr()))
+    };
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: only the retained owner's local fields are projected; none of
+    // these references covers the Theap's independently managed list links.
+    unsafe {
+        Theap::local_page_count_at(theap) == 0
+            && (0..=BIN_FULL).all(|bin|
+                Theap::local_queue_at(theap, bin).is_some_and(|queue| queue.is_empty()))
+            && (0..PAGES_DIRECT).all(|index|
+                Theap::local_direct_page_at(theap, index) == Some(EMPTY_PAGE.as_ptr()))
     }
 }
 
@@ -52267,19 +52356,25 @@ mod tests {
             let adjusted_page = unsafe { allocator.page_map.checked_lookup(adjusted_one.as_ptr()) };
             assert_eq!(adjusted_page, unsafe { allocator.page_map.checked_lookup(base.as_ptr()) });
             assert_eq!(adjusted_page, unsafe { allocator.page_map.checked_lookup(adjusted_two.as_ptr()) });
-            // SAFETY: all three allocations retain their shared page metadata.
-            let adjusted_page = unsafe { &*adjusted_page };
-            assert!(adjusted_page.has_interior_pointers());
-            let block_start = aligned::recover_block_start(
-                adjusted_one.as_ptr().addr(),
-                unsafe { adjusted_page.start() }.addr(),
-                adjusted_page.block_size(),
-            )
-            .unwrap();
+            let adjusted_page = NonNull::new(adjusted_page).unwrap();
+            // SAFETY: the fixture keeps this small page resident until forced
+            // collection. Each observation projects only the source flag word
+            // and creates no Page reference across a following local free.
+            let has_interior_pointers = || unsafe {
+                Page::abandonment_state_at(adjusted_page).xthread_id
+                    .as_ref().load(core::sync::atomic::Ordering::Relaxed)
+                    & crate::types::PAGE_HAS_INTERIOR_POINTERS != 0
+            };
+            assert!(has_interior_pointers());
+            // SAFETY: the adjusted client is still live in this retained page.
+            let block_start = unsafe {
+                Page::canonical_remote_block_for_live_client_at(adjusted_page, adjusted_one)
+            }.unwrap().as_ptr().addr();
+            let block_size = unsafe { Page::abandonment_state_at(adjusted_page) }.block_size;
             assert_eq!(
                 unsafe { allocator.usable_size(adjusted_one) },
                 aligned::usable_size(
-                    adjusted_page.block_size(),
+                    block_size,
                     adjusted_one.as_ptr().addr(),
                     block_start,
                 ),
@@ -52288,11 +52383,11 @@ mod tests {
             // SAFETY: these current allocations exercise the canonical base
             // recovery while other adjusted blocks still keep the marker live.
             unsafe { allocator.free(base).unwrap() };
-            assert!(adjusted_page.has_interior_pointers());
+            assert!(has_interior_pointers());
             unsafe { allocator.free(adjusted_one).unwrap() };
-            assert!(adjusted_page.has_interior_pointers());
+            assert!(has_interior_pointers());
             unsafe { allocator.free(adjusted_two).unwrap() };
-            assert!(!adjusted_page.has_interior_pointers());
+            assert!(!has_interior_pointers());
             unsafe { allocator.free(fast).unwrap() };
             unsafe { allocator.free(natural).unwrap() };
         });
