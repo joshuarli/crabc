@@ -273,6 +273,15 @@ def audit_object(llvm_readelf: str, object_path: Path) -> None:
 
 
 def build(output: Path, *, profile: str = "release", runtime_core: Path | None = None, runtime_compiler_builtins: Path | None = None, runtime_libc: Path | None = None) -> dict[str, object]:
+    """Build the archive and describe its installed compiler inputs.
+
+    ``compile_command`` preserves the selected tool, source, inputs and flags,
+    but names the generated object through its staging role rather than the
+    randomly chosen scratch directory. ``compile_object`` still executes and
+    returns the physical invocation; ``portable_compile_command`` additionally
+    describes the source and tool through their portable spellings.
+    """
+
     contract = load_native_contract()
     _require(native_source_definitions(SOURCE) == {row["name"]: row["source_definition"] for row in contract["helpers"]},
              "native helper source definitions differ from contract")
@@ -287,6 +296,8 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
         stage = Path(temporary)
         member = stage / MEMBER_NAME
         compile_command = compile_object(member, profile=profile, runtime_core=runtime_core, runtime_compiler_builtins=runtime_compiler_builtins)
+        installed_compile_command = list(compile_command)
+        installed_compile_command[installed_compile_command.index("-o") + 1] = f"$CRABC_BUILTINS_STAGE/{MEMBER_NAME}"
         if profile == "debug":
             private = symbols(llvm_nm, member, "--defined-only") - REQUIRED_SYMBOLS
             if any(not name.startswith(("_R", "_ZN")) for name in private):
@@ -323,7 +334,7 @@ def build(output: Path, *, profile: str = "release", runtime_core: Path | None =
             "source_core_dependencies": sorted(undefined),
             "source_core_archive_sha256": sha256(runtime_core.with_suffix(".rlib")) if runtime_core is not None else None,
             "source_libc_archive_sha256": sha256(runtime_libc) if runtime_libc is not None else None,
-            "compile_command": compile_command,
+            "compile_command": installed_compile_command,
             "contract": contract,
             "members": members,
             "defined_symbols": sorted(defined),

@@ -71,6 +71,16 @@ force `__udivti3` and reject ambient CRT or compiler-runtime inputs. This
 builder never reuses a prebuilt compiler runtime and does not establish a
 complete x86 compiler-helper profile or public sysroot.
 
+The installed provenance's `archive.compile_command` preserves the selected
+compiler, source, input paths and flags. Its `-o` operand is
+`$CRABC_BUILTINS_STAGE/crabc-builtins.o`: the generated object's staging role,
+not an input or the random physical temporary directory. Independent builds
+therefore record the same installed command when their inputs agree.
+`archive.portable_compile_command` additionally uses portable source and tool
+spellings. The builder's `compile_object` executes and returns the original
+physical argv, which producer command captures retain separately from the
+installed description.
+
 The native [x86-64 compiler-helper archive contract](x86_64-helper-contract.md)
 names the selected Rust C-ABI and binary80 assembly entries, their two installed archive placements,
 and the bounded aggregate C consumer proof. When the dynamic builder consumes

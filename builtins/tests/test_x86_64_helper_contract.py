@@ -5,6 +5,8 @@ import copy
 import importlib.util
 from pathlib import Path
 import sys
+import subprocess
+import tempfile
 import tomllib
 import unittest
 from unittest import mock
@@ -19,6 +21,31 @@ SPEC.loader.exec_module(BUILDER)
 
 
 class NativeCompilerHelperContractTests(unittest.TestCase):
+    def test_independent_archive_builds_preserve_installed_provenance(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="crabc-builtins-provenance-") as temporary:
+            root = Path(temporary)
+            outputs = [root / name / BUILDER.ARCHIVE_NAME for name in ("first", "second")]
+            with mock.patch.object(BUILDER, "run", wraps=BUILDER.run) as run:
+                records = [BUILDER.build(output) for output in outputs]
+            self.assertEqual(outputs[0].read_bytes(), outputs[1].read_bytes())
+            llvm_ar = BUILDER.tool("llvm-ar")
+            members = [subprocess.run([llvm_ar, "p", str(output), BUILDER.MEMBER_NAME], check=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout for output in outputs]
+            self.assertEqual(members[0], members[1])
+            commands = [call.args[0] for call in run.call_args_list if "--emit=obj" in call.args[0]]
+            self.assertEqual(len(commands), 2)
+            destinations = [command[command.index("-o") + 1] for command in commands]
+            self.assertNotEqual(destinations[0], destinations[1])
+            for output, destination, command, record in zip(outputs, destinations, commands, records):
+                self.assertEqual(Path(destination).parent.parent, output.parent)
+                self.assertEqual(Path(destination).name, BUILDER.MEMBER_NAME)
+                expected = list(command)
+                expected[expected.index("-o") + 1] = f"$CRABC_BUILTINS_STAGE/{BUILDER.MEMBER_NAME}"
+                self.assertEqual(record["compile_command"], expected)
+                portable = record["portable_compile_command"]
+                self.assertEqual(portable[portable.index("-o") + 1], expected[expected.index("-o") + 1])
+            self.assertEqual(records[0], records[1])
+
     def test_debug_compilation_uses_opt0_and_the_explicit_source_runtime_metadata(self) -> None:
         core = Path("/owned/core.rmeta")
         compiler = Path("/owned/compiler_builtins.rmeta")
