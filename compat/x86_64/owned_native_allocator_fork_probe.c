@@ -151,6 +151,62 @@ static void *round_trip_worker(void *unused) {
 static struct block initial_blocks[CLASSES];
 static struct block worker_blocks[CLASSES];
 
+static void check_retained_blocks(void) {
+    for (size_t i = 0; i < CLASSES; i++) {
+        CHECK(intact(&initial_blocks[i]));
+        CHECK(intact(&worker_blocks[i]));
+    }
+}
+
+static void prepare_retained(void) { check_retained_blocks(); record('D'); }
+static void parent_retained(void) { check_retained_blocks(); record('d'); }
+static void child_retained(void) { check_retained_blocks(); record('4'); }
+
+static void *register_retained_worker(void *unused) {
+    (void)unused;
+    fill(worker_blocks, 0x63);
+    CHECK(pthread_atfork(prepare_retained, 0, 0) == 0);
+    /* Null callbacks still have process-lifetime registration records. Keep
+     * enough to cross either fixed-table capacity while traversing every
+     * reverse link between the three independently optional callback slots. */
+    for (int i = 0; i < 70; i++) CHECK(pthread_atfork(0, 0, 0) == 0);
+    CHECK(pthread_atfork(0, parent_retained, 0) == 0);
+    CHECK(pthread_atfork(0, 0, child_retained) == 0);
+    return 0;
+}
+
+static void registration_retained_scenario(void) {
+    pthread_t worker;
+    CHECK(pthread_create(&worker, 0, register_retained_worker, 0) == 0);
+    CHECK(pthread_join(worker, 0) == 0);
+    /* The constructing worker is gone, but both its registration records and
+     * caller-retained allocations remain live in each prepared child image.
+     * Each completion must restore the list cursor for the next fork. */
+    for (int generation = 0; generation < 2; generation++) {
+        event_count = 0;
+        pid_t child = fork();
+        CHECK(child >= 0);
+        if (child == 0) {
+            CHECK(event_count == 8 && !memcmp(events, "DCBA1234", 8));
+            print_events("registration-retained child");
+            CHECK(child_handler_block);
+            free(child_handler_block);
+            release(initial_blocks);
+            release(worker_blocks);
+            allocation_set();
+            _exit(0);
+        }
+        wait_success(child);
+        CHECK(event_count == 8 && !memcmp(events, "DCBAabcd", 8));
+        print_events("registration-retained parent");
+        /* Reallocating and freeing a child's copy must not consume the
+         * parent's original ownership or change its retained bytes. */
+        check_retained_blocks();
+        allocation_set();
+    }
+    release(worker_blocks);
+}
+
 /* Churner ring: each slot holds zero or one live block whose first 16
  * bytes are 0x77; the smallest churned request is 48 bytes. */
 #define RING 8
@@ -385,7 +441,9 @@ int main(int argc, char **argv) {
     CHECK(pthread_atfork(prepare_a, parent_a, child_a) == 0);
     CHECK(pthread_atfork(prepare_b, parent_b, child_b) == 0);
     CHECK(pthread_atfork(prepare_c, parent_c, child_c) == 0);
-    if (!strcmp(argv[1], "initial")) {
+    if (!strcmp(argv[1], "registration-retained")) {
+        registration_retained_scenario();
+    } else if (!strcmp(argv[1], "initial")) {
         live_scenario(0);
     } else if (!strcmp(argv[1], "worker")) {
         live_scenario(1);
