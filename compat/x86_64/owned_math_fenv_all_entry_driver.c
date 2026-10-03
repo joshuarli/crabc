@@ -14,8 +14,12 @@
 #endif
 
 #include <fenv.h>
+#include <complex.h>
+#include <math.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #pragma STDC FENV_ACCESS ON
@@ -140,6 +144,110 @@ static int invoke_stage(enum stage_id stage, probe_function probe,
 	return status;
 }
 
+/* Denormal-operand status is separate from the five ISO exception flags. */
+#define ISO_EXCEPT (FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT)
+
+struct worker_result {
+	long double rounded;
+	long double subnormal;
+	float complex conjugate;
+	int status;
+};
+
+static void *math_worker(void *argument)
+{
+	struct worker_result *result = malloc(sizeof(*result));
+	fenv_t environment;
+	volatile long double input = 1.5L;
+	volatile long double minimum = 0x1p-16382L;
+	volatile float narrow = 1.5f;
+
+	(void)argument;
+	if (result == 0)
+		return 0;
+	result->status = 1;
+	if (fegetenv(&environment) != 0 ||
+		(environment.__control_word & 0x0c00) != FE_DOWNWARD ||
+		((environment.__mxcsr >> 3) & 0x0c00) != FE_UPWARD ||
+		fetestexcept(ISO_EXCEPT) != FE_DIVBYZERO)
+		return result;
+	result->rounded = rintl(input);
+	if (nearbyintf(narrow) != 2.0f ||
+		fetestexcept(ISO_EXCEPT) != (FE_DIVBYZERO | FE_INEXACT))
+		return result;
+	result->subnormal = fmal(minimum, 0.5L, 0.0L);
+	result->conjugate = conjf(CMPLXF(-0.0f, 0.0f));
+	if (fetestexcept(ISO_EXCEPT) != (FE_DIVBYZERO | FE_INEXACT))
+		return result;
+	result->status = 0;
+	return result;
+}
+
+/* A joined worker's result belongs to its caller; its floating environment
+ * remains private even when math calls set flags in the two execution units. */
+static int check_worker_environment(void)
+{
+	fenv_t original;
+	fenv_t split;
+	fenv_t after;
+	int status = 0;
+
+	if (fegetenv(&original) != 0)
+		return 1;
+	if (fesetenv(FE_DFL_ENV) != 0 || fegetenv(&split) != 0) {
+		status = 2;
+		goto restore;
+	}
+	split.__control_word = (split.__control_word & ~0x0c00) | FE_DOWNWARD;
+	split.__mxcsr = (split.__mxcsr & ~0x6000) | (FE_UPWARD << 3);
+	if (fesetenv(&split) != 0 || feraiseexcept(FE_DIVBYZERO) != 0) {
+		status = 3;
+		goto restore;
+	}
+	for (int iteration = 0; iteration != 2; ++iteration) {
+		struct worker_result *result;
+		pthread_t worker;
+		void *returned = 0;
+		union { float value; uint32_t bits; } real, imaginary;
+
+		if (pthread_create(&worker, 0, math_worker, 0) != 0) {
+			status = 5;
+			break;
+		}
+		if (pthread_join(worker, &returned) != 0) {
+			status = 6;
+			break;
+		}
+		result = returned;
+		if (result == 0) {
+			status = 4;
+			break;
+		}
+		if (result->status != 0) {
+			free(result);
+			status = 7;
+			break;
+		}
+		real.value = crealf(result->conjugate);
+		imaginary.value = cimagf(result->conjugate);
+		if (result->rounded != 1.0L || result->subnormal != 0x1p-16383L ||
+			real.bits != UINT32_C(0x80000000) ||
+			imaginary.bits != UINT32_C(0x80000000) ||
+			fegetenv(&after) != 0 ||
+			(after.__control_word & 0x0c00) != FE_DOWNWARD ||
+			((after.__mxcsr >> 3) & 0x0c00) != FE_UPWARD ||
+			fetestexcept(ISO_EXCEPT) != FE_DIVBYZERO)
+			status = 7;
+		free(result);
+		if (status != 0)
+			break;
+	}
+restore:
+	if (fesetenv(&original) != 0 && status == 0)
+		status = 8;
+	return status;
+}
+
 int main(void)
 {
 	fenv_t original;
@@ -147,6 +255,9 @@ int main(void)
 	int caller_round;
 	int caller_exceptions;
 	int status = 0;
+
+	if (check_worker_environment() != 0)
+		return 4;
 
 	if (fegetenv(&original) != 0 || fesetround(FE_UPWARD) != 0 ||
 		feclearexcept(FE_ALL_EXCEPT) != 0 ||
