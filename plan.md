@@ -91,8 +91,9 @@ Update this small section in place when the implementation frontier changes.
   initialize in caller storage and return scalar custody outcomes; processless
   allocation retains its original owner transport. Fresh-page completion now
   follows mapping acquisition in a separate frame, and the huge retry warning
-  buffer is isolated from ordinary mapping. Arena completion, attachment field
-  construction and huge-warning argument transport remain in progress.
+  buffer is isolated from ordinary mapping. Arena completion follows backing
+  selection, attachment field construction returns before Theap allocation,
+  and huge-warning routes borrow their original bodies through delivery.
   Secure free-list extension keeps its fixed
   shuffle arrays outside entropy callbacks, with the existing permutation and
   publication order preserved in default, secure-2 and secure-3 checks.
