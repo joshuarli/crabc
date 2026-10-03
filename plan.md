@@ -49,16 +49,20 @@ Update this small section in place when the implementation frontier changes.
   checks are active with 16 lanes and continuous integration. Historical branches
   and raw failures are retained; the two reported opt0 failures remain open.
 - **Core fixes:** mixed-family resolver configuration now retains the first three
-  nameservers in file order. Accepted-C tiny calloc and aligned allocation satisfy
+  nameservers in file order, and C zero-timeout batches retire their sockets and
+  preserve unanswered-result semantics. Rust filename matching preserves literal
+  bracket ranges and opposite-case classes. Accepted-C tiny calloc and aligned allocation satisfy
   x86 natural alignment; open/openat use their actual variadic ABI; normal worker
   return retires pending loader diagnostics. Generic post-exit frees complete local
   collection before unownership. Heap key release refusal retains its exact lease,
-  and failed registry-bitmap cleanup retains its terminal diagnostic token.
+  arena-record release refusal restores its live slot, consumed completion errors
+  leave it cleared, and failed registry-bitmap cleanup retains its terminal token.
 - **Ownership and construction:** initialized Heap/Theap, metadata, child and
   attachment-only images use final storage. Non-consuming exit prefixes retain
   the source engine across Rust unwind and change only their scalar phase.
   Owner engine/fast-path reads use narrow raw projections; retained-client PageMap
-  lookups preserve source check modes. Secure metadata uses the actual mapping
+  lookups preserve source check modes. Retained sessions and callback pairing
+  project only the local or immutable fields they need. Secure metadata uses the actual mapping
   owner. Compiler evidence removes large aggregate temporaries; ordinary tests
   establish these changes without closing either reported runtime failure.
 - **Verification:** merged source passes nine compiler profiles and focused opt0
@@ -70,6 +74,9 @@ Update this small section in place when the implementation frontier changes.
   the latter combinations are unproved. No qualifying timing or release pass is
   claimed. The opt0 TSD runner's provider-only atomic grep remains a tooling limit;
   its direct runtime and helper-disassembly evidence passes.
+- **Compiler frontier:** ordinary binary80 C arithmetic and 128-bit casts expose
+  six missing x87 helpers. Their compiler/link failure is retained; owned provider
+  work is active. The finite existing archive proof does not close this gap.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
