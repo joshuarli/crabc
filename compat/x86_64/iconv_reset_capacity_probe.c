@@ -134,6 +134,62 @@ static int check_unicode_capacity(const struct unicode_encoding *from,
     return 0;
 }
 
+/* Incomplete input stays with the caller. Output capacity applies only after
+ * a complete input scalar has been decoded, including after a prior prefix. */
+static int check_unicode_input_splits(const struct unicode_encoding *from,
+    const struct unicode_encoding *to)
+{
+    iconv_t descriptor = iconv_open(to->encoding.name, from->encoding.name);
+    if (descriptor == (iconv_t)-1) return 17;
+    for (size_t available = 0; available <= from->encoding.size; available++) {
+        for (size_t capacity = 0; capacity <= to->encoding.size; capacity++) {
+            unsigned char output[20];
+            for (size_t i = 0; i < sizeof output; i++) output[i] = 0x55;
+            char *input = (char *)(void *)from->encoding.text;
+            char *cursor = (char *)(void *)output;
+            size_t input_left = available;
+            size_t output_left = capacity;
+            size_t prefix = 0;
+            int expected_errno = 123;
+            while (prefix < 4 && from->boundary[prefix] < available) {
+                if (from->boundary[prefix + 1] > available) {
+                    expected_errno = EINVAL;
+                    break;
+                }
+                if (to->boundary[prefix + 1] > capacity) {
+                    expected_errno = E2BIG;
+                    break;
+                }
+                prefix++;
+            }
+            errno = 123;
+            size_t result = iconv(descriptor, &input, &input_left, &cursor, &output_left);
+            if (result != (expected_errno == 123 ? 0 : (size_t)-1) ||
+                errno != expected_errno ||
+                input != (char *)(void *)(from->encoding.text + from->boundary[prefix]) ||
+                input_left != available - from->boundary[prefix] ||
+                cursor != (char *)(void *)(output + to->boundary[prefix]) ||
+                output_left != capacity - to->boundary[prefix] ||
+                !equal(output, to->encoding.text, to->boundary[prefix])) return 18;
+            for (size_t i = to->boundary[prefix]; i < sizeof output; i++)
+                if (output[i] != 0x55) return 19;
+            if (check_reset(descriptor) != 0) return 20;
+            input_left = from->encoding.size - from->boundary[prefix];
+            output_left = sizeof output - to->boundary[prefix];
+            errno = 123;
+            if (iconv(descriptor, &input, &input_left, &cursor, &output_left) != 0 ||
+                errno != 123 || input_left != 0 ||
+                input != (char *)(void *)(from->encoding.text + from->encoding.size) ||
+                cursor != (char *)(void *)(output + to->encoding.size) ||
+                !equal(output, to->encoding.text, to->encoding.size)) return 21;
+            for (size_t i = to->encoding.size; i < sizeof output; i++)
+                if (output[i] != 0x55) return 22;
+        }
+    }
+    if (iconv_close(descriptor) != 0) return 23;
+    return 0;
+}
+
 int crabc_x86_64_locale_wide_iconv_probe(void)
 {
     for (size_t from = 0; from < sizeof encodings / sizeof encodings[0]; from++) {
@@ -152,6 +208,8 @@ int crabc_x86_64_locale_wide_iconv_probe(void)
     for (size_t from = 0; from < sizeof unicode_encodings / sizeof unicode_encodings[0]; from++) {
         for (size_t to = 0; to < sizeof unicode_encodings / sizeof unicode_encodings[0]; to++) {
             int result = check_unicode_capacity(&unicode_encodings[from], &unicode_encodings[to]);
+            if (result != 0) return result;
+            result = check_unicode_input_splits(&unicode_encodings[from], &unicode_encodings[to]);
             if (result != 0) return result;
         }
     }

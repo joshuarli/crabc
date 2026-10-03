@@ -814,6 +814,61 @@ mod tests {
     }
 
     #[test]
+    fn selected_unicode_input_splits_and_capacity_preserve_scalar_progress() {
+        let encodings: [(Encoding, &[u8], [usize; 5]); 5] = [
+            (Encoding::Utf8, b"A\xe2\x82\xac\xf0\x9f\x98\x80\0", [0, 1, 4, 8, 9]),
+            (Encoding::Utf16Le, b"A\0\xac\x20\x3d\xd8\0\xde\0\0", [0, 2, 4, 8, 10]),
+            (Encoding::Utf16Be, b"\0A\x20\xac\xd8\x3d\xde\0\0\0", [0, 2, 4, 8, 10]),
+            (Encoding::Utf32Le, b"A\0\0\0\xac\x20\0\0\0\xf6\x01\0\0\0\0\0", [0, 4, 8, 12, 16]),
+            (Encoding::Utf32Be, b"\0\0\0A\0\0\x20\xac\0\x01\xf6\0\0\0\0\0", [0, 4, 8, 12, 16]),
+        ];
+        for &(from, input, input_boundary) in &encodings {
+            for &(to, expected, output_boundary) in &encodings {
+                let mut converter = Converter::new(from, to);
+                for available in 0..=input.len() {
+                    for capacity in 0..=expected.len() {
+                        let mut output = [0x55; 20];
+                        let mut prefix = 0;
+                        let mut incomplete = false;
+                        let mut full = false;
+                        while prefix < 4 && input_boundary[prefix] < available {
+                            if input_boundary[prefix + 1] > available {
+                                incomplete = true;
+                                break;
+                            }
+                            if output_boundary[prefix + 1] > capacity {
+                                full = true;
+                                break;
+                            }
+                            prefix += 1;
+                        }
+                        let consumed = input_boundary[prefix];
+                        let produced = output_boundary[prefix];
+                        let result = converter.convert(&input[..available], &mut output[..capacity]);
+                        if incomplete {
+                            assert_eq!(result, Err(ConvertError::Incomplete { consumed, produced }));
+                        } else if full {
+                            assert_eq!(result, Err(ConvertError::OutputFull { consumed, produced }));
+                        } else {
+                            let progress = result.unwrap();
+                            assert_eq!((progress.consumed, progress.produced, progress.substitutions),
+                                (consumed, produced, 0));
+                        }
+                        assert_eq!(&output[..produced], &expected[..produced]);
+                        assert!(output[produced..].iter().all(|&byte| byte == 0x55));
+                        converter.reset();
+                        let resumed = converter.convert(&input[consumed..], &mut output[produced..]).unwrap();
+                        assert_eq!((resumed.consumed, resumed.produced, resumed.substitutions),
+                            (input.len() - consumed, expected.len() - produced, 0));
+                        assert_eq!(&output[..expected.len()], expected);
+                        assert!(output[expected.len()..].iter().all(|&byte| byte == 0x55));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn output_full_reports_prior_progress() {
         let mut converter = Converter::new(Encoding::Utf8, Encoding::Utf16Le);
         let mut output = [0u8; 2];
