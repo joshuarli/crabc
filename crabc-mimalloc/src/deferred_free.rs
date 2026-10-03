@@ -245,13 +245,13 @@ impl DeferredFreeCallbackInvocation {
 
 impl Drop for DeferredFreeCallbackInvocation {
     fn drop(&mut self) {
-        let Some(mut tld) = self.tld else {
+        let Some(tld) = self.tld else {
             return;
         };
         // SAFETY: retaining a live matching TLD is the invocation token's
         // construction contract. Dropping an undispatched token must restore
         // the source marker so a later collector can select its callback.
-        unsafe { tld.as_mut().end_deferred_callback() };
+        unsafe { ThreadLocalData::end_deferred_callback_at(tld) };
     }
 }
 
@@ -273,8 +273,8 @@ pub(crate) fn begin_process(
 /// [`begin_process`].
 pub(crate) fn begin(
     registration: &DeferredFreeRegistration,
-    mut theap: NonNull<Theap>,
-    mut tld: NonNull<ThreadLocalData>,
+    theap: NonNull<Theap>,
+    tld: NonNull<ThreadLocalData>,
     force: bool,
 ) -> Result<DeferredFreeInvocation, DeferredFreeInvocationError> {
     // SAFETY: callers retain both metadata images for this short source
@@ -282,7 +282,6 @@ pub(crate) fn begin(
     if unsafe { !theap.as_ref().matches_tld_pointer(tld.as_ptr()) } {
         return Err(DeferredFreeInvocationError::TldMismatch);
     }
-    // SAFETY: the exact retained Theap owns the source scalar heartbeat.
     // SAFETY: this source invocation retains the original current Theap
     // capability and exclusively owns its heartbeat scalar. The helper
     // projects that field only; shared Heap list readers may still observe
@@ -293,7 +292,9 @@ pub(crate) fn begin(
     };
     // SAFETY: the matching live TLD is retained by the caller. The source
     // marker is set before its argument Acquire load and user callback entry.
-    if !unsafe { tld.as_mut().begin_deferred_callback() } {
+    // Project only that current-thread field: other retained metadata readers
+    // must not be invalidated by a whole-TLD exclusive reference.
+    if !unsafe { ThreadLocalData::begin_deferred_callback_at(tld) } {
         return Ok(DeferredFreeInvocation::Complete(heartbeat));
     }
     let context = registration.context.load(Ordering::Acquire);
@@ -376,8 +377,8 @@ impl DeferredFreeTestObserver {
 /// heartbeat/recursion ordering probe.
 #[cfg(test)]
 pub(crate) fn collect_with_test_observer(
-    mut theap: NonNull<Theap>,
-    mut tld: NonNull<ThreadLocalData>,
+    theap: NonNull<Theap>,
+    tld: NonNull<ThreadLocalData>,
     force: bool,
     observer: Option<DeferredFreeTestObserver>,
 ) -> Result<u64, DeferredFreeInvocationError> {
@@ -396,7 +397,7 @@ pub(crate) fn collect_with_test_observer(
     // SAFETY: `tld` is live, exact, and exclusively retained by the caller.
     // `begin_deferred_callback` makes the source recursion check and marker
     // update one boundary, so a nested source entry skips the observer.
-    if unsafe { tld.as_mut().begin_deferred_callback() } {
+    if unsafe { ThreadLocalData::begin_deferred_callback_at(tld) } {
         // The guard clears the marker even if a test assertion unwinds.
         let _recursion = DeferredFreeRecursionGuard { tld };
         // SAFETY: `DeferredFreeTestObserver::new` records the context and
@@ -416,11 +417,11 @@ struct DeferredFreeRecursionGuard {
 
 impl Drop for DeferredFreeRecursionGuard {
     fn drop(&mut self) {
-        let mut tld = self.tld;
+        let tld = self.tld;
         // SAFETY: this guard is created only after `begin_deferred_callback`
         // on the exact still-live TLD, and it runs before the synchronous
         // owner-exit invocation can advance to teardown.
-        unsafe { tld.as_mut().end_deferred_callback() };
+        unsafe { ThreadLocalData::end_deferred_callback_at(tld) };
     }
 }
 

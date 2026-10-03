@@ -15,14 +15,22 @@ static SUPPRESSED: AtomicBool = AtomicBool::new(true);
 static ALLOCATED: AtomicBool = AtomicBool::new(true);
 static FREED: AtomicBool = AtomicBool::new(true);
 static CONTEXT_MATCHES: AtomicBool = AtomicBool::new(true);
+static DEFAULT_PRESERVED: AtomicBool = AtomicBool::new(true);
+static HEARTBEAT_ORDERED: AtomicBool = AtomicBool::new(true);
+static LAST_HEARTBEAT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static CONTEXT: AtomicUsize = AtomicUsize::new(0);
 static MARKER: u8 = 0x5a;
 
-unsafe extern "C" fn deferred(force: bool, _: u64, context: *mut c_void) {
+unsafe extern "C" fn deferred(force: bool, heartbeat: u64, context: *mut c_void) {
     if ACTIVE.swap(true, Ordering::SeqCst) {
         SUPPRESSED.store(false, Ordering::SeqCst);
         return;
     }
+    let previous = LAST_HEARTBEAT.swap(heartbeat, Ordering::SeqCst);
+    if heartbeat <= previous {
+        HEARTBEAT_ORDERED.store(false, Ordering::SeqCst);
+    }
+    let original_default = crabc_mimalloc::source_heap_api::theap_get_default();
     CALLS.fetch_add(1, Ordering::SeqCst);
     FORCED.fetch_add(usize::from(force), Ordering::SeqCst);
     if context as usize != CONTEXT.load(Ordering::SeqCst) {
@@ -45,6 +53,12 @@ unsafe extern "C" fn deferred(force: bool, _: u64, context: *mut c_void) {
     } else {
         ALLOCATED.store(false, Ordering::SeqCst);
     }
+    // A nested explicit collection advances the source heartbeat while the
+    // same recursion marker suppresses selected user code.
+    api::collect(true);
+    if crabc_mimalloc::source_heap_api::theap_get_default() != original_default {
+        DEFAULT_PRESERVED.store(false, Ordering::SeqCst);
+    }
     ACTIVE.store(false, Ordering::SeqCst);
 }
 
@@ -59,6 +73,7 @@ fn public_collection_and_worker_exit_callbacks_allow_nested_small_and_large_allo
         for context in [core::ptr::null_mut(), core::ptr::from_ref(&MARKER).cast_mut().cast()] {
             REQUEST.store(request, Ordering::SeqCst);
             CONTEXT.store(context as usize, Ordering::SeqCst);
+            LAST_HEARTBEAT.store(0, Ordering::SeqCst);
             CALLS.store(0, Ordering::SeqCst);
             FORCED.store(0, Ordering::SeqCst);
             ALLOCATED.store(true, Ordering::SeqCst);
@@ -77,6 +92,8 @@ fn public_collection_and_worker_exit_callbacks_allow_nested_small_and_large_allo
             assert!(CONTEXT_MATCHES.load(Ordering::SeqCst), "callback registration context changed");
             assert_eq!(CALLS.load(Ordering::SeqCst), 3);
             assert_eq!(FORCED.load(Ordering::SeqCst), 1);
+            assert!(DEFAULT_PRESERVED.load(Ordering::SeqCst));
+            assert!(HEARTBEAT_ORDERED.load(Ordering::SeqCst));
         }
     }
     assert!(crabc_mimalloc::__crabc_runtime::prepare_native_later_thread_arena());
@@ -102,6 +119,7 @@ fn public_collection_and_worker_exit_callbacks_allow_nested_small_and_large_allo
             ready_rx.recv().unwrap();
             REQUEST.store(request, Ordering::SeqCst);
             CONTEXT.store(context as usize, Ordering::SeqCst);
+            LAST_HEARTBEAT.store(0, Ordering::SeqCst);
             CALLS.store(0, Ordering::SeqCst);
             FORCED.store(0, Ordering::SeqCst);
             ALLOCATED.store(true, Ordering::SeqCst);
@@ -119,6 +137,8 @@ fn public_collection_and_worker_exit_callbacks_allow_nested_small_and_large_allo
             assert!(CONTEXT_MATCHES.load(Ordering::SeqCst));
             assert_eq!(CALLS.load(Ordering::SeqCst), 2);
             assert_eq!(FORCED.load(Ordering::SeqCst), 1);
+            assert!(DEFAULT_PRESERVED.load(Ordering::SeqCst));
+            assert!(HEARTBEAT_ORDERED.load(Ordering::SeqCst));
             api::collect(false);
             api::collect(true);
             assert_eq!(CALLS.load(Ordering::SeqCst), 2, "clearing registration suppresses later callbacks");

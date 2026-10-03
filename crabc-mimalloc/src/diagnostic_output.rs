@@ -2726,9 +2726,11 @@ impl OutputOwner {
         }
         // SAFETY: the lock serializes byte access and the source image has an
         // extra byte so `count == DELAYED_OUTPUT_BYTES` remains NUL-terminated.
-        let buffer = unsafe { &mut *self.out_buf.get() };
-        buffer[count] = 0;
-        let message = buffer.as_ptr().cast::<c_char>();
+        let buffer = self.out_buf.get().cast::<u8>();
+        // SAFETY: the lock retains exclusive byte mutation for this bounded
+        // terminator write. No buffer reference spans foreign callback entry.
+        unsafe { buffer.add(count).write(0) };
+        let message = buffer.cast::<c_char>();
         match sink {
             DelayedFlushSink::Custom { output, argument } => {
                 // SAFETY: `buffer` stays live until this callback returns.
@@ -2740,7 +2742,8 @@ impl OutputOwner {
                 // `mi_out_stderr` filters the empty delayed image before it
                 // reaches `_mi_prim_out_stderr`; preserve that boundary before
                 // invoking the nonempty caller-supplied primitive.
-                if buffer[0] != 0 {
+                // SAFETY: the retained lock owns this initialized first byte.
+                if unsafe { buffer.read() } != 0 {
                     // SAFETY: this is the constructor-fixed source primitive
                     // and `buffer` supplies its non-null NUL-terminated input.
                     unsafe { output(message) };
@@ -2748,7 +2751,9 @@ impl OutputOwner {
             }
         }
         if !no_more_buffer {
-            buffer[count] = b'\n';
+            // SAFETY: callback delivery has returned; the retained lock still
+            // owns the same in-bounds terminator byte.
+            unsafe { buffer.add(count).write(b'\n') };
         }
     }
 }

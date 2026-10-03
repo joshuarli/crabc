@@ -187,7 +187,9 @@ pub fn option_set_enabled_default(option: c_int, enable: bool) {
 ///
 /// # Safety
 /// A non-null `output` and the objects reachable from `argument` stay valid
-/// for every printed line.
+/// for every printed line. The callback must not unwind across its C ABI;
+/// it may synchronously read or change options and allocate or free its own
+/// clients.
 pub unsafe fn options_print_out(output: Option<OutputFunction>, argument: *mut c_void) {
     let Some(owner) = owner() else { return };
     // SAFETY: forwarded callback contract; the page record size is the
@@ -200,7 +202,10 @@ pub unsafe fn options_print_out(output: Option<OutputFunction>, argument: *mut c
 /// # Safety
 /// The `mi_register_output` contract: `output` and `argument` stay valid
 /// until a replacement is registered and in-flight deliveries finish, and
-/// registration is serialized with every other output.
+/// registration is serialized with every other output. The callback must
+/// not unwind across its C ABI. It may allocate and free its own clients;
+/// registration flushing retains the source delayed-buffer lock, so it must
+/// not recursively register a custom output while that flush is in progress.
 pub unsafe fn register_output(output: Option<OutputFunction>, argument: *mut c_void) {
     let Some(owner) = owner() else { return };
     // SAFETY: forwarded.
@@ -211,7 +216,9 @@ pub unsafe fn register_output(output: Option<OutputFunction>, argument: *mut c_v
 ///
 /// # Safety
 /// The `mi_register_error` contract: `handler` and `argument` stay valid for
-/// every later report, and registration does not race a report.
+/// every later report, and registration does not race a report. The handler
+/// must not unwind across its C ABI. It may allocate and free its own clients;
+/// it must not consume a client retained by an enclosing realloc operation.
 pub unsafe fn register_error(handler: Option<ErrorFunction>, argument: *mut c_void) {
     let Some(owner) = owner() else { return };
     // SAFETY: forwarded.
@@ -221,7 +228,14 @@ pub unsafe fn register_error(handler: Option<ErrorFunction>, argument: *mut c_vo
 /// `mi_register_deferred_free`.
 ///
 /// # Safety
-/// As [`crate::runtime_lifecycle::register_native_deferred_free_callback`].
+/// A present callback and every object reachable through `argument` must
+/// remain valid until all invocations that could have selected this or an
+/// earlier registration return. Replacing or clearing registration does not
+/// recall a selected callback. The caller must serialize registration and
+/// destruction of callback/context state and provide its concurrency policy.
+/// The callback must not unwind across its C ABI. It may allocate and free
+/// its own clients, but must not free, reallocate, or otherwise consume a
+/// client retained by an enclosing realloc operation.
 pub unsafe fn register_deferred_free(callback: Option<DeferredFreeFunction>, argument: *mut c_void) {
     // SAFETY: forwarded.
     unsafe { crate::runtime_lifecycle::register_native_deferred_free_callback(callback, argument) };
@@ -366,6 +380,100 @@ mod option_initialization_tests {
             4096, crate::runtime_lifecycle::test_host_process_environment,
             crate::__crabc_runtime::RuntimeStderrOutput::new(discard)) }.unwrap();
         assert!(crate::runtime_lifecycle::publish_native_process_startup_facts(facts));
+    }
+
+    struct AllocatingCallbacks {
+        deliveries: core::sync::atomic::AtomicUsize,
+        errors: core::sync::atomic::AtomicUsize,
+        allocations_ok: core::sync::atomic::AtomicBool,
+        saw_updated_option: core::sync::atomic::AtomicBool,
+    }
+
+    fn allocate_in_callback(state: &AllocatingCallbacks) {
+        for size in [33, 524_289] {
+            let Some(block) = crate::source_api::malloc(size).value else {
+                state.allocations_ok.store(false, core::sync::atomic::Ordering::Relaxed);
+                continue;
+            };
+            // SAFETY: this callback owns the complete nested allocation until
+            // the matching free; it never accesses an outer request's client.
+            unsafe {
+                block.as_ptr().write(0x39);
+                block.as_ptr().add(size - 1).write(0x71);
+                let contents_match = block.as_ptr().read() == 0x39
+                    && block.as_ptr().add(size - 1).read() == 0x71;
+                let freed = crate::source_api::free(block.as_ptr()) == crate::source_api::FreeOutcome::Freed;
+                if !contents_match || !freed {
+                    state.allocations_ok.store(false, core::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
+    unsafe extern "C" fn allocating_output(message: *const c_char, argument: *mut c_void) {
+        // SAFETY: the fresh-process test retains this shared atomic state and
+        // the source supplies live NUL-terminated text for synchronous delivery.
+        let state = unsafe { &*argument.cast::<AllocatingCallbacks>() };
+        let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+        state.deliveries.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if message.starts_with(b"v3.") {
+            option_set(SourceOption::PurgeDelay as c_int, 91);
+        }
+        if message == b"option 'purge_delay': 91 \n" {
+            state.saw_updated_option.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        allocate_in_callback(state);
+    }
+
+    unsafe extern "C" fn allocating_error(_: c_int, argument: *mut c_void) {
+        // SAFETY: registration retains this shared atomic fixture through all
+        // synchronous error reports and is cleared before the fixture is freed.
+        let state = unsafe { &*argument.cast::<AllocatingCallbacks>() };
+        state.errors.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        allocate_in_callback(state);
+    }
+
+    #[test]
+    fn public_option_output_and_allocation_error_callbacks_allow_nested_allocation() {
+        crate::test_process::run_in_fresh_process(
+            "source_options_api::option_initialization_tests::public_option_output_and_allocation_error_callbacks_allow_nested_allocation",
+            || {
+                option_set(SourceOption::GuardedSampleRate as c_int, 0);
+                publish_facts();
+                assert!(crate::runtime_lifecycle::initialize_process());
+                let state = AllocatingCallbacks {
+                    deliveries: core::sync::atomic::AtomicUsize::new(0),
+                    errors: core::sync::atomic::AtomicUsize::new(0),
+                    allocations_ok: core::sync::atomic::AtomicBool::new(true),
+                    saw_updated_option: core::sync::atomic::AtomicBool::new(false),
+                };
+                let argument = core::ptr::from_ref(&state).cast_mut().cast();
+                let original_default = crate::source_heap_api::theap_get_default();
+                // SAFETY: the fixture and functions remain live through every
+                // synchronous line, registration flush and oversized request.
+                unsafe {
+                    options_print_out(Some(allocating_output), argument);
+                    register_output(Some(allocating_output), argument);
+                    register_error(Some(allocating_error), argument);
+                }
+                option_set(SourceOption::ShowErrors as c_int, 1);
+                let deliveries = state.deliveries.load(core::sync::atomic::Ordering::Relaxed);
+                assert!(crate::source_api::malloc(isize::MAX as usize + 1).value.is_none());
+                // SAFETY: every callback returned; replacements finish the
+                // fixture's registration lifetime before it leaves scope.
+                unsafe {
+                    register_error(None, core::ptr::null_mut());
+                    register_output(None, core::ptr::null_mut());
+                }
+                assert!(state.allocations_ok.load(core::sync::atomic::Ordering::Relaxed));
+                assert!(state.saw_updated_option.load(core::sync::atomic::Ordering::Relaxed));
+                assert!(state.deliveries.load(core::sync::atomic::Ordering::Relaxed) > deliveries);
+                // The ordinary source path rejects the request at both page
+                // searches, then reports the final allocation refusal.
+                assert_eq!(state.errors.load(core::sync::atomic::Ordering::Relaxed), 3);
+                assert_eq!(crate::source_heap_api::theap_get_default(), original_default);
+            },
+        );
     }
 
     #[test]
