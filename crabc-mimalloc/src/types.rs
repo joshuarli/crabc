@@ -2334,6 +2334,43 @@ impl ThreadLocalData {
         self.recurse = false;
     }
 
+    /// Enters the deferred callback using only the recursion-marker field.
+    ///
+    /// # Safety
+    /// `pointer` names an initialized, retained TLD owned by the current
+    /// thread. The caller excludes concurrent recursion-marker access, image
+    /// replacement, teardown, and whole-TLD references during this operation.
+    /// A successful entry must be paired with `end_deferred_callback_at` on
+    /// this same retained image after the synchronous callback returns.
+    #[inline]
+    pub(crate) unsafe fn begin_deferred_callback_at(pointer: NonNull<Self>) -> bool {
+        // SAFETY: the owner retains the image and exclusively accesses this
+        // scalar. Other allocator fields need no reference projection here.
+        unsafe {
+            let recurse = core::ptr::addr_of_mut!((*pointer.as_ptr()).recurse);
+            if recurse.read() { return false; }
+            recurse.write(true);
+        }
+        true
+    }
+
+    /// Clears the recursion marker after its synchronous callback returns.
+    ///
+    /// # Safety
+    /// The caller retains the same initialized TLD whose successful
+    /// `begin_deferred_callback_at` entry it owns. Concurrent marker access,
+    /// image replacement, teardown, and whole-TLD references are excluded.
+    #[inline]
+    pub(crate) unsafe fn end_deferred_callback_at(pointer: NonNull<Self>) {
+        // SAFETY: the matching entry retains exclusive marker authority;
+        // only this field is read or written after the callback returns.
+        unsafe {
+            let recurse = core::ptr::addr_of_mut!((*pointer.as_ptr()).recurse);
+            debug_assert!(recurse.read(), "a deferred callback must own the recursion marker");
+            recurse.write(false);
+        }
+    }
+
     /// Returns the pinned Unix thread-pool observation.
     #[inline]
     pub(crate) const fn is_in_threadpool(&self) -> bool {
@@ -6822,11 +6859,7 @@ impl PreparedTheapInitialization {
     /// the containing TLD or its mutex while a guard or waiter remains live.
     pub(crate) unsafe fn reset_unattached(self) -> NonNull<Theap> {
         let image = unsafe { &mut *self.theap.as_ptr() };
-        let memory_id = image.memid;
-        let lifecycle = image.main_heap_lifecycle;
-        *image = Theap::empty();
-        image.memid = memory_id;
-        image.main_heap_lifecycle = lifecycle;
+        image.reset_empty_preserving_ownership();
         self.theap
     }
 }
@@ -7195,12 +7228,7 @@ impl Theap {
         }
         list_guard.unlock().map_err(|error|
             TheapMainStaticInitError::ThreadList(ThreadLocalTheapListError::Lock(error)))?;
-        let memid = image.memid;
-        let lifecycle = image.main_heap_lifecycle;
-        let replaced = core::mem::replace(image, Self::empty());
-        drop(replaced);
-        image.memid = memid;
-        image.main_heap_lifecycle = lifecycle;
+        image.reset_empty_preserving_ownership();
         image.tld = tld.as_ptr();
         image.refcount.store(1, Ordering::Release);
         image.subproc.store(heap_subprocess, Ordering::Release);
@@ -7270,6 +7298,28 @@ impl Theap {
                 core::ptr::from_ref(crate::bootstrap::empty_default_theap()), destination.as_ptr(), 1,
             );
         }
+    }
+
+    /// Restores the empty image while retaining the producer's allocation
+    /// provenance and transferred metadata ownership. The exclusive borrow
+    /// covers the complete image; callers use this only before attachment or
+    /// after an unattached initialization phase has returned its authority.
+    fn reset_empty_preserving_ownership(&mut self) {
+        let memid = self.memid;
+        #[cfg(target_arch = "x86_64")]
+        let lifecycle = self.main_heap_lifecycle;
+        let destination = NonNull::from(&mut *self);
+        // SAFETY: exclusive access excludes observers and field projections.
+        // Drop zeroizes the old random field in its original storage; no
+        // whole-Theap temporary or duplicated random state is needed. The
+        // immutable prototype then initializes every field before further use.
+        unsafe {
+            core::ptr::drop_in_place(destination.as_ptr());
+            Self::write_empty_at(destination);
+        }
+        self.memid = memid;
+        #[cfg(target_arch = "x86_64")]
+        { self.main_heap_lifecycle = lifecycle; }
     }
 
     /// Records the kind-only static provenance that
@@ -7456,19 +7506,9 @@ impl Theap {
 
         // `_mi_theap_init` first preserves the concrete allocation provenance
         // supplied by `_mi_theap_alloc`, copies `_mi_theap_empty`, then puts
-        // that provenance back. `replace` is the Rust ownership equivalent of
-        // the aligned source copy; the old inert random image is zeroized by
-        // its bounded Drop rather than silently retained in static storage.
-        let memid = self.memid;
-        #[cfg(target_arch = "x86_64")]
-        let main_heap_lifecycle = self.main_heap_lifecycle;
-        let replaced = core::mem::replace(self, Self::empty());
-        drop(replaced);
-        self.memid = memid;
-        // A transferred metadata capability remains source-owned across the
-        // source empty-image copy; initialization must not reset its custody.
-        #[cfg(target_arch = "x86_64")]
-        { self.main_heap_lifecycle = main_heap_lifecycle; }
+        // that provenance back. Resetting in place zeroizes the old random
+        // image before copying the immutable prototype into this same extent.
+        self.reset_empty_preserving_ownership();
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
 
@@ -7571,16 +7611,7 @@ impl Theap {
             return Err(TheapDynamicInitError::InvalidInput);
         }
 
-        let memid = self.memid;
-        #[cfg(target_arch = "x86_64")]
-        let main_heap_lifecycle = self.main_heap_lifecycle;
-        let replaced = core::mem::replace(self, Self::empty());
-        drop(replaced);
-        self.memid = memid;
-        // A transferred metadata capability remains source-owned across the
-        // source empty-image copy; initialization must not reset its custody.
-        #[cfg(target_arch = "x86_64")]
-        { self.main_heap_lifecycle = main_heap_lifecycle; }
+        self.reset_empty_preserving_ownership();
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
@@ -7729,16 +7760,7 @@ impl Theap {
             return Err(TheapDynamicInitError::InvalidInput);
         }
 
-        let memid = self.memid;
-        #[cfg(target_arch = "x86_64")]
-        let main_heap_lifecycle = self.main_heap_lifecycle;
-        let replaced = core::mem::replace(self, Self::empty());
-        drop(replaced);
-        self.memid = memid;
-        // A transferred metadata capability remains source-owned across the
-        // source empty-image copy; initialization must not reset its custody.
-        #[cfg(target_arch = "x86_64")]
-        { self.main_heap_lifecycle = main_heap_lifecycle; }
+        self.reset_empty_preserving_ownership();
         self.tld = tld_pointer;
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
@@ -7807,16 +7829,7 @@ impl Theap {
             return Err(TheapDynamicInitError::InvalidInput);
         }
 
-        let memid = self.memid;
-        #[cfg(target_arch = "x86_64")]
-        let main_heap_lifecycle = self.main_heap_lifecycle;
-        let replaced = core::mem::replace(self, Self::empty());
-        drop(replaced);
-        self.memid = memid;
-        // A transferred metadata capability remains source-owned across the
-        // source empty-image copy; initialization must not reset its custody.
-        #[cfg(target_arch = "x86_64")]
-        { self.main_heap_lifecycle = main_heap_lifecycle; }
+        self.reset_empty_preserving_ownership();
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
