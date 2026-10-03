@@ -185,6 +185,13 @@ def validate(root: Path) -> dict:
         raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
     if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != FORMAT or record.get("target") != shared.TARGET or record.get("symlinks") != ALIASES:
         raise shared.DriverError("wrong installed dynamic product contract")
+    # Debug products keep their input fingerprint in the manifest; their
+    # unqualified state contains only backend selection. Installed drivers
+    # validate its shape without requiring the producer checkout to exist.
+    if record.get("build_profile") == "debug":
+        source = record.get("source_sha256")
+        if type(source) is not str or re.fullmatch(r"[0-9a-f]{64}", source) is None:
+            raise shared.DriverError("debug dynamic product source digest is invalid")
     files = record.get("files")
     if not isinstance(files, dict) or not REQUIRED <= files.keys():
         raise shared.DriverError("incomplete installed dynamic payload")

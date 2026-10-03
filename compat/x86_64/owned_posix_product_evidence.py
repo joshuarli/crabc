@@ -522,6 +522,10 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
         1, DYNAMIC_PRODUCT_FORMAT, TARGET, aliases
     ):
         _fail("dynamic product manifest has the wrong product identity")
+    if manifest.get("build_profile") == "debug":
+        source = manifest.get("source_sha256")
+        if type(source) is not str or re.fullmatch(r"[0-9a-f]{64}", source) is None:
+            _fail("debug dynamic product source digest is invalid")
     files = _payload_files(manifest.get("files"), "dynamic product manifest")
     missing = sorted(set(DYNAMIC_REQUIRED) - set(files))
     if missing:
@@ -534,6 +538,43 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     files = _validate_product_tree(root, "dynamic", files, aliases, combined)
     _validate_link_input_modes(root, DYNAMIC_LINK_INPUT_MODES, "dynamic link input")
     return manifest_path, files
+
+
+
+def validate_debug_product_source(root: Path, source_sha256: str) -> None:
+    """Bind an unqualified debug product to live source, without release claims.
+
+    The debug producer seals source content in its manifest because its four
+    state fields describe backend selection only. Payload validation must run
+    first, so both state and provenance are already bound to installed bytes.
+    """
+    manifest = _json_object(root / PRODUCT_MANIFEST, "debug dynamic manifest")
+    if manifest.get("build_profile") != "debug":
+        _fail("dynamic product debug profile differs")
+    recorded_source = manifest.get("source_sha256")
+    if type(recorded_source) is not str or re.fullmatch(r"[0-9a-f]{64}", recorded_source) is None:
+        _fail("dynamic product source digest is invalid")
+    if recorded_source != source_sha256:
+        _fail("dynamic product source differs from current checkout")
+    try:
+        state, provenance = [json.loads(_physical_regular(root / name, "debug dynamic metadata").read_text(),
+                                       object_pairs_hook=_no_duplicate_object)
+                             for name in ("share/crabc/dynamic-product-state.json",
+                                          "share/crabc/libc-shared.provenance.json")]
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise ProductEvidenceError("debug dynamic metadata is not valid JSON") from error
+    expected = {"build_profile", "allocator_backend", "allocator_lifecycle_test_audit", "status"}
+    if (type(state) is not dict or set(state) != expected
+            or state["build_profile"] != "debug" or state["status"] != "materialized-unqualified"
+            or type(state["allocator_backend"]) is not str
+            or state["allocator_backend"] not in {"accepted-c", "native-shadow", "native"}
+            or type(state["allocator_lifecycle_test_audit"]) is not bool
+            or (state["allocator_backend"] == "native" and state["allocator_lifecycle_test_audit"])):
+        _fail("debug dynamic product state differs")
+    if (type(provenance) is not dict or provenance.get("build_profile") != "debug"
+            or provenance.get("allocator_backend") != state["allocator_backend"]
+            or provenance.get("allocator_lifecycle_test_audit") is not state["allocator_lifecycle_test_audit"]):
+        _fail("debug dynamic product provenance differs")
 
 
 def _recorded_file(value: object, receipt: Path, description: str) -> Path:

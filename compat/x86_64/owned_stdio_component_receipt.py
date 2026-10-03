@@ -334,17 +334,23 @@ def validate_source_product_seals(
     except Exception as error:
         raise ReceiptError("dynamic product validation failed") from error
     state = strict_json(dynamic / "share/crabc/dynamic-product-state.json", "dynamic product materialization state")
-    require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
-            and state.get("status") == "materialized-unqualified",
-            "dynamic product materialization state differs")
-    recorded_source = state.get("source_sha256")
-    require(type(recorded_source) is str and SHA256.fullmatch(recorded_source) is not None,
-            "dynamic product source digest is invalid")
-    try:
-        current_source = qualification.source_digest()
-    except Exception as error:
-        raise ReceiptError("current source digest cannot be read") from error
-    require(recorded_source == current_source, "dynamic product source differs from current checkout")
+    if state.get("build_profile") == "debug":
+        try:
+            products.validate_debug_product_source(dynamic, qualification.source_digest())
+        except Exception as error:
+            raise ReceiptError(str(error)) from error
+    else:
+        require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
+                and state.get("status") == "materialized-unqualified",
+                "dynamic product materialization state differs")
+        recorded_source = state.get("source_sha256")
+        require(type(recorded_source) is str and SHA256.fullmatch(recorded_source) is not None,
+                "dynamic product source digest is invalid")
+        try:
+            current_source = qualification.source_digest()
+        except Exception as error:
+            raise ReceiptError("current source digest cannot be read") from error
+        require(recorded_source == current_source, "dynamic product source differs from current checkout")
     if static:
         static_product = directory(Path(product_paths["static"]), "static product")
         _product_seal(before_value["static"], static_product, "static")

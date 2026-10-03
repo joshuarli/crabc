@@ -379,16 +379,22 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
     except Exception as error:
         raise ReceiptError("supplied product validation failed") from error
     state = strict_json(dynamic_product / "share/crabc/dynamic-product-state.json", "dynamic product state")
-    require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
-            and state.get("status") == "materialized-unqualified", "dynamic product state differs")
-    source_digest = state.get("source_sha256")
-    require(type(source_digest) is str and SHA256.fullmatch(source_digest) is not None,
-            "dynamic product source digest is invalid")
-    try:
-        current_source = qualification.source_digest()
-    except Exception as error:
-        raise ReceiptError("current source digest cannot be read") from error
-    require(source_digest == current_source, "dynamic product source differs from current checkout")
+    if state.get("build_profile") == "debug":
+        try:
+            products.validate_debug_product_source(dynamic_product, qualification.source_digest())
+        except Exception as error:
+            raise ReceiptError(str(error)) from error
+    else:
+        require(state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1"
+                and state.get("status") == "materialized-unqualified", "dynamic product state differs")
+        source_digest = state.get("source_sha256")
+        require(type(source_digest) is str and SHA256.fullmatch(source_digest) is not None,
+                "dynamic product source digest is invalid")
+        try:
+            current_source = qualification.source_digest()
+        except Exception as error:
+            raise ReceiptError("current source digest cannot be read") from error
+        require(source_digest == current_source, "dynamic product source differs from current checkout")
     return all_sources
 
 

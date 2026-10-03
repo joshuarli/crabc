@@ -862,6 +862,68 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
                 validate(root)
 
+    def debug_product(self) -> Path:
+        state = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                 "allocator_lifecycle_test_audit": False, "status": "materialized-unqualified"}
+        self.write_json(self.dynamic / "share/crabc/dynamic-product-state.json", state)
+        self.write_json(self.dynamic / "share/crabc/libc-shared.provenance.json",
+                        {key: state[key] for key in ("build_profile", "allocator_backend", "allocator_lifecycle_test_audit")})
+        manifest_path = self.dynamic / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest.update(build_profile="debug", source_sha256="a" * 64, files={name: value for name, value in self.payload_manifest(self.dynamic).items() if name != "share/crabc/manifest.json"})
+        self.write_json(manifest_path, manifest)
+        return self.dynamic
+
+    def test_debug_product_source_and_installed_driver_accept_the_same_sealed_payload(self) -> None:
+        import crabc_cc_owned_dynamic as driver
+        product = self.debug_product()
+        evidence._validate_dynamic_product(product)
+        evidence.validate_debug_product_source(product, "a" * 64)
+        self.assertEqual(driver.validate(product)["source_sha256"], "a" * 64)
+
+    def test_rehashed_debug_product_stale_source_is_rejected(self) -> None:
+        product = self.debug_product()
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "source differs"):
+            evidence.validate_debug_product_source(product, "b" * 64)
+
+    def test_debug_product_missing_source_is_rejected_by_installed_driver(self) -> None:
+        import crabc_cc_owned_dynamic as driver
+        product = self.debug_product()
+        manifest_path = product / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for value in (None, True, "invalid", "a" * 63):
+            with self.subTest(value=value):
+                manifest["source_sha256"] = value
+                self.write_json(manifest_path, manifest)
+                with self.assertRaisesRegex(driver.shared.DriverError, "source digest"):
+                    driver.validate(product)
+                with self.assertRaisesRegex(evidence.ProductEvidenceError, "source digest"):
+                    evidence._validate_dynamic_product(product)
+
+    def test_rehashed_debug_product_state_and_provenance_drift_are_rejected(self) -> None:
+        product = self.debug_product()
+        for filename, key, value in (
+            ("dynamic-product-state.json", "runtime_v1_published", True),
+            ("dynamic-product-state.json", "allocator_lifecycle_test_audit", 0),
+            ("dynamic-product-state.json", "status", "qualified"),
+            ("libc-shared.provenance.json", "allocator_backend", "accepted-c"),
+            ("libc-shared.provenance.json", "build_profile", "release"),
+        ):
+            with self.subTest(filename=filename, key=key):
+                path = product / "share/crabc" / filename
+                original = path.read_bytes()
+                record = json.loads(original)
+                record[key] = value
+                self.write_json(path, record)
+                manifest_path = product / "share/crabc/manifest.json"
+                manifest = json.loads(manifest_path.read_text())
+                manifest["files"] = {name: value for name, value in self.payload_manifest(product).items() if name != "share/crabc/manifest.json"}
+                self.write_json(manifest_path, manifest)
+                evidence._validate_dynamic_product(product)
+                with self.assertRaisesRegex(evidence.ProductEvidenceError, "state differs|provenance differs"):
+                    evidence.validate_debug_product_source(product, "a" * 64)
+                path.write_bytes(original)
+
     def test_dynamic_product_requires_its_sealed_driver(self) -> None:
         receipt = self.dynamic_receipt()
         (self.dynamic / "bin/crabc-cc-dynamic").unlink()

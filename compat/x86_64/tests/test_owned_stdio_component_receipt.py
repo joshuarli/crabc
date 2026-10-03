@@ -362,6 +362,8 @@ class ReceiptFixture:
             path = self.work / ("source-product-" + phase + ".json")
             value = json.loads(path.read_text())
             value["dynamic"]["tree"] = receipt.tree_identity(self.dynamic)
+            manifest = self.dynamic / "share/crabc/manifest.json"
+            value["dynamic"]["manifest"] = {"path": str(manifest), "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(), "size": manifest.stat().st_size}
             path.write_text(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
         self.refresh("source-product-before", "source-product-after")
 
@@ -412,6 +414,18 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         self.assertEqual(report["matrix"], "dynamic-development")
         with self.assertRaisesRegex(receipt.ReceiptError, "supplied-static"):
             self.validate(require_static=True)
+
+    def test_source_bound_debug_product_reconstructs_without_release_state(self) -> None:
+        state = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                 "allocator_lifecycle_test_audit": False, "status": "materialized-unqualified"}
+        self.fixture.dynamic_state.write_text(json.dumps(state) + "\n")
+        manifest = {"schema": 1, "build_profile": "debug", "source_sha256": "a" * 64}
+        (self.fixture.dynamic / "share/crabc/manifest.json").write_text(json.dumps(manifest) + "\n")
+        provenance = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                      "allocator_lifecycle_test_audit": False}
+        (self.fixture.dynamic / "share/crabc/libc-shared.provenance.json").write_text(json.dumps(provenance) + "\n")
+        self.fixture.refresh_dynamic_product_seals()
+        self.validate()
 
     def test_rehashed_transplanted_dynamic_product_source_is_rejected(self) -> None:
         state = json.loads(self.fixture.dynamic_state.read_text())

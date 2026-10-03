@@ -191,14 +191,35 @@ def selected_products(root: Path, preparation: Path, static: Path, dynamic: Path
     dynamic_manifest, dynamic_files = products._validate_dynamic_product(dynamic)
     require(same(static_products.tree_identity(static), prepared["products"]["primary"]["tree"]),
             "prepared static product bytes differ")
-    pthread_receipt._validate_dynamic_materialization_state(
-        read_json(dynamic / "share/crabc/dynamic-product-state.json"), source["content_sha256"],
-        dynamic_files, "FILE DSO dynamic product")
+    state = read_json(dynamic / "share/crabc/dynamic-product-state.json")
+    provenance = read_json(dynamic / "share/crabc/libc-shared.provenance.json")
+    debug = state.get("build_profile") == "debug"
+    if debug:
+        try:
+            products.validate_debug_product_source(dynamic, source["content_sha256"])
+        except Exception as error:
+            raise ReceiptError(str(error)) from error
+        dynamic_command = provenance["source_runtime"]["cargo_command"]
+    else:
+        pthread_receipt._validate_dynamic_materialization_state(
+            state, source["content_sha256"], dynamic_files, "FILE DSO dynamic product")
+        dynamic_command = provenance["libc_command"]
     static_command = read_json(static / "share/crabc/build.commands.json")["commands"]["libc"]
-    dynamic_command = read_json(dynamic / "share/crabc/libc-shared.provenance.json")["libc_command"]
-    for command, feature in ((static_command, "x86-owned-static-runtime"),
-                             (dynamic_command, "x86-owned-dynamic-runtime")):
-        require(command.count("--features") == 1 and command[command.index("--features") + 1] == feature,
+    for product, command, linkage in ((static, static_command, "static"),
+                                       (dynamic, dynamic_command, "dynamic")):
+        manifest = read_json(product / "share/crabc/manifest.json")
+        if manifest.get("build_profile") == "debug":
+            selected = read_json(product / ("share/crabc/libc-static.provenance.json" if linkage == "static"
+                                           else "share/crabc/libc-shared.provenance.json"))
+            backend = selected["allocator_backend"]
+            suffix = "runtime" if backend == "accepted-c" else "native-shadow"
+            feature = f"x86-owned-{linkage}-{suffix}"
+            if selected["allocator_lifecycle_test_audit"]:
+                feature += ",x86-owned-allocator-lifecycle-test-audit"
+        else:
+            feature = f"x86-owned-{linkage}-runtime"
+        require(type(command) is list and command.count("--features") == 1
+                and command[command.index("--features") + 1] == feature,
                 "selected libc feature differs")
     return {
         "source": source, "preparation": file_identity(root, preparation),

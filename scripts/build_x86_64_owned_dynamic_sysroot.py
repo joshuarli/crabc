@@ -1055,9 +1055,15 @@ def write_product_manifest(output: Path, metadata: Path, *, profile: str = "rele
     """Seal installed payload bytes together with their selected Rust toolchain."""
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
-    common.write_json(metadata / "manifest.json", {"schema": 1, "format": FORMAT,
+    manifest = {"schema": 1, "format": FORMAT,
         "target": common.TARGET, "toolchain": common.PINNED_TOOLCHAIN, "files": files, "build_profile": profile,
-        "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}})
+        "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}}
+    if profile == "debug":
+        # Debug state describes only the unqualified backend selection. Bind
+        # its installed payload to source content in the manifest; build()
+        # also requires this fingerprint to match the one taken before build.
+        manifest["source_sha256"] = qualification.source_digest()
+    common.write_json(metadata / "manifest.json", manifest)
 
 
 def main() -> int:

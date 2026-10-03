@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,6 +17,43 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
+    def test_debug_selected_products_use_source_seal_and_native_feature_commands(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            root = Path(temporary)
+            preparation = root / ".work/prepared/preparation.json"
+            static = preparation.parent / "products/primary"
+            dynamic = root / ".work/dynamic"
+            for product in (static, dynamic):
+                (product / "share/crabc").mkdir(parents=True)
+                (product / "bin").mkdir()
+                (product / "usr/lib").mkdir(parents=True)
+                (product / "share/crabc/manifest.json").write_text(json.dumps({"schema": 1, "build_profile": "debug", "source_sha256": "a" * 64}))
+            (static / "bin/crabc-cc").write_bytes(b"static driver")
+            (static / "usr/lib/libc.a").write_bytes(b"static archive")
+            (dynamic / "bin/crabc-cc-dynamic").write_bytes(b"dynamic driver")
+            (dynamic / "usr/lib/libc.so").write_bytes(b"shared libc")
+            (dynamic / "lib").mkdir()
+            (dynamic / "lib/ld-crabc-x86_64.so.1").write_bytes(b"loader")
+            source = {"revision": "fixture", "content_sha256": "a" * 64}
+            for name in ("source-before.json", "source-after.json"):
+                (preparation.parent / name).write_text(json.dumps(source))
+            (static / "share/crabc/build.commands.json").write_text(json.dumps({"commands": {"libc": ["cargo", "--features", "x86-owned-static-native-shadow"]}}))
+            state = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                     "allocator_lifecycle_test_audit": False, "status": "materialized-unqualified"}
+            (dynamic / "share/crabc/dynamic-product-state.json").write_text(json.dumps(state))
+            provenance = {key: state[key] for key in ("build_profile", "allocator_backend", "allocator_lifecycle_test_audit")}
+            (static / "share/crabc/libc-static.provenance.json").write_text(json.dumps(provenance))
+            provenance["source_runtime"] = {"cargo_command": ["cargo", "--features", "x86-owned-dynamic-native-shadow"]}
+            (dynamic / "share/crabc/libc-shared.provenance.json").write_text(json.dumps(provenance))
+            preparation.write_text(json.dumps({"schema": receipt.static_products.SCHEMA, "source": source,
+                "products": {"primary": {"tree": {"fixture": "static"}}}}))
+            with (mock.patch.object(receipt.static_products, "source_identity", return_value=source),
+                  mock.patch.object(receipt.static_products, "tree_identity", return_value={"fixture": "static"}),
+                  mock.patch.object(receipt.products, "_validate_static_product", return_value=(static / "share/crabc/manifest.json", {})),
+                  mock.patch.object(receipt.products, "_validate_dynamic_product", return_value=(dynamic / "share/crabc/manifest.json", {}))):
+                selected = receipt.selected_products(root, preparation, static, dynamic)
+                self.assertEqual(selected["source"], source)
+
     def test_path_memory_pushback_and_lock_handoff_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:

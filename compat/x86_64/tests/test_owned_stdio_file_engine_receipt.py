@@ -570,6 +570,21 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(report["allocator_interposition"]["runtime_cells"], list(receipt.INTERPOSITION_CELLS))
         self.assertEqual(report["dso_differential"]["runtime_cells"], list(receipt.dso.CASES))
 
+    def test_source_bound_debug_product_reconstructs_without_release_state(self) -> None:
+        state = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                 "allocator_lifecycle_test_audit": False, "status": "materialized-unqualified"}
+        self.fixture.dynamic_state.write_text(json.dumps(state) + "\n")
+        manifest = {"schema": 1, "build_profile": "debug", "source_sha256": "a" * 64}
+        (self.fixture.dynamic / "share/crabc/manifest.json").write_text(json.dumps(manifest) + "\n")
+        provenance = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                      "allocator_lifecycle_test_audit": False}
+        (self.fixture.dynamic / "share/crabc/libc-shared.provenance.json").write_text(json.dumps(provenance) + "\n")
+        self.fixture._write_seals()
+        for phase in ("source-product-before", "source-product-after"):
+            self.fixture.report["seals"][phase] = identity(self.fixture.work, self.fixture.work / (phase + ".json"))
+        self.fixture.write_report()
+        self.validate()
+
     def test_rehashed_transplanted_dynamic_product_source_is_rejected(self) -> None:
         state = json.loads(self.fixture.dynamic_state.read_text())
         state["source_sha256"] = "b" * 64
