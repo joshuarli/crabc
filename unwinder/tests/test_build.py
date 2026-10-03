@@ -309,8 +309,12 @@ class DependencyBoundary(unittest.TestCase):
         self.assertIsNone(builder.declared_offline_sources({}))
         scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
         scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary, tempfile.TemporaryDirectory() as outside:
-            root = Path(temporary)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary, \
+                unittest.mock.patch.object(builder, 'ROOT', Path(temporary) / 'checkout/unwinder'):
+            root = Path(temporary) / 'checkout/.work/sources'
+            root.mkdir(parents=True)
+            outside = Path(temporary) / 'outside'
+            outside.mkdir()
             (root / 'cargo-home').mkdir()
             (root / 'unwinding').mkdir()
             (root / 'linked').symlink_to(root / 'unwinding')
