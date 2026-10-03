@@ -199,6 +199,20 @@ static int note(const char* key, const void* p) {
   return id;
 }
 
+/* Ordinary class allocations use the public good-size extent. Singleton
+   blocks also apply the OS allocation rounding, which is coarser than the
+   page-size rounding returned by mi_good_size above the large class range.
+   This is a request-derived bound, independent of either observed client. */
+static size_t allocation_capacity_upper(size_t size) {
+  const size_t good = mi_good_size(size);
+  if (good <= 512 * KiB) { return good; }
+  const size_t alignment = good < 2 * MiB ? 64 * KiB
+      : good < 8 * MiB ? 256 * KiB
+      : good < 32 * MiB ? MiB : 4 * MiB;
+  if (good >= SIZE_MAX - alignment) { return good; }
+  return (good + alignment - 1) & ~(alignment - 1);
+}
+
 /* Aligned allocation can select an already aligned free block or allocate
    max(size,16)+alignment-1 bytes and adjust within that block. Record the
    request and its capacity bound, without equating random block placement.
@@ -211,7 +225,7 @@ static void note_request(const char* key, const void* p, size_t size,
   snprintf(contract_key, sizeof contract_key, "%s.contract", key);
   const size_t oversize = (size < 16 ? 16 : size) + alignment - 1;
   line(contract_key, "requested:%zu,alignment:%zu,offset:%zu,upper:%zu,success:%d,aligned:%d,distinct:%d",
-       size, alignment, offset, mi_good_size(oversize), p != NULL,
+       size, alignment, offset, allocation_capacity_upper(oversize), p != NULL,
        p != NULL && (((uintptr_t)p + offset) & (alignment - 1)) == 0, distinct);
 }
 
@@ -261,7 +275,7 @@ static void note_plain_request(const char* key, void* p, size_t size, bool zero)
   if (valid_domain) {
     char context[128];
     snprintf(context, sizeof context, "%s.natural", key);
-    line(context, "%zu", mi_good_size(size));
+    line(context, "%zu", allocation_capacity_upper(size));
   }
 }
 
@@ -290,7 +304,7 @@ static void note_realloc_request(const char* key, void* p, uintptr_t old,
       ? old_size / 2 : old_size - old_size / 2;
   const bool reuse = old != 0 && size > 0 && size <= old_size && size >= half
       && ((old + offset) & (alignment - 1)) == 0;
-  size_t upper = mi_good_size((size < 16 ? 16 : size) + alignment - 1);
+  size_t upper = allocation_capacity_upper((size < 16 ? 16 : size) + alignment - 1);
   if (reuse && upper < old_size) { upper = old_size; }
   char context[128];
   snprintf(context, sizeof context, "%s.contract", key);
@@ -335,7 +349,7 @@ static void section_allocation(void) {
     note_request(key, blocks[i], class_sizes[i], class_sizes[i] <= 8 ? 8 : 16, 0, distinct);
     if (valid_domain) {
       char context[128]; snprintf(context, sizeof context, "%s.natural", key);
-      line(context, "%zu", mi_good_size(class_sizes[i]));
+      line(context, "%zu", allocation_capacity_upper(class_sizes[i]));
     }
     if (blocks[i] != NULL) { fill(blocks[i], mi_usable_size(blocks[i]), (unsigned char)i); }
   }
@@ -351,7 +365,7 @@ static void section_allocation(void) {
     note_request(key, p, class_sizes[i], class_sizes[i] <= 8 ? 8 : 16, 0, true);
     if (valid_domain) {
       char context[128]; snprintf(context, sizeof context, "%s.natural", key);
-      line(context, "%zu", mi_good_size(class_sizes[i]));
+      line(context, "%zu", allocation_capacity_upper(class_sizes[i]));
     }
     key_name(key, sizeof key, "zalloc.zero", i, class_sizes[i]);
     line(key, "%d", p != NULL && is_zero(p, mi_usable_size(p)));
@@ -362,7 +376,7 @@ static void section_allocation(void) {
     note_request(key, p, class_sizes[i], class_sizes[i] <= 8 ? 8 : 16, 0, true);
     if (valid_domain) {
       char context[128]; snprintf(context, sizeof context, "%s.natural", key);
-      line(context, "%zu", mi_good_size(class_sizes[i]));
+      line(context, "%zu", allocation_capacity_upper(class_sizes[i]));
     }
     key_name(key, sizeof key, "calloc.zero", i, class_sizes[i]);
     line(key, "%d", p != NULL && is_zero(p, mi_usable_size(p)));
@@ -863,7 +877,14 @@ static void section_aligned(void) {
     key_name(key, sizeof key, "rezalloc_aligned_at", o, offsets[o]);
     note_realloc_request(key, q, old, old_size, 1900, 256, offsets[o], 90, 0x61, true, false);
     key_name(key, sizeof key, "rezalloc_aligned_at.ok", o, offsets[o]);
-    line(key, "%d,%d", q != NULL && has_fill(q, 90, 0x61), q != NULL && is_zero((char*)q + 900, 1000));
+    /* A replacement preserves the whole old usable extent, including bytes
+       beyond the earlier request. Only its newly added capacity is zeroed;
+       padding modes make the old usable extent equal that earlier request. */
+    const size_t zero_start = valid_domain ? old_size : 900;
+    const size_t zero_end = valid_domain && q != NULL ? mi_usable_size(q) : 1900;
+    line(key, "%d,%d", q != NULL && has_fill(q, 90, 0x61),
+         q != NULL && zero_end >= zero_start
+           && is_zero((char*)q + zero_start, zero_end - zero_start));
     old = (uintptr_t)q;
     old_size = valid_domain ? mi_usable_size(q) : 0;
     q = mi_recalloc_aligned_at(q, 4, 700, 256, offsets[o]);
@@ -1435,10 +1456,10 @@ static void section_offset_rezalloc_boundaries(void) {
           snprintf(key, sizeof key, "%s.basis", base);
           line(key, "requested:%zu,alignment:%zu,offset:%zu,initial:%zu,initial_upper:%zu,grown:%zu,grown_upper:%zu,replacement:%zu,replacement_upper:%zu,initial_aligned:%d,grown_aligned:%d",
                sizes[s], alignments[a], offsets[o], initial_usable,
-               mi_good_size((sizes[s] < 16 ? 16 : sizes[s]) + alignments[a] - 1),
-               grown_usable, mi_good_size(initial_usable + 17 + alignments[a] - 1),
+               allocation_capacity_upper((sizes[s] < 16 ? 16 : sizes[s]) + alignments[a] - 1),
+               grown_usable, allocation_capacity_upper(initial_usable + 17 + alignments[a] - 1),
                replaced == NULL ? 0 : mi_usable_size(replaced),
-               mi_good_size((replacement_size < 16 ? 16 : replacement_size) + alignments[a] - 1),
+               allocation_capacity_upper((replacement_size < 16 ? 16 : replacement_size) + alignments[a] - 1),
                initial_aligned, grown_aligned);
         }
         mi_free(replaced == NULL ? reused : replaced);
@@ -1819,6 +1840,16 @@ int main(int argc, char** argv) {
   if (valid_domain) {
     set_live_client_precise(false);
     fprintf(stderr, "valid-domain guarded_precise=%ld\n", mi_option_get(mi_option_guarded_precise));
+    /* A nonzero public sampling seed selects the same first guarded request
+       in both independent processes. Keep the configured sampling rate and
+       all guards; default entropy otherwise selects unrelated countdowns. */
+    const long guarded_rate = mi_option_get_clamp(mi_option_guarded_sample_rate, 0, LONG_MAX);
+    const size_t guarded_seed = 1;
+    if (guarded_rate > 0) {
+      mi_theap_guarded_set_sample_rate(mi_theap_get_default(), (size_t)guarded_rate, guarded_seed);
+    }
+    fprintf(stderr, "valid-domain guarded_sample_rate=%ld,guarded_sample_seed=%zu\n",
+            guarded_rate, guarded_seed);
   }
   const char* scenario = argv[1];
   if (valid_domain && (strncmp(scenario, "source-client:", 14) == 0
