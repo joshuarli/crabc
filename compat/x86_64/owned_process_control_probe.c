@@ -53,6 +53,7 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 
 #ifndef CRABC_PROCESS_CONTROL_EXECUTABLE
@@ -1175,6 +1176,95 @@ static void write_decimal(int value)
     }
 }
 
+static int check_observation_configuration(void)
+{
+    struct utsname name, direct_name;
+    struct rlimit limit, direct_limit;
+    struct rusage usage;
+    int descriptors[2];
+    int result = 0;
+    static const int resources[] = { RLIMIT_NOFILE, RLIMIT_STACK, RLIMIT_NPROC };
+    unsigned int i;
+    errno = EDOM;
+    if (getpid() != raw_syscall0(SYS_getpid) || getppid() != raw_syscall0(SYS_getppid) ||
+        getuid() != (uid_t)raw_syscall0(SYS_getuid) || getgid() != (gid_t)raw_syscall0(SYS_getgid) ||
+        geteuid() != (uid_t)raw_syscall0(SYS_geteuid) || getegid() != (gid_t)raw_syscall0(SYS_getegid) ||
+        getpgrp() != raw_syscall0(SYS_getpgrp) || getpgid(0) != raw_syscall1(SYS_getpgid, 0) ||
+        getsid(0) != raw_syscall1(SYS_getsid, 0) || errno != EDOM)
+        return 1;
+    fill_bytes(&name, 0xa5, sizeof name);fill_bytes(&direct_name, 0xa5, sizeof direct_name);
+    if (uname(&name) || raw_syscall1(SYS_uname, (long)&direct_name) ||
+        !bytes_equal(&name, &direct_name, sizeof name) || errno != EDOM)
+        return 2;
+    for (i = 0; i < sizeof resources / sizeof resources[0]; i++) {
+        if (getrlimit(resources[i], &limit) ||
+            raw_syscall4(SYS_prlimit64, 0, resources[i], 0, (long)&direct_limit) ||
+            !bytes_equal(&limit, &direct_limit, sizeof limit) ||
+            prlimit(getpid(), resources[i], NULL, &direct_limit) ||
+            !bytes_equal(&limit, &direct_limit, sizeof limit) || errno != EDOM)
+            return 3;
+    }
+    if (getrlimit(RLIMIT_NOFILE, &limit) || sysconf(_SC_OPEN_MAX) !=
+        (limit.rlim_cur == RLIM_INFINITY ? -1 : limit.rlim_cur > LONG_MAX ? LONG_MAX : (long)limit.rlim_cur) ||
+        getdtablesize() != (limit.rlim_cur > INT_MAX ? INT_MAX : (int)limit.rlim_cur) ||
+        sysconf(_SC_PAGE_SIZE) != getpagesize() || getpagesize() != 4096 ||
+        sysconf(_SC_CLK_TCK) != 100 || sysconf(_SC_ARG_MAX) != 131072 || errno != EDOM)
+        return 4;
+    for (i = 0; i < 3; i++) {
+        static const int who[] = { RUSAGE_SELF, RUSAGE_CHILDREN, RUSAGE_THREAD };
+        fill_bytes(&usage, 0xa5, sizeof usage);
+        if (getrusage(who[i], &usage) || !usage_is_canonical(&usage) ||
+            !bytes_are(usage.__reserved, 0xa5, sizeof usage.__reserved) || errno != EDOM)
+            return 5;
+    }
+    if (pipe2(descriptors, O_CLOEXEC)) return 6;
+    /* Valid live descriptors and a conventional live pathname retain musl's
+       fd-independent configuration table without a negative selector. */
+    if (pathconf("/", _PC_NAME_MAX) != 255 || fpathconf(descriptors[0], _PC_PIPE_BUF) != 4096 ||
+        fpathconf(descriptors[1], _PC_PATH_MAX) != 4096 || errno != EDOM)
+        result = 7;
+    if (close(descriptors[0]) || close(descriptors[1])) return 8;
+    return result;
+}
+
+static int check_descriptor_inheritance(void)
+{
+    int report[2];
+    pid_t parent = getpid();
+    struct rlimit expected, inherited;
+    int status = 0, flags[2], observed[2];
+    long child;
+    if (pipe2(report, O_CLOEXEC) || getrlimit(RLIMIT_NOFILE, &expected)) return 1;
+    flags[0] = fcntl(report[1], F_GETFD);flags[1] = fcntl(report[1], F_GETFL);
+    if (flags[0] != FD_CLOEXEC || flags[1] < 0) return 2;
+    child = raw_fork();
+    if (!child) {
+        observed[0] = fcntl(report[1], F_GETFD);observed[1] = fcntl(report[1], F_GETFL);
+        (void)raw_close(report[0]);
+        if (getppid() != parent || getpid() == parent || getrlimit(RLIMIT_NOFILE, &inherited) ||
+            !bytes_equal(&expected, &inherited, sizeof expected) ||
+            !raw_write_full(report[1], observed, sizeof observed)) raw_exit(1);
+        (void)raw_close(report[1]);raw_exit(49);
+    }
+    (void)raw_close(report[1]);
+    if (child < 0 || !raw_read_full(report[0], observed, sizeof observed) ||
+        !bytes_equal(flags, observed, sizeof flags) || waitpid((pid_t)child, &status, 0) != child ||
+        !exited_with(status, 49)) {
+        (void)raw_close(report[0]);return 3;
+    }
+    (void)raw_close(report[0]);return 0;
+}
+
+static int ordinary_observation_control(void)
+{
+    int result = check_observation_configuration();
+    if (result) return 100 + result;
+    result = check_descriptor_inheritance();
+    if (result) return 120 + result;
+    if (check_waitpid() || check_wait_any() || check_waitid() || check_wait3() || check_wait4()) return 130;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char success[] = "owned-process-control-ok fexecve-seccomp=";
@@ -1182,6 +1272,8 @@ int main(int argc, char **argv)
     int fexecve_errno = 0;
     int result;
 
+    if (argc == 2 && same_string(argv[1], "--ordinary-observation"))
+        return ordinary_observation_control();
     if (argc == 3 && same_string(argv[1], "--exec-child"))
         return exec_child(argv[2], environ);
     if (argc != 1)
