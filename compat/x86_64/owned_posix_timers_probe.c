@@ -393,7 +393,7 @@ static void pending_delete_contract(void)
     CHECK(atomic_load(&pending_delete_calls) == 1);
     puts("pending periodic deletion: active callback finishes, queued notifications stop");
 }
-static void kernel_timer(void)
+static void kernel_timer(int ordinary_only)
 {
     struct sigevent event = {.sigev_notify = SIGEV_NONE};
     timer_t timer;
@@ -411,6 +411,7 @@ static void kernel_timer(void)
        the signal-notification branches below separately require zero. */
     printf("none disarmed query zero: %d\n", old.it_value.tv_sec == 0 && old.it_value.tv_nsec == 0);
     CHECK(timer_delete(timer) == 0);
+    if (ordinary_only) return;
     errno = 123; CHECK(timer_delete(timer) == -EINVAL && errno == 123);
     errno = 0; CHECK(timer_gettime(timer, &old) == -1 && errno == EINVAL);
     sigset_t set, previous;
@@ -691,16 +692,27 @@ int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "allocation-isolation")) return allocation_isolation();
     if (argc > 1 && !strcmp(argv[1], "failure-once")) return failure_once();
-    dynamic_tls = argc > 1 && !strcmp(argv[1], "dynamic");
+    dynamic_tls = argc > 1 && (!strcmp(argv[1], "dynamic") ||
+                              !strcmp(argv[1], "ordinary-dynamic"));
     /* Reclamation paces 32768 detached-worker creations with sleeps, so its
      * duration follows host scheduling; its hang bound matches the runner's. */
     if (argc > 1 && !strcmp(argv[1], "failure")) { alarm(120); failure_reclamation(); return 0; }
     alarm(20);
     if (argc > 2) plugin_path = argv[2];
+    if (argc > 1 && (!strcmp(argv[1], "ordinary-lifecycle") ||
+                    !strcmp(argv[1], "ordinary-dynamic"))) {
+        kernel_timer(1);
+        thread_timer();
+        overlapping_timer_workers();
+        thread_timer_contract();
+        pending_delete_contract();
+        puts("owned-posix-timers-ordinary-ok");
+        return 0;
+    }
     creator_cancellation();
-    kernel_timer(); directed_timer_delivery(); thread_timer(); overlapping_timer_workers(); thread_timer_contract(); pending_delete_contract();
+    kernel_timer(0); directed_timer_delivery(); thread_timer(); overlapping_timer_workers(); thread_timer_contract(); pending_delete_contract();
     pid_t child = fork(); CHECK(child >= 0);
-    if (!child) { kernel_timer(); thread_timer(); _Exit(0); }
+    if (!child) { kernel_timer(0); thread_timer(); _Exit(0); }
     int status; CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
     puts("fork child creates fresh timers");
     return 0;

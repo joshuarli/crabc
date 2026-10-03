@@ -25,6 +25,9 @@
 #include <sys/syscall.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
+#ifndef CRABC_TIMERFD_FREESTANDING
+#include <string.h>
+#endif
 
 enum {
     NANOSECONDS_PER_MILLISECOND = 1000000,
@@ -430,8 +433,10 @@ int crabc_x86_64_timerfd_probe(void)
 }
 
 #ifndef CRABC_TIMERFD_FREESTANDING
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "ordinary-shared"))
+        return test_absolute_overrun_shared_descriptor();
     return crabc_x86_64_timerfd_probe();
 }
 #endif
