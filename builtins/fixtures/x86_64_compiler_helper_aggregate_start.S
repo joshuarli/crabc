@@ -90,6 +90,32 @@ crabc_x86_64_compiler_helper_registers:
     movabsq $0x4014000000000000,%rdx
     cmpq %rdx,%rax
     jne 3f
+    # Float-complex helpers take four separate binary32 XMM arguments and
+    # return both binary32 components packed in the low eight bytes of XMM0.
+    movl $0x40400000,%eax
+    movd %eax,%xmm0
+    movl $0x40800000,%eax
+    movd %eax,%xmm1
+    movl $0x3f800000,%eax
+    movd %eax,%xmm2
+    movl $0x40000000,%eax
+    movd %eax,%xmm3
+    call __mulsc3
+    movq %xmm0,%rax
+    movabsq $0x41200000c0a00000,%rdx
+    cmpq %rdx,%rax
+    jne 3f
+    movl $0x40800000,%eax
+    movd %eax,%xmm0
+    movl $0x40000000,%eax
+    movd %eax,%xmm1
+    movd %eax,%xmm2
+    pxor %xmm3,%xmm3
+    call __divsc3
+    movq %xmm0,%rax
+    movabsq $0x3f80000040000000,%rdx
+    cmpq %rdx,%rax
+    jne 3f
     # Binary80 uses integer word pairs for integer128 and ST0 for scalar
     # results. The low ten bytes carry the value; padding is not compared.
     subq $32,%rsp

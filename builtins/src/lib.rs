@@ -212,6 +212,184 @@ fn divide_complex_double(mut a: f64, mut b: f64, mut c: f64, mut d: f64) -> Comp
     ComplexDouble { real, imaginary }
 }
 
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Adapted from LLVM compiler-rt 22.1.3 single-precision complex kernels.
+/// The SysV AMD64 C float-complex return carrier.
+/// Both binary32 components share the low eight bytes of XMM0.
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComplexFloat {
+    pub real: f32,
+    pub imaginary: f32,
+}
+
+#[cfg(target_arch = "x86_64")]
+fn multiply_complex_float(mut a: f32, mut b: f32, mut c: f32, mut d: f32) -> ComplexFloat {
+    let ac = a * c;
+    let bd = b * d;
+    let ad = a * d;
+    let bc = b * c;
+    let mut real = ac - bd;
+    let mut imaginary = ad + bc;
+    if float_complex_is_nan(real) && float_complex_is_nan(imaginary) {
+        let mut recalculate = false;
+        if float_complex_is_infinite(a) || float_complex_is_infinite(b) {
+            a = (if float_complex_is_infinite(a) { 1.0_f32 } else { 0.0_f32 }).copysign(a);
+            b = (if float_complex_is_infinite(b) { 1.0_f32 } else { 0.0_f32 }).copysign(b);
+            if float_complex_is_nan(c) {
+                c = 0.0_f32.copysign(c);
+            }
+            if float_complex_is_nan(d) {
+                d = 0.0_f32.copysign(d);
+            }
+            recalculate = true;
+        }
+        if float_complex_is_infinite(c) || float_complex_is_infinite(d) {
+            c = (if float_complex_is_infinite(c) { 1.0_f32 } else { 0.0_f32 }).copysign(c);
+            d = (if float_complex_is_infinite(d) { 1.0_f32 } else { 0.0_f32 }).copysign(d);
+            if float_complex_is_nan(a) {
+                a = 0.0_f32.copysign(a);
+            }
+            if float_complex_is_nan(b) {
+                b = 0.0_f32.copysign(b);
+            }
+            recalculate = true;
+        }
+        if !recalculate && (float_complex_is_infinite(ac) || float_complex_is_infinite(bd) || float_complex_is_infinite(ad) || float_complex_is_infinite(bc)) {
+            if float_complex_is_nan(a) {
+                a = 0.0_f32.copysign(a);
+            }
+            if float_complex_is_nan(b) {
+                b = 0.0_f32.copysign(b);
+            }
+            if float_complex_is_nan(c) {
+                c = 0.0_f32.copysign(c);
+            }
+            if float_complex_is_nan(d) {
+                d = 0.0_f32.copysign(d);
+            }
+            recalculate = true;
+        }
+        if recalculate {
+            real = f32::INFINITY * (a * c - b * d);
+            imaginary = f32::INFINITY * (a * d + b * c);
+        }
+    }
+    ComplexFloat { real, imaginary }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn float_complex_division_normalize(significand: &mut u32) -> i32 {
+    let shift = significand.leading_zeros() as i32 - (1_u32 << 23).leading_zeros() as i32;
+    *significand <<= shift;
+    1 - shift
+}
+
+#[cfg(target_arch = "x86_64")]
+fn float_complex_division_logb(value: f32) -> f32 {
+    let mut representation = value.to_bits();
+    let exponent = ((representation >> 23) & 0xff) as i32;
+    if exponent == 0xff {
+        if representation >> 31 == 0 || value.is_nan() { value } else { -value }
+    } else if value == 0.0 {
+        f32::NEG_INFINITY
+    } else if exponent != 0 {
+        (exponent - 127) as f32
+    } else {
+        representation &= 0x7fff_ffff;
+        let shift = 1 - float_complex_division_normalize(&mut representation);
+        let normalized_exponent = ((representation >> 23) & 0xff) as i32;
+        (normalized_exponent - 127 - shift) as f32
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn float_complex_division_scalbn(value: f32, scale: i32) -> f32 {
+    let representation = value.to_bits();
+    let mut exponent = ((representation >> 23) & 0xff) as i32;
+    if value == 0.0 || exponent == 0xff {
+        return value;
+    }
+    let mut significand = representation & 0x007f_ffff;
+    if exponent == 0 {
+        exponent += float_complex_division_normalize(&mut significand);
+        significand &= !(1_u32 << 23);
+    }
+    exponent = exponent.saturating_add(scale);
+    let sign = representation & (1_u32 << 31);
+    if exponent >= 0xff {
+        f32::from_bits(sign | (0xfe_u32 << 23)) * 2.0
+    } else if exponent <= 0 {
+        let mut temporary = f32::from_bits(sign | (1_u32 << 23) | significand);
+        exponent = exponent.saturating_add(126).max(1);
+        temporary *= f32::from_bits((exponent as u32) << 23);
+        temporary
+    } else {
+        f32::from_bits(sign | ((exponent as u32) << 23) | significand)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+use x86_64_complex_classification::{
+    float_complex_is_finite, float_complex_is_infinite,
+    float_complex_is_nan, float_complex_ordered_less,
+};
+
+#[cfg(target_arch = "x86_64")]
+fn divide_complex_float(mut a: f32, mut b: f32, mut c: f32, mut d: f32) -> ComplexFloat {
+    let abs_c = c.abs();
+    let abs_d = d.abs();
+    let maximum = if float_complex_is_nan(abs_c) ||
+        float_complex_ordered_less(abs_c, abs_d) { abs_d } else { abs_c };
+    let logbw = float_complex_division_logb(maximum);
+    let mut ilogbw = 0;
+    if float_complex_is_finite(logbw) {
+        ilogbw = logbw as i32;
+        c = float_complex_division_scalbn(c, -ilogbw);
+        d = float_complex_division_scalbn(d, -ilogbw);
+    }
+    let denominator = c * c + d * d;
+    let mut real = float_complex_division_scalbn((a * c + b * d) / denominator, -ilogbw);
+    let imaginary_quotient = (b * c - a * d) / denominator;
+    let mut imaginary = float_complex_division_scalbn(imaginary_quotient, -ilogbw);
+    // Scaling a zero quotient returns that zero unchanged, so recovery
+    // cannot apply. Preserve the pinned C compiler's short circuit here:
+    // reading a subnormal real result would add a denormal exception.
+    if imaginary_quotient.to_bits() & 0x7fff_ffff != 0 &&
+        float_complex_is_nan(real) && float_complex_is_nan(imaginary) {
+        if denominator == 0.0 && (!float_complex_is_nan(a) || !float_complex_is_nan(b)) {
+            real = f32::INFINITY.copysign(c) * a;
+            imaginary = f32::INFINITY.copysign(c) * b;
+        } else if (float_complex_is_infinite(a) || float_complex_is_infinite(b)) && float_complex_is_finite(c) && float_complex_is_finite(d) {
+            a = (if float_complex_is_infinite(a) { 1.0_f32 } else { 0.0_f32 }).copysign(a);
+            b = (if float_complex_is_infinite(b) { 1.0_f32 } else { 0.0_f32 }).copysign(b);
+            real = f32::INFINITY * (a * c + b * d);
+            imaginary = f32::INFINITY * (b * c - a * d);
+        } else if float_complex_is_infinite(logbw) && logbw > 0.0 && float_complex_is_finite(a) && float_complex_is_finite(b) {
+            c = (if float_complex_is_infinite(c) { 1.0_f32 } else { 0.0_f32 }).copysign(c);
+            d = (if float_complex_is_infinite(d) { 1.0_f32 } else { 0.0_f32 }).copysign(d);
+            real = 0.0 * (a * c + b * d);
+            imaginary = 0.0 * (b * c - a * d);
+        }
+    }
+    ComplexFloat { real, imaginary }
+}
+
+/// Return `(a + ib) * (c + id)` using the SysV AMD64 float-complex ABI.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __mulsc3(a: f32, b: f32, c: f32, d: f32) -> ComplexFloat {
+    multiply_complex_float(a, b, c, d)
+}
+
+/// Return `(a + ib) / (c + id)` using the SysV AMD64 float-complex ABI.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __divsc3(a: f32, b: f32, c: f32, d: f32) -> ComplexFloat {
+    divide_complex_float(a, b, c, d)
+}
+
 impl Uint128 {
     const ZERO: Self = Self { lo: 0, hi: 0 };
     const ONE: Self = Self { lo: 1, hi: 0 };

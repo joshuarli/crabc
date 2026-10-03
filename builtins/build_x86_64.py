@@ -34,7 +34,7 @@ MEMBER_NAME = "crabc-builtins.o"
 REQUIRED_SYMBOLS = frozenset({
     "__floattixf", "__floatuntixf", "__fixxfti", "__fixunsxfti", "__mulxc3", "__divxc3",
     "__addoti4", "__ashlti3", "__ashrti3", "__bswapdi2", "__bswapsi2", "__bswapti2",
-    "__clzti2", "__ctzti2", "__divdc3", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3",
+    "__clzti2", "__ctzti2", "__divsc3", "__mulsc3", "__divdc3", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3",
     "__fixdfti", "__fixsfti", "__fixunsdfti", "__fixunssfti",
     "__floattidf", "__floattisf", "__floatuntidf", "__floatuntisf",
     "__modti3", "__muldc3", "__muloti4", "__multi3", "__parityti2", "__popcountdi2",
@@ -52,7 +52,7 @@ SHARED_LIBC_METADATA = {
 HELPER_ABIS = frozenset({
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
     "i128-to-binary80", "u128-to-binary80", "binary80-to-i128", "binary80-to-u128", "complex-binary80",
-    "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
+    "complex-float", "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",
 })

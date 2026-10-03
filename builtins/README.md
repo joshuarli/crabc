@@ -86,3 +86,9 @@ licenses, stack/register ABI, and numerical contract are recorded in
 `UPSTREAM.md`. `tests/test_x86_64_binary80.py` checks ordinary compiler-emitted
 calls in closed static/static-PIE images and a pinned-kernel numerical/fenv
 comparison; float-to-integer inputs remain within their defined C domain.
+
+The x86 float-complex compiler entries `__mulsc3` and `__divsc3` use a faithful
+Rust f32 port of the pinned LLVM kernels. Their C ABI takes separate XMM0-XMM3
+arguments and returns two packed binary32 components in XMM0.
+`tests/test_x86_64_float_complex.py` proves ordinary compiler-emitted archive
+consumption, complete provider origins and pinned numerical/fenv behavior.

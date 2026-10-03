@@ -171,3 +171,13 @@ binary80 recovery constants. As for eight- and sixteen-byte constants, a
 relocation must select one complete immutable source entry, and the final
 entry bytes must match the owned archive. The binary80 compiler-consumer test
 runs this exact code/constant/call-target join for static and static-PIE links.
+
+The float-complex entries `__mulsc3` and `__divsc3` have the exact
+`complex-float` role. Four f32 arguments occupy XMM0-XMM3; the real and imaginary
+result occupy the low and high binary32 words of XMM0 through `ComplexFloat`'s
+two-f32 C layout. These are public definitions in the same single archive
+member, with the same private shared-localization policy as other helpers.
+They perform source-faithful binary32 operations, including divisor scaling
+and IEEE recovery. The ordinary C fixture and aggregate register checker
+exercise this ABI; the numerical oracle checks result representations and
+exception flags under all four rounding modes.

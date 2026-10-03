@@ -51,7 +51,10 @@ SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
 ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
 CAST_PROBE = Path("builtins/fixtures/x86_64_int128_casts_probe.c")
 BINARY32_CAST_PROBE = Path("builtins/fixtures/x86_64_binary32_casts_probe.c")
-SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_divdc3") / name for name in
+SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_float_complex") / name for name in
+                  ("mulsc3.c", "divsc3.c", "LICENSE.TXT", "SHA256SUMS")),
+                Path("builtins/fixtures/x86_64_float_complex_probe.c"), Path("builtins/fixtures/x86_64_float_complex_differential.c"),
+                *(Path("builtins/fixtures/llvm22_divdc3") / name for name in
                   ("int_lib.h", "int_math.h", "int_types.h", "int_endianness.h", "int_util.h", "fp_lib.h", "divdc3.c", "LICENSE.TXT", "SHA256SUMS")),
                 Path("builtins/src/x86_64_binary80.S"), Path("builtins/generate_x86_64_binary80.py"),
                 Path("builtins/fixtures/x86_64_binary80_probe.c"), Path("builtins/fixtures/x86_64_binary80_differential.c"),
@@ -83,7 +86,7 @@ SHARED_LIBC_METADATA = {
 HELPER_ABIS = {
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
     "i128-to-binary80", "u128-to-binary80", "binary80-to-i128", "binary80-to-u128", "complex-binary80",
-    "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
+    "complex-float", "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",
 }

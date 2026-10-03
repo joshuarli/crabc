@@ -120,6 +120,10 @@ static int equal_complex(complex_double value, double real, double imaginary) {
 #undef signed_input
 #undef floating_input
 
+#define main crabc_x86_64_float_complex_probe
+#include "x86_64_float_complex_probe.c"
+#undef main
+
 #define main crabc_x86_64_binary80_probe
 #include "x86_64_binary80_probe.c"
 #undef main
@@ -161,6 +165,7 @@ int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     if (binary64_status != 0) return binary64_status;
     int binary32_status = crabc_x86_64_binary32_casts_probe();
     if (binary32_status != 0) return binary32_status;
+    if (crabc_x86_64_float_complex_probe()) return 37;
     return crabc_x86_64_binary80_probe();
 }
 
