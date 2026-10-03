@@ -165,3 +165,9 @@ integer register pairs, sixteen-byte argument slots, and ST0/ST1 returns.
 Finite representable float-to-integer operands are required. Pinned source
 kernels, a local musl math closure, licenses, and reproducible assembly
 translation are recorded in `UPSTREAM.md`.
+
+The complete-provider reader also admits four-byte merge entries emitted for
+binary80 recovery constants. As for eight- and sixteen-byte constants, a
+relocation must select one complete immutable source entry, and the final
+entry bytes must match the owned archive. The binary80 compiler-consumer test
+runs this exact code/constant/call-target join for static and static-PIE links.

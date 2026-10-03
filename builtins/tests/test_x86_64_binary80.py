@@ -31,11 +31,20 @@ class Binary80CompilerCalls(unittest.TestCase):
             lld = PINNED/'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld'
             for mode in ('static', 'pie'):
                 output = work/mode
+                map_path = work/(mode+'.map')
+                trace_path = work/(mode+'.trace')
                 result = subprocess.run([str(lld), '-static', *(['-pie'] if mode=='pie' else []),
-                                         '--no-dynamic-linker', '--no-undefined', '--gc-sections',
+                                         '--no-dynamic-linker', '--no-undefined', '--gc-sections', '-Map', str(map_path), '-t',
                                          str(work/'start.o'), str(obj), str(archive), '-o', str(output)], capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 subprocess.run([str(output)], check=True, capture_output=True)
+                trace_path.write_bytes(result.stdout)
+                import sys
+                sys.path.insert(0, str(ROOT/'compat/x86_64'))
+                import compiler_helper_evidence as evidence
+                observed = evidence._compiler_helper_transfers(root=ROOT, archive=archive, workload=obj,
+                    executable=output, map_path=map_path, trace_path=trace_path, names=sorted(HELPERS))
+                self.assertEqual(set(observed['transfers']), HELPERS)
 
     def test_pinned_kernels_match_defined_conversions_complex_results_and_fenv(self):
         import importlib.util

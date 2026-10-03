@@ -732,12 +732,14 @@ def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[
                             "compiler-helper provider branch resolves to foreign code")
                     visit(candidates[0])
                 else:
+                    # Binary80 recovery also uses binary32 infinity constants.
+                    # Each relocation must select the complete immutable entry.
                     entry = target_section[9]
                     source_offset = symbol["value"]
                     require(symbol["binding"] == "LOCAL" and symbol["visibility"] == "DEFAULT"
                             and symbol["type"] in {"0", "OBJECT"} and target_section[1] == 1
                             and target_section[2] & 2 and target_section[2] & 16
-                            and not target_section[2] & 5 and entry in {8, 16}
+                            and not target_section[2] & 5 and entry in {4, 8, 16}
                             and source_offset % entry == 0 and source_offset + entry <= target_section[5],
                             "compiler-helper provider constant is not a complete immutable source entry")
                     # LLD pools mergeable entries and omits their original
