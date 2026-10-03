@@ -92,10 +92,12 @@ Update this small section in place when the implementation frontier changes.
   this component result does not certify historical failure evidence or the full
   upstream corpus. Opt0 static application allocator replacement now links its
   original full-override object without extracting duplicate providers.
-  Optimized ordinary consumers cover resolver, process/thread/TLS, filesystem,
-  mappings, IPC, locale, stdio, math, crypt, callback algorithms, std and Lua.
-  These source-bound component results preserve excluded cases and receipt
-  eligibility failures; they do not establish complete family qualification.
+  One held-source snapshot, `6826b29ae`, passed the selected optimized ordinary
+  resolver, process/thread/TLS, filesystem, mapping, IPC, text/locale, stdio,
+  math, crypt, callback algorithm, header, std/LTO, unwind and Lua components
+  across its four owned products. Existing source-bound readers accepted their
+  admitted component scopes. Excluded cases remain unproved; these results do
+  not establish complete family qualification or transfer to newer source.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
@@ -103,8 +105,8 @@ Update this small section in place when the implementation frontier changes.
   through owned providers, but the member-only byte-closure reader still rejects
   relocated location data and lacks inputs for owned source-core/libc callees.
   That stronger debug closure remains unproved. The existing full 40-helper
-  byte-closure reader passes optimized ordinary links in the original release
-  preparation cohort; complete release qualification remains unclaimed.
+  byte-closure reader passed optimized ordinary links in the held `6826b29ae`
+  cohort; complete release qualification remains unclaimed.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
@@ -116,9 +118,11 @@ Update this small section in place when the implementation frontier changes.
   the inspected immutable image ID. Debug stdio producers and readers bind products
   to source content without admitting debug products for release qualification.
   Combined debug products require exact typed backend/audit configurations.
-  Four optimized static/dynamic C/native-shadow products are built from source
-  `a173e8c56`; ordinary consumer matrices are in progress against that immutable
-  cohort. Later source changes retain their own identities rather than relabeling it.
+  Four optimized static/dynamic C/native-shadow products from `6826b29ae`, their
+  exact source archive and tracked roster are retained in
+  `.work/x86_64/reports/cohort141/`. Independent package extraction/admission
+  passes for all four. Later changes retain new identities rather than relabeling
+  this completed component cohort.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
@@ -126,15 +130,29 @@ Update this small section in place when the implementation frontier changes.
   compilation now resolves transitive kernel declarations through owned headers;
   a real compiler regression rejects a missing owned header despite oracle access.
   Frozen ABI/header/coverage digests are unchanged.
+- **Static link inspection:** ordinary static links can retain local undefined
+  metadata after a weak address resolves to zero.
+  `owned_static_link_authority.static_undefined_bindings` admits named local
+  rows with zero value and size only in the regular symbol table; relocation
+  operands and dynamic symbol exposure still require bindings.
+  A normal strict LLD regression fails before the repair and passes afterwards,
+  while its retained-relocation counterpart stays required. Five focused tests
+  and nine merged compiler profiles pass. The four original `6826b29ae` static
+  cleanup images using stock std or std built from source passed unchanged with
+  the repaired reader; original rejected preflights remain retained. This is
+  component evidence.
 - **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
   settled lanes' original programs/source, raw failures and focused proofs before
   their worktrees are removed. Merged checks are in
-  `.work/x86_64/tmp/resume12*-merged-*.log` and `resume13*-merged-*.log`.
+  `.work/x86_64/tmp/resume12*-merged-*.log`, `resume13*-merged-*.log`, and
+  `resume14*-merged-*.log`.
   All settled lane worktrees have been removed. Existing allocator and hardware-policy
   reports remain available. Historical receipts are not transferred to current
   products; other projects' Docker state remains outside cleanup.
-- **On resume:** continue independent source and optimized consumer preparation;
-  keep only constrained investigations parked. Address actual allocator failures,
+- **On resume:** complete the remaining installed native-facade control, fat-LTO
+  and stock-std-fat components through the existing `lto-native-facade` gate;
+  continue independent source work and keep only constrained investigations
+  parked. Address actual allocator failures,
   then investigate performance
   on an uncontended host and qualify the final merged-source release cohort. Use
   existing runners and direct regressions; avoid new catalogs or proof layers.
