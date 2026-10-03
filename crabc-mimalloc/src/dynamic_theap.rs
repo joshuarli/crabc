@@ -76,7 +76,7 @@ extern crate std;
 
 use core::cell::Cell;
 use core::marker::{PhantomData, PhantomPinned};
-use core::mem::size_of;
+use core::mem::{size_of, MaybeUninit};
 use core::pin::Pin;
 use core::ptr::NonNull;
 
@@ -383,6 +383,23 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
     thread: crate::types::LiveThreadId,
     state: DynamicAttachmentState,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// Owns the initialized constructor image until its one result transfer.
+/// Dropping before that transfer preserves ordinary Rust field destruction;
+/// it does not perform source lifecycle teardown or discard retained state.
+struct DynamicAttachmentConstruction<'storage, 'heap> {
+    storage: Option<&'storage mut MaybeUninit<DynamicTheapAttachment<'heap>>>,
+}
+
+impl Drop for DynamicAttachmentConstruction<'_, '_> {
+    fn drop(&mut self) {
+        if let Some(storage) = self.storage.as_mut() {
+            // SAFETY: construction arms this guard only after every field is
+            // initialized. No result has taken the image while it is armed.
+            unsafe { storage.assume_init_drop() };
+        }
+    }
 }
 
 /// In-place, later-worker storage for one persistent source TLD/Theap pair.
@@ -1046,35 +1063,48 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         arena_allocation_allowed: bool, thread: LiveThreadId, roots: UnrelatedRoots,
         tld: DynamicAttachedThreadLocalData,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        let mut attachment = Self {
-            heap: Some(heap),
-            binding: None,
-            backing: None,
-            tld: Some(tld),
-            theap: None,
-            requested_arena,
-            roots,
-            cached_root_bound: false,
-            page_mode,
-            terminal_os_release: None,
-            arena_pages: None,
-            thread,
-            state: DynamicAttachmentState::Preparing,
-            _not_send_or_sync: PhantomData,
+        let mut storage = MaybeUninit::<Self>::uninit();
+        let owner = storage.as_mut_ptr();
+        // SAFETY: storage is fresh and aligned for this exact owner, with no
+        // initialized fields or aliases. These writes cover every field; none
+        // invokes source publication or a fallible operation.
+        unsafe {
+            core::ptr::addr_of_mut!((*owner).heap).write(Some(heap));
+            core::ptr::addr_of_mut!((*owner).binding).write(None);
+            core::ptr::addr_of_mut!((*owner).backing).write(None);
+            core::ptr::addr_of_mut!((*owner).tld).write(Some(tld));
+            core::ptr::addr_of_mut!((*owner).theap).write(None);
+            core::ptr::addr_of_mut!((*owner).requested_arena).write(requested_arena);
+            core::ptr::addr_of_mut!((*owner).roots).write(roots);
+            core::ptr::addr_of_mut!((*owner).cached_root_bound).write(false);
+            core::ptr::addr_of_mut!((*owner).page_mode).write(page_mode);
+            core::ptr::addr_of_mut!((*owner).terminal_os_release).write(None);
+            core::ptr::addr_of_mut!((*owner).arena_pages).write(None);
+            core::ptr::addr_of_mut!((*owner).thread).write(thread);
+            core::ptr::addr_of_mut!((*owner).state).write(DynamicAttachmentState::Preparing);
+            core::ptr::addr_of_mut!((*owner)._not_send_or_sync).write(PhantomData);
+        }
+        let mut construction = DynamicAttachmentConstruction {
+            storage: Some(&mut storage),
         };
-
+        // SAFETY: the armed construction guard retains the fully initialized
+        // local image and its exclusive input owners through publication.
+        let attachment = unsafe { construction.storage.as_mut().unwrap().assume_init_mut() };
         match attachment.allocate_and_publish_theap(
             config, subprocess, metadata, registry, arena_allocation_allowed,
         ) {
             Ok(()) => {
                 attachment.state = DynamicAttachmentState::Attached;
-                Ok(attachment)
+                let storage = construction.storage.take().unwrap();
+                // SAFETY: this is the image's sole move. The disarmed guard
+                // and uninitialized storage cannot destroy the moved fields.
+                Ok(unsafe { storage.assume_init_read() })
             }
             Err(DynamicTheapPublicationError::Rejected(error)) => {
                 Self::rejected_begin_result(error)
             }
             Err(DynamicTheapPublicationError::Retained(error)) => {
-                attachment.into_retained_begin_result(error)
+                Self::retained_begin_result_at(&mut construction, error)
             }
         }
     }
@@ -2133,18 +2163,28 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         Err(DynamicTheapBeginError::Rejected(error))
     }
 
-    /// Transfers the retained owner directly into the final failure result.
-    /// Returning the nested error first would reserve another complete owner
-    /// image in the publication frame even when attachment succeeds.
+    /// Transfers the retained constructor image into its final failure result.
+    /// Borrowing its construction guard avoids an attachment-sized argument
+    /// copy in the publication frame. The helper consumes that image once.
     #[cold]
     #[inline(never)]
-    fn into_retained_begin_result(
-        mut self, error: DynamicTheapError,
+    fn retained_begin_result_at(
+        construction: &mut DynamicAttachmentConstruction<'_, 'heap>,
+        error: DynamicTheapError,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        if self.state != DynamicAttachmentState::AwaitingKeyRelease {
-            self.state = DynamicAttachmentState::Poisoned;
+        // SAFETY: only the armed constructor calls this helper, after its
+        // publication borrow ends and before any image transfer.
+        let attachment = unsafe { construction.storage.as_mut().unwrap().assume_init_mut() };
+        if attachment.state != DynamicAttachmentState::AwaitingKeyRelease {
+            attachment.state = DynamicAttachmentState::Poisoned;
         }
-        Err(DynamicTheapBeginError::Retained { error, attachment: self })
+        let storage = construction.storage.take().unwrap();
+        Err(DynamicTheapBeginError::Retained {
+            error,
+            // SAFETY: this is the initialized image's sole ownership transfer;
+            // its disarmed construction guard cannot destroy the moved fields.
+            attachment: unsafe { storage.assume_init_read() },
+        })
     }
 
     #[inline]
@@ -23940,6 +23980,7 @@ mod tests {
             ));
             assert_eq!(subprocess.total_thread_count(), 2);
             assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(registry.test_live_lease_count(), 0);
             assert_eq!(
                 metadata.test_allocation_audit().live_capability_count,
                 0,
@@ -23973,6 +24014,7 @@ mod tests {
             ));
             assert_eq!(subprocess.total_thread_count(), 3);
             assert_eq!(subprocess.live_thread_count(), 0);
+            assert_eq!(registry.test_live_lease_count(), 0);
             let after_theap_failure = metadata.test_allocation_audit();
             assert_eq!(after_theap_failure.live_capability_count, 1);
             assert_eq!(after_theap_failure.high_water_capability_count, 2);
