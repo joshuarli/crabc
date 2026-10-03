@@ -4619,7 +4619,10 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Result<PendingChildThreadInitialization, ChildThreadStartFailure> {
         // SAFETY: this candidate uses the same exact allocation and
         // registration route while the caller owns the child operation.
-        let mut owner = unsafe { self.allocate_child_thread_owner(binding) }?;
+        let mut owner = match unsafe { self.allocate_child_thread_owner(binding) } {
+            Ok(owner) => owner,
+            Err(failure) => return Err(failure),
+        };
         let theap = owner.theap.as_ref().expect("stored child Theap block").pointer.cast::<Theap>();
         let tld = owner.tld.as_ref().expect("stored child TLD block").pointer.cast::<ThreadLocalData>();
         // SAFETY: this owner retains the original allocated blocks and
@@ -4669,12 +4672,14 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 ChildThreadStartError::InvalidTransition,
             ));
         }
-        let thread = crate::compiler_tls::current_thread_identity().ok_or_else(|| {
-            ChildThreadStartFailure::Rejected(ChildThreadStartError::CurrentThread)
-        })?;
-        let numa = i32::try_from(crate::os::numa_node()).map_err(|_| {
-            ChildThreadStartFailure::Rejected(ChildThreadStartError::NumaNode)
-        })?;
+        let thread = match crate::compiler_tls::current_thread_identity() {
+            Some(thread) => thread,
+            None => return Err(ChildThreadStartFailure::Rejected(ChildThreadStartError::CurrentThread)),
+        };
+        let numa = match i32::try_from(crate::os::numa_node()) {
+            Ok(numa) => numa,
+            Err(_) => return Err(ChildThreadStartFailure::Rejected(ChildThreadStartError::NumaNode)),
+        };
         let (Some(heap), Some(image)) = (
             self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity),
             self.context.with_image(|child| NonNull::from(child.get_ref())),

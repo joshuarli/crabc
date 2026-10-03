@@ -1545,7 +1545,7 @@ unsafe fn add_native_child_thread_source(
             in_other_subprocess: !subprocess.is_null() && subprocess != identity,
         }), None));
     }
-    unsafe { with_native_child_initialization_scope(id, heap, |scope| {
+    let scoped = unsafe { with_native_child_initialization_scope(id, heap, |scope| {
         let mut prepared = None;
         let entered = unsafe { id.with_owner(|owner| {
             if let Some(child) = owner.as_mut() {
@@ -1622,7 +1622,11 @@ unsafe fn add_native_child_thread_source(
         });
         debug_assert!(counted.is_some(), "an attached child owner projects its image");
         Ok((Ok(ChildThreadAddOutcome::Added(ChildThreadMember { owner })), token))
-    }) }?
+    }) };
+    match scoped {
+        Ok(outcome) => outcome,
+        Err(error) => Err(error),
+    }
 }
 
 /// Production `mi_subproc_add_current_thread` for a child from
@@ -1649,7 +1653,10 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
     // SAFETY: forwarded id and current-thread obligations; the record lock
     // excludes every other operation on the child context.
     #[cfg(target_arch = "x86_64")]
-    let (outcome, record_member) = unsafe { add_native_child_thread_source(id, binding) }?;
+    let (outcome, record_member) = match unsafe { add_native_child_thread_source(id, binding) } {
+        Ok(outcome) => outcome,
+        Err(error) => return Err(error),
+    };
     #[cfg(not(target_arch = "x86_64"))]
     let (outcome, record_member) = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
