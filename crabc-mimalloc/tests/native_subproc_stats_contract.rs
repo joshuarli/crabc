@@ -28,14 +28,26 @@ struct StatisticsImage {
     pages: Count,
     reserved: Count,
     committed: Count,
-    remaining: [i64; 535],
+    reset: i64,
+    purged: i64,
+    page_committed: Count,
+    pages_abandoned: Count,
+    threads: Count,
+    malloc_normal: Count,
+    malloc_huge: Count,
+    malloc_requested: Count,
+    remaining: [i64; 515],
 }
 
 impl StatisticsImage {
     fn new() -> Self {
         Self { size: core::mem::size_of::<Self>(), version: 5,
                pages: Count::default(), reserved: Count::default(),
-               committed: Count::default(), remaining: [0; 535] }
+               committed: Count::default(), reset: 0, purged: 0,
+               page_committed: Count::default(), pages_abandoned: Count::default(),
+               threads: Count::default(), malloc_normal: Count::default(),
+               malloc_huge: Count::default(), malloc_requested: Count::default(),
+               remaining: [0; 515] }
     }
 }
 
@@ -108,17 +120,35 @@ fn current_subprocess_statistics_include_its_live_page() {
             let nested_address = nested as usize;
             // The parent keeps the nested identity live through join and
             // client release; the new thread registers before attachment.
-            let nested_client = std::thread::spawn(move || {
+            let (nested_client, nested_owned_image) = std::thread::spawn(move || {
                 assert!(register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor()));
                 let nested = nested_address as *mut c_void;
                 assert_eq!(heaps::subproc_add_current_thread(nested), heaps::SubprocAddCurrentThread::Added);
                 let block = api::malloc(128).value.unwrap();
+                let mut owned_image = StatisticsImage::new();
+                assert!(options::stats_get((&mut owned_image as *mut StatisticsImage).cast()));
                 assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
-                block.as_ptr() as usize
+                (block.as_ptr() as usize, owned_image)
             }).join().unwrap();
             let mut nested_image = StatisticsImage::new();
             assert!(options::subproc_stats_get(nested, (&mut nested_image as *mut StatisticsImage).cast()));
             assert!(nested_image.committed.total > 0);
+            // A foreign child main-Heap getter follows the caller's shared
+            // fast TLS slot. Allocation totals therefore use the image taken
+            // by the nested member while its own main Theap was selected.
+            if cfg!(feature = "mi-stat-1") {
+                assert!(nested_owned_image.malloc_normal.total >= 128);
+            } else {
+                assert_eq!(nested_owned_image.malloc_normal, Count::default());
+            }
+            if cfg!(feature = "mi-stat-2") {
+                assert!(nested_owned_image.malloc_requested.total >= 128);
+            } else {
+                assert_eq!(nested_owned_image.malloc_requested, Count::default());
+            }
+            let mut nested_repeated = StatisticsImage::new();
+            assert!(options::subproc_stats_get(nested, (&mut nested_repeated as *mut StatisticsImage).cast()));
+            assert_eq!(nested_repeated, nested_image, "an exited child's repeated aggregation is stable");
             let mut root_before = StatisticsImage::new();
             assert!(options::subproc_stats_get_exclusive(heaps::subproc_main(), (&mut root_before as *mut StatisticsImage).cast()));
             assert_eq!(api::free(nested_client as *mut u8), api::FreeOutcome::Freed);
@@ -128,6 +158,12 @@ fn current_subprocess_statistics_include_its_live_page() {
             // Nested metadata belongs to its parent Heap, but destroyed
             // subprocess statistics always accumulate in process main.
             assert!(root_after.committed.total >= root_before.committed.total + nested_image.committed.total);
+            assert!(
+                root_after.malloc_normal.total >= root_before.malloc_normal.total + nested_owned_image.malloc_normal.total,
+                "root before={} after={} nested={}",
+                root_before.malloc_normal.total, root_after.malloc_normal.total, nested_owned_image.malloc_normal.total,
+            );
+            assert!(root_after.malloc_requested.total >= root_before.malloc_requested.total + nested_owned_image.malloc_requested.total);
             assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
             (client.as_ptr() as usize, pages)
         }
