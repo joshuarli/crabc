@@ -2214,6 +2214,11 @@ pub(crate) struct ChildThreadOwner {
     /// `mi_thread_locals_expand` does with `_mi_subproc()`, and installed in
     /// the compiler-TLS dynamic root.
     thread_locals: Option<ChildMetadataImageBlock>,
+    // A failed growth retains the copied unpublished allocation alongside
+    // any old array whose release refused before consumption. Neither is
+    // active compiler-TLS storage after the thread owner becomes terminal.
+    #[cfg(target_arch = "x86_64")]
+    pending_thread_locals: Option<ChildMetadataImageBlock>,
     /// The one retained raw-unmap retry of this thread's Theaps for non-main
     /// Heaps, with the Theap whose engine it latched `RetryPending` (`None`
     /// once that Theap is freed); see [`ChildHeapTheapImage`].
@@ -2807,15 +2812,222 @@ impl ChildThreadOwner {
         self.tld.as_ref().map(|block| block.pointer.cast())
     }
 
+    /// Retained terminal arrays carry release custody, never active slot
+    /// projection authority. This check precedes every safe regular-slot read.
+    #[cfg(target_arch = "x86_64")]
+    fn active_thread_local_backing(
+        storage: &Option<ChildMetadataImageBlock>,
+        state: ChildThreadOwnerState,
+    ) -> Option<&ChildMetadataImageBlock> {
+        (state == ChildThreadOwnerState::Attached).then(|| storage.as_ref()).flatten()
+    }
+
     /// `_mi_thread_local_get` for a regular key (`threadlocal.c:169-190`).
     fn thread_local_get(&self, key: crate::thread_local::ThreadLocalKey) -> *mut () {
-        let Some(block) = self.thread_locals.as_ref() else { return core::ptr::null_mut() };
+        #[cfg(target_arch = "x86_64")]
+        let block = Self::active_thread_local_backing(&self.thread_locals, self.state);
+        #[cfg(not(target_arch = "x86_64"))]
+        let block = self.thread_locals.as_ref();
+        let Some(block) = block else { return core::ptr::null_mut() };
         // SAFETY: this owner retains the exact slot image it installed, and
         // only this thread uses it.
         let slots = unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut() };
         crate::thread_local::ThreadLocalSlots::new(slots).get(key)
     }
 
+    /// A failed slot operation retains allocation custody and withdraws the
+    /// regular, fast and cached compiler-TLS roots. Terminal state refuses
+    /// engine projection; the TLD's owned cached reference stays retained.
+    #[cfg(target_arch = "x86_64")]
+    fn poison_thread_local_owner(state: &mut ChildThreadOwnerState) {
+        *state = ChildThreadOwnerState::Terminal;
+        crate::compiler_tls::clear_dynamic_backing();
+        crate::compiler_tls::set_fast_slot(None);
+        crate::compiler_tls::set_cached_theap(NonNull::from(crate::bootstrap::empty_default_theap()));
+    }
+
+    /// Settle client ownership inside the free closure, before engine finish
+    /// can fail. Consumed storage is never an initialized live array again.
+    /// Refusal retains its exact allocation only under terminal owner custody.
+    #[cfg(target_arch = "x86_64")]
+    fn observe_thread_local_release(
+        storage: &mut Option<ChildMetadataImageBlock>,
+        state: &mut ChildThreadOwnerState,
+        progress: crate::single_thread::LocalClientFreeProgress,
+        thread_done: bool,
+    ) {
+        use crate::single_thread::LocalClientFreeProgress as Progress;
+        if matches!(progress, Progress::Consumed(_)) {
+            *storage = None;
+            crate::compiler_tls::clear_dynamic_backing();
+            if thread_done { crate::compiler_tls::set_fast_slot(None); }
+        }
+        if !matches!(progress, Progress::Consumed(Ok(()))) {
+            Self::poison_thread_local_owner(state);
+        }
+    }
+
+    /// Publication waits for successful source release and engine finish.
+    /// Failure retains the unpublished copied replacement; the old token is
+    /// retained only when its precise release never consumed it.
+    #[cfg(target_arch = "x86_64")]
+    fn complete_thread_local_growth(
+        storage: &mut Option<ChildMetadataImageBlock>,
+        pending: &mut Option<ChildMetadataImageBlock>,
+        state: &mut ChildThreadOwnerState,
+        replacement: Option<ChildMetadataImageBlock>,
+        progress: Option<crate::single_thread::LocalClientFreeProgress>,
+        finished: Result<(), ChildMetadataPageEngineError>,
+    ) -> Result<(), ChildHeapTheapError> {
+        use crate::single_thread::LocalClientFreeProgress as Progress;
+        if let Some(progress) = progress {
+            Self::observe_thread_local_release(storage, state, progress, false);
+        }
+        let result = match finished {
+            Err(error) => Err(ChildHeapTheapError::PageEngine(error)),
+            Ok(()) => match progress {
+                Some(Progress::RefusedBeforeConsumption(error) | Progress::Consumed(Err(error))) => {
+                    Err(ChildHeapTheapError::Metadata(error))
+                }
+                _ => Ok(()),
+            },
+        };
+        if let Err(error) = result {
+            debug_assert!(pending.is_none());
+            *pending = replacement;
+            Self::poison_thread_local_owner(state);
+            return Err(error);
+        }
+        let Some(block) = replacement else {
+            if progress.is_some() { Self::poison_thread_local_owner(state); }
+            return Err(ChildHeapTheapError::ThreadLocals);
+        };
+        crate::compiler_tls::install_dynamic_backing(block.pointer.cast());
+        *storage = Some(block);
+        Ok(())
+    }
+
+    /// Source thread-done removes regular and fast roots when consumption is
+    /// observed, even when subsequent local lifecycle or finish reports fail.
+    #[cfg(target_arch = "x86_64")]
+    fn complete_thread_local_release(
+        storage: &mut Option<ChildMetadataImageBlock>,
+        state: &mut ChildThreadOwnerState,
+        progress: Option<crate::single_thread::LocalClientFreeProgress>,
+        finished: Result<(), ChildMetadataPageEngineError>,
+    ) -> Result<(), ChildHeapTheapError> {
+        use crate::single_thread::LocalClientFreeProgress as Progress;
+        if let Some(progress) = progress {
+            Self::observe_thread_local_release(storage, state, progress, true);
+        }
+        let result = match finished {
+            Err(error) => Err(ChildHeapTheapError::PageEngine(error)),
+            Ok(()) => match progress {
+                Some(Progress::Consumed(Ok(()))) => Ok(()),
+                Some(Progress::RefusedBeforeConsumption(error) | Progress::Consumed(Err(error))) => {
+                    Err(ChildHeapTheapError::Metadata(error))
+                }
+                None => Err(ChildHeapTheapError::InvalidTransition),
+            },
+        };
+        if result.is_err() { Self::poison_thread_local_owner(state); }
+        result
+    }
+
+    /// Source regular-slot growth: zero a fresh metadata image, copy the old
+    /// slots, free the old array, then publish the new count and backing.
+    ///
+    /// # Safety
+    /// This runs exclusively on this owner's attached thread; `child` is its
+    /// context and retains the source detached metadata engine and backing.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn thread_local_set(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        key: crate::thread_local::ThreadLocalKey,
+        value: *mut (),
+    ) -> Result<(), ChildHeapTheapError> {
+        if self.state != ChildThreadOwnerState::Attached || self.pending_thread_locals.is_some() {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
+        let count = self.thread_locals.as_ref().map_or(0, |block| {
+            // SAFETY: this thread retains the initialized slot image.
+            unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).count() }
+        });
+        let index = key.index().get();
+        if index >= count {
+            if value.is_null() { return Ok(()); }
+            let new_count = crate::thread_local::expanded_slot_count(count, index)
+                .map_err(|_| ChildHeapTheapError::ThreadLocals)?;
+            let size = DynamicThreadLocalBacking::allocation_size(new_count)
+                .ok_or(ChildHeapTheapError::ThreadLocals)?;
+            let old = self.thread_locals.as_ref().map(|block| block.pointer);
+            let mut grown = None;
+            let mut progress = None;
+            let finished = child.with_metadata_page_engine(binding, |_child, engine| {
+                let Some(block) = engine.allocate_zeroed(size) else { return };
+                let image = block.cast::<DynamicThreadLocalBacking>().as_ptr();
+                // SAFETY: fresh zeroed flexible storage and the exact live
+                // old array contain `count` initialized slots until release.
+                unsafe {
+                    (*image).initialize_owned_header(MemoryId::malloc(block.as_ptr(), size, true), new_count);
+                    if let Some(old) = old {
+                        core::ptr::copy_nonoverlapping(
+                            (*old.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut().as_ptr(),
+                            (*image).slots_mut().as_mut_ptr(), count,
+                        );
+                    }
+                }
+                grown = Some(ChildMetadataImageBlock { pointer: block, size });
+                if let Some(old) = old {
+                    // SAFETY: the exact old array is no longer projected.
+                    let observed = unsafe { engine.free_with_progress(old) };
+                    Self::observe_thread_local_release(&mut self.thread_locals, &mut self.state, observed, false);
+                    progress = Some(observed);
+                }
+            });
+            Self::complete_thread_local_growth(&mut self.thread_locals, &mut self.pending_thread_locals,
+                &mut self.state, grown, progress, finished)?;
+        }
+        let block = self.thread_locals.as_ref().ok_or(ChildHeapTheapError::ThreadLocals)?;
+        // SAFETY: the retained newly sized array is owned by this thread.
+        let slots = unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut() };
+        crate::thread_local::ThreadLocalSlots::new(slots).set(key, value)
+            .map_err(|_| ChildHeapTheapError::ThreadLocals)
+    }
+
+    /// Frees regular dynamic storage before source thread-done clears the
+    /// independent fast slot. Consumption and engine completion are observed
+    /// separately so completion cannot revive a consumed array.
+    ///
+    /// # Safety
+    /// This is the attached owner's finishing thread and exact context. No
+    /// slot image, value or compiler-TLS projection spans the source free.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn free_thread_locals(
+        &mut self,
+        child: &mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<(), ChildHeapTheapError> {
+        if self.state != ChildThreadOwnerState::Attached || self.pending_thread_locals.is_some() {
+            return Err(ChildHeapTheapError::InvalidTransition);
+        }
+        let Some(block) = self.thread_locals.as_ref().map(|block| block.pointer) else {
+            crate::compiler_tls::set_fast_slot(None);
+            return Ok(());
+        };
+        let mut progress = None;
+        let finished = child.with_metadata_page_engine(binding, |_child, engine| {
+            // SAFETY: this exact live array has no remaining slot users.
+            let observed = unsafe { engine.free_with_progress(block) };
+            Self::observe_thread_local_release(&mut self.thread_locals, &mut self.state, observed, true);
+            progress = Some(observed);
+        });
+        Self::complete_thread_local_release(&mut self.thread_locals, &mut self.state, progress, finished)
+    }
+
+    /// Historical non-x86 slot growth with unclassified release errors.
     /// `_mi_thread_local_set` for a regular key (`threadlocal.c:103-166`):
     /// a slot beyond the array grows it (`mi_thread_locals_expand`, 16 slots
     /// first, then doubling) with a fresh zeroed child metadata block, the
@@ -2823,6 +3035,7 @@ impl ChildThreadOwner {
     ///
     /// # Safety
     /// This runs on this owner's thread; `child` is its context.
+    #[cfg(not(target_arch = "x86_64"))]
     unsafe fn thread_local_set(
         &mut self,
         child: &mut ChildMainHeapContextOwner<'_>,
@@ -2880,11 +3093,13 @@ impl ChildThreadOwner {
             .map_err(|_| ChildHeapTheapError::ThreadLocals)
     }
 
+    /// Historical non-x86 slot release with unclassified errors.
     /// `_mi_thread_locals_thread_done` (`threadlocal.c:192-202`): free the
     /// slot array and clear the compiler-TLS root.
     ///
     /// # Safety
     /// As for [`Self::thread_local_set`]; no slot is used again.
+    #[cfg(not(target_arch = "x86_64"))]
     unsafe fn free_thread_locals(
         &mut self,
         child: &mut ChildMainHeapContextOwner<'_>,
@@ -3551,6 +3766,8 @@ impl ChildThreadOwner {
     /// first regular slot is set).
     #[cfg(test)]
     pub(crate) fn test_thread_local_count(&self) -> usize {
+        #[cfg(target_arch = "x86_64")]
+        if self.state != ChildThreadOwnerState::Attached { return 0; }
         self.thread_locals.as_ref().map_or(0, |block| {
             // SAFETY: the retained slot image.
             unsafe { (*block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).count() }
@@ -4476,6 +4693,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             pending_live_page_validity: None,
             page_engine: ChildPageEngineState::Active,
             thread_locals: None,
+            #[cfg(target_arch = "x86_64")]
+            pending_thread_locals: None,
             heap_theap_pending_os_release: None,
             heap_theap_pending_fresh_initialization: None,
             heap_theap_pending_live_page_validity: None,
@@ -7564,6 +7783,202 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[cfg(target_arch = "x86_64")]
+    fn child_tls_array_fixture(
+        allocator: Pin<&'static MetaAllocator>,
+        count: usize,
+    ) -> (ChildMetadataImageBlock, MetaAllocation<'static>) {
+        let size = DynamicThreadLocalBacking::allocation_size(count).unwrap();
+        let mut allocation = allocator.zalloc(config(), size).unwrap();
+        let pointer = allocation.pointer();
+        let memory = allocation.memory_id();
+        // SAFETY: the exact direct-zeroed metadata capability validates the
+        // complete flexible request and retains it through its final release.
+        unsafe { allocation.dynamic_thread_local_backing_mut(count).unwrap()
+            .initialize_owned_header(memory, count) };
+        (ChildMetadataImageBlock { pointer, size }, allocation)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn child_thread_local_consumption_survives_release_and_completion_errors() {
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::child_thread_local_consumption_survives_release_and_completion_errors", || {
+                for growth in [false, true] {
+                    for completion_error in [false, true] {
+                        let allocator = static_allocator();
+                        let (old, old_allocation) = child_tls_array_fixture(allocator, 16);
+                        let old_pointer = old.pointer;
+                        let replacement_pair = growth.then(|| child_tls_array_fixture(allocator, 32));
+                        let (replacement, mut replacement_allocation) = match replacement_pair {
+                            Some((block, allocation)) => (Some(block), Some(allocation)),
+                            None => (None, None),
+                        };
+                        let replacement_pointer = replacement.as_ref().map(|block| block.pointer);
+                        let mut storage = Some(old);
+                        let mut pending = None;
+                        let mut state = ChildThreadOwnerState::Attached;
+                        crate::compiler_tls::install_dynamic_backing(old_pointer.cast());
+                        let mut fast = 17usize;
+                        crate::compiler_tls::set_fast_slot(Some(NonNull::from(&mut fast).cast()));
+                        let mut mapping = crate::os::Mapping::map_for_allocator(config(), 4096, crate::os::MapAccess::Committed).unwrap();
+                        let injection = fault::install(fault::Plan::disabled());
+                        // SAFETY: the installed array is exclusively owned,
+                        // no slot projection survives, and this consumes it once.
+                        assert!(MetaRelease::Malloc(old_allocation).release().is_ok());
+                        assert_eq!(allocator.test_allocation_audit().live_capability_count, usize::from(growth));
+                        injection.set(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                        assert_eq!(mapping.unmap(), Err(crabc_core::Errno::NOMEM));
+                        let (progress, finished) = if completion_error {
+                            (Progress::Consumed(Ok(())), Err(ChildMetadataPageEngineError::EngineRetained))
+                        } else {
+                            (Progress::Consumed(Err(FreeError::Lifecycle)), Ok(()))
+                        };
+                        let result = if growth {
+                            ChildThreadOwner::complete_thread_local_growth(&mut storage, &mut pending,
+                                &mut state, replacement, Some(progress), finished)
+                        } else {
+                            ChildThreadOwner::complete_thread_local_release(&mut storage, &mut state,
+                                Some(progress), finished)
+                        };
+                        assert!(result.is_err());
+                        assert!(storage.is_none(), "consumption never retains the old array as live");
+                        assert!(crate::compiler_tls::dynamic_backing_peek().is_none());
+                        assert!(crate::compiler_tls::fast_slot_peek().is_none());
+                        assert_eq!(state, ChildThreadOwnerState::Terminal);
+                        assert!(ChildThreadOwner::active_thread_local_backing(&storage, state).is_none());
+                        assert_eq!(pending.as_ref().map(|block| block.pointer), replacement_pointer);
+                        injection.set(fault::Plan::disabled());
+                        mapping.unmap().unwrap();
+                        if let Some(block) = pending.take() {
+                            // SAFETY: terminal custody retained this unpublished
+                            // replacement live; the consumed old array is absent.
+                            assert_eq!(replacement_allocation.as_ref().unwrap().pointer(), block.pointer);
+                            assert!(MetaRelease::Malloc(replacement_allocation.take().unwrap()).release().is_ok());
+                        }
+                        assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+                    }
+                }
+            });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn child_thread_local_refusal_retains_exact_arrays_in_terminal_custody() {
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::child_thread_local_refusal_retains_exact_arrays_in_terminal_custody", || {
+                for growth in [false, true] {
+                    let allocator = static_allocator();
+                    let (old, old_allocation) = child_tls_array_fixture(allocator, 16);
+                    let original = old.pointer;
+                    let replacement_pair = growth.then(|| child_tls_array_fixture(allocator, 32));
+                        let (replacement, mut replacement_allocation) = match replacement_pair {
+                            Some((block, allocation)) => (Some(block), Some(allocation)),
+                            None => (None, None),
+                        };
+                    let replacement_pointer = replacement.as_ref().map(|block| block.pointer);
+                    let mut storage = Some(old);
+                    let mut pending = None;
+                    let mut state = ChildThreadOwnerState::Attached;
+                    crate::compiler_tls::install_dynamic_backing(original.cast());
+                    let mut fast = 19usize;
+                    crate::compiler_tls::set_fast_slot(Some(NonNull::from(&mut fast).cast()));
+                    let mut mapping = crate::os::Mapping::map_for_allocator(config(), 4096, crate::os::MapAccess::Committed).unwrap();
+                    let injection = fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                    assert_eq!(mapping.unmap(), Err(crabc_core::Errno::NOMEM));
+                    let entry = allocator.enter().unwrap();
+                    let failure = MetaRelease::Malloc(old_allocation).release().unwrap_err();
+                    let MetaReleaseFailure::MallocRetryable { error, allocation } = failure else {
+                        panic!("recursive owner entry must refuse before array consumption");
+                    };
+                    assert_eq!(error, MetaError::RecursiveEntry);
+                    drop(entry);
+                    let old_allocation = allocation;
+                    let progress = Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
+                    let result = if growth {
+                        ChildThreadOwner::complete_thread_local_growth(&mut storage, &mut pending,
+                            &mut state, replacement, Some(progress), Ok(()))
+                    } else {
+                        ChildThreadOwner::complete_thread_local_release(&mut storage, &mut state,
+                            Some(progress), Ok(()))
+                    };
+                    assert!(result.is_err());
+                    assert_eq!(storage.as_ref().map(|block| block.pointer), Some(original));
+                    assert_eq!(pending.as_ref().map(|block| block.pointer), replacement_pointer);
+                    assert_eq!(allocator.test_allocation_audit().live_capability_count, 1 + usize::from(growth));
+                    assert_eq!(state, ChildThreadOwnerState::Terminal);
+                    assert!(ChildThreadOwner::active_thread_local_backing(&storage, state).is_none());
+                    assert!(crate::compiler_tls::dynamic_backing_peek().is_none());
+                    assert!(crate::compiler_tls::fast_slot_peek().is_none());
+                    injection.set(fault::Plan::disabled());
+                    mapping.unmap().unwrap();
+                    assert_eq!(storage.take().unwrap().pointer, old_allocation.pointer());
+                    assert!(MetaRelease::Malloc(old_allocation).release().is_ok());
+                    if let Some(block) = pending.take() {
+                        assert_eq!(block.pointer, replacement_allocation.as_ref().unwrap().pointer());
+                        assert!(MetaRelease::Malloc(replacement_allocation.take().unwrap()).release().is_ok());
+                    }
+                    assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+                }
+            });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn child_thread_local_growth_preserves_copied_slots_and_independent_fast_slot() {
+        use crate::single_thread::LocalClientFreeProgress as Progress;
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::child_thread_local_growth_preserves_copied_slots_and_independent_fast_slot", || {
+                let allocator = static_allocator();
+                let (old, old_allocation) = child_tls_array_fixture(allocator, 16);
+                let (replacement, replacement_allocation) = child_tls_array_fixture(allocator, 32);
+                let key = crate::thread_local::ThreadLocalKey::from_parts(
+                    crate::thread_local::ThreadLocalSlotIndex::new(7).unwrap(), 11,
+                ).unwrap();
+                let mut value = 31usize;
+                let value = core::ptr::from_mut(&mut value).cast();
+                // SAFETY: both exact flexible arrays are live and exclusive.
+                unsafe {
+                    let old_slots = (*old.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut();
+                    crate::thread_local::ThreadLocalSlots::new(old_slots).set(key, value).unwrap();
+                    core::ptr::copy_nonoverlapping(old_slots.as_ptr(),
+                        (*replacement.pointer.cast::<DynamicThreadLocalBacking>().as_ptr()).slots_mut().as_mut_ptr(), 16);
+                }
+                crate::compiler_tls::install_dynamic_backing(old.pointer.cast());
+                let mut fast = 23usize;
+                let fast = NonNull::from(&mut fast).cast();
+                crate::compiler_tls::set_fast_slot(Some(fast));
+                let mut storage = Some(old);
+                let mut pending = None;
+                let mut state = ChildThreadOwnerState::Attached;
+                // SAFETY: no slot projection spans the old array's sole free.
+                assert!(MetaRelease::Malloc(old_allocation).release().is_ok());
+                ChildThreadOwner::complete_thread_local_growth(&mut storage, &mut pending, &mut state,
+                    Some(replacement), Some(Progress::Consumed(Ok(()))), Ok(())).unwrap();
+                let block = storage.as_ref().unwrap();
+                assert_eq!(crate::compiler_tls::dynamic_backing_peek(), Some(block.pointer.cast()));
+                assert_eq!(crate::compiler_tls::fast_slot_peek(), Some(fast));
+                assert_eq!(state, ChildThreadOwnerState::Attached);
+                assert_eq!(ChildThreadOwner::active_thread_local_backing(&storage, state).map(|block| block.pointer), Some(block.pointer));
+                assert!(pending.is_none());
+                // SAFETY: successful publication retains the initialized new
+                // array; only this fixture reads its copied source slots.
+                let backing = unsafe { &mut *block.pointer.cast::<DynamicThreadLocalBacking>().as_ptr() };
+                assert_eq!(backing.count(), 32);
+                assert_eq!(crate::thread_local::ThreadLocalSlots::new(unsafe { backing.slots_mut() }).get(key), value);
+                // SAFETY: the published replacement is freed exactly once.
+                assert!(MetaRelease::Malloc(replacement_allocation).release().is_ok());
+                ChildThreadOwner::complete_thread_local_release(&mut storage, &mut state,
+                    Some(Progress::Consumed(Ok(()))), Ok(())).unwrap();
+                assert!(storage.is_none());
+                assert!(crate::compiler_tls::dynamic_backing_peek().is_none());
+                assert!(crate::compiler_tls::fast_slot_peek().is_none());
+                assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+            });
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
