@@ -665,6 +665,29 @@ mod tests {
     }
 
     #[test]
+    fn rejected_metadata_owner_preserves_live_key_and_original_release_owner() {
+        let (registry, metadata, subprocess) = fixture();
+        let mut lease = registry.test_claim_selected(config(), subprocess, metadata)
+            .expect("the first claim binds its exact metadata owner");
+        let before = registry.test_state();
+        let foreign_metadata = MetaAllocator::test_static_owner();
+        assert!(matches!(
+            registry.test_claim_selected(config(), subprocess, foreign_metadata),
+            Err(OwnedThreadLocalKeyError::SubprocessMismatch),
+        ));
+        assert_eq!(registry.test_state(), before,
+            "a rejected metadata pair cannot change the bitmap, generation or live leases");
+        let old_key = lease.key();
+        lease.release().expect("release still uses the original selected metadata pair");
+        let mut replacement = registry.test_claim_selected(config(), subprocess, metadata)
+            .expect("the original pair remains usable after rejection");
+        assert_eq!(replacement.key().index(), old_key.index());
+        assert_ne!(replacement.key().version(), old_key.version());
+        replacement.release().expect("the reused index has one release owner");
+        registry.shutdown().expect("the original pair releases the quiescent bitmap");
+    }
+
+    #[test]
     fn first_regular_key_uses_index_zero_version_one_and_never_fast_raw_one() {
         let (registry, metadata, subprocess) = fixture();
         let mut lease = registry

@@ -34,6 +34,7 @@ fn joined_child_heap_delete_preserves_clients_and_caller_membership() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
     assert!(runtime::prepare_native_later_thread_arena());
+    worker_exit_preserves_selected_auxiliary_heap_clients();
     for foreign_child_caller in [false, true] {
         let root = heaps::heap_main() as usize;
         let child = heaps::subproc_new() as usize;
@@ -104,6 +105,48 @@ fn joined_child_heap_delete_preserves_clients_and_caller_membership() {
             assert_eq!(source_api::free(main_block as *mut u8), source_api::FreeOutcome::Freed);
             assert_eq!(source_api::free(auxiliary_block as *mut u8), source_api::FreeOutcome::Freed);
             assert!(heaps::subproc_destroy(child as *mut c_void));
+        }
+    }
+}
+
+// Each worker finishes with an auxiliary default, retaining live clients for
+// a joined caller. Repeated Heap creation reuses released key indexes while
+// new workers receive fresh per-thread slots and cached references.
+fn worker_exit_preserves_selected_auxiliary_heap_clients() {
+    for generation in 0..3 {
+        let (heap, pointer) = std::thread::spawn(move || {
+            assert_eq!(native_runtime_test_support::attach_current_thread(),
+                       runtime::ThreadAttachResult::Attached);
+            let heap = heaps::heap_new();
+            assert!(!heap.is_null());
+            // SAFETY: this worker owns both Theaps until its explicit finish;
+            // the Heap remains live until the joined caller releases it.
+            unsafe {
+                let original = heaps::theap_get_default();
+                let selected = heaps::heap_theap(heap);
+                assert!(!selected.is_null());
+                assert_eq!(heaps::heap_theap(heap), selected);
+                assert_eq!(heaps::theap_set_default(selected), original);
+                let pointer = source_api::malloc(113).value.unwrap();
+                assert_eq!(heaps::heap_of(pointer.as_ptr()), heap);
+                pointer.as_ptr().write_bytes(0x51 + generation, 113);
+                assert_eq!(heaps::theap_get_default(), selected);
+                assert_eq!(runtime::finish_current_thread_native_after_user_destructors(),
+                           runtime::ThreadFinishResult::Finished);
+                (heap as usize, pointer.as_ptr() as usize)
+            }
+        }).join().unwrap();
+        // SAFETY: the finished worker has joined, and its client is retained
+        // until this caller frees it. Delete transfers its page to main.
+        unsafe {
+            let current = heaps::theap_get_default();
+            assert!(heaps::heap_release(heap as *mut c_void, false));
+            assert_eq!(heaps::theap_get_default(), current);
+            for index in 0..113 {
+                assert_eq!((pointer as *const u8).add(index).read(), 0x51 + generation);
+            }
+            assert_eq!(heaps::heap_of(pointer as *const u8), heaps::heap_main());
+            assert_eq!(source_api::free(pointer as *mut u8), source_api::FreeOutcome::Freed);
         }
     }
 }

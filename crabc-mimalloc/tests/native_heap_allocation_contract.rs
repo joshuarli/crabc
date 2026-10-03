@@ -89,6 +89,7 @@ fn heap_requests_preserve_content_failure_and_legal_release_lifetimes() {
     crabc_mimalloc::source_options_api::option_set(
         ARENA_RESERVE, 0,
     );
+    default_selection_survives_regular_slot_growth_and_key_reuse();
     let growth_heap = heaps::heap_new();
     assert!(!growth_heap.is_null());
     // Keep same-bin clients live until allocation must extend or add a page.
@@ -357,4 +358,51 @@ unsafe fn refusal_preserves_live_clients(heap: *mut c_void, runtime: &Runtime) {
     options::option_set(DISALLOW_OS_ALLOC, previous_os);
     options::option_set(DISALLOW_ARENA_ALLOC, previous_arena);
     assert!(unsafe { heaps::heap_release(empty, true) });
+}
+
+// More than sixteen simultaneous Heaps grows the regular TLS backing. The
+// following round reuses the released indexes with new key generations.
+fn default_selection_survives_regular_slot_growth_and_key_reuse() {
+    let original = heaps::theap_get_default();
+    assert!(!original.is_null());
+    for round in 0..2 {
+        let mut heaps_and_theaps = Vec::new();
+        for _ in 0..24 {
+            let heap = heaps::heap_new();
+            assert!(!heap.is_null());
+            // SAFETY: every Heap and its calling-thread Theap stays live
+            // throughout this round, including regular TLS backing growth.
+            let theap = unsafe { heaps::heap_theap(heap) };
+            assert!(!theap.is_null());
+            heaps_and_theaps.push((heap, theap));
+        }
+        for (index, &(heap, selected)) in heaps_and_theaps.iter().enumerate() {
+            // SAFETY: the caller owns these Heaps and Theaps and restores
+            // its original default before deleting any selected Heap.
+            unsafe {
+                assert_eq!(heaps::heap_theap(heap), selected);
+                assert_eq!(heaps::theap_set_default(selected), original);
+                let pointer = block(api::malloc(97));
+                assert_eq!(heaps::heap_of(pointer.as_ptr()), heap);
+                pointer.as_ptr().write_bytes((round * 24 + index) as u8, 97);
+                // Sibling selection changes the cache while this default
+                // retains its original source Heap and per-thread slot.
+                let sibling = heaps_and_theaps[(index + 1) % heaps_and_theaps.len()];
+                assert_eq!(heaps::heap_theap(sibling.0), sibling.1);
+                assert_eq!(heaps::theap_get_default(), selected);
+                let second = block(api::malloc(97));
+                assert_eq!(heaps::heap_of(second.as_ptr()), heap);
+                contents(pointer, 97, (round * 24 + index) as u8);
+                free(pointer);
+                free(second);
+                assert_eq!(heaps::theap_set_default(original), selected);
+            }
+        }
+        for (heap, _) in heaps_and_theaps {
+            // SAFETY: every client is freed and the original default has
+            // been restored before this Heap and its key are released.
+            assert!(unsafe { heaps::heap_release(heap, true) });
+        }
+        assert_eq!(heaps::theap_get_default(), original);
+    }
 }
