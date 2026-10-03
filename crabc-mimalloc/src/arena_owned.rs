@@ -5709,11 +5709,25 @@ mod tests {
         let count = advice.count();
         drop(advice);
         let after = process.subprocess().vm_statistics().snapshot();
-        // Secure levels one and two use advisory discard in the release
-        // source profile; their already-accessible info tail stays writable.
-        let tail = unsafe { base.add(layout.info_size() - 1) };
-        unsafe { tail.write_volatile(0x5a) };
-        assert_eq!(unsafe { tail.read_volatile() }, 0x5a);
+        let tail = base.wrapping_add(layout.info_size() - 1);
+        let protected = crate::config::SECURE_LEVEL > 0 && crate::os::decommit_needs_recommit();
+        // Observe protection without touching a tail that the active source
+        // profile deliberately made inaccessible. The original mapping still
+        // owns this page and must retain its terminal release right.
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let permissions = maps.lines().find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (start, end) = fields.next()?.split_once('-')?;
+            let start = usize::from_str_radix(start, 16).ok()?;
+            let end = usize::from_str_radix(end, 16).ok()?;
+            (start <= tail.addr() && tail.addr() < end).then(|| fields.next().unwrap())
+        }).expect("the metadata tail remains in its original mapping");
+        assert_eq!(permissions, if protected { "---p" } else { "rw-p" });
+        if !protected {
+            // SAFETY: the retained mapping's tail is writable in this profile.
+            unsafe { tail.write_volatile(0x5a) };
+            assert_eq!(unsafe { tail.read_volatile() }, 0x5a);
+        }
         std::println!("secure.info.committed={}:{}:{}", layout.info_size(), count,
             after.committed_current - before.committed_current);
         assert!(managed.is_complete());
@@ -5726,7 +5740,10 @@ mod tests {
             assert_eq!(observed, None);
             assert_eq!(count, 0);
         }
-        assert_eq!(after.committed_current, before.committed_current);
+        let debit = if protected {
+            layout.guard_size() as i64
+        } else { 0 };
+        assert_eq!(after.committed_current, before.committed_current - debit);
     }
 
     #[cfg(all(target_arch = "x86_64", any(feature = "mi-secure-1", feature = "mi-secure-2")))]
