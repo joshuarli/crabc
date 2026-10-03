@@ -341,8 +341,20 @@ static int exercise_orphan_lock(void) {
     puts("retired task explicit FILE lock remains orphaned");
     return 0;
 }
-int main(void) {
+int main(int argc,char **argv) {
     alarm(20);
+    if (argc==2 && !strcmp(argv[1],"pipe-ownership")) {
+        /* Pipe descriptors stay owned by the joining caller. Cleanup runs
+         * inner before outer while each worker's borrowed state remains live.
+         * Signal checks reuse the surviving descriptors after interruption. */
+        for (int operation=READ_BYTE;operation<=READ_MASKED;operation++) CHECK(!exercise(operation));
+        CHECK(!exercise(READ_PENDING));
+        for (int operation=SIGNAL_READ;operation<=SIGNAL_WRITE;operation++)
+            for (int restart=0;restart<=1;restart++) CHECK(!exercise_ordinary_signal(operation,restart));
+        puts("owned-pipe-ownership-ok");
+        return 0;
+    }
+    CHECK(argc==1);
     for (int operation=READ_BYTE;operation<=ASYNC_LOOP;operation++) CHECK(!exercise(operation));
     for (int operation=SIGNAL_READ;operation<=SIGNAL_ACCEPT;operation++)
         for (int restart=0;restart<=1;restart++) CHECK(!exercise_ordinary_signal(operation,restart));
