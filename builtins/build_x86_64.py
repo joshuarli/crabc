@@ -32,6 +32,7 @@ TARGET = "x86_64-unknown-linux-musl"
 ARCHIVE_NAME = "libcrabc-builtins.a"
 MEMBER_NAME = "crabc-builtins.o"
 REQUIRED_SYMBOLS = frozenset({
+    "__floattixf", "__floatuntixf", "__fixxfti", "__fixunsxfti", "__mulxc3", "__divxc3",
     "__addoti4", "__ashlti3", "__ashrti3", "__bswapdi2", "__bswapsi2", "__bswapti2",
     "__clzti2", "__ctzti2", "__divdc3", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3",
     "__fixdfti", "__fixsfti", "__fixunsdfti", "__fixunssfti",
@@ -50,6 +51,7 @@ SHARED_LIBC_METADATA = {
 }
 HELPER_ABIS = frozenset({
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
+    "i128-to-binary80", "u128-to-binary80", "binary80-to-i128", "binary80-to-u128", "complex-binary80",
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",
@@ -68,7 +70,7 @@ def _require(condition: bool, message: str) -> None:
 
 
 def native_source_definitions(source: Path) -> dict[str, str]:
-    """Return the exact public C definitions from the owned Rust source."""
+    """Return exact Rust C definitions and included assembly export directives."""
 
     try:
         text = source.read_text(encoding="utf-8")
@@ -80,6 +82,13 @@ def native_source_definitions(source: Path) -> dict[str, str]:
         name = match.group(1)
         _require(name not in definitions, f"duplicate native helper definition: {name}")
         definitions[name] = " ".join(match.group(0).split())
+    if 'include_str!("x86_64_binary80.S")' in text:
+        assembly = source.with_name("x86_64_binary80.S").read_text()
+        for name in re.findall(r'^\s*\.globl\s+(__\w+)\s*$', assembly, re.M):
+            _require(re.search(r'^\s*\.type\s+' + re.escape(name) + r',\s*@function\s*$', assembly, re.M) is not None,
+                     "assembly export lacks function type: " + name)
+            _require(name not in definitions, "duplicate assembly helper: " + name)
+            definitions[name] = ".globl " + name + "; .type " + name + ",@function"
     return definitions
 
 

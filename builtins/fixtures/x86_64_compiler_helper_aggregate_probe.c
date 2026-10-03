@@ -120,6 +120,10 @@ static int equal_complex(complex_double value, double real, double imaginary) {
 #undef signed_input
 #undef floating_input
 
+#define main crabc_x86_64_binary80_probe
+#include "x86_64_binary80_probe.c"
+#undef main
+
 int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     const u128 one = 1;
     const u128 word = one << 64;
@@ -155,7 +159,9 @@ int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     if (!equal_complex(crabc_compiler_complex_product(complex_left, complex_right), 10.0, 5.0)) return 20;
     int binary64_status = crabc_x86_64_int128_casts_probe();
     if (binary64_status != 0) return binary64_status;
-    return crabc_x86_64_binary32_casts_probe();
+    int binary32_status = crabc_x86_64_binary32_casts_probe();
+    if (binary32_status != 0) return binary32_status;
+    return crabc_x86_64_binary80_probe();
 }
 
 #ifndef CRABC_BUILTINS_FREESTANDING

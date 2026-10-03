@@ -82,3 +82,43 @@ non-NaN representations compare exactly; NaN payload selection is excluded.
 The aggregate C fixture additionally performs ordinary complex multiplication,
 and its assembly entry checks the four XMM argument registers, the two XMM
 result registers, stack restoration, and all six callee-saved integer registers.
+
+## x86 binary80 compiler boundary
+
+The six x86 entries `__floattixf`, `__floatuntixf`, `__fixxfti`,
+`__fixunsxfti`, `__mulxc3`, and `__divxc3` are faithful assembly translations
+of the unchanged LLVM `llvmorg-22.1.3` C kernels retained under
+`fixtures/llvm22_binary80`, with their exact license and SHA-256 roster.
+`src/x86_64_binary80.S` is included as Rust global assembly only on x86-64;
+Rust has no scalar type expressing the System V AMD64 binary80 ABI.
+The runtime builder never compiles or links C or an external assembly object.
+
+`generate_x86_64_binary80.py` reproduces the checked assembly using pinned
+GCC 15.2.0. Its fixed flags preserve floating rounding, prevent contraction,
+and retain the signed integer source's intended wrapping bit operations.
+The conversion algorithms retain nearest-even integer-to-float rounding and
+truncating float-to-integer extraction. Float-to-integer consumers must supply
+finite representable values; no otherwise undefined C conversion is promised.
+Integer128 arguments use RDI/RSI and results RAX/RDX. Scalar binary80 results
+use ST0. Binary80 arguments occupy sixteen-byte stack slots, with ten value
+bytes and six padding bytes. Complex arguments occupy four such slots and
+results use ST0 for real and ST1 for imaginary. Tests ignore padding bytes.
+
+Complex division's `fmaxl`, `logbl`, `ilogbl`, `scalbnl`, `__fpclassifyl`,
+and `__signbitl` closure is translated from pinned musl 1.2.6 and bound to
+local `__crabc_binary80_*` symbols. The unchanged C support and license are
+retained under `fixtures/musl126_binary80`. The generator checks the complete
+musl source tree digest `2ebc86943f5cdac77729695b304a08f6308e7a218f9d484cec5675006b207d88`
+and exact retained support files before code generation. The only external
+kernel import is the already owned integer helper `__clzti2`.
+
+`fixtures/x86_64_binary80_probe.c` exercises ordinary compiler-emitted calls
+with defined operands. The aggregate assembly checks the actual x87 stack,
+integer register pairs, callee-saved registers, and stack restoration.
+`fixtures/x86_64_binary80_differential.c` compares all six providers to the
+renamed pinned C kernels under four rounding modes: representations, complex
+special values, signed zeros, subnormals, and exception flags. NaN payloads
+are excluded. The C oracle uses the same fixed kernel codegen flags as the
+assembly translation: unoptimized x87 source can introduce extra loads of
+subnormal temporaries and set the denormal-operand status bit. Consumer
+compilation at optimization level zero is tested separately.

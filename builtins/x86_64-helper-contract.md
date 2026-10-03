@@ -152,3 +152,16 @@ original object map rows, so those data references bind exact entry bytes and
 immutable final storage. Missing code contributions, altered private code or
 constants, redirected internal branches, and unreviewed helper names fail.
 The finite cast projection retains its existing caller interface and results.
+
+The selected archive also owns the six binary80 compiler entries
+`__floattixf`, `__floatuntixf`, `__fixxfti`, `__fixunsxfti`, `__mulxc3`, and
+`__divxc3`. Their assembly export declarations occupy the existing
+`rust_signature` field because Rust cannot express an fp80 C scalar type.
+The ABI roles and caller obligations describe the real stack/register
+boundary; no Rust declaration is used to approximate it. The same one-member
+archive and private shared-libc localization policy apply. The aggregate
+includes ordinary compiler-generated long-double expressions and checks
+integer register pairs, sixteen-byte argument slots, and ST0/ST1 returns.
+Finite representable float-to-integer operands are required. Pinned source
+kernels, a local musl math closure, licenses, and reproducible assembly
+translation are recorded in `UPSTREAM.md`.

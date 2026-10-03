@@ -90,7 +90,90 @@ crabc_x86_64_compiler_helper_registers:
     movabsq $0x4014000000000000,%rdx
     cmpq %rdx,%rax
     jne 3f
-    cmpq (%rsp),%rsp
+    # Binary80 uses integer word pairs for integer128 and ST0 for scalar
+    # results. The low ten bytes carry the value; padding is not compared.
+    subq $32,%rsp
+    xorl %edi,%edi
+    movabsq $0xfffffff000000000,%rsi
+    call __floattixf
+    fstpt (%rsp)
+    movabsq $0x8000000000000000,%rax
+    cmpq %rax,(%rsp)
+    jne 5f
+    cmpw $0xc063,8(%rsp)
+    jne 5f
+    call __fixxfti
+    testq %rax,%rax
+    jne 5f
+    movabsq $0xfffffff000000000,%rcx
+    cmpq %rcx,%rdx
+    jne 5f
+    xorl %edi,%edi
+    movabsq $0x1000000000,%rsi
+    call __floatuntixf
+    fstpt (%rsp)
+    movabsq $0x8000000000000000,%rax
+    cmpq %rax,(%rsp)
+    jne 5f
+    cmpw $0x4063,8(%rsp)
+    jne 5f
+    call __fixunsxfti
+    testq %rax,%rax
+    jne 5f
+    movabsq $0x1000000000,%rcx
+    cmpq %rcx,%rdx
+    jne 5f
+    addq $32,%rsp
+    jmp 6f
+5:  addq $32,%rsp
+    jmp 3f
+6:
+    # Four binary80 arguments occupy consecutive sixteen-byte stack slots.
+    # Complex results return real then imaginary in ST0 and ST1.
+    subq $64,%rsp
+    movabsq $0x8000000000000000,%rax
+    movq %rax,0(%rsp)
+    movq %rax,16(%rsp)
+    movq %rax,32(%rsp)
+    movq $0,48(%rsp)
+    movq $0,8(%rsp)
+    movq $0,24(%rsp)
+    movq $0,40(%rsp)
+    movq $0,56(%rsp)
+    movw $0x4001,8(%rsp)
+    movw $0x4000,24(%rsp)
+    movw $0x4000,40(%rsp)
+    call __mulxc3
+    fstpt 0(%rsp)
+    fstpt 16(%rsp)
+    movabsq $0x8000000000000000,%rax
+    cmpq %rax,0(%rsp)
+    jne 7f
+    cmpq %rax,16(%rsp)
+    jne 7f
+    cmpw $0x4002,8(%rsp)
+    jne 7f
+    cmpw $0x4001,24(%rsp)
+    jne 7f
+    movw $0x4001,8(%rsp)
+    movw $0x4000,24(%rsp)
+    call __divxc3
+    fstpt 0(%rsp)
+    fstpt 16(%rsp)
+    movabsq $0x8000000000000000,%rax
+    cmpq %rax,0(%rsp)
+    jne 7f
+    cmpq %rax,16(%rsp)
+    jne 7f
+    cmpw $0x4000,8(%rsp)
+    jne 7f
+    cmpw $0x3fff,24(%rsp)
+    jne 7f
+    addq $64,%rsp
+    jmp 8f
+7:  addq $64,%rsp
+    jmp 3f
+8:  cmpq (%rsp),%rsp
     jne 3f
     cmpl $0x1234,%ebp
     jne 3f

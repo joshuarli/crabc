@@ -51,7 +51,13 @@ SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
 ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
 CAST_PROBE = Path("builtins/fixtures/x86_64_int128_casts_probe.c")
 BINARY32_CAST_PROBE = Path("builtins/fixtures/x86_64_binary32_casts_probe.c")
-SOURCE_FILES = (CAST_PROBE, BINARY32_CAST_PROBE, CONTRACT, SOURCE, Path("builtins/src/x86_64_complex_classification.rs"), BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
+SOURCE_FILES = (Path("builtins/src/x86_64_binary80.S"), Path("builtins/generate_x86_64_binary80.py"),
+                Path("builtins/fixtures/x86_64_binary80_probe.c"), Path("builtins/fixtures/x86_64_binary80_differential.c"),
+                *(Path("builtins/fixtures/llvm22_binary80") / name for name in
+                  ("floattixf.c", "floatuntixf.c", "fixxfti.c", "fixunsxfti.c", "mulxc3.c", "divxc3.c", "LICENSE.TXT", "SHA256SUMS")),
+                *(Path("builtins/fixtures/musl126_binary80") / name for name in
+                  ("fmaxl.c", "logbl.c", "ilogbl.c", "scalbnl.c", "__fpclassifyl.c", "__signbitl.c", "COPYRIGHT", "SHA256SUMS")),
+                CAST_PROBE, BINARY32_CAST_PROBE, CONTRACT, SOURCE, Path("builtins/src/x86_64_complex_classification.rs"), BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
                 SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, READER, SELECTION, DOCUMENTATION,
                 BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
@@ -74,6 +80,7 @@ SHARED_LIBC_METADATA = {
 }
 HELPER_ABIS = {
     "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
+    "i128-to-binary80", "u128-to-binary80", "binary80-to-i128", "binary80-to-u128", "complex-binary80",
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",
@@ -173,8 +180,8 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
         name, signature, c_abi, obligation = row["name"], row["rust_signature"], row["c_abi"], row["caller_obligation"]
         require(type(name) is str and re.fullmatch(r"__[a-z0-9]+", name) is not None,
                 "compiler-helper name differs")
-        require(type(signature) is str and signature.startswith('pub ') and f"fn {name}" in signature,
-                "compiler-helper Rust signature differs")
+        require(type(signature) is str and ((signature.startswith('pub ') and f"fn {name}" in signature) or signature == f".globl {name}; .type {name},@function"),
+                "compiler-helper source definition differs")
         require(type(c_abi) is str and c_abi in HELPER_ABIS and type(obligation) is str and obligation,
                 "compiler-helper C ABI role differs")
         result.append({"name": name, "rust_signature": signature, "c_abi": c_abi,
@@ -200,7 +207,7 @@ def helper_names(contract: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def source_definitions(root: Path = ROOT) -> dict[str, str]:
-    """Read the direct no-mangle C definition set from Rust source bytes."""
+    """Read Rust C definitions and the included binary80 assembly exports."""
 
     path = Path(root).absolute() / SOURCE
     try:
@@ -213,6 +220,13 @@ def source_definitions(root: Path = ROOT) -> dict[str, str]:
         name = match.group(1)
         require(name not in result, f"duplicate compiler-helper source definition: {name}")
         result[name] = " ".join(match.group(0).split())
+    if 'include_str!("x86_64_binary80.S")' in text:
+        assembly = path.with_name("x86_64_binary80.S").read_text()
+        for name in re.findall(r'^\s*\.globl\s+(__\w+)\s*$', assembly, re.M):
+            require(re.search(r'^\s*\.type\s+' + re.escape(name) + r',\s*@function\s*$', assembly, re.M) is not None,
+                    "assembly export lacks function type: " + name)
+            require(name not in result, "duplicate assembly helper: " + name)
+            result[name] = ".globl " + name + "; .type " + name + ",@function"
     return result
 
 

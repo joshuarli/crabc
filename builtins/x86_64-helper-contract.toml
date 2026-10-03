@@ -1,7 +1,10 @@
 # Exact producer contract for the bounded native x86-64 compiler-helper archive.
 #
-# These are unversioned C compiler-runtime entries from the reviewed
-# `#[unsafe(no_mangle)] pub extern "C"` definitions in `src/lib.rs`. They are
+# These are unversioned C compiler-runtime entries from reviewed Rust C ABI
+# definitions and the x86 binary80 global assembly included by `src/lib.rs`.
+# The historical `rust_signature` field records either a real Rust definition
+# or the exact assembly export directives, without inventing a Rust fp80 type.
+# They are
 # installed as ordinary archive providers. The owned shared-libc link also
 # consumes that exact one-member archive for its private compiler-generated
 # calls: that physical copy is LOCAL in libc.so and absent from .dynsym. This
@@ -104,6 +107,13 @@ caller_obligation = "defined signed division operands"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__divxc3"
+rust_signature = '.globl __divxc3; .type __divxc3,@function'
+c_abi = "complex-binary80"
+caller_obligation = "four padded binary80 stack arguments; complex real and imaginary result in ST0/ST1"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__ffsti2"
 rust_signature = 'pub extern "C" fn __ffsti2(value: Uint128) -> i32'
 c_abi = "u128-bit-count"
@@ -139,6 +149,20 @@ caller_obligation = "finite input whose truncation fits unsigned128; total sourc
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__fixunsxfti"
+rust_signature = '.globl __fixunsxfti; .type __fixunsxfti,@function'
+c_abi = "binary80-to-u128"
+caller_obligation = "one padded binary80 stack argument, finite nonnegative and representable in unsigned integer128; RAX/RDX result"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__fixxfti"
+rust_signature = '.globl __fixxfti; .type __fixxfti,@function'
+c_abi = "binary80-to-i128"
+caller_obligation = "one padded binary80 stack argument, finite and representable in signed integer128; RAX/RDX result"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__floattidf"
 rust_signature = 'pub extern "C" fn __floattidf(value: Uint128) -> f64'
 c_abi = "u128-to-binary64"
@@ -153,6 +177,13 @@ caller_obligation = "signed128 two-word carrier; source rounds to nearest with t
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__floattixf"
+rust_signature = '.globl __floattixf; .type __floattixf,@function'
+c_abi = "i128-to-binary80"
+caller_obligation = "signed integer128 in RDI/RSI; padded binary80 scalar result in ST0"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__floatuntidf"
 rust_signature = 'pub extern "C" fn __floatuntidf(value: Uint128) -> f64'
 c_abi = "u128-to-binary64"
@@ -164,6 +195,13 @@ name = "__floatuntisf"
 rust_signature = 'pub extern "C" fn __floatuntisf(value: Uint128) -> f32'
 c_abi = "u128-to-binary32"
 caller_obligation = "unsigned128 two-word carrier; source rounds to nearest with ties to even"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__floatuntixf"
+rust_signature = '.globl __floatuntixf; .type __floatuntixf,@function'
+c_abi = "u128-to-binary80"
+caller_obligation = "unsigned integer128 in RDI/RSI; padded binary80 scalar result in ST0"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
@@ -199,6 +237,13 @@ name = "__multi3"
 rust_signature = 'pub extern "C" fn __multi3(left: Uint128, right: Uint128) -> Uint128'
 c_abi = "u128-binary"
 caller_obligation = "two-word Uint128 C ABI carrier"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__mulxc3"
+rust_signature = '.globl __mulxc3; .type __mulxc3,@function'
+c_abi = "complex-binary80"
+caller_obligation = "four padded binary80 stack arguments; complex real and imaginary result in ST0/ST1"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]

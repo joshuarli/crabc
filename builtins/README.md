@@ -72,9 +72,17 @@ builder never reuses a prebuilt compiler runtime and does not establish a
 complete x86 compiler-helper profile or public sysroot.
 
 The native [x86-64 compiler-helper archive contract](x86_64-helper-contract.md)
-now names all 23 Rust C-ABI entries, their two installed archive placements,
+names the selected Rust C-ABI and binary80 assembly entries, their two installed archive placements,
 and the bounded aggregate C consumer proof. When the dynamic builder consumes
 that exact archive for private libc compiler-generated calls, it localizes only
 that libc.so copy; the installed archive remains the ordinary provider for
 applications and application DSOs. The focused shared-placement runner in the
 same contract records that boundary. Neither proof promotes native support.
+
+The x86 binary80 entries use checked Rust global assembly because Rust has no
+fp80 C scalar type. The fixed LLVM 22.1.3 kernels and local musl 1.2.6 math
+closure are retained as test-only source oracles. The source translation,
+licenses, stack/register ABI, and numerical contract are recorded in
+`UPSTREAM.md`. `tests/test_x86_64_binary80.py` checks ordinary compiler-emitted
+calls in closed static/static-PIE images and a pinned-kernel numerical/fenv
+comparison; float-to-integer inputs remain within their defined C domain.
