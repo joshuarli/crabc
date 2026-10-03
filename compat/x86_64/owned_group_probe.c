@@ -3,6 +3,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <pwd.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
@@ -611,10 +614,93 @@ static void allocation(void)
     }
 }
 
+static void write_local_file(const char *path,const char *text) {
+    int descriptor=open(path,O_WRONLY|O_CREAT|O_TRUNC,0600);CHECK(descriptor>=0);
+    size_t length=strlen(text);
+    CHECK(write(descriptor,text,length)==(ssize_t)length && !close(descriptor));
+}
+static void refresh_files(int phase) {
+    endgrent();endpwent();
+    write_local_file("/etc/group",phase?
+        "alpha:y:2101:carol,dave\nbeta:y:2102:erin\n":
+        "alpha:x:1101:alice,bob\nbeta:x:1102:zed\n");
+    write_local_file("/etc/passwd",phase?
+        "alpha:y:2101:2101:New Alpha:/new-alpha:/bin/bash\nbeta:y:2102:2102:New Beta:/new-beta:/bin/sh\n":
+        "alpha:x:1101:1101:Old Alpha:/old-alpha:/bin/sh\nbeta:x:1102:1102:Old Beta:/old-beta:/bin/sh\n");
+    write_local_file("/etc/services",phase?
+        "new-service 45002/tcp refresh-service\n":
+        "old-service 45001/tcp refresh-service\n");
+    write_local_file("/etc/protocols",phase?"alternate 253\n":"fixture 252\n");
+}
+static void passwd_in_buffer(const struct passwd *record,char *buffer,size_t capacity) {
+    char *fields[]={record->pw_name,record->pw_passwd,record->pw_gecos,record->pw_dir,record->pw_shell};
+    for(unsigned i=0;i<5;i++) CHECK(fields[i]>=buffer && fields[i]<buffer+capacity && memchr(fields[i],0,buffer+capacity-fields[i]));
+}
+static void *refresh_worker(void *opaque) {
+    int phase=*(int*)opaque;unsigned id=phase?2101:1101;
+    char *storage=malloc(32768);CHECK(storage);
+    char *ga=storage,*gb=storage+4096,*pa=storage+8192,*pb=storage+12288,*sa=storage+16384,*sb=storage+20480;
+    for(int i=0;i<16;i++) {
+        struct group first,second,*group_result;
+        struct passwd user,other,*passwd_result;
+        struct servent service,reverse,*service_result;
+        errno=EDOM;
+        CHECK(!getgrnam_r("alpha",&first,ga,4096,&group_result) && group_result==&first && first.gr_gid==id && errno==EDOM);
+        group_in_buffer(&first,ga,4096);
+        CHECK(!getgrgid_r(id+1,&second,gb,4096,&group_result) && group_result==&second && !strcmp(second.gr_name,"beta"));
+        CHECK(!strcmp(first.gr_mem[0],phase?"carol":"alice") && !strcmp(first.gr_mem[1],phase?"dave":"bob") && !first.gr_mem[2]);
+        CHECK(!getpwnam_r("alpha",&user,pa,4096,&passwd_result) && passwd_result==&user && user.pw_uid==id);
+        passwd_in_buffer(&user,pa,4096);
+        CHECK(!getpwuid_r(id+1,&other,pb,4096,&passwd_result) && passwd_result==&other && !strcmp(other.pw_name,"beta"));
+        CHECK(!strcmp(user.pw_dir,phase?"/new-alpha":"/old-alpha") && !strcmp(first.gr_name,"alpha"));
+        CHECK(!getservbyname_r("refresh-service","tcp",&service,sa,4096,&service_result) && service_result==&service);
+        CHECK(service.s_port==htons(phase?45002:45001) && !strcmp(service.s_name,"refresh-service"));
+        CHECK(!getservbyport_r(service.s_port,"tcp",&reverse,sb,4096,&service_result) && service_result==&reverse);
+        CHECK(!strcmp(reverse.s_name,phase?"new-service":"old-service") && !strcmp(service.s_name,"refresh-service"));
+        memset(gb,0x5a,4096);errno=EDOM;
+        CHECK(!getgrnam_r("absent",&second,gb,4096,&group_result) && !group_result && errno==EDOM);
+        CHECK(gb[0]==0x5a && gb[4095]==0x5a && !strcmp(first.gr_mem[0],phase?"carol":"alice"));
+        memset(pb,0x5a,4096);errno=EDOM;
+        CHECK(!getpwnam_r("absent",&other,pb,4096,&passwd_result) && !passwd_result && errno==EDOM);
+        CHECK(pb[0]==0x5a && pb[4095]==0x5a && !strcmp(user.pw_dir,phase?"/new-alpha":"/old-alpha"));
+        CHECK(getservbyname_r("absent-service","tcp",&reverse,sb,4096,&service_result)==ENOENT && !service_result);
+        int state;CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&state) && state==PTHREAD_CANCEL_ENABLE);
+        CHECK(!pthread_setcancelstate(state,NULL));
+    }
+    free(storage);return NULL;
+}
+static void refresh_interleaved(void) {
+    struct group old_group,*group_result;struct passwd old_user,*passwd_result;
+    struct servent old_service,*service_result;
+    char group_buffer[4096],passwd_buffer[4096],service_buffer[4096];
+    refresh_files(0);
+    CHECK(!getgrnam_r("alpha",&old_group,group_buffer,sizeof group_buffer,&group_result) && group_result==&old_group);
+    CHECK(!getpwnam_r("alpha",&old_user,passwd_buffer,sizeof passwd_buffer,&passwd_result) && passwd_result==&old_user);
+    CHECK(!getservbyport_r(htons(45001),"tcp",&old_service,service_buffer,sizeof service_buffer,&service_result) && service_result==&old_service);
+    for(int phase=0;phase<2;phase++) {
+        refresh_files(phase);
+        pthread_t a,b;CHECK(!pthread_create(&a,NULL,refresh_worker,&phase));
+        CHECK(!pthread_create(&b,NULL,refresh_worker,&phase));
+        CHECK(!pthread_join(a,NULL) && !pthread_join(b,NULL));
+        /* File replacement and later call-local parsing cannot retire the
+         * earlier results stored in their caller-owned buffers. */
+        CHECK(old_group.gr_gid==1101 && !strcmp(old_group.gr_mem[0],"alice"));
+        CHECK(old_user.pw_uid==1101 && !strcmp(old_user.pw_dir,"/old-alpha"));
+        CHECK(!strcmp(old_service.s_name,"old-service") && old_service.s_port==htons(45001));
+        errno=EDOM;setprotoent(0);
+        struct protoent *protocol=getprotoent();CHECK(protocol && !strcmp(protocol->p_name,"ip"));
+        CHECK(getprotobyname("tcp")==protocol && protocol->p_proto==6);
+        CHECK(getprotoent()==protocol && !strcmp(protocol->p_name,"egp") && errno==EDOM);
+        endprotoent();
+    }
+    int descriptor=open("/etc/group",O_RDONLY|O_CLOEXEC);CHECK(descriptor==3 && !close(descriptor));
+}
 int main(int argc, char **argv)
 {
     CHECK(argc == 3);
-    if (!strcmp(argv[1], "lookup")) {
+    if (!strcmp(argv[1], "refresh-interleaved")) {
+        refresh_interleaved();
+    } else if (!strcmp(argv[1], "lookup")) {
         lookup();
     } else if (!strcmp(argv[1], "duplicate-cursor")) {
         duplicate_cursor();
