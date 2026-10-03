@@ -113,7 +113,7 @@ Update this small section in place when the implementation frontier changes.
   seeded guarded/stat combinations pass 4,314-key source comparisons. Default
   entropy placement differences and guarded-debug oracle failures remain retained;
   the latter combinations are unproved. No qualifying timing or release pass is
-  claimed. The opt0 TSD runner's atomic check now follows called helpers; its direct
+  claimed for those component checks. The opt0 TSD runner's atomic check now follows called helpers; its direct
   runtime and helper-disassembly evidence passes. The cold startup output timeout came from a FILE surrogate
   violating the pinned delayed-flush contract; real FILE and registered allocating
   callbacks have distinct passing checks, with the original timeout retained.
@@ -185,8 +185,18 @@ Update this small section in place when the implementation frontier changes.
   inventory and all 17 ELF placements collect and replay successfully.
   Integrated allocator performance preparation now uses the existing pinned
   core image and its explicit musl compiler; four fresh products and benchmark
-  programs build successfully. Full measurements still require an uncontended
-  host, and complete correctness/codegen prerequisites remain open.
+  programs build successfully. At `348aa729d`, three complete engine measurements
+  qualify physically on an uncontended host and agree, but fail the numerical
+  promotion bounds: suite throughput lower95 is 0.315–0.320 of pinned C, all ten
+  critical throughput rows fail, and nine tail rows regress. RSS/PSS bounds pass;
+  Rust allocator code occupies 1,024,830 bytes versus C's 108,311 bytes. The fresh
+  integrated four-product run completes all 14 rows without workload failures,
+  but its initial host load of 1.21 exceeds the qualification limit of 1.0.
+  Exact source, artifacts and original measurements remain under
+  `.work/x86_64/reports/integrated-lanes/allocatorperf161-348aa729d/`.
+  Sixteen separate compiler/source lanes investigate the observed cost while
+  retaining admission synchronization and pinned algorithms. Performance
+  acceptance and complete correctness/codegen prerequisites remain open.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
