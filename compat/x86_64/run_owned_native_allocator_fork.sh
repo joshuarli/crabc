@@ -14,7 +14,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_native_allocator_fork_probe.c"
-readonly scenarios=(initial worker joined repeat underscore synccall-create)
+readonly scenarios=(initial worker joined registration-retained repeat underscore synccall-create)
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
