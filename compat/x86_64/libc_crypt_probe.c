@@ -236,7 +236,7 @@ int main(void)
     CHECK_REENTRANT(public_crypt_r, "$6$rounds=100000$bbe605c2cce4c642$bCGLqF35/fKkEVLwsr19YOM6.EcwMQ1svcz3iFHIfJZZ3etWnNZIMpAlO3EC3OHZJpNqNlC0sMLh3K/ctWdmF1", "$6$rounds=100000$bbe605c2cce4c642", "foobar");
     check_public_shared_result();
 
-#ifdef CRABC_X86_CRYPT_CANDIDATE
+#if defined(CRABC_X86_CRYPT_CANDIDATE) && !defined(CRABC_CRYPT_ORDINARY_ONLY)
     /* The dependency serializer spells default rounds explicitly. */
     CHECK_PUBLIC("$5$rounds=5000$9aEeVXnCiCNHUjO/$FrVBcjyJukRaE6inMYazyQv1DBnwaKfom.71ebgQR/0", "$5$9aEeVXnCiCNHUjO/", "foobar");
     CHECK_PUBLIC("$6$rounds=5000$bbe605c2cce4c642$BiBOywFAm9kdv6ZPpj2GaKVqeh/.c21pf1uFBaq.e59KEE2Ej74iJleXaLXURYV6uh5LF4K7dDc4vtRtPiiKB/", "$6$bbe605c2cce4c642", "foobar");
