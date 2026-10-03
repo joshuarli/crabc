@@ -696,6 +696,12 @@ impl<'main> MainHeapThreadAttachment<'main> {
         tld: DynamicAttachedThreadLocalData,
     ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
         let destination = destination.as_ptr();
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: construction owns the accepted inputs and uninitialized
+        // destination. The field writer returns before metadata allocation.
+        unsafe { Self::write_preparing_fields(destination, main_heap, metadata,
+            config, page_mode, generic_collect_policy, thread, tld) };
+        #[cfg(not(target_arch = "x86_64"))]
         // SAFETY: every field is written exactly once before any attachment
         // reference is formed. These writes cannot invoke a fallible callback
         // or publish the destination's address.
@@ -739,6 +745,54 @@ impl<'main> MainHeapThreadAttachment<'main> {
                 attachment.state = MainHeapThreadAttachmentState::Poisoned;
                 Err(MainHeapThreadAttachmentBeginIntoError::Retained(error))
             }
+        }
+    }
+
+    /// Writes the complete Preparing image before allocation or publication.
+    /// Typed Some/None field values are confined to this returned call;
+    /// no allocator, callback, cancellation or root publication runs here.
+    ///
+    /// # Safety
+    ///
+    /// `destination` is aligned, exclusively writable uninitialized storage
+    /// retained for the complete attachment lifetime. The caller transfers its
+    /// exact current-thread TLD and accepted main Heap, metadata and policy
+    /// inputs. Every field is written once, leaving sole custody in destination.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
+    unsafe fn write_preparing_fields(
+        destination: *mut Self,
+        main_heap: MainStaticHeapLease<'main>,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+        page_mode: TheapPageMode,
+        generic_collect_policy: Option<&'static crate::os::VmPolicy>,
+        thread: LiveThreadId,
+        tld: DynamicAttachedThreadLocalData,
+    ) {
+        // SAFETY: every field is written exactly once before any attachment
+        // reference is formed. These writes cannot invoke a fallible callback
+        // or publish the destination's address.
+        unsafe {
+            core::ptr::addr_of_mut!((*destination).main_heap).write(main_heap);
+            core::ptr::addr_of_mut!((*destination).metadata).write(metadata);
+            core::ptr::addr_of_mut!((*destination).config).write(config);
+            core::ptr::addr_of_mut!((*destination).page_mode).write(page_mode);
+            core::ptr::addr_of_mut!((*destination).generic_collect_policy).write(generic_collect_policy);
+            core::ptr::addr_of_mut!((*destination).tld).write(Some(tld));
+            core::ptr::addr_of_mut!((*destination).theap).write(None);
+            core::ptr::addr_of_mut!((*destination).thread).write(thread);
+            core::ptr::addr_of_mut!((*destination).counted_in_main_heap).write(false);
+            core::ptr::addr_of_mut!((*destination).terminal_os_release).write(None);
+            core::ptr::addr_of_mut!((*destination).page_engine_suspended).write(false);
+            core::ptr::addr_of_mut!((*destination).deferred_free_callback_generation).write(0);
+            core::ptr::addr_of_mut!((*destination).deferred_free_callback_active).write(AtomicUsize::new(0));
+            #[cfg(test)]
+            core::ptr::addr_of_mut!((*destination).deferred_free_test_observer).write(None);
+            #[cfg(test)]
+            core::ptr::addr_of_mut!((*destination).detached_process_page_finish_failures).write(0);
+            core::ptr::addr_of_mut!((*destination).state).write(MainHeapThreadAttachmentState::Preparing);
+            core::ptr::addr_of_mut!((*destination)._not_send_or_sync).write(PhantomData);
         }
     }
 
