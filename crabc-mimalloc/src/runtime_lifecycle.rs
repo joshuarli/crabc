@@ -10255,13 +10255,33 @@ fn install_native_attachment_only_owner(
     owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
     attachment: MainHeapThreadAttachment<'static>,
 ) -> Result<(), MainHeapThreadAttachment<'static>> {
+    struct AttachmentOnlyStateImage(NativePersistentThreadOwnerExitState);
+    // SAFETY: the private immutable image is always AttachmentOnly, which
+    // owns no engine or resource. It is never projected, activated, or mutated;
+    // the other variants' non-Sync source-owner payloads are never present.
+    unsafe impl Sync for AttachmentOnlyStateImage {}
+    static ATTACHMENT_ONLY_STATE: AttachmentOnlyStateImage =
+        AttachmentOnlyStateImage(NativePersistentThreadOwnerExitState::AttachmentOnly);
     let mut attachment = Some(attachment);
-    let installed = owner_cell.install_with(|| NativePersistentThreadOwner {
-        attachment: attachment.take().expect("accepted owner construction consumes its attachment once"),
-        state: NativePersistentThreadOwnerExitState::AttachmentOnly,
+    // SAFETY: acceptance grants exclusive uninitialized pinned storage. Take
+    // the attachment before the first write so an unwinding expect leaves no
+    // partial owner. All subsequent field writes are infallible and invoke no
+    // callback; no owner projection or pointer escapes before Active.
+    let installed = unsafe { owner_cell.install_in_place(|destination| {
+        let attachment = attachment.take().expect("accepted owner construction consumes its attachment once");
+        core::ptr::addr_of_mut!((*destination).attachment).write(attachment);
+        // Copy the compiler's typed inert image into the uninitialized field.
+        // A by-value enum write materializes its full engine-sized extent even
+        // for AttachmentOnly; this avoids that temporary without guessing its
+        // discriminant or layout. No live engine or metadata owner is copied.
+        core::ptr::copy_nonoverlapping(
+            core::ptr::addr_of!(ATTACHMENT_ONLY_STATE.0),
+            core::ptr::addr_of_mut!((*destination).state),
+            1,
+        );
         #[cfg(target_arch = "x86_64")]
-        generic_frequency_captures: 0,
-    });
+        core::ptr::addr_of_mut!((*destination).generic_frequency_captures).write(0);
+    }) };
     match installed {
         Ok(()) => Ok(()),
         Err(_) => Err(attachment.expect("refused owner construction preserves its attachment")),
