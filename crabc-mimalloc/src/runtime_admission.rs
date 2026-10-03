@@ -10,9 +10,10 @@
 //! They preserve ordinary default process-done allocation: only an explicitly
 //! closed native epoch denies entry. Registration is not source admission.
 //!
-//! This module does not yet enable a physical destroy caller: foreign callback
-//! sites must compose the suspended-borrow boundary, fork must share the epoch,
-//! and terminal ownership transfer must consume or retain every TLS engine.
+//! Physical destruction follows permanent closure and exact TLS-owner transfer.
+//! Deferred foreign callbacks suspend every source borrow before withdrawing
+//! entry; diagnostic output keeps entry published while its source borrows live.
+//! Prepared fork uses the same epoch and repairs vanished owners before reopening.
 //! Standalone source fixtures which export raw page/owner capabilities retain
 //! their separate lifetime contracts and cannot authorize native destruction.
 
@@ -1267,11 +1268,13 @@ mod tests {
         let record = registered_record();
         let pointer = NonNull::from(&record);
         let operation = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
+        let inner_operation = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
         // SAFETY: no source borrow or lock exists in this isolated fixture;
         // both nested operations use the same thread-local record and epoch.
         let result = unsafe { with_callback_boundary_at(&epoch, pointer, || {
             assert!(!record.entered.load(Ordering::SeqCst));
             assert!(record.callback.load(Ordering::SeqCst));
+            assert_eq!(*record.nesting.get(), 0, "all enclosing source guards are suspended");
             assert_eq!(epoch.close_terminal(&Registry(&record)), Err(NativeAllocatorQuiescenceError::CallbackActive));
             let nested = NativeAllocatorOperationGuard::enter_at(&epoch, pointer).unwrap();
             assert!(record.entered.load(Ordering::SeqCst));
@@ -1285,9 +1288,14 @@ mod tests {
             17
         }) };
         assert_eq!(result, Ok(17));
+        assert_eq!(unsafe { *record.nesting.get() }, 2, "resume restores the exact enclosing guard depth");
         assert!(record.entered.load(Ordering::SeqCst));
         assert!(!record.callback.load(Ordering::SeqCst));
+        drop(inner_operation);
+        assert!(record.entered.load(Ordering::SeqCst), "the outer source guard still protects the owner");
         drop(operation);
+        assert!(!record.entered.load(Ordering::SeqCst));
+        assert_eq!(unsafe { *record.nesting.get() }, 0);
         epoch.close_terminal(&Registry(&record)).unwrap();
     }
 
