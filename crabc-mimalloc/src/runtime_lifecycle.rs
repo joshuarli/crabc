@@ -3807,9 +3807,9 @@ impl RuntimeProcessStorage {
             // SAFETY: the selected owner retains this default image. Both
             // source observations load only its atomic Heap field while the
             // main-Heap guard excludes a concurrent list mutation.
-            let default_is_initialized = !unsafe { crate::types::Theap::heap_at(default) }.is_null();
+            let default_is_initialized = !unsafe { crate::types::Theap::heap_relaxed_at(default) }.is_null();
             if !default_is_empty && default_is_initialized {
-                if !core::ptr::eq(unsafe { crate::types::Theap::heap_at(default) }, core::ptr::from_mut(heap)) {
+                if !core::ptr::eq(unsafe { crate::types::Theap::heap_relaxed_at(default) }, core::ptr::from_mut(heap)) {
                     false
                 } else {
                     // SAFETY: the existing Heap guard serializes this exact
