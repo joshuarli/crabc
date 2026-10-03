@@ -131,6 +131,9 @@ Update this small section in place when the implementation frontier changes.
   components passed both allocator backends at `1e415ac59`: direct syscall
   witnesses, facade/core LLVM bitcode and raw musl comparisons are retained.
   Their partial gate reports preserve omitted scopes and make no LTO-into-libc claim.
+  The separate `9ddab8cf8` four-product snapshot passes the selected ordinary
+  compatibility and consumer components on installed and independently extracted
+  products. Its source-bound evidence remains separate from subsequent fixes.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
@@ -144,6 +147,9 @@ Update this small section in place when the implementation frontier changes.
   The existing full 40-helper
   byte-closure reader passed optimized ordinary links in the held `6826b29ae`
   cohort; complete release qualification remains unclaimed.
+  Optimized native shared libc now extracts the complete private helper archive
+  even when its allocator emits no helper imports. Both backend candidates pass
+  the unchanged 40-helper private-placement reader; other archives remain lazy.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
@@ -165,6 +171,12 @@ Update this small section in place when the implementation frontier changes.
   `.work/x86_64/reports/cohort143/` retains the separate `1e415ac59` four-product
   tuple and exact source inputs used for the installed facade components;
   independent package extraction/admission also passes for this tuple.
+  `.work/x86_64/reports/cohort156/` retains the `9ddab8cf8` products and source
+  inputs; fresh admissions of its preserved packages pass. Runtime and allocator
+  performance inputs are prepared, but no qualifying measurements are recorded.
+  The collector smoke now supplies its retained host capture paths, the private
+  allocator adapter selects its required page-size projection, and the scalar
+  C configuration oracle treats its undefined encoding switch as source zero.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
