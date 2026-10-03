@@ -78,6 +78,9 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
                 panic!("the retained owner performs its local anchor realloc")
             }
         };
+        // SAFETY: the successful replacement is this worker's exclusively
+        // owned anchor and exposes every requested byte until its final free.
+        unsafe { anchor.as_ptr().write_bytes(0x6d, ANCHOR_REALLOC_REQUEST) };
         for cycle in 0..OWNER_LOCAL_CYCLES {
             let block = allocate_local(CYCLE_REQUEST);
             // SAFETY: this exact worker owns `block` until this matching
@@ -111,6 +114,29 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
                 }
                 clients.push((block, round.wrapping_add(index)));
             }
+            for (request, alignment, zero) in [(0, 64, false), (1, 16, true), (1, 65536, true)] {
+                let block = match native_allocate_aligned(request, alignment, zero) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("the retained worker allocates its aligned boundary client"),
+                };
+                assert_eq!(block.as_ptr().addr() % alignment, 0);
+                // SAFETY: only the nonempty clients expose a payload byte.
+                // The zero-size result is checked and freed without access.
+                unsafe {
+                    if request != 0 {
+                        assert!(native_usable_size(block).is_some_and(|size| size >= request));
+                        assert_eq!(block.as_ptr().read(), 0);
+                        block.as_ptr().write(0x39);
+                    }
+                    assert_eq!(native_free(block), NativePageFreeResult::Freed);
+                    assert!(core::slice::from_raw_parts(anchor.as_ptr(), ANCHOR_REALLOC_REQUEST)
+                        .iter().all(|byte| *byte == 0x6d));
+                    for &(sibling, pattern) in &clients {
+                        assert!(core::slice::from_raw_parts(sibling.as_ptr(), 256)
+                            .iter().all(|byte| *byte == pattern));
+                    }
+                }
+            }
             for (block, pattern) in clients {
                 // SAFETY: no sibling allocation or free consumes this client;
                 // its payload stays live until this exact matching local free.
@@ -123,6 +149,8 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
         }
         // SAFETY: the retained owner still owns the anchor locally.
         unsafe {
+            assert!(core::slice::from_raw_parts(anchor.as_ptr(), ANCHOR_REALLOC_REQUEST)
+                .iter().all(|byte| *byte == 0x6d));
             assert_eq!(native_free(anchor), NativePageFreeResult::Freed);
         }
         assert_eq!(
