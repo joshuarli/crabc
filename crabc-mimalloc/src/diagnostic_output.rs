@@ -1676,6 +1676,44 @@ impl OutputOwner {
         }
     }
 
+    /// Initializes the pre-init diagnostic owner directly in its final slot.
+    /// The delayed bytes are zeroed in place so startup does not carry the
+    /// full buffer through temporary stack images.
+    ///
+    /// # Safety
+    /// `pointer` must be aligned, writable storage for one owner, exclusively
+    /// owned and unpublished until this call finishes. No initialized owner
+    /// or reference may be live in that slot. The stderr primitive must stay
+    /// callable for the resulting owner's lifetime.
+    pub(crate) unsafe fn initialize_at(
+        pointer: core::ptr::NonNull<Self>,
+        default_stderr_output: DefaultStderrOutput,
+    ) {
+        let pointer = pointer.as_ptr();
+        // SAFETY: the caller owns every field of this unpublished final slot.
+        // Zero is the valid initial byte representation of the delayed buffer;
+        // its UnsafeCell wrapper has the same layout as its contained array.
+        unsafe {
+            core::ptr::addr_of_mut!((*pointer).out_buf).cast::<u8>()
+                .write_bytes(0, DELAYED_OUTPUT_BYTES + 1);
+            core::ptr::addr_of_mut!((*pointer).out_len).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*pointer).out_buf_lock).write(PrivateLock::new());
+            core::ptr::addr_of_mut!((*pointer).default_sink).write(AtomicU8::new(DEFAULT_DELAYED));
+            core::ptr::addr_of_mut!((*pointer).default_stderr_output).write(default_stderr_output);
+            core::ptr::addr_of_mut!((*pointer).callback).write(AtomicPtr::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*pointer).argument).write(AtomicPtr::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*pointer).warning_count).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*pointer).max_warning_count).write(AtomicIsize::new(INITIAL_MAX_WARNING_COUNT));
+            core::ptr::addr_of_mut!((*pointer).error_count).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*pointer).max_error_count).write(AtomicIsize::new(INITIAL_MAX_ERROR_COUNT));
+            core::ptr::addr_of_mut!((*pointer).error_handler).write(AtomicPtr::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*pointer).error_argument).write(AtomicPtr::new(core::ptr::null_mut()));
+            core::ptr::addr_of_mut!((*pointer).source_options).write(UnsafeCell::new(core::mem::MaybeUninit::uninit()));
+            core::ptr::addr_of_mut!((*pointer).source_options_ready).write(AtomicU8::new(0));
+            core::ptr::addr_of_mut!((*pointer).source_options_lock).write(PrivateLock::new());
+        }
+    }
+
     /// Performs this slice's `_mi_options_init` contribution before OS setup.
     ///
     /// The exclusive borrow encodes the source startup ordering: initialize
@@ -5027,6 +5065,28 @@ mod tests {
         assert_eq!(capture.message(1), b"first\n");
         assert_live_thread_warning_prefix(capture.message(2));
         assert_eq!(capture.message(3), b"second\n");
+    }
+
+    #[test]
+    fn final_slot_initialization_preserves_delayed_and_registered_delivery() {
+        let mut slot = std::boxed::Box::<OutputOwner>::new_uninit();
+        let pointer = core::ptr::NonNull::new(slot.as_mut_ptr()).unwrap();
+        // SAFETY: this exclusive uninitialized allocation is the owner's final
+        // slot, and the static primitive outlives every synchronous delivery.
+        unsafe { OutputOwner::initialize_at(pointer, test_default_stderr_output) };
+        // SAFETY: initialize_at wrote every field before publication.
+        let owner = unsafe { slot.assume_init() };
+        let capture = Capture::new();
+        // SAFETY: serialized dispatch retains the capture through registration
+        // and all later deliveries; the owner is not shared with another test.
+        unsafe {
+            owner.raw_message(source_message(b"early\n\0"));
+            owner.register_output(Some(capture_output), capture_argument(&capture));
+            owner.raw_message(source_message(b"later\n\0"));
+        }
+        assert_eq!(capture.count(), 2);
+        assert_eq!(capture.message(0), b"early\n");
+        assert_eq!(capture.message(1), b"later\n");
     }
 
     #[test]
