@@ -8866,6 +8866,17 @@ impl Theap {
         Some(unsafe { core::ptr::addr_of!((*tld.as_ptr()).thread_seq).read() })
     }
 
+    /// Copies the source Heap identity with the relaxed peek ordering.
+    ///
+    /// # Safety
+    /// The initialized or static-empty Theap stays resident through the read.
+    /// This observation grants no ownership or Heap lifetime capability.
+    #[inline]
+    pub(crate) unsafe fn heap_relaxed_at(theap: NonNull<Self>) -> *mut Heap {
+        // SAFETY: only the retained initialized atomic identity is projected.
+        unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).heap) }.load(Ordering::Relaxed)
+    }
+
     /// Copies the source sequence from this retained Theap's associated TLD.
     ///
     /// # Safety
@@ -8887,7 +8898,7 @@ impl Theap {
     /// Independently locked Heap-list fields are not borrowed.
     #[inline]
     pub(crate) unsafe fn deferred_free_tld_at(theap: NonNull<Self>) -> Option<NonNull<ThreadLocalData>> {
-        if unsafe { Self::heap_at(theap) }.is_null() { return None; }
+        if unsafe { Self::heap_relaxed_at(theap) }.is_null() { return None; }
         NonNull::new(unsafe { Self::tld_at(theap) })
     }
 
