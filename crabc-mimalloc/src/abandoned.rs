@@ -567,10 +567,10 @@ impl<M: MappedAbandonedPages> ReclaimOnFreeCandidate<'_, M> {
     /// `mi_page_heap(page)`: the Heap whose Theap may reclaim this page.
     #[inline]
     pub(crate) fn page_heap(&self) -> *mut Heap {
-        // SAFETY: the held low owner bit makes the ordinary page fields
-        // stable; producers touch only the atomic head while this short
-        // borrow copies one pointer.
-        unsafe { self.page.as_ref() }.heap()
+        // SAFETY: the held low owner bit stabilizes this Page's Heap
+        // identity. Copy only that field while remote producers retain their
+        // disjoint atomic projections; no whole-Page reference is formed.
+        unsafe { Page::heap_identity_at(self.page) }
     }
 
     /// `page->theap`, which `_mi_page_abandon` deliberately leaves naming the
@@ -4172,6 +4172,15 @@ mod tests {
     }
 
     fn map_fixture_for_bin(storage: &mut BitmapStorage, bin: usize) -> Arena {
+        map_fixture_for_bin_with_subprocess(storage, bin,
+            crate::subproc::MainSubprocess::test_static_owner().as_ptr())
+    }
+
+    fn map_fixture_for_bin_with_subprocess(
+        storage: &mut BitmapStorage,
+        bin: usize,
+        subprocess: *mut crate::types::Subprocess,
+    ) -> Arena {
         assert!(bin < ARENA_BIN_COUNT);
         let layout = BitmapLayout::for_bit_count(BCHUNK_BITS).unwrap();
         unsafe {
@@ -4188,7 +4197,7 @@ mod tests {
         maps[bin] = bitmap;
         Arena {
             memid: MemoryId::none(),
-            subprocess: crate::subproc::MainSubprocess::test_static_owner().as_ptr(),
+            subprocess,
             arena_index: 0,
             start: core::ptr::null_mut(),
             slice_count: BCHUNK_BITS,
@@ -6177,6 +6186,120 @@ mod tests {
     }
 
     #[test]
+    fn retained_regular_reclaim_offer_keeps_heap_identity_during_remote_publication() {
+        use crate::config::{ARENA_SLICE_SIZE, MEDIUM_PAGE_SIZE};
+        use crate::free_list::LocalFreeList;
+        use crate::remote_free::LiveRemoteFreePublish;
+        use crate::types::TheapOwner;
+
+        const BLOCK_SIZE: usize = 64 * 1024;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const RESERVED: usize = (MEDIUM_PAGE_SIZE - PAGE_OFFSET) / BLOCK_SIZE;
+        #[repr(C, align(65536))]
+        struct Storage([MaybeUninit<u8>; MEDIUM_PAGE_SIZE]);
+        struct PendingClient(TestLiveRemoteAllocation);
+        // SAFETY: one current client retains its complete source backing;
+        // the receiving thread touches only its block and producer atomics.
+        unsafe impl Send for PendingClient {}
+        impl PendingClient {
+            unsafe fn publish(self) {
+                assert!(matches!(unsafe { remote_free::push_live_allocation(self.0) },
+                    Ok(LiveRemoteFreePublish::PublishedToOwner)));
+            }
+        }
+
+        let bin = size_class::bin(BLOCK_SIZE).unwrap();
+        let mut bitmap_storage = BitmapStorage::uninit();
+        let subprocess = crate::subproc::MainSubprocess::new();
+        let mut arena = map_fixture_for_bin_with_subprocess(
+            &mut bitmap_storage, bin, subprocess.as_ptr());
+        // Keep one original arena capability through both bitmap access and
+        // Page provenance publication; no later whole-arena retag is needed.
+        let arena_pointer = core::ptr::addr_of_mut!(arena);
+        let view = unsafe { ArenaView::from_ptr(arena_pointer).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        let owner = bind_adopting_theap(&mut heap, &mut tld, &mut theap, id);
+        let heap_identity = NonNull::from(&heap);
+        let mut storage = std::boxed::Box::<Storage>::new_uninit();
+        let mut page = NonNull::new(storage.as_mut_ptr().cast::<Page>()).unwrap();
+        // SAFETY: one aligned allocation contains the initialized metadata
+        // and every full source stride. Retain the original owner pointers.
+        unsafe { Page::publish_fresh_exclusive_owner_at_with_pointers(
+            page, owner, heap_identity, TheapOwner::Live(id), BLOCK_SIZE,
+            PAGE_OFFSET, RESERVED as u16, 0, false, MemoryId::none()) }.unwrap();
+        assert!(unsafe { page.as_mut().abandoned_test_set_arena_memory(
+            arena_pointer, 17, MEDIUM_PAGE_SIZE / ARENA_SLICE_SIZE) });
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        assert_eq!(list.extend_count(3), Ok(3));
+        let first = list.pop(false).unwrap().unwrap();
+        let second = list.pop(false).unwrap().unwrap();
+        let survivor = list.pop(false).unwrap().unwrap();
+        drop(list);
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let first_block = first.cast::<Block>().as_ptr();
+        let first = TestLiveRemoteAllocation { page, producer, canonical_block: first };
+        let pending = PendingClient(TestLiveRemoteAllocation {
+            page, producer, canonical_block: second,
+        });
+        assert_eq!(unsafe { abandon(page, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        let claim = match unsafe { remote_free::push_live_allocation(first) }.unwrap() {
+            LiveRemoteFreePublish::ClaimedAbandonedPage(claim) => claim,
+            _ => panic!("the first survivor acquires the source low owner bit"),
+        };
+        let published = Barrier::new(2);
+        let result = thread::scope(|scope| {
+            let producer = scope.spawn(|| {
+                published.wait();
+                // SAFETY: the retained second client is consumed once while
+                // the reclaim offer keeps the Page's low owner bit held.
+                unsafe { pending.publish() };
+                published.wait();
+            });
+            let result = unsafe { continue_post_owner_exit_remote_claim(
+                claim, |_memory, _size| Ok(&map),
+                |page| collect_post_owner_exit_local_free_false(page),
+                |candidate| {
+                    assert_eq!(candidate.page_heap(), heap_identity.as_ptr());
+                    assert_eq!(candidate.originating_theap(), owner.as_ptr());
+                    assert_eq!(candidate.bin(), bin);
+                    assert!(!candidate.is_mostly_used());
+                    published.wait();
+                    assert_eq!(candidate.page_heap(), heap_identity.as_ptr());
+                    published.wait();
+                    assert_eq!(candidate.page_heap(), heap_identity.as_ptr());
+                    ReclaimOnFreeOutcome::Declined
+                }, |_page| panic!("an arena page has no OS-abandoned list"),
+                |_release| panic!("the unpublished survivor pins the page")) }.unwrap();
+            producer.join().unwrap();
+            result
+        });
+        assert!(matches!(result, ClaimedPostOwnerExitRegularFreeResult::StillLive));
+        let state = unsafe { Page::abandonment_state_at(page) };
+        assert!(!is_owned(&state));
+        assert_eq!(unsafe { state.used.as_ptr().read() }, 1);
+        // SAFETY: the producer joined and no other bitmap reader or owner
+        // exists in this fixture. Inspect source reuse order before final free.
+        {
+            let image = unsafe { Page::owner_snapshot_at(page) };
+            assert_eq!(image.free, first_block);
+            assert_eq!(image.local_free, second.cast::<Block>().as_ptr());
+        }
+        assert!(map.is_published(17));
+        // SAFETY: the remaining exact client keeps the same backing alive
+        // until the source tail hands its unique all-free owner to this test.
+        assert_eq!(unsafe { free_regular_after_failed_reclaim_select_map(
+            page, survivor, |_memory, _size| Ok(&map)) },
+            Ok(RegularAbandonedFreeAfterFailedReclaimResult::Empty));
+        assert!(is_owned(&state));
+        assert!(page_is_empty(&state));
+        assert!(!map.is_published(17));
+    }
+
+    #[test]
     fn regular_post_exit_free_transfers_collected_blocks_before_unownership() {
         use crate::config::{ARENA_SLICE_SIZE, MEDIUM_PAGE_SIZE};
         use crate::free_list::LocalFreeList;
@@ -6189,8 +6312,11 @@ mod tests {
 
         let bin = size_class::bin(BLOCK_SIZE).unwrap();
         let mut bitmap_storage = BitmapStorage::uninit();
-        let mut arena = map_fixture_for_bin(&mut bitmap_storage, bin);
-        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let subprocess = crate::subproc::MainSubprocess::new();
+        let mut arena = map_fixture_for_bin_with_subprocess(
+            &mut bitmap_storage, bin, subprocess.as_ptr());
+        let arena_pointer = core::ptr::addr_of_mut!(arena);
+        let view = unsafe { ArenaView::from_ptr(arena_pointer).unwrap() };
         let map = view.abandoned_pages(bin).unwrap();
         let id = LiveThreadId::new(16).unwrap();
         let mut heap = Heap::bootstrap_empty();
@@ -6206,7 +6332,7 @@ mod tests {
                 BLOCK_SIZE, PAGE_OFFSET, RESERVED as u16, 0, false, MemoryId::none())
         }.unwrap();
         assert!(unsafe { page.as_mut().abandoned_test_set_arena_memory(
-            &mut arena, 17, MEDIUM_PAGE_SIZE / ARENA_SLICE_SIZE) });
+            arena_pointer, 17, MEDIUM_PAGE_SIZE / ARENA_SLICE_SIZE) });
         let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
         assert_eq!(list.extend_count(2), Ok(2));
         let first = list.pop(false).unwrap().unwrap();
