@@ -212,6 +212,17 @@ pub(crate) struct HeapSourceSnapshot {
 }
 
 impl Heap {
+    /// Reads the sequence used to spread this Heap's arena searches.
+    ///
+    /// # Safety
+    /// The original initialized Heap remains live without replacement. Its
+    /// sequence is fixed at initialization; mutable lists need no projection.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn heap_sequence_at(heap: NonNull<Self>) -> usize {
+        // SAFETY: the retained Heap's immutable scalar is copied directly.
+        unsafe { core::ptr::addr_of!((*heap.as_ptr()).heap_seq).read() }
+    }
+
     /// Copies only the source fields fixed by Heap initialization.
     ///
     /// # Safety
