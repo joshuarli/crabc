@@ -216,6 +216,14 @@ unsafe fn observe_validated_loader_tls(record: &LoaderLibcTlsRuntimeV1) -> bool 
 /// malformed, or mismatched runtime state. This return value never uses TLS
 /// `errno`: the caller may invoke it precisely at the CRT boundary before a
 /// general libc runtime exists.
+///
+/// # Safety
+/// A resolved weak record must name the loader's aligned, process-lifetime
+/// header and exact version-one image. Once its ready state is published,
+/// its fields must remain immutable and its TCB/DTV mappings must remain live
+/// through this observation; the caller must then run on the initial thread
+/// with the selected loader's thread pointer installed. An absent weak import
+/// is permitted before TLS exists and reports that no attachment is available.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_loader_tls_runtime_v1_attach() -> c_int {
     let Some(record) = (unsafe { validate_loader_tls_runtime_v1() }) else {
