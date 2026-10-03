@@ -438,7 +438,12 @@ def shared_libc_link_command(
         # loader reads at every start) become a 264-byte bitmap stream.
         "-z", "pack-relative-relocs",
         f"--symbol-ordering-file={symbol_order}", "--no-warn-symbol-ordering",
-        *(str(objects / item) for item in selected), str(builtins), str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(hot_rodata),
+        *(str(objects / item) for item in selected),
+        # The shared libc owns the complete private helper member even when
+        # its selected allocator emits no helper imports. Force only this
+        # archive's extraction; subsequent inputs retain ordinary lazy policy.
+        "--whole-archive", str(builtins), "--no-whole-archive",
+        str(RUNTIME_DISCARD_UNWIND_SCRIPT), str(hot_rodata),
         "-o", str(library / "libc.so"),
     ]
 
