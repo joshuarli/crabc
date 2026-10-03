@@ -108,6 +108,10 @@ static void malformed_timezone_file(const char *path) {
     CHECK(!unlink(path));
 }
 #endif
+struct calendar_result {
+    struct tm local;
+    char name[32];
+};
 static void *calendar_worker(void *unused) {
     (void)unused;
     for (time_t seconds=0; seconds<1000; seconds++) {
@@ -117,10 +121,44 @@ static void *calendar_worker(void *unused) {
             local.tm_hour == utc.tm_hour && local.tm_mday == utc.tm_mday &&
             local.tm_mon == utc.tm_mon && local.tm_year == utc.tm_year);
     }
+    struct calendar_result *result = malloc(sizeof *result);
+    time_t epoch = 0;
+    CHECK(result && localtime_r(&epoch, &result->local));
+    CHECK(snprintf(result->name, sizeof result->name, "%s", result->local.tm_zone) > 0);
+    /* Detach the zone name while its process timezone is still current.
+     * The returned allocation owns both civil fields and the copied name. */
+    result->local.tm_zone = result->name;
+    return result;
+}
+static void retained_calendar_result(void *value) {
+    struct calendar_result *result = value;
+    CHECK(result && result->local.tm_year == 70 && result->local.tm_mon == 0 &&
+        result->local.tm_mday == 1 && result->local.tm_hour == 0 &&
+        result->local.tm_gmtoff == 0 && !strcmp(result->local.tm_zone, "UTC"));
+    free(result);
+}
+static void *timezone_setup_worker(void *unused) {
+    (void)unused;
+    /* This valid POSIX setting grows the private timezone cache in a worker.
+     * The process retains that cache and environment after the worker exits. */
+    CHECK(!setenv("TZ", "<WorkerStandardName>5<WorkerDaylightName>,M3.2.0,M11.1.0", 1));
+    tzset();
+    time_t winter = 1609459200;
+    struct tm value;
+    CHECK(localtime_r(&winter, &value) && value.tm_gmtoff == -18000 &&
+        value.tm_isdst == 0 && value.tm_hour == 19);
     return NULL;
 }
 int main(int argc, char **argv) {
     CHECK(argc == 2); /* Private TZif pathname, never a shared fixture. */
+    pthread_t setup;
+    CHECK(!pthread_create(&setup, NULL, timezone_setup_worker, NULL));
+    CHECK(!pthread_join(setup, NULL));
+    time_t winter = 1609459200;
+    struct tm warmed;
+    CHECK(localtime_r(&winter, &warmed) && warmed.tm_gmtoff == -18000 &&
+        warmed.tm_isdst == 0 && warmed.tm_hour == 19);
+
     static const char *zones[] = {"", "UTC0", "GMT-3", "EST5EDT,M3.2.0,M11.1.0",
         "AEST-10AEDT-11,M10.1.0,M4.1.0/3", "NST3:30NDT2:30,M3.2.0,M11.1.0",
         "<+0545>-5:45", "AAA0BBB,J60/0,J300/25", "AAA0BBB,59/-2,300/26",
@@ -171,8 +209,20 @@ int main(int argc, char **argv) {
     pthread_t threads[2];
     CHECK(!pthread_create(threads, NULL, calendar_worker, NULL));
     CHECK(!pthread_create(threads+1, NULL, calendar_worker, NULL));
-    calendar_worker(NULL);
-    CHECK(!pthread_join(threads[0], NULL) && !pthread_join(threads[1], NULL));
+    void *main_result = calendar_worker(NULL);
+    void *results[2];
+    CHECK(!pthread_join(threads[0], results) && !pthread_join(threads[1], results+1));
+    /* All workers have retired before the process changes TZ. Their copied
+     * results remain caller-owned while static conversion storage is reused. */
+    CHECK(!setenv("TZ", "GMT-3", 1)); tzset();
+    struct tm *shifted = localtime(&epoch);
+    CHECK(shifted && shifted->tm_hour == 3);
+    struct tm *universal = gmtime(&epoch);
+    CHECK(universal && universal->tm_hour == 0);
+    retained_calendar_result(main_result);
+    retained_calendar_result(results[0]);
+    retained_calendar_result(results[1]);
+    CHECK(!setenv("TZ", "UTC0", 1)); tzset();
 #ifdef CRABC_OWNED_CALENDAR
     malformed_timezone_file(argv[1]);
 #endif
