@@ -57,6 +57,12 @@ unsafe extern "C" fn observe(
                 visit.valid = false;
             }
             visit.valid &= heaps::theap_get_default() == default;
+            // This visited Heap is non-main. Creating and releasing a sibling
+            // changes its subprocess list links and main-Heap metadata, while
+            // leaving every visited page and retained client untouched.
+            let sibling = heaps::heap_new();
+            if sibling.is_null() { visit.valid = false; }
+            else { visit.valid &= unsafe { heaps::heap_release(sibling, true) }; }
         }
     } else {
         visit.blocks += 1;
@@ -122,8 +128,8 @@ fn public_theap_visitation_finds_one_live_calloc_block() {
 
 fn public_heap_visitation_tracks_live_population_early_stop_and_collection() {
     let default = heaps::theap_get_default();
-    let heap = heaps::heap_new();
     let reentry_heap = heaps::heap_new();
+    let heap = heaps::heap_new();
     assert!(!default.is_null() && !heap.is_null() && !reentry_heap.is_null());
     // SAFETY: this test retains its public Heap handle until final release.
     // Allocation, freeing and collection finish before every traversal.
@@ -161,12 +167,16 @@ fn public_heap_visitation_tracks_live_population_early_stop_and_collection() {
         assert!(areas.valid);
         assert_eq!((areas.areas, areas.blocks), (full.areas, 0));
         let mut stop_area = Visit::new(heap, clients, 1);
+        stop_area.reentry_heap = reentry_heap;
         assert!(!visit(heap, false, &mut stop_area));
         assert!(stop_area.valid);
+        assert!(stop_area.reentered);
         assert_eq!((stop_area.areas, stop_area.blocks), (1, 0));
         let mut stop_block = Visit::new(heap, clients, 2);
+        stop_block.reentry_heap = reentry_heap;
         assert!(!visit(heap, true, &mut stop_block));
         assert!(stop_block.valid);
+        assert!(stop_block.reentered);
         assert_eq!((stop_block.areas, stop_block.blocks), (1, 1));
         let mut repeated = Visit::new(heap, clients, 0);
         assert!(visit(heap, true, &mut repeated));
@@ -192,6 +202,45 @@ fn public_heap_visitation_tracks_live_population_early_stop_and_collection() {
     }
 }
 
+fn abandoned_heap_visitation_keeps_reentrant_callbacks_outside_owner_views() {
+    let reentry_heap = heaps::heap_new();
+    let heap = heaps::heap_new();
+    assert!(!heap.is_null() && !reentry_heap.is_null());
+    let heap_address = heap as usize;
+    let clients = std::thread::spawn(move || {
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
+        let heap = heap_address as *mut c_void;
+        let clients = [64, 64, 256].map(|size| {
+            // SAFETY: the coordinator retains the Heap through worker exit,
+            // subsequent quiescent traversal, client frees and final release.
+            let client = unsafe { heaps::heap_malloc(heap, size) }.value.unwrap();
+            (client.as_ptr() as usize, size)
+        });
+        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        clients
+    }).join().unwrap();
+    // Joining ends all owner and remote producers. The callback only changes
+    // a distinct sibling Heap; these retained abandoned pages stay quiescent.
+    unsafe {
+        for (blocks, stop_after, completed) in [(true, 0, true), (false, 1, false), (true, 2, false)] {
+            let mut capture = Visit::new(heap, clients, stop_after);
+            capture.reentry_heap = reentry_heap;
+            assert_eq!(heaps::heap_visit_abandoned_blocks(heap, blocks, Some(observe),
+                (&mut capture as *mut Visit).cast()), completed);
+            assert!(capture.valid && capture.reentered);
+            if completed { assert_eq!((capture.blocks, capture.seen), (3, 0b111)); }
+            else { assert_eq!((capture.areas, capture.blocks), (1, usize::from(blocks))); }
+        }
+        let mut repeated = Visit::new(heap, clients, 0);
+        assert!(visit(heap, true, &mut repeated));
+        assert!(repeated.valid);
+        assert_eq!((repeated.blocks, repeated.seen), (3, 0b111));
+        for (client, _) in clients { assert_eq!(api::free(client as *mut u8), api::FreeOutcome::Freed); }
+        assert!(heaps::heap_release(heap, true));
+        assert!(heaps::heap_release(reentry_heap, true));
+    }
+}
+
 #[test]
 fn public_heap_and_theap_visitation_preserve_live_population_after_prior_heap_history() {
     // Process startup owns the initial thread's allocator descriptor. Keep
@@ -207,4 +256,5 @@ fn public_heap_and_theap_visitation_preserve_live_population_after_prior_heap_hi
     }).join().unwrap();
     public_theap_visitation_finds_one_live_calloc_block();
     public_heap_visitation_tracks_live_population_early_stop_and_collection();
+    abandoned_heap_visitation_keeps_reentrant_callbacks_outside_owner_views();
 }

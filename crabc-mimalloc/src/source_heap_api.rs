@@ -1949,6 +1949,34 @@ pub unsafe fn heap_visit_abandoned_blocks(
     unsafe { heap_visit_blocks_selected(heap, true, visit_blocks, visitor, argument) }
 }
 
+/// Attaches one visitor bitmap from a retained arena-pages pointer table.
+///
+/// The pointer table is initialized before publication and immutable while
+/// retained. The returned view covers only the selected bitmap's atomics.
+///
+/// # Safety
+/// `pages` is a published main or non-main table for this exact layout. Its
+/// header and selected bitmap backing stay live for the returned view's use,
+/// including through synchronous visitor calls; retirement is excluded.
+unsafe fn heap_visit_arena_bitmap<'owner>(
+    pages: NonNull<crate::types::ArenaPages>, layout: crate::bitmap::BitmapLayout, bitmap: usize,
+) -> Option<crate::bitmap::BitmapView<'owner>> {
+    let raw = pages.as_ptr();
+    // SAFETY: the caller retains this immutable published pointer table;
+    // checked indexing avoids projecting unrelated or absent bin storage.
+    let pointer = unsafe {
+        if bitmap == 0 { core::ptr::addr_of!((*raw).pages).read() }
+        else {
+            let index = bitmap.checked_sub(1)?;
+            if index >= crate::config::ARENA_BIN_COUNT { return None; }
+            core::ptr::addr_of!((*raw).pages_abandoned).cast::<*mut u8>().add(index).read()
+        }
+    };
+    // SAFETY: the same source publication retains initialized atomic words
+    // of the exact bitmap extent for every returned view operation.
+    unsafe { crate::bitmap::BitmapView::attach(pointer, layout.byte_size(), layout) }
+}
+
 /// Selects either all arena pages or only their abandoned-bin bitmaps.
 ///
 /// # Safety
@@ -1964,11 +1992,14 @@ unsafe fn heap_visit_blocks_selected(
     let Some(visitor) = visitor else { return false };
     let selected = if heap.is_null() { heap_main() } else { heap };
     let Some(heap) = NonNull::new(selected.cast::<Heap>()) else { return false };
-    // SAFETY: caller keeps the Heap live and traversal quiescent.
-    let heap_ref = unsafe { heap.as_ref() };
+    // SAFETY: the caller retains the original initialized Heap. Membership
+    // and the TLS key are immutable; no Heap reference survives callbacks.
+    let source = unsafe { Heap::source_snapshot_at(heap) };
+    let is_subprocess_main = source.theap_slot == crate::thread_local::TLS_FAST_KEY_RAW as usize
+        && !source.subprocess.is_null();
     // SAFETY: the caller retains the Heap's owning subprocess through this
     // traversal; its identity is immutable after Heap initialization.
-    let Some(subprocess) = (unsafe { heap_ref.subprocess_pointer().as_ref() }) else { return false };
+    let Some(subprocess) = (unsafe { source.subprocess.as_ref() }) else { return false };
     // The caller retains this Heap's owning subprocess, including its
     // parent metadata custody. Registration admits every nesting depth;
     // traversal uses only this subprocess's own arena registry.
@@ -1980,25 +2011,37 @@ unsafe fn heap_visit_blocks_selected(
     let registry = subprocess.arena_backing().registry();
     for index in 0..registry.count() {
         // SAFETY: the caller excludes arena retirement for this traversal.
-        let Some(arena) = (unsafe { registry.arena_at(index) }) else { continue };
-        // SAFETY: the registered arena remains mapped and published.
-        let Some(view) = (unsafe { crate::arena::ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else {
-            return false;
+        let Some(arena) = registry.arena_print_pointer(index) else { continue };
+        // SAFETY: published arena geometry and its embedded pointer table
+        // are retained through traversal; only copied fields cross callbacks.
+        let (arena_index, slice_count, arena_start, embedded_pages) = unsafe {
+            let raw = arena.as_ptr();
+            (core::ptr::addr_of!((*raw).arena_index).read(),
+             core::ptr::addr_of!((*raw).slice_count).read(),
+             core::ptr::addr_of!((*raw).start).read(),
+             NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).pages_main)))
         };
-        let pages = if heap_ref.is_subprocess_main() {
-            if heap_ref.arena_pages_at(index) != Some(NonNull::from(&view.arena().pages_main)) {
-                continue;
-            }
-            // SAFETY: the installed main Heap slot retains this arena's
-            // embedded bitmap, and the caller excludes its retirement.
-            unsafe { view.pages() }
+        // SAFETY: the Heap's source slot remains retained with its bitmap
+        // allocation; atomic publication may be sampled independently.
+        let pages_pointer = unsafe { Heap::arena_pages_pointer_at(heap,
+            if is_subprocess_main { index } else { arena_index }) };
+        if is_subprocess_main && pages_pointer != Some(embedded_pages) { continue; }
+        let Some(pages_pointer) = pages_pointer else { continue };
+        let layout = if is_subprocess_main {
+            crate::bitmap::BitmapLayout::for_bit_count(slice_count)
         } else {
-            // SAFETY: the installed Heap bitmap and arena remain live.
-            unsafe { heap_ref.non_main_arena_pages_bitmap(&view, 0) }
+            crate::arena::ArenaPagesLayout::for_slice_count(slice_count).map(|layout| layout.bitmap_layout())
         };
+        let Some(layout) = layout else { return false };
+        // SAFETY: this source table and all bitmap backing stay live through
+        // every callback. The view borrows only initialized atomic words.
+        let pages = unsafe { heap_visit_arena_bitmap(pages_pointer, layout, 0) };
         let Some(pages) = pages else { continue };
         let visit_page_set = |selected: &crate::bitmap::BitmapView<'_>| selected.visit_set_bits(|slice, _| {
-            let Some(start) = view.slice_start(slice) else { return false };
+            if slice >= slice_count { return false; }
+            let Some(offset) = crate::invariants::size_of_slices(slice) else { return false };
+            // SAFETY: the checked slice belongs to the retained arena mapping.
+            let start = unsafe { arena_start.add(offset) };
             // SAFETY: a set Heap bit retains the registered page at this
             // slice; caller exclusion keeps its mapping stable.
             let Some(page) = (unsafe { binding.page_map().lookup_registered_page(start) }).ok().flatten() else {
@@ -2009,21 +2052,12 @@ unsafe fn heap_visit_blocks_selected(
         });
         if abandoned_only {
             for bin in 0..crate::config::ARENA_BIN_COUNT {
-                if !heap_ref.has_abandoned_page_in_bin(bin) { continue; }
-                let abandoned = if heap_ref.is_subprocess_main() {
-                    let Some(layout) = crate::bitmap::BitmapLayout::for_bit_count(view.arena().slice_count) else {
-                        return false;
-                    };
-                    // SAFETY: the installed process-main arena image retains
-                    // this initialized bin bitmap for the complete visit.
-                    unsafe { crate::bitmap::BitmapView::attach(
-                        view.arena().pages_main.pages_abandoned[bin], layout.byte_size(), layout,
-                    ) }
-                } else {
-                    // SAFETY: the non-main Heap's published arena-pages image
-                    // and its bin bitmap remain live during this traversal.
-                    unsafe { heap_ref.non_main_arena_pages_bitmap(&view, bin + 1) }
-                };
+                // SAFETY: only the initialized atomic search hint is read;
+                // the selected bitmap remains the source page authority.
+                if !unsafe { Heap::has_abandoned_page_in_bin_at(heap, bin) } { continue; }
+                // SAFETY: the source table and this bin's atomic bitmap stay
+                // retained; no whole Heap or Arena reference spans delivery.
+                let abandoned = unsafe { heap_visit_arena_bitmap(pages_pointer, layout, bin + 1) };
                 let Some(abandoned) = abandoned else { return false };
                 if !visit_page_set(&abandoned) { return false; }
             }
