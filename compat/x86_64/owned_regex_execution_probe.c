@@ -88,6 +88,42 @@ static int check_empty_backreference(void)
     return execute("\\(a*\\)\\1", 0, "", 2, expected);
 }
 
+static int check_compiled_lifetime(void)
+{
+    regex_t parallel, backreference;
+    regmatch_t matches[3];
+    int result = 0;
+    if (regcomp(&parallel, "(a|ab)(b?)", REG_EXTENDED)) return 1;
+    if (regcomp(&backreference, "\\(a\\)\\1", 0)) {
+        regfree(&parallel);
+        return 2;
+    }
+    /* Execution temporaries belong to one call; alternating successful and
+     * unsuccessful calls must leave both independently compiled graphs live. */
+    for (unsigned iteration = 0; iteration < 8; iteration++) {
+        if (regexec(&parallel, "ab", 3, matches, 0) ||
+            matches[0].rm_so != 0 || matches[0].rm_eo != 2 ||
+            matches[1].rm_so != 0 || matches[1].rm_eo != 2 ||
+            matches[2].rm_so != 2 || matches[2].rm_eo != 2) {
+            result = 3;
+            break;
+        }
+        if (regexec(&backreference, "zaa", 2, matches, 0) ||
+            matches[0].rm_so != 1 || matches[0].rm_eo != 3 ||
+            matches[1].rm_so != 1 || matches[1].rm_eo != 2 ||
+            regexec(&parallel, "z", 0, NULL, 0) != REG_NOMATCH ||
+            regexec(&backreference, "ab", 0, NULL, 0) != REG_NOMATCH) {
+            result = 4;
+            break;
+        }
+    }
+    regfree(&parallel);
+    /* Releasing one graph must not consume another graph's matcher state. */
+    if (!result && regexec(&backreference, "aa", 0, NULL, 0)) result = 5;
+    regfree(&backreference);
+    return result;
+}
+
 static int semantic_suite(void)
 {
     static const regmatch_t longest[] = {{1, 3}};
@@ -113,6 +149,7 @@ static int semantic_suite(void)
     if ((result = expect_no_match("^a", REG_EXTENDED, "a", REG_NOTBOL))) return 390 + result;
     if ((result = expect_no_match("a$", REG_EXTENDED, "a", REG_NOTEOL))) return 410 + result;
     if ((result = check_error_table())) return 430 + result;
+    if ((result = check_compiled_lifetime())) return 450 + result;
     return 0;
 }
 
