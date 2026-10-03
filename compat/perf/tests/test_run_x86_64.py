@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+from contextlib import ExitStack
+import json
 import errno
 import os
 import signal
@@ -758,6 +760,69 @@ class RosterBoundaryTests(unittest.TestCase):
                  patch.object(runner.evidence, "_x86_module", side_effect=module):
                 with self.assertRaisesRegex(runner.AdapterError, "ordered qualification chain"):
                     runner.load_attempt_roster(ROOT, roster_path, product)
+
+
+class MemoryCollectorSmokeTests(unittest.TestCase):
+    def test_collector_captures_host_raw_paths_and_preserves_observations_and_cleanup(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "crabc_memory_collector_smoke", ROOT / "compat/perf/tests/run_x86_64_memory_collector_smoke.py")
+        assert spec is not None and spec.loader is not None
+        smoke = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(smoke)
+        selected = smoke.selected_rows()
+        observations = {}
+        leaves = []
+        for row in selected:
+            lanes = {}
+            for lane in ("musl", "crabc"):
+                leaf = f"{row.name}-{lane}"
+                leaves.append(leaf)
+                lanes[lane] = {
+                    "status": "ok",
+                    "migration": {"event": "syscall-entry-execve", "threads": 1,
+                                  "syscall": {"entry": True}, "probe": leaf},
+                    "checkpoints": [{"phase": phase, "ready": "R", "continue": "C",
+                                     "memory": {"pss_kib": 1, "raw": {}}, "mappings": {"raw": {}}}
+                                    for phase in row.memory_phases],
+                    "cgroup_memory": {"status": "ok", "memory_peak_after_exit_bytes": 1, "raw": {}},
+                    "peer": {"status": "complete", "row": {"id": row.name}}
+                            if row.name == "loopback_tcp_ipv4_4k" else None,
+                }
+            observations[row.name] = {"invocation": {"phases": list(row.memory_phases)},
+                                      **lanes, "comparison": {"status": "ok"}}
+        cleanup = {"owned_leaves": leaves, "remaining_leaves": [], "unmount_status": 0}
+        session = Mock()
+        session.close.return_value = cleanup
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary, ExitStack() as stack:
+            directory = Path(temporary)
+            work = directory / "collector"
+            args = SimpleNamespace(work=work, dynamic_product=directory / "product", cpu=2, timeout=1.0)
+            owner = smoke.runner
+            for name, value in {
+                "git_clean": True, "git_revision": "a" * 40,
+                "validate_environment": (args.dynamic_product, directory / "musl", directory / "musl-cc",
+                                         2, (2, 3), 3),
+                "make_generated_sources": None, "source_roster": ({}, {}),
+                "compile_required_objects": None, "link_required_artifacts": None,
+                "stage_lane": None, "record_product": {"root": "mock-product"},
+            }.items():
+                stack.enter_context(patch.object(owner, name, return_value=value))
+            stack.enter_context(patch.object(owner.CgroupSession, "create", return_value=session))
+            collect = stack.enter_context(patch.object(owner, "collect_memory_observers", return_value=observations))
+            host = stack.enter_context(patch.object(owner, "host_snapshot", autospec=True,
+                                                   return_value={"captured": "mock-host"}))
+            report = smoke.run(args)
+            host.assert_called_once_with(ROOT, work / "raw/host/cache-sysfs", work / "raw/host/governor-sysfs",
+                                         2, (2, 3), 3)
+            self.assertEqual(collect.call_args.args[4], work / "raw/execution")
+            session.close.assert_called_once_with()
+            result = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(result["schema"], "crabc.perf.x86_64-memory-collector-smoke/v1")
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["rows"], list(smoke.SMOKE_ROWS))
+            self.assertEqual(result["host"], {"captured": "mock-host"})
+            self.assertEqual(result["observations"], observations)
+            self.assertEqual(result["cleanup"], cleanup)
 
 
 if __name__ == "__main__":

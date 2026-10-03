@@ -177,7 +177,10 @@ def run(args: argparse.Namespace) -> Path:
         )
         result.update({
             "product": runner.record_product(ROOT, product),
-            "host": runner.host_snapshot(cpu, allowed_affinity, peer_cpu),
+            "host": runner.host_snapshot(
+                ROOT, work / "raw/host/cache-sysfs", work / "raw/host/governor-sysfs",
+                cpu, allowed_affinity, peer_cpu,
+            ),
             "observations": observations,
         })
     except (runner.AdapterError, runner.CgroupUnsupported, OSError, SmokeError) as error:
