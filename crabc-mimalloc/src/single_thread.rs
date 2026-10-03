@@ -132,6 +132,8 @@ use core::marker::PhantomData;
 use crate::page_backing::PageBacking;
 use crate::process_arena::{ProcessPageBackingLease, ProcessPageBackingError};
 use core::mem::ManuallyDrop;
+#[cfg(target_arch = "x86_64")]
+use core::mem::MaybeUninit;
 use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -170,6 +172,8 @@ use crate::config::{
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
+#[cfg(target_arch = "x86_64")]
+use crate::os_page::OsAlignedPageClaimInitialization;
 use crate::os_page::{
     OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage,
     published_on_demand_os_page_area_for_process,
@@ -42923,32 +42927,68 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let config = self.page_map.memory_config();
         let arena = &self.arena;
         let requested = self.requested_arena;
+        #[cfg(target_arch = "x86_64")]
+        let mut storage = MaybeUninit::<OsAlignedPageClaim>::uninit();
+        #[cfg(target_arch = "x86_64")]
+        let destination = NonNull::from(&mut storage);
+        #[cfg(target_arch = "x86_64")]
         let allocation = self.session.with_os_random_source(|random| {
             if let Some(process) = arena.process() {
-                if commit {
-                    // SAFETY: this PageBacking is borrowed from the exact
-                    // child owner which remains live through the engine call.
-                    unsafe { OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
-                        process, config, block_size, alignment, requested, Some(random),
-                    ) }
-                } else {
-                    // SAFETY: same exact child-backing retention as above.
-                    unsafe { OsAlignedPageClaim::allocate_on_demand_for_borrowed_process_with_random(
-                        process, config, block_size, alignment, requested, Some(random),
-                    ) }
-                }
+                // SAFETY: the exact backing retains its process owner. This
+                // vacant stack destination never escapes to a warning callback;
+                // the scalar result names whether its original image is valid.
+                unsafe { OsAlignedPageClaim::initialize_borrowed_into(destination,
+                    process, config, block_size, alignment, requested, Some(random), commit) }
             } else {
-                OsAlignedPageClaim::allocate(config, block_size, alignment)
+                // SAFETY: random admission and process selection retain their
+                // original order. The same vacant private destination receives
+                // only the authentic processless allocation's retained owner.
+                unsafe { OsAlignedPageClaim::initialize_processless_into(
+                    destination, config, block_size, alignment) }
             }
         });
+        #[cfg(target_arch = "x86_64")]
         let mut claim = match allocation {
-            Ok(claim) => claim,
-            Err(failure) => {
-                if let Some(owner) = failure.into_owner() {
-                    self.park_pending_os_release(owner);
-                }
+            // SAFETY: only these two outcomes initialized a complete original
+            // image. Each branch consumes that destination once; Released never
+            // reads it and carries no terminal mapping capability.
+            OsAlignedPageClaimInitialization::Ready => unsafe { storage.assume_init() },
+            OsAlignedPageClaimInitialization::Retained(_) => {
+                self.park_pending_os_release(OsAlignedPageOwner::Claim(unsafe { storage.assume_init() }));
                 return Ok(None);
             }
+            OsAlignedPageClaimInitialization::Released(_) => return Ok(None),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
+        let mut claim = {
+            let allocation = self.session.with_os_random_source(|random| {
+                if let Some(process) = arena.process() {
+                    if commit {
+                        // SAFETY: this PageBacking is borrowed from the exact
+                        // child owner which remains live through the engine call.
+                        unsafe { OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
+                            process, config, block_size, alignment, requested, Some(random),
+                        ) }
+                    } else {
+                        // SAFETY: same exact child-backing retention as above.
+                        unsafe { OsAlignedPageClaim::allocate_on_demand_for_borrowed_process_with_random(
+                            process, config, block_size, alignment, requested, Some(random),
+                        ) }
+                    }
+                } else {
+                    OsAlignedPageClaim::allocate(config, block_size, alignment)
+                }
+            });
+            let mut claim = match allocation {
+                Ok(claim) => claim,
+                Err(failure) => {
+                    if let Some(owner) = failure.into_owner() {
+                        self.park_pending_os_release(owner);
+                    }
+                    return Ok(None);
+                }
+            };
+            claim
         };
         let layout = claim.layout();
         // All checks precede primary metadata, aliases, map publication and

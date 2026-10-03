@@ -45,6 +45,8 @@
 
 use core::cell::Cell;
 use core::mem::size_of;
+#[cfg(target_arch = "x86_64")]
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
 use crabc_core::Errno;
@@ -513,6 +515,18 @@ pub(crate) struct OsAlignedPageAllocationFailure {
     claim: Option<OsAlignedPageClaim>,
 }
 
+/// Result of constructing the sole claim in caller-provided storage.
+/// Ready and Retained leave one initialized image to take exactly once.
+/// Released grants no right to read the destination, including after a
+/// successful rollback left inactive representation bytes there.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) enum OsAlignedPageClaimInitialization {
+    Ready,
+    Released(OsAlignedPageError),
+    Retained(OsAlignedPageError),
+}
+
 impl OsAlignedPageAllocationFailure {
     #[inline]
     fn released(error: OsAlignedPageError) -> Self {
@@ -662,6 +676,165 @@ impl OsAlignedPageClaim {
         Ok(claim)
     }
 
+    /// Moves the original processless allocation outcome into a private destination.
+    ///
+    /// # Safety
+    /// The destination is aligned, writable, vacant and inaccessible to callbacks.
+    /// Ready and Retained initialize one complete original claim which the caller
+    /// must take exactly once. Released forbids reading or releasing the destination.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn initialize_processless_into(
+        destination: NonNull<MaybeUninit<Self>>, config: MemoryConfig,
+        block_size: usize, alignment: usize,
+    ) -> OsAlignedPageClaimInitialization {
+        match Self::allocate(config, block_size, alignment) {
+            Ok(claim) => {
+                // SAFETY: the exclusive vacant destination receives this original
+                // claim once, with no remaining owner in the allocation result.
+                unsafe { destination.cast::<Self>().as_ptr().write(claim); }
+                OsAlignedPageClaimInitialization::Ready
+            }
+            Err(OsAlignedPageAllocationFailure { error, claim: None }) =>
+                OsAlignedPageClaimInitialization::Released(error),
+            Err(OsAlignedPageAllocationFailure { error, claim: Some(claim) }) => {
+                // SAFETY: the refused original owner moves once into the same
+                // exclusive destination; Retained preserves its release right.
+                unsafe { destination.cast::<Self>().as_ptr().write(claim); }
+                OsAlignedPageClaimInitialization::Retained(error)
+            }
+        }
+    }
+
+    /// Constructs an unpublished borrowed claim in its caller's destination.
+    ///
+    /// # Safety
+    /// The destination is aligned, writable, vacant and inaccessible to
+    /// callbacks throughout this call. The caller retains the exact process
+    /// image and external context until the returned claim is published and
+    /// reclaimed or released. Ready and Retained require taking that complete
+    /// original image once; Released forbids reading or releasing it. No
+    /// destructor or implicit release acts on the destination.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn initialize_borrowed_into(
+        destination: NonNull<MaybeUninit<Self>>, process: VmProcess<'_>,
+        config: MemoryConfig, block_size: usize, alignment: usize,
+        requested: crate::arena::ArenaId, random: crate::os::OsRandom<'_>,
+        commit: bool,
+    ) -> OsAlignedPageClaimInitialization {
+        use OsAlignedPageClaimInitialization::{Ready, Released, Retained};
+        if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
+            return Released(OsAlignedPageError::new(OsAlignedPageFailureStage::Map, Errno::NOMEM));
+        }
+        let layout = match OsAlignedPageLayout::for_fresh_page(config, block_size, alignment) {
+            Some(layout) => layout,
+            None => return Released(OsAlignedPageError::new(OsAlignedPageFailureStage::Map, Errno::INVAL)),
+        };
+        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
+        let pointer = destination.cast::<Self>();
+        let mapping = match allocation {
+            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Err(failure) => {
+                let error = OsAlignedPageError::new(OsAlignedPageFailureStage::Map, failure.error());
+                return match failure.into_mapping() {
+                    None => Released(error),
+                    Some(mapping) => {
+                        // SAFETY: the vacant destination receives this exact
+                        // refused mapping once, with its original unready state.
+                        unsafe { Self::write_borrowed_claim_at(pointer, mapping, &layout, process, false); }
+                        Retained(error)
+                    }
+                };
+            }
+        };
+        // SAFETY: the destination is still vacant and this mapping has not
+        // escaped. Complete every field before any commit warning can run.
+        unsafe { Self::write_borrowed_claim_at(pointer, mapping, &layout, process, commit); }
+        let metadata_size = layout.metadata_commit_size();
+        // SAFETY: this private Mapping field is initialized and retained.
+        // Only that field is borrowed during the existing warning operation;
+        // no whole-claim reference crosses a callback.
+        let metadata = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).mapping) }
+            .commit_for_process_with_warning(process, 0, metadata_size, metadata_size);
+        let result = match metadata {
+            Err(error) => Err((OsAlignedPageFailureStage::MetadataCommit, error)),
+            Ok(_) if commit => {
+                // SAFETY: the same complete private Mapping remains retained.
+                match unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).mapping) }
+                    .commit_for_process_with_warning(process, layout.alignment(), layout.allocation_size(), 0) {
+                    Ok(_) => Ok(()),
+                    Err(error) => Err((OsAlignedPageFailureStage::BlockCommit, error)),
+                }
+            }
+            Ok(_) => Ok(()),
+        };
+        if let Err((stage, error)) = result {
+            // SAFETY: construction initialized the whole image and retains
+            // its sole release right and original process through rollback.
+            return match unsafe { Self::release_borrowed_at(pointer, process) } {
+                Ok(()) => Released(OsAlignedPageError::new(stage, error)),
+                Err(cleanup) => Retained(OsAlignedPageError::with_cleanup(stage, error, Some(cleanup.operation()))),
+            };
+        }
+        // SAFETY: the metadata prefix is now writable and remains private.
+        // The Mapping field has its original provenance and zero fact.
+        let mapping = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).mapping) };
+        if !mapping.initially_zero() {
+            unsafe { core::ptr::write_bytes(mapping.base().unwrap(), 0, metadata_size); }
+        }
+        // SAFETY: these are disjoint scalar fields of the initialized image.
+        // Source eager construction changes its release debit only after both
+        // commits succeed; on-demand construction retains its zero debit.
+        unsafe {
+            if commit { core::ptr::addr_of_mut!((*pointer.as_ptr()).release_commit_size).write(layout.allocation_size()); }
+            core::ptr::addr_of_mut!((*pointer.as_ptr()).ready).write(true);
+        }
+        Ready
+    }
+
+    /// Writes every field of one private image without an aggregate Claim.
+    /// The destination is vacant and the mapping is the sole authentic owner.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn write_borrowed_claim_at(
+        destination: NonNull<Self>, mapping: Mapping, layout: &OsAlignedPageLayout,
+        process: VmProcess<'_>, commit: bool,
+    ) {
+        let pointer = destination.as_ptr();
+        // SAFETY: all field addresses lie in the aligned vacant destination.
+        // Mapping moves once; layout is immutable Copy geometry with the same
+        // provenance. No callback runs before the full image is initialized.
+        unsafe {
+            core::ptr::addr_of_mut!((*pointer).mapping).write(mapping);
+            core::ptr::copy_nonoverlapping(layout, core::ptr::addr_of_mut!((*pointer).layout), 1);
+            core::ptr::addr_of_mut!((*pointer).process).write(None);
+            core::ptr::addr_of_mut!((*pointer).process_identity).write(Some(NonNull::from(process.subprocess())));
+            core::ptr::addr_of_mut!((*pointer).initially_committed).write(commit);
+            core::ptr::addr_of_mut!((*pointer).release_commit_size).write(if commit { layout.mapping_length() } else { 0 });
+            core::ptr::addr_of_mut!((*pointer).page_publication_started).write(Cell::new(false));
+            core::ptr::addr_of_mut!((*pointer).tail_reset_recorded).write(false);
+            core::ptr::addr_of_mut!((*pointer).release_state).write(OsPageReleaseState::Unaccounted);
+            core::ptr::addr_of_mut!((*pointer).ready).write(false);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn allocate_borrowed_value(
+        process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>, commit: bool,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        let mut storage = MaybeUninit::uninit();
+        // SAFETY: this adapter's destination is vacant, private and retained;
+        // its caller retains the original process until terminal release.
+        match unsafe { Self::initialize_borrowed_into(NonNull::from(&mut storage),
+            process, config, block_size, alignment, requested, random, commit) } {
+            OsAlignedPageClaimInitialization::Ready => Ok(unsafe { storage.assume_init() }),
+            OsAlignedPageClaimInitialization::Released(error) => Err(OsAlignedPageAllocationFailure::released(error)),
+            OsAlignedPageClaimInitialization::Retained(error) => Err(OsAlignedPageAllocationFailure::with_claim(
+                error, unsafe { storage.assume_init() })),
+        }
+    }
+
     /// Process-paired allocation for a reclaimable child identity. Unlike
     /// the process-main entry point, this claim never stores a `VmProcess`;
     /// the external child owner retains the image and supplies a short pair
@@ -671,6 +844,25 @@ impl OsAlignedPageClaim {
     /// context owner until this claim is either published and reclaimed or
     /// explicitly released. The returned token carries only its comparison
     /// identity, not the context lifetime.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn allocate_for_borrowed_process_with_random(
+        process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        // SAFETY: the caller retains the original process image/context
+        // through this operation and the returned claim's terminal release.
+        unsafe { Self::allocate_borrowed_value(process, config, block_size,
+            alignment, requested, random, true) }
+    }
+
+    /// Borrowed construction on the paused target retains its original owner
+    /// transport. The caller retains the exact process image and external
+    /// context until publication/reclaim or explicit claim release completes.
+    /// # Safety
+    /// The process image/context and sole returned mapping owner remain live
+    /// through every operation and terminal release.
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn allocate_for_borrowed_process_with_random(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -757,6 +949,25 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// Same external subprocess-image retention obligation as
     /// [`Self::allocate_for_borrowed_process_with_random`].
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn allocate_on_demand_for_borrowed_process_with_random(
+        process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        // SAFETY: the caller retains the original process image/context
+        // through this operation and the returned claim's terminal release.
+        unsafe { Self::allocate_borrowed_value(process, config, block_size,
+            alignment, requested, random, false) }
+    }
+
+    /// Borrowed construction on the paused target retains its original owner
+    /// transport. The caller retains the exact process image and external
+    /// context until publication/reclaim or explicit claim release completes.
+    /// # Safety
+    /// The process image/context and sole returned mapping owner remain live
+    /// through every operation and terminal release.
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn allocate_on_demand_for_borrowed_process_with_random(
         process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
         alignment: usize, requested: crate::arena::ArenaId,
@@ -1266,6 +1477,24 @@ impl OsAlignedPageClaim {
     /// # Safety
     /// The caller retains the exact subprocess identity image captured by
     /// this claim, with the sole terminal release right, through this call.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn release_for_process(
+        mut self,
+        process: VmProcess<'_>,
+    ) -> Result<(), OsAlignedPageReleaseFailure> {
+        // SAFETY: self is the complete unique stack owner and cannot be
+        // reached by callbacks; the caller retains its process image.
+        match unsafe { Self::release_borrowed_at(NonNull::from(&mut self), process) } {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageReleaseFailure { error, owner: OsAlignedPageOwner::Claim(self) }),
+        }
+    }
+
+    /// Borrowed release on the paused target retains its original transport.
+    /// # Safety
+    /// The caller retains the exact captured process image and this claim's
+    /// sole terminal release right throughout the operation.
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn release_for_process(
         mut self,
         process: VmProcess<'_>,
@@ -1299,6 +1528,57 @@ impl OsAlignedPageClaim {
                 error: OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error),
                 owner: OsAlignedPageOwner::Claim(self),
             }),
+        }
+    }
+
+    /// Executes the original borrowed release without transporting its owner.
+    ///
+    /// # Safety
+    /// The pointer is one complete, exclusive claim inaccessible to callbacks.
+    /// Its sole release right and original process image remain retained for
+    /// this call. Success consumes that right and forbids another read or
+    /// release; error leaves the complete original image and progress intact.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn release_borrowed_at(
+        destination: NonNull<Self>, process: VmProcess<'_>,
+    ) -> Result<(), OsAlignedPageError> {
+        let pointer = destination.as_ptr();
+        // SAFETY: the caller supplies a complete retained image. These copied
+        // identity/state facts grant no new mapping or process authority.
+        let identity = unsafe { core::ptr::addr_of!((*pointer).process_identity).read() };
+        if identity != Some(NonNull::from(process.subprocess())) {
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Release, Errno::INVAL));
+        }
+        let state = unsafe { core::ptr::addr_of!((*pointer).release_state).read() };
+        if matches!(state, OsPageReleaseState::RetainedPublicationFailure) {
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
+        }
+        let result = match state {
+            OsPageReleaseState::Unaccounted => {
+                // SAFETY: latch source accounting before the same warning/
+                // unmap operation, so a refused primitive retains raw retry.
+                unsafe { core::ptr::addr_of_mut!((*pointer).release_state).write(OsPageReleaseState::Accounted); }
+                let publication = unsafe { &*core::ptr::addr_of!((*pointer).page_publication_started) }.get();
+                let initially_committed = unsafe { core::ptr::addr_of!((*pointer).initially_committed).read() };
+                let committed = if publication && initially_committed {
+                    let layout = unsafe { &*core::ptr::addr_of!((*pointer).layout) };
+                    layout.mapping_length() - layout.alignment()
+                } else { unsafe { core::ptr::addr_of!((*pointer).release_commit_size).read() } };
+                // SAFETY: only the private Mapping field is mutably borrowed
+                // across its original warning callback; no whole-claim view
+                // spans callback reentry.
+                unsafe { &mut *core::ptr::addr_of_mut!((*pointer).mapping) }
+                    .unmap_for_process_with_warning(process, committed, false, true)
+            }
+            OsPageReleaseState::Accounted => {
+                // SAFETY: this original accounted owner has a raw retry right.
+                unsafe { &mut *core::ptr::addr_of_mut!((*pointer).mapping) }.unmap()
+            }
+            OsPageReleaseState::RetainedPublicationFailure => unreachable!(),
+        };
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Release, error)),
         }
     }
 
@@ -2015,15 +2295,43 @@ mod tests {
     #[test]
     fn paired_fresh_os_page_commit_failure_retains_accounted_cleanup_owner() {
         let fault = fault::install(fault::Plan::disabled());
-        for (borrowed, on_demand, commit_call) in [
-            (false, false, 1), (false, false, 2),
-            (true, false, 1), (true, false, 2), (true, true, 1),
+        for (destination, borrowed, on_demand, commit_call) in [
+            (false, false, false, 1), (false, false, false, 2),
+            (false, true, false, 1), (false, true, false, 2), (false, true, true, 1),
+            #[cfg(target_arch = "x86_64")]
+            (true, true, false, 1),
+            #[cfg(target_arch = "x86_64")]
+            (true, true, false, 2),
+            #[cfg(target_arch = "x86_64")]
+            (true, true, true, 1),
         ] {
             let process = process(false);
             let before = process.subprocess().vm_statistics().snapshot();
             fault.set(fault::Plan::at_pair(fault::Point::Commit, commit_call,
                 fault::Point::Unmap, 1, Errno::NOMEM));
-            let allocation = if borrowed {
+            let allocation = if destination {
+                #[cfg(target_arch = "x86_64")]
+                {
+                    let mut storage = MaybeUninit::uninit();
+                    // SAFETY: the private vacant destination and original
+                    // process image remain retained through exact cleanup.
+                    let outcome = unsafe { OsAlignedPageClaim::initialize_borrowed_into(
+                        NonNull::from(&mut storage), process, config(4 * KIB), 4096,
+                        1, crate::arena::ArenaId::none(), None, !on_demand,
+                    ) };
+                    match outcome {
+                        OsAlignedPageClaimInitialization::Retained(error) => {
+                            // SAFETY: Retained initializes the original image
+                            // once, including its actual failed-release latch.
+                            Err(OsAlignedPageAllocationFailure::with_claim(error,
+                                unsafe { storage.assume_init() }))
+                        }
+                        _ => panic!("refused commit and cleanup retain the original destination"),
+                    }
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                { unreachable!("destination cases are native only") }
+            } else if borrowed {
                 // SAFETY: this fixture retains the exact process image until
                 // the original refused claim has completed its raw retry.
                 unsafe {
@@ -2045,10 +2353,14 @@ mod tests {
             assert_eq!(failure.error().stage(), if commit_call == 1 {
                 OsAlignedPageFailureStage::MetadataCommit
             } else { OsAlignedPageFailureStage::BlockCommit });
+            assert_eq!(failure.error().operation(), Errno::NOMEM);
             assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
             let OsAlignedPageOwner::Claim(claim) = failure.into_owner().expect("retained mapping") else { panic!("private claim") };
             assert!(claim.memory_id().is_err(), "failed commitment cannot publish a valid page");
             assert!(claim.belongs_to_subprocess(process.subprocess()));
+            assert!(matches!(claim.release_state, OsPageReleaseState::Accounted));
+            assert!(!claim.ready);
+            assert!(claim.mapping.base().is_ok());
             assert_eq!(claim.base().unwrap().addr() % PAGE_META_ALIGNMENT, 0);
             let after = process.subprocess().vm_statistics().snapshot();
             assert_eq!(after.reserved_current, before.reserved_current);
@@ -2433,6 +2745,96 @@ mod tests {
             1, crate::arena::ArenaId::none()).err().expect("source disallow OS refusal");
         assert!(failure.into_owner().is_none());
         assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut storage = MaybeUninit::uninit();
+            // SAFETY: policy refusal leaves this private vacant destination
+            // unread; the exact process image remains live through the call.
+            let outcome = unsafe { OsAlignedPageClaim::initialize_borrowed_into(
+                NonNull::from(&mut storage), process, config(4 * KIB), 4096,
+                1, crate::arena::ArenaId::none(), None, true,
+            ) };
+            let OsAlignedPageClaimInitialization::Released(error) = outcome else {
+                panic!("disallowed OS allocation initializes no claim");
+            };
+            assert_eq!(error.stage(), OsAlignedPageFailureStage::Map);
+            assert_eq!(error.operation(), Errno::NOMEM);
+            assert_eq!(error.cleanup(), None);
+            assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+            // Real commit refusal followed by successful cleanup has the same
+            // vacant destination protocol as refusal before the first mapping.
+            for (commit, ordinal) in [(true, 1), (true, 2), (false, 1)] {
+                let process = self::process(false);
+                let before = process.subprocess().vm_statistics().snapshot();
+                let fault = fault::install(fault::Plan::at(fault::Point::Commit, ordinal, Errno::NOMEM));
+                // SAFETY: the private destination is vacant; its exact process
+                // remains live through the single source rollback operation.
+                let outcome = unsafe { OsAlignedPageClaim::initialize_borrowed_into(
+                    NonNull::from(&mut storage), process, config(4 * KIB), 4096,
+                    1, crate::arena::ArenaId::none(), None, commit,
+                ) };
+                let OsAlignedPageClaimInitialization::Released(error) = outcome else {
+                    panic!("successful rollback returns no initialized owner");
+                };
+                assert_eq!(error.stage(), if ordinal == 1 {
+                    OsAlignedPageFailureStage::MetadataCommit
+                } else { OsAlignedPageFailureStage::BlockCommit });
+                assert_eq!(error.operation(), Errno::NOMEM);
+                assert_eq!(error.cleanup(), None);
+                let after = process.subprocess().vm_statistics().snapshot();
+                assert_eq!(after.reserved_current, before.reserved_current);
+                assert_eq!(after.commit_calls - before.commit_calls, ordinal as i64);
+                assert_eq!(fault.observed(), ordinal);
+                // Released forbids an image read or a second release, even
+                // though construction had initialized bytes before rollback.
+            }
+            // Released grants no image read. Reuse the vacant destination for
+            // real eager and on-demand mappings under an admitted process.
+            for commit in [true, false] {
+                let process = self::process(false);
+                let before = process.subprocess().vm_statistics().snapshot();
+                let fault = fault::install(fault::Plan::disabled());
+                // SAFETY: storage remains private/vacant and this process is
+                // retained until the original claim completes its exact release.
+                let outcome = unsafe { OsAlignedPageClaim::initialize_borrowed_into(
+                    NonNull::from(&mut storage), process, config(4 * KIB), 4096,
+                    1, crate::arena::ArenaId::none(), None, commit,
+                ) };
+                assert!(matches!(outcome, OsAlignedPageClaimInitialization::Ready));
+                // SAFETY: Ready initialized one complete image; this take
+                // consumes its destination before any reuse.
+                let mut claim = unsafe { storage.assume_init_read() };
+                assert!(claim.belongs_to_subprocess(process.subprocess()));
+                assert!(claim.process.is_none());
+                assert!(matches!(claim.release_state, OsPageReleaseState::Unaccounted));
+                assert_eq!(claim.memory_id().unwrap().initially_committed(), commit);
+                if !commit {
+                    let prefix_pages = page::initial_page_slice_pcommitted(
+                        claim.layout().block_start_offset(), claim.layout().block_size(),
+                        claim.layout().allocation_size(), 4 * KIB,
+                    ).unwrap();
+                    claim.commit_initial_page_prefix_for_process(process,
+                        usize::from(prefix_pages) * 4 * KIB).unwrap();
+                }
+                // SAFETY: eager construction or the real initial-prefix
+                // operation committed this first complete block. No Page,
+                // list or client has been published from this unique mapping.
+                let block = claim.slice_start().unwrap().as_ptr()
+                    .wrapping_add(claim.layout().block_start_offset());
+                unsafe { block.write_bytes(0x57, 4096); }
+                assert!(unsafe { core::slice::from_raw_parts(block, 4096) }
+                    .iter().all(|byte| *byte == 0x57));
+                // SAFETY: this original private claim and process are retained.
+                unsafe { claim.release_for_process(process) }
+                    .unwrap_or_else(|_| panic!("ready destination retains exact release custody"));
+                let after = process.subprocess().vm_statistics().snapshot();
+                assert_eq!(after.reserved_current, before.reserved_current);
+                assert_eq!(after.committed_current, before.committed_current);
+                assert_eq!(fault.observed(), 0);
+                assert_eq!(after.commit_calls - before.commit_calls, 2);
+            }
+        }
+
     }
 
     /// Source `mi_os_prim_alloc_aligned` in the fresh OS page caller: a
@@ -3896,35 +4298,67 @@ mod tests {
         assert!(over_large.mapping_length() > over_large.page_map_size());
     }
 
+    #[cfg(target_arch = "x86_64")]
+    fn processless_destination_fixture(
+        config: MemoryConfig, block_size: usize, alignment: usize,
+    ) -> Result<OsAlignedPageClaim, OsAlignedPageAllocationFailure> {
+        let mut storage = MaybeUninit::uninit();
+        // SAFETY: the fixture's vacant destination never escapes; the outcome
+        // selects exactly one original owner read or no read after release.
+        match unsafe { OsAlignedPageClaim::initialize_processless_into(
+            NonNull::from(&mut storage), config, block_size, alignment) } {
+            OsAlignedPageClaimInitialization::Ready => Ok(unsafe { storage.assume_init() }),
+            OsAlignedPageClaimInitialization::Released(error) =>
+                Err(OsAlignedPageAllocationFailure::released(error)),
+            OsAlignedPageClaimInitialization::Retained(error) =>
+                Err(OsAlignedPageAllocationFailure::with_claim(error, unsafe { storage.assume_init() })),
+        }
+    }
+
     #[test]
     fn live_claim_commits_only_the_derived_ranges_and_releases_explicitly() {
-        let claim = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
-            Ok(claim) => claim,
-            Err(_) => panic!("OS-aligned singleton claim"),
-        };
-        let base = claim.base().unwrap();
-        let slice_start = claim.slice_start().unwrap();
-        let metadata = claim.metadata().unwrap();
-        assert_eq!(base.addr() % PAGE_META_ALIGNMENT, 0);
-        assert_eq!(slice_start.as_ptr().addr() % (128 * KIB), 0);
-        assert_eq!(
-            metadata.as_ptr().addr(),
-            base.addr() + 2 * size_of::<Page>()
-        );
-        let memory = claim.memory_id().unwrap();
-        assert!(memory.is_os());
-        assert!(memory.initially_committed());
-        assert!(memory.initially_zero());
-        assert_eq!(memory.size(), Some(192 * KIB));
+        #[cfg(target_arch = "x86_64")]
+        let destinations = [false, true];
+        #[cfg(not(target_arch = "x86_64"))]
+        let destinations = [false];
+        for _direct in destinations {
+            let claim = match {
+                #[cfg(target_arch = "x86_64")]
+                if _direct {
+                    processless_destination_fixture(config(4 * KIB), 4 * KIB, 128 * KIB)
+                } else {
+                    OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
+            } {
+                Ok(claim) => claim,
+                Err(_) => panic!("OS-aligned singleton claim"),
+            };
+            let base = claim.base().unwrap();
+            let slice_start = claim.slice_start().unwrap();
+            let metadata = claim.metadata().unwrap();
+            assert_eq!(base.addr() % PAGE_META_ALIGNMENT, 0);
+            assert_eq!(slice_start.as_ptr().addr() % (128 * KIB), 0);
+            assert_eq!(
+                metadata.as_ptr().addr(),
+                base.addr() + 2 * size_of::<Page>()
+            );
+            let memory = claim.memory_id().unwrap();
+            assert!(memory.is_os());
+            assert!(memory.initially_committed());
+            assert!(memory.initially_zero());
+            assert_eq!(memory.size(), Some(192 * KIB));
 
-        // SAFETY: both bytes lie inside ranges committed by this live claim.
-        unsafe {
-            base.write(0x51);
-            slice_start.as_ptr().write(0x73);
-            assert_eq!(base.read(), 0x51);
-            assert_eq!(slice_start.as_ptr().read(), 0x73);
+            // SAFETY: both bytes lie inside ranges committed by this live claim.
+            unsafe {
+                base.write(0x51);
+                slice_start.as_ptr().write(0x73);
+                assert_eq!(base.read(), 0x51);
+                assert_eq!(slice_start.as_ptr().read(), 0x73);
+            }
+            assert!(matches!(claim.release(), Ok(())));
         }
-        assert!(matches!(claim.release(), Ok(())));
     }
 
     #[test]
@@ -3975,55 +4409,85 @@ mod tests {
 
     #[test]
     fn commit_failure_with_failed_cleanup_transfers_the_live_claim_owner() {
-        let fault = fault::install(fault::Plan::at_pair(
-            fault::Point::Commit,
-            1,
-            fault::Point::Unmap,
-            1,
-            Errno::NOMEM,
-        ));
-        let failure = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
-            Ok(claim) => {
-                assert!(matches!(claim.release(), Ok(())));
-                panic!("the configured metadata commit must fail");
+        #[cfg(target_arch = "x86_64")]
+        let destinations = [false, true];
+        #[cfg(not(target_arch = "x86_64"))]
+        let destinations = [false];
+        for _direct in destinations {
+            let fault = fault::install(fault::Plan::at_pair(
+                fault::Point::Commit,
+                1,
+                fault::Point::Unmap,
+                1,
+                Errno::NOMEM,
+            ));
+            let failure = match {
+                #[cfg(target_arch = "x86_64")]
+                if _direct {
+                    processless_destination_fixture(config(4 * KIB), 4 * KIB, 128 * KIB)
+                } else {
+                    OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
+            } {
+                Ok(claim) => {
+                    assert!(matches!(claim.release(), Ok(())));
+                    panic!("the configured metadata commit must fail");
+                }
+                Err(failure) => failure,
+            };
+            assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::MetadataCommit);
+            assert_eq!(failure.error().operation(), Errno::NOMEM);
+            assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
+            let owner = failure.into_owner().expect("failed cleanup retains its claim");
+            fault.set(fault::Plan::disabled());
+            match owner {
+                OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
+                OsAlignedPageOwner::Published(_) => panic!("commit rollback cannot publish a page"),
             }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::MetadataCommit);
-        assert_eq!(failure.error().operation(), Errno::NOMEM);
-        assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
-        let owner = failure.into_owner().expect("failed cleanup retains its claim");
-        fault.set(fault::Plan::disabled());
-        match owner {
-            OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
-            OsAlignedPageOwner::Published(_) => panic!("commit rollback cannot publish a page"),
         }
     }
 
     #[test]
     fn block_commit_failure_with_failed_cleanup_retains_the_live_claim_owner() {
-        let fault = fault::install(fault::Plan::at_pair(
-            fault::Point::Commit,
-            2,
-            fault::Point::Unmap,
-            1,
-            Errno::NOMEM,
-        ));
-        let failure = match OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB) {
-            Ok(claim) => {
-                assert!(matches!(claim.release(), Ok(())));
-                panic!("the configured block commit must fail");
+        #[cfg(target_arch = "x86_64")]
+        let destinations = [false, true];
+        #[cfg(not(target_arch = "x86_64"))]
+        let destinations = [false];
+        for _direct in destinations {
+            let fault = fault::install(fault::Plan::at_pair(
+                fault::Point::Commit,
+                2,
+                fault::Point::Unmap,
+                1,
+                Errno::NOMEM,
+            ));
+            let failure = match {
+                #[cfg(target_arch = "x86_64")]
+                if _direct {
+                    processless_destination_fixture(config(4 * KIB), 4 * KIB, 128 * KIB)
+                } else {
+                    OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                OsAlignedPageClaim::allocate(config(4 * KIB), 4 * KIB, 128 * KIB)
+            } {
+                Ok(claim) => {
+                    assert!(matches!(claim.release(), Ok(())));
+                    panic!("the configured block commit must fail");
+                }
+                Err(failure) => failure,
+            };
+            assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::BlockCommit);
+            assert_eq!(failure.error().operation(), Errno::NOMEM);
+            assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
+            let owner = failure.into_owner().expect("failed cleanup retains its claim");
+            fault.set(fault::Plan::disabled());
+            match owner {
+                OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
+                OsAlignedPageOwner::Published(_) => panic!("block rollback cannot publish a page"),
             }
-            Err(failure) => failure,
-        };
-        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::BlockCommit);
-        assert_eq!(failure.error().operation(), Errno::NOMEM);
-        assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
-        let owner = failure.into_owner().expect("failed cleanup retains its claim");
-        fault.set(fault::Plan::disabled());
-        match owner {
-            OsAlignedPageOwner::Claim(claim) => assert!(matches!(claim.release(), Ok(()))),
-            OsAlignedPageOwner::Published(_) => panic!("block rollback cannot publish a page"),
         }
     }
 }
