@@ -11,6 +11,9 @@
  * that closing the adopted FILE retires only its transferred descriptor.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -18,7 +21,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <locale.h>
+#include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <wchar.h>
 
@@ -209,8 +214,218 @@ static int wide_stream(const char *path)
     return 0;
 }
 
+static __thread int callback_tls = 17;
+
+struct live_cookie {
+    char bytes[64];
+    size_t position;
+    size_t length;
+    FILE *nested;
+    int tls;
+    int closed;
+    int failed;
+};
+
+/* Each callback owns its temporary client and touches a distinct live FILE.
+ * The cookie's borrowed state and nested stream remain live until fclose. */
+static int callback_client(struct live_cookie *cookie)
+{
+    unsigned char *client = malloc(19);
+    unsigned char *grown;
+    int index;
+
+    if (client == NULL)
+        return 1;
+    for (index = 0; index != 19; ++index)
+        client[index] = (unsigned char)(index + cookie->tls);
+    grown = realloc(client, 37);
+    if (grown == NULL) {
+        free(client);
+        return 2;
+    }
+    for (index = 0; index != 19; ++index)
+        if (grown[index] != (unsigned char)(index + cookie->tls)) {
+            free(grown);
+            return 3;
+        }
+    free(grown);
+    errno = EDOM;
+    if (callback_tls != cookie->tls)
+        return 4;
+    if (cookie->nested != NULL && fputc('C', cookie->nested) != 'C')
+        return 5;
+    return errno != EDOM;
+}
+
+static ssize_t live_write(void *opaque, const char *bytes, size_t count)
+{
+    struct live_cookie *cookie = opaque;
+    size_t index;
+
+    if (callback_client(cookie) != 0 || count > sizeof(cookie->bytes) - cookie->position) {
+        cookie->failed = 1;
+        return -1;
+    }
+    for (index = 0; index != count; ++index)
+        cookie->bytes[cookie->position + index] = bytes[index];
+    cookie->position += count;
+    if (cookie->length < cookie->position)
+        cookie->length = cookie->position;
+    return (ssize_t)count;
+}
+
+static ssize_t live_read(void *opaque, char *bytes, size_t count)
+{
+    struct live_cookie *cookie = opaque;
+    size_t index;
+
+    if (callback_client(cookie) != 0) {
+        cookie->failed = 1;
+        return -1;
+    }
+    if (count > cookie->length - cookie->position)
+        count = cookie->length - cookie->position;
+    for (index = 0; index != count; ++index)
+        bytes[index] = cookie->bytes[cookie->position + index];
+    cookie->position += count;
+    return (ssize_t)count;
+}
+
+static int live_seek(void *opaque, off64_t *offset, int whence)
+{
+    struct live_cookie *cookie = opaque;
+    off64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ?
+        (off64_t)cookie->position : (off64_t)cookie->length;
+    off64_t position = base + *offset;
+
+    if (callback_client(cookie) != 0 || position < 0 || position > (off64_t)cookie->length) {
+        cookie->failed = 1;
+        return -1;
+    }
+    cookie->position = (size_t)position;
+    *offset = position;
+    return 0;
+}
+
+static int live_close(void *opaque)
+{
+    struct live_cookie *cookie = opaque;
+    cookie->closed += 1;
+    if (callback_client(cookie) != 0)
+        cookie->failed = 1;
+    return cookie->failed ? -1 : 0;
+}
+
+static int memory_cookie_composition(int tls)
+{
+    char fixed_bytes[32] = { 0 };
+    char observed[9];
+    char *grown = NULL;
+    size_t length = 0;
+    struct live_cookie cookie = { .tls = tls };
+    cookie_io_functions_t functions = { live_read, live_write, live_seek, live_close };
+    FILE *fixed = fmemopen(fixed_bytes, sizeof(fixed_bytes), "w+");
+    FILE *stream = NULL;
+    size_t index;
+    int result = 1;
+
+    cookie.nested = open_memstream(&grown, &length);
+    if (fixed == NULL || cookie.nested == NULL)
+        goto close_live;
+    stream = fopencookie(&cookie, "w+", functions);
+    result = 2;
+    if (stream == NULL || fwide(stream, -1) >= 0 ||
+        fwrite("callback", 1, 8, stream) != 8 || fflush(stream) != 0 ||
+        fseek(stream, 0, SEEK_SET) != 0 || fread(observed, 1, 8, stream) != 8 ||
+        !equal_bytes(observed, "callback", 8))
+        goto close_live;
+    result = fclose(stream);
+    stream = NULL;
+    if (result != 0 || cookie.closed != 1 || cookie.failed) {
+        result = 3;
+        goto close_live;
+    }
+    result = 4;
+    if (fflush(cookie.nested) != 0 || length == 0 || grown[length] != '\0')
+        goto close_live;
+    for (index = 0; index != length; ++index)
+        if (grown[index] != 'C')
+            goto close_live;
+    result = fclose(cookie.nested);
+    cookie.nested = NULL;
+    if (result != 0 || grown[length] != '\0') {
+        result = 5;
+        goto close_live;
+    }
+    result = 6;
+    if (fwrite("memory", 1, 6, fixed) != 6 || fflush(fixed) != 0 ||
+        !equal_bytes(fixed_bytes, "memory\0", 7) || fseek(fixed, 0, SEEK_SET) != 0 ||
+        fread(observed, 1, 6, fixed) != 6 || !equal_bytes(observed, "memory", 6))
+        goto close_live;
+    result = 0;
+close_live:
+    /* Even a failed assertion retires borrowed FILE state before its stack
+     * objects end. The nested stream remains available through cookie close. */
+    if (stream != NULL && fclose(stream) != 0)
+        result = 7;
+    if (cookie.nested != NULL && fclose(cookie.nested) != 0)
+        result = 8;
+    if (fixed != NULL && fclose(fixed) != 0)
+        result = 9;
+    free(grown);
+    return result;
+}
+
+static void *callback_worker(void *opaque)
+{
+    int *result = opaque;
+    callback_tls = 31;
+    *result = memory_cookie_composition(31);
+    return opaque;
+}
+
+static struct live_cookie exit_cookie = { .tls = 17 };
+static char exit_buffer[128];
+static int exit_handler_observed;
+
+static void ordinary_exit_handler(void)
+{
+    exit_handler_observed = callback_client(&exit_cookie) == 0;
+}
+
+/* Static cookie state and buffering outlive main. Only raw descriptor output
+ * is used while exit holds the stream registry lock. The transcript proves
+ * the pending callback ran after the ordinary exit handler. */
+static ssize_t exit_write(void *opaque, const char *bytes, size_t count)
+{
+    static const char transcript[] = "owned-stdio-products-ok\n";
+    struct live_cookie *cookie = opaque;
+    size_t written = 0;
+
+    /* A flush may invoke the cookie with an empty pending region as well. */
+    if (count == 0)
+        return 0;
+    if (!exit_handler_observed || callback_client(cookie) != 0 || count != 4 ||
+        !equal_bytes(bytes, "exit", 4))
+        _Exit(87);
+    while (written != sizeof(transcript) - 1) {
+        ssize_t step = write(STDOUT_FILENO, transcript + written,
+            sizeof(transcript) - 1 - written);
+        if (step <= 0)
+            _Exit(88);
+        written += (size_t)step;
+    }
+    return (ssize_t)count;
+}
+
 int main(int argc, char **argv)
 {
+    pthread_t worker;
+    void *worker_result = NULL;
+    int result = -1;
+    FILE *pending;
+    cookie_io_functions_t functions = { NULL, exit_write, NULL, NULL };
+
     if (argc != 4)
         return 80;
     if (byte_stream(argv[1], argv[2]) != 0)
@@ -219,6 +434,19 @@ int main(int argc, char **argv)
         return 82;
     if (wide_stream(argv[3]) != 0)
         return 83;
-    puts("owned-stdio-products-ok");
+    if (memory_cookie_composition(17) != 0 ||
+        pthread_create(&worker, NULL, callback_worker, &result) != 0 ||
+        pthread_join(worker, &worker_result) != 0 || worker_result != &result ||
+        result != 0 || callback_tls != 17)
+        return 84;
+    if (fileno(stdin) != STDIN_FILENO || fileno(stdout) != STDOUT_FILENO ||
+        fileno(stderr) != STDERR_FILENO || fprintf(stdout, "%s", "") != 0 ||
+        fflush(stdout) != 0)
+        return 85;
+    pending = fopencookie(&exit_cookie, "w", functions);
+    if (pending == NULL || setvbuf(pending, exit_buffer, _IOFBF, sizeof(exit_buffer)) != 0 ||
+        atexit(ordinary_exit_handler) != 0 || fwrite("exit", 1, 4, pending) != 4 ||
+        exit_handler_observed)
+        return 86;
     return 0;
 }
