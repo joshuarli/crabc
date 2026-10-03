@@ -504,6 +504,36 @@ static void empty_and_reporting(void) {
     CHECK(!fflush(stderr)&&dup2(saved,2)==2&&!close(saved));char b[256];ssize_t count=read(pipefd[0],b,sizeof b);CHECK(count>0&&!close(pipefd[0]));
     const char expected[]="prefix: Host not found\nTry again\n: Address not available\n";CHECK(count==(ssize_t)sizeof expected-1&&!memcmp(b,expected,sizeof expected-1));
 }
+static void *zero_timeout_worker(void *argument) {
+    int marker=(int)(uintptr_t)argument;
+    for(unsigned i=0;i<16;i++) {
+        struct addrinfo retained={0},hint={0},*result=&retained;
+        hint.ai_family=i%2?AF_INET:AF_UNSPEC;
+        hint.ai_socktype=SOCK_STREAM;
+        errno=EDOM;h_errno=marker;
+        CHECK(getaddrinfo("zero-timeout.example.test","80",&hint,&result)==EAI_AGAIN);
+        CHECK(result==&retained && h_errno==marker);
+        int state;
+        CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&state));
+        CHECK(state==PTHREAD_CANCEL_ENABLE);
+        CHECK(!pthread_setcancelstate(state,0));
+    }
+    return 0;
+}
+static void zero_timeout(void) {
+    /* A zero elapsed budget still acquires and retires the source socket,
+     * without sending a request or publishing an allocated result. */
+    const char conf[]="nameserver 127.0.0.1\noptions timeout:0 attempts:1\n";
+    file("/etc/resolv.conf",conf,sizeof conf-1);
+    int first=socket(AF_INET,SOCK_DGRAM,0);CHECK(first>=0&&!close(first));
+    zero_timeout_worker((void*)73);
+    pthread_t a,b;
+    CHECK(!pthread_create(&a,0,zero_timeout_worker,(void*)74));
+    CHECK(!pthread_create(&b,0,zero_timeout_worker,(void*)75));
+    CHECK(!pthread_join(a,0)&&!pthread_join(b,0)&&h_errno==73);
+    int after=socket(AF_INET,SOCK_DGRAM,0);CHECK(after==first&&!close(after));
+    setup();
+}
 static void addrinfo(void) {
     struct addrinfo hint={0},*r=(void*)1;
     hint.ai_family=AF_INET;CHECK(getaddrinfo("alias.test","alt",&hint,&r)==0&&r);
@@ -514,6 +544,7 @@ static void addrinfo(void) {
     hint.ai_family=AF_INET6;hint.ai_flags=AI_V4MAPPED;CHECK(!getaddrinfo("alias.test","80",&hint,&r));CHECK(r->ai_family==AF_INET6&&!r->ai_next);freeaddrinfo(r);
     hint.ai_flags=AI_ADDRCONFIG;hint.ai_family=AF_INET;CHECK(!getaddrinfo("127.1","80",&hint,&r));freeaddrinfo(r);
     struct sockaddr_in sa={.sin_family=AF_INET,.sin_port=htons(45001)};char service[32];CHECK(!getnameinfo((void*)&sa,sizeof sa,0,0,service,sizeof service,0)&&!strcmp(service,"tcp-second"));
+    zero_timeout();
 }
 static void *thread_lookup(void *arg) {
     int marker=(int)(uintptr_t)arg;h_errno=marker;struct hostent h,*hr;struct servent s,*sr;char b[2048],sb[64];

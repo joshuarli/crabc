@@ -593,7 +593,9 @@ fn slots(requests: BatchRequests<'_>) -> Result<([Slot; 2], usize), Errno> {
 }
 
 fn addresses(config: &CResolverBatchConfig) -> Result<([SocketAddress;3],usize,c_int), Errno> {
-    if config.nameserver_count == 0 || config.nameserver_count > 3 || config.total_timeout_ms == 0 || config.attempts == 0 { return Err(Errno::INVAL); }
+    // A zero source timeout still opens and retires the socket, then yields
+    // unanswered slots without entering the elapsed-time loop.
+    if config.nameserver_count == 0 || config.nameserver_count > 3 || config.attempts == 0 { return Err(Errno::INVAL); }
     let mut addresses = [SocketAddress { bytes: [0;28], length: 0, family: AF_INET };3];
     let mut family = AF_INET;
     for index in 0..config.nameserver_count {
