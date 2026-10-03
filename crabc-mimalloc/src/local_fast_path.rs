@@ -240,21 +240,26 @@ pub(crate) unsafe fn allocate(
     // The counter step below touches only the Theap. Keep the owner-only
     // local head observed during this preflight for the source quick collect;
     // no other owner can change either ordinary free-list field between them.
-    let (immediate_available, local_head) = unsafe {
+    // Carry the selected head through the counter step so the pop needs no
+    // second page-state projection just to recover the same pointer.
+    let (selected_head, local_head) = unsafe {
         let state = Page::local_free_list_state_at(first);
         // The current owner cannot change an immediate head between the
         // direct lookup and this queue lookup. Reuse that empty observation
         // only when the queue still names the same page.
-        let immediate_available = first.as_ptr() != observed_empty_direct_page
-            && !(*state.free.as_ptr()).is_null();
-        let local_head = if !immediate_available {
+        let immediate_head = if first.as_ptr() == observed_empty_direct_page {
+            core::ptr::null_mut()
+        } else {
+            *state.free.as_ptr()
+        };
+        let local_head = if immediate_head.is_null() {
             *state.local_free.as_ptr()
         } else {
             core::ptr::null_mut()
         };
-        (immediate_available, local_head)
+        (if immediate_head.is_null() { local_head } else { immediate_head }, local_head)
     };
-    if !immediate_available && local_head.is_null() {
+    if selected_head.is_null() {
         // An empty head needs `mi_page_queue_find_free_ex`.
         return None;
     }
@@ -270,11 +275,6 @@ pub(crate) unsafe fn allocate(
         // `mi_page_queue_lookup_free_first` clears this owner-only byte once
         // it selects the head.
         Page::set_retire_expire_at(first, 0);
-        let selected_head = if local_head.is_null() {
-            *Page::local_free_list_state_at(first).free.as_ptr()
-        } else {
-            local_head
-        };
         pop_selected_head(first, selected_head, zero)
     };
     // SAFETY: the queue head remains live through the owner-local pop.
@@ -321,18 +321,21 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
         let first = NonNull::new(theap_ref.queue(bin)?.first())?;
         // SAFETY: the queue head is a live owner page. The direct head's
         // empty observation remains valid while this owner runs.
-        let (immediate_available, local_head) = unsafe {
+        let (selected_head, local_head) = unsafe {
             let state = Page::local_free_list_state_at(first);
-            let immediate_available = first.as_ptr() != page.as_ptr()
-                && !(*state.free.as_ptr()).is_null();
-            let local_head = if immediate_available {
+            let immediate_head = if first == page {
                 core::ptr::null_mut()
             } else {
-                *state.local_free.as_ptr()
+                *state.free.as_ptr()
             };
-            (immediate_available, local_head)
+            let local_head = if immediate_head.is_null() {
+                *state.local_free.as_ptr()
+            } else {
+                core::ptr::null_mut()
+            };
+            (if immediate_head.is_null() { local_head } else { immediate_head }, local_head)
         };
-        if !immediate_available && local_head.is_null() {
+        if selected_head.is_null() {
             return None;
         }
         // SAFETY: the published owner exclusively controls this counter.
@@ -344,11 +347,6 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
         let base = unsafe {
             quick_collect_before_pop(first, local_head);
             Page::set_retire_expire_at(first, 0);
-            let selected_head = if local_head.is_null() {
-                *Page::local_free_list_state_at(first).free.as_ptr()
-            } else {
-                local_head
-            };
             pop_selected_head(first, selected_head, zero)
         };
         (first, base)
@@ -405,13 +403,17 @@ pub(crate) unsafe fn allocate_ordinary_eight_word(theap: NonNull<Theap>) -> Opti
     let first = NonNull::new(theap_ref.queue(8)?.first())?;
     // SAFETY: the selected queue head is live and its ordinary fields belong
     // to this thread. The direct head cannot change between these reads.
-    let (immediate_available, local_head) = unsafe {
+    let (selected_head, local_head) = unsafe {
         let state = Page::local_free_list_state_at(first);
-        let immediate_available = first.as_ptr() != direct && !(*state.free.as_ptr()).is_null();
-        let local_head = if immediate_available { core::ptr::null_mut() } else { *state.local_free.as_ptr() };
-        (immediate_available, local_head)
+        let immediate_head = if first.as_ptr() == direct {
+            core::ptr::null_mut()
+        } else {
+            *state.free.as_ptr()
+        };
+        let local_head = if immediate_head.is_null() { *state.local_free.as_ptr() } else { core::ptr::null_mut() };
+        (if immediate_head.is_null() { local_head } else { immediate_head }, local_head)
     };
-    if !immediate_available && local_head.is_null() {
+    if selected_head.is_null() {
         return None;
     }
     // SAFETY: the caller owns this Theap's ordinary generic counter.
@@ -423,11 +425,6 @@ pub(crate) unsafe fn allocate_ordinary_eight_word(theap: NonNull<Theap>) -> Opti
     let block = unsafe {
         quick_collect_before_pop(first, local_head);
         Page::set_retire_expire_at(first, 0);
-        let selected_head = if local_head.is_null() {
-            *Page::local_free_list_state_at(first).free.as_ptr()
-        } else {
-            local_head
-        };
         pop_selected_head(first, selected_head, false)
     };
     #[cfg(feature = "mi-stat-1")]
@@ -634,13 +631,16 @@ unsafe fn pop_selected_head(page: NonNull<Page>, block: *mut Block, zero: bool) 
 /// or null when that immediate head was non-null.
 #[inline(always)]
 unsafe fn quick_collect_before_pop(page: NonNull<Page>, local_head: *mut Block) {
-    // SAFETY: forwarded ordinary-field ownership.
+    if local_head.is_null() {
+        return;
+    }
+    // SAFETY: forwarded ordinary-field ownership. An immediate head needs
+    // no collection, so construct the page-state projection only when the
+    // local list must transfer to the immediate list before the pop.
     unsafe {
         let state = Page::local_free_list_state_at(page);
-        if !local_head.is_null() {
-            *state.local_free.as_ptr() = core::ptr::null_mut();
-            *state.free_is_zero.as_ptr() = false;
-        }
+        *state.local_free.as_ptr() = core::ptr::null_mut();
+        *state.free_is_zero.as_ptr() = false;
     }
 }
 

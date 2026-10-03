@@ -93,6 +93,45 @@ fn initial_local_all_free_cycles_keep_the_page_engine_until_explicit_handoff() {
         );
     }
 
+    // Repeated batches exhaust the immediate list while keeping the same
+    // owner and pages live, then consume locally freed blocks through queue
+    // lookup. The three requests cover ordinary, overallocated aligned, and
+    // medium queue-head selection without a full-page transition.
+    for (request, batch) in [(8, 128), (REQUEST, 128), (10248, 8)] {
+        let mut retained_entries = None;
+        for round in 0..32 {
+            let mut blocks = Vec::with_capacity(batch);
+            for index in 0..batch {
+                let block = match native_allocate_aligned(request, 16, true) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("queue-head reuse supplies request {request}, round {round}"),
+                };
+                assert_eq!(block.as_ptr().addr() & 15, 0);
+                // SAFETY: each successful allocation supplies `request` live
+                // writable bytes, exclusively owned until the final free.
+                let bytes = unsafe { core::slice::from_raw_parts_mut(block.as_ptr(), request) };
+                assert!(bytes.iter().all(|byte| *byte == 0), "reused blocks are zeroed");
+                bytes.fill((index + 1) as u8);
+                blocks.push(block);
+            }
+            let entries = native_runtime_lifecycle_test_audit().unwrap().page_map_registered_entry_count;
+            if let Some(expected) = retained_entries {
+                assert_eq!(entries, expected, "request {request} reuses its retained page image");
+            } else {
+                retained_entries = Some(entries);
+            }
+            for (index, block) in blocks.into_iter().enumerate() {
+                // SAFETY: this exact allocation remains live; no other block
+                // aliases its requested bytes, including after local reuse.
+                let bytes = unsafe { core::slice::from_raw_parts(block.as_ptr(), request) };
+                assert!(bytes.iter().all(|byte| *byte == (index + 1) as u8));
+                // SAFETY: consumes the exact live client once on its owner.
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            }
+            assert_eq!(native_runtime_lifecycle_test_audit().unwrap().page_map_registered_entry_count, entries);
+        }
+    }
+
     assert!(
         prepare_native_later_thread_arena(),
         "the explicit later-worker boundary force-collects the now-all-free initial engine"
