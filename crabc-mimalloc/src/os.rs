@@ -11697,21 +11697,65 @@ mod tests {
 
     #[test]
     fn map_commit_protect_unprotect_and_unmap_have_an_explicit_lifecycle() {
-        let _fault = fault::install(fault::Plan::disabled());
+        let fault = fault::install(fault::Plan::disabled());
         let startup = current_startup();
         let page = startup.page_size().bytes();
+        fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        assert!(matches!(Mapping::map_anonymous(startup, page, MapAccess::Reserved),
+            Err(Errno::NOMEM)));
+        assert_eq!(fault.observed(), 1, "a refused reservation returns no owner or retry");
+        fault.set(fault::Plan::disabled());
         let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Reserved)
             .expect("reserve one kernel page");
+        let base = mapping.base().unwrap();
+
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        assert_eq!(mapping.commit(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "a refused commit has no hidden retry");
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(mapping.length(), Ok(page));
+        // A refused commit leaves the reservation inaccessible. Access starts
+        // only after the explicit retry succeeds.
+        fault.set(fault::Plan::disabled());
 
         assert_eq!(mapping.commit(0, page), Ok(Some(CommitOutcome::NotKnownZero)));
         assert!(mapping.protect(0, page).expect("protect the committed page"));
         assert!(mapping.unprotect(0, page).expect("restore read/write access"));
+        // SAFETY: the retained owner has restored access to this complete page.
+        unsafe { base.write_volatile(0x37) };
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        assert_eq!(mapping.commit(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1);
+        // SAFETY: failed recommit did not change the already writable page.
+        assert_eq!(unsafe { base.read_volatile() }, 0x37);
+
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        assert_eq!(mapping.unmap(), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "a refused release has no hidden retry");
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(mapping.length(), Ok(page));
+        // SAFETY: refused unmap retains the exact writable mapping and payload.
+        unsafe {
+            assert_eq!(base.read_volatile(), 0x37);
+            base.write_volatile(0x38);
+        }
+        fault.set(fault::Plan::disabled());
         mapping.unmap().expect("release the mapped page");
+        fault.set(fault::Plan::any_nth(1, Errno::NOMEM));
+        assert_eq!(mapping.base(), Err(Errno::INVAL));
+        assert_eq!(mapping.length(), Err(Errno::INVAL));
+        assert_eq!(mapping.commit(0, page), Err(Errno::INVAL));
+        assert_eq!(mapping.decommit(0, page), Err(Errno::INVAL));
+        assert_eq!(mapping.purge(0, page), Err(Errno::INVAL));
+        assert_eq!(mapping.protect(0, page), Err(Errno::INVAL));
+        assert_eq!(mapping.unprotect(0, page), Err(Errno::INVAL));
+        assert_eq!(mapping.unmap(), Err(Errno::INVAL));
+        assert_eq!(fault.observed(), 0, "a consumed owner never reaches a VM primitive");
     }
 
     #[test]
     fn decommit_and_purge_use_only_the_source_defined_page_transitions() {
-        let _fault = fault::install(fault::Plan::disabled());
+        let fault = fault::install(fault::Plan::disabled());
         let startup = current_startup();
         let page = startup.page_size().bytes();
         let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Committed)
@@ -11719,6 +11763,20 @@ mod tests {
 
         assert!(mapping.initially_committed());
         assert!(mapping.initially_zero());
+        let base = mapping.base().unwrap();
+        // SAFETY: this owner retains a complete committed writable page.
+        unsafe { base.write_volatile(0x44) };
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        assert_eq!(mapping.decommit(0, page), Err(Errno::NOMEM));
+        assert_eq!(fault.observed(), 1, "failed discard has no advisory retry");
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(mapping.length(), Ok(page));
+        // Debug and secure decommit still attempt protection after refused
+        // advice. Recommit before observing the retained, undiscarded payload.
+        fault.set(fault::Plan::disabled());
+        assert_eq!(mapping.commit(0, page), Ok(Some(CommitOutcome::NotKnownZero)));
+        // SAFETY: explicit recommit restored access to the retained page.
+        assert_eq!(unsafe { base.read_volatile() }, 0x44);
         assert_eq!(mapping.decommit(1, page - 1), Ok(None));
         let protected = cfg!(all(target_arch = "x86_64",
             any(feature = "mi-debug-1", feature = "mi-secure-3")));
@@ -11727,7 +11785,6 @@ mod tests {
         } else {
             DecommitOutcome::DoesNotNeedRecommit
         })));
-        let base = mapping.base().unwrap();
         #[cfg(target_arch = "x86_64")]
         assert_eq!(decommit_mapping_permissions(base), if protected { "---p" } else { "rw-p" });
         assert_eq!(mapping.commit(0, page), Ok(Some(CommitOutcome::NotKnownZero)));
@@ -14709,11 +14766,29 @@ mod tests {
         let page = startup.page_size().bytes();
         let mut mapping = Mapping::map_anonymous(startup, page, MapAccess::Committed)
             .expect("map one committed kernel page");
+        let base = mapping.base().unwrap();
+        // SAFETY: the owner retains one committed writable page.
+        unsafe { base.write_volatile(0x59) };
 
         fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
         assert_eq!(mapping.purge(0, page), Err(Errno::NOMEM));
         assert_eq!(fault.observed(), 1, "NOMEM must not trigger a second advisory");
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(mapping.length(), Ok(page));
+        // SAFETY: the refused advisory changed neither access nor payload.
+        unsafe {
+            assert_eq!(base.read_volatile(), 0x59);
+            base.write_volatile(0x5a);
+        }
         fault.set(fault::Plan::disabled());
+        assert_eq!(mapping.purge(0, page), Ok(true));
+        // A successful reset may discard contents; only accessibility and
+        // ownership, not the previous payload, survive that source operation.
+        // SAFETY: reset keeps this committed mapping writable and live.
+        unsafe {
+            base.write_volatile(0x5b);
+            assert_eq!(base.read_volatile(), 0x5b);
+        }
         mapping.unmap().expect("the failed purge leaves the mapping owned");
     }
 
