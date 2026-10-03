@@ -566,6 +566,14 @@ pub(crate) enum PersistentCompilerTlsOwnerInitializeError<T, E> {
     Owner(E),
 }
 
+/// A final-storage constructor either refused admission or left no live
+/// payload after its own fallible source construction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PersistentCompilerTlsOwnerInstallError<E> {
+    State(PersistentCompilerTlsOwnerError),
+    Constructor(E),
+}
+
 /// Failure of one source-ordered consuming owner teardown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PersistentCompilerTlsOwnerTeardownError<E> {
@@ -743,12 +751,45 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         self: Pin<&Self>,
         create: impl FnOnce(*mut T),
     ) -> Result<(), PersistentCompilerTlsOwnerError> {
+        // SAFETY: this infallible constructor has the same complete-write
+        // and partial-cleanup obligations as the fallible boundary.
+        match unsafe { self.try_install_in_place(|destination| {
+            create(destination);
+            Ok::<(), core::convert::Infallible>(())
+        }) } {
+            Ok(()) => Ok(()),
+            Err(PersistentCompilerTlsOwnerInstallError::State(error)) => Err(error),
+            Err(PersistentCompilerTlsOwnerInstallError::Constructor(error)) => match error {},
+        }
+    }
+
+    /// Constructs a fallible source owner directly in the pinned cell.
+    ///
+    /// Admission refusal does not call `create`. Success publishes the fully
+    /// initialized payload as active; constructor rejection restores vacancy
+    /// without moving or dropping an unknown partial owner.
+    ///
+    /// # Safety
+    ///
+    /// On `Ok`, `create` initializes every field of one valid `T` exactly once
+    /// at the destination. The pointer must not escape to observers during
+    /// construction, and an initialized owner must not move. On `Err` or
+    /// unwind, the constructor first releases or retains elsewhere every
+    /// partial source capability, drops each initialized field, and leaves
+    /// no live `T` or escaped capability in the destination. A source failure
+    /// that retains this payload must finish its full image and return `Ok`;
+    /// its caller then marks the installed cell retained through its ordinary
+    /// owner transition.
+    pub(crate) unsafe fn try_install_in_place<E>(
+        self: Pin<&Self>,
+        create: impl FnOnce(*mut T) -> Result<(), E>,
+    ) -> Result<(), PersistentCompilerTlsOwnerInstallError<E>> {
         let cell = self.get_ref();
         if cell.state.get() != PersistentCompilerTlsOwnerState::Vacant {
-            return Err(cell.state_error_for_initialization());
+            return Err(PersistentCompilerTlsOwnerInstallError::State(cell.state_error_for_initialization()));
         }
         let Some(thread) = current_thread_identity() else {
-            return Err(PersistentCompilerTlsOwnerError::InvalidCurrentThread);
+            return Err(PersistentCompilerTlsOwnerInstallError::State(PersistentCompilerTlsOwnerError::InvalidCurrentThread));
         };
         cell.thread.set(Some(thread));
         cell.state.set(PersistentCompilerTlsOwnerState::Initializing);
@@ -759,10 +800,19 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         // Initializing excludes recursive projections; the caller initializes
         // it completely before returning or cleans it before unwinding.
         let destination = unsafe { (*cell.owner.get()).as_mut_ptr() };
-        create(destination);
-        cell.state.set(PersistentCompilerTlsOwnerState::Active);
-        transition.disarm();
-        Ok(())
+        match create(destination) {
+            Ok(()) => {
+                cell.state.set(PersistentCompilerTlsOwnerState::Active);
+                transition.disarm();
+                Ok(())
+            }
+            Err(error) => {
+                cell.thread.set(None);
+                cell.set_state(PersistentCompilerTlsOwnerState::Vacant);
+                transition.disarm();
+                Err(PersistentCompilerTlsOwnerInstallError::Constructor(error))
+            }
+        }
     }
 
     /// Runs one direct local operation through the same in-place owner.
@@ -2695,6 +2745,53 @@ mod tests {
             assert_eq!(drops.load(Ordering::Relaxed), 0);
             assert_eq!(cell.teardown(|_| Ok::<(), ()>(())), Ok(()));
             assert_eq!(drops.load(Ordering::Relaxed), 1);
+        }).join().unwrap();
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_fallible_in_place_cleanup_preserves_vacancy_and_retry() {
+        struct Counted(Arc<AtomicUsize>);
+        impl Drop for Counted {
+            fn drop(&mut self) { self.0.fetch_add(1, Ordering::Relaxed); }
+        }
+        struct Owner { counted: Counted, address: usize }
+        thread::spawn(|| {
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::<Owner>::new());
+            let cell = cell.as_ref();
+            let drops = Arc::new(AtomicUsize::new(0));
+            // SAFETY: this constructor drops its one initialized field before
+            // rejecting. It publishes no pointer and leaves no live payload.
+            assert_eq!(unsafe { cell.try_install_in_place(|destination| {
+                assert_eq!(cell.with_owner(|_| ()),
+                    Err(PersistentCompilerTlsOwnerError::Initializing));
+                assert_eq!(cell.try_install_in_place(|_| Ok::<(), u8>(())),
+                    Err(PersistentCompilerTlsOwnerInstallError::State(
+                        PersistentCompilerTlsOwnerError::Initializing)));
+                let counted = core::ptr::addr_of_mut!((*destination).counted);
+                counted.write(Counted(Arc::clone(&drops)));
+                core::ptr::drop_in_place(counted);
+                Err(7u8)
+            }) }, Err(PersistentCompilerTlsOwnerInstallError::Constructor(7)));
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Vacant);
+            assert_eq!(cell.with_owner(|_| ()), Err(PersistentCompilerTlsOwnerError::NotAttached));
+            // SAFETY: the retry initializes both fields once in their final
+            // storage, with no fallible operation after the first write.
+            assert_eq!(unsafe { cell.try_install_in_place(|destination| {
+                core::ptr::addr_of_mut!((*destination).counted).write(Counted(Arc::clone(&drops)));
+                core::ptr::addr_of_mut!((*destination).address).write(destination as usize);
+                Ok::<(), u8>(())
+            }) }, Ok(()));
+            assert_eq!(cell.with_owner(|owner| {
+                let owner = owner.as_ref().get_ref();
+                assert_eq!(owner as *const Owner as usize, owner.address);
+            }), Ok(()));
+            // SAFETY: an active cell refuses without calling the constructor.
+            assert_eq!(unsafe { cell.try_install_in_place(|_| panic!("active owner cannot be overwritten")) },
+                Err::<(), PersistentCompilerTlsOwnerInstallError<u8>>(
+                    PersistentCompilerTlsOwnerInstallError::State(PersistentCompilerTlsOwnerError::AlreadyActive)));
+            assert_eq!(cell.teardown(|_| Ok::<(), ()>(())), Ok(()));
+            assert_eq!(drops.load(Ordering::Relaxed), 2);
         }).join().unwrap();
     }
 

@@ -352,6 +352,16 @@ pub(crate) enum MainHeapThreadAttachmentBeginError<'main> {
     },
 }
 
+/// Construction in caller-owned storage either released all partial source
+/// state or retained the exact initialized attachment at that address.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MainHeapThreadAttachmentBeginIntoError {
+    /// No live attachment remains in the destination.
+    Rejected(MainHeapThreadAttachmentError),
+    /// The destination contains the poisoned owner and must stay retained.
+    Retained(MainHeapThreadAttachmentError),
+}
+
 /// A publication failure before the attachment moves into its final result.
 /// The exact partial owner stays borrowed until the constructor decides
 /// whether cancellation released it or source state must remain retained.
@@ -471,6 +481,33 @@ impl<'main> MainHeapThreadAttachment<'main> {
         ) }
     }
 
+    /// Constructs the production later-main attachment in its final storage.
+    ///
+    /// On success the destination contains the attached owner. A retained
+    /// error leaves the exact poisoned owner initialized there; a rejected
+    /// error leaves no live attachment after any source cancellation.
+    ///
+    /// # Safety
+    ///
+    /// The caller upholds [`Self::begin_with_vm_process`]'s lifecycle and
+    /// process obligations. `destination` is aligned writable uninitialized
+    /// storage for one attachment, exclusively owned for construction and
+    /// retained until its explicit source teardown. No observer may access it
+    /// until this method returns. A retained owner must not be overwritten or
+    /// dropped as though construction made no source state.
+    pub(crate) unsafe fn begin_with_vm_process_into(
+        destination: NonNull<Self>,
+        main_heap: MainStaticHeapLease<'main>,
+        config: MemoryConfig,
+        process: crate::os::VmProcess<'static>,
+    ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
+        // SAFETY: the caller supplies final storage and the exact process
+        // identity; the shared helper preserves source admission and order.
+        unsafe { Self::begin_with_metadata_into(destination, main_heap,
+            MetaAllocator::global(), config, TheapPageMode::OrdinaryAbandoning,
+            Some(process.policy())) }
+    }
+
     /// Builds the same owner over an explicit process-lived metadata fixture.
     ///
     /// # Safety
@@ -567,40 +604,83 @@ impl<'main> MainHeapThreadAttachment<'main> {
         page_mode: TheapPageMode,
         generic_collect_policy: Option<&'static crate::os::VmPolicy>,
     ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
+        let mut destination = core::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: this wrapper owns uninitialized final construction storage.
+        // Only success or retention initializes the complete attachment.
+        let result = unsafe { Self::begin_with_metadata_into(
+            NonNull::new_unchecked(destination.as_mut_ptr()), main_heap,
+            metadata, config, page_mode, generic_collect_policy,
+        ) };
+        match result {
+            Ok(()) => Ok(unsafe { destination.assume_init_read() }),
+            Err(MainHeapThreadAttachmentBeginIntoError::Rejected(error)) => {
+                Err(MainHeapThreadAttachmentBeginError::Rejected(error))
+            }
+            Err(MainHeapThreadAttachmentBeginIntoError::Retained(error)) => {
+                Err(MainHeapThreadAttachmentBeginError::Retained {
+                    error,
+                    attachment: unsafe { destination.assume_init_read() },
+                })
+            }
+        }
+    }
+
+    /// Creates the TLD before initializing the caller's attachment storage.
+    /// No destination field is live if admission or TLD allocation rejects.
+    ///
+    /// # Safety
+    ///
+    /// The destination and source inputs have the same exclusive lifetime
+    /// obligations as [`Self::begin_with_vm_process_into`]. `metadata` is the
+    /// selected process-lived owner for every returned TLD/Theap allocation.
+    unsafe fn begin_with_metadata_into(
+        destination: NonNull<Self>,
+        main_heap: MainStaticHeapLease<'main>,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        config: MemoryConfig,
+        page_mode: TheapPageMode,
+        generic_collect_policy: Option<&'static crate::os::VmPolicy>,
+    ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
         let Some(thread) = current_thread_identity() else {
-            return Err(MainHeapThreadAttachmentBeginError::Rejected(
+            return Err(MainHeapThreadAttachmentBeginIntoError::Rejected(
                 MainHeapThreadAttachmentError::InvalidCurrentThread,
             ));
         };
         if !roots_are_pristine_for_later_main_attachment() {
-            return Err(MainHeapThreadAttachmentBeginError::Rejected(
+            return Err(MainHeapThreadAttachmentBeginIntoError::Rejected(
                 MainHeapThreadAttachmentError::RootsNotPristine,
             ));
         }
 
         let tld = match unsafe {
             ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata(
-                main_heap.subprocess(),
-                metadata,
-                config,
+                main_heap.subprocess(), metadata, config,
             )
         } {
             Ok(tld) => tld,
             Err(error) => {
-                return Err(MainHeapThreadAttachmentBeginError::Rejected(
+                return Err(MainHeapThreadAttachmentBeginIntoError::Rejected(
                     MainHeapThreadAttachmentError::ThreadLocalData(error),
                 ));
             }
         };
-        Self::begin_with_thread_local_data(
-            main_heap, metadata, config, page_mode, generic_collect_policy, thread, tld,
-        )
+        // SAFETY: TLD creation succeeded and the destination is still
+        // exclusively uninitialized. This helper writes every field once.
+        unsafe { Self::begin_with_thread_local_data_into(destination, main_heap,
+            metadata, config, page_mode, generic_collect_policy, thread, tld) }
     }
 
-    /// Publishes the Theap after the TLD allocation has returned. Its owner
-    /// and failure-result temporaries must not reserve worker stack space
-    /// while the first TLD request initializes process metadata backing.
-    fn begin_with_thread_local_data(
+    /// Publishes the Theap after the TLD allocation has returned, building
+    /// each attachment field at its retained destination without transporting
+    /// a complete owner through intermediate success or failure values.
+    ///
+    /// # Safety
+    ///
+    /// The destination is exclusively writable uninitialized storage. `tld`
+    /// is this current thread's exact active later-main TLD and every other
+    /// input retains the source identity accepted by the admission prepass.
+    unsafe fn begin_with_thread_local_data_into(
+        destination: NonNull<Self>,
         main_heap: MainStaticHeapLease<'main>,
         metadata: core::pin::Pin<&'static MetaAllocator>,
         config: MemoryConfig,
@@ -608,39 +688,50 @@ impl<'main> MainHeapThreadAttachment<'main> {
         generic_collect_policy: Option<&'static crate::os::VmPolicy>,
         thread: LiveThreadId,
         tld: DynamicAttachedThreadLocalData,
-    ) -> Result<Self, MainHeapThreadAttachmentBeginError<'main>> {
-        let mut attachment = Self {
-            main_heap,
-            metadata,
-            config,
-            page_mode,
-            generic_collect_policy,
-            tld: Some(tld),
-            theap: None,
-            thread,
-            counted_in_main_heap: false,
-            terminal_os_release: None,
-            page_engine_suspended: false,
-            deferred_free_callback_generation: 0,
-            deferred_free_callback_active: AtomicUsize::new(0),
+    ) -> Result<(), MainHeapThreadAttachmentBeginIntoError> {
+        let destination = destination.as_ptr();
+        // SAFETY: every field is written exactly once before any attachment
+        // reference is formed. These writes cannot invoke a fallible callback
+        // or publish the destination's address.
+        unsafe {
+            core::ptr::addr_of_mut!((*destination).main_heap).write(main_heap);
+            core::ptr::addr_of_mut!((*destination).metadata).write(metadata);
+            core::ptr::addr_of_mut!((*destination).config).write(config);
+            core::ptr::addr_of_mut!((*destination).page_mode).write(page_mode);
+            core::ptr::addr_of_mut!((*destination).generic_collect_policy).write(generic_collect_policy);
+            core::ptr::addr_of_mut!((*destination).tld).write(Some(tld));
+            core::ptr::addr_of_mut!((*destination).theap).write(None);
+            core::ptr::addr_of_mut!((*destination).thread).write(thread);
+            core::ptr::addr_of_mut!((*destination).counted_in_main_heap).write(false);
+            core::ptr::addr_of_mut!((*destination).terminal_os_release).write(None);
+            core::ptr::addr_of_mut!((*destination).page_engine_suspended).write(false);
+            core::ptr::addr_of_mut!((*destination).deferred_free_callback_generation).write(0);
+            core::ptr::addr_of_mut!((*destination).deferred_free_callback_active).write(AtomicUsize::new(0));
             #[cfg(test)]
-            deferred_free_test_observer: None,
+            core::ptr::addr_of_mut!((*destination).deferred_free_test_observer).write(None);
             #[cfg(test)]
-            detached_process_page_finish_failures: 0,
-            state: MainHeapThreadAttachmentState::Preparing,
-            _not_send_or_sync: PhantomData,
-        };
-
+            core::ptr::addr_of_mut!((*destination).detached_process_page_finish_failures).write(0);
+            core::ptr::addr_of_mut!((*destination).state).write(MainHeapThreadAttachmentState::Preparing);
+            core::ptr::addr_of_mut!((*destination)._not_send_or_sync).write(PhantomData);
+        }
+        // SAFETY: all fields are now initialized and construction still owns
+        // this one attachment exclusively through publication or cancellation.
+        let attachment = unsafe { &mut *destination };
         match attachment.allocate_and_publish_theap() {
             Ok(()) => {
                 attachment.state = MainHeapThreadAttachmentState::Attached;
-                Ok(attachment)
+                Ok(())
             }
             Err(MainHeapThreadAttachmentPublicationError::Rejected(error)) => {
-                Err(MainHeapThreadAttachmentBeginError::Rejected(error))
+                // SAFETY: source cancellation released the partial TLD and
+                // there is no Theap publication. End this initialized wrapper
+                // exactly once before reporting an empty destination.
+                unsafe { core::ptr::drop_in_place(destination) };
+                Err(MainHeapThreadAttachmentBeginIntoError::Rejected(error))
             }
             Err(MainHeapThreadAttachmentPublicationError::Retained(error)) => {
-                Err(attachment.into_retained_begin_failure(error))
+                attachment.state = MainHeapThreadAttachmentState::Poisoned;
+                Err(MainHeapThreadAttachmentBeginIntoError::Retained(error))
             }
         }
     }
@@ -1977,17 +2068,6 @@ impl<'main> MainHeapThreadAttachment<'main> {
         &mut self,
     ) -> Result<*mut Theap, MainHeapThreadAttachmentError> {
         self.theap_pointer()
-    }
-
-    fn into_retained_begin_failure(
-        mut self,
-        error: MainHeapThreadAttachmentError,
-    ) -> MainHeapThreadAttachmentBeginError<'main> {
-        self.state = MainHeapThreadAttachmentState::Poisoned;
-        MainHeapThreadAttachmentBeginError::Retained {
-            error,
-            attachment: self,
-        }
     }
 
     #[inline]
@@ -3770,21 +3850,21 @@ mod tests {
                         "the failed Theap allocation leaves every worker root at its source empty image"
                     );
 
-                    let mut recovered = match unsafe {
-                        MainHeapThreadAttachment::begin_with_test_metadata(
-                            main_heap,
-                            metadata,
-                            memory_config(),
+                    let mut destination = core::mem::MaybeUninit::<MainHeapThreadAttachment>::uninit();
+                    // SAFETY: the failed attempt left pristine roots and no
+                    // metadata capability. This retry constructs exactly one
+                    // owner in its retained storage through normal teardown.
+                    let result = unsafe {
+                        MainHeapThreadAttachment::begin_with_metadata_into(
+                            NonNull::new_unchecked(destination.as_mut_ptr()),
+                            main_heap, metadata, memory_config(),
+                            TheapPageMode::OrdinaryAbandoning, None,
                         )
-                    } {
-                        Ok(owner) => owner,
-                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
-                            panic!("the later source retry rejected: {error:?}")
-                        }
-                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
-                            panic!("the later source retry retained: {error:?}")
-                        }
                     };
+                    assert_eq!(result, Ok(()));
+                    // SAFETY: successful final-storage construction initialized
+                    // every field; this borrow does not move its retained owner.
+                    let recovered = unsafe { destination.assume_init_mut() };
                     assert_eq!(
                         recovered
                             .current_tld_mut()
