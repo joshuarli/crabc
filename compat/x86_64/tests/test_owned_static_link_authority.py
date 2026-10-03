@@ -87,6 +87,28 @@ ret
 ''')
         cls.run_command(['gcc', '-c', str(cls.work / 'weak.S'), '-o', str(cls.work / 'weak.o')], 'compile-weak')
         cls.run_command(cls.link_command('referenced-weak', ['weak.o']) + ['--emit-relocs'], 'link-weak')
+        (cls.work / 'hidden-address.S').write_text('''.text
+.globl _start
+.type _start,@function
+.weak optional_hidden_address
+.hidden optional_hidden_address
+_start: lea optional_hidden_address(%rip),%rax
+test %rax,%rax
+setne %dil
+movzbl %dil,%edi
+mov $60,%eax
+syscall
+.size _start,.-_start
+.section .note.GNU-stack,"",@progbits
+''')
+        cls.run_command(['gcc', '-c', str(cls.work / 'hidden-address.S'),
+                         '-o', str(cls.work / 'hidden-address.o')], 'compile-hidden-address')
+        for mode in ('hidden-address', 'hidden-address-relocations'):
+            command = cls.link_command(mode, ['hidden-address.o'])
+            if mode.endswith('relocations'):
+                command.append('--emit-relocs')
+            cls.run_command(command, 'link-' + mode)
+            cls.run_command(['readelf', '-sWr', str(cls.work / mode)], mode + '-metadata')
         export_source = (cls.work / 'start.S').read_text().split('.section .text.dead')[0]
         (cls.work / 'export-start.S').write_text(export_source + '.section .note.GNU-stack,"",@progbits\n')
         cls.run_command(['gcc', '-c', str(cls.work / 'export-start.S'), '-o', str(cls.work / 'export-start.o')],
@@ -140,6 +162,28 @@ ret
     def test_any_retained_undefined_relocation_requires_binding(self):
         proof = static_undefined_bindings(self.work / 'referenced-weak')
         self.assertEqual([row['symbol']['name'] for row in proof['required_bindings']], ['optional_unprovided'])
+        self.assertEqual(proof['inert_symtab_rows'], [])
+        self.assertTrue(proof['relocation_sections'])
+
+    def test_local_hidden_undefined_address_is_inert_without_operands(self):
+        image = Elf(self.work / 'hidden-address')
+        symbols = [image.symbol_row(index, number)
+                   for index, table in enumerate(image.sections) if table[1] == 2
+                   for number in range(table[5] // 24)
+                   if image.symbol_row(index, number)['name'] == 'optional_hidden_address']
+        self.assertEqual([(row['binding'], row['visibility'], row['section'], row['value'], row['size'])
+                          for row in symbols], [('LOCAL', 'HIDDEN', 0, 0, 0)])
+        proof = static_undefined_bindings(self.work / 'hidden-address')
+        self.assertEqual(proof['required_bindings'], [])
+        self.assertEqual([row['symbol']['name'] for row in proof['inert_symtab_rows']],
+                         ['optional_hidden_address'])
+        self.run_command([str(self.work / 'hidden-address')], 'run-hidden-address')
+        (self.work / 'hidden-address.bindings.json').write_text(json.dumps(proof, indent=2) + '\n')
+
+    def test_local_hidden_undefined_relocation_stays_required(self):
+        proof = static_undefined_bindings(self.work / 'hidden-address-relocations')
+        self.assertEqual([(row['symbol']['name'], row['symbol']['binding'])
+                          for row in proof['required_bindings']], [('optional_hidden_address', 'LOCAL')])
         self.assertEqual(proof['inert_symtab_rows'], [])
         self.assertTrue(proof['relocation_sections'])
 

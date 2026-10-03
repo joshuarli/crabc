@@ -138,7 +138,12 @@ def _static_undefined_bindings(executable):
         tables.append({'index': index, 'name': name, 'row_count': len(rows)})
         for number, row in enumerate(rows[1:], 1):
             if row['section'] == 0:
-                require(row['name'] and row['binding'] in ('GLOBAL', 'WEAK')
+                # LLD can localize an undefined hidden weak symbol after
+                # resolving its address to zero. Regular local metadata
+                # still requires the operand and dynamic-exposure checks;
+                # local binding alone does not establish an inert row.
+                require(row['name'] and (row['binding'] in ('GLOBAL', 'WEAK')
+                                        or name == '.symtab' and row['binding'] == 'LOCAL')
                         and row['value'] == row['size'] == 0, 'static undefined symbol metadata differs')
                 undefined.append({'table_index': index, 'table': name, 'symbol_index': number, 'symbol': row})
     require(any(row['name'] == '.symtab' for row in tables), 'static binding regular symbol table is missing')
