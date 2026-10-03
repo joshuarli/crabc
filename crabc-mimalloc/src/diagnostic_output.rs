@@ -1956,10 +1956,49 @@ impl OutputOwner {
     /// process-lifetime stability requirement is documented by
     /// [`ProcessDiagnosticInputs`]. The registered callback or default FILE
     /// primitive may synchronously reenter this route, as in pinned C.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
+        // SAFETY: the byvalue adapter owns the immutable message until the
+        // synchronous borrowed gate and every callback return.
+        unsafe { self.warning_from_source_options_borrowed(&message) }
+    }
+
+    /// Selected legacy transport retains its original owned warning gate.
+    ///
+    /// # Safety
+    /// Callback registration and in-flight delivery obey [`Self::warning`].
+    /// The environment reader retains its process-lifetime stability, and
+    /// synchronous output may reenter the source gate after unlocking.
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
         #[cfg(target_arch = "x86_64")]
         let message = PendingSourceMessage::primary(&message);
         #[cfg(not(target_arch = "x86_64"))]
+        let message = PendingSourceMessage::primary(message);
+        debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
+        let mut pending = PendingSourceWarnings::new();
+        {
+            let Ok(_guard) = self.source_options_lock.lock() else { return; };
+            // SAFETY: ready is Release-published before a route borrows this
+            // owner. The lock serializes all later UNINIT retries, and no
+            // mutable descriptor reference escapes this block.
+            unsafe { self.collect_warning_from_source_options_unlocked(message, &mut pending) };
+        }
+        // SAFETY: descriptor locking ended above. This retains the existing
+        // unsafe registration/default-dispatch contract without introducing a
+        // lock-across-foreign-callback boundary.
+        unsafe { pending.deliver(self) };
+    }
+
+    /// Runs the source warning gate with the caller's original immutable body.
+    /// The borrow ends only after synchronous staged output returns.
+    ///
+    /// # Safety
+    /// The same registration, environment, and callback admission obligations
+    /// as [`Self::warning_from_source_options`] apply. Callback code must not
+    /// modify or retain the borrowed body beyond its synchronous invocation.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn warning_from_source_options_borrowed(&self, message: &SourceFormattedMessage) {
         let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
@@ -2776,10 +2815,54 @@ impl OutputOwner {
     /// The obligations of [`Self::warning_from_source_options`] apply to the
     /// message, and a registered handler must satisfy
     /// [`Self::register_error`]'s contract.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
+        // SAFETY: the byvalue adapter owns the immutable message until the
+        // synchronous borrowed gate and every callback return.
+        unsafe { self.error_message_borrowed(error, &message) }
+    }
+
+    /// Selected legacy transport retains its original owned error gate.
+    ///
+    /// # Safety
+    /// The warning gate's registration, environment, and synchronous delivery
+    /// obligations apply; a handler obeys [`Self::register_error`].
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
         #[cfg(target_arch = "x86_64")]
         let message = PendingSourceMessage::primary(&message);
         #[cfg(not(target_arch = "x86_64"))]
+        let message = PendingSourceMessage::primary(message);
+        debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
+        let mut pending = PendingSourceWarnings::new();
+        if self.source_options_ready.load(Ordering::Acquire) == 1 {
+            if let Ok(_guard) = self.source_options_lock.lock() {
+                // SAFETY: the descriptor lock serializes lazy retries.
+                unsafe { self.collect_gated_message_unlocked(SourceMessageKind::Error, message, &mut pending) };
+            }
+        }
+        // SAFETY: descriptor locking ended above.
+        unsafe { pending.deliver(self) };
+        let handler = self.error_handler.load(Ordering::Acquire);
+        if handler.is_null() {
+            return source_default_error_disposition(error);
+        }
+        // SAFETY: only `register_error` stores a non-null `ErrorCallback`.
+        let handler: ErrorCallback = unsafe { core::mem::transmute(handler) };
+        // SAFETY: the registration contract keeps handler and argument live.
+        unsafe { handler(error.raw(), self.error_argument.load(Ordering::Acquire)) };
+        SourceErrorDisposition::Handled
+    }
+
+    /// Runs the source error gate and handler with the caller's original body.
+    /// The immutable borrow ends after synchronous output and the handler return.
+    ///
+    /// # Safety
+    /// The same registration, environment, and callback admission obligations
+    /// as [`Self::error_message`] apply. Callback code must not modify or retain
+    /// the borrowed body beyond its synchronous invocation.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn error_message_borrowed(&self, error: Errno, message: &SourceFormattedMessage) -> SourceErrorDisposition {
         let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
@@ -5282,6 +5365,62 @@ mod tests {
         unsafe { pending.deliver(&owner) };
         assert_eq!(capture.capture.count(), 6);
         assert_eq!(primary.as_c_str().to_bytes(), b"original caller body\n");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn borrowed_source_gates_keep_primary_storage_through_nested_output_and_handler() {
+        struct HandlerCapture<'capture> {
+            output: &'capture StagedPrimaryCapture,
+            after_output: AtomicBool,
+        }
+        unsafe extern "C" fn handler(code: core::ffi::c_int, argument: *mut c_void) {
+            // SAFETY: this isolated gate retains the handler capture until
+            // the synchronous error handler completes.
+            let capture = unsafe { &*(argument as *const HandlerCapture<'_>) };
+            capture.after_output.store(code == Errno::NOMEM.raw()
+                && capture.output.capture.count() == 10, Ordering::Relaxed);
+        }
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let entries = environment_entries(&[b"mimalloc_show_errors=1"]);
+        install_option_trace_environment(&entries);
+        let owner = output_owner();
+        // SAFETY: the locked environment and owner outlive all source reads.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        let primary = source_message(b"borrowed gate body\n\0");
+        let capture = StagedPrimaryCapture {
+            capture: Capture::new(), owner: &owner,
+            primary: primary.as_c_str().as_ptr(),
+            primary_seen: AtomicBool::new(false), reentered: AtomicBool::new(false),
+        };
+        // SAFETY: both original body storage and callback capture stay live
+        // and immutable through the outer and every nested source gate.
+        unsafe { owner.register_output(Some(capture_staged_primary), core::ptr::from_ref(&capture).cast_mut().cast()) };
+        capture.capture.reset();
+        unsafe { owner.warning_from_source_options_borrowed(&primary) };
+        assert!(capture.primary_seen.load(Ordering::Relaxed));
+        assert_eq!(capture.capture.count(), 6);
+        assert_eq!(capture.capture.message(1), b"borrowed gate body\n");
+        assert_eq!(capture.capture.message(3), b"nested warning\n");
+        assert_eq!(capture.capture.message(5), b"nested error\n");
+        capture.primary_seen.store(false, Ordering::Relaxed);
+        // SAFETY: the same synchronous borrow and admission remain valid.
+        let default = unsafe { owner.error_message_borrowed(Errno::NOMEM, &primary) };
+        assert_eq!(default, super::SourceErrorDisposition::DefaultErrno(Errno::NOMEM));
+        assert!(capture.primary_seen.load(Ordering::Relaxed));
+        assert_eq!(capture.capture.count(), 8);
+        let handler_capture = HandlerCapture { output: &capture, after_output: AtomicBool::new(false) };
+        // SAFETY: the handler capture is retained alongside the output capture
+        // until both fragments and subsequent handler return.
+        unsafe { owner.register_error(Some(handler), core::ptr::from_ref(&handler_capture).cast_mut().cast()) };
+        capture.primary_seen.store(false, Ordering::Relaxed);
+        let handled = unsafe { owner.error_message_borrowed(Errno::NOMEM, &primary) };
+        assert_eq!(handled, super::SourceErrorDisposition::Handled);
+        assert!(capture.primary_seen.load(Ordering::Relaxed));
+        assert!(handler_capture.after_output.load(Ordering::Relaxed));
+        assert_eq!(capture.capture.count(), 10);
+        assert_eq!(primary.as_c_str().to_bytes(), b"borrowed gate body\n");
     }
 
     #[test]

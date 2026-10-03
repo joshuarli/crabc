@@ -1437,17 +1437,30 @@ impl VmPolicy {
     /// output route. An image policy (fixtures, the paused AArch64 process)
     /// has no route and drops it, as a source build with warnings disabled
     /// would.
-    // Warning delivery stages several bounded formatting buffers. Keep those
-    // buffers in this callee so nested metadata mapping does not reserve them
-    // in every caller while attaching a worker on its small pthread stack.
     #[cfg_attr(target_arch = "x86_64", inline(never))]
     #[cfg_attr(not(target_arch = "x86_64"), inline)]
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) fn source_warning(&self, message: SourceFormattedMessage) {
         if let Some(output) = self.process_options {
             // SAFETY: `from_process_options` accepted this owner's delivery
             // obligations for every source read point on this policy,
             // including warnings a `mi_option_get` itself can deliver.
             unsafe { output.warning_from_source_options(message) };
+        }
+    }
+
+    /// Delivers the owned VM warning body through a synchronous borrowed gate.
+    /// The original body stays immutable throughout delivery; the finite
+    /// selection stage stores scalar recipes and borrows instead of a second
+    /// formatting buffer. The image policy has no route and drops the body.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
+    pub(crate) fn source_warning(&self, message: SourceFormattedMessage) {
+        if let Some(output) = self.process_options {
+            // SAFETY: `from_process_options` accepted this owner's delivery
+            // obligations for every source read point on this policy,
+            // including warnings a `mi_option_get` itself can deliver.
+            unsafe { output.warning_from_source_options_borrowed(&message) };
         }
     }
 
@@ -1496,6 +1509,7 @@ impl VmPolicy {
     ///
     /// The returned disposition describes the source branch, independently
     /// of optional writer presence or whether that writer changed errno.
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) fn source_error(
         &self,
         report: crate::diagnostic_output::SourceErrorReport,
@@ -1505,6 +1519,32 @@ impl VmPolicy {
             // owner's synchronous callback and lifetime obligations, just
             // as for source option reads and warning delivery.
             unsafe { output.error_message(report.error(), report.message()) }
+        } else {
+            crate::diagnostic_output::source_default_error_disposition(report.error())
+        };
+        #[cfg(target_arch = "x86_64")]
+        if let crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(error) = disposition {
+            if let Some(writer) = self.source_errno_store { let _ = writer.store_default(error); }
+        }
+        disposition
+    }
+
+    /// Formats one original error body, then borrows it through gated output
+    /// and the handler. Default errno storage still follows their disposition.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn source_error(
+        &self,
+        report: crate::diagnostic_output::SourceErrorReport,
+    ) -> crate::diagnostic_output::SourceErrorDisposition {
+        let disposition = if let Some(output) = self.process_options {
+            // SAFETY: the process-policy constructor accepted this output
+            // owner's synchronous callback and lifetime obligations, just
+            // as for source option reads and warning delivery.
+            let error = report.error();
+            let message = report.message();
+            // SAFETY: this original formatted body remains immutably
+            // borrowed until output and the registered handler return.
+            unsafe { output.error_message_borrowed(error, &message) }
         } else {
             crate::diagnostic_output::source_default_error_disposition(report.error())
         };
