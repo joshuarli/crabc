@@ -8023,6 +8023,162 @@ mod tests {
             });
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn native_child_heap_image_guard_warning_reentry_retains_exact_tls_release_custody() {
+        struct Callback {
+            allocator: Pin<&'static MetaAllocator>,
+            allocation: Option<MetaAllocation<'static>>,
+            warnings: usize,
+            refused: bool,
+            nested: bool,
+        }
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        unsafe extern "C" fn output(message: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+            if message.is_null() || argument.is_null() { return; }
+            // SAFETY: source output lends a terminated fragment, and the test
+            // retains this exclusive callback state through synchronous free.
+            let message = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if !message.starts_with(b"cannot unprotect OS memory") { return; }
+            let callback = unsafe { &mut *argument.cast::<Callback>() };
+            callback.warnings += 1;
+            if callback.warnings != 1 { return; }
+            let Some(allocation) = callback.allocation.take() else { return };
+            let original = allocation.pointer();
+            let result = callback.allocator.test_with_held_backing_entry(|| {
+                MetaRelease::Malloc(allocation).release()
+            });
+            if let Ok(Err(MetaReleaseFailure::MallocRetryable { error, allocation })) = result {
+                callback.refused = error == MetaError::RecursiveEntry && allocation.pointer() == original;
+                callback.allocation = Some(allocation);
+            }
+            if let crate::runtime_lifecycle::NativePageAllocationResult::Allocated(nested) =
+                crate::runtime_lifecycle::native_allocate(96, false)
+            {
+                // SAFETY: this independent callback client is exclusively
+                // owned and consumed once, without touching the in-flight Heap.
+                unsafe { nested.as_ptr().write_bytes(0x47, 96); }
+                callback.nested = unsafe { crate::runtime_lifecycle::native_free(nested) }
+                    == crate::runtime_lifecycle::NativePageFreeResult::Freed;
+            }
+        }
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::native_child_heap_image_guard_warning_reentry_retains_exact_tls_release_custody", || {
+                std::env::set_var("mimalloc_guarded_sample_rate", "1");
+                let image_size = std::format!("{}", NativeChildHeapImage::image_request_size());
+                std::env::set_var("mimalloc_guarded_min", &image_size);
+                std::env::set_var("mimalloc_guarded_max", &image_size);
+                std::env::set_var("mimalloc_show_errors", "1");
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                let allocator = static_allocator();
+                let (backing, mut allocation) = child_tls_array_fixture(allocator, 16);
+                let key = crate::thread_local::ThreadLocalKey::from_parts(
+                    crate::thread_local::ThreadLocalSlotIndex::new(7).unwrap(), 11,
+                ).unwrap();
+                let mut value = 41usize;
+                let value = core::ptr::from_mut(&mut value).cast();
+                // SAFETY: this exact flexible array is exclusively live; its
+                // slot value remains borrowed from the enclosing fixture.
+                unsafe { crate::thread_local::ThreadLocalSlots::new(
+                    allocation.dynamic_thread_local_backing_mut(16).unwrap().slots_mut(),
+                ).set(key, value).unwrap(); }
+                let mut image = NativeChildHeapImage::allocate().unwrap();
+                assert!(image.initialize_empty_image());
+                let binding = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap().0;
+                // SAFETY: this exclusively owned unpublished image retains
+                // the PageMap registration through the short observation.
+                let observed = unsafe { binding.page_map().lookup_live_allocation(image.pointer.cast()) }
+                    .unwrap().unwrap();
+                assert!(observed.is_guarded());
+                assert_eq!(unsafe { crate::types::Page::theap_at(observed.page()) },
+                    crate::compiler_tls::default_theap().as_ptr(),
+                    "the exact image belongs to the original process-main issuer");
+                drop(observed);
+                let mut callback = Callback { allocator, allocation: Some(allocation),
+                    warnings: 0, refused: false, nested: false };
+                let output_owner = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: registration and delivery are confined to this
+                // isolated thread; the callback state outlives the sole free.
+                unsafe { output_owner.register_output(Some(output), core::ptr::from_mut(&mut callback).cast()); }
+                let fault = fault::install(fault::Plan::at(fault::Point::Unprotect, 1, crabc_core::Errno::NOMEM));
+                // SAFETY: this unpublished Heap has no list, Theap, page or
+                // image projection. The callback owns only distinct clients.
+                assert!(unsafe { image.free() }.is_ok());
+                // Source unprotect failure warns but does not cancel free.
+                // The consumed image is never observed or retried afterwards.
+                assert_eq!(fault.observed(), 1);
+                assert_eq!(callback.warnings, 1);
+                assert!(callback.refused && callback.nested);
+                // SAFETY: synchronous free ended before unregistering output.
+                unsafe { output_owner.register_output(None, core::ptr::null_mut()); }
+                fault.set(fault::Plan::disabled());
+                assert_eq!(allocator.test_allocation_audit().live_capability_count, 1);
+                let mut allocation = callback.allocation.take().unwrap();
+                assert_eq!(allocation.pointer(), backing.pointer);
+                // SAFETY: recursive entry refused before consumption, so this
+                // retained exact array and copied source slot remain live.
+                assert_eq!(unsafe { crate::thread_local::ThreadLocalSlots::new(
+                    allocation.dynamic_thread_local_backing_mut(16).unwrap().slots_mut(),
+                ).get(key) }, value);
+                assert!(MetaRelease::Malloc(allocation).release().is_ok());
+                assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+            });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_child_heap_image_release_after_issuing_worker_finish_uses_retained_source_page() {
+        struct Transfer(NativeChildHeapImage);
+        // SAFETY: the worker transfers this unique unpublished image only
+        // after ending every projection. Source subprocess-safe free may
+        // publish it remotely while its original Page/backing remain retained.
+        unsafe impl Send for Transfer {}
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::native_child_heap_image_release_after_issuing_worker_finish_uses_retained_source_page", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let transferred = std::thread::spawn(|| {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: the joined host worker retains its TLS mapping
+                    // through registration, source owner finish and transfer.
+                    // No fork or terminal registry scan visits this test worker.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(crate::runtime_lifecycle::attach_current_thread(),
+                        crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                    let mut image = NativeChildHeapImage::allocate().unwrap();
+                    assert!(image.initialize_empty_image());
+                    let issuer = crate::compiler_tls::default_theap();
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                    (Transfer(image), issuer.as_ptr().addr())
+                }).join().unwrap();
+                let (Transfer(mut image), issuer) = transferred;
+                assert_ne!(crate::compiler_tls::default_theap().as_ptr().addr(), issuer);
+                let binding = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap().0;
+                // SAFETY: transfer retains this exact still-live image and
+                // its original abandoned Page; only short identity reads occur.
+                let observed = unsafe { binding.page_map().lookup_live_allocation(image.pointer.cast()) }
+                    .unwrap().unwrap();
+                assert!(!observed.is_associated_with(crate::compiler_tls::current_thread_identity().unwrap()),
+                    "the retired worker's Page is not this releasing thread's local page");
+                drop(observed);
+                assert!(image.with_heap(|_| ()).is_some());
+                // SAFETY: the joined issuer ended all image projections and
+                // this exact remote capability is published once, without reclaim.
+                assert!(unsafe { image.free() }.is_ok());
+                let mut recovery = NativeChildHeapImage::allocate().unwrap();
+                assert!(recovery.initialize_empty_image());
+                // SAFETY: this newly issued image owns independent current
+                // custody; no consumed pointer is accessed or retried.
+                assert!(unsafe { recovery.free() }.is_ok());
+            });
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn prepared_native_child_heap_image_refusal_retains_only_release_authority() {
