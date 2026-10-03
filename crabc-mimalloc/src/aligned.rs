@@ -107,6 +107,11 @@ pub(crate) const fn allocation_failure_request(
     }
 }
 
+/// Aligns the integer address at the caller's offset. The offset need not lie
+/// within the requested object or be a multiple of a machine word; the returned
+/// client itself may therefore have less alignment than a machine word.
+/// Wrapping address addition selects only low alignment bits and grants no
+/// authority to access memory at that offset.
 pub(crate) const fn pointer_adjustment(
     address: usize,
     alignment: usize,
@@ -326,13 +331,25 @@ mod tests {
     fn pointer_adjustment_aligns_pointer_plus_offset() {
         for alignment in [1usize, 8, 16, 64, 4096, 65536] {
             for address in [0x1000usize, 0x1001, 0x103f, usize::MAX - 7] {
-                for offset in [0usize, 1, 7, alignment.saturating_sub(1)] {
+                for offset in [0usize, 1, 7, alignment.saturating_sub(1), 50, 51, usize::MAX] {
                     let adjust = pointer_adjustment(address, alignment, offset).unwrap();
                     assert!(adjust < alignment);
                     assert_eq!(address.wrapping_add(adjust).wrapping_add(offset) & (alignment - 1), 0);
                 }
             }
         }
+        // An offset-aligned client has no independent word-alignment
+        // obligation, even when the requested alignment is one word.
+        let address = 0x1000;
+        let adjustment = pointer_adjustment(address, 8, 1).unwrap();
+        let client = address + adjustment;
+        for offset in [1, 50, 51, usize::MAX] {
+            assert_eq!(allocation_plan(50, 8, offset, OS_PAGE),
+                Some(AlignedAllocationPlan::Overallocate { request: 57 }));
+        }
+        assert_eq!(adjustment, 7);
+        assert_eq!(client % size_of::<usize>(), 7 % size_of::<usize>());
+        assert_eq!((client + 1) % 8, 0);
         assert_eq!(pointer_adjustment(0x1000, 0, 0), None);
         assert_eq!(pointer_adjustment(0x1000, 12, 0), None);
     }
