@@ -89,9 +89,11 @@ Update this small section in place when the implementation frontier changes.
   publication now follows source callbacks in a separate frame. VM warning
   gates borrow their caller's primary message. Unpublished borrowed OS claims
   initialize in caller storage and return scalar custody outcomes; processless
-  allocation retains its original owner transport. Separating fresh-page
-  completion from mapping acquisition and isolating the huge retry warning
-  buffer remain in progress. Secure free-list extension keeps its fixed
+  allocation retains its original owner transport. Fresh-page completion now
+  follows mapping acquisition in a separate frame, and the huge retry warning
+  buffer is isolated from ordinary mapping. Arena completion, attachment field
+  construction and huge-warning argument transport remain in progress.
+  Secure free-list extension keeps its fixed
   shuffle arrays outside entropy callbacks, with the existing permutation and
   publication order preserved in default, secure-2 and secure-3 checks.
   Metadata refusal tests
@@ -175,7 +177,7 @@ Update this small section in place when the implementation frontier changes.
   settled lanes' original programs/source, raw failures, debug helper storage
   facts and focused proofs before their worktrees are removed. Merged checks are in
   `.work/x86_64/tmp/resume12*-merged-*.log`, `resume13*-merged-*.log`, and
-  `resume14*-merged-*.log`.
+  `resume14*-merged-*.log`, and `resume15*-merged-*.log`.
   All settled lane worktrees have been removed. Existing allocator and hardware-policy
   reports remain available. Historical receipts are not transferred to current
   products; other projects' Docker state remains outside cleanup.
