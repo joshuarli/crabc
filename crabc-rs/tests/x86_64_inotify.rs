@@ -104,3 +104,61 @@ fn x86_64_inotify_preserves_direct_validation_and_noalloc_path_boundaries() {
         ));
     }
 }
+
+#[test]
+fn x86_64_inotify_duplicate_retains_watch_and_batch_after_owner_drop() {
+    use core::mem::MaybeUninit;
+    use crabc_rs::event::epoll;
+    use crabc_rs::time::Timespec;
+
+    let directory = temporary_directory("duplicate-owner");
+    std::fs::create_dir(&directory).unwrap();
+    let inotify = Inotify::new(CreateFlags::NONBLOCK | CreateFlags::CLOEXEC).unwrap();
+    let watch = inotify.add_watch(directory.as_os_str().as_bytes(), EventMask::CREATE).unwrap();
+    let duplicate = io::dup(inotify.as_fd()).unwrap();
+    let poller = epoll::create(epoll::CreateFlags::CLOEXEC).unwrap();
+    epoll::add(&poller, inotify.as_fd(), epoll::EventData::new_u64(81), epoll::EventFlags::IN).unwrap();
+    let first_name = OsString::from_vec(b"first-\xff".to_vec());
+    std::fs::write(directory.join(&first_name), b"first").unwrap();
+    let mut first_buffer = [0_u8; 512];
+    let mut first_batch = inotify.read_events(&mut first_buffer).unwrap();
+    let first_event = first_batch.next().unwrap().unwrap();
+    assert_eq!(first_event.watch(), Some(watch));
+    assert_eq!(first_event.mask(), EventMask::CREATE);
+    assert_eq!(first_event.name(), Some(b"first-\xff".as_slice()));
+    assert!(first_batch.next().is_none());
+    drop(inotify);
+
+    std::fs::write(directory.join("second"), b"second").unwrap();
+    let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut readiness = [MaybeUninit::uninit(); 1];
+    let (ready, _) = epoll::wait(&poller, &mut readiness, Some(&zero)).unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].flags(), epoll::EventFlags::IN);
+    assert_eq!(ready[0].data().u64(), 81);
+    let mut second_buffer = [0_u8; 512];
+    // Removing the watch does not flush records already queued for it.
+    crabc_core::inotify::rm_watch(duplicate.as_raw_fd(), watch.as_raw()).unwrap();
+    let count = io::read(&duplicate, &mut second_buffer).unwrap();
+    assert!(count >= 39);
+    assert_eq!(i32::from_ne_bytes(second_buffer[0..4].try_into().unwrap()), watch.as_raw());
+    assert_eq!(u32::from_ne_bytes(second_buffer[4..8].try_into().unwrap()), EventMask::CREATE.bits());
+    assert_eq!(&second_buffer[16..23], b"second\0");
+    let first_length = 16 + u32::from_ne_bytes(second_buffer[12..16].try_into().unwrap()) as usize;
+    assert_eq!(count, first_length + 16);
+    assert_eq!(i32::from_ne_bytes(second_buffer[first_length..first_length + 4].try_into().unwrap()),
+        watch.as_raw());
+    assert_eq!(u32::from_ne_bytes(second_buffer[first_length + 4..first_length + 8].try_into().unwrap()),
+        EventMask::IGNORED.bits());
+    std::fs::write(directory.join("third"), b"third").unwrap();
+    assert_eq!(io::read(&duplicate, &mut second_buffer), Err(Errno::AGAIN));
+    drop(duplicate);
+    let (ready, _) = epoll::wait(&poller, &mut readiness, Some(&zero)).unwrap();
+    assert!(ready.is_empty());
+
+    // Read-batch records borrow only caller storage, independently of the
+    // descriptor or watch lifetime. A separate read cannot overwrite that storage.
+    assert_eq!(first_event.watch(), Some(watch));
+    assert_eq!(first_event.name(), Some(b"first-\xff".as_slice()));
+    std::fs::remove_dir_all(directory).unwrap();
+}

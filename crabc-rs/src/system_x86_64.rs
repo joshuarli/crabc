@@ -220,7 +220,10 @@ pub mod inotify {
         }
     }
 
-    /// A watch identifier scoped to one [`Inotify`] descriptor.
+    /// A scalar watch identifier scoped to one inotify instance.
+    ///
+    /// Retaining this token does not keep the watch alive. Use it only with
+    /// the instance that produced it; it is not a borrow of that instance.
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     #[repr(transparent)]
     pub struct WatchDescriptor(i32);
@@ -235,9 +238,10 @@ pub mod inotify {
 
     /// An owned Linux inotify descriptor.
     ///
-    /// Dropping this value closes the descriptor and removes all of its
-    /// watches. Watch descriptors cannot outlive the descriptor at the type
-    /// level because every mutating operation borrows this owner.
+    /// Dropping this value closes its descriptor. Watches and queued records
+    /// belong to the shared open file description, so duplicate descriptors
+    /// retain them until the final descriptor closes. Watch identifiers are
+    /// scalar tokens; their lifetime is not tied to this owner by the type.
     #[derive(Debug)]
     pub struct Inotify {
         fd: OwnedFd,
@@ -271,8 +275,9 @@ pub mod inotify {
             })
         }
 
-        /// Removes one watch. Linux may already have removed it after an
-        /// `IGNORED` event, in which case it returns the direct `EINVAL`.
+        /// Removes one watch and queues its `IGNORED` event. Records queued
+        /// before removal remain readable. Linux may already have removed the
+        /// watch, in which case it returns the direct `EINVAL`.
         #[inline]
         pub fn remove_watch(&self, watch: WatchDescriptor) -> Result<()> {
             crabc_core::inotify::rm_watch(self.fd.as_raw_fd(), watch.0)
@@ -286,8 +291,9 @@ pub mod inotify {
 
         /// Reads and validates one kernel batch into caller-owned storage.
         ///
-        /// The returned iterator borrows `buffer`; each item either describes
-        /// one byte-preserving event or reports malformed record boundaries.
+        /// The returned iterator borrows only `buffer`, independently of this
+        /// descriptor and its watches. Each item either describes one
+        /// byte-preserving event or reports malformed record boundaries.
         /// A nonblocking descriptor reports `EAGAIN` before an iterator is
         /// created when no complete batch is available.
         #[inline]
