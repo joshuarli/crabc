@@ -21,6 +21,83 @@ static LAST_HEARTBEAT: core::sync::atomic::AtomicU64 = core::sync::atomic::Atomi
 static CONTEXT: AtomicUsize = AtomicUsize::new(0);
 static MARKER: u8 = 0x5a;
 
+struct ExitCallbackContext {
+    generation: usize,
+    observed_generation: AtomicUsize,
+    calls: AtomicUsize,
+    forced: AtomicBool,
+    clients_ok: AtomicBool,
+}
+
+unsafe extern "C" fn unregistering_exit_callback(force: bool, _: u64, context: *mut c_void) {
+    // SAFETY: the coordinator retains this boxed context until the worker's
+    // synchronous retirement callback and all nested allocator calls return.
+    let context = unsafe { &*context.cast::<ExitCallbackContext>() };
+    context.calls.fetch_add(1, Ordering::SeqCst);
+    context.forced.store(force, Ordering::SeqCst);
+    // SAFETY: this worker is the only active callback issuer. Clearing the
+    // publication does not end the context lifetime of this selected call.
+    unsafe { crabc_mimalloc::source_options_api::register_deferred_free(None, core::ptr::null_mut()) };
+    for size in [33, 524_289] {
+        if let Some(block) = api::malloc(size).value {
+            // SAFETY: the callback owns each complete live client through its
+            // endpoint writes and matching release, including during retirement.
+            unsafe {
+                block.as_ptr().write(0x39);
+                block.as_ptr().add(size - 1).write(0x71);
+                if block.as_ptr().read() != 0x39 || block.as_ptr().add(size - 1).read() != 0x71 {
+                    context.clients_ok.store(false, Ordering::SeqCst);
+                }
+                if api::free(block.as_ptr()) != api::FreeOutcome::Freed {
+                    context.clients_ok.store(false, Ordering::SeqCst);
+                }
+            }
+        } else { context.clients_ok.store(false, Ordering::SeqCst); }
+    }
+    api::collect(true);
+    // The original userdata remains usable after unregister and nested
+    // collection. Its owning Box is released only after worker join.
+    context.observed_generation.store(context.generation, Ordering::SeqCst);
+}
+
+fn dynamic_userdata_survives_self_unregistering_owner_exit() {
+    for generation in [1, 2] {
+        let context = Box::new(ExitCallbackContext {
+            generation, observed_generation: AtomicUsize::new(0), calls: AtomicUsize::new(0),
+            forced: AtomicBool::new(false), clients_ok: AtomicBool::new(true),
+        });
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(0);
+        let (continue_tx, continue_rx) = std::sync::mpsc::sync_channel(0);
+        let worker = std::thread::spawn(move || {
+            assert_eq!(native_runtime_test_support::attach_current_thread(),
+                crabc_mimalloc::__crabc_runtime::ThreadAttachResult::Attached);
+            let warm = api::malloc(33).value.unwrap();
+            assert_eq!(unsafe { api::free(warm.as_ptr()) }, api::FreeOutcome::Freed);
+            ready_tx.send(()).unwrap();
+            continue_rx.recv().unwrap();
+            assert_eq!(crabc_mimalloc::__crabc_runtime::finish_current_thread_native_after_user_destructors(),
+                crabc_mimalloc::__crabc_runtime::ThreadFinishResult::Finished);
+        });
+        ready_rx.recv().unwrap();
+        // SAFETY: publication is serialized with this worker's sole issuer;
+        // the Box remains live past callback self-unregistration and join.
+        unsafe { crabc_mimalloc::source_options_api::register_deferred_free(
+            Some(unregistering_exit_callback), core::ptr::from_ref(&*context).cast_mut().cast()) };
+        continue_tx.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(context.calls.load(Ordering::SeqCst), 1);
+        assert!(context.forced.load(Ordering::SeqCst));
+        assert!(context.clients_ok.load(Ordering::SeqCst));
+        assert_eq!(context.observed_generation.load(Ordering::SeqCst), generation);
+        api::collect(true);
+        assert_eq!(context.calls.load(Ordering::SeqCst), 1);
+        println!("retirement.{generation}.calls={}", context.calls.load(Ordering::SeqCst));
+        println!("retirement.{generation}.forced={}", usize::from(context.forced.load(Ordering::SeqCst)));
+        println!("retirement.{generation}.clients_ok={}", usize::from(context.clients_ok.load(Ordering::SeqCst)));
+        println!("retirement.{generation}.userdata={}", context.observed_generation.load(Ordering::SeqCst));
+    }
+}
+
 unsafe extern "C" fn deferred(force: bool, heartbeat: u64, context: *mut c_void) {
     if ACTIVE.swap(true, Ordering::SeqCst) {
         SUPPRESSED.store(false, Ordering::SeqCst);
@@ -144,4 +221,5 @@ fn public_collection_and_worker_exit_callbacks_allow_nested_small_and_large_allo
             assert_eq!(CALLS.load(Ordering::SeqCst), 2, "clearing registration suppresses later callbacks");
         }
     }
+    dynamic_userdata_survives_self_unregistering_owner_exit();
 }

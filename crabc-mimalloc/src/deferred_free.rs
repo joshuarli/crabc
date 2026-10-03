@@ -58,11 +58,10 @@ impl DeferredFreeSource {
         // SAFETY: the caller supplies the short current source projection; no
         // reference leaves this function and the returned value is identity,
         // not a borrow or owner capability.
-        let theap_ref = unsafe { theap.as_ref() };
-        let tld = theap_ref.deferred_free_tld()?;
-        let thread_sequence = theap_ref.thread_sequence()?;
-        if !theap_ref.matches_thread(thread)
-            || unsafe { tld.as_ref() }.thread_sequence().get() != thread_sequence
+        let tld = unsafe { Theap::deferred_free_tld_at(theap) }?;
+        let thread_sequence = unsafe { Theap::thread_sequence_at(theap) }?;
+        if unsafe { ThreadLocalData::thread_id_at(tld) } != thread.get()
+            || unsafe { ThreadLocalData::thread_sequence_at(tld) }.get() != thread_sequence
         {
             return None;
         }
@@ -120,6 +119,10 @@ impl DeferredFreeRegistration {
     /// `callback`, when present, and every object reachable from `context`
     /// must stay valid for each invocation that can still observe this
     /// publication. The callback must not unwind across the C ABI boundary.
+    /// Replacing or clearing the pair does not recall an invocation's copied
+    /// function and userdata. The separate source loads do not select a
+    /// coherent registration generation: either serialize replacement with
+    /// selection or retain valid userdata for every observable pairing.
     #[inline]
     pub(crate) unsafe fn register(
         &self,
@@ -279,7 +282,7 @@ pub(crate) fn begin(
 ) -> Result<DeferredFreeInvocation, DeferredFreeInvocationError> {
     // SAFETY: callers retain both metadata images for this short source
     // prefix. No mutable reference escapes into the returned callback token.
-    if unsafe { !theap.as_ref().matches_tld_pointer(tld.as_ptr()) } {
+    if unsafe { Theap::tld_at(theap) } != tld.as_ptr() {
         return Err(DeferredFreeInvocationError::TldMismatch);
     }
     // SAFETY: this source invocation retains the original current Theap
@@ -562,6 +565,58 @@ mod tests {
             !source.tld.recursing(),
             "an abandoned caller-stack continuation must not suppress a later callback"
         );
+    }
+
+    #[test]
+    fn selected_invocation_keeps_original_userdata_across_replacement_and_unregister() {
+        struct Context { calls: AtomicUsize, heartbeat: AtomicUsize, callback: AtomicUsize }
+        unsafe extern "C" fn observe(_: bool, heartbeat: u64, context: *mut c_void) {
+            // SAFETY: the test retains both context objects until every
+            // selected invocation has returned, including after unregister.
+            let context = unsafe { &*context.cast::<Context>() };
+            context.calls.fetch_add(1, Ordering::SeqCst);
+            context.heartbeat.store(heartbeat as usize, Ordering::SeqCst);
+            context.callback.store(1, Ordering::SeqCst);
+        }
+        unsafe extern "C" fn replacement(_: bool, heartbeat: u64, context: *mut c_void) {
+            // SAFETY: the second context is retained after null registration
+            // until its already-selected invocation returns.
+            let context = unsafe { &*context.cast::<Context>() };
+            context.calls.fetch_add(1, Ordering::SeqCst);
+            context.heartbeat.store(heartbeat as usize, Ordering::SeqCst);
+            context.callback.store(2, Ordering::SeqCst);
+        }
+        let mut source = paired_source_metadata();
+        let registration = DeferredFreeRegistration::new();
+        let first = Context { calls: AtomicUsize::new(0), heartbeat: AtomicUsize::new(0), callback: AtomicUsize::new(0) };
+        let second = Context { calls: AtomicUsize::new(0), heartbeat: AtomicUsize::new(0), callback: AtomicUsize::new(0) };
+        // SAFETY: each publication and copied token retains its context; no
+        // context is destroyed by replacement or null registration.
+        unsafe { registration.register(Some(observe), core::ptr::from_ref(&first).cast_mut().cast()) };
+        let first_call = begin(&registration, NonNull::from(&mut source.theap),
+            NonNull::from(&mut source.tld), false).unwrap();
+        unsafe { registration.register(Some(replacement), core::ptr::from_ref(&second).cast_mut().cast()) };
+        assert_eq!(unsafe { first_call.invoke() }, 1);
+        assert_eq!(first.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(first.callback.load(Ordering::SeqCst), 1);
+        assert!(!source.tld.recursing());
+
+        let second_call = begin(&registration, NonNull::from(&mut source.theap),
+            NonNull::from(&mut source.tld), true).unwrap();
+        unsafe { registration.register(None, core::ptr::null_mut()) };
+        assert_eq!(unsafe { second_call.invoke() }, 2);
+        assert_eq!(second.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second.callback.load(Ordering::SeqCst), 2);
+        assert_eq!(first.heartbeat.load(Ordering::SeqCst), 1);
+        assert_eq!(second.heartbeat.load(Ordering::SeqCst), 2);
+        assert!(!source.tld.recursing());
+        let unregistered = begin(&registration, NonNull::from(&mut source.theap),
+            NonNull::from(&mut source.tld), false).unwrap();
+        assert!(matches!(unregistered, super::DeferredFreeInvocation::Complete(3)));
+        assert_eq!(unsafe { unregistered.invoke() }, 3);
+        assert_eq!(first.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second.calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
