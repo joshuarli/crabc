@@ -7,6 +7,7 @@ use crabc_mimalloc::source_api::{self, FreeOutcome};
 fn aligned_offset_client_keeps_usable_reallocation_and_free_contract() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
+    selected_theap_reallocation_preserves_source_extent();
     let original = source_api::zalloc_aligned_at(81, 128, 11).value.unwrap();
     assert_eq!((original.as_ptr().addr() + 11) % 128, 0);
     // SAFETY: this test exclusively owns the successful 81-byte allocation.
@@ -47,14 +48,23 @@ fn aligned_offset_client_keeps_usable_reallocation_and_free_contract() {
         assert_eq!(freed.errno.apply(0), 0);
 
         let client = source_api::malloc_aligned_at(81, 128, 11).value.unwrap();
-        client.as_ptr().write_bytes(0x19, 81);
+        let client_extent = source_api::usable_size(client.as_ptr());
+        client.as_ptr().write_bytes(0x19, client_extent);
+        let refused = source_api::urealloc(client.as_ptr(), usize::MAX);
+        assert!(refused.value.0.is_none());
+        let canonical_size = refused.value.1.unwrap();
+        assert!(canonical_size > client_extent,
+            "the offset client reports its complete canonical block size");
+        assert_eq!(refused.value.2, None, "failure leaves the new block-size output untouched");
+        assert_eq!(source_api::usable_size(client.as_ptr()), client_extent);
         let grown = source_api::urealloc(client.as_ptr(), 501);
         assert_eq!(grown.errno.apply(0), 0);
-        assert!(grown.value.1.unwrap() >= 81);
-        assert!(grown.value.2.unwrap() >= 501);
+        assert_eq!(grown.value.1, Some(canonical_size));
+        let grown_block_size = grown.value.2.unwrap();
+        assert!(grown_block_size >= 501);
         let grown = grown.value.0.unwrap();
-        assert!(core::slice::from_raw_parts(grown.as_ptr(), 81).iter().all(|byte| *byte == 0x19));
-        assert_eq!(source_api::free(grown.as_ptr()), FreeOutcome::Freed);
+        assert!(core::slice::from_raw_parts(grown.as_ptr(), client_extent).iter().all(|byte| *byte == 0x19));
+        assert_eq!(source_api::ufree(grown.as_ptr()), (FreeOutcome::Freed, grown_block_size));
 
         let zero = source_api::malloc_aligned_at(0, 128, 11).value.unwrap();
         let zero_usable = source_api::usable_size(zero.as_ptr());
@@ -125,5 +135,79 @@ fn aligned_offset_client_keeps_usable_reallocation_and_free_contract() {
             assert_eq!(refused.value, FreeOutcome::RejectedCorruption);
             assert_eq!(refused.errno.apply(29), 29);
         }
+    }
+}
+
+fn selected_theap_reallocation_preserves_source_extent() {
+    use crabc_mimalloc::source_heap_api as heap_api;
+
+    let source = heap_api::heap_new();
+    let target = heap_api::heap_new();
+    assert!(!source.is_null() && !target.is_null());
+    let base = heap_api::theap_get_default();
+    // SAFETY: this thread retains both Heaps and their initialized Theaps,
+    // exclusively owns each returned client, restores its default Theap,
+    // and frees every client before releasing either Heap.
+    unsafe {
+        let selected = heap_api::heap_theap(target);
+        assert!(!selected.is_null());
+        assert_eq!(heap_api::theap_set_default(selected), base);
+        for alignment in [8, 128] {
+            let offset = if alignment == 8 { 7 } else { 11 };
+            let old = heap_api::heap_malloc_aligned_at(source, 81, alignment, offset, false)
+                .value.unwrap();
+            let extent = source_api::usable_size(old.as_ptr());
+            assert!(extent >= 81);
+            old.as_ptr().write_bytes(0x58, extent);
+            let half = extent - extent / 2;
+            let reused = source_api::rezalloc_aligned_at(old.as_ptr(), half, alignment, offset);
+            assert_eq!(reused.value, Some(old), "aligned reuse omits the target Heap comparison");
+            assert_eq!(heap_api::heap_of(old.as_ptr()), source);
+            assert_eq!(source_api::usable_size(old.as_ptr()), extent,
+                "reuse retains the original extent even after a smaller request");
+            let failed = source_api::rezalloc_aligned_at(old.as_ptr(), usize::MAX, alignment, offset);
+            assert!(failed.value.is_none());
+            assert_eq!(source_api::usable_size(old.as_ptr()), extent);
+            assert!(core::slice::from_raw_parts(old.as_ptr(), extent).iter().all(|byte| *byte == 0x58));
+
+            let grown = source_api::rezalloc_aligned_at(old.as_ptr(), extent + 173, alignment, offset)
+                .value.unwrap();
+            assert_eq!((grown.as_ptr().addr() + offset) % alignment, 0);
+            assert_eq!(heap_api::heap_of(grown.as_ptr()), target);
+            let grown_extent = source_api::usable_size(grown.as_ptr());
+            assert!(grown_extent >= extent + 173);
+            assert!(core::slice::from_raw_parts(grown.as_ptr(), extent).iter().all(|byte| *byte == 0x58),
+                "replacement copies the observed extent, including bytes beyond the smaller request");
+            assert!(core::slice::from_raw_parts(grown.as_ptr().add(extent), grown_extent - extent)
+                .iter().all(|byte| *byte == 0));
+            assert_eq!(source_api::free(grown.as_ptr()), FreeOutcome::Freed);
+        }
+        assert_eq!(heap_api::theap_set_default(base), selected);
+
+        for explicit in [false, true] {
+            let old = heap_api::heap_malloc_aligned_at(source, 81, 128, 11, false).value.unwrap();
+            let extent = source_api::usable_size(old.as_ptr());
+            old.as_ptr().write_bytes(0x39, extent);
+            let replacement = if explicit {
+                source_api::theap_realloc(selected, old.as_ptr(), extent, true)
+            } else {
+                assert_eq!(heap_api::theap_set_default(selected), base);
+                let result = source_api::rezalloc(old.as_ptr(), extent);
+                assert_eq!(heap_api::theap_set_default(base), selected);
+                result
+            }.value.unwrap();
+            assert_ne!(replacement, old, "ordinary reuse requires equality with the target Heap");
+            assert_eq!(heap_api::heap_of(replacement.as_ptr()), target);
+            assert!(core::slice::from_raw_parts(replacement.as_ptr(), extent).iter().all(|byte| *byte == 0x39));
+            let replacement_extent = source_api::usable_size(replacement.as_ptr());
+            assert!(core::slice::from_raw_parts(replacement.as_ptr().add(extent), replacement_extent - extent)
+                .iter().all(|byte| *byte == 0));
+            assert_eq!(heap_api::theap_get_default(), base,
+                "an explicit Theap call retains the current default");
+            assert_eq!(source_api::free(replacement.as_ptr()), FreeOutcome::Freed);
+        }
+        assert!(heap_api::heap_release(source, false));
+        assert!(heap_api::heap_release(target, false));
+        assert_eq!(heap_api::theap_get_default(), base);
     }
 }
