@@ -3778,11 +3778,10 @@ impl RuntimeProcessStorage {
 
     /// Performs pinned retained `init.c:636-641` field-only statistics merges.
     ///
-    /// This forms one transient shared `Theap` observation only to load its
-    /// initialized/Heap atomic fields. The current selected owner has no
-    /// outstanding source borrow, and the exact short main-Heap guard excludes
-    /// concurrent Heap-list writes; no mutable Theap reference or reference
-    /// across output is created. Empty or uninitialized default images are
+    /// Only the default Theap's atomic Heap field is observed. The current
+    /// selected owner retains that image, and the exact short main-Heap guard
+    /// excludes concurrent Heap-list writes. No whole-Theap reference or
+    /// reference across output is created. Empty or uninitialized images are
     /// skipped; a nonempty image bound to another Heap is a retained failure.
     #[cfg(target_arch = "x86_64")]
     fn merge_selected_default_process_done_statistics(
@@ -3805,13 +3804,12 @@ impl RuntimeProcessStorage {
                 default.as_ptr().cast_const(),
                 empty_default_theap() as *const crate::types::Theap,
             );
-            // SAFETY: the selected initial owner retains this default image;
-            // this short shared view reads only the two atomic fields below
-            // while the main-Heap guard excludes a concurrent list mutation.
-            let default_image = unsafe { default.as_ref() };
-            let default_is_initialized = default_image.is_initialized();
+            // SAFETY: the selected owner retains this default image. Both
+            // source observations load only its atomic Heap field while the
+            // main-Heap guard excludes a concurrent list mutation.
+            let default_is_initialized = !unsafe { crate::types::Theap::heap_at(default) }.is_null();
             if !default_is_empty && default_is_initialized {
-                if !core::ptr::eq(default_image.heap(), core::ptr::from_mut(heap)) {
+                if !core::ptr::eq(unsafe { crate::types::Theap::heap_at(default) }, core::ptr::from_mut(heap)) {
                     false
                 } else {
                     // SAFETY: the existing Heap guard serializes this exact
@@ -14473,6 +14471,54 @@ unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()
     }
 }
 
+/// Frees one captured local metadata client through its original process-main
+/// issuer. The observed consumption survives completion of the outer owner
+/// projection; refusal cannot turn a still-live client into a consumed one.
+/// This performs no lookup, owner activation, foreign publication, or reclaim.
+///
+/// # Safety
+/// `selected` is this thread's retained initialized process-main issuing Theap,
+/// and `allocation` is its exact live local client, freed once. The caller
+/// retains the original Heap, Theap, process admission and page backing through
+/// this synchronous call, with no overlapping owner or metadata projection.
+/// On Consumed the client must never be accessed or retried, including errors;
+/// RefusedBeforeConsumption leaves its ownership with the caller.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn native_free_local_metadata_with_progress(
+    selected: core::ptr::NonNull<crate::types::Theap>,
+    allocation: LiveAllocationPointer,
+) -> crate::single_thread::LocalClientFreeProgress {
+    use crate::single_thread::{FreeError, LocalClientFreeProgress};
+    let mut allocation = Some(allocation);
+    let mut observed = None;
+    let completed = if RUNTIME_PROCESS.is_on_initial_allocation_thread() {
+        with_current_thread_native_initial_persistent_allocator(false, |issuer| {
+            if !issuer.allocator.owns_theap(selected) { return; }
+            // SAFETY: the original selected issuer retains this exact local
+            // client. The optional transport is consumed only on this entry.
+            observed = unsafe { issuer.allocator
+                .free_captured_live_allocation_with_progress_current_initial_thread_local(
+                    allocation.take().expect("one captured local metadata client"),
+                ) };
+        }).is_ok()
+    } else {
+        with_current_thread_native_persistent_allocator(false, |allocator| {
+            if !allocator.owns_theap(selected) { return; }
+            // SAFETY: the same original retained issuer exclusively owns this
+            // local client and its ordinary source publication fields.
+            observed = Some(unsafe { allocator.free_captured_live_allocation_with_progress(
+                allocation.take().expect("one captured local metadata client"),
+            ) });
+        }).is_ok()
+    };
+    match (observed, completed) {
+        (Some(LocalClientFreeProgress::Consumed(Ok(()))), false) =>
+            LocalClientFreeProgress::Consumed(Err(FreeError::Lifecycle)),
+        (Some(progress), _) => progress,
+        (None, _) => LocalClientFreeProgress::RefusedBeforeConsumption(FreeError::Lifecycle),
+    }
+}
+
 /// Copied geometry of one canonical live block, paired with a process view
 /// whose actual owner remains admitted for the complete synchronous callback.
 /// These facts grant no client release or metadata mutation authority.
@@ -24767,6 +24813,51 @@ mod tests {
                     break;
                 }
                 assert!(captured, "normal source allocations reach the frequency getter");
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn native_local_metadata_free_progress_uses_original_initial_and_worker_issuers() {
+        fn free_one_local_client() {
+            let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(128, 16, false) else {
+                panic!("the ordinary source issuer supplies a live local client");
+            };
+            // SAFETY: this thread exclusively owns the complete live client.
+            unsafe { block.as_ptr().write_bytes(0x73, 128); }
+            let operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+            let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+            // SAFETY: the exact live client retains its source page/backing.
+            let allocation = unsafe { map.lookup_live_allocation(block) }.unwrap().unwrap();
+            let selected = default_theap();
+            assert!(allocation.is_associated_with(current_thread_identity().unwrap()));
+            // SAFETY: the captured local client retains the page's identity.
+            assert_eq!(unsafe { crate::types::Page::theap_at(allocation.page()) }, selected.as_ptr());
+            // SAFETY: original process admission and this thread's exact
+            // issuing Theap enclose this one captured local free. All owner
+            // projections ended; consumption discharges the client once.
+            assert_eq!(unsafe { native_free_local_metadata_with_progress(selected, allocation) },
+                crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())));
+            drop(operation);
+            assert!(native_round_trip(73), "the same issuer remains usable after completed metadata free");
+        }
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_local_metadata_free_progress_uses_original_initial_and_worker_issuers",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(prepare_native_initial_thread_owner());
+                free_one_local_client();
+                std::thread::spawn(|| {
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its exact descriptor through
+                    // attachment, local work, and normal final teardown.
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    free_one_local_client();
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("the ordinary worker completes its original source owner");
             },
         );
     }

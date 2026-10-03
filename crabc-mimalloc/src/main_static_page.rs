@@ -3230,7 +3230,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// held and its local page and queue fields are exclusive through this
     /// call. Consumed discharges the client even when its result is an error;
     /// that client must never be freed again or returned as live.
-    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn free_captured_live_allocation_with_progress_current_initial_thread_local(
         &mut self,
         allocation: crate::process_page_map::LiveAllocationPointer,
