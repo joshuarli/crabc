@@ -316,6 +316,43 @@ static int live_close(void *opaque)
     return cookie->failed ? -1 : 0;
 }
 
+static ssize_t short_cookie_write(void *opaque, const char *bytes, size_t count)
+{
+    return live_write(opaque, bytes, count > 2 ? 2 : count);
+}
+
+/* A positive short backend write publishes only complete fwrite items.
+ * Both streams borrow live storage through close; neither short prefix sets
+ * the stream error indicator or replaces the callback's errno. */
+static int short_write_composition(int tls)
+{
+    char fixed_bytes[4] = { 0 };
+    struct live_cookie cookie = { .tls = tls };
+    cookie_io_functions_t functions = { NULL, short_cookie_write, NULL, live_close };
+    FILE *fixed = fmemopen(fixed_bytes, sizeof(fixed_bytes), "w+");
+    FILE *stream = fopencookie(&cookie, "w", functions);
+    int result = 1;
+
+    if (fixed == NULL || stream == NULL || setvbuf(fixed, NULL, _IONBF, 0) != 0 ||
+        setvbuf(stream, NULL, _IONBF, 0) != 0)
+        goto close_live;
+    errno = EDOM;
+    if (fwrite("abcdef", 2, 3, fixed) != 2 || ferror(fixed) != 0 || errno != EDOM ||
+        !equal_bytes(fixed_bytes, "abcd", 4))
+        goto close_live;
+    if (fwrite("ABCD", 2, 2, stream) != 1 || ferror(stream) != 0 || errno != EDOM ||
+        cookie.position != 2 || cookie.length != 2 || !equal_bytes(cookie.bytes, "AB", 2) ||
+        cookie.failed || callback_tls != tls)
+        goto close_live;
+    result = 0;
+close_live:
+    if (stream != NULL && fclose(stream) != 0)
+        result = 2;
+    if (fixed != NULL && fclose(fixed) != 0)
+        result = 3;
+    return result;
+}
+
 static int memory_cookie_composition(int tls)
 {
     char fixed_bytes[32] = { 0 };
@@ -381,6 +418,8 @@ static void *callback_worker(void *opaque)
     int *result = opaque;
     callback_tls = 31;
     *result = memory_cookie_composition(31);
+    if (*result == 0)
+        *result = short_write_composition(31);
     return opaque;
 }
 
@@ -434,7 +473,7 @@ int main(int argc, char **argv)
         return 82;
     if (wide_stream(argv[3]) != 0)
         return 83;
-    if (memory_cookie_composition(17) != 0 ||
+    if (memory_cookie_composition(17) != 0 || short_write_composition(17) != 0 ||
         pthread_create(&worker, NULL, callback_worker, &result) != 0 ||
         pthread_join(worker, &worker_result) != 0 || worker_result != &result ||
         result != 0 || callback_tls != 17)
