@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -20,9 +21,27 @@ SPEC.loader.exec_module(facts)
 
 sys.path.insert(0, str(ROOT))
 from compat.x86_64.tests.test_native_abi_inventory import HEADER, SECTIONS, STATIC
+import header_callable_inventory as header_authority
+
+
+UAPI_FILES = {'linux/netlink.h': '1' * 64, 'linux/sockios.h': '2' * 64}
+UAPI_MANIFEST_SHA256 = hashlib.sha256(''.join(
+    f'{digest}  ./{name}\n' for name, digest in sorted(UAPI_FILES.items())).encode()).hexdigest()
 
 
 class CompleteElfFactTests(unittest.TestCase):
+    def test_authenticated_kernel_exports_are_classified_in_both_installed_products(self):
+        project = {'usr/' + row['path'] for row in facts.inventory._header_tree_identity(ROOT / 'include')['files']}
+        base = {'inputs': {}}
+        for owner, key in (('candidate-static', 'static_product'), ('candidate-dynamic', 'dynamic_product')):
+            payloads = dict.fromkeys((*facts.NON_ELF_REQUIRED[owner], *facts.NON_ELF_METADATA[owner],
+                                     *(item.relative for item in facts.ARTIFACTS if item.owner == owner),
+                                     *project), 'a' * 64)
+            payloads.update({'usr/include/crabc-linux-uapi/' + name: digest for name, digest in UAPI_FILES.items()})
+            base['inputs'][key] = {'payload_files': payloads}
+        with mock.patch.object(header_authority, 'LINUX_UAPI_HEADER_MANIFEST_SHA256', UAPI_MANIFEST_SHA256):
+            facts._require_product_artifact_rosters(base)
+
     def test_final_exec_and_pie_headers_keep_exact_distinct_type_contracts(self):
         descriptions = {'REL': 'REL (Relocatable file)', 'DYN': 'DYN (Shared object file)',
                         'EXEC': 'EXEC (Executable file)',
@@ -93,6 +112,9 @@ class CompleteElfFactTests(unittest.TestCase):
 # raw stream, source-snapshot and supplement replay validation remain real here.
 class ElfFactReceiptTests(unittest.TestCase):
     def setUp(self):
+        pin = mock.patch.object(header_authority, 'LINUX_UAPI_HEADER_MANIFEST_SHA256', UAPI_MANIFEST_SHA256)
+        pin.start()
+        self.addCleanup(pin.stop)
         work = ROOT / '.work/x86_64/native-abi-elf-facts-tests'
         work.mkdir(parents=True, exist_ok=True)
         temporary = tempfile.TemporaryDirectory(dir=work)
@@ -117,8 +139,10 @@ class ElfFactReceiptTests(unittest.TestCase):
             ('candidate-static', self.static, facts.inventory.STATIC_PRODUCT_PATH, 'static_product'),
             ('candidate-dynamic', self.dynamic, facts.inventory.DYNAMIC_PRODUCT_PATH, 'dynamic_product'),
         ):
+            exported = {'usr/include/crabc-linux-uapi/' + name: digest for name, digest in UAPI_FILES.items()}
             payloads = dict.fromkeys((*facts.NON_ELF_REQUIRED[owner], *facts.NON_ELF_METADATA[owner],
-                                      *facts._installed_header_placements()), 'a' * 64)
+                                      *facts._installed_header_placements(exported)), 'a' * 64)
+            payloads.update(exported)
             for item in facts.ARTIFACTS:
                 if item.owner != owner:
                     continue
@@ -219,6 +243,26 @@ class ElfFactReceiptTests(unittest.TestCase):
                 self.base['inputs'][product]['payload_files'] = payloads
                 with self.subTest(product=product, relative=relative), self.assertRaisesRegex(
                         facts.inventory.InventoryError, 'classified placement roster differs from manifest'):
+                    self.replay()
+            self.base['inputs'][product]['payload_files'] = original
+
+    def test_kernel_export_names_hashes_and_complete_roster_are_authenticated_per_product(self):
+        for product in ('static_product', 'dynamic_product'):
+            original = dict(self.base['inputs'][product]['payload_files'])
+            for change in ('missing', 'renamed', 'added', 'bytes'):
+                payloads = dict(original)
+                relative = 'usr/include/crabc-linux-uapi/linux/netlink.h'
+                if change == 'missing':
+                    del payloads[relative]
+                elif change == 'renamed':
+                    payloads['usr/include/crabc-linux-uapi/linux/unclassified.h'] = payloads.pop(relative)
+                elif change == 'added':
+                    payloads['usr/include/crabc-linux-uapi/linux/unclassified.h'] = '3' * 64
+                else:
+                    payloads[relative] = '4' * 64
+                self.base['inputs'][product]['payload_files'] = payloads
+                with self.subTest(product=product, change=change), self.assertRaisesRegex(
+                        facts.inventory.InventoryError, 'Linux UAPI export roster or bytes differ'):
                     self.replay()
             self.base['inputs'][product]['payload_files'] = original
 

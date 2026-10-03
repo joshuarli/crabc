@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -19,11 +20,13 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
+import header_callable_inventory as header_authority
 
 ROOT = inventory.ROOT
 SCHEMA = 'crabc.x86_64-native-abi-elf-facts/v1'
 BASE_REPORT = Path('/inputs/base-inventory/report.json')
-SOURCE_FILES = (*inventory.SOURCE_FILES, 'compat/x86_64/native_abi_elf_facts.py')
+SOURCE_FILES = (*inventory.SOURCE_FILES, 'compat/x86_64/native_abi_elf_facts.py',
+                'compat/x86_64/header_callable_inventory.py')
 TOOL_NAMES = ('ar', 'readelf')
 STATUS = {
     'classification': 'measurement-only-no-abi-selection-or-promotion',
@@ -99,15 +102,22 @@ NON_ELF_METADATA = {
 }
 
 
-def _installed_header_placements() -> set[str]:
-    """Both product builders install exactly the current include/ file roster.
+def _installed_header_placements(payload_files: Mapping[str, str]) -> set[str]:
+    """Classify project headers and the exact authenticated kernel export tree.
 
     This reuses the physical regular-file tree reader, including its rejection
-    of symlinks. Source header *names* classify placements; v1 still binds each
-    product's actual header bytes and distinct product build provenance.
+    of symlinks. The kernel export names and bytes must reproduce the pinned
+    sha256sum manifest independently for each installed product. The v1 reader
+    binds these payload hashes to physical files and product build provenance.
     """
     tree = inventory._header_tree_identity(ROOT / 'include')
-    return {'usr/' + row['path'] for row in tree['files']}
+    prefix = 'usr/include/crabc-linux-uapi/'
+    exported = {name[len(prefix):]: digest for name, digest in payload_files.items() if name.startswith(prefix)}
+    manifest = ''.join(f'{digest}  ./{name}\n' for name, digest in sorted(exported.items()))
+    require(hashlib.sha256(manifest.encode('utf-8')).hexdigest()
+            == header_authority.LINUX_UAPI_HEADER_MANIFEST_SHA256,
+            'installed Linux UAPI export roster or bytes differ from pinned manifest')
+    return {'usr/' + row['path'] for row in tree['files']} | {prefix + name for name in exported}
 
 
 def _command_specs(artifact: Artifact) -> tuple[tuple[str, str, str], ...]:
@@ -127,12 +137,12 @@ def _require_product_artifact_rosters(base: Mapping[str, Any]) -> None:
         expected = [*elf, *NON_ELF_REQUIRED[owner]]
         require(len(expected) == len(set(expected)) and len(contract) == len(set(contract))
                 and set(contract) == set(expected), f'{owner} placement roster differs from product contract')
-    headers = _installed_header_placements()
     for owner in ('candidate-static', 'candidate-dynamic'):
+        product = base['inputs']['static_product' if owner == 'candidate-static' else 'dynamic_product']
+        headers = _installed_header_placements(product['payload_files'])
         expected = [*(item.relative for item in ARTIFACTS if item.owner == owner),
                     *NON_ELF_REQUIRED[owner], *NON_ELF_METADATA[owner], *headers]
         require(len(expected) == len(set(expected)), f'{owner} placement classifications overlap')
-        product = base['inputs']['static_product' if owner == 'candidate-static' else 'dynamic_product']
         require(set(product['payload_files']) == set(expected),
                 f'{owner} classified placement roster differs from manifest')
 

@@ -55,9 +55,14 @@ manifest payloads. Equal bytes never merge two placements.
 Placement classification is closed. `NON_ELF_REQUIRED` explicitly names each
 driver/helper required by the product contracts, and `NON_ELF_METADATA` names
 each other installed metadata payload. Those sets, the exact ELF placements,
-and the current source `include/` regular-file roster must account for every
-manifest payload exactly once. Header names classify placements; the validated
-v1 product receipts bind their actual bytes and build provenance. An older
+the current source `include/` regular-file roster, and the authenticated Linux
+5.10 export tree must account for every manifest payload exactly once. Project
+header names classify placements; the validated v1 product receipts bind their
+actual bytes and build provenance. For each product, the names and hashes under
+`usr/include/crabc-linux-uapi/` must independently reconstruct the exact pinned
+export manifest digest from `header_callable_inventory.py`. This authenticates
+the entire kernel header roster without depending on an ambient export tree
+during host replay. Unknown, missing, renamed or changed exports reject. An older
 product with a different installed header roster therefore needs an explicit
 contract update before collection. The existing loader compatibility symlink
 remains an independently validated v1 alias rather than a regular payload.
