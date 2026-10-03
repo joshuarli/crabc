@@ -424,50 +424,60 @@ impl LocalFreeList {
         } else {
             let random = random_word().filter(|word| *word != 0)
                 .ok_or(FreeListError::RandomSourceUnavailable)?;
-            let mut slice_count = 1usize;
-            while slice_count < 64 && slice_count * 2 <= extend as usize {
-                slice_count *= 2;
-            }
-            let slice_extend = extend as usize / slice_count;
-            let mut blocks = [0usize; 64];
-            let mut counts = [0usize; 64];
-            for index in 0..slice_count {
-                blocks[index] = capacity as usize + index * slice_extend;
-                counts[index] = slice_extend;
-            }
-            counts[slice_count - 1] += extend as usize % slice_count;
-            let mut current = random % slice_count;
-            counts[current] -= 1;
-            let start = self.block_at(blocks[current])?;
-            let mut shuffled = crate::random::shuffle(random | 1);
-            for index in 1..extend as usize {
-                let round = index % size_of::<usize>();
-                if round == 0 {
-                    shuffled = crate::random::shuffle(shuffled);
-                }
-                let mut next = (shuffled >> (8 * round)) & (slice_count - 1);
-                while counts[next] == 0 {
-                    next = (next + 1) & (slice_count - 1);
-                }
-                counts[next] -= 1;
-                let block = self.block_at(blocks[current])?;
-                blocks[current] += 1;
-                // Advance first: the source may choose the same slice again.
-                let successor = self.block_at(blocks[next])?;
-                // SAFETY: both nodes belong to the validated new suffix, and
-                // the slice counts ensure each node receives exactly one link.
-                unsafe { self.write_next(block, successor.as_ptr()) };
-                current = next;
-            }
-            let tail = self.block_at(blocks[current])?;
-            // SAFETY: the final new node retains the previous immediate head.
-            unsafe { self.write_next(tail, self.free()) };
-            self.set_free(start.as_ptr());
+            self.link_randomized_suffix(capacity, extend, random)?;
         }
         // SAFETY: publication follows all initialized suffix links under the
         // caller's exclusive owner-field authority.
         unsafe { ptr::write(self.capacity.as_ptr(), next_capacity) };
         Ok(extend)
+    }
+
+    /// Links the validated suffix after the randomness operation returns.
+    /// Its fixed slice arrays therefore stay outside entropy diagnostics and
+    /// synchronous callbacks. Capacity publication remains with the caller.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
+    fn link_randomized_suffix(&mut self, capacity: u16, extend: u16, random: usize) -> Result<(), FreeListError> {
+        let mut slice_count = 1usize;
+        while slice_count < 64 && slice_count * 2 <= extend as usize {
+            slice_count *= 2;
+        }
+        let slice_extend = extend as usize / slice_count;
+        let mut blocks = [0usize; 64];
+        let mut counts = [0usize; 64];
+        for index in 0..slice_count {
+            blocks[index] = capacity as usize + index * slice_extend;
+            counts[index] = slice_extend;
+        }
+        counts[slice_count - 1] += extend as usize % slice_count;
+        let mut current = random % slice_count;
+        counts[current] -= 1;
+        let start = self.block_at(blocks[current])?;
+        let mut shuffled = crate::random::shuffle(random | 1);
+        for index in 1..extend as usize {
+            let round = index % size_of::<usize>();
+            if round == 0 {
+                shuffled = crate::random::shuffle(shuffled);
+            }
+            let mut next = (shuffled >> (8 * round)) & (slice_count - 1);
+            while counts[next] == 0 {
+                next = (next + 1) & (slice_count - 1);
+            }
+            counts[next] -= 1;
+            let block = self.block_at(blocks[current])?;
+            blocks[current] += 1;
+            // Advance first: the source may choose the same slice again.
+            let successor = self.block_at(blocks[next])?;
+            // SAFETY: both nodes belong to the validated new suffix, and
+            // the slice counts ensure each node receives exactly one link.
+            unsafe { self.write_next(block, successor.as_ptr()) };
+            current = next;
+        }
+        let tail = self.block_at(blocks[current])?;
+        // SAFETY: the final new node retains the previous immediate head.
+        unsafe { self.write_next(tail, self.free()) };
+        self.set_free(start.as_ptr());
+        Ok(())
     }
 
     /// Selects the configured source extension without drawing in default mode.
