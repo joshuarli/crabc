@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <pthread.h>
+#include <sched.h>
 
 /* Installed chroots use an explicit owned executable; the static host
  * fixture retains Linux's self-executable path. Both oracle and candidate
@@ -71,7 +72,17 @@ static int child(int argc, char **argv) {
     if (!strncmp(argv[2],"deny-",5)) return denied_spawn(argv[2]);
     if (!strcmp(argv[2],"worker-actions")) {
         sigset_t mask;
-        CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask) && !sigismember(&mask,SIGUSR2));
+        struct sigaction action;
+        struct sched_param parameter;
+        int policy=-1;
+        CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask) && sigismember(&mask,SIGUSR1) &&
+            !sigismember(&mask,SIGUSR2));
+        CHECK(!sigaction(SIGUSR1,NULL,&action) && action.sa_handler==SIG_DFL);
+        CHECK(!sigaction(SIGWINCH,NULL,&action) && action.sa_handler==SIG_IGN);
+        CHECK(!sigaction(SIGUSR2,NULL,&action) && action.sa_handler==SIG_DFL);
+        CHECK(getpgrp()==getpid() && getuid()==geteuid() && getgid()==getegid());
+        CHECK(!pthread_getschedparam(pthread_self(),&policy,&parameter) &&
+            policy==SCHED_OTHER && parameter.sched_priority==0);
         CHECK(!(fcntl(7,F_GETFD)&FD_CLOEXEC) && !(fcntl(9,F_GETFD)&FD_CLOEXEC));
         for (int fd=3;fd<=6;fd++) CHECK(fcntl(fd,F_GETFD)==-1 && errno==EBADF);
         char bytes[16]={0};
@@ -129,31 +140,69 @@ static void *worker(void *unused) {
 }
 struct worker_actions {
     posix_spawn_file_actions_t actions;
-    posix_spawnattr_t attributes;
+    posix_spawnattr_t *attributes;
     const char *directory;
     int directory_fd;
     unsigned char *retained;
 };
-static int check_worker_spawn(struct worker_actions *owner, int expected)
+static const short worker_attribute_flags=POSIX_SPAWN_SETSIGMASK|POSIX_SPAWN_SETSIGDEF|
+    POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_RESETIDS|POSIX_SPAWN_SETSCHEDPARAM|POSIX_SPAWN_SETSCHEDULER;
+static int check_worker_attributes(struct worker_actions *owner)
+{
+    short flags=0; pid_t group=-1;
+    sigset_t mask={0}, defaults={0};
+    int policy=123;
+    struct sched_param parameter={.sched_priority=123};
+    CHECK(!posix_spawnattr_getflags(owner->attributes,&flags) && flags==worker_attribute_flags);
+    CHECK(!posix_spawnattr_getpgroup(owner->attributes,&group) && group==0);
+    CHECK(!posix_spawnattr_getsigmask(owner->attributes,&mask) &&
+        sigismember(&mask,SIGUSR1) && !sigismember(&mask,SIGUSR2));
+    CHECK(!posix_spawnattr_getsigdefault(owner->attributes,&defaults) &&
+        sigismember(&defaults,SIGUSR1) && !sigismember(&defaults,SIGWINCH));
+    /* Musl admits the scheduler flags but leaves both scheduling fields and
+     * output arguments alone: these APIs return ENOSYS, not scheduler state. */
+    errno=ENOSPC;
+    CHECK(posix_spawnattr_getschedpolicy(owner->attributes,&policy)==ENOSYS && policy==123 &&
+        posix_spawnattr_getschedparam(owner->attributes,&parameter)==ENOSYS &&
+        parameter.sched_priority==123 && errno==ENOSPC);
+    return 0;
+}
+static int check_worker_spawn(struct worker_actions *owner, const char *path,
+    int expected, int expected_errno)
 {
     sigset_t before, after;
     CHECK(!sigprocmask(SIG_SETMASK,NULL,&before));
+    uid_t user=getuid(), effective_user=geteuid();
+    gid_t group=getgid(), effective_group=getegid();
+    pid_t process_group=getpgrp();
+    int policy_before=-1, policy_after=-1;
+    struct sched_param priority_before, priority_after;
+    CHECK(!pthread_getschedparam(pthread_self(),&policy_before,&priority_before));
+    CHECK(!check_worker_attributes(owner));
     pid_t pid=-123;
     char *arguments[]={"spawn-child","child","worker-actions",NULL};
     errno=ENOSPC;
-    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&owner->actions,&owner->attributes,
-        arguments,child_environment)==expected && errno==ENOSPC);
+    CHECK(posix_spawn(&pid,path,&owner->actions,owner->attributes,
+        arguments,child_environment)==expected && errno==expected_errno);
     if (expected) {
         CHECK(pid==-123 && waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
     } else CHECK(!reap(pid,23));
     CHECK(!sigprocmask(SIG_SETMASK,NULL,&after));
     for (int signal=1;signal<65;signal++)
         CHECK(sigismember(&before,signal)==sigismember(&after,signal));
+    struct sigaction disposition;
+    CHECK(!sigaction(SIGUSR1,NULL,&disposition) && disposition.sa_handler==SIG_IGN);
+    CHECK(!sigaction(SIGWINCH,NULL,&disposition) && disposition.sa_handler==SIG_IGN);
+    CHECK(!sigaction(SIGUSR2,NULL,&disposition) && disposition.sa_handler==returning_handler);
+    CHECK(getuid()==user && geteuid()==effective_user && getgid()==group &&
+        getegid()==effective_group && getpgrp()==process_group && !check_worker_attributes(owner));
+    CHECK(!pthread_getschedparam(pthread_self(),&policy_after,&priority_after) &&
+        policy_before==policy_after && priority_before.sched_priority==priority_after.sched_priority);
     int old_state=-1;
     CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&old_state) &&
         old_state==PTHREAD_CANCEL_ENABLE && !pthread_setcancelstate(old_state,NULL));
     /* The error pipe must be gone in the parent, while its original directory
-     * descriptor and offset remain available for the next action generation. */
+     * descriptor remains available for the next action generation. */
     int copy=dup(owner->directory_fd);
     CHECK(copy==4 && !close(copy) && fcntl(owner->directory_fd,F_GETFD)==FD_CLOEXEC);
     return 0;
@@ -163,8 +212,22 @@ static void *worker_actions_body(void *pointer)
     struct worker_actions *owner=pointer;
     char output_copy[]="ordered-output", input_copy[]="ready-input";
     owner->retained=malloc(8193);
-    if (!owner->retained) return (void *)1;
+    owner->attributes=malloc(sizeof *owner->attributes);
+    if (!owner->retained || !owner->attributes) return (void *)1;
     for (int i=0;i<8193;i++) owner->retained[i]=(unsigned char)(i*17+3);
+    sigset_t mask={0}, defaults={0};
+    sigemptyset(&mask); sigaddset(&mask,SIGUSR1);
+    sigemptyset(&defaults); sigaddset(&defaults,SIGUSR1);
+    struct sched_param parameter={.sched_priority=0};
+    if (posix_spawnattr_init(owner->attributes) ||
+        posix_spawnattr_setsigmask(owner->attributes,&mask) ||
+        posix_spawnattr_setsigdefault(owner->attributes,&defaults) ||
+        posix_spawnattr_setpgroup(owner->attributes,0) ||
+        posix_spawnattr_setflags(owner->attributes,worker_attribute_flags)) return (void *)5;
+    errno=ENOSPC;
+    if (posix_spawnattr_setschedpolicy(owner->attributes,SCHED_OTHER)!=ENOSYS ||
+        posix_spawnattr_setschedparam(owner->attributes,&parameter)!=ENOSYS ||
+        errno!=ENOSPC || check_worker_attributes(owner)) return (void *)6;
     if (posix_spawn_file_actions_init(&owner->actions) ||
         posix_spawn_file_actions_addfchdir_np(&owner->actions,owner->directory_fd) ||
         posix_spawn_file_actions_addopen(&owner->actions,5,output_copy,O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC,0600) ||
@@ -178,12 +241,15 @@ static void *worker_actions_body(void *pointer)
     /* With fd 3 retained by the parent, OPEN 5 and CLOSE 4 each relocate the
      * child error writer. A later missing file must still report and be reaped. */
     for (int attempt=0;attempt<3;attempt++)
-        if (check_worker_spawn(owner,ENOENT)) return (void *)3;
+        if (check_worker_spawn(owner,CRABC_SPAWN_EXECUTABLE,ENOENT,ENOSPC)) return (void *)3;
     char path[4096];
     snprintf(path,sizeof path,"%s/ready-input",owner->directory);
     int fd=open(path,O_CREAT|O_WRONLY,0600);
     if (fd<0 || write(fd,"worker-input",12)!=12 || close(fd) ||
-        check_worker_spawn(owner,0)) return (void *)4;
+        check_worker_spawn(owner,CRABC_SPAWN_EXECUTABLE,0,ENOSPC)) return (void *)4;
+    snprintf(path,sizeof path,"%s/missing-image",owner->directory);
+    if (check_worker_spawn(owner,path,ENOENT,ENOENT) ||
+        check_worker_spawn(owner,CRABC_SPAWN_EXECUTABLE,0,ENOSPC)) return (void *)7;
     return NULL;
 }
 static int ordinary_worker_actions(const char *directory)
@@ -191,26 +257,38 @@ static int ordinary_worker_actions(const char *directory)
     CHECK(!mkdir(directory,0700));
     struct worker_actions owner={.directory=directory};
     owner.directory_fd=open(directory,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
-    CHECK(owner.directory_fd==3 && !posix_spawnattr_init(&owner.attributes));
-    sigset_t empty, blocked, saved;
-    sigemptyset(&empty); sigemptyset(&blocked); sigaddset(&blocked,SIGUSR2);
-    CHECK(!posix_spawnattr_setsigmask(&owner.attributes,&empty) &&
-        !posix_spawnattr_setflags(&owner.attributes,POSIX_SPAWN_SETSIGMASK));
+    int policy=-1;
+    struct sched_param parameter;
+    CHECK(owner.directory_fd==3 && getuid()==geteuid() && getgid()==getegid() &&
+        !pthread_getschedparam(pthread_self(),&policy,&parameter) &&
+        policy==SCHED_OTHER && parameter.sched_priority==0);
+    struct sigaction ignored={.sa_handler=SIG_IGN}, caught={.sa_handler=returning_handler};
+    struct sigaction old_usr1, old_usr2, old_winch;
+    CHECK(!sigaction(SIGUSR1,&ignored,&old_usr1) && !sigaction(SIGUSR2,&caught,&old_usr2) &&
+        !sigaction(SIGWINCH,&ignored,&old_winch));
+    sigset_t blocked={0}, saved;
+    sigemptyset(&blocked); sigaddset(&blocked,SIGUSR2);
     CHECK(!sigprocmask(SIG_BLOCK,&blocked,&saved));
     char before[4096], after[4096];
     CHECK(getcwd(before,sizeof before));
     pthread_t thread; void *result=(void *)1;
     CHECK(!pthread_create(&thread,NULL,worker_actions_body,&owner) &&
         !pthread_join(thread,&result) && !result);
-    /* Join transfers the allocated action records and retained allocation to
-     * this task. They remain usable after the constructing worker has exited. */
-    CHECK(!check_worker_spawn(&owner,0));
+    /* Join transfers the allocated attribute/action records and retained
+     * allocation. Success and missing-exec cleanup must leave them reusable
+     * after their constructing worker's allocator owner has retired. */
+    char missing[4096]; snprintf(missing,sizeof missing,"%s/missing-image",directory);
+    CHECK(!check_worker_spawn(&owner,missing,ENOENT,ENOENT) &&
+        !check_worker_spawn(&owner,CRABC_SPAWN_EXECUTABLE,0,ENOSPC));
     for (int i=0;i<8193;i++) CHECK(owner.retained[i]==(unsigned char)(i*17+3));
     free(owner.retained);
     CHECK(!posix_spawn_file_actions_destroy(&owner.actions) &&
-        !posix_spawnattr_destroy(&owner.attributes) && !close(owner.directory_fd));
+        !posix_spawnattr_destroy(owner.attributes) && !close(owner.directory_fd));
+    free(owner.attributes);
     CHECK(getcwd(after,sizeof after) && !strcmp(before,after));
     CHECK(!sigprocmask(SIG_SETMASK,&saved,NULL));
+    CHECK(!sigaction(SIGUSR1,&old_usr1,NULL) && !sigaction(SIGUSR2,&old_usr2,NULL) &&
+        !sigaction(SIGWINCH,&old_winch,NULL));
     char path[4096], bytes[16]={0};
     snprintf(path,sizeof path,"%s/ordered-output",directory);
     int fd=open(path,O_RDONLY);
