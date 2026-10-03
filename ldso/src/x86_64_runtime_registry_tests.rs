@@ -418,3 +418,100 @@ fn completed_cycle_root_skips_an_inherited_abandoned_constructor_queue() {
             (*snapshot.nodes.as_slice()[index]).callback_state.load(Ordering::Acquire) == CONSTRUCTOR_ABANDONED));
     }
 }
+
+#[test]
+fn iteration_callbacks_open_close_reopen_and_extend_retained_object_traversal() {
+    static FIRST: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    static LAST: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    struct Observation {
+        visits: usize,
+        first: *mut c_void,
+        last: *mut c_void,
+        retained_name: *const u8,
+        retained_headers: *const u8,
+    }
+    unsafe extern "C" fn stop(_: *mut ProgramHeaderInfo, size: usize, _: *mut c_void) -> i32 {
+        if size == core::mem::size_of::<ProgramHeaderInfo>() { 37 } else { -1 }
+    }
+    unsafe extern "C" fn visit(info: *mut ProgramHeaderInfo, size: usize, data: *mut c_void) -> i32 {
+        // The outer iterator owns info for this call; data remains this
+        // child's observation record until the complete traversal returns.
+        unsafe { (|| -> Option<i32> {
+            let observed = &mut *data.cast::<Observation>();
+            if size != core::mem::size_of::<ProgramHeaderInfo>() || (*info).removals != 0
+                || (*info).tls_module != 0 || !(*info).tls_data.is_null() { return None; }
+            let mut diagnostic: RuntimeDiagnostic = core::mem::zeroed();
+            match observed.visits {
+                0 => {
+                    if (*info).additions != 0 { return None; }
+                    observed.first = runtime_open(FIRST.load(Ordering::Acquire), 2, &mut diagnostic);
+                    if observed.first.is_null() || diagnostic.kind != 0
+                        || runtime_close(observed.first) != 0
+                        || runtime_open(FIRST.load(Ordering::Acquire), 2 | 4, &mut diagnostic) != observed.first
+                        || runtime_iterate(stop, core::ptr::null_mut()) != 37 { return None; }
+                }
+                1 => {
+                    if (*info).additions != 2 || (*info).headers.is_null() { return None; }
+                    observed.retained_name = (*info).name;
+                    observed.retained_headers = (*info).headers;
+                    observed.last = runtime_open(LAST.load(Ordering::Acquire), 2, &mut diagnostic);
+                    if observed.last.is_null() || diagnostic.kind != 0
+                        || runtime_close(observed.first) != 0
+                        || !mapped(((*info).headers as usize & !(PAGE as usize - 1)) as *mut u8)
+                        || (*info).name != observed.retained_name { return None; }
+                }
+                2 => {
+                    if (*info).additions != 3 || runtime_close(observed.last) != 0 { return None; }
+                }
+                _ => return None,
+            }
+            observed.visits += 1;
+            Some(0)
+        })().unwrap_or(-1) }
+    }
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        let main = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
+            role: ObjectRole::Main, ..EMPTY_OBJECT }), identity(1), 0,
+            LoadedName::new(b"main"), false)?;
+        (*main).callback_state.store(INITIALIZED, Ordering::Release);
+        (*REGISTRY.0.get()).head = main;
+        (*REGISTRY.0.get()).tail = main;
+        (*REGISTRY.0.get()).count = 1;
+        add_global(&mut *REGISTRY.0.get(), main);
+        // Each public loader entry acquires its own graph lock. This sole
+        // child retains all object mappings and never changes the host TCB.
+        RuntimeGuard::complete_fork();
+        let mut observed = Observation { visits: 0, first: core::ptr::null_mut(),
+            last: core::ptr::null_mut(), retained_name: core::ptr::null(),
+            retained_headers: core::ptr::null() };
+        if runtime_iterate(visit, core::ptr::from_mut(&mut observed).cast()) != 0
+            || observed.visits != 3 || !mapped((observed.retained_headers as usize & !(PAGE as usize - 1)) as *mut u8)
+            || (*REGISTRY.0.get()).count != 3 { return None; }
+        let first = observed.first.cast::<RuntimeObject>();
+        if (*first).link_map.name != observed.retained_name
+            || (*first).object()?.phdr != observed.retained_headers
+            || node_name(first).is_empty() { return None; }
+        let mut error = 0;
+        let anchor = runtime_symbol(observed.first, b"loader110_first_anchor\0".as_ptr(), 0, &mut error);
+        if anchor.is_null() || error != 0 { return None; }
+        let call: unsafe extern "C" fn() -> i32 = core::mem::transmute(anchor);
+        Some(call() == 1)
+    })().unwrap_or(false) } }
+    let directory = std::path::Path::new(".work/runtime-iteration/fixtures");
+    std::fs::create_dir_all(directory).unwrap();
+    let compile = |source: &str, file: &str| {
+        let output = directory.join(file);
+        assert!(std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
+            .args(["-O0", "-nostdlib", "-fPIC", "-shared", "-Wl,--hash-style=sysv"])
+            .arg(source).arg("-o").arg(&output).status().unwrap().success());
+        std::ffi::CString::new(std::fs::canonicalize(output).unwrap().as_os_str()
+            .as_encoded_bytes()).unwrap()
+    };
+    let first = compile("compat/x86_64/tests/loader110_scope_first.c", "libfirst.so");
+    let last = compile("compat/x86_64/tests/loader110_scope_last.c", "liblast.so");
+    FIRST.store(first.as_ptr().cast_mut().cast(), Ordering::Release);
+    LAST.store(last.as_ptr().cast_mut().cast(), Ordering::Release);
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+    FIRST.store(core::ptr::null_mut(), Ordering::Release);
+    LAST.store(core::ptr::null_mut(), Ordering::Release);
+}

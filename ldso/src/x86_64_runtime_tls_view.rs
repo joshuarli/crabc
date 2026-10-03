@@ -331,6 +331,90 @@ mod tests {
     }
 
     #[test]
+    fn independent_worker_views_keep_mutations_and_late_worker_receives_fresh_templates() {
+        let _guard = RuntimeGuard::acquire();
+        let initial_image = [11u8, 13];
+        let runtime_image = [17u8, 19, 23];
+        let later_image = [29u8, 31];
+        let mut initial = [EMPTY_OBJECT; 32];
+        initial[0] = Object { tls_image: initial_image.as_ptr(), tls_filesz: 2,
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+        let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 3,
+            tls_memsz: 129, tls_align: 4096, tls_module_id: 2, ..EMPTY_OBJECT };
+        let later = Object { tls_image: later_image.as_ptr(), tls_filesz: 2,
+            tls_memsz: 67, tls_align: 64, tls_module_id: 3, ..EMPTY_OBJECT };
+        let modules = [initial[0], runtime, later];
+        // SAFETY: these complete module records borrow local templates that
+        // outlive every owned initial mapping and runtime descriptor below.
+        let first = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let second = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let mut original_addresses = [0usize; 2];
+        let mut runtime_addresses = [0usize; 2];
+        for (index, block) in [first, second].iter().enumerate() {
+            // Each offline worker owns its initialized TCB and TLS mappings.
+            // The graph guard excludes any other generation writer.
+            unsafe {
+                original_addresses[index] = *block.dtv.add(1);
+                (original_addresses[index] as *mut u8).write(71 + index as u8);
+                PreparedTlsView::prepare(block.thread_pointer, &modules[..2]).unwrap()
+                    .publish(block.thread_pointer);
+                let view = current(block.thread_pointer);
+                let address = resolve(view, 2, 0).cast::<u8>();
+                runtime_addresses[index] = address as usize;
+                assert_eq!(core::slice::from_raw_parts(address, 3), runtime_image);
+                assert_eq!(address.add(128).read(), 0);
+                address.write(81 + index as u8);
+                address.add(128).write(91 + index as u8);
+            }
+        }
+        assert_ne!(original_addresses[0], original_addresses[1]);
+        assert_ne!(runtime_addresses[0], runtime_addresses[1]);
+        for (index, block) in [first, second].iter().enumerate() {
+            // SAFETY: both worker mappings remain live and uniquely owned;
+            // retained old descriptors keep their TLS blocks through growth.
+            unsafe {
+                let old = current(block.thread_pointer);
+                PreparedTlsView::prepare(block.thread_pointer, &modules).unwrap()
+                    .publish(block.thread_pointer);
+                let new = current(block.thread_pointer);
+                assert_ne!(old, new);
+                for view in [old, new] {
+                    assert_eq!(resolve(view, 1, 0) as usize, original_addresses[index]);
+                    assert_eq!(resolve(view, 2, 0) as usize, runtime_addresses[index]);
+                    assert_eq!(resolve(view, 1, 0).cast::<u8>().read(), 71 + index as u8);
+                    assert_eq!(resolve(view, 2, 0).cast::<u8>().read(), 81 + index as u8);
+                    assert_eq!(resolve(view, 2, 128).cast::<u8>().read(), 91 + index as u8);
+                }
+                assert_eq!(core::slice::from_raw_parts(resolve(new, 3, 0).cast::<u8>(), 2), later_image);
+                assert_eq!(resolve(new, 3, 66).cast::<u8>().read(), 0);
+            }
+        }
+        // SAFETY: the same retained templates initialize a fresh, separate
+        // worker mapping; none of the earlier workers owns its TLS bytes.
+        let late = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        // SAFETY: every generation reader is quiescent before release. Each
+        // thread mapping is unmapped only after its descriptor chain is gone.
+        unsafe {
+            PreparedTlsView::prepare(late.thread_pointer, &modules).unwrap().publish(late.thread_pointer);
+            let view = current(late.thread_pointer);
+            assert_eq!(resolve(view, 1, 0).cast::<u8>().read(), initial_image[0]);
+            assert_eq!(resolve(view, 2, 0).cast::<u8>().read(), runtime_image[0]);
+            assert_eq!(resolve(view, 2, 128).cast::<u8>().read(), 0);
+            // Releasing one joined worker cannot reclaim another worker's
+            // initial image, runtime blocks, or retained descriptors.
+            assert_eq!(release(first.thread_pointer), 0);
+            assert_eq!(syscall2(SYS_MUNMAP, first.mapping as i64, first.mapping_byte_len as i64), 0);
+            assert_eq!(resolve(current(second.thread_pointer), 2, 128).cast::<u8>().read(), 92);
+            assert_eq!(resolve(view, 2, 0).cast::<u8>().read(), runtime_image[0]);
+            for block in [second, late] {
+                assert_eq!(release(block.thread_pointer), 0);
+                assert_eq!(syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64), 0);
+            }
+        }
+    }
+
+    #[test]
     fn generations_preserve_live_addresses_and_publish_dtv_sizes_together() {
         let image = [17u8, 19];
         let mut initial = [EMPTY_OBJECT; 32];
