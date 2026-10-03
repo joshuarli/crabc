@@ -9070,6 +9070,47 @@ mod tests {
         unsafe { storage.test_prepare_vm_process_backing_binding(config(), options, subprocess, map) }.unwrap()
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_metadata_map_refusal_covers_source_reservation_and_page_retries() {
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::process_metadata_map_refusal_covers_source_reservation_and_page_retries", || {
+                for unavailable in [false, true] {
+                    let allocator = static_allocator();
+                    let mut options = crate::config::VmOptions::uninitialized();
+                    options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+                    let binding = process_binding_fixture(allocator.test_default_subprocess(), options);
+                    allocator.bind_process_backing(binding).unwrap();
+                    assert_eq!(allocator.status.load(Ordering::Acquire), BOUND);
+                    let plan = if unavailable {
+                        fault::Plan::every(fault::Point::Map, crabc_core::Errno::NOMEM)
+                    } else {
+                        fault::Plan::at(fault::Point::Map, 1, crabc_core::Errno::NOMEM)
+                    };
+                    let fault = fault::install(plan);
+                    let allocation = allocator.zalloc(config(), crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE);
+                    assert!(fault.observed() > 1, "source reservation or page selection retries a refused map");
+                    assert_eq!(allocator.status.load(Ordering::Acquire), READY,
+                        "process session activation precedes demand for ordinary page backing");
+                    assert!(allocator.test_private_page_map_address().is_none());
+                    let allocation = if unavailable {
+                        assert!(matches!(allocation, Err(MetaError::AllocationUnavailable)));
+                        assert_eq!(allocator.test_allocation_audit(), MetaAllocationAudit {
+                            live_capability_count: 0, high_water_capability_count: 0,
+                        }, "a wholly refused request never publishes a metadata capability");
+                        fault.set(fault::Plan::disabled());
+                        allocator.zalloc(config(), crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE)
+                            .expect("the same detached owner remains ready after complete map refusal")
+                    } else {
+                        allocation.expect("a one-shot map refusal permits the source fallback")
+                    };
+                    assert_eq!(allocator.test_allocation_audit().live_capability_count, 1);
+                    assert!(MetaRelease::Malloc(allocation).release().is_ok());
+                    assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+                }
+            });
+    }
+
     /// The pinned v3.5.0 regular-page policy used by the incremental metadata
     /// probes. `disallow_arena` selects the source OS fallback after the
     /// process policy has already selected on-demand commitment.
