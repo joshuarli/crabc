@@ -163,17 +163,14 @@ Update this small section in place when the implementation frontier changes.
   the inspected immutable image ID. Debug stdio producers and readers bind products
   to source content without admitting debug products for release qualification.
   Combined debug products require exact typed backend/audit configurations.
-  Four optimized static/dynamic C/native-shadow products from `6826b29ae`, their
-  exact source archive and tracked roster are retained in
-  `.work/x86_64/reports/cohort141/`. Independent package extraction/admission
-  passes for all four. Later changes retain new identities rather than relabeling
-  this completed component cohort.
-  `.work/x86_64/reports/cohort143/` retains the separate `1e415ac59` four-product
-  tuple and exact source inputs used for the installed facade components;
-  independent package extraction/admission also passes for this tuple.
-  `.work/x86_64/reports/cohort156/` retains the `9ddab8cf8` products and source
-  inputs; fresh admissions of its preserved packages pass. Runtime and allocator
-  performance inputs are prepared, but no qualifying measurements are recorded.
+  `.work/x86_64/reports/cohort159/` retains the `e66fab1a8` optimized
+  static/dynamic C/native-shadow products, independent reproductions, eight
+  reproducible packages and exact source inputs. Both genuine canonical static
+  preparation receipts pass; all fresh package extractions and product identity
+  checks pass. This is product preparation, not full runtime qualification.
+  Existing complete admission readers retain the missing prerequisite receipts;
+  the full dynamic roster requires 73 cases for each product placement.
+  Historical component cohorts keep their original identities and evidence.
   The collector smoke now supplies its retained host capture paths, the private
   allocator adapter selects its required page-size projection, and the scalar
   C configuration oracle treats its undefined encoding switch as source zero.
@@ -183,6 +180,13 @@ Update this small section in place when the implementation frontier changes.
   unchanged canonical static preparation collector on the repaired source.
   The allocator harness now accepts its existing `xmalloc` caller and selects
   `MI_XMALLOC=1` with `mi-xmalloc`; returning allocation controls pass.
+  The ELF facts collector now authenticates each product's complete Linux UAPI
+  names and hashes against the pinned export manifest. A real accepted-C
+  inventory and all 17 ELF placements collect and replay successfully.
+  Integrated allocator performance preparation now uses the existing pinned
+  core image and its explicit musl compiler; four fresh products and benchmark
+  programs build successfully. Full measurements still require an uncontended
+  host, and complete correctness/codegen prerequisites remain open.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
