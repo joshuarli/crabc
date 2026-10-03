@@ -9,6 +9,10 @@
 #include <netpacket/packet.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 _Static_assert(sizeof(void *) == 8, "x86 LP64 pointer width");
 _Static_assert(sizeof(struct if_nameindex) == 16, "x86 if_nameindex layout");
@@ -214,6 +218,104 @@ static int ifaddrs_cases(unsigned int loopback_index)
     return result;
 }
 
+#ifndef CRABC_INTERFACE_DISCOVERY_FREESTANDING
+struct retained_interfaces {
+    struct ifaddrs *addresses;
+    struct if_nameindex *names;
+    unsigned int loopback_index;
+    unsigned char *bytes;
+};
+
+static void release_interfaces(void *argument)
+{
+    struct retained_interfaces *result = argument;
+    freeifaddrs(result->addresses);
+    if_freenameindex(result->names);
+    free(result->bytes);
+    free(result);
+}
+
+static int retained_names_are_valid(struct if_nameindex *names)
+{
+    unsigned int i;
+    char name[IF_NAMESIZE];
+    for (i = 0; i < 64; i++) {
+        if (!names[i].if_index)
+            return names[i].if_name == NULL && i != 0;
+        if (!names[i].if_name || if_nametoindex(names[i].if_name) != names[i].if_index ||
+            if_indextoname(names[i].if_index, name) != name ||
+            !text_equal(name, names[i].if_name))
+            return 0;
+    }
+    return 0;
+}
+
+static int collect_retained_interfaces(struct retained_interfaces *result)
+{
+    unsigned int i;
+    result->bytes = malloc(4096);
+    if (!result->bytes)
+        return 0;
+    for (i = 0; i < 4096; i++) result->bytes[i] = (unsigned char)(i % 251);
+    result->loopback_index = if_nametoindex("lo");
+    if (!result->loopback_index || getifaddrs(&result->addresses) ||
+        !(result->names = if_nameindex()))
+        return 0;
+    /* Destroying a later snapshot does not release either earlier result. */
+    if (ifaddrs_cases(result->loopback_index) || name_index_cases(&i))
+        return 0;
+    return !list_is_valid(result->addresses, result->loopback_index) &&
+        retained_names_are_valid(result->names);
+}
+
+static void *interface_worker(void *unused)
+{
+    struct retained_interfaces *result = calloc(1, sizeof *result);
+    int success;
+    (void)unused;
+    if (!result) return NULL;
+    pthread_cleanup_push(release_interfaces, result);
+    success = collect_retained_interfaces(result);
+    pthread_cleanup_pop(!success);
+    /* The joining caller owns both result APIs and the worker allocation. */
+    return success ? result : NULL;
+}
+
+static int worker_result_cases(void)
+{
+    unsigned int round, i, j;
+    int before = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (before < 0 || close(before)) return 44;
+    for (round = 0; round < 4; round++) {
+        pthread_t workers[2];
+        struct retained_interfaces *results[2];
+        for (i = 0; i < 2; i++) {
+            if (pthread_create(&workers[i], NULL, interface_worker, NULL))
+                return 40;
+        }
+        for (i = 0; i < 2; i++) {
+            void *joined;
+            if (pthread_join(workers[i], &joined) || !joined)
+                return 41;
+            results[i] = joined;
+        }
+        for (i = 0; i < 2; i++) {
+            if (list_is_valid(results[i]->addresses, results[i]->loopback_index) ||
+                !retained_names_are_valid(results[i]->names))
+                return 42;
+            for (j = 0; j < 4096; j++) {
+                if (results[i]->bytes[j] != (unsigned char)(j % 251))
+                    return 43;
+            }
+            release_interfaces(results[i]);
+        }
+    }
+    int after = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (after != before || close(after)) return 45;
+    return 0;
+}
+#endif
+
 int crabc_x86_64_interface_discovery_probe(void)
 {
     unsigned int loopback_index = 0;
@@ -221,7 +323,12 @@ int crabc_x86_64_interface_discovery_probe(void)
 
     if (result != 0)
         return result;
-    return ifaddrs_cases(loopback_index);
+    result = ifaddrs_cases(loopback_index);
+#ifdef CRABC_INTERFACE_DISCOVERY_FREESTANDING
+    return result;
+#else
+    return result ? result : worker_result_cases();
+#endif
 }
 
 #ifndef CRABC_INTERFACE_DISCOVERY_FREESTANDING

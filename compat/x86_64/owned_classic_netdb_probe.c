@@ -445,6 +445,46 @@ static void services(void) {
     CHECK(!getservbyname_r("current",tcp,&s,b,sizeof b,&r)&&r==&s&&s.s_port==htons(45007));
     CHECK(getservbyname("current",tcp)==shared_name&&shared_name->s_port==htons(45007));
 }
+static void *service_ownership_worker(void *argument) {
+    unsigned port=(unsigned)(uintptr_t)argument;
+    char *tcp_buffer=malloc(4096),*udp_buffer=malloc(4096);
+    CHECK(tcp_buffer&&udp_buffer);
+    pthread_cleanup_push(free,tcp_buffer);
+    pthread_cleanup_push(free,udp_buffer);
+    struct servent tcp,udp,byname,*result;char name_buffer[128];
+    for(unsigned i=0;i<8;i++) {
+        CHECK(!getservbyport_r(htons(port),"tcp",&tcp,tcp_buffer,4096,&result)&&result==&tcp);
+        CHECK(!getservbyport_r(htons(port),"udp",&udp,udp_buffer,4096,&result)&&result==&udp);
+        CHECK(!getservbyname_r("current","tcp",&byname,name_buffer,sizeof name_buffer,&result)&&result==&byname);
+        CHECK(byname.s_port==htons(port)&&tcp.s_port==htons(port)&&udp.s_port==htons(port));
+        CHECK(!strcmp(tcp.s_name,port==45001?"first":"newtcp")&&!strcmp(udp.s_name,port==45001?"second":"newudp"));
+        CHECK(tcp.s_name>=tcp_buffer&&tcp.s_name<tcp_buffer+4096&&udp.s_name>=udp_buffer&&udp.s_name<udp_buffer+4096);
+        CHECK(tcp.s_aliases[0]==tcp.s_name&&!tcp.s_aliases[1]&&udp.s_aliases[0]==udp.s_name&&!udp.s_aliases[1]);
+    }
+    pthread_cleanup_pop(1);
+    pthread_cleanup_pop(1);
+    return argument;
+}
+static void service_ownership(void) {
+    const char original[]="first 45001/tcp current\nsecond 45001/udp current\n";
+    const char replacement[]="newtcp 45011/tcp current\nnewudp 45011/udp current\n";
+    file("/etc/services",original,sizeof original-1);
+    struct servent retained,*result;char retained_buffer[128];
+    CHECK(!getservbyport_r(htons(45001),"tcp",&retained,retained_buffer,sizeof retained_buffer,&result)&&result==&retained);
+    for(unsigned round=0;round<2;round++) {
+        unsigned port=round?45011:45001;
+        pthread_t workers[2];
+        if(round)file("/etc/services",replacement,sizeof replacement-1);
+        for(unsigned i=0;i<2;i++)CHECK(!pthread_create(&workers[i],0,service_ownership_worker,(void*)(uintptr_t)port));
+        for(unsigned i=0;i<2;i++) {
+            void *joined;CHECK(!pthread_join(workers[i],&joined)&&joined==(void*)(uintptr_t)port);
+        }
+        /* File refresh and worker cleanup leave the earlier caller buffer
+           intact; no shared service result owner is consulted here. */
+        CHECK(!strcmp(retained.s_name,"first")&&retained.s_port==htons(45001));
+        errno=EDOM;setservent(1);CHECK(!getservent()&&errno==EDOM);endservent();CHECK(errno==EDOM);
+    }
+}
 static void protocols(void) {
     struct protoent *first,*p;char **aliases;
     static const struct {int number;const char *name;} expected[]={
@@ -598,6 +638,6 @@ static void allocation_failure(void) {
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
     if(!strcmp(s,"query-domain")){query_domain_construction();query_domain_answers();dns_composition();}else if(!strcmp(s,"dns-composition"))dns_composition();else if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
-    else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services")){services();protocols();}else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
+    else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services")){services();protocols();service_ownership();}else if(!strcmp(s,"service-ownership"))service_ownership();else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }
