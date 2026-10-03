@@ -3548,8 +3548,17 @@ impl Mapping {
         let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
             return Ok(None);
         };
-        // SAFETY: this mapping retains the validated complete-page range;
-        // the process binding supplies its accounting and warning authority.
+        self.decommit_validated_range(process, range, stat_size)
+    }
+
+    // A contained range already checked by this live mapping needs no second
+    // owner/bounds projection. The raw decommit retains its address validation,
+    // accounting, profile protection and warning sequence.
+    fn decommit_validated_range(
+        &self, process: VmProcess<'_>, range: MappingRange, stat_size: usize,
+    ) -> Result<Option<DecommitOutcome>> {
+        // SAFETY: callers obtain the range from this same live mapping and
+        // retain its process binding across the transition and warning.
         unsafe { process.decommit_arena_range_with_failure_hook(
             self.page_size, range.address, range.length, stat_size, |_| {},
         ) }
@@ -3602,6 +3611,14 @@ impl Mapping {
         let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
             return Ok(true);
         };
+        // SAFETY: the caller's writable-span and alias exclusion obligations
+        // apply to the range validated above for this same live mapping.
+        unsafe { self.reset_validated_range(process, range) }
+    }
+
+    // Callers retain this mapping and pass only its checked contained range;
+    // the same writable-span and alias obligations as reset_for_process apply.
+    unsafe fn reset_validated_range(&self, process: VmProcess<'_>, range: MappingRange) -> Result<bool> {
         process.subprocess.vm_statistics().reset(range.length);
         // SAFETY: the caller proves this accepted contained span is writable
         // and excludes observing aliases across the eager source reset.
@@ -3662,16 +3679,10 @@ impl Mapping {
         }
         process.subprocess.vm_statistics().purge(length);
         if process.policy.purge_decommits() && !process.is_preloading() {
-            // Preserve the typed mapping boundary before consuming the raw
-            // primitive error below. The second source-shaped range query
-            // cannot now hide an inactive or out-of-bounds owner violation.
-            if self
-                .page_range(offset, length, PageAlignment::Contained)?
-                .is_none()
-            {
+            let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
                 return Ok(true);
-            }
-            return match self.decommit_for_process(process, offset, length, stat_size) {
+            };
+            return match self.decommit_validated_range(process, range, stat_size) {
                 Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) => Ok(false),
                 Ok(Some(DecommitOutcome::NeedsRecommit)) => Ok(true),
                 // The profile flag survives advisory failure; protection may have
@@ -3684,21 +3695,15 @@ impl Mapping {
             };
         }
         if allow_reset {
-            // The source has no typed owner boundary. Validate this exact
-            // Rust mapping range before consuming only the reset advisory
-            // error, while retaining its empty-range no-recommit result.
-            if self
-                .page_range(offset, length, PageAlignment::Contained)?
-                .is_none()
-            {
+            let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
                 return Ok(false);
-            }
+            };
             // `_mi_os_purge_ex` ignores `_mi_os_reset`'s advisory error and
             // returns its fixed no-recommit outcome. The mapping remains live
             // for the caller's later policy-selected transition or release.
             // SAFETY: the caller's selected-reset contract proves the
             // contained span is writable and free of observing aliases.
-            let _ = unsafe { self.reset_for_process(process, offset, length) };
+            let _ = unsafe { self.reset_validated_range(process, range) };
         }
         Ok(false)
     }
@@ -14110,6 +14115,51 @@ mod tests {
             MemoryConfig::detect(current_startup()),
             &fault,
         ));
+    }
+
+    #[test]
+    fn vm_process_purge_success_preserves_contained_ranges_and_source_counters() {
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        for decommit in [false, true] {
+            for (offset, length, contains_page) in [(0, page, true), (1, 2 * page - 1, true), (1, page - 1, false)] {
+                let mut policy = VmPolicy::defaults_for_test();
+                policy.set_option(VmOption::PurgeDecommits, i64::from(decommit));
+                policy.finish_preloading();
+                let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+                let process = VmProcess::new(&policy, subprocess);
+                let mut mapping = Mapping::map_for_process(
+                    process, config, 2 * page, 1, MapAccess::Committed, false, None,
+                ).expect("the valid policy cell owns two writable pages");
+                let base = mapping.base().unwrap();
+                // SAFETY: this complete live mapping is writable and no byte
+                // references are retained across its advisory transition.
+                unsafe { base.write_volatile(0x51); }
+                let before = subprocess.vm_statistics().snapshot();
+                // SAFETY: the mapping and process remain live and exclusively
+                // owned, with no guards or aliases in the selected reset span.
+                let recommit = unsafe { mapping.purge_for_process(process, offset, length, true, length) }
+                    .expect("ordinary successful purge retains its mapping owner");
+                assert_eq!(recommit, decommit && (!contains_page || decommit_needs_recommit()));
+                let after = subprocess.vm_statistics().snapshot();
+                assert_eq!(after.purge_calls, before.purge_calls + 1);
+                assert_eq!(after.purged, before.purged + length as i64);
+                assert_eq!(after.reset_calls, before.reset_calls + i64::from(!decommit && contains_page));
+                assert_eq!(after.reset, before.reset + if !decommit && contains_page { page as i64 } else { 0 });
+                assert_eq!(mapping.base(), Ok(base));
+                assert_eq!(mapping.length(), Ok(2 * page));
+                if recommit {
+                    let already_committed = if contains_page { 2 * page - length } else { 2 * page };
+                    mapping.commit_for_process(process, 0, 2 * page, already_committed)
+                        .expect("restore this retained span and its source accounting before reuse");
+                }
+                assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
+                // SAFETY: the exact owner remains live, and any requested
+                // recommit completed before this ordinary valid byte access.
+                unsafe { base.write_volatile(0x63); }
+                mapping.unmap_for_process(process, 2 * page, false).unwrap();
+            }
+        }
     }
 
     #[test]
