@@ -112,6 +112,46 @@ fn guarded_public_aligned_growth() {
         heaps::theap_guarded_set_size_bound(selected, 0, usize::MAX);
         heaps::theap_guarded_set_sample_rate(selected, 1, 0);
     }
+    // Both the tiny overallocated shape and a naturally aligned small shape
+    // must still obey this explicit sample selection before taking a local
+    // head. Keep their exact clients live together to check independent tails.
+    let mut sampled_clients = std::vec::Vec::new();
+    for (size, alignment) in [(8usize, 16usize), (64, 16)] {
+        for zero in [false, true] {
+            let client = if zero {
+                api::zalloc_aligned_at(size, alignment, 0)
+            } else {
+                api::malloc_aligned_at(size, alignment, 0)
+            }.value.unwrap();
+            assert_eq!(client.as_ptr().addr() % alignment, 0);
+            // SAFETY: only this exact live client's reported writable extent
+            // is read or written. Its following mapping is inspected via proc.
+            let usable = unsafe { api::usable_size(client.as_ptr()) };
+            assert!(usable >= size);
+            let tail = client.as_ptr().addr().checked_add(usable).unwrap();
+            assert_eq!(tail % page_size, 0);
+            assert!(permissions(tail).unwrap().starts_with("---"),
+                "the explicitly sampled {size}/{alignment} client reports its guarded tail");
+            let pattern = sampled_clients.len() as u8 + 1;
+            // SAFETY: this owned live payload contains exactly `usable`
+            // writable bytes; its tail is observed but never dereferenced.
+            unsafe {
+                let bytes = core::slice::from_raw_parts_mut(client.as_ptr(), usable);
+                if zero { assert!(bytes.iter().all(|byte| *byte == 0)); }
+                bytes.fill(pattern);
+            }
+            sampled_clients.push((client, usable, pattern));
+        }
+    }
+    for (client, usable, pattern) in sampled_clients {
+        // SAFETY: each sibling remains live until its own exact free. Neither
+        // payload observation extends into the protected following mapping.
+        unsafe {
+            assert!(core::slice::from_raw_parts(client.as_ptr(), usable)
+                .iter().all(|byte| *byte == pattern));
+            assert_eq!(api::free(client.as_ptr()), api::FreeOutcome::Freed);
+        }
+    }
     let old = api::malloc_aligned_at(81, 64, 0).value.unwrap();
     let keeper = api::malloc_aligned_at(81, 64, 0).value.unwrap();
     // SAFETY: these successful public clients remain exclusively owned.
