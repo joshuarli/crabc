@@ -292,24 +292,34 @@ pub(super) fn restore_current_selected_pthread_condition_cancellation(state: u8)
 /// detaches each node before invoking user code, preserving musl's LIFO and
 /// reentrant-push shape without retaining a stale caller-stack pointer.
 pub(super) fn run_current_selected_thread_cleanup_handlers() {
-    let Some(slot) = current_cleanup_slot() else {
-        return;
+    let head = {
+        let Some(slot) = current_cleanup_slot() else {
+            return;
+        };
+        // Retain only the current task's raw atomic slot across callbacks.
+        // Its control mapping stays live until cleanup and task exit finish.
+        core::ptr::addr_of!(slot.cleanup_head)
     };
 
     loop {
-        let node = slot.cleanup_head.load(Ordering::Acquire) as *mut CleanupNode;
+        // SAFETY: the current task retains this mapped atomic throughout exit.
+        let node = unsafe { (*head).load(Ordering::Acquire) } as *mut CleanupNode;
         if node.is_null() {
             return;
         }
-        // SAFETY: a selected worker owns its active cleanup-node chain. The
-        // macro keeps the current stack node valid until this function removes
-        // it or the worker stops executing; no other task mutates the chain.
-        unsafe {
-            slot.cleanup_head
-                .store((*node).next as usize, Ordering::Release);
-            if let Some(function) = (*node).function {
-                function((*node).argument);
-            }
+        // SAFETY: the current task owns its active caller-stack node. Copy
+        // its callback and argument, then detach it before application code
+        // can push and pop a nested cleanup scope on this same chain.
+        let (function, argument) = unsafe {
+            let function = (*node).function;
+            let argument = (*node).argument;
+            (*head).store((*node).next as usize, Ordering::Release);
+            (function, argument)
+        };
+        if let Some(function) = function {
+            // SAFETY: the popped node's caller keeps its argument live through
+            // this synchronous invocation; no node or state borrow spans it.
+            unsafe { function(argument) };
         }
     }
 }

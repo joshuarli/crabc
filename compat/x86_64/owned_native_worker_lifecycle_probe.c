@@ -213,6 +213,118 @@ static void exit_modes(void) {
     }
 }
 
+/* Deferred requests remain pending while DISABLE owns resources. ENABLE
+ * returns before the explicit cancellation point; exit then runs nested LIFO
+ * cleanup and TSD while the worker's allocator and descriptor are still live. */
+struct cancel_state_round {
+    volatile int ready, release_request;
+    unsigned after_enable, order_count, order[5];
+    int descriptor;
+    unsigned char *inner_client, *outer_client, *tsd_client;
+};
+static pthread_key_t cancel_state_key;
+
+static void cancel_state_record(struct cancel_state_round *round, unsigned event) {
+    CHECK(round->order_count < 5);
+    round->order[round->order_count++] = event;
+}
+static void cancel_state_require_disabled(void) {
+    int previous = -1;
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previous) == 0);
+    CHECK(previous == PTHREAD_CANCEL_DISABLE);
+    pthread_testcancel();
+    require_owner(1);
+}
+static void cancel_state_nested(void *opaque) {
+    struct cancel_state_round *round = opaque;
+    cancel_state_require_disabled();
+    cancel_state_record(round, 2);
+    allocation_round();
+}
+static void cancel_state_inner(void *opaque) {
+    struct cancel_state_round *round = opaque;
+    cancel_state_require_disabled();
+    cancel_state_record(round, 1);
+    release(round->inner_client, 128, 0x29);
+    round->inner_client = NULL;
+    pthread_cleanup_push(cancel_state_nested, round);
+    allocation_round();
+    pthread_cleanup_pop(1);
+    cancel_state_record(round, 3);
+}
+static void cancel_state_outer(void *opaque) {
+    struct cancel_state_round *round = opaque;
+    cancel_state_require_disabled();
+    cancel_state_record(round, 4);
+    CHECK(close(round->descriptor) == 0);
+    release(round->outer_client, 64, 0x44);
+    round->outer_client = NULL;
+    allocation_round();
+}
+static void cancel_state_tsd(void *opaque) {
+    struct cancel_state_round *round = opaque;
+    cancel_state_require_disabled();
+    CHECK(pthread_getspecific(cancel_state_key) == NULL);
+    cancel_state_record(round, 5);
+    release(round->tsd_client, 96, 0x53);
+    round->tsd_client = NULL;
+    allocation_round();
+}
+static void *cancel_state_worker(void *opaque) {
+    struct cancel_state_round *round = opaque;
+    int previous;
+    require_owner(0);
+    CHECK(pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, &previous) == 0);
+    CHECK(previous == PTHREAD_CANCEL_DEFERRED);
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previous) == 0);
+    CHECK(previous == PTHREAD_CANCEL_ENABLE);
+    round->inner_client = filled(128, 0x29);
+    round->outer_client = filled(64, 0x44);
+    round->tsd_client = filled(96, 0x53);
+    CHECK(pthread_setspecific(cancel_state_key, round) == 0);
+    pthread_cleanup_push(cancel_state_outer, round);
+    pthread_cleanup_push(cancel_state_inner, round);
+    __atomic_store_n(&round->ready, 1, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&round->release_request, __ATOMIC_ACQUIRE)) sched_yield();
+    pthread_testcancel();
+    unsigned char byte;
+    CHECK(read(round->descriptor, &byte, 1) == 1 && byte == 0x57);
+    CHECK(round->order_count == 0);
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &previous) == 0);
+    CHECK(previous == PTHREAD_CANCEL_DISABLE);
+    round->after_enable = 1;
+    pthread_testcancel();
+    CHECK(0);
+    pthread_cleanup_pop(0);
+    pthread_cleanup_pop(0);
+    return NULL;
+}
+static void cancellation_state_resources(void) {
+    int descriptors[2];
+    CHECK(pipe(descriptors) == 0);
+    unsigned char byte = 0x57;
+    CHECK(write(descriptors[1], &byte, 1) == 1);
+    struct cancel_state_round round = { .descriptor = descriptors[0] };
+    CHECK(pthread_key_create(&cancel_state_key, cancel_state_tsd) == 0);
+    mark_baseline();
+    pthread_t thread;
+    void *result;
+    CHECK(pthread_create(&thread, NULL, cancel_state_worker, &round) == 0);
+    while (!__atomic_load_n(&round.ready, __ATOMIC_ACQUIRE)) sched_yield();
+    CHECK(pthread_cancel(thread) == 0 && pthread_cancel(thread) == 0);
+    __atomic_store_n(&round.release_request, 1, __ATOMIC_RELEASE);
+    CHECK(pthread_join(thread, &result) == 0 && result == PTHREAD_CANCELED);
+    CHECK(round.after_enable == 1 && round.order_count == 5);
+    for (unsigned index = 0; index != 5; ++index) CHECK(round.order[index] == index + 1);
+    CHECK(!round.inner_client && !round.outer_client && !round.tsd_client);
+    errno = 0;
+    CHECK(fcntl(descriptors[0], F_GETFD) == -1 && errno == EBADF);
+    CHECK(close(descriptors[1]) == 0);
+    CHECK(pthread_key_delete(cancel_state_key) == 0);
+    require_joined(1);
+    dprintf(1, "cancel state: disabled read, enable testcancel, nested cleanup, fd and allocation retirement\n");
+}
+
 /* Four TSD passes leave both worker-born clients live until join. */
 struct four_pass_round {
     unsigned int calls, cleanup_calls;
@@ -435,6 +547,10 @@ static void *deferred_worker(void *argument) {
 
 int main(int argc, char **argv) {
     CHECK(argc == 2);
+    if (!strcmp(argv[1], "cancel-state")) {
+        cancellation_state_resources();
+        return 0;
+    }
     if (!strcmp(argv[1], "tsd-four")) {
         four_tsd_passes();
         return 0;
