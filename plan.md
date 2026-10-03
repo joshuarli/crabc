@@ -74,8 +74,17 @@ Update this small section in place when the implementation frontier changes.
   Direct worker installation reduces its opt0 entry frame from 4,744 to 952 bytes;
   dynamic attachment transfers its retained image from initialized storage and
   removes separate result temporaries. Scalar option reads remove two 304-byte
-  copies. These are individual
-  compiler frames, not peak-stack or 16-KiB qualification. Metadata refusal tests
+  copies. The ordinary worker page-pop path now returns scalar selection state;
+  fresh OS prepublication refusal keeps the original claim outside observation
+  error transport and converges on one release transition. Child construction
+  validates before fieldwise writes into caller-retained storage. PageMap failure
+  output uses separate bounded message frames, and staged diagnostic delivery
+  drains its original initialized entries once. Ordinary OS mapping and commit
+  warning storage is isolated: their opt0 frames fall from 3,080 to 1,064 bytes
+  and from 1,192 to 184 bytes respectively. These are individual
+  compiler frames, not peak-stack or 16-KiB qualification. Caller-retained child
+  phase transport and unpublished OS-claim initialization remain in progress.
+  Metadata refusal tests
   distinguish one-shot recovery from sustained mapping unavailability.
 - **Verification:** merged source passes nine compiler profiles and focused opt0
   ownership/worker/collection checks. Fresh debug comparisons cover selected-C
