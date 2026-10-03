@@ -89,6 +89,20 @@ static void size_classes(void)
     }
     for (int i = 0; i < 8; i++) { errno = EDOM; free(zero[i]); CHECK(errno == EDOM); }
 
+    for (size_t size = 1; size <= 8; size++) {
+        unsigned char *tiny[32];
+        for (size_t i = 0; i < sizeof tiny / sizeof *tiny; i++) {
+            errno = ENOTTY;
+            tiny[i] = calloc(1, size);
+            check_live(tiny[i], size, ENOTTY);
+            for (size_t j = 0; j < size; j++) CHECK(tiny[i][j] == 0);
+        }
+        for (size_t i = 0; i < sizeof tiny / sizeof *tiny; i++) {
+            free(tiny[i]);
+            CHECK(errno == ENOTTY);
+        }
+    }
+
     for (size_t k = 0; k < SIZE_COUNT; k++) {
         size_t size = sizes[k];
         errno = ENOTTY;
@@ -182,7 +196,25 @@ static void realloc_transitions(void)
 
 static void alignment(void)
 {
-    static const size_t alignments[] = { 16, 32, 64, 256, 4096, 16384, 65536, 1u << 20, 4u << 20 };
+    static const size_t small_alignments[] = { 0, 1, 2, 4, 8, 16 };
+    for (size_t a = 0; a < sizeof small_alignments / sizeof *small_alignments; a++) {
+        for (int legacy = 0; legacy < 2; legacy++) {
+            void *live[32];
+            /* Keep each tiny block live so a word-stride backend cannot hide
+             * its weaker alignment by recycling the same aligned address. */
+            for (size_t i = 0; i < sizeof live / sizeof *live; i++) {
+                errno = ESRCH;
+                live[i] = legacy ? memalign(small_alignments[a], 1)
+                    : aligned_alloc(small_alignments[a], 1);
+                check_live(live[i], 1, ESRCH);
+            }
+            for (size_t i = 0; i < sizeof live / sizeof *live; i++) {
+                free(live[i]);
+                CHECK(errno == ESRCH);
+            }
+        }
+    }
+    static const size_t alignments[] = { 8, 16, 32, 64, 256, 4096, 16384, 65536, 1u << 20, 4u << 20 };
     static const size_t requests[] = { 0, 1, 100, 5000, 70000, 3u << 20 };
     for (size_t a = 0; a < sizeof alignments / sizeof *alignments; a++) {
         size_t align = alignments[a];

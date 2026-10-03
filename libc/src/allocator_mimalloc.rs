@@ -151,6 +151,15 @@ static_archive_member! { calloc_source {
             return allocation;
         }
 
+        // The one-word bin has only word alignment. Keep tiny x86 C
+        // calloc results suitable for every fundamental C type, including
+        // adjacent live blocks from that bin.
+        #[cfg(target_arch = "x86_64")]
+        if total <= core::mem::size_of::<usize>() {
+            return mimalloc_allocation(|| unsafe {
+                libmimalloc_sys::mi_zalloc_aligned(total, MIMALLOC_MALLOC_ALIGNMENT)
+            });
+        }
         mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_zalloc(total) })
     }
 }}
@@ -208,8 +217,8 @@ static_archive_member! { aligned_alloc_source {
         // Once `malloc` is replaced, mallocng's `DISABLE_ALIGNED_ALLOC` refuses
         // after its power-of-two test, so no backend pointer reaches the
         // application's `free`. Musl applies it in dynamic processes only; the
-        // x86 static archive refuses too, as the native-shadow libc does
-        // (compat/allocator/known-differences.md).
+        // x86 static archive refuses too, as the native-shadow libc does,
+        // so allocation and public free keep matching ownership.
         #[cfg(target_arch = "x86_64")]
         if cabi_application_malloc_replaced() {
             let error = if alignment != 0 && !mimalloc_is_power_of_two(alignment) { EINVAL } else { ENOMEM };
@@ -236,6 +245,11 @@ static_archive_member! { aligned_alloc_source {
             cabi_set_allocator_errno(ENOMEM);
             return null_mut();
         }
+        // Mallocng raises smaller alignments to its natural allocation unit.
+        // Adjacent word-sized backend blocks otherwise need not satisfy the
+        // x86 C boundary's sixteen-byte natural alignment.
+        #[cfg(target_arch = "x86_64")]
+        let alignment = alignment.max(MIMALLOC_MALLOC_ALIGNMENT);
         mimalloc_allocation(|| unsafe { libmimalloc_sys::mi_malloc_aligned(size, alignment) })
     }
 }}
