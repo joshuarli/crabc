@@ -9806,11 +9806,29 @@ fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
             // Publish once while this thread owns its TLS, before the descriptor
             // release-store makes the slot reachable to the pinned registry.
             if (*projection).is_none() {
-                projection.write(Some(crate::subproc::main_heaps::current_thread_heap_tls()));
+                initialize_current_thread_source_heap_tls(projection);
             }
         }
         pointer
     }
+}
+
+/// Publishes the current thread's source Heap TLS handles on the first slot
+/// projection. This constructor stays separate from repeated scalar owner
+/// observations; its publication still precedes descriptor registration.
+///
+/// # Safety
+/// `projection` names this thread's initialized, empty `source_heap_tls`
+/// field. No reference to that field spans this initialization.
+#[cfg(target_arch = "x86_64")]
+#[cold]
+#[inline(never)]
+unsafe fn initialize_current_thread_source_heap_tls(
+    projection: *mut Option<crate::subproc::main_heaps::CopiedThreadHeapTls>,
+) {
+    // SAFETY: the caller exclusively owns this current-thread field. The
+    // source handles name only this thread's compiler-TLS storage.
+    unsafe { projection.write(Some(crate::subproc::main_heaps::current_thread_heap_tls())) };
 }
 
 #[inline]
@@ -11469,9 +11487,20 @@ pub(crate) fn test_initialize_process_from_host_environment(
 fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
     match admission::NativeAllocatorOperationGuard::enter() {
         Ok(operation) => return Some(operation),
-        Err(admission::NativeAllocatorEntryError::Unregistered) => {}
+        Err(admission::NativeAllocatorEntryError::Unregistered) => {
+            enter_native_first_allocation_operation()
+        }
         Err(_) => return None,
     }
+}
+
+/// An unregistered allocation may initialize only a still-cold process.
+/// Keep the once body and its second admission attempt outside registered
+/// allocation dispatch, retaining their original startup ordering.
+#[cfg(target_arch = "x86_64")]
+#[cold]
+#[inline(never)]
+fn enter_native_first_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
     if RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_COLD {
         return None;
     }
