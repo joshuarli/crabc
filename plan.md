@@ -30,6 +30,11 @@ total-memory rows use no-regression checks with raw measurements retained;
 other performance requirements remain active. Neither decision waives a
 functional failure or establishes a hardware qualification pass.
 
+User direction (2026-10-03): defer known blockers until the end. Continue
+independent qualification, release-product and performance work now. Preserve
+the unresolved failures and constrained investigations; their final verification
+and the default/public promotion prerequisites remain required.
+
 `AGENTS.md` owns scope and working rules. This file is the sole implementation
 plan and progress handoff. User direction takes precedence over older gate or
 qualification requirements in repository instructions and manifests. Preserve
@@ -47,10 +52,11 @@ Update this small section in place when the implementation frontier changes.
   pass focused checks; they do not establish that either failure is repaired.
 - **Resumed (2026-10-03):** source/compiler work and ordinary valid-client
   checks from the settled parallel lanes are integrated. The current
-  construction frontier is settled. Required verification of the two reported
-  opt0 failures remains constrained by the recorded crash-investigation
-  restriction; ensuing full qualification and promotion remain open.
-  Historical branches and raw failures are retained.
+  construction frontier is settled. Independent release qualification and
+  performance work resumes with known blockers deferred to the end. Required
+  verification of the two reported opt0 failures remains constrained by the
+  recorded crash-investigation restriction. Historical branches and raw
+  failures are retained; promotion remains open.
 - **Core fixes:** mixed-family resolver configuration now retains the first three
   nameservers in file order, and C zero-timeout batches retire their sockets and
   preserve unanswered-result semantics. Rust filename matching preserves literal
@@ -141,7 +147,9 @@ Update this small section in place when the implementation frontier changes.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
-  Correctness precedes performance, release, the default switch and public promotion.
+  Independent release and performance work proceeds with known blockers
+  deferred; mandatory correctness remains required for the default switch and
+  public promotion.
 - **Inputs and tooling:** authenticated core image `a635e97c4bb5` and allocator
   image `3d5e3a88e4f5` are restored, alongside pinned source oracles, package
   archives, std/provider vendors and Lua/Rustybench/Rustix inputs. Current tool
@@ -183,12 +191,10 @@ Update this small section in place when the implementation frontier changes.
   All settled lane worktrees have been removed. Existing allocator and hardware-policy
   reports remain available. Historical receipts are not transferred to current
   products; other projects' Docker state remains outside cleanup.
-- **On resume:** continue independent source work and keep constrained
-  investigations parked. The selected ordinary consumer components above are
-  settled; do not repeat them or rebuild unchanged providers just to update
-  handoff prose. Preserve their actual source identities. Address actual allocator failures,
-  then investigate performance
-  on an uncontended host and qualify the final merged-source release cohort. Use
+- **On resume:** qualify the current merged-source release cohort and investigate
+  performance on an uncontended host, keeping known blockers until the end.
+  The historical ordinary consumer components above retain their actual source
+  identities; rebuild for changed products, not handoff prose. Use
   existing runners and direct regressions; avoid new catalogs or proof layers.
   Baseline allocator qualification, post-switch reruns and public promotion remain open.
   No qualifying timing or full release-family pass is claimed.
@@ -469,8 +475,8 @@ Use a focused workload when it exercises an actual feature or regression;
 large stress/soak matrices, leak certification and full milestone reruns are
 final release work. Small ownership/model tests remain appropriate for unsafe
 state transitions. Fault injection belongs at the actual primitive boundary.
-Comparative memory/size ratios and performance thresholds become active after
-current-source correctness and architecture checks pass.
+Comparative memory/size ratios and performance thresholds are active for
+independent current-source work while known blockers wait until the end.
 For total-memory metrics dominated by mandatory live payload or kernel charge
 granularity, require no regression rather than a ten-percent reduction. Keep
 the raw reference and candidate measurements and the explicit row threshold;
@@ -570,7 +576,8 @@ recorded. It must not be relabeled as a pinned-image or release qualification ru
    and preserve source history, exact pins and compact original regressions.
 2. Restore pinned native tools and corpus inputs; reconcile current-source
    ownership, architecture and correctness across runtime, allocator and consumers.
-   Repair reproduced failures before performance investigation.
+   Defer known blockers until independent qualification and performance work
+   is complete; preserve their failures and required final verification.
 3. Investigate algorithmic work, syscalls, allocation and codegen. Measure the
    native allocator against both accepted C integration and exact v3.5.0, and
    runtime against pinned musl, with authenticated uncontended measurements.
