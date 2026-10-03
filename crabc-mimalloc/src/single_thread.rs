@@ -39178,9 +39178,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         zero: bool,
         completion: Option<DeferredFreeAlignedCompletion>,
     ) -> DeferredFreeAllocationPhase {
-        let Some(bin) = size_class::bin_for_request(request) else {
-            return DeferredFreeAllocationPhase::Complete(None);
-        };
         let direct_index = match request.checked_add(PADDING_SIZE).and_then(invariants::word_count) {
             Some(index) if index < PAGES_DIRECT => index,
             _ => return DeferredFreeAllocationPhase::Complete(None),
@@ -39199,6 +39196,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 Err(_) => return DeferredFreeAllocationPhase::Complete(None),
             }
         }
+        // The source direct cache needs only the padded word index. Select
+        // the size bin only when the immediate list needs generic fallback.
+        let Some(bin) = size_class::bin_for_request(request) else {
+            return DeferredFreeAllocationPhase::Complete(None);
+        };
         let Some(block_size) = size_class::bin_size(bin) else {
             return DeferredFreeAllocationPhase::Complete(None);
         };
@@ -39521,7 +39523,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn allocate_small_direct(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
-        let bin = size_class::bin_for_request(request)?;
         let direct_index = invariants::word_count(request.checked_add(PADDING_SIZE)?)?;
         if direct_index >= PAGES_DIRECT {
             return None;
@@ -39530,6 +39531,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         loop {
             let direct = self.session.direct_page(direct_index)?;
             if direct == EMPTY_PAGE.as_ptr() {
+                let bin = size_class::bin_for_request(request)?;
                 let block_size = size_class::bin_size(bin)?;
                 // Source `mi_page_malloc_zero` routes an empty direct page
                 // through ordinary generic selection. This must also happen
@@ -39555,6 +39557,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     // That scan first performs `_mi_page_free_collect(false)`
                     // before it could extend or classify this page full, so a
                     // joined remote publication is reusable in source order.
+                    let bin = size_class::bin_for_request(request)?;
                     let block_size = size_class::bin_size(bin)?;
                     return self.allocate_generic_with_retry(
                         bin,
