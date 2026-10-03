@@ -991,9 +991,21 @@ impl Heap {
         guard.unlock().is_ok() && installed
     }
 
-    /// Clears every `mi_arena_pages_t` slot of this non-main Heap and
-    /// returns each image through `free`, in arena order (`heap.c:185-194`).
-    pub(crate) fn take_non_main_arena_pages(&self, mut free: impl FnMut(core::ptr::NonNull<u8>) -> bool) -> bool {
+    /// Clears each non-main Heap record before its source free, in arena
+    /// order. A refusal before consumption restores the original live slot;
+    /// a consumed client stays cleared even if its final lifecycle failed.
+    ///
+    /// # Safety
+    /// Every installed record is an exact live allocation retained by this
+    /// Heap. The callback reports actual consumption or transfer to the
+    /// subprocess's retained bulk teardown owner, must not
+    /// reenter this Heap's arena-record lock, and must not access or retry a
+    /// consumed record. A refused record remains live through slot restoration.
+    pub(crate) unsafe fn take_non_main_arena_pages(
+        &self,
+        mut free: impl FnMut(core::ptr::NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
+    ) -> bool {
+        use crate::single_thread::LocalClientFreeProgress;
         if self.is_subprocess_main() {
             return false;
         }
@@ -1002,6 +1014,37 @@ impl Heap {
         for slot in &self.arena_pages {
             let pages = slot.load(Ordering::Relaxed);
             if let Some(pages) = core::ptr::NonNull::new(pages) {
+                slot.store(core::ptr::null_mut(), Ordering::Relaxed);
+                match free(pages.cast()) {
+                    LocalClientFreeProgress::RefusedBeforeConsumption(_) => {
+                        slot.store(pages.as_ptr(), Ordering::Relaxed);
+                        freed = false;
+                    }
+                    LocalClientFreeProgress::Consumed(Ok(())) => {}
+                    LocalClientFreeProgress::Consumed(Err(_)) => freed = false,
+                }
+            }
+        }
+        guard.unlock().is_ok() && freed
+    }
+
+    /// Historical target route whose free callback cannot witness client
+    /// consumption. A false result retains the Heap terminally and never
+    /// restores a possibly consumed record pointer.
+    ///
+    /// # Safety
+    /// Every record is an exact live allocation. The callback frees it once,
+    /// never reenters this lock, and retains all backing on its terminal error.
+    #[cfg(not(target_arch = "x86_64"))]
+    pub(crate) unsafe fn legacy_take_non_main_arena_pages(
+        &self,
+        mut free: impl FnMut(core::ptr::NonNull<u8>) -> bool,
+    ) -> bool {
+        if self.is_subprocess_main() { return false; }
+        let Ok(guard) = self.arena_pages_lock.lock() else { return false };
+        let mut freed = true;
+        for slot in &self.arena_pages {
+            if let Some(pages) = core::ptr::NonNull::new(slot.load(Ordering::Relaxed)) {
                 slot.store(core::ptr::null_mut(), Ordering::Relaxed);
                 freed &= free(pages.cast());
             }
@@ -1410,6 +1453,138 @@ mod tests {
     use crate::types::{MemoryId, Theap, ThreadLocalData};
     use core::ptr::NonNull;
     use std::boxed::Box;
+
+    fn arena_record_fixture() -> (
+        Box<Heap>,
+        core::pin::Pin<&'static crate::meta::MetaAllocator>,
+        crate::meta::MetaAllocation<'static>,
+        crate::arena::ArenaPagesLayout,
+        &'static MainSubprocess,
+    ) {
+        use crate::arena::ArenaPagesLayout;
+        use crate::bitmap::BCHUNK_SIZE;
+        use crate::meta::MetaAllocator;
+        use crate::os::{MemoryConfig, PageSize};
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1024 * 1024, false, false);
+        let subprocess = MainSubprocess::test_static_owner();
+        let metadata = MetaAllocator::test_static_owner();
+        metadata.prepare_for_main_subprocess(config, subprocess).unwrap();
+        let storage = crate::process_init::ProcessMainInitializationStorage::test_static_owner();
+        let page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        // SAFETY: isolated process-lived policy and map owners are configured
+        // once before the first metadata image is allocated.
+        let binding = unsafe { storage.test_prepare_vm_process_backing_binding(config, options, subprocess, page_map) }.unwrap();
+        metadata.bind_process_backing(binding).unwrap();
+        let layout = ArenaPagesLayout::for_slice_count(1024).unwrap();
+        let mut allocation = metadata.zalloc_aligned_for_main_subprocess(config, subprocess, layout.byte_size(), BCHUNK_SIZE).unwrap();
+        assert!(allocation.initialize_dynamic_arena_pages(metadata, layout));
+        let record = allocation.dynamic_arena_pages_pointer(metadata, layout).unwrap();
+        let mut heap = Box::new(Heap::bootstrap_empty());
+        // SAFETY: this unique pinned fixture Heap publishes one exact source
+        // record while its linear metadata capability remains retained.
+        unsafe { heap.initialize_non_main(subprocess.identity(), 1 << crate::thread_local::TLS_INDEX_BITS, null_mut(), MemoryId::static_empty()); }
+        heap.arena_pages[0].store(record.as_ptr(), Ordering::Release);
+        (heap, metadata, allocation, layout, subprocess)
+    }
+
+    #[test]
+    fn refused_arena_record_release_keeps_its_original_live_slot() {
+        use crate::meta::{MetaRelease, MetaReleaseFailure};
+        let (heap, metadata, allocation, layout, _subprocess) = arena_record_fixture();
+        let record = allocation.dynamic_arena_pages_pointer(metadata, layout).unwrap();
+        let mut retained = Some(allocation);
+        // SAFETY: this callback preserves the exact live retryable owner.
+        let released = unsafe { heap.take_non_main_arena_pages(|pointer| {
+            assert_eq!(pointer, record.cast());
+            let result = metadata.test_with_held_backing_entry(|| {
+                MetaRelease::Malloc(retained.take().unwrap()).release()
+            }).unwrap();
+            match result {
+                Err(MetaReleaseFailure::MallocRetryable { allocation, .. }) => {
+                    retained = Some(allocation);
+                    crate::single_thread::LocalClientFreeProgress::RefusedBeforeConsumption(crate::single_thread::FreeError::Lifecycle)
+                }
+                _ => panic!("the exact metadata entry refusal must preserve release authority"),
+            }
+        }) };
+        assert!(!released);
+        assert_eq!(heap.arena_pages_slot(0), Some(record),
+            "a refused release must not lose the source Heap's live record edge");
+        assert_eq!(retained.as_ref().unwrap().dynamic_arena_pages_pointer(metadata, layout), Some(record));
+        // SAFETY: the exact retained owner is freed once on this retry.
+        assert!(unsafe { heap.take_non_main_arena_pages(|pointer| {
+            assert_eq!(pointer, record.cast());
+            assert!(MetaRelease::Malloc(retained.take().unwrap()).release().is_ok());
+            crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
+        }) });
+        assert_eq!(heap.arena_pages_slot(0), None);
+    }
+
+    #[test]
+    fn source_arena_record_release_visits_sparse_slots_in_arena_order() {
+        use crate::meta::MetaRelease;
+        use crate::os::{MemoryConfig, PageSize};
+        use crate::single_thread::LocalClientFreeProgress as Progress;
+        let (heap, metadata, first, layout, subprocess) = arena_record_fixture();
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1024 * 1024, false, false);
+        let mut owners = std::vec::Vec::new();
+        heap.arena_pages[0].store(null_mut(), Ordering::Relaxed);
+        for (slot, mut allocation) in [7, 2, 11].into_iter().zip([
+            first,
+            metadata.zalloc_aligned_for_main_subprocess(config, subprocess, layout.byte_size(), crate::bitmap::BCHUNK_SIZE).unwrap(),
+            metadata.zalloc_aligned_for_main_subprocess(config, subprocess, layout.byte_size(), crate::bitmap::BCHUNK_SIZE).unwrap(),
+        ]) {
+            if slot != 7 { assert!(allocation.initialize_dynamic_arena_pages(metadata, layout)); }
+            let record = allocation.dynamic_arena_pages_pointer(metadata, layout).unwrap();
+            heap.arena_pages[slot].store(record.as_ptr(), Ordering::Release);
+            owners.push((slot, record, Some(allocation)));
+        }
+        let expected = [owners[1].1.cast(), owners[0].1.cast(), owners[2].1.cast()];
+        let mut visited = std::vec::Vec::new();
+        // SAFETY: each exact live record has one retained allocation token;
+        // every callback performs its source free once after slot removal.
+        assert!(unsafe { heap.take_non_main_arena_pages(|pointer| {
+            visited.push(pointer);
+            let (slot, _, owner) = owners.iter_mut().find(|(_, record, _)| record.cast::<u8>() == pointer).unwrap();
+            assert_eq!(heap.arena_pages_slot(*slot), None, "source clears the slot before free");
+            assert!(MetaRelease::Malloc(owner.take().unwrap()).release().is_ok());
+            Progress::Consumed(Ok(()))
+        }) });
+        assert_eq!(visited, expected);
+        assert!(owners.iter().all(|(slot, _, owner)| owner.is_none() && heap.arena_pages_slot(*slot).is_none()));
+    }
+
+    #[test]
+    fn consumed_arena_record_completion_failure_never_restores_a_freed_slot() {
+        use crate::meta::MetaRelease;
+        use crate::os::{Mapping, MapAccess, MemoryConfig, PageSize, fault};
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        let (heap, _metadata, allocation, _layout, _subprocess) = arena_record_fixture();
+        let record = heap.arena_pages_slot(0).unwrap();
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1024 * 1024, false, false);
+        let mut pending = Mapping::map_for_allocator(config, 4096, MapAccess::Committed).unwrap();
+        let injection = fault::install(fault::Plan::disabled());
+        let mut allocation = Some(allocation);
+        let mut visits = std::vec::Vec::new();
+        // SAFETY: the exact record is consumed once. The callback's later
+        // mapping cleanup refusal retains its actual Mapping owner separately.
+        assert!(!unsafe { heap.take_non_main_arena_pages(|pointer| {
+            visits.push(pointer);
+            assert!(MetaRelease::Malloc(allocation.take().unwrap()).release().is_ok());
+            injection.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+            assert_eq!(pending.unmap(), Err(Errno::NOMEM));
+            Progress::Consumed(Err(FreeError::Lifecycle))
+        }) });
+        assert_eq!(visits, [record.cast()]);
+        assert_eq!(heap.arena_pages_slot(0), None,
+            "a final cleanup failure cannot revive an already consumed record");
+        injection.set(fault::Plan::disabled());
+        pending.unmap().expect("the exact refused mapping owner remains retryable");
+        // SAFETY: no source records remain; the callback must not run again.
+        assert!(unsafe { heap.take_non_main_arena_pages(|_| panic!("consumed record revisited")) });
+    }
 
     #[test]
     fn allocated_heap_list_retirement_clears_original_tld_and_visits_each_theap_once() {

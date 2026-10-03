@@ -455,9 +455,9 @@ unsafe fn child_heap_release_foreign(
     // on delete and are discarded only on the destructive release.
     unsafe { delete_heap_pages(child, binding, heap, target) }?;
     // SAFETY: each record remains a live child block until its own free.
-    if !unsafe { heap.as_ref() }.take_non_main_arena_pages(|record| unsafe {
-        free_foreign_child_block(binding, record)
-    }) {
+    if !unsafe { heap.as_ref().take_non_main_arena_pages(|record| {
+        unsafe { free_foreign_child_block_with_progress(binding, record) }
+    }) } {
         return Err(HeapReleaseError::Retained);
     }
     // SAFETY: the Heap now has no Theap or page and the child owns it.
@@ -475,13 +475,24 @@ unsafe fn child_heap_release_foreign(
 ///
 /// # Safety
 /// `block` is one exact live child allocation that no other thread frees.
-unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
+unsafe fn free_foreign_child_block_with_progress(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
+    use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
     // SAFETY: the block stays live until its remote publication completes.
     let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
-        return false;
+        return Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
     };
     // SAFETY: the caller is outside the child's TLDs and cannot own this page.
-    unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
+    match unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) } {
+        Ok(()) => Progress::Consumed(Ok(())),
+        Err(_) => Progress::RefusedBeforeConsumption(FreeError::Lifecycle),
+    }
+}
+
+/// # Safety
+/// `block` is an exact live foreign child allocation, retained until publication.
+unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
+    matches!(unsafe { free_foreign_child_block_with_progress(binding, block) },
+        crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
 }
 
 /// Frees Heap administration with the source `allow_collect=false` policy.
@@ -492,28 +503,45 @@ unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: No
 /// # Safety
 /// `owner` is this thread's admitted child owner, `child` and `binding` retain
 /// its allocation backing, and `block` is an exact live block freed once.
+unsafe fn free_heap_metadata_with_progress(
+    owner: *mut ChildThreadOwner,
+    child: *mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+    block: NonNull<u8>,
+) -> crate::single_thread::LocalClientFreeProgress {
+    use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+    // SAFETY: the caller retains this exact live block through publication.
+    let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
+        return Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
+    };
+    let local = crate::compiler_tls::current_thread_identity()
+        .is_some_and(|thread| allocation.is_associated_with(thread));
+    if local {
+        // SAFETY: this thread owns the page, and no projection crosses the
+        // owning engine's local free operation.
+        unsafe { ChildThreadOwner::free_local_heap_metadata_with_progress(owner, child, binding, allocation) }
+    } else {
+        // SAFETY: this caller does not own the page; source preserves its low
+        // owner bit and does not collect or reclaim it from this metadata free.
+        match unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) } {
+            Ok(()) => Progress::Consumed(Ok(())),
+            Err(_) => Progress::RefusedBeforeConsumption(FreeError::Lifecycle),
+        }
+    }
+}
+
+/// # Safety
+/// The admitted child owner and exact live metadata block obey the same
+/// obligations as `free_heap_metadata_with_progress`. Failure may follow
+/// consumption and is terminal for this full Heap release operation.
 unsafe fn free_heap_metadata(
     owner: *mut ChildThreadOwner,
     child: *mut ChildMainHeapContextOwner<'_>,
     binding: ProcessMainBackingBinding,
     block: NonNull<u8>,
 ) -> bool {
-    // SAFETY: the caller retains this exact live block through publication.
-    let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
-        return false;
-    };
-    let local = crate::compiler_tls::current_thread_identity()
-        .is_some_and(|thread| allocation.is_associated_with(thread));
-    if local {
-        drop(allocation);
-        // SAFETY: this thread owns the page, and no projection crosses the
-        // owning engine's local free operation.
-        unsafe { ChildThreadOwner::free_block(owner, child, binding, block) }.is_ok()
-    } else {
-        // SAFETY: this caller does not own the page; source preserves its low
-        // owner bit and does not collect or reclaim it from this metadata free.
-        unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
-    }
+    matches!(unsafe { free_heap_metadata_with_progress(owner, child, binding, block) },
+        crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
 }
 
 /// `mi_heap_delete_pages` over the child's arenas; see
@@ -601,7 +629,7 @@ unsafe fn release_heap(
     // Heap, freed once; neither pointer is otherwise borrowed meanwhile.
     let freed = unsafe {
         heap.as_ref().take_non_main_arena_pages(|block| {
-            free_heap_metadata(owner, child_pointer, binding, block)
+            free_heap_metadata_with_progress(owner, child_pointer, binding, block)
         })
     };
     if !freed {
@@ -657,7 +685,9 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
     // SAFETY: the Theaps are detached above.
     unsafe { delete_heap_pages(child, binding, heap, None) }?;
     // SAFETY: the live Heap; its records go with the child arenas.
-    if !unsafe { heap.as_ref() }.take_non_main_arena_pages(|_record| true) {
+    if !unsafe { heap.as_ref().take_non_main_arena_pages(|_record| {
+        crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
+    }) } {
         return Err(HeapReleaseError::Retained);
     }
     // SAFETY: forwarded obligations.

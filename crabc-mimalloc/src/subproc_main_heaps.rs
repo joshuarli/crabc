@@ -2115,10 +2115,16 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // `mi_heap_free`: page records, then statistics, counts, list, key, and
     // image, each record and the image back through the native free.
     // SAFETY: the live Heap; each record is a live main-Heap block.
-    let freed = unsafe { heap.as_ref() }.take_non_main_arena_pages(|record| {
+    #[cfg(target_arch = "x86_64")]
+    let freed = unsafe { heap.as_ref().take_non_main_arena_pages(|record| {
         // SAFETY: the exact live record block, freed once.
+        unsafe { free_subproc_safe_with_progress(record) }
+    }) };
+    #[cfg(not(target_arch = "x86_64"))]
+    // SAFETY: preserve this target's terminal legacy metadata-free contract.
+    let freed = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|record| {
         unsafe { free_subproc_safe(record) }
-    });
+    }) };
     if !freed {
         return Err(HeapReleaseError::Retained);
     }
@@ -2193,7 +2199,9 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
         }
         // `mi_heap_free`: the records stay live main-Heap blocks.
         // SAFETY: the live Heap; its records are dropped, not freed.
-        if !unsafe { heap.as_ref() }.take_non_main_arena_pages(|_| true) {
+        if !unsafe { heap.as_ref().take_non_main_arena_pages(|_| {
+            crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
+        }) } {
             return false;
         }
         // SAFETY: the Heap has no Theap or page left; its image stays a
@@ -2377,6 +2385,66 @@ pub(crate) fn native_thread_done() -> bool {
 ///
 /// # Safety
 /// `block` is an exact live block, freed once.
+#[cfg(target_arch = "x86_64")]
+unsafe fn free_subproc_safe_with_progress(block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
+    use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+    let Some(binding) = binding() else { return Progress::RefusedBeforeConsumption(FreeError::Lifecycle) };
+    // SAFETY: forwarded exact-live-block contract retains the PageMap observation.
+    let Ok(Some(allocation)) = (unsafe { binding.page_map().lookup_live_allocation(block) }) else {
+        return Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
+    };
+    let local = crate::compiler_tls::current_thread_identity().is_some_and(|thread| allocation.is_associated_with(thread));
+    if local {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let Some(thread) = current_main_thread() else {
+                return Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
+            };
+            // SAFETY: this exact current allocation retains the immutable issuer.
+            let Some(selected) = NonNull::new(unsafe { crate::types::Page::theap_at(allocation.page()) }) else {
+                return Progress::RefusedBeforeConsumption(FreeError::ForeignPage);
+            };
+            if selected == thread.theap {
+                // SAFETY: the admitted process-main issuer owns the captured
+                // local administration block through this synchronous release.
+                return unsafe { crate::runtime_lifecycle::native_free_local_metadata_with_progress(selected, allocation) };
+            }
+            let mut observed = None;
+            let finished = with_theap_engine(thread, selected, |engine| {
+                // SAFETY: the captured local client and its retained issuer
+                // supply exclusive source-page authority until consumption.
+                observed = Some(unsafe { engine.free_captured_live_allocation_with_progress(allocation) });
+            }).is_some();
+            return match observed {
+                Some(Progress::Consumed(Ok(()))) if !finished => Progress::Consumed(Err(FreeError::Lifecycle)),
+                Some(progress) => progress,
+                None => Progress::RefusedBeforeConsumption(FreeError::Lifecycle),
+            };
+        }
+    }
+    // SAFETY: this caller does not own the page. The remote primitive can
+    // refuse only before publication; success consumes the exact client.
+    match unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) } {
+        Ok(()) => Progress::Consumed(Ok(())),
+        Err(_) => Progress::RefusedBeforeConsumption(FreeError::Lifecycle),
+    }
+}
+
+/// # Safety
+/// `block` is an exact live process-main administration allocation. A false
+/// result may follow consumption and is terminal for full Heap release.
+#[cfg(target_arch = "x86_64")]
+unsafe fn free_subproc_safe(block: NonNull<u8>) -> bool {
+    matches!(unsafe { free_subproc_safe_with_progress(block) },
+        crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
+}
+
+/// Historical metadata-free route with terminal, unclassified local errors.
+///
+/// # Safety
+/// `block` is an exact live block, freed once. On failure the caller retains
+/// the complete backing and cannot repeat the full Heap release.
+#[cfg(not(target_arch = "x86_64"))]
 unsafe fn free_subproc_safe(block: NonNull<u8>) -> bool {
     let Some(binding) = binding() else { return false };
     // SAFETY: forwarded live-block contract.
@@ -2384,10 +2452,10 @@ unsafe fn free_subproc_safe(block: NonNull<u8>) -> bool {
     let local = crate::compiler_tls::current_thread_identity().is_some_and(|thread| allocation.is_associated_with(thread));
     if local {
         drop(allocation);
-        // SAFETY: forwarded; the local free never collects foreign pages.
+        // SAFETY: this local free never collects foreign pages.
         return (unsafe { native_free(block) }) == NativePageFreeResult::Freed;
     }
-    // SAFETY: forwarded; this thread does not own the page.
+    // SAFETY: this thread does not own the page.
     unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
 }
 

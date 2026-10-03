@@ -3513,6 +3513,52 @@ impl ChildThreadOwner {
         }
     }
 
+    /// Frees one locally owned Heap administration record while preserving
+    /// whether the client was consumed before a session-finish failure.
+    ///
+    /// # Safety
+    /// This thread retains `this`, its admitted child, binding, and the exact
+    /// live captured allocation. Its source Theap owns the allocation and
+    /// belongs to this owner's TLD. No competing local free or page mutation
+    /// may race this operation. A consumed client is never accessed or retried.
+    pub(crate) unsafe fn free_local_heap_metadata_with_progress(
+        this: *mut Self,
+        child: *mut ChildMainHeapContextOwner<'_>,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        allocation: crate::process_page_map::LiveAllocationPointer,
+    ) -> crate::single_thread::LocalClientFreeProgress {
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        if !crate::compiler_tls::current_thread_identity()
+            .is_some_and(|thread| allocation.is_associated_with(thread)) {
+            return Progress::RefusedBeforeConsumption(FreeError::ForeignPage);
+        }
+        // SAFETY: the captured current client retains immutable source identity;
+        // the admitted thread owns the short TLD/Theap identity projections.
+        let selected = NonNull::new(unsafe { crate::types::Page::theap_at(allocation.page()) });
+        let (main, tld) = unsafe { ((*this).theap_pointer(), (*this).tld_pointer()) };
+        let mut observed = None;
+        let finished = if selected == main && main.is_some() {
+            // SAFETY: the selected main Theap owns this exact current client.
+            unsafe { (*this).with_page_engine(binding, |_image, engine| {
+                observed = Some(unsafe { engine.free_captured_live_allocation_with_progress(allocation) });
+            }) }.is_ok()
+        } else if let Some(selected) = selected.filter(|selected| tld.is_some() && unsafe {
+            Theap::tld_at(*selected) == tld.map_or(core::ptr::null_mut(), NonNull::as_ptr)
+        }) {
+            // SAFETY: the selected auxiliary Theap belongs to this retained TLD.
+            unsafe { Self::with_heap_theap_page_engine(this, child, binding, selected, |engine| {
+                observed = Some(unsafe { engine.free_captured_live_allocation_with_progress(allocation) });
+            }) }.is_ok()
+        } else {
+            return Progress::RefusedBeforeConsumption(FreeError::ForeignPage);
+        };
+        match observed {
+            Some(Progress::Consumed(Ok(()))) if !finished => Progress::Consumed(Err(FreeError::Lifecycle)),
+            Some(progress) => progress,
+            None => Progress::RefusedBeforeConsumption(FreeError::Lifecycle),
+        }
+    }
+
     /// Frees `block`, a live block observed through `binding`'s PageMap, on
     /// this thread: through the owning engine when one of this thread's
     /// Theaps owns its page, otherwise through the nonlocal route.
