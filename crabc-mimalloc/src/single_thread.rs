@@ -43872,6 +43872,273 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// ordinary, non-aligned request. `kind` is derived from the selected
     /// block size before this function is entered, so all source span and
     /// reserved-count transitions stay together with the claim provenance.
+    #[cfg(target_arch = "x86_64")]
+    fn allocate_fresh_page(
+        &mut self,
+        block_size: usize,
+        kind: PageKind,
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
+        let slice_count = match kind {
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                match page::regular_page_slice_count(kind) { Some(count) => count, None => return Ok(None) }
+            }
+            PageKind::Singleton => match page::singleton_page_slice_count(block_size, self.page_map.memory_config().page_size()) { Some(count) => count, None => return Ok(None) },
+        };
+        let Some(allocation_size) = slice_count.checked_mul(ARENA_SLICE_SIZE) else { return Ok(None); };
+        let process_commit = self.arena.process().map(|process| {
+            let config = self.page_map.memory_config();
+            let mode = process.policy().page_commit_on_demand();
+            matches!(kind, PageKind::Singleton)
+                || crate::config::PAGE_MIN_COMMIT_SIZE.max(config.page_size().bytes()) >= allocation_size
+                || slice_count >= (usize::from(u16::MAX) * config.page_size().bytes()).div_ceil(ARENA_SLICE_SIZE)
+                || mode == 0 || (mode == 2 && config.has_overcommit())
+        });
+        #[cfg(test)]
+        let commit = if self.page_commit_on_demand && !matches!(kind, PageKind::Singleton) {
+            self.page_commit_on_demand = false;
+            false
+        } else {
+            true
+        };
+        #[cfg(not(test))]
+        let commit = true;
+        let commit = process_commit.unwrap_or(commit);
+        // SAFETY: no Theap projection survives into backing selection. The
+        // current source session retains compiler-TLS root lifetime while
+        // this adapter projects only the random field at individual draws.
+        let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
+        // SAFETY: the owned session retains its Theap, Heap and TLD, and
+        // source affinity setters cannot overlap an allocation read.
+        let numa_node = unsafe { self.session.theap().page_allocation_numa_node() };
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the owned session retains its Theap and Heap; only the
+        // immutable owner pointer is copied before backing callbacks.
+        let owner_heap = NonNull::new(unsafe { Theap::heap_at(self.session.local_field_theap_pointer()) })
+            .ok_or(GenericPathError::Lifecycle)?;
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the source session retains the exact owner and subprocess
+        // through this claim and excludes retirement during callbacks.
+        let claim = unsafe { self.arena.claim_for_heap(owner_heap,
+            self.page_map.memory_config(), self.requested_arena, slice_count, commit,
+            self.thread_sequence, numa_node, Some(&mut random)) };
+        #[cfg(not(target_arch = "x86_64"))]
+        let claim = self.arena.claim_with_numa_node(
+            self.page_map.memory_config(),
+            self.requested_arena,
+            slice_count,
+            commit,
+            self.thread_sequence,
+            numa_node,
+            Some(&mut random),
+        );
+        let Some(claim) = claim else {
+            return if self.arena.process().is_some() {
+                self.allocate_fresh_os_page_checked(block_size, 1, false, commit)
+            } else { Ok(None) };
+        };
+        self.complete_fresh_arena_page(claim, block_size, kind, allocation_size)
+    }
+
+    /// Completes the sole arena claim after backing selection succeeds.
+    /// The claim moves from this session's selected backing exactly once;
+    /// its original arena/process lifetime remains retained through metadata,
+    /// prefix commit, guard, bitmap, PageMap, statistics and list publication.
+    /// Every refused phase keeps its existing explicit release or rollback;
+    /// no alternate claim or implicit destructor can return these slices.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
+    fn complete_fresh_arena_page(
+        &mut self, claim: crate::arena::ArenaSliceClaim<'arena>,
+        block_size: usize, kind: PageKind, allocation_size: usize,
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
+        let slice_start = claim.start();
+        let memory = claim.memory_id();
+        // SAFETY: the fresh linear claim retains this exact live arena.
+        let arena = match unsafe { self.arena.arena_for_memory(memory) } {
+            Some(arena) => arena,
+            None => { let _ = claim.release(); return Ok(None); }
+        };
+        // Source ensures the heap's arena-page image before committing this
+        // page's partial prefix, so failure cannot orphan prefix accounting.
+        if !self.session.ensure_arena_pages(&arena, self.page_map.memory_config()) {
+            let _ = claim.release();
+            return Ok(None);
+        }
+        let metadata = match claim.page_metadata() {
+            Some(metadata) => metadata,
+            None => {
+                let _ = claim.release();
+                return Ok(None);
+            }
+        };
+        let usable_offset = match page::page_usable_start_offset(block_size) {
+            Some(offset) => offset,
+            None => {
+                let _ = claim.release();
+                return Ok(None);
+            }
+        };
+        let usable_start = match slice_start.addr().checked_add(usable_offset) {
+            Some(start) => start,
+            None => {
+                let _ = claim.release();
+                return Ok(None);
+            }
+        };
+        let page_offset = match usable_start.checked_sub(metadata.as_ptr().addr()) {
+            Some(offset) => offset,
+            None => {
+                let _ = claim.release();
+                return Ok(None);
+            }
+        };
+        let reserved = match kind {
+            PageKind::Singleton => 1,
+            PageKind::Small | PageKind::Medium | PageKind::Large => {
+                match page::page_reserved_object_count(allocation_size, usable_offset, block_size, self.page_map.memory_config().page_size()) {
+                    Some(reserved) => reserved,
+                    None => {
+                        let _ = claim.release();
+                        return Ok(None);
+                    }
+                }
+            }
+        };
+        // `mi_arenas_page_alloc_fresh` commits only the prefix through
+        // `mi_arena_commit` when its fresh arena claim was deliberately
+        // uncommitted. The normal profile and test seam select their own
+        // `commit` value, while a bound process may select the same source
+        // branch through `page_commit_on_demand`; every such caller records a
+        // nonzero page-local count only after the prefix commit succeeds.
+        let slice_pcommitted = if !memory.initially_committed() {
+            let page_size = self.page_map.memory_config().page_size().bytes();
+            let prefix_pages = match page::initial_page_slice_pcommitted(
+                usable_offset,
+                block_size,
+                allocation_size,
+                page_size,
+            ) {
+                Some(prefix_pages) => prefix_pages,
+                None => {
+                    let _ = claim.release();
+                    return Ok(None);
+                }
+            };
+            let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
+                Some(prefix_size) => prefix_size,
+                None => {
+                    let _ = claim.release();
+                    return Ok(None);
+                }
+            };
+            if !claim.commit_initial_page_prefix(prefix_size) {
+                let _ = claim.release();
+                return Ok(None);
+            }
+            prefix_pages
+        } else {
+            0
+        };
+
+        // SAFETY: `claim` owns the exact unregistered slice and selected
+        // metadata record exclusively. The caller-pinned session owns the
+        // only mutable theap/heap image. Publication writes a fresh Page value
+        // before any map or queue observer can reach it.
+        let page = unsafe {
+            #[cfg(target_arch = "x86_64")]
+            let page = self.session.publish_fresh_primary_page(
+                metadata,
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                memory.initially_zero(),
+                memory,
+            );
+            #[cfg(not(target_arch = "x86_64"))]
+            let page = self.session.publish_fresh_page(
+                metadata,
+                block_size,
+                page_offset,
+                reserved,
+                slice_pcommitted,
+                memory.initially_zero(),
+                memory,
+            );
+            page
+        };
+        let Some(page) = page else {
+            let _ = unsafe { self.arena.account_page_commit_before_release(memory,
+                usize::from(slice_pcommitted) * self.page_map.memory_config().page_size().bytes()) };
+            let _ = claim.release();
+            return Ok(None);
+        };
+
+        // SAFETY: the unique fresh claim retains its initialized primary;
+        // no arena bitmap, PageMap, queue, or client observes it yet.
+        unsafe { crate::page_backing::set_source_page_guard(
+            self.page_map.memory_config(), self.arena.process(), memory, slice_start, allocation_size,
+        ) };
+        let page_map_size = match arena_page_map_size(page, slice_start, allocation_size) {
+            Some(size) => size,
+            None => {
+                // The fresh metadata is initialized but has not entered an
+                // arena bitmap, PageMap, or queue. Retire it before returning
+                // the exact claim; no wider PageMap fallback is source-valid.
+                let _ = self.account_page_commit_before_release(page, memory);
+                let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
+                let _ = unsafe { self.arena.release(memory) };
+                return Ok(None);
+            }
+        };
+
+        let registered_in_arena = self.session.set_arena_page(&arena, memory);
+        if !registered_in_arena {
+            self.rollback_fresh(page, slice_start, page_map_size, memory, false, false);
+            return Ok(None);
+        }
+        // SAFETY: `page` is fully initialized and remains address-stable until
+        // the matching unregister below. This serial lifecycle excludes a
+        // lookup racing this source-plain page-map write.
+        if unsafe {
+            self.page_map
+                .register_range(slice_start, page_map_size, page)
+        }
+        .is_err()
+        {
+            self.rollback_fresh(page, slice_start, page_map_size, memory, true, false);
+            return Ok(None);
+        }
+
+        // `arena.c:1110-1118` records the successful PageMap registration
+        // before the following page-local extension. A later rollback takes
+        // the matched terminal-release record in `rollback_fresh`.
+        let statistics_bin = unsafe { source_page_statistics_bin_at(page) }
+            .expect("fresh source page has one statistics bin");
+        let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
+        debug_assert!(statistics_recorded);
+
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this original fresh arena Page has completed source
+        // registration; no list, client or prior key draw has been published.
+        if !unsafe { self.session.initialize_fresh_page_keys(page) } {
+            self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
+            return Err(GenericPathError::Lifecycle);
+        }
+
+        match self.extend_page_before_allocation(page) {
+            Ok(()) => {}
+            #[cfg(target_arch = "x86_64")]
+            Err(error @ GenericPathError::LiveValidity) => return Err(error),
+            Err(_) => {
+                self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
+                return Ok(None);
+            }
+        }
+        Ok(Some(page))
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
     fn allocate_fresh_page(
         &mut self,
         block_size: usize,
@@ -48715,7 +48982,12 @@ mod tests {
         script
             .fail_from_call
             .store(calls_before_fresh + 2, Ordering::Relaxed);
+        let page_count_before = allocator.session.theap().page_count();
         assert!(allocator.allocate(37, false).is_none());
+        assert_eq!(allocator.session.theap().page_count(), page_count_before,
+            "refused metadata completion publishes no registered page");
+        assert!(allocator.pending_os_release.is_none(),
+            "an admitted arena claim does not enter the OS release slot");
         assert_eq!(
             script.calls.load(Ordering::Relaxed),
             calls_before_fresh + 4,
