@@ -312,12 +312,6 @@ unsafe fn allocate_overalloc_head(
     alignment: usize,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    // Guarded aligned allocation also carries a source tag and sampling
-    // transition. Preserve its existing eight-byte specialization; other
-    // guarded overallocations continue through the complete source path.
-    if crate::config::GUARDED && !(size == WORD_SIZE && alignment == MAX_ALIGN_SIZE) {
-        return None;
-    }
     if alignment > PAGE_MAX_OVERALLOC_ALIGN {
         return None;
     }

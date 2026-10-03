@@ -10168,9 +10168,12 @@ fn fail_stop_with_current_thread_native_owner() -> ! {
 #[cfg(target_arch = "x86_64")]
 #[inline(always)]
 fn native_local_fast_owner() -> Option<crate::local_fast_path::LocalFastOwner> {
-    // The raw helper requires unencoded links and no trailing padding record;
-    // the complete engine preserves both protocols for other source profiles.
-    if crate::config::ENCODE_FREELIST || crate::config::PADDING_SIZE != 0 { return None; }
+    // The raw helper requires unencoded links, no trailing padding record,
+    // and no guarded sampling. The complete engine owns those protocols,
+    // including sampler advancement for allocations that are not selected.
+    if crate::config::ENCODE_FREELIST || crate::config::PADDING_SIZE != 0 || crate::config::GUARDED {
+        return None;
+    }
     let owner = crate::local_fast_path::published()?;
     let presence = current_thread_native_owner_presence();
     let owner_selected = if presence.initial_installed {

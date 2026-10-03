@@ -204,9 +204,19 @@ Update this small section in place when the implementation frontier changes.
   profiles, eight focused opt0 checks and the frozen inventories pass.
   Required admission synchronization and pinned algorithms remain intact;
   these individual compiler measurements do not establish combined throughput
-  acceptance. Quiet-host remeasurement and compiler analysis of the large
-  required teardown continuations follow. Performance acceptance and complete
-  correctness/codegen prerequisites remain open.
+  acceptance. At `b80593052`, three complete engine runs on CPUs 8–15 qualify
+  physically and agree through the existing readers. Suite throughput lower95
+  is 0.3346–0.3362 of pinned C; all ten critical throughput rows and nine tail
+  rows fail. RSS/PSS bounds pass. Allocator code is 1,000,263 bytes versus C's
+  108,311 bytes. Original CPU-zero timing refusals remain retained with their
+  exact records. Source and products are retained under
+  `.work/x86_64/reports/integrated-lanes/allocatorperf164-b80593052/` and
+  `.work/allocator-x86_64/reports/allocator/x86_64/perf-engine/`.
+  Guarded profiles now use the complete engine for sampler advancement and
+  aligned-base tagging; focused opt0 owner cycles pass. Those changes follow
+  the measured snapshot. Compiler analysis of required teardown continuations
+  continues. Performance acceptance and complete correctness/codegen
+  prerequisites remain open.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
