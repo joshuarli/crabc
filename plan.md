@@ -46,8 +46,10 @@ Update this small section in place when the implementation frontier changes.
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
 - **Resumed (2026-10-03):** source/compiler work and ordinary valid-client
-  checks from the settled parallel lanes are integrated. Historical branches
-  and raw failures are retained; the two reported opt0 failures remain open.
+  checks from the settled parallel lanes are integrated. Independent runtime
+  and qualification preparation continue; only constrained investigations are
+  parked. Historical branches and raw failures are retained; the two reported
+  opt0 failures remain open.
 - **Core fixes:** mixed-family resolver configuration now retains the first three
   nameservers in file order, and C zero-timeout batches retire their sockets and
   preserve unanswered-result semantics. Rust filename matching preserves literal
