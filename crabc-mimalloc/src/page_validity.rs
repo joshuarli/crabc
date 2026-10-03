@@ -1801,25 +1801,49 @@ mod tests {
                     Theap::guarded_set_sample_rate_at(selected, 1, 1);
                     Theap::guarded_set_size_bound_at(selected, 0, 100_000);
                 }
-                for request in [1, 81, 4096, 8193, 65_536] {
-                    let block = crate::source_api::malloc(request).value
-                        .unwrap_or_else(|| panic!("sampled source client for {request}"));
-                    // SAFETY: this thread retains exact clients and the sole
-                    // owner; no collector, producer, teardown or map mutation
-                    // overlaps these short observations or client accesses.
-                    unsafe { runtime::with_native_allocation_owner(selected, |owner| {
-                        let root = owner.page_map().unwrap();
-                        let allocation = root.lookup_live_allocation(block).unwrap().unwrap();
-                        assert!(allocation.is_guarded());
-                        assert!(allocation.guarded_tail_page(4096).is_some());
-                        assert!(allocation.usable_size() >= request);
-                        let state = Page::validity_snapshot_at(allocation.page());
-                        assert_eq!(source_page_lists_valid(&state, root.page_map().unwrap()), Ok(()));
-                        block.as_ptr().write_bytes(0x5a, request);
-                        assert_eq!(source_page_lists_valid(&Page::validity_snapshot_at(allocation.page()),
-                            root.page_map().unwrap()), Ok(()));
-                    }) }.unwrap();
-                    assert_eq!(unsafe { runtime::native_free(block) }, NativePageFreeResult::Freed);
+                for precise in [false, true] {
+                    crate::source_options_api::option_set(
+                        crate::config::SourceOption::GuardedPrecise as _, precise as _);
+                    for zero in [false, true] {
+                        for request in [0, 1, 15, 16, 17, 81, 4095, 4096, 4097, 8193, 65_536] {
+                            let result = if zero { crate::source_api::zalloc(request) }
+                                else { crate::source_api::malloc(request) };
+                            let block = result.value.unwrap_or_else(||
+                                panic!("sampled source client for {request}, precise={precise}, zero={zero}"));
+                            // Ordinary zero-sized sampled requests become one
+                            // word before precision or natural alignment applies.
+                            let normalized = if request == 0 { core::mem::size_of::<usize>() }
+                                else { request };
+                            let expected = if precise { normalized }
+                                else { (normalized + 15) & !15 };
+                            // SAFETY: this thread retains exact clients and the
+                            // sole owner; no collector, producer, teardown or map
+                            // mutation overlaps these short observations or
+                            // accesses within the source usable client extent.
+                            unsafe { runtime::with_native_allocation_owner(selected, |owner| {
+                                let root = owner.page_map().unwrap();
+                                let allocation = root.lookup_live_allocation(block).unwrap().unwrap();
+                                assert!(allocation.is_guarded());
+                                let tail = allocation.guarded_tail_page(4096).unwrap();
+                                assert_eq!(allocation.usable_size(), expected);
+                                assert_eq!(tail.as_ptr().addr() - block.as_ptr().addr(), expected);
+                                if !precise {
+                                    assert_eq!(block.as_ptr().addr() % crate::config::MAX_ALIGN_SIZE, 0);
+                                }
+                                if zero {
+                                    for byte in 0..expected {
+                                        assert_eq!(block.as_ptr().add(byte).read(), 0);
+                                    }
+                                }
+                                let state = Page::validity_snapshot_at(allocation.page());
+                                assert_eq!(source_page_lists_valid(&state, root.page_map().unwrap()), Ok(()));
+                                block.as_ptr().write_bytes(0x5a, expected);
+                                assert_eq!(source_page_lists_valid(&Page::validity_snapshot_at(allocation.page()),
+                                    root.page_map().unwrap()), Ok(()));
+                            }) }.unwrap();
+                            assert_eq!(unsafe { runtime::native_free(block) }, NativePageFreeResult::Freed);
+                        }
+                    }
                 }
                 assert_eq!(unsafe { runtime::native_free(seed) }, NativePageFreeResult::Freed);
                 unsafe { runtime::native_collect(true); }
