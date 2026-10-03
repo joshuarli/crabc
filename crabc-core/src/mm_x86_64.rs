@@ -132,8 +132,9 @@ pub unsafe fn mremap_raw(
 /// `MREMAP_MAYMOVE` must be supplied: the source remains mapped, and the
 /// returned destination is an additional shared alias. Both require independent
 /// cleanup, synchronized shared contents, and no incompatible Rust references
-/// through either alias. If the call fails, the original mappings remain
-/// available for cleanup.
+/// through either alias. Fixed remapping is not transactional: a failed call
+/// may already have unmapped the destination or truncated the source. The
+/// caller must not assume that an error preserves either original range.
 #[inline]
 pub unsafe fn mremap_fixed_raw(
     address: *mut u8,

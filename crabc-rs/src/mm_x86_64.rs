@@ -348,8 +348,10 @@ pub unsafe fn mremap(
 /// and [`MremapFlags::MAYMOVE`] must be supplied. Linux preserves the original
 /// source and creates an additional shared alias at the destination. The
 /// source and returned alias require independent cleanup, synchronized
-/// contents, and no incompatible Rust references through either alias. A
-/// failed call leaves the original mappings available for cleanup.
+/// contents, and no incompatible Rust references through either alias.
+/// Fixed remapping is not transactional: a failed call may already have
+/// unmapped the destination or truncated the source. The caller must not
+/// assume that an error preserves either original range.
 #[inline]
 pub unsafe fn mremap_fixed(
     ptr: *mut c_void,
