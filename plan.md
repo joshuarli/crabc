@@ -57,6 +57,10 @@ Update this small section in place when the implementation frontier changes.
   collection before unownership. Heap key release refusal retains its exact lease,
   arena-record release refusal restores its live slot, consumed completion errors
   leave it cleared, and failed registry-bitmap cleanup retains its terminal token.
+  Prepared or consumed child Heap images refuse initialized projections. Child
+  TLS growth/free now separates consumption from completion and withdraws terminal
+  roots while retaining only exact live allocation custody. Arena allocation and
+  visitation use the actual Heap sequence and source population sampling.
 - **Ownership and construction:** initialized Heap/Theap, metadata, child and
   attachment-only images use final storage. Non-consuming exit prefixes retain
   the source engine across Rust unwind and change only their scalar phase.
@@ -73,10 +77,15 @@ Update this small section in place when the implementation frontier changes.
   entropy placement differences and guarded-debug oracle failures remain retained;
   the latter combinations are unproved. No qualifying timing or release pass is
   claimed. The opt0 TSD runner's provider-only atomic grep remains a tooling limit;
-  its direct runtime and helper-disassembly evidence passes.
-- **Compiler frontier:** ordinary binary80 C arithmetic and 128-bit casts expose
-  six missing x87 helpers. Their compiler/link failure is retained; owned provider
-  work is active. The finite existing archive proof does not close this gap.
+  its direct runtime and helper-disassembly evidence passes. Its atomic check now
+  follows called helpers. The cold startup output timeout came from a FILE surrogate
+  violating the pinned delayed-flush contract; real FILE and registered allocating
+  callbacks have distinct passing checks, with the original timeout retained.
+- **Compiler frontier:** eight missing binary80 and float-complex helpers now have
+  owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
+  ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
+  the legacy source boundary. Complete debug dependency closure remains unproved
+  for relocated read-only data, GOT and source-core forms; no release pass is claimed.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
