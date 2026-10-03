@@ -177,6 +177,12 @@ Update this small section in place when the implementation frontier changes.
   The collector smoke now supplies its retained host capture paths, the private
   allocator adapter selects its required page-size projection, and the scalar
   C configuration oracle treats its undefined encoding switch as source zero.
+  Installed compiler-builtin provenance now records the generated object's
+  staging role while preserving compiler inputs, flags and raw actual argv.
+  Independent archive bytes and provenance agree; both backends pass the
+  unchanged canonical static preparation collector on the repaired source.
+  The allocator harness now accepts its existing `xmalloc` caller and selects
+  `MI_XMALLOC=1` with `mi-xmalloc`; returning allocation controls pass.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
