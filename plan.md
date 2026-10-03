@@ -45,29 +45,31 @@ Update this small section in place when the implementation frontier changes.
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
-- **Resumed (2026-10-03):** the user resumed the campaign from this handoff.
-  Reconcile current-source allocator initialization, ownership and runtime
-  boundaries through source/compiler work and ordinary valid-client regressions.
-  The two reported native opt0 failures remain open until direct evidence repairs
-  them. Historical source branches and compact evidence remain available.
-- **Core fixes:** secure/guarded output formatting matches pinned C; the private
-  context maps retained page-validity errors and counts a consumed free even when
-  cleanup fails. The bounded queue retry reuses its frame. Fresh Heap/Theap and
-  child images initialize directly in final storage with the original cold state.
-  Committed external context arenas supply their actual mapping owner for secure
-  metadata guards. Private randomized secure comparisons validate each side's
-  request, capacity, live identity, payload and zeroing before admitting incidental
-  placement differences; canonical and guarded comparisons remain strict.
-  Focused tests/compiler checks establish these changes, not repair of the two
-  open runtime failures. Debug public-Theap compiler/link closure is repaired;
-  its actual runtime failure remains.
-- **Verification and cleanup:** the final merged change passes 32 focused reader
-  tests and the ordinary secure-5 debug C/native comparison (4,314 keys). Preserved
-  C/self and C/native traces also pass the relocated reader; original raw
-  differences remain retained. All nine compiler profiles and both parity
-  validators pass. Other source modes were not rerun. Approved memory/hardware
-  policies are integrated. Cleanup left about 1.1 TiB free; keep reusable inputs
-  and compact evidence. Other projects' Docker state remains outside this cleanup.
+- **Resumed (2026-10-03):** source/compiler work and ordinary valid-client
+  checks are active with 16 lanes and continuous integration. Historical branches
+  and raw failures are retained; the two reported opt0 failures remain open.
+- **Core fixes:** mixed-family resolver configuration now retains the first three
+  nameservers in file order. Accepted-C tiny calloc and aligned allocation satisfy
+  x86 natural alignment; open/openat use their actual variadic ABI; normal worker
+  return retires pending loader diagnostics. Generic post-exit frees complete local
+  collection before unownership. Heap key release refusal retains its exact lease,
+  and failed registry-bitmap cleanup retains its terminal diagnostic token.
+- **Ownership and construction:** initialized Heap/Theap, metadata, child and
+  attachment-only images use final storage. Non-consuming exit prefixes retain
+  the source engine across Rust unwind and change only their scalar phase.
+  Owner engine/fast-path reads use narrow raw projections; retained-client PageMap
+  lookups preserve source check modes. Secure metadata uses the actual mapping
+  owner. Compiler evidence removes large aggregate temporaries; ordinary tests
+  establish these changes without closing either reported runtime failure.
+- **Verification:** merged source passes nine compiler profiles and focused opt0
+  ownership/worker/collection checks. Fresh debug comparisons cover selected-C
+  dynamic allocation and native fork, signals, timers, stdio, locale, TLS, loader,
+  CRT/helpers and Rust facade composition. Secure-1/2/3/4, stat-1/2 and explicitly
+  seeded guarded/stat combinations pass 4,314-key source comparisons. Default
+  entropy placement differences and guarded-debug oracle failures remain retained;
+  the latter combinations are unproved. No qualifying timing or release pass is
+  claimed. The opt0 TSD runner's provider-only atomic grep remains a tooling limit;
+  its direct runtime and helper-disassembly evidence passes.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
@@ -77,15 +79,12 @@ Update this small section in place when the implementation frontier changes.
   archives, std/provider vendors and Lua/Rustybench/Rustix inputs. Current tool
   authorities authenticate these inputs; resolver and C performance launches use
   the inspected immutable image ID. Frozen ABI/header/coverage digests are unchanged.
-- **Evidence:** existing ignored report locations retain original programs, source
-  pins, raw failures and focused C/native comparisons independently of retired
-  trees. Recent allocator proofs are in `.work/reports/allocator/operationcontracts120/`,
-  `.work/reports/allocator/heapimage120/` and
-  `.work/x86_64/reports/integrated-lanes/context118-54271afbe/`; policy proofs are in
-  `.work/reports/allocator/hardwarepolicy119/` and
-  `.work/x86_64/reports/memorypolicy119-proof.tar.gz`. Merged checks are in
-  `.work/x86_64/tmp/operationcontracts120-merged-*.log` and `winddown-rust-check.log`.
-  Historical receipts are not transferred to current products.
+- **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
+  settled lanes' original programs/source, raw failures and focused proofs before
+  their worktrees are removed. Merged checks are in
+  `.work/x86_64/tmp/resume12*-merged-*.log`. Existing allocator and hardware-policy
+  reports remain available. Historical receipts are not transferred to current
+  products; other projects' Docker state remains outside cleanup.
 - **On resume:** address actual allocator failures, then investigate performance
   on an uncontended host and qualify the final merged-source release cohort. Use
   existing runners and direct regressions; avoid new catalogs or proof layers.
