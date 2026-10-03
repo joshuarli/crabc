@@ -133,6 +133,13 @@ class FixtureGrammarTests(unittest.TestCase):
         with self.assertRaisesRegex(engine.HarnessError, "unexpected record"):
             engine.parse_timed_output("batch ns=10 ops=2\nok\n", expected_batches=1)
 
+    def test_invalid_batch_error_retains_its_original_record(self) -> None:
+        for record in ("batch ns=0 cpu_ns=9 ops=2", "batch ns=10 cpu_ns=0 ops=2", "batch ns=10 cpu_ns=9 ops=0"):
+            with self.subTest(record=record):
+                with self.assertRaisesRegex(engine.HarnessError, "positive") as raised:
+                    engine.parse_timed_output(record + "\nok\n", expected_batches=1)
+                self.assertIn(record, str(raised.exception))
+
 
 class StatisticsTests(unittest.TestCase):
     def test_throughput_ratio_is_inverse_cost_with_a_bootstrap_spread(self) -> None:

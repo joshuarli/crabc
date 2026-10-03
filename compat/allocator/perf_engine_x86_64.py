@@ -287,7 +287,7 @@ def parse_timed_output(output: str, *, expected_batches: int) -> list[dict[str, 
             raise HarnessError(f"fixture output contains an unexpected record: {line!r}")
         nanoseconds, cpu_nanoseconds, operations = (int(group) for group in match.groups())
         if nanoseconds <= 0 or cpu_nanoseconds <= 0 or operations <= 0:
-            raise HarnessError("fixture batch record must have positive time, CPU time, and operation count")
+            raise HarnessError(f"fixture batch record must have positive time, CPU time, and operation count: {line!r}")
         batches.append({"ns": nanoseconds, "cpu_ns": cpu_nanoseconds, "ops": operations})
     if len(batches) != expected_batches:
         raise HarnessError(f"fixture expected {expected_batches} batch records, found {len(batches)}")
