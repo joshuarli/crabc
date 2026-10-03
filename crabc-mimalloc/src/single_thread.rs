@@ -408,13 +408,19 @@ enum PageCommitError {
 /// `Ok(None)` remains the source no-page/OOM signal eligible for one forced
 /// retry. This distinct result prevents a failed remote/local collection or
 /// queue invariant from being misread as OOM after it may already have
-/// detached a corrupt remote list. The allocator retains a persistent poison
-/// record before returning this error.
+/// detached a corrupt remote list. Collection and publication failures retain
+/// their persistent poison before returning. On x86-64, fresh-initialization
+/// and live-validity decisions keep the exact task in the issuing engine's
+/// existing pending slot. Only the phase or unphased-cleanup boundary takes
+/// that original task; generic Result propagation carries no claim custody.
 #[derive(Debug)]
 enum GenericPathError {
+    #[cfg(not(target_arch = "x86_64"))]
     FreshInitialization(PendingFreshOsPageInitialization),
     #[cfg(target_arch = "x86_64")]
-    LiveValidity(PendingLivePageValidity),
+    FreshInitialization,
+    #[cfg(target_arch = "x86_64")]
+    LiveValidity,
     Collection(PageCollectError),
     Local(FreeListError),
     PageCommit(PageCommitError),
@@ -39046,7 +39052,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if collection != GenericAllocationCollection::Mini {
             match self.observe_collection_prefix() {
                 Ok(()) => {},
-                Err(GenericPathError::LiveValidity(task)) => return Ok(DeferredFreeAllocationPhase::LiveValidity(task)),
+                Err(GenericPathError::LiveValidity) => return self.take_generic_error_phase(GenericPathError::LiveValidity),
                 Err(_) => { self.page_commit_poison = true; return Err(GuardedCanonicalAllocationRefusal); },
             }
         }
@@ -39111,9 +39117,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             GenericAllocationCollection::Force => match self.attempt_deferred_free_allocation(continuation) {
                 Ok(block) => Ok(DeferredFreeAllocationPhase::Complete(block)),
                 #[cfg(target_arch = "x86_64")]
-                Err(GenericPathError::FreshInitialization(pending)) => Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+                Err(GenericPathError::FreshInitialization) => self.take_generic_error_phase(GenericPathError::FreshInitialization),
                 #[cfg(target_arch = "x86_64")]
-                Err(GenericPathError::LiveValidity(pending)) => Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
+                Err(GenericPathError::LiveValidity) => self.take_generic_error_phase(GenericPathError::LiveValidity),
                 Err(_) => Err(GuardedCanonicalAllocationRefusal),
             },
             GenericAllocationCollection::Mini | GenericAllocationCollection::Full => {
@@ -39272,9 +39278,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         match self.attempt_deferred_free_allocation(continuation) {
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
                             #[cfg(target_arch = "x86_64")]
-                            Err(GenericPathError::FreshInitialization(pending)) => return Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+                            Err(GenericPathError::FreshInitialization) => return self.take_generic_error_phase(GenericPathError::FreshInitialization),
                             #[cfg(target_arch = "x86_64")]
-                            Err(GenericPathError::LiveValidity(pending)) => return Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
+                            Err(GenericPathError::LiveValidity) => return self.take_generic_error_phase(GenericPathError::LiveValidity),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
@@ -39294,9 +39300,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                         match self.attempt_deferred_free_allocation(continuation) {
                             Ok(Some(block)) => return Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
                             #[cfg(target_arch = "x86_64")]
-                            Err(GenericPathError::FreshInitialization(pending)) => return Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+                            Err(GenericPathError::FreshInitialization) => return self.take_generic_error_phase(GenericPathError::FreshInitialization),
                             #[cfg(target_arch = "x86_64")]
-                            Err(GenericPathError::LiveValidity(pending)) => return Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
+                            Err(GenericPathError::LiveValidity) => return self.take_generic_error_phase(GenericPathError::LiveValidity),
                             Err(_) => return Err(GuardedCanonicalAllocationRefusal),
                             Ok(None) => {}
                         }
@@ -39381,9 +39387,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         match self.attempt_deferred_free_allocation(continuation) {
             Ok(Some(block)) => Ok(DeferredFreeAllocationPhase::Complete(Some(block))),
             #[cfg(target_arch = "x86_64")]
-            Err(GenericPathError::FreshInitialization(pending)) => Ok(DeferredFreeAllocationPhase::FreshInitialization(pending)),
+            Err(GenericPathError::FreshInitialization) => self.take_generic_error_phase(GenericPathError::FreshInitialization),
             #[cfg(target_arch = "x86_64")]
-            Err(GenericPathError::LiveValidity(pending)) => Ok(DeferredFreeAllocationPhase::LiveValidity(pending)),
+            Err(GenericPathError::LiveValidity) => self.take_generic_error_phase(GenericPathError::LiveValidity),
             Err(_) => Err(GuardedCanonicalAllocationRefusal),
             Ok(None) => self.begin_checked_collection_phase(GenericAllocationCollection::Force, continuation),
         }
@@ -39758,7 +39764,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                                 // A retained assertion owns this Page and cannot
                                 // be discarded as a recoverable commitment miss.
                                 #[cfg(target_arch = "x86_64")]
-                                let retained_assertion = matches!(&extension, Err(GenericPathError::LiveValidity(_)));
+                                let retained_assertion = matches!(&extension, Err(GenericPathError::LiveValidity));
                                 #[cfg(not(target_arch = "x86_64"))]
                                 let retained_assertion = false;
                                 if self.page_commit_poison || retained_assertion {
@@ -40562,7 +40568,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 let _ = self.session.set_direct_page(index, EMPTY_PAGE.as_ptr());
             }
         }
-        Err(GenericPathError::LiveValidity(task))
+        Err(self.retain_generic_live_error(task))
     }
 
     /// Checks the complete source Theap before selecting deferred-free.
@@ -40585,7 +40591,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let assertion = failure.invariant.into_live_page_validity_assertion()
             .map_err(|_| GenericPathError::Lifecycle)?;
         let issuer = unsafe { Theap::owner_snapshot_at(theap) }.ok_or(GenericPathError::Lifecycle)?;
-        Err(GenericPathError::LiveValidity(PendingLivePageValidity {
+        Err(self.retain_generic_live_error(PendingLivePageValidity {
             page: failure.page, theap, heap: issuer.heap, subprocess: issuer.subprocess,
             assertion, retirement_marker: FreshTaskRetirementMarker::Unmarked,
         }))
@@ -40597,10 +40603,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     pub(crate) fn retain_collection_prefix_failure(&mut self) -> bool {
         match self.observe_collection_prefix() {
             Ok(()) => true,
-            Err(GenericPathError::LiveValidity(task)) => {
-                if let Err(task) = self.retain_live_page_validity(task) { core::mem::forget(task); }
-                false
-            }
+            Err(GenericPathError::LiveValidity) => false,
             Err(_) => { self.page_commit_poison = true; false },
         }
     }
@@ -40612,15 +40615,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn retain_live_page_transition_failure(&mut self, page: NonNull<Page>) -> bool {
         match self.observe_live_page_validity(page, true) {
             Ok(()) => true,
-            Err(GenericPathError::LiveValidity(task)) => {
-                if let Err(task) = self.retain_live_page_validity(task) {
-                    // A foreign or occupied issuer supplies no release right.
-                    // Preserve custody and stop all later source operations.
-                    core::mem::forget(task);
-                    self.page_commit_poison = true;
-                }
-                false
-            }
+            Err(GenericPathError::LiveValidity) => false,
             Err(_) => { self.page_commit_poison = true; false }
         }
     }
@@ -42558,9 +42553,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         error: GenericPathError,
     ) -> GenericPathError {
         let retained_error = match &error {
+            #[cfg(not(target_arch = "x86_64"))]
             GenericPathError::FreshInitialization(_) => return error,
             #[cfg(target_arch = "x86_64")]
-            GenericPathError::LiveValidity(_) => return error,
+            GenericPathError::FreshInitialization => return error,
+            #[cfg(target_arch = "x86_64")]
+            GenericPathError::LiveValidity => return error,
             GenericPathError::Collection(error) => *error,
             GenericPathError::Local(error) => PageCollectError::Local(*error),
             GenericPathError::PageCommit(error) => {
@@ -43071,7 +43069,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: actual PageMap and matched statistics publication completed;
         // the original session retains this Page before zero or list writes.
         if !unsafe { self.session.initialize_fresh_page_keys(page) } {
-            return Err(GenericPathError::FreshInitialization(PendingFreshOsPageInitialization {
+            return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
                 claim, page, theap: self.theap_identity(),
                 metadata_stage: FreshOsMetadataStage::Registered { statistics_bin },
                 failure: FreshOsPageInitializationFailure::PageKeysRefused,
@@ -43082,7 +43080,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the exact original claim retains its entire readable
         // committed area; no free-list link or client has been published.
         let claim = unsafe { self.observe_fresh_os_initialization(claim, page, statistics_bin) }
-            .map_err(GenericPathError::FreshInitialization)?;
+            .map_err(|pending| {
+                #[cfg(target_arch = "x86_64")]
+                { self.retain_generic_fresh_error(pending) }
+                #[cfg(not(target_arch = "x86_64"))]
+                { GenericPathError::FreshInitialization(pending) }
+            })?;
 
         let initialized = (|| -> Result<(), FreshOsPageInitializationFailure> {
             // SAFETY: an on-demand claim committed its first page area above;
@@ -43146,7 +43149,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         })();
         if let Err(failure) = initialized {
             #[cfg(target_arch = "x86_64")]
-            return Err(GenericPathError::FreshInitialization(PendingFreshOsPageInitialization {
+            return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
                 claim, page, theap: self.theap_identity(),
                 metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
                 retirement_marker: FreshTaskRetirementMarker::Unmarked,
@@ -43210,6 +43213,50 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
         }
         Ok(claim)
+    }
+
+    // Terminal decisions travel through the generic success path without
+    // copying the original claim or live task into every Result temporary.
+    // The same issuing engine keeps custody until a phase boundary takes it.
+    #[cfg(target_arch = "x86_64")]
+    fn retain_generic_fresh_error(&mut self, pending: PendingFreshOsPageInitialization) -> GenericPathError {
+        match self.retain_fresh_os_initialization(pending) {
+            Ok(()) => GenericPathError::FreshInitialization,
+            Err(pending) => {
+                // Refused issuer/slot admission grants no release authority.
+                core::mem::forget(pending);
+                self.page_commit_poison = true;
+                GenericPathError::Lifecycle
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-3"))]
+    fn retain_generic_live_error(&mut self, pending: PendingLivePageValidity) -> GenericPathError {
+        match self.retain_live_page_validity(pending) {
+            Ok(()) => GenericPathError::LiveValidity,
+            Err(pending) => {
+                // Preserve the refused task and any prior slot's exact owner.
+                core::mem::forget(pending);
+                self.page_commit_poison = true;
+                GenericPathError::Lifecycle
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn take_generic_error_phase(&mut self, error: GenericPathError) -> GuardedCanonicalAllocationPhase {
+        let phase = match error {
+            GenericPathError::FreshInitialization => self.take_pending_fresh_initialization()
+                .map(DeferredFreeAllocationPhase::FreshInitialization),
+            GenericPathError::LiveValidity => self.take_pending_live_page_validity()
+                .map(DeferredFreeAllocationPhase::LiveValidity),
+            _ => None,
+        };
+        phase.ok_or_else(|| {
+            self.page_commit_poison = true;
+            GuardedCanonicalAllocationRefusal
+        })
     }
 
     /// Retains a refused cleanup at its exact remaining metadata stage.
@@ -43328,16 +43375,22 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     fn cleanup_unphased_initialization_error(&mut self, error: GenericPathError) {
         #[cfg(target_arch = "x86_64")]
-        let error = match error {
-            GenericPathError::LiveValidity(pending) => {
-                if let Err(pending) = self.retain_live_page_validity(pending) {
-                    core::mem::forget(pending);
-                }
-                return;
+        let pending = match error {
+            // The producer already retained the detached original live task.
+            GenericPathError::LiveValidity => return,
+            GenericPathError::FreshInitialization => {
+                let pending = self.take_pending_fresh_initialization();
+                if pending.is_none() { self.page_commit_poison = true; }
+                pending
             }
-            error => error,
+            _ => None,
         };
-        if let GenericPathError::FreshInitialization(pending) = error {
+        #[cfg(not(target_arch = "x86_64"))]
+        let pending = match error {
+            GenericPathError::FreshInitialization(pending) => Some(pending),
+            _ => None,
+        };
+        if let Some(pending) = pending {
             if matches!(pending.failure, FreshOsPageInitializationFailure::SourceObservation(
                 crate::page_validity::SourcePageInvariant::InitiallyZero,
             )) {
@@ -43675,7 +43728,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         match self.extend_page_before_allocation(page) {
             Ok(()) => {}
             #[cfg(target_arch = "x86_64")]
-            Err(error @ GenericPathError::LiveValidity(_)) => return Err(error),
+            Err(error @ GenericPathError::LiveValidity) => return Err(error),
             Err(_) => {
                 self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
                 return Ok(None);
@@ -52097,6 +52150,70 @@ mod tests {
         });
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn generic_fresh_error_slot_transfers_original_claim_or_cleans_unphased() {
+        for phased in [true, false] {
+            with_allocator(|allocator| {
+                let claim = OsAlignedPageClaim::allocate(
+                    allocator.page_map.memory_config(), 128 * KIB, 128 * KIB,
+                ).ok().unwrap();
+                let layout = claim.layout();
+                let memory = claim.memory_id().unwrap();
+                let start = claim.slice_start().unwrap();
+                // SAFETY: this exact private claim retains full backing; only
+                // primary, aliases and lookup are published, never a client/list.
+                let page = unsafe { allocator.session.publish_fresh_primary_page(
+                    claim.metadata().unwrap(), layout.block_size(), layout.page_offset(),
+                    layout.reserved(), 0, memory.initially_zero(), memory,
+                ) }.unwrap();
+                assert!(unsafe { claim.publish_secondary_metadata(page) });
+                unsafe { allocator.page_map.register_range(start.as_ptr(), layout.page_map_size(), page) }.unwrap();
+                let statistics_bin = unsafe { source_page_statistics_bin_at(page) }.unwrap();
+                assert!(allocator.session.theap().record_page_registered(statistics_bin));
+                // Stop at the real initialized-primary boundary before keys
+                // or list publication; the transport must own this exact claim.
+                let error = allocator.retain_generic_fresh_error(PendingFreshOsPageInitialization {
+                    claim, page, theap: allocator.theap_identity(),
+                    metadata_stage: FreshOsMetadataStage::Registered { statistics_bin },
+                    failure: FreshOsPageInitializationFailure::PageKeysRefused,
+                    retirement_marker: FreshTaskRetirementMarker::Unmarked,
+                });
+                assert!(matches!(error, GenericPathError::FreshInitialization));
+                assert!(!allocator.page_commit_poison);
+                assert_eq!(unsafe { allocator.page_map.checked_lookup(start.as_ptr()) }, page.as_ptr());
+                if phased {
+                    let phase = allocator.take_generic_error_phase(error).unwrap();
+                    assert!(allocator.pending_fresh_initialization.is_none());
+                    let DeferredFreeAllocationPhase::FreshInitialization(pending) = phase else {
+                        panic!("the fresh decision transfers its original claim");
+                    };
+                    assert_eq!(pending.page, page);
+                    assert_eq!(pending.theap, allocator.theap_identity());
+                    assert_eq!(pending.claim.slice_start(), Some(start));
+                    assert_eq!(pending.metadata_stage, FreshOsMetadataStage::Registered { statistics_bin });
+                    assert_eq!(pending.failure(), FreshOsPageInitializationFailure::PageKeysRefused);
+                    assert!(!pending.has_retirement_refusal_marker());
+                    // SAFETY: the original engine and full backing remain
+                    // admitted; no observer, callback, queue or client escaped.
+                    unsafe { allocator.cleanup_fresh_os_initialization(pending) }.unwrap();
+                } else {
+                    allocator.cleanup_unphased_initialization_error(error);
+                }
+                assert!(allocator.pending_fresh_initialization.is_none());
+                assert!(!allocator.has_pending_os_release());
+                assert!(unsafe { allocator.page_map.checked_lookup(start.as_ptr()) }.is_null());
+                assert_eq!(allocator.test_page_count(), 0);
+                assert!(!allocator.page_commit_poison);
+                let client = allocator.allocate(8192, false).unwrap();
+                unsafe { client.as_ptr().write_bytes(0x36, 8192); }
+                assert!(unsafe { core::slice::from_raw_parts(client.as_ptr(), 8192) }
+                    .iter().all(|byte| *byte == 0x36));
+                unsafe { allocator.free(client) }.unwrap();
+            });
+        }
+    }
+
     #[cfg(all(target_arch = "x86_64", not(miri), feature = "mi-debug-3"))]
     #[test]
     fn fresh_os_task_changed_marker_acknowledgement_retains_original_child_custody() {
@@ -52271,9 +52388,8 @@ mod tests {
                     continue;
                 }
                 let pending = observed.err().unwrap();
-                allocator.cleanup_unphased_initialization_error(
-                    GenericPathError::FreshInitialization(pending),
-                );
+                let error = allocator.retain_generic_fresh_error(pending);
+                allocator.cleanup_unphased_initialization_error(error);
                 let pending = allocator.take_pending_fresh_initialization()
                     .expect("unphased source assertion retains its original registered candidate");
                 assert_eq!(pending.failure(), FreshOsPageInitializationFailure::SourceObservation(crate::page_validity::SourcePageInvariant::InitiallyZero));
