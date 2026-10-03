@@ -3599,9 +3599,26 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// have passed the source
     /// `0 <= node < 8 * MI_INTPTR_SIZE - 1` predicate.
     #[inline]
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn mbind_failure(&self, numa_node: i32, errno: Errno) {
         let message = SourceFormattedMessage::mbind_failure(numa_node, errno);
         unsafe { self.output.warning_from_source_options(message) };
+    }
+
+    /// Delivers the locally formatted valid-node mbind body from its original storage.
+    /// The source gate borrows it only through synchronous callback delivery.
+    ///
+    /// # Safety
+    /// The caller retains process startup serialization and output callback
+    /// lifetimes at the matching source warning branch; `numa_node` must
+    /// satisfy `0 <= node < 8 * MI_INTPTR_SIZE - 1`.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn mbind_failure(&self, numa_node: i32, errno: Errno) {
+        let message = SourceFormattedMessage::mbind_failure(numa_node, errno);
+        // SAFETY: the source route retains callback admission; this original
+        // body remains immutable until all synchronous output returns.
+        unsafe { self.output.warning_from_source_options_borrowed(&message) };
     }
 
     /// Delivers one selected source huge-page warning while the caller still
@@ -3612,8 +3629,24 @@ impl<'owner> HugePageWarningRoute<'owner> {
     /// [`Self::mbind_failure`] apply. The caller must invoke this at the
     /// matching pinned source branch, before transferring or releasing pages.
     #[inline]
+    #[cfg(not(target_arch = "x86_64"))]
     pub(crate) unsafe fn huge_warning(&self, message: SourceFormattedMessage) {
         unsafe { self.output.warning_from_source_options(message) };
+    }
+
+    /// Delivers the owned huge-page body from its original storage.
+    /// The source gate borrows it only through synchronous callback delivery.
+    ///
+    /// # Safety
+    /// The caller retains process startup serialization and output callback
+    /// lifetimes at the matching source warning branch before transferring or
+    /// releasing any mapped primitive.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn huge_warning(&self, message: SourceFormattedMessage) {
+        // SAFETY: the source route retains callback admission; this original
+        // body remains immutable until all synchronous output returns.
+        unsafe { self.output.warning_from_source_options_borrowed(&message) };
     }
 }
 
@@ -5421,6 +5454,62 @@ mod tests {
         assert!(handler_capture.after_output.load(Ordering::Relaxed));
         assert_eq!(capture.capture.count(), 10);
         assert_eq!(primary.as_c_str().to_bytes(), b"borrowed gate body\n");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn huge_warning_route_preserves_nested_mbind_huge_and_error_delivery() {
+        struct RouteCapture {
+            capture: Capture,
+            owner: *const OutputOwner,
+            reentered: AtomicBool,
+        }
+        unsafe extern "C" fn output(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: the test retains this callback image, its owner, and
+            // each NUL-terminated body until synchronous dispatch returns.
+            let capture = unsafe { &*(argument as *const RouteCapture) };
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            unsafe { capture_output(message, capture_argument(&capture.capture)) };
+            if bytes == b"outer huge warning\n"
+                && !capture.reentered.swap(true, Ordering::Relaxed) {
+                let owner = unsafe { &*capture.owner };
+                let route = super::HugePageWarningRoute::new(owner);
+                // SAFETY: the original output admission stays serialized;
+                // node two satisfies the source predicate. This formats its
+                // failure body without invoking any host NUMA primitive.
+                unsafe {
+                    route.mbind_failure(2, Errno::NOMEM);
+                    route.huge_warning(source_message(b"nested huge warning\n\0"));
+                    let _ = owner.error_message(Errno::NOMEM, source_message(b"nested route error\n\0"));
+                }
+            }
+        }
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let entries = environment_entries(&[b"mimalloc_show_errors=1"]);
+        install_option_trace_environment(&entries);
+        let owner = output_owner();
+        // SAFETY: the environment and owner remain stable through source reads.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        let capture = RouteCapture { capture: Capture::new(), owner: &owner,
+            reentered: AtomicBool::new(false) };
+        // SAFETY: the local registration, owner, and capture are retained
+        // until every nested warning and error callback has returned.
+        unsafe { owner.register_output(Some(output), core::ptr::from_ref(&capture).cast_mut().cast()) };
+        capture.capture.reset();
+        let route = super::HugePageWarningRoute::new(&owner);
+        unsafe { route.huge_warning(source_message(b"outer huge warning\n\0")) };
+        assert!(capture.reentered.load(Ordering::Relaxed));
+        assert_eq!(capture.capture.count(), 8);
+        for index in [0, 2, 4] {
+            assert_live_thread_warning_prefix(capture.capture.message(index));
+        }
+        assert_eq!(capture.capture.message(1), b"outer huge warning\n");
+        assert_eq!(capture.capture.message(3),
+            b"failed to bind huge (1GiB) pages to numa node 2 (error: 12 (0x0C))\n");
+        assert_eq!(capture.capture.message(5), b"nested huge warning\n");
+        assert!(capture.capture.message(6).starts_with(b"mimalloc: error: thread 0x"));
+        assert_eq!(capture.capture.message(7), b"nested route error\n");
     }
 
     #[test]
