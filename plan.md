@@ -46,7 +46,7 @@ Update this small section in place when the implementation frontier changes.
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
 - **Resumed (2026-10-03):** source/compiler work and ordinary valid-client
-  checks are active with parallel lanes and continuous integration. Historical branches
+  checks from the settled parallel lanes are integrated. Historical branches
   and raw failures are retained; the two reported opt0 failures remain open.
 - **Core fixes:** mixed-family resolver configuration now retains the first three
   nameservers in file order, and C zero-timeout batches retire their sockets and
@@ -69,6 +69,10 @@ Update this small section in place when the implementation frontier changes.
   project only the local or immutable fields they need. Secure metadata uses the actual mapping
   owner. Compiler evidence removes large aggregate temporaries; ordinary tests
   establish these changes without closing either reported runtime failure.
+  Direct worker installation reduces its opt0 entry frame from 4,744 to 952 bytes;
+  dynamic attachment removes separate result temporaries. These are individual
+  compiler frames, not peak-stack or 16-KiB qualification. Metadata refusal tests
+  distinguish one-shot recovery from sustained mapping unavailability.
 - **Verification:** merged source passes nine compiler profiles and focused opt0
   ownership/worker/collection checks. Fresh debug comparisons cover selected-C
   dynamic allocation and native fork, signals, timers, stdio, locale, TLS, loader,
@@ -93,11 +97,14 @@ Update this small section in place when the implementation frontier changes.
   image `3d5e3a88e4f5` are restored, alongside pinned source oracles, package
   archives, std/provider vendors and Lua/Rustybench/Rustix inputs. Current tool
   authorities authenticate these inputs; resolver and C performance launches use
-  the inspected immutable image ID. Frozen ABI/header/coverage digests are unchanged.
+  the inspected immutable image ID. Debug stdio producers and readers bind products
+  to source content without admitting debug products for release qualification.
+  Frozen ABI/header/coverage digests are unchanged.
 - **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
   settled lanes' original programs/source, raw failures and focused proofs before
   their worktrees are removed. Merged checks are in
-  `.work/x86_64/tmp/resume12*-merged-*.log`. Existing allocator and hardware-policy
+  `.work/x86_64/tmp/resume12*-merged-*.log` and `resume13*-merged-*.log`.
+  All settled lane worktrees have been removed. Existing allocator and hardware-policy
   reports remain available. Historical receipts are not transferred to current
   products; other projects' Docker state remains outside cleanup.
 - **On resume:** address actual allocator failures, then investigate performance
