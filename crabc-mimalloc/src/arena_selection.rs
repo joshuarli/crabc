@@ -129,7 +129,7 @@ pub(crate) struct ArenaSearch {
 }
 
 impl ArenaSearch {
-    fn start_index(self, cycle: usize) -> usize {
+    pub(crate) fn start_index(self, cycle: usize) -> usize {
         if cycle <= 1 {
             return 0;
         }
@@ -147,7 +147,7 @@ impl ArenaSearch {
         start
     }
 
-    fn registry_index(count: usize, turn: usize, start: usize) -> Option<usize> {
+    pub(crate) fn registry_index(count: usize, turn: usize, start: usize) -> Option<usize> {
         if turn >= count {
             return None;
         }
