@@ -991,8 +991,11 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         requested_arena: Option<ArenaView<'heap>>,
         arena_allocation_allowed: bool,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        let thread = current_thread_identity()
-            .ok_or(DynamicTheapBeginError::Rejected(DynamicTheapError::InvalidCurrentThread))?;
+        // A missing identity carries no attachment. Keep that refusal scalar
+        // instead of transporting an owner-sized error through `?`.
+        let Some(thread) = current_thread_identity() else {
+            return Self::rejected_begin_result(DynamicTheapError::InvalidCurrentThread);
+        };
         let roots = UnrelatedRoots::capture();
         // Source `_mi_heap_theap_get_or_init` may replace the cached root only
         // after a regular slot exists. This bounded owner intentionally has no
@@ -1000,9 +1003,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         // rejected before the later-ticket TLD sequence or metadata backing
         // can be consumed.
         if !roots.cached_is_canonical_empty() {
-            return Err(DynamicTheapBeginError::Rejected(
-                DynamicTheapError::RootOwnership,
-            ));
+            return Self::rejected_begin_result(DynamicTheapError::RootOwnership);
         }
         let tld = match unsafe {
             ThreadLocalDataOwner::begin_later_dynamic_attachment_with_metadata(
@@ -1011,14 +1012,10 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         } {
             Ok(tld) => tld,
             Err(ThreadLocalDataError::FirstTicketReserved) => {
-                return Err(DynamicTheapBeginError::Rejected(
-                    DynamicTheapError::FirstTicketReserved,
-                ));
+                return Self::rejected_begin_result(DynamicTheapError::FirstTicketReserved);
             }
             Err(error) => {
-                return Err(DynamicTheapBeginError::Rejected(
-                    DynamicTheapError::ThreadLocalData(error),
-                ));
+                return Self::rejected_begin_result(DynamicTheapError::ThreadLocalData(error));
             }
         };
         // Complete TLD demand before reserving the larger attachment and its
@@ -1074,10 +1071,10 @@ impl<'heap> DynamicTheapAttachment<'heap> {
                 Ok(attachment)
             }
             Err(DynamicTheapPublicationError::Rejected(error)) => {
-                Err(DynamicTheapBeginError::Rejected(error))
+                Self::rejected_begin_result(error)
             }
             Err(DynamicTheapPublicationError::Retained(error)) => {
-                Err(attachment.into_retained_begin_failure(error))
+                attachment.into_retained_begin_result(error)
             }
         }
     }
@@ -2127,17 +2124,27 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         Ok(())
     }
 
-    fn into_retained_begin_failure(
-        mut self,
-        error: DynamicTheapError,
-    ) -> DynamicTheapBeginError<'heap> {
+    /// Forms a scalar refusal in the final result destination. The ordinary
+    /// TLD-demand and publication frames do not need an attachment-sized
+    /// intermediate error for a branch that never transfers an owner.
+    #[cold]
+    #[inline(never)]
+    fn rejected_begin_result(error: DynamicTheapError) -> Result<Self, DynamicTheapBeginError<'heap>> {
+        Err(DynamicTheapBeginError::Rejected(error))
+    }
+
+    /// Transfers the retained owner directly into the final failure result.
+    /// Returning the nested error first would reserve another complete owner
+    /// image in the publication frame even when attachment succeeds.
+    #[cold]
+    #[inline(never)]
+    fn into_retained_begin_result(
+        mut self, error: DynamicTheapError,
+    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
         if self.state != DynamicAttachmentState::AwaitingKeyRelease {
             self.state = DynamicAttachmentState::Poisoned;
         }
-        DynamicTheapBeginError::Retained {
-            error,
-            attachment: self,
-        }
+        Err(DynamicTheapBeginError::Retained { error, attachment: self })
     }
 
     #[inline]
@@ -25015,6 +25022,9 @@ mod tests {
             joins.push(thread::spawn(move || {
                 let (subprocess, metadata, registry) = fixture();
                 consume_static_ticket(subprocess, metadata);
+                let roots = UnrelatedRoots::capture();
+                assert_eq!(subprocess.live_thread_count(), 0);
+                assert_eq!(registry.test_live_lease_count(), 0);
                 let mut storage = Box::pin(PersistentWorkerTheapStorage::new());
                 unsafe {
                     storage
@@ -25028,6 +25038,8 @@ mod tests {
                         )
                 }
                 .expect("the prepared worker attaches one persistent TLD/Theap");
+                assert_eq!(subprocess.live_thread_count(), 1);
+                assert_eq!(registry.test_live_lease_count(), 1);
 
                 let thread = storage
                     .as_mut()
@@ -25082,6 +25094,9 @@ mod tests {
                     .as_mut()
                     .teardown()
                     .expect("the quiescent persistent worker tears down in source order");
+                assert_eq!(subprocess.live_thread_count(), 0);
+                assert_eq!(registry.test_live_lease_count(), 0);
+                assert!(roots.still_matches());
                 sender
                     .send(Observation {
                         thread,
