@@ -31,6 +31,13 @@ static size_t module_ids[2];
 static void *main_tls_data[2];
 static pthread_key_t retirement_key;
 static atomic_uint retirement_passes;
+static atomic_uint cancel_ready;
+static atomic_uint cancel_release;
+static atomic_uint cancel_cleanup_done;
+
+struct cancel_tls {
+    unsigned *addresses[2];
+};
 
 struct tls_retirement {
     unsigned values[2];
@@ -112,6 +119,8 @@ static void retire_tls(void *argument)
 {
     struct tls_retirement *retirement = argument;
     CHECK(pthread_getspecific(retirement_key) == 0);
+    if (retirement->values[0] == 141)
+        CHECK(atomic_load(&cancel_cleanup_done) == 1);
     struct tls_snapshot snapshot = snapshot_tls();
     for (unsigned index = 0; index != 2; ++index) {
         CHECK(plugins[index].ready());
@@ -194,6 +203,56 @@ static void *worker(void *argument)
     return 0;
 }
 
+/* Cancellation cleanup precedes TSD destruction and worker TLS retirement.
+ * The callback may enter the loader again while retained modules and this
+ * worker's independently initialized TLS remain live. */
+static void cancel_tls_cleanup(void *argument)
+{
+    struct cancel_tls *state = argument;
+    struct tls_snapshot snapshot = snapshot_tls();
+    for (unsigned index = 0; index != 2; ++index) {
+        CHECK(plugins[index].address() == state->addresses[index]);
+        CHECK(plugins[index].get() == (index ? 242 : 141));
+        CHECK(snapshot.ids[index] == module_ids[index]);
+        CHECK(snapshot.data[index] != main_tls_data[index]);
+        check_tls_symbol(index);
+        void *handle = dlopen(index ? "libowned-runtime-tls-two.so"
+                                     : "libowned-runtime-tls-one.so", RTLD_NOW | RTLD_NOLOAD);
+        CHECK(handle == plugins[index].handle);
+        CHECK(dlclose(handle) == 0);
+    }
+    unsigned char *allocation = malloc(48 * 1024);
+    CHECK(allocation);
+    memset(allocation, 0x71, 48 * 1024);
+    for (size_t index = 0; index != 48 * 1024; ++index)
+        CHECK(allocation[index] == 0x71);
+    free(allocation);
+    atomic_store(&cancel_cleanup_done, 1);
+}
+
+static void *cancel_worker(void *argument)
+{
+    struct cancel_tls *state = argument;
+    wait_stage(1);
+    CHECK(plugins[0].get() == 101);
+    plugins[0].set(141);
+    state->addresses[0] = plugins[0].address();
+    wait_stage(2);
+    CHECK(plugins[1].get() == 202);
+    plugins[1].set(242);
+    state->addresses[1] = plugins[1].address();
+    register_tls_retirement();
+    pthread_cleanup_push(cancel_tls_cleanup, state);
+    atomic_store(&cancel_ready, 1);
+    /* The parent requests cancellation only after retained-handle reopen.
+     * No condition-variable mutex is held at the explicit cancellation point. */
+    while (!atomic_load(&cancel_release)) { }
+    pthread_testcancel();
+    CHECK(0);
+    pthread_cleanup_pop(0);
+    return 0;
+}
+
 static void *fresh_worker(void *argument)
 {
     unsigned round = (unsigned)(uintptr_t)argument;
@@ -237,10 +296,12 @@ static void wait_workers(unsigned index)
 
 int main(void)
 {
-    pthread_t early, late;
+    pthread_t early, late, canceled;
+    struct cancel_tls cancel_state = { { 0, 0 } };
     CHECK(pthread_key_create(&retirement_key, retire_tls) == 0);
     CHECK(pthread_create(&early, 0, worker, (void *)(uintptr_t)1) == 0);
     wait_started(1);
+    CHECK(pthread_create(&canceled, 0, cancel_worker, &cancel_state) == 0);
     plugins[0] = open_plugin("libowned-runtime-tls-one.so");
     CHECK(plugins[0].get() == 101);
     plugins[0].set(131);
@@ -262,6 +323,7 @@ int main(void)
     }
     advance(2);
     wait_workers(1);
+    while (!atomic_load(&cancel_ready)) { }
 
     for (unsigned index = 0; index != 2; ++index) {
         void *old = plugins[index].handle;
@@ -282,18 +344,24 @@ int main(void)
         CHECK(after_close.ids[index] == before_close.ids[index]);
         CHECK(after_close.data[index] == before_close.data[index]);
     }
+    CHECK(pthread_cancel(canceled) == 0);
+    atomic_store(&cancel_release, 1);
+    void *cancel_result = 0;
+    CHECK(pthread_join(canceled, &cancel_result) == 0);
+    CHECK(cancel_result == PTHREAD_CANCELED);
+    CHECK(atomic_load(&cancel_cleanup_done) == 1);
     advance(3);
     CHECK(pthread_join(early, 0) == 0 && pthread_join(late, 0) == 0);
-    CHECK(atomic_load(&retirement_passes) == 4);
+    CHECK(atomic_load(&retirement_passes) == 6);
     for (uintptr_t round = 0; round != 2; ++round) {
         pthread_t fresh;
         CHECK(pthread_create(&fresh, 0, fresh_worker, (void *)round) == 0);
         CHECK(pthread_join(fresh, 0) == 0);
-        CHECK(atomic_load(&retirement_passes) == 6 + 2 * round);
+        CHECK(atomic_load(&retirement_passes) == 8 + 2 * round);
         CHECK(plugins[0].get() == 131 && plugins[1].get() == 231);
     }
     CHECK(pthread_key_delete(retirement_key) == 0);
     CHECK(dlclose(plugins[1].handle) == 0 && dlclose(plugins[0].handle) == 0);
-    puts("runtime TLS: two growth generations, retained reopen, successor workers, allocating TSD cleanup");
+    puts("runtime TLS: two growth generations, retained reopen, successor workers, cancellation and allocating TSD cleanup");
     return 0;
 }
