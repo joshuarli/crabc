@@ -15198,10 +15198,19 @@ pub unsafe fn native_block_size(block: core::ptr::NonNull<u8>) -> Option<usize> 
         return None;
     };
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
-    // SAFETY: forwarded exact-live native-client contract.
-    match unsafe { page_map.lookup_live_allocation(block) } {
-        Ok(Some(allocation)) => Some(allocation.block_size()),
-        Ok(None) | Err(_) => None,
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the exact live client retains the immutable source stride;
+        // this observation grants no owner or canonical-block authority.
+        unsafe { page_map.lookup_live_block_size(block) }.ok().flatten()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        // SAFETY: forwarded exact-live native-client contract.
+        match unsafe { page_map.lookup_live_allocation(block) } {
+            Ok(Some(allocation)) => Some(allocation.block_size()),
+            Ok(None) | Err(_) => None,
+        }
     }
 }
 

@@ -214,9 +214,14 @@ Update this small section in place when the implementation frontier changes.
   `.work/allocator-x86_64/reports/allocator/x86_64/perf-engine/`.
   Guarded profiles now use the complete engine for sampler advancement and
   aligned-base tagging; focused opt0 owner cycles pass. Those changes follow
-  the measured snapshot. Compiler analysis of required teardown continuations
-  continues. Performance acceptance and complete correctness/codegen
-  prerequisites remain open.
+  the measured snapshot. Further merged changes share startup and callback
+  admission, narrow native child release, remove owner-result transport, isolate
+  metadata initialization and static inactive preparation, and read live block
+  stride without unrelated page classification. Nine combined compiler profiles
+  and eleven focused opt0 checks pass, including aligned boundary/guarded
+  payload preservation and ordinary teardown. Rejected compiler trials retain
+  their measured code or stack regressions. Performance acceptance and complete
+  correctness/codegen prerequisites remain open.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
