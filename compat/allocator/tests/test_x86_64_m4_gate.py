@@ -148,6 +148,27 @@ class M4GateContractTests(unittest.TestCase):
             self.assertNotIn("-O3", command)
             self.assertIn("-DMI_DEBUG=1", command)
 
+    def test_xmalloc_adapter_selects_existing_feature_and_source_macro(self) -> None:
+        self.assertEqual(gate.api_profile_flags("xmalloc"),
+                         (*gate.api_profile_flags("release"), "-DMI_XMALLOC=1"))
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            with mock.patch.object(gate, "debug_adapter_environment", return_value=(
+                    ["/cargo", "-Zbuild-std=core,compiler_builtins"], {}, {})), \
+                    mock.patch.object(harness, "require_tool", return_value="/cargo"), \
+                    mock.patch.object(harness, "command_record", return_value={"status": 0}) as compile, \
+                    mock.patch.object(harness, "require_success"), \
+                    mock.patch.object(harness, "artifact_record", return_value={}):
+                library = gate.build_adapter_library(Path(directory), "xmalloc", build_profile="debug")
+            command = compile.call_args.args[0]
+            self.assertEqual(command[command.index("--features") + 1], "crabc-mimalloc/mi-xmalloc")
+            self.assertNotIn("--release", command)
+            self.assertEqual(library.parent.name, "debug")
+
+    def test_unknown_api_profile_still_rejects_flags_and_features(self) -> None:
+        for selector in (gate.api_profile_flags, gate.api_profile_features):
+            with self.subTest(selector=selector.__name__), self.assertRaises(KeyError):
+                selector("unknown")
+
     def test_guarded_profiles_select_independent_source_and_rust_features(self) -> None:
         for profile, base in (("guarded", "release"), ("guarded-debug-1", "debug-1"),
                               ("guarded-secure-3", "secure-3"), ("guarded-stat-2", "stat-2"),

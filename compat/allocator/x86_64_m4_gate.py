@@ -719,6 +719,7 @@ def api_profile_flags(profile: str) -> tuple[str, ...]:
                   and not (profile.startswith("secure-") and flag.startswith("-DMI_SECURE=")))
     return (*flags, *{
         "release": ("-DMI_DEBUG=0", "-DMI_STAT=0"),
+        "xmalloc": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_XMALLOC=1"),
         "secure-1": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=1"),
         "secure-2": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=2"),
         "secure-3": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=3"),
