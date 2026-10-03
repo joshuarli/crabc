@@ -1813,6 +1813,115 @@ mod tests {
     }
 
     #[test]
+    fn actual_regular_page_late_publication_retries_detach_with_a_retained_client() {
+        use core::mem::{MaybeUninit, size_of};
+        use crate::config::MEDIUM_PAGE_SIZE;
+        use crate::free_list::LocalFreeList;
+        use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData};
+
+        const BLOCK_SIZE: usize = 64 * 1024;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const RESERVED: usize = (MEDIUM_PAGE_SIZE - PAGE_OFFSET) / BLOCK_SIZE;
+        #[repr(C, align(65536))]
+        struct Storage([MaybeUninit<u8>; MEDIUM_PAGE_SIZE]);
+        struct Client(NonNull<u8>);
+        // SAFETY: each moved wrapper owns one exact current source block.
+        // Its worker consumes that client by one remote publication.
+        unsafe impl Send for Client {}
+        impl Client {
+            unsafe fn publish(self, producer: PageRemoteFreeProducerState) {
+                unsafe { push(producer, self.0) }.unwrap();
+            }
+        }
+
+        let mut backing = std::boxed::Box::<Storage>::new_uninit();
+        let page = NonNull::new(backing.as_mut_ptr().cast::<Page>()).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let id = LiveThreadId::new(12).unwrap();
+        tld.attach_bootstrap_exclusive(id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        let memory = MemoryId::external(page.as_ptr().cast(), MEDIUM_PAGE_SIZE,
+            true, false, false);
+        // SAFETY: the whole retained allocation contains aligned metadata
+        // and every complete source stride before any client is published.
+        unsafe { Page::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
+            BLOCK_SIZE, PAGE_OFFSET, RESERVED as u16, 0, false, memory) }.unwrap();
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        assert_eq!(list.extend_count(3), Ok(3));
+        let first = list.pop(false).unwrap().unwrap();
+        let second = list.pop(false).unwrap().unwrap();
+        let survivor = list.pop(false).unwrap().unwrap();
+        let mut expected = [first.as_ptr().addr(), second.as_ptr().addr(), survivor.as_ptr().addr()];
+        expected.sort_unstable();
+        drop(list);
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }.unwrap();
+        let seeded = Barrier::new(2);
+        let publish_late = Barrier::new(2);
+        let late_published = Barrier::new(2);
+        let seed = Client(first);
+        let late = Client(second);
+        let collected = thread::scope(|scope| {
+            let producer_seeded = &seeded;
+            let producer_start = &publish_late;
+            let producer_complete = &late_published;
+            scope.spawn(move || {
+                // SAFETY: this worker owns both distinct current clients;
+                // its retained second client pins the page through the retry.
+                unsafe { seed.publish(producer) };
+                producer_seeded.wait();
+                producer_start.wait();
+                unsafe { late.publish(producer) };
+                producer_complete.wait();
+            });
+            seeded.wait();
+            let mut before_detach = Some(|| {
+                publish_late.wait();
+                late_published.wait();
+            });
+            // SAFETY: the sole owner loans only its raw ordinary fields. The
+            // late producer changes the head after this collector loads it,
+            // so the first CAS must fail and restore the new expected head.
+            let collected = unsafe { collect_live_page_with_before_detach_cas(
+                owner, &mut before_detach) }.unwrap();
+            assert!(before_detach.is_none());
+            collected
+        });
+        assert_eq!(collected, 2);
+        assert_eq!(unsafe { owner.xthread_free.as_ref() }.load(Ordering::Acquire), THREAD_FREE_OWNED);
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 1);
+        // Complete the non-force local transfer after the successful detach.
+        assert_eq!(unsafe { collect_live_page_false(owner) }, Ok(0));
+        assert!(unsafe { owner.local_free.as_ptr().read() }.is_null());
+
+        // The unpublished survivor still pins the same backing. Its own
+        // publication is consumed only by the next source detach.
+        let last = Client(survivor);
+        thread::scope(|scope| {
+            scope.spawn(move || unsafe { last.publish(producer) }).join().unwrap();
+        });
+        assert_eq!(unsafe { collect_live_page_false(owner) }, Ok(1));
+        assert_eq!(unsafe { owner.xthread_free.as_ref() }.load(Ordering::Acquire), THREAD_FREE_OWNED);
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 0);
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        assert_eq!(list.collect_local(true), Ok(true));
+        let mut reused = Vec::new();
+        for _ in 0..3 { reused.push(list.pop(false).unwrap().unwrap()); }
+        assert!(list.pop(false).unwrap().is_none());
+        let mut observed: Vec<_> = reused.iter().map(|block| block.as_ptr().addr()).collect();
+        observed.sort_unstable();
+        assert_eq!(observed, expected);
+        for block in reused {
+            // SAFETY: these are renewed distinct source allocations; each is
+            // freed once while the original Page backing remains retained.
+            unsafe { list.push_local(block) }.unwrap();
+        }
+        assert_eq!(unsafe { owner.used.as_ptr().read() }, 0);
+    }
+
+    #[test]
     fn actual_abandoned_partial_collection_handoff_retains_pending_clients() {
         use core::mem::{MaybeUninit, size_of};
         use crate::abandoned::{AbandonResult, abandon_unmappable_after_collect};
