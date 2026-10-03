@@ -331,6 +331,74 @@ static int failed_cookie_close(void)
     return 0;
 }
 
+struct reentry_cookie {
+    struct cookie base;
+    FILE *nested;
+    char *output;
+    size_t size;
+    int calls;
+};
+
+/* Each callback allocates and flushes a different live stream. Its published
+ * allocation remains caller-owned after the close callback closes that stream. */
+static void callback_other_stream(struct reentry_cookie *state, int marker)
+{
+    char *scratch = malloc(64);
+    if (!scratch) _Exit(92);
+    memset(scratch, marker, 64);
+    if (fputc(scratch[0], state->nested) == EOF || fflush(state->nested)) _Exit(93);
+    free(scratch);
+    if (state->size != (size_t)++state->calls || state->output[state->size] != 0) _Exit(94);
+}
+
+static ssize_t reentry_read(void *opaque, char *bytes, size_t length)
+{
+    struct reentry_cookie *state = opaque;
+    callback_other_stream(state, 'R');
+    return reader(&state->base, bytes, length);
+}
+
+static ssize_t reentry_write(void *opaque, const char *bytes, size_t length)
+{
+    struct reentry_cookie *state = opaque;
+    callback_other_stream(state, 'W');
+    return writer(&state->base, bytes, length);
+}
+
+static int reentry_seek(void *opaque, off_t *offset, int whence)
+{
+    struct reentry_cookie *state = opaque;
+    callback_other_stream(state, 'S');
+    return seeker(&state->base, offset, whence);
+}
+
+static int reentry_close(void *opaque)
+{
+    struct reentry_cookie *state = opaque;
+    callback_other_stream(state, 'C');
+    int status = fclose(state->nested);
+    state->nested = NULL;
+    state->base.closes++;
+    return status;
+}
+
+static int cookie_callback_reentry(void)
+{
+    struct reentry_cookie state = {0};
+    state.nested = open_memstream(&state.output, &state.size);
+    cookie_io_functions_t functions = {reentry_read, reentry_write, reentry_seek, reentry_close};
+    FILE *f = fopencookie(&state, "w+", functions);
+    char bytes[3];
+    if (!state.nested || !f || setvbuf(f, NULL, _IONBF, 0)) return 83;
+    if (fwrite("abc", 1, 3, f) != 3 || fseek(f, 0, SEEK_SET) ||
+        fread(bytes, 1, 3, f) != 3 || memcmp(bytes, "abc", 3) || fclose(f)) return 84;
+    if (state.nested || state.base.closes != 1 || state.calls != 4 ||
+        state.size != 4 || memcmp(state.output, "WSRC\0", 5)) return 85;
+    record(77, state.calls, NULL, state.output, state.size + 1);
+    free(state.output);
+    return 0;
+}
+
 /* The same binary record crosses FILE buffering, allocated line input,
  * logical-position restoration, and scanf on two independent backends. */
 static int binary_record(void)
@@ -421,6 +489,7 @@ int main(int argc,char **argv)
     status=cookies(); if(status) return status;
     status=global_cookie_flush(); if(status) return status;
     status=failed_cookie_close(); if(status) return status;
+    status=cookie_callback_reentry(); if(status) return status;
     status=binary_record(); if(status) return status;
     status=cookie_read_recovery(); if(status) return status;
     status=fixed_seek_recovery(); if(status) return status;
