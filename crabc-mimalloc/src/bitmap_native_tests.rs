@@ -353,6 +353,57 @@ fn conditional_chunk_claims_restore_every_failed_range_and_preserve_neighbors() 
 }
 
 #[test]
+fn failed_multi_chunk_claim_restores_prefix_and_partial_tail_before_retry() {
+    for tail in [1, BFIELD_BITS - 1, BFIELD_BITS, BFIELD_BITS + 1, BCHUNK_BITS - 1] {
+        for hole_offset in [0, tail / 2, tail - 1] {
+            let mut storage = Storage::new();
+            let bitmap = storage.binned(4 * BCHUNK_BITS);
+            assert_eq!(bitmap.set_range(0, bitmap.max_bits()), Some(true));
+            let len = 2 * BCHUNK_BITS + tail;
+            let hole = 2 * BCHUNK_BITS + hole_offset;
+            assert_eq!(bitmap.try_clear_within_chunk(hole, 1), Some(true));
+            let mut before = std::vec::Vec::new();
+            for chunk in 0..bitmap.chunk_count() {
+                for field in 0..BCHUNK_FIELDS {
+                    before.push(word_load_relaxed(bitmap.chunk(chunk).field(field)));
+                }
+            }
+            // SAFETY: this image's isolated statistics owner outlives its
+            // complete bitmap storage and no other fixture uses that owner.
+            let statistics = unsafe { &*bitmap.subprocess() }.bitmap_statistics();
+            let before_statistics = statistics.snapshot();
+            assert!(!bitmap.try_claim_chunks_at(0, len));
+            assert_eq!(statistics.snapshot(), before_statistics);
+            for chunk in 0..bitmap.chunk_count() {
+                for field in 0..BCHUNK_FIELDS {
+                    assert_eq!(word_load_relaxed(bitmap.chunk(chunk).field(field)),
+                        before[chunk * BCHUNK_FIELDS + field], "tail={tail}, hole={hole}");
+                }
+                assert_eq!(bitmap.chunk_bin(chunk), Some(ChunkBin::None));
+            }
+            assert_eq!(bitmap.set_range(hole, 1), Some(true));
+            assert_eq!(bitmap.try_find_and_claim(0, len), Some(0));
+            assert_eq!(bitmap.is_clear_range(0, len), Some(true));
+            assert_eq!(bitmap.is_set_range(len, bitmap.max_bits() - len), Some(true));
+            let huge = statistics.snapshot().chunk_bins[ChunkBin::Huge.index()];
+            let previous_huge = before_statistics.chunk_bins[ChunkBin::Huge.index()];
+            assert_eq!(huge.current, previous_huge.current + 3);
+            assert_eq!(huge.total, previous_huge.total + 3);
+            for chunk in 0..3 {
+                assert_eq!(bitmap.chunk_bin(chunk), Some(ChunkBin::Huge));
+            }
+            assert_eq!(bitmap.set_range(0, len), Some(true));
+            let returned_huge = statistics.snapshot().chunk_bins[ChunkBin::Huge.index()];
+            assert_eq!(returned_huge.current, previous_huge.current);
+            assert_eq!(returned_huge.total, huge.total);
+            for chunk in 0..bitmap.chunk_count() {
+                assert_eq!(bitmap.chunk_bin(chunk), Some(ChunkBin::None));
+            }
+        }
+    }
+}
+
+#[test]
 fn concurrent_binned_claims_and_returns_conserve_every_bit_and_reset_bins() {
     use std::sync::Mutex;
     let mut storage = Storage::new();

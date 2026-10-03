@@ -147,7 +147,7 @@ impl ArenaSearch {
         start
     }
 
-    fn registry_index(self, count: usize, turn: usize) -> Option<usize> {
+    fn registry_index(count: usize, turn: usize, start: usize) -> Option<usize> {
         if turn >= count {
             return None;
         }
@@ -155,7 +155,7 @@ impl ArenaSearch {
         if turn == cycle {
             return Some(turn);
         }
-        let candidate = turn + self.start_index(cycle);
+        let candidate = turn + start;
         Some(if candidate >= cycle { candidate - cycle } else { candidate })
     }
 }
@@ -168,6 +168,7 @@ pub(crate) struct ArenaCandidates<'arena> {
     pass: usize,
     count: usize,
     turn: usize,
+    start: usize,
 }
 
 impl<'arena> Iterator for ArenaCandidates<'arena> {
@@ -180,6 +181,10 @@ impl<'arena> Iterator for ArenaCandidates<'arena> {
                 self.pass += 1;
                 if self.pass == passes { return None; }
                 self.count = self.registry.count();
+                // Each NUMA pass observes one registry count and computes
+                // its spreading start once. New publications become visible
+                // when the next pass begins, without restarting this pass.
+                self.start = self.search.start_index(self.count.saturating_sub(1));
                 self.turn = 0;
                 continue;
             }
@@ -189,7 +194,7 @@ impl<'arena> Iterator for ArenaCandidates<'arena> {
                 if turn != 0 { self.turn = self.count; continue; }
                 self.search.requested.as_ptr()
             } else {
-                let index = self.search.registry_index(self.count, turn)?;
+                let index = ArenaSearch::registry_index(self.count, turn, self.start)?;
                 // SAFETY: construction retains all published arenas and
                 // excludes destruction for the cursor's complete lifetime.
                 match unsafe { self.registry.arena_at(index) } {
@@ -217,7 +222,9 @@ impl ArenaRegistry {
     /// Every published arena and `search.requested` must remain live through
     /// the cursor and every returned view; exclude registry destruction.
     pub(crate) unsafe fn suitable_arenas(&self, search: ArenaSearch) -> ArenaCandidates<'_> {
-        ArenaCandidates { registry: self, search, pass: 0, count: self.count(), turn: 0 }
+        let count = self.count();
+        let start = search.start_index(count.saturating_sub(1));
+        ArenaCandidates { registry: self, search, pass: 0, count, turn: 0, start }
     }
 
     /// Searches the source NUMA-preferred pass, then only nonpreferred arenas.
@@ -370,6 +377,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_candidates_refresh_registry_and_spreading_at_the_numa_pass_boundary() {
+        let subprocess = MainSubprocess::new();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let mut mappings = std::vec::Vec::new();
+        let mut identities = std::vec::Vec::new();
+        for _ in 0..4 {
+            mappings.push(Mapping::map_aligned_for_allocator(config(false), ARENA_MIN_SIZE,
+                ARENA_ALIGNMENT, MapAccess::Committed).unwrap());
+        }
+        for (index, numa) in [0, 1, 0].into_iter().enumerate() {
+            // SAFETY: the retained caller-owned mappings and subprocess
+            // outlive every view and claim; destruction is excluded.
+            let managed = unsafe { manage_external_in_place(&registry,
+                mappings[index].base().unwrap(), ARENA_MIN_SIZE, config(false).page_size(),
+                true, false, true, numa, false, None) }.unwrap();
+            identities.push(managed.arena_id());
+        }
+        let request = ArenaSearch { heap_sequence: 2, heap_count: 3,
+            numa_node: 1, ..search() };
+        let mut attempted = std::vec::Vec::new();
+        // SAFETY: all candidate mappings remain live, including the new
+        // publication. Each refusal consumes no claim; only the final
+        // candidate issues one outstanding claim returned below.
+        let claim = unsafe { registry.try_find_free_with(request, 1, ARENA_SLICE_SIZE, |view| {
+            attempted.push(core::ptr::from_ref(view.arena()).cast_mut());
+            if attempted.len() == 1 {
+                let managed = manage_external_in_place(&registry,
+                    mappings[3].base().unwrap(), ARENA_MIN_SIZE, config(false).page_size(),
+                    true, false, true, 0, false, None).unwrap();
+                identities.push(managed.arena_id());
+            }
+            if attempted.len() < 4 { return None; }
+            view.try_claim_suitable_slices(request.requested, 1, true, request.thread_sequence)
+        }) }.unwrap();
+        assert_eq!(attempted, std::vec![identities[1].as_ptr(), identities[2].as_ptr(),
+            identities[0].as_ptr(), identities[3].as_ptr()]);
+        assert_eq!(claim.memory_id().arena_memory().unwrap().arena, identities[3].as_ptr());
+        assert!(claim.release());
+        for mut mapping in mappings { mapping.unmap().unwrap(); }
+    }
+
+    #[test]
     fn emit_native_arena_search_order_trace() {
         let mut ordinal = 0;
         for count in [0, 1, 2, 3, 8, 17, 129, 2305] {
@@ -383,12 +432,12 @@ mod tests {
                         ordinal += 1;
                         let mut seen = std::vec![false; count];
                         for turn in 0..count {
-                            let index = request.registry_index(count, turn).unwrap();
+                            let index = ArenaSearch::registry_index(count, turn, request.start_index(cycle)).unwrap();
                             assert!(!seen[index]);
                             seen[index] = true;
                             if turn == count - 1 { assert_eq!(index, turn); }
                         }
-                        assert!(request.registry_index(count, count).is_none());
+                        assert!(ArenaSearch::registry_index(count, count, request.start_index(cycle)).is_none());
                     }
                 }
             }
