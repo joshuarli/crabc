@@ -569,8 +569,11 @@ def compile_planned_declarations(inventory: Mapping[str, Any], members: Sequence
 
     C declarations take precedence where available. A name visible only in a
     selected C++ profile keeps that language and linkage; no C declaration is
-    invented to make the provider easier to link. Raw compiler facts must still
-    contain the recorded declaration type before its address is emitted.
+    invented to make the provider easier to link. Installed headers resolve
+    transitive kernel declarations from their owned kernel-header subtree.
+    The source header tree uses the separate pinned kernel-header oracle.
+    Raw compiler facts must still contain the recorded declaration type
+    before its address is emitted.
     """
     import header_callable_inventory as callable_inventory
 
@@ -588,6 +591,9 @@ def compile_planned_declarations(inventory: Mapping[str, Any], members: Sequence
         groups.setdefault((row["declaring_header"], row["profile"]), []).append(row)
     products, cases, jobs, objects = {}, [], [], []
     resource = callable_inventory.compiler_resource_include(compiler)
+    linux_uapi = (Path("/opt/linux-5.10-uapi/include")
+                  if header_root.resolve() == (ROOT / "include").resolve()
+                  else header_root / "crabc-linux-uapi")
     def command(name, argv):
         result, logs = _planned_command(output, name, argv)
         cases.append((name, result.returncode, logs))
@@ -599,7 +605,7 @@ def compile_planned_declarations(inventory: Mapping[str, Any], members: Sequence
         source = output / f"probe-{index}.{'cpp' if profile.language == 'cxx' else 'c'}"
         source.write_text(f"#include <{header}>\n")
         ast_command = callable_inventory.compiler_command(compiler, profile, header_root,
-            resource, Path("/opt/linux-5.10-uapi/include"), source, ast=True, preprocess=False)
+            resource, linux_uapi, source, ast=True, preprocess=False)
         result = command(f"ast-{index}", ast_command)
         declarations = callable_inventory.discover_functions(json.loads(result.stdout), header_root, header)
         for row in rows:
@@ -616,7 +622,7 @@ def compile_planned_declarations(inventory: Mapping[str, Any], members: Sequence
         obj = output / f"caller-{index}.o"
         argv = [compiler, "-x", "c++" if profile.language == "cxx" else "c",
             f"-std={profile.standard}", "-nostdinc", "-I", str(header_root), "-isystem", str(resource),
-            "-isystem", "/opt/linux-5.10-uapi/include", *(f"-D{d}" for d in profile.defines)]
+            "-isystem", str(linux_uapi), *(f"-D{d}" for d in profile.defines)]
         if profile.language == "cxx":
             argv.append("-nostdinc++")
         command(f"compile-{index}", [*argv, "-c", str(source), "-o", str(obj)])

@@ -147,6 +147,56 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
 
 
 class PlannedDeclarationCompilerTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("clang") and shutil.which("nm") and shutil.which("ld")
+                         and Path("/opt/linux-5.10-uapi/include").is_dir(),
+                         "requires native Clang, nm and pinned Linux UAPI")
+    def test_installed_transitive_kernel_header_owns_callback_declaration(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            headers = root / "usr/include"
+            shutil.copytree(ROOT / "include", headers)
+            owned_uapi = headers / "crabc-linux-uapi"
+            shutil.copytree("/opt/linux-5.10-uapi/include", owned_uapi)
+            inventory = {"profiles": [{"id": "c11-gnu", "language": "c", "standard": "c11",
+                                       "defines": ["_GNU_SOURCE"]}], "callables": [
+                {"tree": "candidate", "classification": "external", "declaration_kind": "function",
+                 "name": "seqbuf_dump", "profile": "c11-gnu", "declaring_header": "sys/soundcard.h",
+                 "type": "void (void)"}]}
+            objects, _, _, _ = AUDIT.compile_planned_declarations(
+                inventory, ("seqbuf_dump",), headers, root / "output")
+            ast = json.loads((root / "output/ast-0.stdout").read_text())
+            physical_files = set()
+            def collect_files(value):
+                if isinstance(value, dict):
+                    if "file" in value:
+                        physical_files.add(value["file"])
+                    for child in value.values():
+                        collect_files(child)
+                elif isinstance(value, list):
+                    for child in value:
+                        collect_files(child)
+            collect_files(ast)
+            self.assertIn(str(owned_uapi / "linux/soundcard.h"), physical_files)
+            self.assertFalse(any(path.startswith("/opt/linux-5.10-uapi/include/")
+                                 for path in physical_files))
+            provider = root / "callback.c"
+            provider.write_text("#include <sys/soundcard.h>\nvoid seqbuf_dump(void) {}\n")
+            provider_object = root / "callback.o"
+            subprocess.run(["clang", "-nostdinc", "-I", str(headers), "-isystem", str(owned_uapi),
+                            "-c", str(provider), "-o", str(provider_object)], check=True)
+            linked = root / "linked.o"
+            subprocess.run(["ld", "-r", *map(str, objects), str(provider_object), "-o", str(linked)], check=True)
+            definitions = subprocess.check_output(["nm", "-g", "--defined-only", str(linked)], text=True)
+            undefined = subprocess.check_output(["nm", "--undefined-only", str(linked)], text=True)
+            self.assertIn(" T seqbuf_dump", definitions)
+            self.assertNotIn("seqbuf_dump", undefined)
+            (owned_uapi / "linux/soundcard.h").unlink()
+            with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "binding command failed"):
+                AUDIT.compile_planned_declarations(
+                    inventory, ("seqbuf_dump",), headers, root / "missing-owned-header")
+
     def test_timed_out_command_retains_raw_diagnostic_bytes(self):
         work = ROOT / ".work/x86_64/planned-provider-tests"
         work.mkdir(parents=True, exist_ok=True)
