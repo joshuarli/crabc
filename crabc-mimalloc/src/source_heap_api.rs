@@ -1690,16 +1690,16 @@ pub(crate) unsafe fn visit_heap_page(
     let (blocks, area, full_block_size) = {
         // SAFETY: the caller holds the live page and excludes ordinary-field
         // mutation while these source geometry scalars are copied.
-        let page_ref = unsafe { page.as_ref() };
-        if page_ref.heap() != heap.as_ptr() { return false; }
-        let full_block_size = page_ref.block_size();
+        let image = unsafe { Page::owner_snapshot_at(page) };
+        if image.heap != heap.as_ptr() { return false; }
+        let full_block_size = image.block_size;
         let Some(block_size) = full_block_size.checked_sub(crate::config::PADDING_SIZE) else { return false };
-        let Some(reserved) = full_block_size.checked_mul(page_ref.reserved() as usize) else { return false };
-        let Some(committed) = full_block_size.checked_mul(page_ref.capacity() as usize) else { return false };
+        let Some(reserved) = full_block_size.checked_mul(image.reserved as usize) else { return false };
+        let Some(committed) = full_block_size.checked_mul(image.capacity as usize) else { return false };
         // SAFETY: the caller's live page geometry covers the complete area.
-        let blocks = unsafe { page_ref.start() };
+        let blocks = image.start;
         let area = HeapArea {
-            blocks: blocks.cast(), reserved, committed, used: page_ref.used(),
+            blocks: blocks.cast(), reserved, committed, used: image.used,
             block_size, full_block_size, reserved1: page.as_ptr().cast(),
         };
         (blocks, area, full_block_size)
@@ -1713,31 +1713,35 @@ pub(crate) unsafe fn visit_heap_page(
     const MAX_BLOCKS: usize = crate::config::SMALL_PAGE_SIZE / core::mem::size_of::<usize>();
     const WORD_BITS: usize = usize::BITS as usize;
     // SAFETY: the callback left this page and its ordinary fields stable.
-    let page_ref = unsafe { page.as_ref() };
-    let capacity = page_ref.capacity() as usize;
-    let used = page_ref.used();
+    let image = unsafe { Page::owner_snapshot_at(page) };
+    let capacity = image.capacity as usize;
+    let used = image.used;
     if capacity > MAX_BLOCKS || full_block_size == 0 { return false; }
     let mut free_map = [0usize; MAX_BLOCKS.div_ceil(WORD_BITS)];
     // SAFETY: the caller excludes mutation of every page free-list node.
     let Some(mut free_count) = (unsafe {
-        heap_visit_free_map(page, page_ref.free_list_head(), blocks, area.committed, full_block_size, capacity, &mut free_map)
+        heap_visit_free_map(page, image.free, blocks, area.committed, full_block_size, capacity, &mut free_map)
     }) else { return false };
     // When the immediate free list accounts for every unused block and no
     // remote head is published, forced collection cannot change this page's
     // live-block image. This also covers a page whose owner has exited.
-    if free_count + used != capacity || page_ref.has_published_remote_free() {
+    // SAFETY: the retained page supplies this one initialized atomic field;
+    // no whole-page reference overlaps owner-side collection or callbacks.
+    let remote = unsafe { Page::abandonment_state_at(page).xthread_free.as_ref() }
+        .load(core::sync::atomic::Ordering::Acquire) & !1 != 0;
+    if free_count + used != capacity || remote {
         // SAFETY: the caller owns the stable page and its block area through
         // the remote and local collection steps for this page identity.
         if !unsafe { Page::collect_for_heap_visit_at(page) } { return false; }
         free_map.fill(0);
         // SAFETY: collection left the same page and block area live.
         let Some(collected_count) = (unsafe {
-            heap_visit_free_map(page, page.as_ref().free_list_head(), blocks, area.committed, full_block_size, capacity, &mut free_map)
+            heap_visit_free_map(page, Page::free_list_head_at(page), blocks, area.committed, full_block_size, capacity, &mut free_map)
         }) else { return false };
         free_count = collected_count;
     }
     // SAFETY: any collection has finished before this ordinary-field read.
-    let used = unsafe { page.as_ref() }.used();
+    let used = unsafe { Page::owner_snapshot_at(page) }.used;
     if free_count + used != capacity { return false; }
     if used == 0 { return true; }
     if capacity == 1 {
