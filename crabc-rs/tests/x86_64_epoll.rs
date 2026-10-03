@@ -397,3 +397,94 @@ fn x86_64_epoll_registration_survives_original_close_until_last_duplicate_closes
     drop(duplicate);
     assert!(immediate_event_tokens(&epoll).is_empty());
 }
+
+#[test]
+fn x86_64_epoll_reused_descriptor_slot_keeps_file_descriptions_distinct() {
+    let mut slot = event::eventfd(1, event::EventfdFlags::NONBLOCK | event::EventfdFlags::CLOEXEC)
+        .expect("create the original registered file description");
+    let retained = io::dup(&slot).expect("retain the original file description");
+    let replacement = event::eventfd(2, event::EventfdFlags::NONBLOCK | event::EventfdFlags::CLOEXEC)
+        .expect("create the replacement file description");
+    let epoll = event::epoll::create(event::epoll::CreateFlags::CLOEXEC).unwrap();
+    let slot_number = slot.as_raw_fd();
+    let flags = event::epoll::EventFlags::IN;
+    event::epoll::add(&epoll, &slot, event::epoll::EventData::new_u64(61), flags).unwrap();
+
+    // The registration key includes the open file description. Replacing the
+    // owned slot preserves its number while the duplicate retains the old key.
+    io::dup2(&replacement, &mut slot).expect("replace the owned descriptor slot");
+    assert_eq!(slot.as_raw_fd(), slot_number);
+    assert!(!io::fcntl_getfd(&slot).unwrap().contains(io::FdFlags::CLOEXEC));
+    assert!(io::fcntl_getfd(&replacement).unwrap().contains(io::FdFlags::CLOEXEC));
+    event::epoll::add(&epoll, &slot, event::epoll::EventData::new_u64(62), flags).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [61, 62]);
+
+    assert_eq!(event::eventfd_read(&retained), Ok(1));
+    assert_eq!(immediate_event_tokens(&epoll), [62]);
+    event::eventfd_write(&retained, 3).unwrap();
+    event::epoll::delete(&epoll, &slot).expect("delete only the replacement key");
+    assert_eq!(immediate_event_tokens(&epoll), [61]);
+    assert_eq!(event::eventfd_read(&replacement), Ok(2));
+    event::eventfd_write(&slot, 4).unwrap();
+    assert_eq!(event::eventfd_read(&replacement), Ok(4));
+    drop(retained);
+    assert!(immediate_event_tokens(&epoll).is_empty());
+    assert!(io::fcntl_getfd(&epoll).unwrap().contains(io::FdFlags::CLOEXEC));
+}
+
+#[test]
+fn x86_64_epoll_packed_results_copy_tokens_without_owning_their_sources() {
+    let counters = [
+        event::eventfd(1, event::EventfdFlags::NONBLOCK).unwrap(),
+        event::eventfd(1, event::EventfdFlags::NONBLOCK).unwrap(),
+    ];
+    let mut token_storage = Box::new([71_u64, 72]);
+    let pointers = [
+        core::ptr::addr_of_mut!(token_storage[0]).cast::<core::ffi::c_void>(),
+        core::ptr::addr_of_mut!(token_storage[1]).cast::<core::ffi::c_void>(),
+    ];
+    let epoll = event::epoll::create(event::epoll::CreateFlags::CLOEXEC).unwrap();
+    for (counter, pointer) in counters.iter().zip(pointers) {
+        event::epoll::add(&epoll, counter, event::epoll::EventData::new_ptr(pointer),
+            event::epoll::EventFlags::IN).unwrap();
+    }
+    let sentinel = event::epoll::Event::new(event::epoll::EventFlags::OUT,
+        event::epoll::EventData::new_u64(0xdead_beef));
+    let mut records = [sentinel; 4];
+    let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
+    let count = event::epoll::wait(&epoll, &mut records, Some(&zero)).unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(records[2], sentinel);
+    assert_eq!(records[3], sentinel);
+    let copied = [records[0], records[1]];
+    let mut observed: Vec<_> = copied.iter().map(|record| {
+        assert_eq!(record.flags(), event::epoll::EventFlags::IN);
+        record.data().ptr() as usize
+    }).collect();
+    observed.sort_unstable();
+    let mut expected = pointers.map(|pointer| pointer as usize);
+    expected.sort_unstable();
+    assert_eq!(observed, expected);
+    for counter in &counters {
+        event::epoll::delete(&epoll, counter).unwrap();
+    }
+    drop(counters);
+    drop(epoll);
+
+    // Packed record methods copy fields before borrowing them for formatting,
+    // equality or hashing. A copied result owns token bits, not its source fd.
+    for record in copied {
+        let pointer = pointers.iter().copied().find(|pointer| *pointer == record.data().ptr())
+            .expect("the copied result keeps a caller-provided token");
+        let expected = event::epoll::Event::new(event::epoll::EventFlags::IN,
+            event::epoll::EventData::new_ptr(pointer));
+        assert_eq!(record, expected);
+        let mut first = std::collections::hash_map::DefaultHasher::new();
+        let mut second = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&record, &mut first);
+        std::hash::Hash::hash(&expected, &mut second);
+        assert_eq!(std::hash::Hasher::finish(&first), std::hash::Hasher::finish(&second));
+        assert_eq!(format!("{record:?}"), format!("{expected:?}"));
+    }
+    assert_eq!(*token_storage, [71, 72]);
+}

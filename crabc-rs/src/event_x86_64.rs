@@ -193,6 +193,10 @@ pub mod epoll {
 
     /// Data associated with an [`Event`], represented as a 64-bit token or
     /// pointer without crossing the C ABI.
+    ///
+    /// A pointer token does not borrow or own its pointee. The kernel and this
+    /// facade copy the token without dereferencing it; the caller must retain
+    /// and synchronize the pointee for any later dereference.
     #[repr(C)]
     #[derive(Clone, Copy)]
     pub union EventData {
@@ -337,6 +341,15 @@ pub mod epoll {
     }
 
     /// Registers a source descriptor with an epoll object.
+    ///
+    /// The source is borrowed only during this call. Linux keys the registration
+    /// by both descriptor number and open file description. Closing or replacing
+    /// the registered descriptor can leave its registration alive while another
+    /// descriptor retains the original file description. A reused descriptor
+    /// number can therefore have a separate registration for its new description.
+    /// Delete the registration before replacing its slot when explicit removal
+    /// is required; closing the final descriptor for a description also removes
+    /// its registrations.
     #[inline]
     #[doc(alias = "epoll_ctl")]
     pub fn add<EpollFd: AsFd, SourceFd: AsFd>(
