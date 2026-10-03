@@ -41,8 +41,9 @@ use crate::thread_local::{
 /// `ReadyWithoutBitmap` is observable after construction or a recoverable
 /// first allocation failure. `Exhausted` retains its final bitmap and accepts
 /// releases, which return it to `ReadyWithBitmap`. `Poisoned` retains any
-/// previously published or committed typed image after an ownership-ambiguous
-/// transition; `Shutdown` has no image and touches no bitmap again.
+/// previously published or committed typed image and any failed cleanup
+/// capability after an ownership-ambiguous transition; `Shutdown` has no image
+/// and touches no bitmap again.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum OwnedRegistryPhase {
     Cold,
@@ -61,6 +62,9 @@ struct RegistryBitmap {
 struct OwnedRegistryState {
     phase: OwnedRegistryPhase,
     bitmap: Option<RegistryBitmap>,
+    // A failed cleanup token is diagnostic ownership, never a bitmap to
+    // project or retry. Poisoning prevents another retirement from replacing it.
+    failed_bitmap: Option<RegistryBitmap>,
     versions: ThreadLocalKeyVersions,
     live_leases: usize,
     subprocess: Option<&'static MainSubprocess>,
@@ -72,6 +76,7 @@ impl OwnedRegistryState {
         Self {
             phase: OwnedRegistryPhase::Cold,
             bitmap: None,
+            failed_bitmap: None,
             versions: ThreadLocalKeyVersions::new(),
             live_leases: 0,
             subprocess: None,
@@ -145,6 +150,8 @@ pub(crate) struct OwnedThreadLocalKeyRegistry {
     bitmap_allocation_attempts: AtomicUsize,
     #[cfg(test)]
     fail_next_release_lock: AtomicUsize,
+    #[cfg(test)]
+    refuse_next_bitmap_release: AtomicUsize,
 }
 
 // SAFETY: all mutable state, including the linear metadata capability, is
@@ -163,6 +170,8 @@ impl OwnedThreadLocalKeyRegistry {
             bitmap_allocation_attempts: AtomicUsize::new(0),
             #[cfg(test)]
             fail_next_release_lock: AtomicUsize::new(0),
+            #[cfg(test)]
+            refuse_next_bitmap_release: AtomicUsize::new(0),
         }
     }
 
@@ -331,7 +340,10 @@ impl OwnedThreadLocalKeyRegistry {
                 // failure would itself make the new capability ambiguous. An
                 // absent appended-range result is likewise a construction
                 // invariant failure, so retain the old owner terminally.
-                if metadata.free(&mut replacement).is_err() {
+                if self.retire_bitmap_locked(state, metadata, RegistryBitmap {
+                    layout: new_layout,
+                    allocation: replacement,
+                }).is_err() {
                     state.phase = OwnedRegistryPhase::Poisoned;
                     return Err(OwnedThreadLocalKeyError::Poisoned);
                 }
@@ -342,7 +354,10 @@ impl OwnedThreadLocalKeyRegistry {
                 // A typed-projection error after fresh allocation means the
                 // process-owned image/provenance contract was broken. The
                 // old image remains retained, but no retry may reinterpret it.
-                if metadata.free(&mut replacement).is_err() {
+                if self.retire_bitmap_locked(state, metadata, RegistryBitmap {
+                    layout: new_layout,
+                    allocation: replacement,
+                }).is_err() {
                     state.phase = OwnedRegistryPhase::Poisoned;
                     return Err(OwnedThreadLocalKeyError::Poisoned);
                 }
@@ -359,13 +374,48 @@ impl OwnedThreadLocalKeyRegistry {
             allocation: replacement,
         });
         state.phase = OwnedRegistryPhase::ReadyWithBitmap;
-        if let Some(mut old) = old {
-            if metadata.free(&mut old.allocation).is_err() {
+        if let Some(old) = old {
+            if self.retire_bitmap_locked(state, metadata, old).is_err() {
                 state.phase = OwnedRegistryPhase::Poisoned;
                 return Err(OwnedThreadLocalKeyError::Poisoned);
             }
         }
         Ok(())
+    }
+
+    fn retire_bitmap_locked(
+        &self,
+        state: &mut OwnedRegistryState,
+        metadata: Pin<&'static MetaAllocator>,
+        mut bitmap: RegistryBitmap,
+    ) -> Result<(), MetaError> {
+        match self.free_bitmap(metadata, &mut bitmap.allocation) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // General metadata free terminalizes an admitted failed token,
+                // even when backing entry refused before any page mutation.
+                // Preserve that exact token alongside the committed bitmap;
+                // poisoning forbids projection, release retry, or replacement.
+                debug_assert!(state.failed_bitmap.is_none());
+                state.failed_bitmap = Some(bitmap);
+                state.phase = OwnedRegistryPhase::Poisoned;
+                Err(error)
+            }
+        }
+    }
+
+    fn free_bitmap(
+        &self,
+        metadata: Pin<&'static MetaAllocator>,
+        allocation: &mut MetaAllocation<'static>,
+    ) -> Result<(), MetaError> {
+        #[cfg(test)]
+        if self.refuse_next_bitmap_release.swap(0, Ordering::Relaxed) != 0 {
+            // The registry lock was acquired first. Refuse this exact release
+            // at metadata entry before any backing allocation is freed.
+            return metadata.test_with_held_backing_entry(|| metadata.free(allocation))?;
+        }
+        metadata.free(allocation)
     }
 
     #[inline]
@@ -662,6 +712,47 @@ mod tests {
             metadata,
             subprocess,
         )
+    }
+
+    #[test]
+    fn refused_expansion_release_retains_both_exact_bitmap_owners() {
+        let (registry, metadata, subprocess) = fixture();
+        let mut leases = std::vec::Vec::new();
+        for _ in 0..TLS_REGISTRY_EXPANSION_BITS {
+            leases.push(registry.test_claim_selected(config(), subprocess, metadata)
+                .expect("ordinary claims fill the first source bitmap"));
+        }
+        let old_image = registry.test_bitmap_image().expect("the full bitmap is owned");
+        let before = registry.test_state();
+        registry.refuse_next_bitmap_release.store(1, Ordering::Relaxed);
+        assert!(matches!(
+            registry.test_claim_selected(config(), subprocess, metadata),
+            Err(OwnedThreadLocalKeyError::Poisoned),
+        ));
+        let after = registry.test_state();
+        assert_eq!(after.0, OwnedRegistryPhase::Poisoned);
+        assert_eq!((after.1, after.2), (before.1, before.2),
+            "an expansion cleanup refusal must not issue a new lease or generation");
+        let committed = registry.test_bitmap_image().expect("the replacement stays owned");
+        assert_eq!(committed.0.max_bits(), 2 * TLS_REGISTRY_EXPANSION_BITS);
+        assert_ne!(committed.2, old_image.2);
+        let guard = registry.lock.lock().expect("the isolated registry lock acquires");
+        // SAFETY: the held registry lock protects a short exact-owner projection.
+        let state = unsafe { &*registry.state.get() };
+        let retained = state.failed_bitmap.as_ref()
+            .expect("the refused old bitmap release must retain its exact owner");
+        assert_eq!(retained.layout, old_image.0);
+        assert_eq!(retained.allocation.pointer().as_ptr().addr(), old_image.2);
+        let retained_memory = retained.allocation.memory_id();
+        assert_eq!(retained_memory.kind(), old_image.1.kind());
+        let retained_malloc = retained_memory.malloc_memory().expect("retained Malloc provenance");
+        let old_malloc = old_image.1.malloc_memory().expect("original Malloc provenance");
+        assert_eq!(retained_malloc.base, old_malloc.base);
+        assert_eq!(retained_malloc.size, old_malloc.size);
+        drop(guard);
+        // The poisoned owner and its original live leases remain process-lived.
+        // No full lifecycle retry may reinterpret the partially committed image.
+        let _ = std::boxed::Box::leak(leases.into_boxed_slice());
     }
 
     #[test]
