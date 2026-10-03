@@ -72,7 +72,9 @@ Update this small section in place when the implementation frontier changes.
   owner. Compiler evidence removes large aggregate temporaries; ordinary tests
   establish these changes without closing either reported runtime failure.
   Direct worker installation reduces its opt0 entry frame from 4,744 to 952 bytes;
-  dynamic attachment removes separate result temporaries. These are individual
+  dynamic attachment transfers its retained image from initialized storage and
+  removes separate result temporaries. Scalar option reads remove two 304-byte
+  copies. These are individual
   compiler frames, not peak-stack or 16-KiB qualification. Metadata refusal tests
   distinguish one-shot recovery from sustained mapping unavailability.
 - **Verification:** merged source passes nine compiler profiles and focused opt0
@@ -86,6 +88,10 @@ Update this small section in place when the implementation frontier changes.
   runtime and helper-disassembly evidence passes. The cold startup output timeout came from a FILE surrogate
   violating the pinned delayed-flush contract; real FILE and registered allocating
   callbacks have distinct passing checks, with the original timeout retained.
+  The unchanged upstream `functional/random` now passes all seven debug providers;
+  this component result does not certify historical failure evidence or the full
+  upstream corpus. Opt0 static application allocator replacement now links its
+  original full-override object without extracting duplicate providers.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
@@ -103,6 +109,10 @@ Update this small section in place when the implementation frontier changes.
   authorities authenticate these inputs; resolver and C performance launches use
   the inspected immutable image ID. Debug stdio producers and readers bind products
   to source content without admitting debug products for release qualification.
+  Combined debug products require exact typed backend/audit configurations.
+  Four optimized static/dynamic C/native-shadow products are built from source
+  `a173e8c56`; ordinary consumer matrices are in progress against that immutable
+  cohort. Later source changes retain their own identities rather than relabeling it.
   Frozen ABI/header/coverage digests are unchanged.
 - **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
   settled lanes' original programs/source, raw failures and focused proofs before
@@ -111,7 +121,9 @@ Update this small section in place when the implementation frontier changes.
   All settled lane worktrees have been removed. Existing allocator and hardware-policy
   reports remain available. Historical receipts are not transferred to current
   products; other projects' Docker state remains outside cleanup.
-- **On resume:** address actual allocator failures, then investigate performance
+- **On resume:** continue independent source and optimized consumer preparation;
+  keep only constrained investigations parked. Address actual allocator failures,
+  then investigate performance
   on an uncontended host and qualify the final merged-source release cohort. Use
   existing runners and direct regressions; avoid new catalogs or proof layers.
   Baseline allocator qualification, post-switch reruns and public promotion remain open.
