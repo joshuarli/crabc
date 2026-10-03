@@ -286,10 +286,9 @@ impl NativePreparedProcessDestroy {
         let terminal = unsafe { self.ready.seal_terminal() }.map_err(|error| {
             owners.failure = Some(RetainedDestroyFailure::Coordinator(error)); NativeProcessDestroyError::Coordinator
         })?;
-        let arenas = unsafe { process.subprocess().arena_backing().destroy_all(huge_tracking) }
-            .map_err(|error| { owners.failure = Some(RetainedDestroyFailure::Arena(error)); NativeProcessDestroyError::Arena })?;
-        let all_arenas_released = arenas.is_released();
-        owners.arenas = Some(arenas);
+        owners.arenas = Some(unsafe { process.subprocess().arena_backing().destroy_all(huge_tracking) }
+            .map_err(|error| { owners.failure = Some(RetainedDestroyFailure::Arena(error)); NativeProcessDestroyError::Arena })?);
+        let all_arenas_released = owners.arenas.as_ref().unwrap().is_released();
         // Source subproc.c:244 prints after arena destruction and before
         // PageMap retirement. End the mutable retained-owner projection before
         // an option warning or output adapter can enter foreign libc code.
