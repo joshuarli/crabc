@@ -1211,8 +1211,10 @@ pub(crate) unsafe fn free_unmapped_after_failed_reclaim<M: MappedAbandonedPages 
 /// page must be queue-detached and have either `THREAD_ID_ABANDONED` or
 /// `THREAD_ID_ABANDONED_MAPPED` identity after the successful low-owner
 /// claim. `select_map` must return the exact static-main bitmap/count pair
-/// for the supplied arena memory and size class. The caller retains PageMap,
-/// metadata, arena, and terminal span-release authority through every result.
+/// for the supplied arena memory and size class. The complete source-stride
+/// block area and every local-list node must stay live through collection.
+/// The caller retains PageMap, metadata, arena, and terminal span-release
+/// authority through every result.
 /// `Empty` retains the low owner bit for that separate terminal release.
 pub(crate) unsafe fn free_regular_after_failed_reclaim_select_map<M, F>(
     page: NonNull<Page>,
@@ -1267,17 +1269,16 @@ where
     F: FnOnce(MemoryId, usize) -> Result<M, AbandonError>,
     H: FnOnce() -> bool,
 {
-    // SAFETY: the established bounded callers already own their complete
-    // source collection protocol. Preserve their existing raw tail while the
-    // generic post-owner-exit entry below supplies its explicit local-list
-    // collection seam.
+    // SAFETY: the current client and complete page backing remain retained
+    // through the source claim. Every remote detach must finish its non-force
+    // local transfer before the shared tail may release, reabandon, or unown.
     unsafe {
         free_regular_after_failed_reclaim_select_map_with_after_claim_and_owner_deferred_collection(
             page,
             block,
             select_map,
             after_claim,
-            |_page| Ok(()),
+            |page| collect_post_owner_exit_local_free_false(page),
         )
     }
 }
@@ -6173,6 +6174,69 @@ mod tests {
         assert!(map.is_published(17));
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
         assert_eq!(page.remote_free_test_head() & 1, 1);
+    }
+
+    #[test]
+    fn regular_post_exit_free_transfers_collected_blocks_before_unownership() {
+        use crate::config::{ARENA_SLICE_SIZE, MEDIUM_PAGE_SIZE};
+        use crate::free_list::LocalFreeList;
+
+        const BLOCK_SIZE: usize = 64 * 1024;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const RESERVED: usize = (MEDIUM_PAGE_SIZE - PAGE_OFFSET) / BLOCK_SIZE;
+        #[repr(C, align(65536))]
+        struct Storage([MaybeUninit<u8>; MEDIUM_PAGE_SIZE]);
+
+        let bin = size_class::bin(BLOCK_SIZE).unwrap();
+        let mut bitmap_storage = BitmapStorage::uninit();
+        let mut arena = map_fixture_for_bin(&mut bitmap_storage, bin);
+        let view = unsafe { ArenaView::from_ptr(&mut arena).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        bind_adopting_theap(&mut heap, &mut tld, &mut theap, id);
+        let mut storage = std::boxed::Box::<Storage>::new_uninit();
+        let mut page = NonNull::new(storage.as_mut_ptr().cast::<Page>()).unwrap();
+        // SAFETY: one retained aligned allocation contains the complete page
+        // metadata and source-stride block area. Publication precedes clients.
+        unsafe {
+            Page::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
+                BLOCK_SIZE, PAGE_OFFSET, RESERVED as u16, 0, false, MemoryId::none())
+        }.unwrap();
+        assert!(unsafe { page.as_mut().abandoned_test_set_arena_memory(
+            &mut arena, 17, MEDIUM_PAGE_SIZE / ARENA_SLICE_SIZE) });
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        assert_eq!(list.extend_count(2), Ok(2));
+        let first = list.pop(false).unwrap().unwrap();
+        let survivor = list.pop(false).unwrap().unwrap();
+        drop(list);
+        assert_eq!(unsafe { abandon(page, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+
+        // SAFETY: first is one current source allocation. The map selector
+        // retains this page's exact arena/bin capability across the claim.
+        assert_eq!(unsafe {
+            free_regular_after_failed_reclaim_select_map(page, first, |memory, block_size| {
+                assert_eq!(block_size, BLOCK_SIZE);
+                assert_eq!(map.page_slice_index(memory), Some(17));
+                Ok(&map)
+            })
+        }, Ok(RegularAbandonedFreeAfterFailedReclaimResult::StillLive));
+        let state = unsafe { Page::abandonment_state_at(page) };
+        assert!(!is_owned(&state));
+        assert_eq!(unsafe { state.used.as_ptr().read() }, 1);
+        assert_eq!(unsafe { page.as_ref() }.remote_free_test_free(), first.cast::<Block>().as_ptr());
+        assert!(unsafe { page.as_ref() }.remote_free_test_local_free().is_null());
+
+        // SAFETY: the final current client keeps the same backing registered
+        // until collection hands its sole low-bit owner to terminal cleanup.
+        assert_eq!(unsafe {
+            free_regular_after_failed_reclaim_select_map(page, survivor, |_memory, _size| Ok(&map))
+        }, Ok(RegularAbandonedFreeAfterFailedReclaimResult::Empty));
+        assert!(is_owned(&state));
+        assert!(page_is_empty(&state));
+        assert!(!map.is_published(17));
     }
 
     #[test]
