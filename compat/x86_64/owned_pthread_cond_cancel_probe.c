@@ -11,17 +11,41 @@
 #include <time.h>
 #include "pthread_futex_wait_witness.h"
 
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t mutex;
+static pthread_cond_t condition;
 static atomic_int ready, waiter_tid, cleaned, reuse_ready, false_wakes, teardown_order;
 static pthread_t waiter;
 static pthread_key_t teardown_key;
 static int main_waiter, pending_entry, saved_state, signaled;
+static int reuse_woken;
 #ifdef CRABC_SHARED_CONDITION
 #define CONDITION_FUTEX_OPERATION 0
 #else
 #define CONDITION_FUTEX_OPERATION 128
 #endif
+static int initialize_objects(void)
+{
+#if defined(CRABC_TIMED_CONDITION) || defined(CRABC_SHARED_CONDITION)
+    pthread_condattr_t cond_attr;
+    if (pthread_condattr_init(&cond_attr)) return 4;
+#ifdef CRABC_TIMED_CONDITION
+    if (pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC)) return 5;
+#endif
+#ifdef CRABC_SHARED_CONDITION
+    pthread_mutexattr_t mutex_attr;
+    if (pthread_mutexattr_init(&mutex_attr) ||
+        pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED) ||
+        pthread_mutex_init(&mutex, &mutex_attr) || pthread_mutexattr_destroy(&mutex_attr) ||
+        pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED)) return 6;
+#else
+    if (pthread_mutex_init(&mutex, 0)) return 6;
+#endif
+    if (pthread_cond_init(&condition, &cond_attr) || pthread_condattr_destroy(&cond_attr)) return 7;
+#else
+    if (pthread_mutex_init(&mutex, 0) || pthread_cond_init(&condition, 0)) return 7;
+#endif
+    return 0;
+}
 static void cleanup_owned(void *unused)
 {
     (void)unused;
@@ -103,21 +127,33 @@ static void *reuse_body(void *unused)
     (void)unused;
     if (pthread_mutex_lock(&mutex)) _Exit(30);
     atomic_store(&reuse_ready, 1);
-    if (pthread_cond_wait(&condition, &mutex) || pthread_mutex_unlock(&mutex)) _Exit(31);
+    while (!reuse_woken)
+        if (pthread_cond_wait(&condition, &mutex)) _Exit(31);
+    if (pthread_mutex_unlock(&mutex)) _Exit(31);
     return (void *)(uintptr_t)42;
 }
 static void verify_reuse(void)
 {
-    pthread_t thread;
-    if (pthread_create(&thread, 0, reuse_body, 0)) _Exit(32);
-    while (!atomic_load(&reuse_ready)) sched_yield();
-    /* Acquiring the released mutex proves the replacement is enrolled. */
-    if (pthread_mutex_lock(&mutex) || pthread_cond_signal(&condition) ||
-        pthread_mutex_unlock(&mutex)) _Exit(33);
-    void *result = 0;
-    if (pthread_join(thread, &result) || result != (void *)(uintptr_t)42 ||
-        pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex) ||
-        pthread_key_delete(teardown_key)) _Exit(34);
+    /* Cleanup and the destructor have finished every access to these objects.
+     * End that lifetime before publishing two fresh generations in the same
+     * storage, retaining the clock and process-sharing attributes each time. */
+    if (pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) _Exit(49);
+    for (int generation = 0; generation != 2; ++generation) {
+        if (initialize_objects()) _Exit(50);
+        atomic_store(&reuse_ready, 0);
+        reuse_woken = 0;
+        pthread_t thread;
+        if (pthread_create(&thread, 0, reuse_body, 0)) _Exit(32);
+        while (!atomic_load(&reuse_ready)) sched_yield();
+        /* The predicate is protected by the freshly initialized mutex. */
+        if (pthread_mutex_lock(&mutex)) _Exit(33);
+        reuse_woken = 1;
+        if (pthread_cond_signal(&condition) || pthread_mutex_unlock(&mutex)) _Exit(33);
+        void *result = 0;
+        if (pthread_join(thread, &result) || result != (void *)(uintptr_t)42 ||
+            pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) _Exit(34);
+    }
+    if (pthread_key_delete(teardown_key)) _Exit(34);
 }
 static void *controller(void *unused)
 {
@@ -163,21 +199,8 @@ int main(int argc, char **argv)
 {
     if (argc != 2) return 1;
     if (pthread_key_create(&teardown_key, teardown_destructor)) return 8;
-#if defined(CRABC_TIMED_CONDITION) || defined(CRABC_SHARED_CONDITION)
-    pthread_condattr_t cond_attr;
-    if (pthread_condattr_init(&cond_attr)) return 4;
-#ifdef CRABC_TIMED_CONDITION
-    if (pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC)) return 5;
-#endif
-#ifdef CRABC_SHARED_CONDITION
-    pthread_mutexattr_t mutex_attr;
-    if (pthread_mutexattr_init(&mutex_attr) ||
-        pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED) ||
-        pthread_mutex_init(&mutex, &mutex_attr) || pthread_mutexattr_destroy(&mutex_attr) ||
-        pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED)) return 6;
-#endif
-    if (pthread_cond_init(&condition, &cond_attr) || pthread_condattr_destroy(&cond_attr)) return 7;
-#endif
+    int initialized = initialize_objects();
+    if (initialized) return initialized;
     main_waiter = !strncmp(argv[1], "main-", 5);
     pending_entry = strstr(argv[1], "entry") != 0;
     signaled = strstr(argv[1], "signaled") != 0;

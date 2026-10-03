@@ -496,6 +496,7 @@ static pthread_mutex_t pi_mutex;
 static pthread_cond_t pi_condition;
 static pthread_t pi_worker;
 static atomic_int pi_ready, pi_release, pi_acquired;
+static atomic_int pi_waiter_tid, pi_cleaned;
 
 /* Linux 5.10 classic-BPF ABI, kept fixture-local. The filter rejects only
  * FUTEX_TRYLOCK_PI|FUTEX_PRIVATE_FLAG. Pinned musl never issues that
@@ -768,6 +769,61 @@ static int pi_condition_reacquire_case(void)
     return 0;
 }
 
+static void pi_condition_cleanup(void *unused)
+{
+    (void)unused;
+    /* Deferred cancellation must repair ownership before releasing the
+     * owner's robust-list entry and kernel PI state through normal unlock. */
+    if (pthread_mutex_trylock(&pi_mutex) != EBUSY || errno != E2BIG ||
+        pthread_mutex_unlock(&pi_mutex)) _Exit(120);
+    atomic_store(&pi_cleaned, 1);
+}
+
+static void *pi_condition_cancel_waiter(void *unused)
+{
+    (void)unused;
+    if (pthread_mutex_lock(&pi_mutex)) _Exit(121);
+    pthread_cleanup_push(pi_condition_cleanup, 0);
+    errno = E2BIG;
+    atomic_store(&pi_waiter_tid, (int)syscall(SYS_gettid));
+    atomic_store(&pi_ready, 1);
+    while (!atomic_load(&pi_release))
+        if (pthread_cond_wait(&pi_condition, &pi_mutex)) _Exit(122);
+    pthread_cleanup_pop(1);
+    return 0;
+}
+
+static int pi_condition_lifecycle_case(void)
+{
+    for (int robust = 0; robust != 2; ++robust) {
+        reset_pi_state();
+        atomic_store(&pi_cleaned, 0);
+        if (init_pi_mutex(&pi_mutex, PTHREAD_MUTEX_ERRORCHECK, robust, 0) ||
+            pthread_cond_init(&pi_condition, 0) ||
+            pthread_create(&pi_worker, 0, pi_condition_cancel_waiter, 0)) return 123;
+        wait_for(&pi_ready);
+        witness_pthread_futex_wait(atomic_load(&pi_waiter_tid), 128);
+        void *result = 0;
+        if (pthread_cancel(pi_worker) || pthread_join(pi_worker, &result) ||
+            result != PTHREAD_CANCELED || !atomic_load(&pi_cleaned) ||
+            pthread_cond_destroy(&pi_condition) || pthread_mutex_destroy(&pi_mutex)) return 124;
+
+        /* The canceled owner is joined before either object's lifetime ends.
+         * Reinitialize the mutex as plain storage, then transfer ownership to
+         * a fresh worker: no PI type or robust-list ownership may survive. */
+        reset_pi_state();
+        if (pthread_mutex_init(&pi_mutex, 0) ||
+            pthread_create(&pi_worker, 0, pi_holder, 0)) return 125;
+        wait_for(&pi_ready);
+        if (pthread_mutex_trylock(&pi_mutex) != EBUSY) return 126;
+        atomic_store(&pi_release, 1);
+        if (pthread_join(pi_worker, 0) || pthread_mutex_lock(&pi_mutex) ||
+            pthread_mutex_unlock(&pi_mutex) || pthread_mutex_destroy(&pi_mutex)) return 127;
+    }
+    puts("pthread PI condition cancellation, owner release and plain reinitialization: PASS");
+    return 0;
+}
+
 static int pi_case(void)
 {
     if (pi_protocol_and_ceiling_case() || pi_contention_and_deadline_case() ||
@@ -980,6 +1036,8 @@ static int c11_condition_case(void)
 
 int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "pi-condition-lifecycle"))
+        return pi_condition_lifecycle_case();
     if (argc != 2) return 80;
     if (!strcmp(argv[1], "recursive")) return recursive_case();
     if (!strcmp(argv[1], "errorcheck")) return errorcheck_case();
