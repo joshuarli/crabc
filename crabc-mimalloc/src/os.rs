@@ -3410,7 +3410,7 @@ impl Mapping {
     /// A source arena can be managed only under the same frozen page-size
     /// observation as its process page map. This value is immutable after
     /// creation and exposes no mapping ownership or raw memory access.
-    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+    #[cfg(any(test, feature = "test-adapter", feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) const fn page_size(&self) -> PageSize {
         self.page_size
