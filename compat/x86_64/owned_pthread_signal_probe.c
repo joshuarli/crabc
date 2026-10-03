@@ -8,6 +8,7 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -156,8 +157,12 @@ static int deliver_blocked_to_worker(void)
     CHECK(sigaction(SIGUSR2, &action, &old_action) == 0);
     CHECK(pthread_create(&worker, NULL, pending_worker, &state) == 0);
     CHECK(wait_for_ready(&state.ready) == 0);
+    sigset_t before, after;
+    CHECK(pthread_sigmask(SIG_SETMASK, NULL, &before) == 0);
     errno = ERANGE;
     CHECK(pthread_kill(worker, SIGUSR2) == 0 && errno == ERANGE);
+    CHECK(pthread_sigmask(SIG_SETMASK, NULL, &after) == 0 && errno == ERANGE);
+    CHECK(memcmp(&before, &after, sizeof(unsigned long)) == 0);
     atomic_store_explicit(&state.sent, 1, memory_order_release);
     void *result;
     CHECK(pthread_join(worker, &result) == 0 && result == NULL);
@@ -166,8 +171,14 @@ static int deliver_blocked_to_worker(void)
     return 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 2 && !strcmp(argv[1], "ordinary-blocked-worker")) {
+        CHECK(deliver_blocked_to_worker() == 0);
+        puts("pthread-signal: blocked SIGUSR2 pending then delivered to worker");
+        return 0;
+    }
+    CHECK(argc == 1);
     sigset_t signals, saved, observed;
     CHECK(sigemptyset(&signals) == 0 && sigaddset(&signals, SIGUSR1) == 0);
     CHECK(pthread_sigmask(SIG_BLOCK, &signals, &saved) == 0);

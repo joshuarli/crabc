@@ -304,10 +304,64 @@ static void waits(void) {
     printf("interrupted-sigwait: result=%d errno=%d interruptions=%d signal=%d\n",result,error,interruptions,received);
     CHECK(!result && interruptions==1 && received==SIGUSR1);
 }
+/* These ordinary deliveries retain the complete caller-owned alternate
+ * backing and the installed handler until the last synchronous return. */
+static unsigned char ordinary_alternate[65536] __attribute__((aligned(16)));
+static volatile sig_atomic_t ordinary_calls,ordinary_error,ordinary_code,ordinary_value;
+static volatile sig_atomic_t ordinary_onstack,ordinary_self_blocked,ordinary_peer_blocked;
+static void ordinary_handler(int signal_number, siginfo_t *info, void *context) {
+    (void)context;
+    int incoming=errno;
+    volatile unsigned char local;
+    uintptr_t address=(uintptr_t)&local;
+    sigset_t current;
+    ordinary_onstack=address>=(uintptr_t)ordinary_alternate
+        && address<(uintptr_t)ordinary_alternate+sizeof ordinary_alternate;
+    if (!sigprocmask(SIG_SETMASK,NULL,&current)) {
+        ordinary_self_blocked=sigismember(&current,SIGUSR1);
+        ordinary_peer_blocked=sigismember(&current,SIGUSR2);
+    }
+    ordinary_error=incoming;
+    ordinary_code=info->si_code;
+    ordinary_value=info->si_code==SI_QUEUE?info->si_value.sival_int:0;
+    if (signal_number==SIGUSR1) ordinary_calls++;
+    errno=ERANGE;
+}
+static void ordinary_lifecycle(void) {
+    stack_t previous,request={.ss_sp=ordinary_alternate,.ss_size=sizeof ordinary_alternate};
+    struct sigaction previous_action,action={0};
+    sigset_t previous_mask,blocked,temporary,pending,observed;
+    empty(&blocked); CHECK(!sigaddset(&blocked,SIGUSR1));
+    CHECK(!sigprocmask(SIG_SETMASK,&blocked,&previous_mask));
+    CHECK(!sigaltstack(&request,&previous));
+    action.sa_sigaction=ordinary_handler; action.sa_flags=SA_SIGINFO|SA_ONSTACK;
+    empty(&action.sa_mask); CHECK(!sigaddset(&action.sa_mask,SIGUSR2));
+    CHECK(!sigaction(SIGUSR1,&action,&previous_action));
+    empty(&temporary); CHECK(!sigprocmask(SIG_SETMASK,&temporary,NULL));
+    errno=EDOM; CHECK(!raise(SIGUSR1));
+    CHECK(ordinary_calls==1 && ordinary_error==EDOM && errno==ERANGE
+        && ordinary_code==SI_TKILL && ordinary_onstack && ordinary_self_blocked && ordinary_peer_blocked);
+    union sigval value={.sival_int=73}; errno=EDOM;
+    CHECK(!sigqueue(getpid(),SIGUSR1,value));
+    CHECK(ordinary_calls==2 && ordinary_error==EDOM && errno==ERANGE
+        && ordinary_code==SI_QUEUE && ordinary_value==73 && ordinary_onstack);
+    CHECK(!sigprocmask(SIG_SETMASK,&blocked,NULL));
+    errno=EDOM; CHECK(!raise(SIGUSR1) && ordinary_calls==2 && errno==EDOM);
+    CHECK(!sigpending(&pending) && sigismember(&pending,SIGUSR1));
+    errno=EDOM; CHECK(sigsuspend(&temporary)==-1 && errno==EINTR);
+    CHECK(ordinary_calls==3 && ordinary_error==EDOM && ordinary_onstack);
+    CHECK(!sigprocmask(SIG_SETMASK,NULL,&observed) && sigismember(&observed,SIGUSR1));
+    CHECK(!sigpending(&pending) && !sigismember(&pending,SIGUSR1));
+    CHECK(!sigaction(SIGUSR1,&previous_action,NULL));
+    CHECK(!sigaltstack(&previous,NULL));
+    CHECK(!sigprocmask(SIG_SETMASK,&previous_mask,NULL));
+    printf("ordinary-lifecycle: deliveries=%d mask-restored=1 altstack=1 queue=73 handler-errno=1\n",ordinary_calls);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2); CHECK(!setvbuf(stdout,NULL,_IONBF,0));
     sigset_t baseline; empty(&baseline); CHECK(!sigprocmask(SIG_SETMASK,&baseline,NULL));
-    if (!strcmp(argv[1],"sets")) sets();
+    if (!strcmp(argv[1],"ordinary-lifecycle")) ordinary_lifecycle();
+    else if (!strcmp(argv[1],"sets")) sets();
     else if (!strcmp(argv[1],"initial-handler-mask")) initial_handler_unmasks_internal_signals();
     else if (!strcmp(argv[1],"threaded-handler-mask")) threaded_handler_preserves_internal_mask();
     else if (!strcmp(argv[1],"actions-masks")) actions_masks();

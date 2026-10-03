@@ -29,7 +29,7 @@ static void require_action(void (*handler)(int), int restart) {
     CHECK(action.sa_handler == handler && !!(action.sa_flags & SA_RESTART) == restart);
     CHECK(!sigismember(&action.sa_mask, SIGUSR1));
 }
-static void action_cases(void) {
+static void action_cases(int ordinary) {
     struct sigaction saved;
     sigset_t saved_mask, mask;
     CHECK(sigaction(SIGUSR1, 0, &saved) == 0);
@@ -51,18 +51,20 @@ static void action_cases(void) {
     CHECK(sigignore(SIGUSR1) == 0); require_action(SIG_IGN, 0);
     CHECK(sighold(SIGUSR1) == 0 && sigrelse(SIGUSR1) == 0);
     CHECK(sigprocmask(SIG_SETMASK, 0, &mask) == 0 && !sigismember(&mask, SIGUSR1));
-    int invalid[] = {-1, 0, 32, 33, 34, 65};
-    for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; i++) {
-        int sig = invalid[i];
-        CHECK(sighold(sig) == -1 && errno == EINVAL);
-        CHECK(sigrelse(sig) == -1 && errno == EINVAL);
-        CHECK(sigignore(sig) == -1 && errno == EINVAL);
-        CHECK(sigset(sig, first) == SIG_ERR && errno == EINVAL);
-        CHECK(bsd_entry(sig, first) == SIG_ERR && errno == EINVAL);
-        CHECK(sysv_entry(sig, first) == SIG_ERR && errno == EINVAL);
+    if (!ordinary) {
+        int invalid[] = {-1, 0, 32, 33, 34, 65};
+        for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+            int sig = invalid[i];
+            CHECK(sighold(sig) == -1 && errno == EINVAL);
+            CHECK(sigrelse(sig) == -1 && errno == EINVAL);
+            CHECK(sigignore(sig) == -1 && errno == EINVAL);
+            CHECK(sigset(sig, first) == SIG_ERR && errno == EINVAL);
+            CHECK(bsd_entry(sig, first) == SIG_ERR && errno == EINVAL);
+            CHECK(sysv_entry(sig, first) == SIG_ERR && errno == EINVAL);
+        }
+        CHECK(sigignore(SIGKILL) == -1 && errno == EINVAL);
+        CHECK(sigignore(SIGSTOP) == -1 && errno == EINVAL);
     }
-    CHECK(sigignore(SIGKILL) == -1 && errno == EINVAL);
-    CHECK(sigignore(SIGSTOP) == -1 && errno == EINVAL);
     CHECK(sigaction(SIGUSR1, &saved, 0) == 0);
     CHECK(sigprocmask(SIG_SETMASK, &saved_mask, 0) == 0);
 }
@@ -216,7 +218,7 @@ static int redirect_stderr(int write_fd) {
 static void restore_stderr(int saved) {
     CHECK(dup2(saved, 2) == 2 && close(saved) == 0);
 }
-static void reporting_case(void) {
+static void reporting_case(int ordinary) {
     int channel[2]; CHECK(pipe(channel) == 0);
     int saved = redirect_stderr(channel[1]); CHECK(close(channel[1]) == 0);
     CHECK(fwide(stderr, 0) == 0);
@@ -236,6 +238,7 @@ static void reporting_case(void) {
     static const char expected[] = "notice: User defined signal 1\nUnknown signal\n: Terminated\nwide: Terminated\n\xce\xbb";
     CHECK(count == (ssize_t)sizeof expected - 1 && !memcmp(observed, expected, sizeof expected - 1));
     CHECK(close(channel[0]) == 0);
+    if (ordinary) return;
     saved = dup(2); CHECK(saved >= 0 && close(2) == 0);
     errno = EDOM; psignal(SIGTERM, "closed");
     int error = errno, stream_error = ferror(stderr), orientation = fwide(stderr, 0);
@@ -268,7 +271,9 @@ static void partial_reporting_case(void) {
 }
 int main(int argc, char **argv) {
     CHECK(argc == 2);
-    if (!strcmp(argv[1], "actions")) action_cases();
+    if (!strcmp(argv[1], "ordinary-actions")) action_cases(1);
+    else if (!strcmp(argv[1], "ordinary-reporting")) reporting_case(1);
+    else if (!strcmp(argv[1], "actions")) action_cases(0);
     else if (!strcmp(argv[1], "fork-action-mask")) fork_action_mask_case();
     else if (!strcmp(argv[1], "interrupt")) interrupt_bookkeeping(0, 0);
     else if (!strcmp(argv[1], "failed-interrupt")) interrupt_bookkeeping(1, 0);
@@ -277,7 +282,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "pause-query-failure")) pause_invalid_after_query_failure();
     else if (!strcmp(argv[1], "pause-threaded")) pause_threaded_delivery();
     else if (!strcmp(argv[1], "cancellation")) cancellation_case();
-    else if (!strcmp(argv[1], "reporting")) reporting_case();
+    else if (!strcmp(argv[1], "reporting")) reporting_case(0);
     else if (!strcmp(argv[1], "partial-reporting")) partial_reporting_case();
     else CHECK(0);
     puts("owned-signal-helpers-ok");
