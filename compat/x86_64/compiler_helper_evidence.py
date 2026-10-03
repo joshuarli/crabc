@@ -177,16 +177,16 @@ def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
     result: list[dict[str, Any]] = []
     names: list[str] = []
     for row in helpers:
-        require(type(row) is dict and set(row) == {"name", "rust_signature", "c_abi", "caller_obligation", "metadata"},
+        require(type(row) is dict and set(row) == {"name", "source_definition", "c_abi", "caller_obligation", "metadata"},
                 "compiler-helper helper record differs")
-        name, signature, c_abi, obligation = row["name"], row["rust_signature"], row["c_abi"], row["caller_obligation"]
+        name, definition, c_abi, obligation = row["name"], row["source_definition"], row["c_abi"], row["caller_obligation"]
         require(type(name) is str and re.fullmatch(r"__[a-z0-9]+", name) is not None,
                 "compiler-helper name differs")
-        require(type(signature) is str and ((signature.startswith('pub ') and f"fn {name}" in signature) or signature == f".globl {name}; .type {name},@function"),
+        require(type(definition) is str and ((definition.startswith('pub ') and f"fn {name}" in definition) or definition == f".globl {name}; .type {name},@function"),
                 "compiler-helper source definition differs")
         require(type(c_abi) is str and c_abi in HELPER_ABIS and type(obligation) is str and obligation,
                 "compiler-helper C ABI role differs")
-        result.append({"name": name, "rust_signature": signature, "c_abi": c_abi,
+        result.append({"name": name, "source_definition": definition, "c_abi": c_abi,
                        "caller_obligation": obligation, "metadata": _helper_metadata(row["metadata"])})
         names.append(name)
     require(names == sorted(names) and len(names) == len(set(names)) and set(names) == set(source_definitions(root)), "compiler-helper helper roster differs")
@@ -235,7 +235,7 @@ def source_definitions(root: Path = ROOT) -> dict[str, str]:
 def source_binding(root: Path, contract: Mapping[str, Any] | None = None) -> dict[str, Any]:
     root = Path(root).absolute()
     contract = load_contract(root) if contract is None else validate_contract(dict(contract), root=root)
-    expected = {row["name"]: row["rust_signature"] for row in contract["helpers"]}
+    expected = {row["name"]: row["source_definition"] for row in contract["helpers"]}
     require(source_definitions(root) == expected, "compiler-helper source definitions differ from contract")
     files = [file_identity(root, path) for path in SOURCE_FILES]
     return {"files": files, "helper_names": list(helper_names(contract)), "target": TARGET}

@@ -49,7 +49,7 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
         definitions = BUILDER.native_source_definitions(ROOT / "src/lib.rs")
         self.assertEqual(set(definitions), set(BUILDER.REQUIRED_SYMBOLS))
         self.assertEqual(
-            {helper["name"]: helper["rust_signature"] for helper in contract["helpers"]},
+            {helper["name"]: helper["source_definition"] for helper in contract["helpers"]},
             definitions,
         )
 

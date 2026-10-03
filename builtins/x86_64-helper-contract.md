@@ -155,8 +155,8 @@ The finite cast projection retains its existing caller interface and results.
 
 The selected archive also owns the six binary80 compiler entries
 `__floattixf`, `__floatuntixf`, `__fixxfti`, `__fixunsxfti`, `__mulxc3`, and
-`__divxc3`. Their assembly export declarations occupy the existing
-`rust_signature` field because Rust cannot express an fp80 C scalar type.
+`__divxc3`. The `source_definition` field records each real Rust C definition or exact
+assembly export declaration; Rust cannot express an fp80 C scalar type.
 The ABI roles and caller obligations describe the real stack/register
 boundary; no Rust declaration is used to approximate it. The same one-member
 archive and private shared-libc localization policy apply. The aggregate

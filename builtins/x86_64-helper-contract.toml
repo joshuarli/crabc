@@ -2,7 +2,7 @@
 #
 # These are unversioned C compiler-runtime entries from reviewed Rust C ABI
 # definitions and the x86 binary80 global assembly included by `src/lib.rs`.
-# The historical `rust_signature` field records either a real Rust definition
+# The `source_definition` field records either a real Rust definition
 # or the exact assembly export directives, without inventing a Rust fp80 type.
 # They are
 # installed as ordinary archive providers. The owned shared-libc link also
@@ -31,266 +31,266 @@ dynsym = false
 
 [[helpers]]
 name = "__addoti4"
-rust_signature = 'pub unsafe extern "C" fn __addoti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
+source_definition = 'pub unsafe extern "C" fn __addoti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
 c_abi = "u128-overflow-slot"
 caller_obligation = "one non-null writable int overflow slot"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__ashlti3"
-rust_signature = 'pub extern "C" fn __ashlti3(value: Uint128, shift: i32) -> Uint128'
+source_definition = 'pub extern "C" fn __ashlti3(value: Uint128, shift: i32) -> Uint128'
 c_abi = "u128-shift"
 caller_obligation = "scalar shift follows the source total branch for every i32 count"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__ashrti3"
-rust_signature = 'pub extern "C" fn __ashrti3(value: Uint128, shift: i32) -> Uint128'
+source_definition = 'pub extern "C" fn __ashrti3(value: Uint128, shift: i32) -> Uint128'
 c_abi = "u128-shift"
 caller_obligation = "scalar shift follows the source total branch for every i32 count"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__bswapdi2"
-rust_signature = 'pub extern "C" fn __bswapdi2(value: u64) -> u64'
+source_definition = 'pub extern "C" fn __bswapdi2(value: u64) -> u64'
 c_abi = "u64-byte-swap"
 caller_obligation = "plain u64 scalar"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__bswapsi2"
-rust_signature = 'pub extern "C" fn __bswapsi2(value: u32) -> u32'
+source_definition = 'pub extern "C" fn __bswapsi2(value: u32) -> u32'
 c_abi = "u32-byte-swap"
 caller_obligation = "plain u32 scalar"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__bswapti2"
-rust_signature = 'pub extern "C" fn __bswapti2(value: Uint128) -> Uint128'
+source_definition = 'pub extern "C" fn __bswapti2(value: Uint128) -> Uint128'
 c_abi = "u128-byte-swap"
 caller_obligation = "two-word Uint128 C ABI carrier"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__clzti2"
-rust_signature = 'pub extern "C" fn __clzti2(value: Uint128) -> i32'
+source_definition = 'pub extern "C" fn __clzti2(value: Uint128) -> i32'
 c_abi = "u128-bit-count"
 caller_obligation = "two-word Uint128 C ABI carrier; zero retains source count 128"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__ctzti2"
-rust_signature = 'pub extern "C" fn __ctzti2(value: Uint128) -> i32'
+source_definition = 'pub extern "C" fn __ctzti2(value: Uint128) -> i32'
 c_abi = "u128-bit-count"
 caller_obligation = "two-word Uint128 C ABI carrier; zero retains source count 128"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__divdc3"
-rust_signature = 'pub extern "C" fn __divdc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble'
+source_definition = 'pub extern "C" fn __divdc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble'
 c_abi = "complex-double"
 caller_obligation = "four f64 inputs and the x86-64 double-complex return convention"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__divmodti4"
-rust_signature = 'pub unsafe extern "C" fn __divmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
+source_definition = 'pub unsafe extern "C" fn __divmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
 c_abi = "u128-divmod-slot"
 caller_obligation = "defined signed divisor and one non-null writable Uint128 remainder slot"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__divti3"
-rust_signature = 'pub extern "C" fn __divti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+source_definition = 'pub extern "C" fn __divti3(numerator: Uint128, denominator: Uint128) -> Uint128'
 c_abi = "u128-binary"
 caller_obligation = "defined signed division operands"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__divxc3"
-rust_signature = '.globl __divxc3; .type __divxc3,@function'
+source_definition = '.globl __divxc3; .type __divxc3,@function'
 c_abi = "complex-binary80"
 caller_obligation = "four padded binary80 stack arguments; complex real and imaginary result in ST0/ST1"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__ffsti2"
-rust_signature = 'pub extern "C" fn __ffsti2(value: Uint128) -> i32'
+source_definition = 'pub extern "C" fn __ffsti2(value: Uint128) -> i32'
 c_abi = "u128-bit-count"
 caller_obligation = "two-word Uint128 C ABI carrier; zero returns zero"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__fixdfti"
-rust_signature = 'pub extern "C" fn __fixdfti(value: f64) -> Uint128'
+source_definition = 'pub extern "C" fn __fixdfti(value: f64) -> Uint128'
 c_abi = "binary64-to-u128"
 caller_obligation = "finite input whose truncation fits signed128; total source saturation/NaN branches do not define invalid C casts"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__fixsfti"
-rust_signature = 'pub extern "C" fn __fixsfti(value: f32) -> Uint128'
+source_definition = 'pub extern "C" fn __fixsfti(value: f32) -> Uint128'
 c_abi = "binary32-to-u128"
 caller_obligation = "finite input whose truncation fits signed128; total source saturation/NaN branches do not define invalid C casts"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__fixunsdfti"
-rust_signature = 'pub extern "C" fn __fixunsdfti(value: f64) -> Uint128'
+source_definition = 'pub extern "C" fn __fixunsdfti(value: f64) -> Uint128'
 c_abi = "binary64-to-u128"
 caller_obligation = "finite input whose truncation fits unsigned128; total source saturation/NaN branches do not define invalid C casts"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__fixunssfti"
-rust_signature = 'pub extern "C" fn __fixunssfti(value: f32) -> Uint128'
+source_definition = 'pub extern "C" fn __fixunssfti(value: f32) -> Uint128'
 c_abi = "binary32-to-u128"
 caller_obligation = "finite input whose truncation fits unsigned128; total source saturation/NaN branches do not define invalid C casts"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__fixunsxfti"
-rust_signature = '.globl __fixunsxfti; .type __fixunsxfti,@function'
+source_definition = '.globl __fixunsxfti; .type __fixunsxfti,@function'
 c_abi = "binary80-to-u128"
 caller_obligation = "one padded binary80 stack argument, finite nonnegative and representable in unsigned integer128; RAX/RDX result"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__fixxfti"
-rust_signature = '.globl __fixxfti; .type __fixxfti,@function'
+source_definition = '.globl __fixxfti; .type __fixxfti,@function'
 c_abi = "binary80-to-i128"
 caller_obligation = "one padded binary80 stack argument, finite and representable in signed integer128; RAX/RDX result"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__floattidf"
-rust_signature = 'pub extern "C" fn __floattidf(value: Uint128) -> f64'
+source_definition = 'pub extern "C" fn __floattidf(value: Uint128) -> f64'
 c_abi = "u128-to-binary64"
 caller_obligation = "signed128 two-word carrier; source rounds to nearest with ties to even"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__floattisf"
-rust_signature = 'pub extern "C" fn __floattisf(value: Uint128) -> f32'
+source_definition = 'pub extern "C" fn __floattisf(value: Uint128) -> f32'
 c_abi = "u128-to-binary32"
 caller_obligation = "signed128 two-word carrier; source rounds to nearest with ties to even"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__floattixf"
-rust_signature = '.globl __floattixf; .type __floattixf,@function'
+source_definition = '.globl __floattixf; .type __floattixf,@function'
 c_abi = "i128-to-binary80"
 caller_obligation = "signed integer128 in RDI/RSI; padded binary80 scalar result in ST0"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__floatuntidf"
-rust_signature = 'pub extern "C" fn __floatuntidf(value: Uint128) -> f64'
+source_definition = 'pub extern "C" fn __floatuntidf(value: Uint128) -> f64'
 c_abi = "u128-to-binary64"
 caller_obligation = "unsigned128 two-word carrier; source rounds to nearest with ties to even"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__floatuntisf"
-rust_signature = 'pub extern "C" fn __floatuntisf(value: Uint128) -> f32'
+source_definition = 'pub extern "C" fn __floatuntisf(value: Uint128) -> f32'
 c_abi = "u128-to-binary32"
 caller_obligation = "unsigned128 two-word carrier; source rounds to nearest with ties to even"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__floatuntixf"
-rust_signature = '.globl __floatuntixf; .type __floatuntixf,@function'
+source_definition = '.globl __floatuntixf; .type __floatuntixf,@function'
 c_abi = "u128-to-binary80"
 caller_obligation = "unsigned integer128 in RDI/RSI; padded binary80 scalar result in ST0"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__lshrti3"
-rust_signature = 'pub extern "C" fn __lshrti3(value: Uint128, shift: i32) -> Uint128'
+source_definition = 'pub extern "C" fn __lshrti3(value: Uint128, shift: i32) -> Uint128'
 c_abi = "u128-shift"
 caller_obligation = "scalar shift follows the source total branch for every i32 count"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__modti3"
-rust_signature = 'pub extern "C" fn __modti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+source_definition = 'pub extern "C" fn __modti3(numerator: Uint128, denominator: Uint128) -> Uint128'
 c_abi = "u128-binary"
 caller_obligation = "defined signed division operands"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__muldc3"
-rust_signature = 'pub extern "C" fn __muldc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble'
+source_definition = 'pub extern "C" fn __muldc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble'
 c_abi = "complex-double"
 caller_obligation = "four f64 inputs and the x86-64 double-complex return convention"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__muloti4"
-rust_signature = 'pub unsafe extern "C" fn __muloti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
+source_definition = 'pub unsafe extern "C" fn __muloti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
 c_abi = "u128-overflow-slot"
 caller_obligation = "one non-null writable int overflow slot"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__multi3"
-rust_signature = 'pub extern "C" fn __multi3(left: Uint128, right: Uint128) -> Uint128'
+source_definition = 'pub extern "C" fn __multi3(left: Uint128, right: Uint128) -> Uint128'
 c_abi = "u128-binary"
 caller_obligation = "two-word Uint128 C ABI carrier"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__mulxc3"
-rust_signature = '.globl __mulxc3; .type __mulxc3,@function'
+source_definition = '.globl __mulxc3; .type __mulxc3,@function'
 c_abi = "complex-binary80"
 caller_obligation = "four padded binary80 stack arguments; complex real and imaginary result in ST0/ST1"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__parityti2"
-rust_signature = 'pub extern "C" fn __parityti2(value: Uint128) -> i32'
+source_definition = 'pub extern "C" fn __parityti2(value: Uint128) -> i32'
 c_abi = "u128-bit-count"
 caller_obligation = "two-word Uint128 C ABI carrier"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__popcountdi2"
-rust_signature = 'pub extern "C" fn __popcountdi2(value: u64) -> i32'
+source_definition = 'pub extern "C" fn __popcountdi2(value: u64) -> i32'
 c_abi = "u64-bit-count"
 caller_obligation = "plain u64 scalar"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__popcountti2"
-rust_signature = 'pub extern "C" fn __popcountti2(value: Uint128) -> i32'
+source_definition = 'pub extern "C" fn __popcountti2(value: Uint128) -> i32'
 c_abi = "u128-bit-count"
 caller_obligation = "two-word Uint128 C ABI carrier"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__suboti4"
-rust_signature = 'pub unsafe extern "C" fn __suboti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
+source_definition = 'pub unsafe extern "C" fn __suboti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
 c_abi = "u128-overflow-slot"
 caller_obligation = "one non-null writable int overflow slot"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__udivmodti4"
-rust_signature = 'pub unsafe extern "C" fn __udivmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
+source_definition = 'pub unsafe extern "C" fn __udivmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
 c_abi = "u128-divmod-slot"
 caller_obligation = "defined unsigned divisor and optional Uint128 remainder slot; a non-null slot must be aligned and writable"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__udivti3"
-rust_signature = 'pub extern "C" fn __udivti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+source_definition = 'pub extern "C" fn __udivti3(numerator: Uint128, denominator: Uint128) -> Uint128'
 c_abi = "u128-binary"
 caller_obligation = "defined unsigned division operands"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
 name = "__umodti3"
-rust_signature = 'pub extern "C" fn __umodti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+source_definition = 'pub extern "C" fn __umodti3(numerator: Uint128, denominator: Uint128) -> Uint128'
 c_abi = "u128-binary"
 caller_obligation = "defined unsigned division operands"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }

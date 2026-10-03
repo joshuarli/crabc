@@ -103,7 +103,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
     def test_source_and_contract_are_a_bijection(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
         self.assertEqual(EVIDENCE.source_definitions(ROOT), {
-            row["name"]: row["rust_signature"] for row in contract["helpers"]
+            row["name"]: row["source_definition"] for row in contract["helpers"]
         })
 
     def test_reader_rejects_extra_helper_wrong_metadata_and_shared_placement(self) -> None:

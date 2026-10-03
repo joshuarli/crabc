@@ -113,10 +113,10 @@ def load_native_contract_value(value: object) -> dict[str, object]:
     names: list[str] = []
     normalized: list[dict[str, object]] = []
     for row in helpers:
-        _require(type(row) is dict and set(row) == {"name", "rust_signature", "c_abi", "caller_obligation", "metadata"},
+        _require(type(row) is dict and set(row) == {"name", "source_definition", "c_abi", "caller_obligation", "metadata"},
                  "native helper record differs")
-        name, signature, c_abi, obligation, metadata = (row["name"], row["rust_signature"], row["c_abi"], row["caller_obligation"], row["metadata"])
-        _require(all(type(item) is str and item for item in (name, signature, c_abi, obligation)), "native helper scalar contract differs")
+        name, definition, c_abi, obligation, metadata = (row["name"], row["source_definition"], row["c_abi"], row["caller_obligation"], row["metadata"])
+        _require(all(type(item) is str and item for item in (name, definition, c_abi, obligation)), "native helper scalar contract differs")
         _require(c_abi in HELPER_ABIS, "native helper C ABI role differs")
         _require(type(metadata) is dict and set(metadata) == {"type", "binding", "visibility", "version", "version_default"},
                  "native helper metadata fields differ")
@@ -128,7 +128,7 @@ def load_native_contract_value(value: object) -> dict[str, object]:
         normalized_metadata["version"] = None
         _require(normalized_metadata == HELPER_METADATA, "native helper metadata differs")
         names.append(name)
-        normalized.append({"name": name, "rust_signature": signature, "c_abi": c_abi,
+        normalized.append({"name": name, "source_definition": definition, "c_abi": c_abi,
                            "caller_obligation": obligation, "metadata": normalized_metadata})
     _require(len(names) == len(set(names)) and set(names) == REQUIRED_SYMBOLS and names == sorted(names),
              "native helper roster differs")
@@ -274,7 +274,7 @@ def audit_object(llvm_readelf: str, object_path: Path) -> None:
 
 def build(output: Path, *, profile: str = "release", runtime_core: Path | None = None, runtime_compiler_builtins: Path | None = None, runtime_libc: Path | None = None) -> dict[str, object]:
     contract = load_native_contract()
-    _require(native_source_definitions(SOURCE) == {row["name"]: row["rust_signature"] for row in contract["helpers"]},
+    _require(native_source_definitions(SOURCE) == {row["name"]: row["source_definition"] for row in contract["helpers"]},
              "native helper source definitions differ from contract")
     if output.name != ARCHIVE_NAME:
         raise BuildError(f"output must be named {ARCHIVE_NAME}")
