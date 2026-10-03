@@ -37,7 +37,6 @@
 //! without traversing inherited locks, roots, or page state.
 
 use core::cell::{Cell, UnsafeCell};
-use core::convert::Infallible;
 #[cfg(test)]
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
@@ -10014,31 +10013,37 @@ fn begin_current_thread_native_initial_persistent_owner(
         let Some(allocator) = RUNTIME_PROCESS.take_initial_page_owner_for_promotion() else {
             return Err(());
         };
-        let owner = NativeInitialPersistentThreadOwner {
-            allocator,
-            deferred_free_callback_generation: 0,
-            deferred_free_callback_active: AtomicUsize::new(0),
-            #[cfg(target_arch = "x86_64")]
-            generic_frequency_captures: 0,
-        };
-        match current_thread_native_initial_persistent_owner_cell().initialize(
-            owner,
-            |_owner| -> Result<(), Infallible> { Ok(()) },
-        ) {
+        let mut allocator = Some(allocator);
+        // SAFETY: acceptance grants this thread exclusive uninitialized final
+        // owner storage. Consume the already-selected permanent allocator
+        // before the first write; every following field write is infallible
+        // and invokes no callback. Initializing excludes recursive access and
+        // no pointer or owner projection escapes before Active publication.
+        let installed = unsafe { current_thread_native_initial_persistent_owner_cell()
+            .install_in_place(|destination| {
+                let allocator = allocator.take()
+                    .expect("accepted initial construction consumes its permanent allocator once");
+                core::ptr::addr_of_mut!((*destination).allocator).write(allocator);
+                core::ptr::addr_of_mut!((*destination).deferred_free_callback_generation).write(0);
+                core::ptr::addr_of_mut!((*destination).deferred_free_callback_active)
+                    .write(AtomicUsize::new(0));
+                #[cfg(target_arch = "x86_64")]
+                core::ptr::addr_of_mut!((*destination).generic_frequency_captures).write(0);
+            }) };
+        match installed {
             Ok(()) => {
                 set_current_thread_initial_native_owner_installed(true);
                 RUNTIME_PROCESS.publish_initial_owner_installed();
                 Ok(())
             }
-            Err(PersistentCompilerTlsOwnerInitializeError::State { owner, .. }) => {
-                // The pinned cell rejected the offered owner before consuming
-                // it. The owner has not published a page; dropping it latches
-                // its permanent page session terminal, and the caller below
-                // retains the process instead of offering a retry.
-                drop(owner);
+            Err(_) => {
+                // Refusal never consumes the offered allocator. As with a
+                // rejected complete owner, dropping it latches the permanent
+                // session terminal; the caller retains the process instead
+                // of offering another permanent session or publishing a cell.
+                drop(allocator);
                 Err(())
             }
-            Err(PersistentCompilerTlsOwnerInitializeError::Owner(never)) => match never {},
         }
     });
 
