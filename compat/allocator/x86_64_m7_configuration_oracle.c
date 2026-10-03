@@ -4,6 +4,9 @@
 #include "static.c"
 
 /* Undefined source switches have value zero in preprocessor conditions. */
+#ifndef MI_ENCODE_FREELIST
+#define MI_ENCODE_FREELIST 0
+#endif
 #ifndef MI_FREE_IS_CHECKED
 #define MI_FREE_IS_CHECKED 0
 #endif
