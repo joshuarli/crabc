@@ -784,6 +784,10 @@ impl PageMap {
             .min(self.header()?.reserved_size);
         let commit_count = page_map_count_of_size(commit_size);
         if let Err(error) = self.statistics.commit(self.mapping.commit(0, commit_size), commit_size) {
+            #[cfg(target_arch = "x86_64")]
+            self.report_commit_failure(error, commit_size)?;
+            #[cfg(not(target_arch = "x86_64"))]
+            {
             // The failed OS commit has already advanced its call statistic.
             // Source reports that failure before the PageMap refusal; the
             // null replay may then commit the same top range successfully.
@@ -800,6 +804,7 @@ impl PageMap {
             } else {
                 crate::process_init::process_warning_message(os_warning);
                 crate::process_init::process_warning_message(map_warning);
+            }
             }
             return Err(error);
         }
@@ -897,6 +902,10 @@ impl PageMap {
         })();
         let unlock = guard.unlock();
         if let Some(error) = failed_map {
+            #[cfg(target_arch = "x86_64")]
+            self.report_submap_allocation_failure(error);
+            #[cfg(not(target_arch = "x86_64"))]
+            {
             // The callback may reenter PageMap. No submap was published, so
             // unlock first, deliver the failed OS allocation warning while
             // its source statistics still reflect the preceding page, then
@@ -919,9 +928,67 @@ impl PageMap {
             } else {
                 crate::process_init::process_warning_message(map_warning);
             }
+            }
         }
         unlock?;
         result
+    }
+
+    /// Reports an already charged failed commit before its PageMap refusal.
+    /// Keep bounded message owners off the successful commitment path.
+    #[cfg(target_arch = "x86_64")]
+    #[cold]
+    #[inline(never)]
+    fn report_commit_failure(&self, error: Errno, commit_size: usize) -> Result<()> {
+        // The failed OS commit has already advanced its call statistic.
+        // Source reports that failure before the PageMap refusal; the
+        // null replay may then commit the same top range successfully.
+        let address = self.mapping.base()?.addr();
+        let os_warning = crate::diagnostic_output::SourceFormattedMessage::os_commit_failure(
+            error, address, commit_size,
+        );
+        let map_warning = crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+            c"unable to commit the allocation page-map on-demand\n",
+        );
+        if let Some(process) = self.source_process {
+            process.policy().source_warning(os_warning);
+            process.policy().source_warning(map_warning);
+        } else {
+            crate::process_init::process_warning_message(os_warning);
+            crate::process_init::process_warning_message(map_warning);
+        }
+        Ok(())
+    }
+
+    /// Reports a failed submap allocation after the map lock is released.
+    /// The failed mmap charge stays between its OS and PageMap warnings, so
+    /// reentrant output observes the same source statistics at each boundary.
+    #[cfg(target_arch = "x86_64")]
+    #[cold]
+    #[inline(never)]
+    fn report_submap_allocation_failure(&self, error: Errno) {
+        // The callback may reenter PageMap. No submap was published, so
+        // unlock first, deliver the failed OS allocation warning while
+        // its source statistics still reflect the preceding page, then
+        // charge the failed mmap before the PageMap warning and rollback.
+        let allocation_warning = crate::diagnostic_output::SourceFormattedMessage::os_alloc_failure(
+            error, 0, self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), 1, true, false,
+        );
+        if let Some(process) = self.source_process {
+            process.policy().source_warning(allocation_warning);
+        } else {
+            crate::process_init::process_warning_message(allocation_warning);
+        }
+        let _: Result<Mapping> = self.statistics.map(Err(error),
+            self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), true);
+        let map_warning = crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+            c"internal error: unable to extend the page map\n",
+        );
+        if let Some(process) = self.source_process {
+            process.policy().source_warning(map_warning);
+        } else {
+            crate::process_init::process_warning_message(map_warning);
+        }
     }
 
     /// Registers one page pointer over the arena slices intersecting a range.
