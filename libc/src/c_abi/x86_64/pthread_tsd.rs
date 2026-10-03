@@ -473,25 +473,24 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
     if values.is_null() {
         return;
     }
-    // SAFETY: the selected normal/explicit exit seam supplies its own current
-    // live worker value table and retains its mapping through this phase.
-    let values = unsafe { &*values };
-    if values
-        .teardown
-        .compare_exchange(
+    // Keep the owner as a raw pointer across application callbacks. Each
+    // atomic access borrows only that field for the operation; reentrant key
+    // set/delete and allocator callbacks retain no whole value-table borrow.
+    // SAFETY: the exit seam retains the current worker mapping until return.
+    let teardown = unsafe { core::ptr::addr_of!((*values).teardown) };
+    if unsafe { (*teardown).compare_exchange(
             TSD_TEAR_DOWN_IDLE,
             TSD_TEAR_DOWN_RUNNING,
             Ordering::AcqRel,
             Ordering::Acquire,
-        )
-        .is_err()
-    {
+        ).is_err() } {
         return;
     }
 
     for _ in 0..PTHREAD_DESTRUCTOR_ITERATIONS {
         lock_selected_tsd();
-        let used = values.used.swap(0, Ordering::AcqRel);
+        // SAFETY: this field remains in the caller-retained current mapping.
+        let used = unsafe { (*values).used.swap(0, Ordering::AcqRel) };
         unlock_selected_tsd();
         if used == 0 {
             break;
@@ -501,13 +500,19 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
             // key deletion from another thread only clears them. A slot that
             // reads zero therefore stays zero, and clearing it under the lock
             // would neither change it nor select a destructor.
-            if values.values[index].load(Ordering::Acquire) == 0 {
+            // SAFETY: the bounded index projects one atomic slot in the live
+            // current worker table without borrowing the surrounding array.
+            let slot = unsafe {
+                core::ptr::addr_of!((*values).values).cast::<AtomicUsize>().add(index)
+            };
+            if unsafe { (*slot).load(Ordering::Acquire) } == 0 {
                 continue;
             }
             lock_selected_tsd();
             // Musl clears every value while scanning, including values whose
             // key has no destructor or was deleted during a prior callback.
-            let value = values.values[index].swap(0, Ordering::AcqRel);
+            // SAFETY: this slot is retained through the callback handoff.
+            let value = unsafe { (*slot).swap(0, Ordering::AcqRel) };
             let destructor = if value != 0 && key_is_allocated_locked(index) {
                 destructor_from_word(
                     SELECTED_TSD_KEYS[index]
@@ -527,9 +532,8 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
             }
         }
     }
-    values
-        .teardown
-        .store(TSD_TEAR_DOWN_COMPLETE, Ordering::Release);
+    // SAFETY: all callbacks finished while the caller retained this mapping.
+    unsafe { (*teardown).store(TSD_TEAR_DOWN_COMPLETE, Ordering::Release); }
 }
 
 /// Run the bootstrapped initial thread's selected TSD destructor phase.

@@ -227,7 +227,10 @@ static void four_pass_cleanup(void *opaque) {
     release(filled(73, 0x29), 73, 0x29);
     ++round->cleanup_calls;
 }
-static void four_pass_destructor(void *opaque) {
+static void four_pass_destructor(void *opaque);
+static void four_pass_replacement_destructor(void *opaque);
+
+static void four_pass_step(void *opaque) {
     struct four_pass_round *round = opaque;
     require_owner(1);
     CHECK(++round->calls <= 4);
@@ -241,10 +244,31 @@ static void four_pass_destructor(void *opaque) {
     memset(block, byte, 241);
     if (round->calls < 4) {
         release(block, 241, byte);
+        /* Deletion does not own the cleared callback value. Replacing the
+         * key from its own callback must dispatch the newly selected
+         * destructor on the next pass, while this worker can still allocate. */
+        pthread_key_t previous = four_pass_key;
+        pthread_key_t replacement;
+        CHECK(pthread_key_delete(previous) == 0);
+        CHECK(pthread_key_create(&replacement, round->calls & 1
+            ? four_pass_replacement_destructor : four_pass_destructor) == 0);
+        CHECK(replacement == previous);
+        four_pass_key = replacement;
+        CHECK(pthread_getspecific(four_pass_key) == NULL);
         CHECK(pthread_setspecific(four_pass_key, round) == 0);
     } else {
         round->last_client = block;
     }
+}
+static void four_pass_destructor(void *opaque) {
+    struct four_pass_round *round = opaque;
+    CHECK((round->calls & 1) == 0);
+    four_pass_step(opaque);
+}
+static void four_pass_replacement_destructor(void *opaque) {
+    struct four_pass_round *round = opaque;
+    CHECK((round->calls & 1) == 1);
+    four_pass_step(opaque);
 }
 static void *four_pass_worker(void *opaque) {
     struct four_pass_round *round = opaque;
@@ -260,6 +284,12 @@ static void *four_pass_worker(void *opaque) {
 static void four_tsd_passes(void) {
     CHECK(pthread_key_create(&four_pass_key, four_pass_destructor) == 0);
     for (int mode = 0; mode < 2; ++mode) {
+        /* The prior round ends on the replacement callback. Reset the next
+         * ordinary worker to the original callback with an empty key slot. */
+        if (mode != 0) {
+            CHECK(pthread_key_delete(four_pass_key) == 0);
+            CHECK(pthread_key_create(&four_pass_key, four_pass_destructor) == 0);
+        }
         struct four_pass_round round = { .explicit_exit = mode };
         pthread_t thread;
         void *result;
@@ -273,7 +303,7 @@ static void four_tsd_passes(void) {
         release(round.last_client, 241, 0x44);
     }
     CHECK(pthread_key_delete(four_pass_key) == 0);
-    dprintf(1, "TSD four passes: return and pthread_exit joined clients\n");
+    dprintf(1, "TSD four passes: callback key replacement, return and pthread_exit joined clients\n");
 }
 
 /* Refusal with subsequent valid use in a worker. */

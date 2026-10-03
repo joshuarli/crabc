@@ -228,7 +228,11 @@ fi
 # Inspect the hidden strong provider behind the weak public alias: objdump
 # selects that provider's label for their shared definition.
 objdump -d --disassemble=__pthread_key_create "$candidate" >"$key_create_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$key_create_disassembly" ||
+# Follow called helpers as well as inline instructions: opt0 keeps the Rust
+# atomic compare-exchange out of the exported provider's own body.
+python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
+    --label 'x86 static libc pthread TSD' --root __pthread_key_create \
+    --instruction '^lock cmpxchg' || \
     fail "pthread_key_create lacks its private atomic key-table lock"
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate" \
