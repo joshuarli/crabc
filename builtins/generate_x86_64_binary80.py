@@ -54,10 +54,11 @@ def main():
     version = subprocess.check_output([args.cc, '--version'], text=True).splitlines()[0]
     if '15.2.0' not in version:
         raise SystemExit('requires pinned GCC 15.2.0')
-    for line in (LLVM/'SHA256SUMS').read_text().splitlines():
-        digest, name = line.split()
-        if hashlib.sha256((LLVM/name).read_bytes()).hexdigest() != digest:
-            raise SystemExit('pinned LLVM source differs: '+name)
+    for directory in (LLVM, HEADERS):
+        for line in (directory/'SHA256SUMS').read_text().splitlines():
+            digest, name = line.split()
+            if hashlib.sha256((directory/name).read_bytes()).hexdigest() != digest:
+                raise SystemExit('pinned LLVM source differs: '+name)
     for name in SUPPORT:
         if (ROOT/'fixtures/musl126_binary80'/(name+'.c')).read_bytes() != (args.musl_source/'src/math'/(name+'.c')).read_bytes():
             raise SystemExit('retained musl kernel differs: '+name)

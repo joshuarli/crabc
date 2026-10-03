@@ -51,7 +51,9 @@ SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
 ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
 CAST_PROBE = Path("builtins/fixtures/x86_64_int128_casts_probe.c")
 BINARY32_CAST_PROBE = Path("builtins/fixtures/x86_64_binary32_casts_probe.c")
-SOURCE_FILES = (Path("builtins/src/x86_64_binary80.S"), Path("builtins/generate_x86_64_binary80.py"),
+SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_divdc3") / name for name in
+                  ("int_lib.h", "int_math.h", "int_types.h", "int_endianness.h", "int_util.h", "fp_lib.h", "divdc3.c", "LICENSE.TXT", "SHA256SUMS")),
+                Path("builtins/src/x86_64_binary80.S"), Path("builtins/generate_x86_64_binary80.py"),
                 Path("builtins/fixtures/x86_64_binary80_probe.c"), Path("builtins/fixtures/x86_64_binary80_differential.c"),
                 *(Path("builtins/fixtures/llvm22_binary80") / name for name in
                   ("floattixf.c", "floatuntixf.c", "fixxfti.c", "fixunsxfti.c", "mulxc3.c", "divxc3.c", "LICENSE.TXT", "SHA256SUMS")),
