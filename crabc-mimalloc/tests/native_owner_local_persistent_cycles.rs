@@ -90,6 +90,37 @@ fn attached_worker_reuses_its_owner_for_repeated_local_allocate_free_cycles() {
                 );
             }
         }
+        // Keep several overallocated clients live together. Their base bin
+        // and adjusted client addresses differ, so zeroing or local reuse must
+        // preserve every sibling payload and the separately retained anchor.
+        for round in 0..16u8 {
+            let mut clients = std::vec::Vec::new();
+            for index in 0..8u8 {
+                let zero = index % 2 == 0;
+                let block = match native_allocate_aligned(256, 4096, zero) {
+                    NativePageAllocationResult::Allocated(block) => block,
+                    _ => panic!("the retained worker allocates its ordinary page-aligned client"),
+                };
+                assert_eq!(block.as_ptr().addr() % 4096, 0);
+                // SAFETY: this worker owns the complete 256-byte live client.
+                unsafe {
+                    assert!(native_usable_size(block).is_some_and(|size| size >= 256));
+                    let bytes = core::slice::from_raw_parts_mut(block.as_ptr(), 256);
+                    if zero { assert!(bytes.iter().all(|byte| *byte == 0)); }
+                    bytes.fill(round.wrapping_add(index));
+                }
+                clients.push((block, round.wrapping_add(index)));
+            }
+            for (block, pattern) in clients {
+                // SAFETY: no sibling allocation or free consumes this client;
+                // its payload stays live until this exact matching local free.
+                unsafe {
+                    assert!(core::slice::from_raw_parts(block.as_ptr(), 256)
+                        .iter().all(|byte| *byte == pattern));
+                    assert_eq!(native_free(block), NativePageFreeResult::Freed);
+                }
+            }
+        }
         // SAFETY: the retained owner still owns the anchor locally.
         unsafe {
             assert_eq!(native_free(anchor), NativePageFreeResult::Freed);

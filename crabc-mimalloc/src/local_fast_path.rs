@@ -35,7 +35,7 @@ use core::ptr::NonNull;
 
 use crate::config::{
     BIN_HUGE, MAX_ALIGN_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_START_BLOCK_ALIGN2,
-    PAGE_OSPAGE_BLOCK_ALIGN2, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
+    PAGE_OSPAGE_BLOCK_ALIGN2, PAGE_MAX_OVERALLOC_ALIGN, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
 #[cfg(feature = "mi-stat-1")]
 use crate::config::LARGE_MAX_OBJ_SIZE;
@@ -135,8 +135,8 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// (`mi_theap_malloc_zero_aligned_at`). Both take the source order: the
 /// direct page's immediate head (`_mi_page_malloc_zero`, which leaves
 /// `retire_expire` alone), when aligned entries find it suitably aligned;
-/// an eight-byte request with 16-byte alignment first uses the source's
-/// 31-byte overallocated base through that base class's direct or queue head;
+/// a request whose alignment exceeds its size uses the source's padded
+/// ordinary base through that base class's direct or queue head;
 /// otherwise, for an ordinary or naturally aligned small request,
 /// `_mi_malloc_generic`'s counter step and its queue-head
 /// `mi_page_free_quick_collect`, which clears `retire_expire` before the
@@ -154,7 +154,7 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// checked in this same native operation, so this thread exclusively owns the Theap's ordinary fields and
 /// every ordinary page field of its queued pages. An `alignment` that is not
 /// a power of two is declined.
-#[inline(never)]
+#[inline]
 pub(crate) unsafe fn allocate(
     theap: NonNull<Theap>,
     size: usize,
@@ -164,13 +164,10 @@ pub(crate) unsafe fn allocate(
     if alignment.is_some_and(|alignment| !alignment.is_power_of_two()) {
         return None;
     }
-    if size == WORD_SIZE && alignment == Some(MAX_ALIGN_SIZE) {
-        // SAFETY: forwarded exclusive owner contract. This aligned request
-        // takes the source's overallocated ordinary allocation branch.
-        return unsafe { allocate_eight_byte_overalloc_head(theap, zero) };
-    }
-    if alignment.is_some_and(|alignment| alignment > size) {
-        return None;
+    if let Some(alignment) = alignment.filter(|alignment| *alignment > size) {
+        // SAFETY: forwarded exclusive owner contract. This request cannot
+        // use natural alignment, so the source overallocates its ordinary base.
+        return unsafe { allocate_overalloc_head(theap, size, alignment, zero) };
     }
     let direct_small = size <= SMALL_SIZE_MAX;
     if !direct_small && (size > MEDIUM_MAX_OBJ_SIZE || alignment.is_some()) {
@@ -210,6 +207,30 @@ pub(crate) unsafe fn allocate(
             }
         }
     }
+    // SAFETY: the unchanged empty direct observation belongs to this owner;
+    // no callback or mutation occurs before the queue-head continuation.
+    let (_, block) = unsafe { allocate_queue_head(theap, size, zero, observed_empty_direct_page) }?;
+    debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
+    Some(block)
+}
+
+/// The source queue-head allocation after a direct head could not supply a
+/// block. Keeping administration and medium-page checks here leaves direct
+/// allocation independent of queue selection and retirement temporaries.
+///
+/// # Safety
+///
+/// The caller owns the live Theap and every selected page's ordinary fields.
+/// `size` names a regular small or medium class. `observed_empty_direct_page`
+/// is null, or the owner's direct page whose immediate head was just empty;
+/// no owner mutation or callback may intervene after that observation.
+#[inline(never)]
+unsafe fn allocate_queue_head(
+    theap: NonNull<Theap>,
+    size: usize,
+    zero: bool,
+    observed_empty_direct_page: *mut Page,
+) -> Option<(NonNull<Page>, NonNull<u8>)> {
     // A direct small head can supply a block without regular-page classification.
     // The eight-word request uses bin eight when its direct head is empty.
     let bin = if size == 8 * WORD_SIZE { 8 } else { size_class::bin(size)? };
@@ -272,69 +293,64 @@ pub(crate) unsafe fn allocate(
     // SAFETY: the queue head remains live through the owner-local pop.
     #[cfg(feature = "mi-stat-1")]
     unsafe { record_normal_allocation(theap, first, size) };
-    debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
-    Some(block)
+    Some((first, block))
 }
 
-/// The eight-byte, 16-aligned case of
-/// `mi_theap_malloc_zero_aligned_at_overalloc`.
-/// Its base request uses the source's minimum size before alignment padding.
-/// An empty direct head may still use the ordinary queue head after its quick
-/// local collection; page search and extension stay on the full path.
+/// `mi_theap_malloc_zero_aligned_at_overalloc` with an ordinary small or
+/// medium base already available from the owner. Larger bases and the source
+/// OS-aligned singleton branch stay on the complete allocation path.
 ///
 /// # Safety
 ///
-/// `theap` is the published exclusive owner for this operation.
+/// `theap` is the published exclusive owner for this operation. `alignment`
+/// is a nonzero power of two larger than `size`, and no callback or owner
+/// transition occurs while the base allocation and interior marking complete.
 #[inline(never)]
-unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) -> Option<NonNull<u8>> {
-    let request = MAX_ALIGN_SIZE + MAX_ALIGN_SIZE - 1;
-    let alignment = MAX_ALIGN_SIZE;
-    let direct_index = invariants::word_count(request)?;
-    if direct_index >= PAGES_DIRECT {
+unsafe fn allocate_overalloc_head(
+    theap: NonNull<Theap>,
+    size: usize,
+    alignment: usize,
+    zero: bool,
+) -> Option<NonNull<u8>> {
+    // Guarded aligned allocation also carries a source tag and sampling
+    // transition. Preserve its existing eight-byte specialization; other
+    // guarded overallocations continue through the complete source path.
+    if crate::config::GUARDED && !(size == WORD_SIZE && alignment == MAX_ALIGN_SIZE) {
         return None;
     }
-    // SAFETY: the published owner keeps each direct slot initialized to a
-    // live page or the immutable empty-page sentinel.
-    let page = unsafe { NonNull::new_unchecked(Theap::local_direct_page_at(theap, direct_index)?) };
-    let head = unsafe { Page::free_list_head_at(page) };
-    let (page, base) = if !head.is_null() {
-        // SAFETY: a non-null head excludes the sentinel. This owner controls
-        // the ordinary list, and the source allocates this base first.
-        (page, unsafe { pop_selected_head(page, head, zero) })
+    if alignment > PAGE_MAX_OVERALLOC_ALIGN {
+        return None;
+    }
+    let request = size.max(MAX_ALIGN_SIZE).checked_add(alignment - 1)?;
+    if request > MEDIUM_MAX_OBJ_SIZE {
+        return None;
+    }
+    let mut observed_empty_direct_page = core::ptr::null_mut();
+    let immediate = if request <= SMALL_SIZE_MAX {
+        let direct_index = invariants::word_count(request)?;
+        // SAFETY: the published owner keeps each direct slot initialized to
+        // a live page or the immutable empty-page sentinel.
+        let page = unsafe { NonNull::new_unchecked(Theap::local_direct_page_at(theap, direct_index)?) };
+        let head = unsafe { Page::free_list_head_at(page) };
+        if head.is_null() {
+            observed_empty_direct_page = page.as_ptr();
+            None
+        } else {
+            // SAFETY: a non-null head excludes the sentinel. The source
+            // allocates this complete ordinary base before aligning its client.
+            let base = unsafe { pop_selected_head(page, head, zero) };
+            #[cfg(feature = "mi-stat-1")]
+            unsafe { record_normal_allocation(theap, page, request) };
+            Some((page, base))
+        }
     } else {
-        let bin = size_class::bin(request)?;
-        let first = NonNull::new(unsafe { Theap::local_queue_at(theap, bin) }?.first())?;
-        // SAFETY: the queue head is a live owner page. The direct head's
-        // empty observation remains valid while this owner runs.
-        let (selected_head, local_head) = unsafe {
-            let state = Page::local_free_list_state_at(first);
-            let immediate_head = if first == page {
-                core::ptr::null_mut()
-            } else {
-                *state.free.as_ptr()
-            };
-            let local_head = if immediate_head.is_null() {
-                *state.local_free.as_ptr()
-            } else {
-                core::ptr::null_mut()
-            };
-            (if immediate_head.is_null() { local_head } else { immediate_head }, local_head)
-        };
-        if selected_head.is_null() {
-            return None;
-        }
-        // SAFETY: the published owner exclusively controls this counter.
-        if !unsafe { Theap::advance_generic_count_below_administration_at(theap) } {
-            return None;
-        }
-        // SAFETY: the selected owner head remains stable through the source
-        // quick collect, countdown clear, and ordinary block pop.
-        let base = unsafe {
-            quick_collect_before_pop(first, local_head);
-            Page::set_retire_expire_at(first, 0);
-            pop_selected_head(first, selected_head, zero)
-        };
-        (first, base)
+        None
+    };
+    // SAFETY: forwarded owner contract. A refused queue selection leaves all
+    // fields unchanged; success retains a regular page that did not become full.
+    let (page, base) = match immediate {
+        Some(allocation) => allocation,
+        None => unsafe { allocate_queue_head(theap, request, zero, observed_empty_direct_page) }?,
     };
     // The source rounds the client pointer up to the next alignment boundary.
     // Negating the address modulo a power of two gives exactly that padding.
@@ -344,8 +360,6 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
         // update leaves the same owner and full-page bits intact.
         unsafe { Page::set_has_interior_pointers_at(page, true) };
     }
-    #[cfg(feature = "mi-stat-1")]
-    unsafe { record_normal_allocation(theap, page, request) };
     // The padded request leaves at least `alignment - 1` bytes beyond the
     // minimum base size, so this adjusted client stays inside the block.
     Some(unsafe { NonNull::new_unchecked(base.as_ptr().add(adjustment)) })
