@@ -578,6 +578,55 @@ static int check_split_rounding(void)
 	return differential_write_error;
 }
 
+/* A saved environment retains each unit's rounding field and exception
+ * flags. Exercise the snapshot across hold/update and default restoration,
+ * then consume both the SSE scalar and binary80 callable return ABIs. */
+static int check_environment_lifetime(void)
+{
+	int iteration;
+	for (iteration = 0; iteration < 8; iteration++) {
+		fenv_t held;
+		fenv_t restored;
+		volatile long double fraction = 1.5L;
+		volatile double scalar = 1.5;
+		if (!set_split_rounding(FE_UPWARD, FE_DOWNWARD))
+			return 1;
+		if (direct_rintl(fraction) != 1.0L ||
+			feraiseexcept(FE_DIVBYZERO) != 0)
+			return 2;
+		if (feholdexcept(&held) != 0 ||
+			(held.__status_word & FE_INEXACT) == 0 ||
+			(held.__mxcsr & FE_DIVBYZERO) == 0 ||
+			fetestexcept(FE_ALL_EXCEPT) != 0)
+			return 3;
+		if (fesetround(FE_TONEAREST) != 0 ||
+			direct_rintl(fraction) != 2.0L ||
+			feraiseexcept(FE_OVERFLOW) != 0 ||
+			feupdateenv(&held) != 0 || fegetenv(&restored) != 0)
+			return 4;
+		if ((restored.__control_word & 0x0c00) != FE_DOWNWARD ||
+			((restored.__mxcsr >> 3) & 0x0c00) != FE_UPWARD ||
+			(restored.__status_word & FE_ALL_EXCEPT) != FE_INEXACT ||
+			(restored.__mxcsr & FE_ALL_EXCEPT) !=
+				(FE_DIVBYZERO | FE_OVERFLOW | FE_INEXACT))
+			return 5;
+		if (direct_rintl(fraction) != 1.0L || direct_rint(scalar) != 2.0)
+			return 6;
+		if (feupdateenv(FE_DFL_ENV) != 0 || fegetround() != FE_TONEAREST ||
+			fetestexcept(FE_ALL_EXCEPT) !=
+				(FE_DIVBYZERO | FE_OVERFLOW | FE_INEXACT))
+			return 7;
+		if (fesetenv(FE_DFL_ENV) != 0 ||
+			!raw_round_state(FE_TONEAREST, 0))
+			return 8;
+		if (fesetenv(&held) != 0 || direct_nearbyintl(fraction) != 1.0L ||
+			direct_nearbyint(scalar) != 2.0 ||
+			fetestexcept(FE_ALL_EXCEPT) != (FE_DIVBYZERO | FE_INEXACT))
+			return 9;
+	}
+	return 0;
+}
+
 int crabc_x86_64_fenv_rounding_probe(void)
 {
 	static const int modes[4] = {
@@ -614,6 +663,8 @@ int crabc_x86_64_fenv_rounding_probe(void)
 		status = emit_differential() == 0 ? 0 : 6;
 	if (status == 0)
 		status = check_split_rounding() == 0 ? 0 : 7;
+	if (status == 0)
+		status = check_environment_lifetime() == 0 ? 0 : 8;
 	if (fesetenv(&original) != 0 && status == 0)
 		status = 4;
 	return status;
