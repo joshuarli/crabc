@@ -1,6 +1,6 @@
 //! Bounded application workload for native `crabc-rs` LTO inspection.
 //!
-//! This is an actual no-std Linux/AArch64 executable rather than a static
+//! This is an actual no-std Linux executable rather than a static
 //! library probe. The installed crabc CRT enters its C-ABI `main`; every
 //! operation below reaches the kernel through the direct `crabc-rs` facade.
 //! In particular, there are no public C ABI calls, C `errno` reads, or
@@ -38,8 +38,8 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
 
 // `core` retains an unwind-personality reference even with `panic = "abort"`
 // on this target. No unwinding can reach this fixture—the panic handler exits
-// directly—but supplying the inert linker symbol lets the normal dynamic musl
-// CRT own process startup without importing an unwind runtime.
+// directly. The inert linker symbol resolves the unreachable reference
+// without importing an unwind runtime; the selected CRT owns startup.
 #[no_mangle]
 pub extern "C" fn rust_eh_personality() {}
 
@@ -63,7 +63,7 @@ fn fail(status: i32, message: &[u8]) -> ! {
 /// The result is process-independent: zero means all three direct `getpid`
 /// observations were positive and stable, while one means an assertion failed.
 /// Keeping the three calls in this `#[inline(never)]` symbol gives an LTO
-/// harness a bounded function whose `svc #0` sequence can be inspected without
+/// harness a bounded function whose syscall sequence can be inspected without
 /// conflating it with the descriptor workload below.
 #[no_mangle]
 #[inline(never)]
@@ -121,11 +121,18 @@ pub extern "C" fn native_facade_direct_route() -> i32 {
         return 7;
     }
     drop(writer);
+    let (eof, _) = match io::read(&reader, &mut received) {
+        Ok(value) => value,
+        Err(_) => return 7,
+    };
+    if !eof.is_empty() {
+        return 7;
+    }
     drop(reader);
 
     // `eventfd` and `fcntl(F_GETFD)` provide a typed scalar operation and an
     // observable flag check while retaining direct errno-free errors.
-    let counter = match eventfd(0, EventfdFlags::CLOEXEC) {
+    let counter = match eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK) {
         Ok(fd) => fd,
         Err(_) => return 8,
     };
@@ -139,7 +146,13 @@ pub extern "C" fn native_facade_direct_route() -> i32 {
     if eventfd_write(&counter, 7).is_err() {
         return 11;
     }
-    if eventfd_read(&counter) != Ok(7) {
+    if eventfd_write(&counter, 9).is_err() {
+        return 11;
+    }
+    if eventfd_read(&counter) != Ok(16) {
+        return 12;
+    }
+    if eventfd_read(&counter) != Err(crabc_rs::Errno::AGAIN) {
         return 12;
     }
     drop(counter);

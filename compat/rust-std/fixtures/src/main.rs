@@ -1,8 +1,11 @@
+use std::cell::RefCell;
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,7 +13,33 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const FILE_PATH: &str = "/tmp/crabc-rust-std-fixture.txt";
 const DIRECTORY_PATH: &str = "/tmp/crabc-rust-std-fixture-dir";
 
+
+// The TLS value owns memory received from the parent. Its destructor also
+// allocates and frees on the worker before allocator thread teardown.
+struct AllocationCleanup {
+    completed: Arc<AtomicUsize>,
+    parent_bytes: Vec<u8>,
+}
+
+impl Drop for AllocationCleanup {
+    fn drop(&mut self) {
+        assert!(self.parent_bytes.iter().all(|byte| *byte == 0x37));
+        let worker_bytes = vec![0x71_u8; 32 * 1024];
+        assert!(worker_bytes.iter().all(|byte| *byte == 0x71));
+        self.completed.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+thread_local! {
+    static ALLOCATION_CLEANUP: RefCell<Option<AllocationCleanup>> = const { RefCell::new(None) };
+}
+
 fn child_process() {
+    let mut bytes = vec![0x37_u8; 4096];
+    bytes.resize(64 * 1024, 0x71);
+    assert!(bytes[..4096].iter().all(|byte| *byte == 0x37));
+    assert!(bytes[4096..].iter().all(|byte| *byte == 0x71));
+    drop(bytes);
     println!("rust-std-child:ok");
 }
 
@@ -46,11 +75,18 @@ fn run() -> io::Result<()> {
 
     let state = Arc::new((Mutex::new(false), Condvar::new()));
     let worker_state = Arc::clone(&state);
+    let completed = Arc::new(AtomicUsize::new(0));
+    let cleanup = AllocationCleanup {
+        completed: Arc::clone(&completed),
+        parent_bytes: vec![0x37; 4096],
+    };
     let worker = thread::spawn(move || {
+        ALLOCATION_CLEANUP.with(|slot| *slot.borrow_mut() = Some(cleanup));
         let (lock, condition) = &*worker_state;
         let mut ready = lock.lock().expect("mutex poisoned");
         *ready = true;
         condition.notify_one();
+        vec![0x7137_u32; 16 * 1024]
     });
     let (lock, condition) = &*state;
     let mut ready = lock.lock().expect("mutex poisoned");
@@ -58,7 +94,12 @@ fn run() -> io::Result<()> {
         ready = condition.wait(ready).expect("condvar poisoned");
     }
     drop(ready);
-    worker.join().expect("worker panicked");
+    let worker_bytes = worker.join().expect("worker panicked");
+    assert_eq!(completed.load(Ordering::SeqCst), 1);
+    assert_eq!(worker_bytes.len(), 16 * 1024);
+    assert!(worker_bytes.iter().all(|word| *word == 0x7137));
+    // Retain the worker's allocation across fork/exec after its TLS
+    // destructors and allocator owner exit have completed.
     println!("threads:ok");
 
     let listener = TcpListener::bind(("127.0.0.1", 0))?;
@@ -90,7 +131,12 @@ fn run() -> io::Result<()> {
     println!("dns:{}", dns_count);
 
     let executable = env::current_exe()?;
-    let child = Command::new(executable)
+    let mut command = Command::new(executable);
+    // SAFETY: the fork-child callback allocates nothing, reads no shared
+    // state, and returns directly before exec. A pre-exec callback selects
+    // std's fork/exec route even when its spawn optimization is available.
+    unsafe { command.pre_exec(|| Ok(())); }
+    let child = command
         .env("CRABC_RUST_STD_CHILD", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -102,6 +148,8 @@ fn run() -> io::Result<()> {
     }
     let child_stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     println!("process:{}", child_stdout);
+    assert!(worker_bytes.iter().all(|word| *word == 0x7137));
+    drop(worker_bytes);
 
     let _ = fs::remove_file(FILE_PATH);
     let _ = fs::remove_dir_all(DIRECTORY_PATH);
