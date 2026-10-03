@@ -46,7 +46,7 @@ Update this small section in place when the implementation frontier changes.
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
 - **Resumed (2026-10-03):** source/compiler work and ordinary valid-client
-  checks are active with 16 lanes and continuous integration. Historical branches
+  checks are active with parallel lanes and continuous integration. Historical branches
   and raw failures are retained; the two reported opt0 failures remain open.
 - **Core fixes:** mixed-family resolver configuration now retains the first three
   nameservers in file order, and C zero-timeout batches retire their sockets and
@@ -76,9 +76,8 @@ Update this small section in place when the implementation frontier changes.
   seeded guarded/stat combinations pass 4,314-key source comparisons. Default
   entropy placement differences and guarded-debug oracle failures remain retained;
   the latter combinations are unproved. No qualifying timing or release pass is
-  claimed. The opt0 TSD runner's provider-only atomic grep remains a tooling limit;
-  its direct runtime and helper-disassembly evidence passes. Its atomic check now
-  follows called helpers. The cold startup output timeout came from a FILE surrogate
+  claimed. The opt0 TSD runner's atomic check now follows called helpers; its direct
+  runtime and helper-disassembly evidence passes. The cold startup output timeout came from a FILE surrogate
   violating the pinned delayed-flush contract; real FILE and registered allocating
   callbacks have distinct passing checks, with the original timeout retained.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
