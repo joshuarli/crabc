@@ -917,6 +917,39 @@ impl Heap {
         bin < BIN_COUNT && self.abandoned_count[bin].load(Ordering::Relaxed) != 0
     }
 
+    /// Reads one relaxed abandoned-page hint without borrowing this Heap's
+    /// independently mutable lists. The hint grants no page ownership.
+    ///
+    /// # Safety
+    /// The initialized Heap remains resident through the load. Any later page
+    /// lookup still requires its own retained backing and source owner claim.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn has_abandoned_page_in_bin_at(heap: NonNull<Self>, bin: usize) -> bool {
+        if bin >= BIN_COUNT { return false; }
+        // SAFETY: the checked index selects exactly one initialized atomic.
+        let count = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).abandoned_count)
+            .cast::<AtomicUsize>().add(bin) };
+        count.load(Ordering::Relaxed) != 0
+    }
+
+    /// Copies one acquire-published arena record pointer without borrowing the
+    /// Heap's independently mutable fields. This grants no record lifetime.
+    ///
+    /// # Safety
+    /// The initialized Heap remains resident through the load. The caller must
+    /// separately retain any returned record before projecting its bitmaps and
+    /// exclude record retirement while those projections remain in use.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn arena_pages_pointer_at(heap: NonNull<Self>, arena_index: usize) -> Option<NonNull<ArenaPages>> {
+        if arena_index >= MAX_ARENAS { return None; }
+        // SAFETY: project only the checked initialized atomic pointer slot.
+        let slot = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).arena_pages)
+            .cast::<AtomicPtr<ArenaPages>>().add(arena_index) };
+        NonNull::new(slot.load(Ordering::Acquire))
+    }
+
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) fn abandoned_count(&self, bin: usize) -> Option<usize> {
