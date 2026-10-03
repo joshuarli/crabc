@@ -94,19 +94,34 @@ unsafe fn open_diagnostic(name: *const u8, record: &RuntimeDiagnostic, caller_er
 
 /// Musl disables deferred cancellation across one loader transaction. The
 /// private native-facade table shares this guard with the C entry points.
-pub(super) struct CancellationGuard { previous: c_int, changed: bool }
+/// A saved state belongs to the calling task: moving the guard to another
+/// task would restore that task's cancellation state instead of the owner's.
+pub(super) struct CancellationGuard {
+    // Some holds the state captured by a successful disable; None means the
+    // task acquired no cancellation state to restore.
+    previous: Option<c_int>,
+    // This stores no address and prevents Send and Sync across task owners.
+    owner: core::marker::PhantomData<*mut ()>,
+}
 impl CancellationGuard {
+    /// # Safety
+    /// The calling task has initialized runtime TLS and keeps it live until
+    /// the guard is dropped, before retiring that task's cancellation state.
     pub(super) unsafe fn enter() -> Self {
         let mut previous = 0;
         let changed = unsafe { super::pthread_cancel::pthread_setcancelstate(1, &mut previous) } == 0;
-        // The initial thread currently has no selected cancellation slot.
-        // ENOTSUP there does not invent cancellability or block loader use.
-        Self { previous, changed }
+        // Owned main and pthread tasks have cancellation state. A task
+        // without pthread cancellation may return ENOTSUP; it acquired no
+        // saved state and therefore has no restoration obligation.
+        Self { previous: changed.then_some(previous), owner: core::marker::PhantomData }
     }
 }
 impl Drop for CancellationGuard {
     fn drop(&mut self) {
-        if self.changed { unsafe { super::pthread_cancel::pthread_setcancelstate(self.previous, ptr::null_mut()); } }
+        if let Some(previous) = self.previous {
+            // SAFETY: this task-bound guard retains its owner's live state.
+            unsafe { super::pthread_cancel::pthread_setcancelstate(previous, ptr::null_mut()); }
+        }
     }
 }
 
@@ -179,6 +194,7 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
 
 /// Consume this thread's pending diagnostic. Storage remains valid until the
 /// next loader error in this thread or until this thread exits.
+/// Successful calls and errors on other threads do not replace this buffer.
 #[no_mangle]
 pub extern "C" fn dlerror() -> *mut c_char { diagnostic::take() }
 
@@ -191,7 +207,8 @@ pub unsafe extern "C" fn dladdr(address: *const c_void, output: *mut c_void) -> 
 
 /// # Safety
 /// For RTLD_DI_LINKMAP, `output` is writable pointer-sized storage. Returned
-/// link-map metadata is borrowed; applications must not mutate it.
+/// link-map metadata is borrowed from the loader's retained process-lifetime
+/// object; applications must not mutate it. Closing the handle retains it.
 #[no_mangle]
 pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, output: *mut c_void) -> c_int {
     // musl validates the handle before interpreting the request. Validation
@@ -211,7 +228,10 @@ pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, output: *mu
 
 /// # Safety
 /// `callback` obeys the installed `dl_phdr_info` C ABI and may use `data` for
-/// the duration of this call. The info argument is callback-borrowed only.
+/// the duration of this call. The info argument is callback-borrowed only:
+/// the callback must not retain that stack record after returning. Retained
+/// object names and program headers stay mapped across nested loader calls;
+/// `dlpi_tls_data` belongs to the calling task's TLS instead of the object.
 #[no_mangle]
 pub unsafe extern "C" fn dl_iterate_phdr(callback: unsafe extern "C" fn(*mut c_void, usize, *mut c_void) -> c_int, data: *mut c_void) -> c_int {
     unsafe { __crabc_x86_64_runtime_iterate(callback, data) }

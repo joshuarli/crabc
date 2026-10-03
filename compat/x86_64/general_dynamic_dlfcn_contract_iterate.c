@@ -41,6 +41,14 @@ static void *loader(void *argument)
 struct pass { long violations; int visited; int nested; unsigned long long adds; };
 static int next_nested = 1;
 
+static int stop_after_one(struct dl_phdr_info *info, size_t size, void *data)
+{
+    (void)info;
+    (void)size;
+    ++*(int *)data;
+    return 37;
+}
+
 static int visit(struct dl_phdr_info *info, size_t size, void *data)
 {
     struct pass *pass = data;
@@ -48,17 +56,30 @@ static int visit(struct dl_phdr_info *info, size_t size, void *data)
     if (info->dlpi_adds < pass->adds) ++pass->violations;
     pass->adds = info->dlpi_adds;
     const char *name = info->dlpi_name ? info->dlpi_name : "";
+    const char *saved_name = info->dlpi_name;
+    ElfW(Addr) saved_address = info->dlpi_addr;
+    const ElfW(Phdr) *saved_headers = info->dlpi_phdr;
+    ElfW(Half) saved_count = info->dlpi_phnum;
+    unsigned long long saved_adds = info->dlpi_adds;
     if (strstr(name, "libfr_")) ++pass->violations;
     const char *base = strstr(name, "libcc_ok");
     if (base) {
         ++pass->visited;
         void *handle = dlopen(base, RTLD_NOW | RTLD_NOLOAD);
+        struct link_map *map = 0;
+        if (!handle || dlinfo(handle, RTLD_DI_LINKMAP, &map) || !map ||
+            map->l_addr != saved_address || map->l_name != saved_name) ++pass->violations;
         if (!handle || dlclose(handle) || dlclose(handle)) ++pass->violations;
+        struct link_map *retained_map = 0;
+        if (!handle || dlinfo(handle, RTLD_DI_LINKMAP, &retained_map) || retained_map != map) ++pass->violations;
         int index = atoi(base + 8);
         char symbol[32];
         snprintf(symbol, sizeof symbol, "cc_ok_value%d", index);
         int *value = dlsym(RTLD_DEFAULT, symbol);
         if (!value || *value != 900 + index) ++pass->violations;
+        Dl_info address_info;
+        if (!value || !dladdr(value, &address_info) || !address_info.dli_fname ||
+            strcmp(address_info.dli_fname, name)) ++pass->violations;
     }
     if (dlopen("libfr_root.so", RTLD_NOW | RTLD_GLOBAL)) ++pass->violations;
     const char *error = dlerror();
@@ -70,6 +91,13 @@ static int visit(struct dl_phdr_info *info, size_t size, void *data)
         pass->nested = 1;
         if (!dlopen(nested, RTLD_NOW | RTLD_GLOBAL)) ++pass->violations;
     }
+    int nested_callbacks = 0;
+    if (dl_iterate_phdr(stop_after_one, &nested_callbacks) != 37 || nested_callbacks != 1) ++pass->violations;
+    /* Reentry can append retained images; the outer callback's borrowed
+       record remains its original snapshot until this callback returns. */
+    if (info->dlpi_name != saved_name || info->dlpi_addr != saved_address ||
+        info->dlpi_phdr != saved_headers || info->dlpi_phnum != saved_count || info->dlpi_adds != saved_adds)
+        ++pass->violations;
     return 0;
 }
 

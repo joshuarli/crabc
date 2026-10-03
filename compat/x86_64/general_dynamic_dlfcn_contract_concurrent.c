@@ -34,10 +34,14 @@ static atomic_int finished;
 static void *opener(void *argument)
 {
     long *violations = argument;
+    int previous = -1;
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previous) || previous != PTHREAD_CANCEL_ENABLE) ++*violations;
     for (int index = 0; index < SUCCESSES; ++index) {
         char name[32], symbol[32];
         snprintf(name, sizeof name, "libcc_ok%d.so", index);
         void *handle = dlopen(name, RTLD_NOW | RTLD_GLOBAL);
+        int state = -1;
+        if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &state) || state != PTHREAD_CANCEL_DISABLE) ++*violations;
         if (!handle || dlerror()) { ++*violations; continue; }
         snprintf(symbol, sizeof symbol, "cc_ok_value%d", index);
         int *value = dlsym(handle, symbol);
@@ -45,6 +49,7 @@ static void *opener(void *argument)
         atomic_store_explicit(&published, index + 1, memory_order_release);
         if (dlclose(handle)) ++*violations;
     }
+    if (pthread_setcancelstate(previous, 0)) ++*violations;
     atomic_fetch_add(&finished, 1);
     return 0;
 }
@@ -56,12 +61,17 @@ static void *failer(void *argument)
     long *mismatches = argument;
     for (int attempt = 0; attempt < FAILURES; ++attempt) {
         if (dlopen("libfr_root.so", RTLD_NOW | RTLD_GLOBAL)) { ++*mismatches; continue; }
+        int state = -1;
+        if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &state) || state != PTHREAD_CANCEL_ENABLE) ++*mismatches;
         const char *error = dlerror();
         if (!error) { ++*mismatches; continue; }
         if (!attempt) snprintf(failure_text, sizeof failure_text, "%s", error);
         else if (strcmp(error, failure_text)) ++*mismatches;
         if (dlerror()) ++*mismatches;
     }
+    /* Exit with a pending message as well as the consumed messages above.
+       Thread cleanup transfers either buffer state without touching main. */
+    if (dlsym(RTLD_DEFAULT, "cc_worker_pending_at_exit")) ++*mismatches;
     atomic_fetch_add(&finished, 1);
     return 0;
 }
@@ -154,6 +164,7 @@ int main(int argc, char **argv)
     if (argc != 2 || (strcmp(argv[1], "missing") && strcmp(argv[1], "unresolved"))) return 2;
     struct scan before = {0, 0, 0, 0, 0};
     dl_iterate_phdr(count_final, &before);
+    if (dlsym(RTLD_DEFAULT, "cc_main_pending_before_workers")) return 5;
     long opener_violations = 0, failer_mismatches = 0;
     struct reader_result results[READERS] = {{0, 0}};
     pthread_t threads[READERS + 2];
@@ -164,8 +175,13 @@ int main(int argc, char **argv)
     for (int index = 0; index < READERS + 2; ++index)
         if (pthread_join(threads[index], 0)) return 4;
 
+    const char *main_error = dlerror();
+    if (!main_error || strcmp(main_error, "Symbol not found: cc_main_pending_before_workers") || dlerror()) return 5;
     struct scan after = {0, 0, 0, 0, 0};
     dl_iterate_phdr(count_final, &after);
+    /* Successful loader operations and joined workers leave the consumed
+       main-thread message readable until main publishes its next error. */
+    if (strcmp(main_error, "Symbol not found: cc_main_pending_before_workers")) return 5;
     printf("opener violations=%ld\n", opener_violations);
     printf("failer mismatches=%ld\n", failer_mismatches);
     print_reduced("failure text", failure_text);
