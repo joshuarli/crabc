@@ -4362,7 +4362,12 @@ mod tests {
         // this single-threaded fixture holds all claims and their owner.
         let free = unsafe { view.slices_free() }.unwrap();
         let purge = unsafe { view.slices_purge() }.unwrap();
-        let setup = released_index == 9 && survivor_index == 265
+        // The first second-arena claim begins after its actual metadata
+        // prefix; the neighboring survivor follows that complete claim.
+        // Debug Page metadata can occupy another slice without changing
+        // either claim's ownership or the partial-purge boundary.
+        let setup = released_index == second.info_slices
+            && survivor_index == released_index + 256
             && second.memid.kind() == crate::types::MemoryKind::Os
             && second.memid.os_memory().is_some_and(|os|
                 os.base == second.start && os.size == 2 * ARENA_MIN_SIZE)
