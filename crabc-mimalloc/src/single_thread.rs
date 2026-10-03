@@ -42951,60 +42951,64 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
         };
         let layout = claim.layout();
-        let metadata = match claim.metadata() {
-            Some(metadata) => metadata,
-            None => {
-                self.release_unpublished_claim_or_park(claim);
-                return Ok(None);
-            }
-        };
-        let slice_start = match claim.slice_start() {
-            Some(slice_start) => slice_start,
-            None => {
-                self.release_unpublished_claim_or_park(claim);
-                return Ok(None);
-            }
-        };
-        let memory = match claim.memory_id() {
-            Ok(memory) => memory,
-            Err(_) => {
-                self.release_unpublished_claim_or_park(claim);
-                return Ok(None);
-            }
-        };
-        let slice_pcommitted = if !memory.initially_committed() {
-            let page_size = config.page_size().bytes();
-            let prefix_pages = match page::initial_page_slice_pcommitted(
-                layout.block_start_offset(),
-                layout.block_size(),
-                layout.allocation_size(),
-                page_size,
-            ) {
-                Some(prefix_pages) => prefix_pages,
+        // All checks precede primary metadata, aliases, map publication and
+        // statistics. Keep the unique claim here and converge only these
+        // private-stage refusals on its original release operation.
+        let prepared = 'prepare: {
+            let metadata = match claim.metadata() {
+                Some(metadata) => metadata,
                 None => {
-                    self.release_unpublished_claim_or_park(claim);
-                    return Ok(None);
+                    break 'prepare None;
                 }
             };
-            let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
-                Some(prefix_size) => prefix_size,
+            let slice_start = match claim.slice_start() {
+                Some(slice_start) => slice_start,
                 None => {
-                    self.release_unpublished_claim_or_park(claim);
-                    return Ok(None);
+                    break 'prepare None;
                 }
             };
-            let committed = if let Some(process) = self.arena.process() {
-                claim.commit_initial_page_prefix_for_process(process, prefix_size)
+            let memory = match claim.memory_id() {
+                Ok(memory) => memory,
+                Err(_) => {
+                    break 'prepare None;
+                }
+            };
+            let slice_pcommitted = if !memory.initially_committed() {
+                let page_size = config.page_size().bytes();
+                let prefix_pages = match page::initial_page_slice_pcommitted(
+                    layout.block_start_offset(),
+                    layout.block_size(),
+                    layout.allocation_size(),
+                    page_size,
+                ) {
+                    Some(prefix_pages) => prefix_pages,
+                    None => {
+                        break 'prepare None;
+                    }
+                };
+                let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
+                    Some(prefix_size) => prefix_size,
+                    None => {
+                        break 'prepare None;
+                    }
+                };
+                let committed = if let Some(process) = self.arena.process() {
+                    claim.commit_initial_page_prefix_for_process(process, prefix_size)
+                } else {
+                    claim.commit_initial_page_prefix(prefix_size)
+                };
+                if committed.is_err() {
+                    break 'prepare None;
+                }
+                prefix_pages
             } else {
-                claim.commit_initial_page_prefix(prefix_size)
+                0
             };
-            if committed.is_err() {
-                self.release_unpublished_claim_or_park(claim);
-                return Ok(None);
-            }
-            prefix_pages
-        } else {
-            0
+            break 'prepare Some((metadata, slice_start, memory, slice_pcommitted));
+        };
+        let Some((metadata, slice_start, memory, slice_pcommitted)) = prepared else {
+            self.release_unpublished_claim_or_park(claim);
+            return Ok(None);
         };
         let page = match unsafe {
             #[cfg(target_arch = "x86_64")]
