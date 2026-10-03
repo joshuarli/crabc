@@ -84,7 +84,7 @@ const fn page_noguard_size_at_secure_level(
     page_span_size: usize, os_page_size: usize, secure_level: usize,
 ) -> Option<usize> {
     if page_span_size == 0 || !os_page_size.is_power_of_two()
-        || page_span_size % os_page_size != 0 || secure_level > 5 { return None; }
+        || (page_span_size & (os_page_size - 1)) != 0 || secure_level > 5 { return None; }
     if secure_level >= 5 {
         match page_span_size.checked_sub(os_page_size) {
             Some(size) if size > 0 => Some(size),
@@ -363,11 +363,16 @@ fn initial_page_slice_pcommitted_at_secure_level(
     if first_block_end > page_noguard_size {
         return None;
     }
-    let committed = invariants::align_up(first_block_end, minimum_commit)?.min(page_noguard_size);
-    if committed == 0 || committed % os_page_size != 0 {
+    // Both the source minimum and the validated OS unit are powers of two,
+    // so their maximum uses the source mask branch of alignment.
+    let commit_mask = minimum_commit - 1;
+    let committed = (first_block_end.checked_add(commit_mask)? & !commit_mask).min(page_noguard_size);
+    if committed == 0 || (committed & (os_page_size - 1)) != 0 {
         return None;
     }
-    let page_count = committed / os_page_size;
+    // The span validation proves a nonzero power-of-two OS unit. Convert
+    // the aligned byte extent to that same page count without division.
+    let page_count = committed >> os_page_size.trailing_zeros();
     if page_count > u16::MAX as usize {
         return None;
     }
@@ -440,14 +445,18 @@ fn page_area_commit_plan_at_secure_level(
     let extended_size = extended_capacity.checked_mul(block_size)?;
     let required_extent = page_slice_offset.checked_add(extended_size)?;
     if required_extent > page_noguard_size { return None; }
-    let mut needed_commit = invariants::align_up(required_extent, minimum_commit)?;
+    // The minimum is a maximum of two validated powers of two. Retain the
+    // source checked alignment without its inapplicable generic divider.
+    let commit_mask = minimum_commit - 1;
+    let mut needed_commit = required_extent.checked_add(commit_mask)? & !commit_mask;
     if secure_level >= 5 {
         let complete_area = page_slice_offset.checked_add(page_area_size(block_size, reserved)?)?;
-        let page_size_commit = invariants::align_up(complete_area, os_page_size)?;
+        let page_mask = os_page_size - 1;
+        let page_size_commit = complete_area.checked_add(page_mask)? & !page_mask;
         if page_size_commit > page_noguard_size { return None; }
         needed_commit = needed_commit.min(page_size_commit);
     }
-    if needed_commit > page_noguard_size || needed_commit % os_page_size != 0 {
+    if needed_commit > page_noguard_size || (needed_commit & (os_page_size - 1)) != 0 {
         return None;
     }
     if needed_commit <= current_commit {
@@ -458,7 +467,9 @@ fn page_area_commit_plan_at_secure_level(
             next_slice_pcommitted: slice_pcommitted,
         });
     }
-    let next_page_count = needed_commit / os_page_size;
+    // The validated power-of-two OS unit makes this the source byte/page
+    // conversion; the preceding alignment and range checks remain intact.
+    let next_page_count = needed_commit >> os_page_size.trailing_zeros();
     if next_page_count > u16::MAX as usize {
         return None;
     }
@@ -641,33 +652,35 @@ use crate::os::PageSize;
 
     #[test]
     fn on_demand_page_commit_plans_keep_os_page_counts_and_byte_ranges_distinct() {
-        let page_size = 4096;
         let span = MEDIUM_PAGE_SIZE;
         let block_size = SMALL_MAX_OBJ_SIZE + 8;
         let offset = page_usable_start_offset(block_size).unwrap();
-        let initial = initial_page_slice_pcommitted(offset, block_size, span, page_size)
-            .expect("the first source block fits in a bounded medium prefix");
-        assert_eq!(initial, 4, "the 16 KiB source minimum is four OS pages");
+        for page_size in [4096, 8192, 16384, 65536] {
+            let minimum_commit = core::cmp::max(16 * KIB, page_size);
+            let initial = initial_page_slice_pcommitted(offset, block_size, span, page_size)
+                .expect("the first source block fits in a bounded medium prefix");
+            assert_eq!(usize::from(initial), minimum_commit / page_size);
 
-        let plan = page_area_commit_plan(
-            1,
-            reserved_object_count(page_noguard_size_at_secure_level(span, page_size,
-                crate::config::SECURE_LEVEL).unwrap(), offset, block_size).unwrap(),
-            block_size,
-            initial,
-            page_size,
-            offset,
-            span,
-        )
-        .expect("the second source block has one page-area commit plan");
-        let extend = if crate::config::SECURE_LEVEL >= 2 { 7 } else { 1 };
-        assert_eq!(plan.extend, extend);
-        assert_eq!(plan.commit_offset, 16 * KIB);
-        let needed_commit = invariants::align_up(
-            offset + (1 + usize::from(extend)) * block_size, 16 * KIB,
-        ).unwrap();
-        assert_eq!(plan.commit_size, needed_commit - 16 * KIB);
-        assert_eq!(usize::from(plan.next_slice_pcommitted), needed_commit / page_size);
+            let plan = page_area_commit_plan(
+                1,
+                reserved_object_count(page_noguard_size_at_secure_level(span, page_size,
+                    crate::config::SECURE_LEVEL).unwrap(), offset, block_size).unwrap(),
+                block_size,
+                initial,
+                page_size,
+                offset,
+                span,
+            )
+            .expect("the second source block has one page-area commit plan");
+            let extend = if crate::config::SECURE_LEVEL >= 2 { 7 } else { 1 };
+            assert_eq!(plan.extend, extend);
+            assert_eq!(plan.commit_offset, minimum_commit);
+            let needed_commit = invariants::align_up(
+                offset + (1 + usize::from(extend)) * block_size, minimum_commit,
+            ).unwrap();
+            assert_eq!(plan.commit_size, needed_commit.saturating_sub(minimum_commit));
+            assert_eq!(usize::from(plan.next_slice_pcommitted), needed_commit.max(minimum_commit) / page_size);
+        }
     }
 
     #[test]
