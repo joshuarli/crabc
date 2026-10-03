@@ -4019,7 +4019,14 @@ impl RuntimeProcessStorage {
         // admits only its initial thread before completed startup. This takes
         // immutable PageMap facts, never the permanent page owner.
         let owner = unsafe { self.allocation_owner() }?;
-        owner.allocation().ok()?.page_map().ok()
+        #[cfg(target_arch = "x86_64")]
+        {
+            owner.allocation_page_map().ok()
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            owner.allocation().ok()?.page_map().ok()
+        }
     }
 
     /// Returns the immutable VM process pair retained by the selected source

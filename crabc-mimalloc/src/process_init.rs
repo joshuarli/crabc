@@ -1712,6 +1712,8 @@ impl ProcessMainInitializationStorage {
     /// preceding source-root writes are visible. Its possible futex-wake error
     /// occurs after that atomic unlock; as in the C void release, it cannot
     /// revoke an already-published terminal result or reopen/retry startup.
+    // Share the linear completion transfer across startup failure exits.
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
     fn publish_terminal_state_and_release(
         &self,
         completion: AllocatorOnceCompletion<'_>,
@@ -2947,6 +2949,18 @@ impl ProcessMainThread {
         Ok(self.allocation)
     }
 
+    /// Copies the allocation PageMap after checking the coordinator phase
+    /// and then the storage's allocation-ready publication. This grants no
+    /// attachment or page ownership and invokes no intervening callback.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) fn allocation_page_map(&self) -> Result<ProcessPageMapRoot, ProcessMainInitError> {
+        if !matches!(self.state, ProcessMainThreadState::Attached | ProcessMainThreadState::MainThreadDetached) {
+            return Err(ProcessMainInitError::Retained);
+        }
+        self.allocation.page_map()
+    }
+
     /// Borrows the ticket-zero attachment for an existing bounded page owner
     /// or later-main attachment. The process coordinator remains the only
     /// constructor for this owner in production.
@@ -3470,6 +3484,9 @@ mod tests {
             }.expect("the source default Theap is attached before reservations");
             assert!(owner.allocation().is_ok(),
                 "the source owner can allocate through its initialized tuple");
+            assert_eq!(owner.allocation_page_map().unwrap().root().unwrap(),
+                owner.allocation().unwrap().page_map().unwrap().root().unwrap(),
+                "the source-attached map shortcut preserves the exact allocation root");
             assert!(owner.ready().is_err(),
                 "an allocation lease does not publish completed process readiness");
             assert!(matches!(unsafe { storage.initialize_with_test_components(
@@ -3481,6 +3498,8 @@ mod tests {
             startup.complete().expect("source startup completes after the callback interval");
             teardown_rx.recv().unwrap();
             owner.teardown().expect("the bounded source owner finishes");
+            assert!(matches!(owner.allocation_page_map(), Err(ProcessMainInitError::Retained)),
+                "the map shortcut refuses its coordinator after source teardown");
         });
         attached_rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
