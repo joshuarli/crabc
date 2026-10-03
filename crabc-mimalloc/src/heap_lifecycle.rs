@@ -112,6 +112,8 @@ pub(crate) enum HeapReleaseError {
     NotEmpty,
     InvalidChild,
     /// A step after list removal failed; the remaining state is retained.
+    /// The complete release must not be retried because earlier list and
+    /// count transitions have already consumed their original authority.
     Retained,
     List(SourceHeapRegistryError),
 }
@@ -706,6 +708,27 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     Ok(heap)
 }
 
+/// Releases a detached Heap's exact key lease before removing its owner.
+/// A refusal keeps the live or terminal lease in the retained Heap image.
+///
+/// # Safety
+/// `image` is the exclusively retained live allocation of a non-main Heap
+/// already removed from every source list, with no Theap, page, or TLS slot
+/// user. No projection of its key field overlaps this operation.
+unsafe fn release_heap_thread_local_key(
+    image: NonNull<NonMainHeapImage>,
+) -> Result<(), HeapReleaseError> {
+    // SAFETY: project only the exact field in the caller's retained image;
+    // registry release cannot free or replace that containing allocation.
+    let slot = unsafe { &mut *core::ptr::addr_of_mut!((*image.as_ptr()).slot) };
+    let lease = slot.as_mut().ok_or(HeapReleaseError::Retained)?;
+    lease.release().map_err(|_| HeapReleaseError::Retained)?;
+    // The registry consumed this claim. Remove only the released token;
+    // every error above retains its original ownership disposition in place.
+    let _ = slot.take();
+    Ok(())
+}
+
 /// [`unlink_empty_heap`] for a Heap of any subprocess given its main Heap:
 /// statistics to `main`, count and list removal, and the key release;
 /// returns the image for the caller's free.
@@ -729,8 +752,7 @@ pub(crate) unsafe fn unlink_non_main_heap(
     unsafe { subprocess.heap_list().unlink_non_main(heap_ref, subprocess) }.map_err(HeapReleaseError::List)?;
     let image = heap.cast::<NonMainHeapImage>();
     // SAFETY: the image is off every list and exclusively owned now.
-    let mut slot = unsafe { (*image.as_ptr()).slot.take() }.ok_or(HeapReleaseError::Retained)?;
-    slot.release().map_err(|_| HeapReleaseError::Retained)?;
+    unsafe { release_heap_thread_local_key(image) }?;
     Ok(image)
 }
 
@@ -771,8 +793,7 @@ unsafe fn unlink_empty_heap(
     // heap.c:220-224 `_mi_thread_local_free(heap->theap)`.
     let image = heap.cast::<NonMainHeapImage>();
     // SAFETY: the image is off every list and exclusively owned now.
-    let mut slot = unsafe { (*image.as_ptr()).slot.take() }.ok_or(HeapReleaseError::Retained)?;
-    slot.release().map_err(|_| HeapReleaseError::Retained)?;
+    unsafe { release_heap_thread_local_key(image) }?;
     Ok(Some(image))
 }
 
@@ -1206,6 +1227,72 @@ mod tests {
                 assert!(crabc_core::mm::mincore_raw(address, 4096, &mut resident).is_ok());
                 crabc_core::mm::munmap_raw(address, failed_range.1).expect("raw-only fixture cleanup");
             }
+        });
+    }
+
+    #[test]
+    fn heap_key_release_refusal_retains_the_exact_lease_in_its_image() {
+        with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
+            let (parent, registry, binding) = child_fixture_inputs(attachment, pair);
+            let keys = HeapKeySource {
+                registry: OwnedThreadLocalKeyRegistry::test_static_owner(),
+                subprocess: parent,
+                metadata: attachment.parent_metadata_allocator(),
+            };
+            // SAFETY: this fixture exclusively retains its parent and child.
+            let mut child = unsafe { new_child(registry, attachment, &mut heap_owner) }.unwrap();
+            struct Shared<T>(T);
+            // SAFETY: the scoped worker exclusively owns this state until join.
+            unsafe impl<T> Send for Shared<T> {}
+            let shared = Shared((&mut child, binding, keys));
+            std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    let shared = shared;
+                    let (child, binding, keys) = shared.0;
+                    // SAFETY: this fresh worker owns its pristine thread roots.
+                    let Ok(ChildThreadAddOutcome::Added(mut member)) =
+                        (unsafe { add_current_thread(child, binding) }) else { panic!("child attachment"); };
+                    for direct_unlink in [false, true] {
+                        // SAFETY: the admitted worker is the sole child user.
+                        let heap = unsafe { child_heap_new(child, &mut member, binding, keys) }.unwrap();
+                        let image = heap.cast::<NonMainHeapImage>();
+                        let key = unsafe { (*image.as_ptr()).slot.as_ref().unwrap().key().raw() };
+                        assert_eq!(keys.registry.test_live_lease_count(), 1);
+                        keys.registry.test_fail_next_release_lock();
+                        // SAFETY: this live Heap has no Theap or application
+                        // pages, and no other thread uses its lists or key.
+                        let result = if direct_unlink {
+                            let main = child.main_heap_pointer().unwrap();
+                            child.with_child_image(|image| unsafe {
+                                unlink_non_main_heap(heap, main, image.identity())
+                            }).unwrap().map(|_| HeapReleaseOutcome::Released)
+                        } else {
+                            unsafe { child_heap_destroy(child, &mut member, binding, heap) }
+                        };
+                        assert_eq!(result, Err(HeapReleaseError::Retained));
+                        // SAFETY: the refused release retains the original live
+                        // image, already off its Heap list. Only the exact key
+                        // lease is settled here; no list transition is retried.
+                        let slot = unsafe { &mut *core::ptr::addr_of_mut!((*image.as_ptr()).slot) };
+                        let retained = slot.as_mut().expect("the image retains the unreleased key lease");
+                        assert_eq!(retained.key().raw(), key);
+                        assert_eq!(keys.registry.test_live_lease_count(), 1);
+                        retained.release().expect("the unchanged exact lease retries its own release");
+                        slot.take();
+                        assert_eq!(keys.registry.test_live_lease_count(), 0);
+                        // SAFETY: key release completed; no source pointer or
+                        // field view names this original live Heap image now.
+                        assert!(unsafe { free_heap_metadata(member.owner_mut(), child, binding, image.cast()) });
+                    }
+                    // SAFETY: all images and key leases have been released.
+                    unsafe { member.thread_done(child, binding) }.unwrap();
+                }).join().unwrap();
+            });
+            // SAFETY: the sole worker joined with every Heap and key released.
+            unsafe { destroy_child(child, registry, binding, &mut [], attachment, &mut heap_owner) }
+                .ok().expect("the child is destroyed");
+            heap_owner.finish(attachment).expect("the parent engine is quiescent");
+            attachment.finish_after_user_destructors().expect("the parent attachment completes");
         });
     }
 

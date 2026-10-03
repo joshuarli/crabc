@@ -2269,7 +2269,9 @@ pub unsafe fn heap_calloc_aligned_at(
 /// # Safety
 /// `heap` is null or a live Heap that no other thread uses during the call;
 /// after a destroy no block of it is used again. A foreign child Heap may be
-/// destroyed after its owner thread exits.
+/// destroyed after its owner thread exits. A false result can follow source
+/// list or page mutations: keep the retained backing alive and do not use the
+/// Heap again or repeat the complete release transition.
 pub unsafe fn heap_release(heap: *mut c_void, destroy: bool) -> bool {
     let Some(heap) = NonNull::new(heap.cast::<Heap>()) else { return true };
     // SAFETY: forwarded; the child route checks its own membership.
