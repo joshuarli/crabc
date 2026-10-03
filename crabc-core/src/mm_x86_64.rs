@@ -84,9 +84,14 @@ pub unsafe fn munmap_raw(address: *mut u8, length: usize) -> Result<()> {
 /// valid mapping owned by the caller. The caller must ensure that
 /// `address + old_length` and `address + new_length` do not wrap. There must
 /// be no Rust references into the old range when the operation may move it,
-/// and callers must treat the old mapping as invalid after a successful call:
-/// only the returned address may be used. If the call fails, Linux leaves the
-/// old mapping available for cleanup.
+/// and ordinary nonzero-length success consumes the old mapping: callers
+/// must discard its pointer and use the returned pointer even when the numeric
+/// address is unchanged. With zero `old_length`, `address` must instead name a
+/// live shareable mapping and `MREMAP_MAYMOVE` must be supplied. Linux creates
+/// an additional shared alias while preserving the original source. Both
+/// mappings require independent cleanup, synchronized shared contents, and
+/// no incompatible Rust references through either alias. If the call fails,
+/// Linux leaves the original mapping available for cleanup.
 #[inline]
 pub unsafe fn mremap_raw(
     address: *mut u8,
@@ -119,9 +124,16 @@ pub unsafe fn mremap_raw(
 /// `address` and `new_address` must be page-aligned. The old range, rounded
 /// up to a page boundary, must be a valid mapping owned by the caller. The
 /// destination range must contain no Rust references because Linux may
-/// replace it, and neither range calculation may wrap. After success, both
-/// input mappings are invalid; only the returned address may be used. If the
-/// call fails, the old mapping remains available for cleanup.
+/// replace it, and neither range calculation may wrap. After success the
+/// replaced destination is invalid; its old pointer must be discarded for
+/// the returned pointer even when the numeric address is unchanged. Ordinary
+/// nonzero-length success also consumes the source mapping. With zero
+/// `old_length`, the source must instead be a live shareable mapping and
+/// `MREMAP_MAYMOVE` must be supplied: the source remains mapped, and the
+/// returned destination is an additional shared alias. Both require independent
+/// cleanup, synchronized shared contents, and no incompatible Rust references
+/// through either alias. If the call fails, the original mappings remain
+/// available for cleanup.
 #[inline]
 pub unsafe fn mremap_fixed_raw(
     address: *mut u8,

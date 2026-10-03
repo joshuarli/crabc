@@ -611,6 +611,84 @@ fn x86_64_failed_fixed_remap_without_maymove_preserves_both_owners() {
 }
 
 #[test]
+fn x86_64_mremap_zero_old_length_retains_shared_source_after_alias_unmap() {
+    // SAFETY: A fresh complete shared anonymous page has no prior aliases.
+    let pointer = unsafe {
+        mm::mmap_anonymous(core::ptr::null_mut(), PAGE_SIZE,
+            mm::ProtFlags::READ | mm::ProtFlags::WRITE, mm::MapFlags::SHARED)
+    }.expect("create shared remap source");
+    let source = Mapping { pointer, length: PAGE_SIZE };
+    // SAFETY: The source owns its complete writable page with no references.
+    unsafe {
+        source.pointer.cast::<u8>().write(0x31);
+        source.pointer.cast::<u8>().add(PAGE_SIZE - 1).write(0x72);
+    }
+    // SAFETY: Zero old length creates a new alias of this shareable mapping;
+    // the original source remains mapped and independently owned.
+    let pointer = unsafe {
+        mm::mremap(source.pointer, 0, PAGE_SIZE, mm::MremapFlags::MAYMOVE)
+    }.expect("create independent shared alias");
+    let alias = Mapping { pointer, length: PAGE_SIZE };
+    assert_ne!(alias.pointer, source.pointer);
+    // SAFETY: Both complete mappings remain readable and writable. Raw accesses
+    // retain no references across the shared writes or either unmap.
+    unsafe {
+        assert_eq!(alias.pointer.cast::<u8>().read(), 0x31);
+        assert_eq!(alias.pointer.cast::<u8>().add(PAGE_SIZE - 1).read(), 0x72);
+        alias.pointer.cast::<u8>().write(0x53);
+        assert_eq!(source.pointer.cast::<u8>().read(), 0x53);
+    }
+    drop(alias);
+    // SAFETY: Unmapping the additional alias did not consume the original page.
+    unsafe {
+        assert_eq!(source.pointer.cast::<u8>().read(), 0x53);
+        source.pointer.cast::<u8>().add(PAGE_SIZE - 1).write(0x64);
+        assert_eq!(source.pointer.cast::<u8>().add(PAGE_SIZE - 1).read(), 0x64);
+    }
+}
+
+#[test]
+fn x86_64_mremap_fixed_zero_old_length_replaces_destination_and_retains_shared_source() {
+    // SAFETY: A fresh complete shared anonymous page has no prior aliases.
+    let pointer = unsafe {
+        mm::mmap_anonymous(core::ptr::null_mut(), PAGE_SIZE,
+            mm::ProtFlags::READ | mm::ProtFlags::WRITE, mm::MapFlags::SHARED)
+    }.expect("create shared fixed-remap source");
+    let source = Mapping { pointer, length: PAGE_SIZE };
+    let mut destination = Mapping::anonymous();
+    let original_destination = destination.pointer;
+    // SAFETY: Disjoint full source/destination pages are writable, with no references.
+    unsafe {
+        source.pointer.cast::<u8>().write(0x35);
+        source.pointer.cast::<u8>().add(PAGE_SIZE - 1).write(0x76);
+        destination.pointer.cast::<u8>().write(0xa5);
+    }
+    // SAFETY: Linux replaces the destination with a new shared alias. Zero old
+    // length preserves the complete source mapping; no references span this call.
+    let successor = unsafe {
+        mm::mremap_fixed(source.pointer, 0, PAGE_SIZE,
+            mm::MremapFlags::MAYMOVE, destination.pointer)
+    }.expect("replace destination with shared alias");
+    assert_eq!(successor, original_destination);
+    // Publish the returned pointer before any use or cleanup of the new image.
+    destination.pointer = successor;
+    // SAFETY: The returned alias and retained source both own complete pages.
+    unsafe {
+        assert_eq!(destination.pointer.cast::<u8>().read(), 0x35);
+        assert_eq!(destination.pointer.cast::<u8>().add(PAGE_SIZE - 1).read(), 0x76);
+        destination.pointer.cast::<u8>().write(0x57);
+        assert_eq!(source.pointer.cast::<u8>().read(), 0x57);
+    }
+    drop(destination);
+    // SAFETY: Only the returned destination alias was unmapped; source stays live.
+    unsafe {
+        assert_eq!(source.pointer.cast::<u8>().read(), 0x57);
+        source.pointer.cast::<u8>().add(PAGE_SIZE - 1).write(0x68);
+        assert_eq!(source.pointer.cast::<u8>().add(PAGE_SIZE - 1).read(), 0x68);
+    }
+}
+
+#[test]
 fn x86_64_madvise_rounds_length_and_discards_only_selected_pages() {
     let mut mapping = Mapping::anonymous();
     mapping.resize(3 * PAGE_SIZE, mm::MremapFlags::MAYMOVE);

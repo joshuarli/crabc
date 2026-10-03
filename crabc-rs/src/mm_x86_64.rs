@@ -67,9 +67,8 @@ bitflags! {
     /// `MREMAP_FIXED` is deliberately not a value in this set: callers use
     /// [`mremap_fixed`] when they need a selected destination, and that
     /// operation adds the kernel's fixed-address bit at its syscall boundary.
-    /// `MREMAP_DONTUNMAP` remains outside this slice because it changes the
-    /// ordinary mremap guarantee that the old range is invalid after a
-    /// successful move.
+    /// `MREMAP_DONTUNMAP` remains outside this slice because retaining a
+    /// moved source range changes its page-fault and ownership semantics.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct MremapFlags: u32 {
@@ -297,11 +296,18 @@ pub unsafe fn munmap(ptr: *mut c_void, len: usize) -> Result<()> {
 /// range beginning at `ptr` and extending for `old_len` bytes, rounded up to
 /// a page boundary, must remain valid for the syscall; the address arithmetic
 /// for both old and new ranges must not wrap. There must be no Rust references
-/// into the old range while this operation runs. On success, the old mapping
-/// is consumed: Linux may have moved it when [`MremapFlags::MAYMOVE`] is set,
-/// and the caller must invalidate every use of `ptr` and use only the
-/// returned address, even when the numeric address is unchanged. A failed
-/// call leaves the old mapping available for cleanup.
+/// into the old range while this operation runs. With nonzero `old_len`, a
+/// successful call consumes the old mapping: Linux may have moved it when
+/// [`MremapFlags::MAYMOVE`] is set, and the caller must discard the old pointer
+/// and use the returned pointer, even when the numeric address is unchanged.
+///
+/// With zero `old_len`, `ptr` must instead identify a live shareable mapping
+/// and the caller must supply Linux's required [`MremapFlags::MAYMOVE`]. A
+/// successful call creates an additional mapping of the shared backing and
+/// preserves the original mapping. Both mappings require independent cleanup;
+/// the caller must synchronize their shared contents and avoid incompatible
+/// Rust references through either alias. A failed call leaves the original
+/// mapping available for cleanup.
 #[inline]
 pub unsafe fn mremap(
     ptr: *mut c_void,
@@ -312,7 +318,7 @@ pub unsafe fn mremap(
     let flags = checked_mremap_flags(flags)?;
 
     // SAFETY: The caller owns the mapping lifetime/provenance contract and
-    // must invalidate the old pointer after a successful operation.
+    // preserves or consumes the old mapping according to the old length.
     unsafe {
         crabc_core::mm::mremap_raw(ptr.cast(), old_len, new_len, flags)
             .map(|mapping| mapping.cast())
@@ -333,10 +339,17 @@ pub unsafe fn mremap(
 /// provenance, must not overlap the old range, and must contain no Rust
 /// references because Linux may replace it. Neither range calculation may
 /// wrap, and no Rust references may point into either range during the call.
-/// On success, the old mapping and any destination mapping replaced by Linux
-/// are invalidated; the caller must discard both input pointers and use only
-/// the returned address. A failed call leaves the old mapping available for
-/// cleanup.
+/// On success, any replaced destination mapping is invalidated: the caller
+/// must discard its old destination pointer and use the returned pointer,
+/// even when the numeric destination address is unchanged. With nonzero
+/// `old_len`, the original source mapping is also consumed.
+///
+/// With zero `old_len`, the source must instead be a live shareable mapping
+/// and [`MremapFlags::MAYMOVE`] must be supplied. Linux preserves the original
+/// source and creates an additional shared alias at the destination. The
+/// source and returned alias require independent cleanup, synchronized
+/// contents, and no incompatible Rust references through either alias. A
+/// failed call leaves the original mappings available for cleanup.
 #[inline]
 pub unsafe fn mremap_fixed(
     ptr: *mut c_void,
@@ -348,7 +361,8 @@ pub unsafe fn mremap_fixed(
     let flags = checked_mremap_flags(flags)?;
 
     // SAFETY: The caller owns both mapping lifetime/provenance contracts and
-    // must invalidate both input pointers after a successful operation.
+    // invalidates the destination and preserves or consumes the source
+    // according to the old length.
     unsafe {
         crabc_core::mm::mremap_fixed_raw(ptr.cast(), old_len, new_len, flags, new_ptr.cast())
             .map(|mapping| mapping.cast())
