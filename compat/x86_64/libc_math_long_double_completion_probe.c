@@ -382,6 +382,54 @@ static int run_exp10l(uint16_t function, unary_long_double_function operation)
 	return 0;
 }
 
+/* Saved split-unit environments must survive the table conversion and
+ * subtraction paths. These assertions add no records: the existing stream
+ * remains the same binary80 differential for every supplied product. */
+static int verify_saved_split_environment(void)
+{
+	unsigned int mode_index;
+	for (mode_index = 0; mode_index < ROUNDING_CASES; mode_index++) {
+		fenv_t split;
+		fenv_t held;
+		struct control_state before;
+		union long_double_bits zero;
+		int mode = rounding_modes[mode_index];
+		int sse_mode = rounding_modes[(mode_index + 2) % ROUNDING_CASES];
+		long double expected = mode == FE_DOWNWARD || mode == FE_TOWARDZERO
+			? 0x1.fffffffffffffffep-1L : 1.0L;
+
+		if (fesetenv(FE_DFL_ENV) != 0 || fegetenv(&split) != 0)
+			return 1;
+		split.__control_word = (split.__control_word & ~0x0c00u) | mode;
+		split.__mxcsr = (split.__mxcsr & ~UINT32_C(0x6000)) |
+			((uint32_t)sse_mode << 3);
+		if (fesetenv(&split) != 0 || feraiseexcept(FE_DIVBYZERO) != 0 ||
+			feholdexcept(&held) != 0)
+			return 2;
+		before = capture_control_state();
+		if (direct_fdiml(1.0L, 0x1p-65L) != expected ||
+			!controls_preserved(before, capture_control_state()) ||
+			fetestexcept(FE_ALL_EXCEPT) != FE_INEXACT)
+			return 3;
+		if (feupdateenv(&held) != 0 || fegetround() != sse_mode ||
+			(x87_control_word() & 0x0c00u) != mode ||
+			fetestexcept(FE_ALL_EXCEPT) != (FE_DIVBYZERO | FE_INEXACT))
+			return 4;
+		before = capture_control_state();
+		if (direct_exp10l(1.0L) != 10.0L || direct_pow10l(-0.0L) != 1.0L ||
+			!controls_preserved(before, capture_control_state()))
+			return 5;
+		if (fesetenv(&split) != 0 ||
+			direct_fdiml(LDBL_TRUE_MIN, 0.0L) != LDBL_TRUE_MIN)
+			return 6;
+		zero.value = direct_fdiml(-0.0L, 0.0L);
+		if (zero.fields.mantissa != 0 || zero.fields.sign_exponent != 0 ||
+			!controls_preserved(before, capture_control_state()))
+			return 7;
+	}
+	return 0;
+}
+
 int crabc_x86_64_math_long_double_completion_probe(void)
 {
 	fenv_t original;
@@ -393,6 +441,8 @@ int crabc_x86_64_math_long_double_completion_probe(void)
 	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
 		return 1;
 	status = verify_binary80_abi();
+	if (status == 0)
+		status = verify_saved_split_environment();
 	if (status == 0)
 		status = run_fdiml();
 	if (status == 0)
