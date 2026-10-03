@@ -183,9 +183,21 @@ static void *thread_numeric_state(void *argument)
     if (strtol("9223372036854775808x", &end, 10) != LONG_MAX ||
         *end != 'x' || errno != ERANGE || uselocale((locale_t)0) != local)
         return (void *)2;
+    char *input = malloc(128);
+    if (input == NULL) {
+        uselocale(previous);
+        freelocale(local);
+        return (void *)3;
+    }
+    memcpy(input, " 6.25!", sizeof " 6.25!");
+    errno = EDOM;
+    double value = strtod_l(input, &end, local);
+    int converted = value == 6.25 && end == input + 5 && errno == EDOM &&
+        uselocale((locale_t)0) == local;
+    free(input);
     uselocale(previous);
     freelocale(local);
-    return (void *)0;
+    return converted ? (void *)0 : (void *)4;
 }
 
 static int threaded_numeric_state(void)
@@ -199,7 +211,9 @@ static int threaded_numeric_state(void)
         return 50;
     if (pthread_join(thread, &result) != 0 || result != (void *)0 || errno != EDOM)
         return 51;
-    return 0;
+    /* The allocating worker has retired. Caller-owned errno and live locale
+     * handles must still compose with narrow and wide floating conversion. */
+    return numeric_locale();
 }
 
 static int clocks(void)
