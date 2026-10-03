@@ -4562,6 +4562,49 @@ impl Page {
         }
     }
 
+    /// Copies the current owner's immediate free-list head.
+    ///
+    /// # Safety
+    /// The caller retains initialized Page metadata and owns or serializes
+    /// its immediate-list field. Image replacement, reuse, and release are
+    /// excluded. Producers may use their disjoint remote-free atomic fields.
+    #[inline]
+    pub(crate) unsafe fn free_list_head_at(page: NonNull<Self>) -> *mut Block {
+        // SAFETY: only the retained owner-local head is copied.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).free).read() }
+    }
+
+    /// Copies the source Theap association without borrowing page counts.
+    ///
+    /// # Safety
+    /// The caller retains initialized Page metadata and owns or serializes
+    /// association changes. Image replacement, reuse, and release are excluded;
+    /// the copied identity grants no access to a former or current owner.
+    #[inline]
+    pub(crate) unsafe fn theap_identity_at(page: NonNull<Self>) -> *mut Theap {
+        // SAFETY: only the retained association field is copied.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).theap).read() }
+    }
+
+    /// Updates only the source interior-pointer bit, preserving owner and
+    /// full-queue identity in the same atomic word.
+    ///
+    /// # Safety
+    /// The caller retains initialized live Page metadata and is authorized to
+    /// change its interior-pointer policy. Image replacement, reuse, and release
+    /// are excluded; other fields and remote publication may change separately.
+    #[inline]
+    pub(crate) unsafe fn set_has_interior_pointers_at(page: NonNull<Self>, has_interior_pointers: bool) {
+        // SAFETY: only the retained atomic word is projected. Relaxed ordering
+        // matches the source flag operation and preserves all unrelated bits.
+        let flags = unsafe { &*core::ptr::addr_of!((*page.as_ptr()).xthread_id) };
+        if has_interior_pointers {
+            flags.fetch_or(PAGE_HAS_INTERIOR_POINTERS, Ordering::Relaxed);
+        } else {
+            flags.fetch_and(!PAGE_HAS_INTERIOR_POINTERS, Ordering::Relaxed);
+        }
+    }
+
     /// Copies immutable source block geometry without borrowing owner fields.
     ///
     /// # Safety
@@ -8884,6 +8927,58 @@ impl Theap {
     #[inline]
     pub(crate) fn record_malloc_normal_allocated(&self, block_size: usize) {
         self.statistics.malloc_normal_allocated(block_size);
+    }
+
+    /// Records the source local fast path's successful normal-page pop.
+    /// The physical block size and internal request are those of that path;
+    /// padding policy is selected before admitting the fast owner.
+    ///
+    /// # Safety
+    /// The caller retains this initialized Theap and owns one successful
+    /// normal-page allocation. Another statistics producer, merge/reset, image
+    /// replacement, or teardown must not overlap this accounting operation.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) unsafe fn record_local_normal_allocation_statistics_at(
+        theap: NonNull<Self>, _requested_size: usize, block_size: usize,
+    ) {
+        // SAFETY: project only the relaxed atomic statistics tail; local
+        // counters, queues, and source Heap links remain outside the borrow.
+        let statistics = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+        statistics.malloc_normal_allocated(block_size);
+        #[cfg(feature = "mi-stat-2")]
+        statistics.malloc_normal_level_two_allocated(_requested_size,
+            crate::size_class::bin_for_regular_page_block_size(block_size));
+    }
+
+    /// Balances one admitted local fast normal-page allocation before free.
+    ///
+    /// # Safety
+    /// The caller retains this initialized Theap, owns the exact consumed
+    /// allocation, and supplies its normal physical block size. Statistics
+    /// merge/reset, another producer, image replacement, and teardown are
+    /// excluded through this operation.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) unsafe fn record_local_normal_free_statistics_at(theap: NonNull<Self>, block_size: usize) {
+        // SAFETY: only the retained relaxed atomic statistics tail is borrowed.
+        let statistics = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+        statistics.malloc_normal_freed(block_size);
+        #[cfg(feature = "mi-stat-2")]
+        statistics.malloc_normal_level_two_freed(
+            crate::size_class::bin_for_regular_page_block_size(block_size));
+    }
+
+    /// Records the source retain decision before its retirement countdown.
+    ///
+    /// # Safety
+    /// The caller retains the initialized owning Theap and records exactly
+    /// one selected page retirement. Statistics merge/reset, another producer,
+    /// image replacement, and teardown are excluded through this operation.
+    #[inline]
+    pub(crate) unsafe fn record_page_retired_at(theap: NonNull<Self>) {
+        // SAFETY: only the retained relaxed atomic statistics tail is borrowed.
+        unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) }.page_retired();
     }
 
     /// Records `mi_stat_free` before the local free-list transition, using

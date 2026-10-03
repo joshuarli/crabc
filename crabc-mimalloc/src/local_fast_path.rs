@@ -176,9 +176,6 @@ pub(crate) unsafe fn allocate(
     if !direct_small && (size > MEDIUM_MAX_OBJ_SIZE || alignment.is_some()) {
         return None;
     }
-    // SAFETY: the caller's contract makes this the exclusively owned live
-    // Theap; the shared projection is the one page sessions use for reads.
-    let theap_ref = unsafe { theap.as_ref() };
     let mut observed_empty_direct_page = core::ptr::null_mut();
     if direct_small {
         // Release small allocation preserves the original requested bytes,
@@ -188,13 +185,13 @@ pub(crate) unsafe fn allocate(
         if direct_index >= PAGES_DIRECT {
             return None;
         }
-        let direct = theap_ref.direct_page(direct_index)?;
+        let direct = unsafe { Theap::local_direct_page_at(theap, direct_index) }?;
         // The initialized cache contains only the readable empty-page
         // sentinel or a live queue page. The sentinel's free head is null.
         // SAFETY: the owner's published Theap keeps every direct slot non-null.
         let page = unsafe { NonNull::new_unchecked(direct) };
         // SAFETY: the pointer names a live page or the immutable sentinel.
-        let head = unsafe { page.as_ref() }.free_list_head();
+        let head = unsafe { Page::free_list_head_at(page) };
         if !head.is_null() {
             if alignment.is_some_and(|alignment| head.addr() & (alignment - 1) != 0) {
                 return None;
@@ -203,12 +200,7 @@ pub(crate) unsafe fn allocate(
             // this live page's ordinary local-list fields and immediate head.
             let block = unsafe { pop_selected_head(page, head, zero) };
             #[cfg(feature = "mi-stat-1")]
-            theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
-            #[cfg(feature = "mi-stat-2")]
-            theap_ref.record_malloc_normal_level_two_allocated(
-                size,
-                size_class::bin_for_regular_page_block_size(unsafe { page.as_ref() }.block_size()),
-            );
+            unsafe { record_normal_allocation(theap, page, size) };
             return Some(block);
         }
         observed_empty_direct_page = direct;
@@ -221,13 +213,13 @@ pub(crate) unsafe fn allocate(
     // A direct small head can supply a block without regular-page classification.
     // The eight-word request uses bin eight when its direct head is empty.
     let bin = if size == 8 * WORD_SIZE { 8 } else { size_class::bin(size)? };
-    let first = NonNull::new(theap_ref.queue(bin)?.first())?;
+    let first = NonNull::new(unsafe { Theap::local_queue_at(theap, bin) }?.first())?;
     if size > SMALL_MAX_OBJ_SIZE {
         // SAFETY: the queue head is a live page of this Theap.
-        let first_ref = unsafe { first.as_ref() };
-        if first_ref.block_size() <= SMALL_MAX_OBJ_SIZE
-            || first_ref.block_size() > MEDIUM_MAX_OBJ_SIZE
-            || first_ref.used() + 1 >= usize::from(first_ref.reserved())
+        let block_size = unsafe { Page::block_size_at(first) };
+        if block_size <= SMALL_MAX_OBJ_SIZE
+            || block_size > MEDIUM_MAX_OBJ_SIZE
+            || unsafe { Page::owner_used_at(first) } + 1 >= usize::from(unsafe { Page::reserved_at(first) })
         {
             // `mi_malloc_generic_fallback` moves a newly full medium page
             // to the full queue after its pop, which belongs to the complete
@@ -278,14 +270,8 @@ pub(crate) unsafe fn allocate(
         pop_selected_head(first, selected_head, zero)
     };
     // SAFETY: the queue head remains live through the owner-local pop.
-    #[cfg(any(feature = "mi-stat-1", feature = "mi-stat-2"))]
-    let first_ref = unsafe { first.as_ref() };
     #[cfg(feature = "mi-stat-1")]
-    theap_ref.record_malloc_normal_allocated(first_ref.block_size());
-    #[cfg(feature = "mi-stat-2")]
-    theap_ref.record_malloc_normal_level_two_allocated(
-        size, size_class::bin_for_regular_page_block_size(first_ref.block_size()),
-    );
+    unsafe { record_normal_allocation(theap, first, size) };
     debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
     Some(block)
 }
@@ -309,16 +295,15 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
     }
     // SAFETY: the published owner keeps each direct slot initialized to a
     // live page or the immutable empty-page sentinel.
-    let theap_ref = unsafe { theap.as_ref() };
-    let page = unsafe { NonNull::new_unchecked(theap_ref.direct_page(direct_index)?) };
-    let head = unsafe { page.as_ref() }.free_list_head();
+    let page = unsafe { NonNull::new_unchecked(Theap::local_direct_page_at(theap, direct_index)?) };
+    let head = unsafe { Page::free_list_head_at(page) };
     let (page, base) = if !head.is_null() {
         // SAFETY: a non-null head excludes the sentinel. This owner controls
         // the ordinary list, and the source allocates this base first.
         (page, unsafe { pop_selected_head(page, head, zero) })
     } else {
         let bin = size_class::bin(request)?;
-        let first = NonNull::new(theap_ref.queue(bin)?.first())?;
+        let first = NonNull::new(unsafe { Theap::local_queue_at(theap, bin) }?.first())?;
         // SAFETY: the queue head is a live owner page. The direct head's
         // empty observation remains valid while this owner runs.
         let (selected_head, local_head) = unsafe {
@@ -357,15 +342,10 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
     if adjustment != 0 {
         // The interior flag shares the source atomic owner word. Its relaxed
         // update leaves the same owner and full-page bits intact.
-        unsafe { page.as_ref() }.set_has_interior_pointers(true);
+        unsafe { Page::set_has_interior_pointers_at(page, true) };
     }
     #[cfg(feature = "mi-stat-1")]
-    theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
-    #[cfg(feature = "mi-stat-2")]
-    theap_ref.record_malloc_normal_level_two_allocated(
-        request,
-        size_class::bin_for_regular_page_block_size(unsafe { page.as_ref() }.block_size()),
-    );
+    unsafe { record_normal_allocation(theap, page, request) };
     // The padded request leaves at least `alignment - 1` bytes beyond the
     // minimum base size, so this adjusted client stays inside the block.
     Some(unsafe { NonNull::new_unchecked(base.as_ptr().add(adjustment)) })
@@ -383,24 +363,18 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
 #[inline(always)]
 pub(crate) unsafe fn allocate_ordinary_eight_word(theap: NonNull<Theap>) -> Option<NonNull<u8>> {
     // SAFETY: the caller holds the published live owner for this operation.
-    let theap_ref = unsafe { theap.as_ref() };
-    let direct = theap_ref.direct_page(8)?;
+    let direct = unsafe { Theap::local_direct_page_at(theap, 8) }?;
     // SAFETY: an initialized direct slot names a live page or the sentinel.
     let direct_page = unsafe { NonNull::new_unchecked(direct) };
-    let direct_head = unsafe { direct_page.as_ref() }.free_list_head();
+    let direct_head = unsafe { Page::free_list_head_at(direct_page) };
     if !direct_head.is_null() {
         // SAFETY: a non-null head excludes the sentinel and belongs to this owner.
         let block = unsafe { pop_selected_head(direct_page, direct_head, false) };
         #[cfg(feature = "mi-stat-1")]
-        theap_ref.record_malloc_normal_allocated(unsafe { direct_page.as_ref() }.block_size());
-        #[cfg(feature = "mi-stat-2")]
-        theap_ref.record_malloc_normal_level_two_allocated(
-            8 * WORD_SIZE,
-            size_class::bin_for_regular_page_block_size(unsafe { direct_page.as_ref() }.block_size()),
-        );
+        unsafe { record_normal_allocation(theap, direct_page, 8 * WORD_SIZE) };
         return Some(block);
     }
-    let first = NonNull::new(theap_ref.queue(8)?.first())?;
+    let first = NonNull::new(unsafe { Theap::local_queue_at(theap, 8) }?.first())?;
     // SAFETY: the selected queue head is live and its ordinary fields belong
     // to this thread. The direct head cannot change between these reads.
     let (selected_head, local_head) = unsafe {
@@ -428,12 +402,7 @@ pub(crate) unsafe fn allocate_ordinary_eight_word(theap: NonNull<Theap>) -> Opti
         pop_selected_head(first, selected_head, false)
     };
     #[cfg(feature = "mi-stat-1")]
-    theap_ref.record_malloc_normal_allocated(unsafe { first.as_ref() }.block_size());
-    #[cfg(feature = "mi-stat-2")]
-    theap_ref.record_malloc_normal_level_two_allocated(
-        8 * WORD_SIZE,
-        size_class::bin_for_regular_page_block_size(unsafe { first.as_ref() }.block_size()),
-    );
+    unsafe { record_normal_allocation(theap, first, 8 * WORD_SIZE) };
     Some(block)
 }
 
@@ -472,13 +441,8 @@ pub(crate) unsafe fn free(
     // SAFETY: the exact identity equality also excludes both page flags.
     // This thread now owns the ordinary fields, and this snapshot ends before
     // their local mutation. Remote producers retain only disjoint atomics.
-    let (page_theap, used, retire_expire) = {
-        let page_ref = unsafe { page.as_ref() };
-        (
-            page_ref.theap(),
-            page_ref.used(),
-            page_ref.retire_expire(),
-        )
+    let (page_theap, used, retire_expire) = unsafe {
+        (Page::theap_identity_at(page), Page::owner_used_at(page), Page::retire_expire_at(page))
     };
     if page_theap != theap.as_ptr() {
         return false;
@@ -516,13 +480,12 @@ unsafe fn retire_last_local_free(
     block: NonNull<u8>,
 ) -> bool {
     // SAFETY: the caller holds the page live and owns its ordinary geometry.
-    let page_ref = unsafe { page.as_ref() };
-    let block_size = page_ref.block_size();
+    let block_size = unsafe { Page::block_size_at(page) };
     // `_mi_page_retire` on an unflagged, non-huge page selects its ordinary
     // queue: keep it only in the retain branch. An eight-word regular page
     // always has multiple reserved blocks; a forced singleton starts with a
     // larger base request even when its client's requested size is small.
-    if block_size != 8 * WORD_SIZE && page_ref.reserved() <= 1 {
+    if block_size != 8 * WORD_SIZE && unsafe { Page::reserved_at(page) } <= 1 {
         return false;
     }
     // A page with multiple reserved blocks uses a word-aligned regular bin
@@ -541,7 +504,7 @@ unsafe fn retire_last_local_free(
         return false;
     }
     // SAFETY: exclusive owner-local Theap, as above.
-    let Some(queue) = (unsafe { theap.as_ref() }).queue(bin) else { return false };
+    let Some(queue) = (unsafe { Theap::local_queue_at(theap, bin) }) else { return false };
     let count = queue.count();
     // A sole queued page satisfies the retirement cap and needs no small-block exception.
     if count != 1 && (count > RETIRE_MAX_PAGES || block_size >= SMALL_SIZE_MAX) {
@@ -555,7 +518,7 @@ unsafe fn retire_last_local_free(
     // The general retire path clears the interior-pointer flag here. The
     // exact raw owner-word check found it clear, and this owner has not set it.
     // SAFETY: exclusive owner-local Theap, as above.
-    unsafe { theap.as_ref() }.record_page_retired();
+    unsafe { Theap::record_page_retired_at(theap) };
     // SAFETY: `used == 0` now, and the owner controls this byte and the
     // Theap's retirement bounds.
     unsafe {
@@ -564,6 +527,21 @@ unsafe fn retire_last_local_free(
         debug_assert!(noted, "an ordinary queue bin is below BIN_FULL");
     }
     true
+}
+
+/// Records a successful pop through the owner's statistics tail alone.
+///
+/// # Safety
+/// The caller retains both images and owns the completed normal-page pop;
+/// `requested_size` is the internal request used by that allocation branch.
+#[cfg(feature = "mi-stat-1")]
+#[inline]
+unsafe fn record_normal_allocation(theap: NonNull<Theap>, page: NonNull<Page>, requested_size: usize) {
+    // SAFETY: this owner retains the page's fixed geometry and statistics;
+    // neither projection covers mutable queue, count, or Heap-list fields.
+    unsafe {
+        Theap::record_local_normal_allocation_statistics_at(theap, requested_size, Page::block_size_at(page));
+    }
 }
 
 /// Records a consumed owner-local binned block before its free-list change.
@@ -577,13 +555,9 @@ unsafe fn retire_last_local_free(
 unsafe fn record_normal_free(theap: NonNull<Theap>, page: NonNull<Page>) {
     // SAFETY: the caller keeps both source objects live and exclusively owns
     // their ordinary fields through this free.
-    let block_size = unsafe { page.as_ref() }.block_size();
+    let block_size = unsafe { Page::block_size_at(page) };
     if block_size <= LARGE_MAX_OBJ_SIZE {
-        unsafe { theap.as_ref() }.record_malloc_normal_freed(block_size);
-        #[cfg(feature = "mi-stat-2")]
-        unsafe { theap.as_ref() }.record_malloc_normal_level_two_freed(
-            size_class::bin_for_regular_page_block_size(block_size),
-        );
+        unsafe { Theap::record_local_normal_free_statistics_at(theap, block_size) };
     }
 }
 
@@ -612,7 +586,7 @@ unsafe fn pop_selected_head(page: NonNull<Page>, block: *mut Block, zero: bool) 
         if zero && !*state.free_is_zero.as_ptr() {
             // SAFETY: the page remains live; its block size is stable under
             // the owner's ordinary-field mutation above.
-            core::ptr::write_bytes(block.as_ptr(), 0, page.as_ref().block_size());
+            core::ptr::write_bytes(block.as_ptr(), 0, Page::block_size_at(page));
         }
         block
     }
