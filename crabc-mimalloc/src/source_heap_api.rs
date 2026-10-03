@@ -884,6 +884,16 @@ unsafe fn theap_allocate_ordinary(theap: NonNull<Theap>, size: usize, zero: bool
     if fixed_runtime_theap() == Some(theap) {
         return crate::source_api::malloc_zero_native(size, zero);
     }
+    // SAFETY: the current thread retains this non-fixed Theap through routing.
+    unsafe { allocate_auxiliary_theap(theap, size, zero) }
+}
+
+/// Continue allocation on an initialized, current-thread auxiliary Theap.
+///
+/// The caller retains the Theap and its Heap, has excluded the fixed runtime
+/// Theap, and performs no callback between that classification and this call.
+#[inline(never)]
+unsafe fn allocate_auxiliary_theap(theap: NonNull<Theap>, size: usize, zero: bool) -> Sourced<Block> {
     // SAFETY: the current thread retains this auxiliary Theap and its Heap.
     let block = if crate::subproc::lifecycle::current_thread_is_child_member() {
         unsafe { crate::subproc::lifecycle::native_child_theap_allocate(theap, size, zero) }.flatten()
@@ -911,7 +921,7 @@ pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<
     if heap.is_null() || fixed_runtime_theap() == Some(selected) { return None; }
     // SAFETY: only the calling thread changes its default, which must stay
     // live through every allocation until it is restored.
-    Some(unsafe { theap_allocate_ordinary(selected, size, zero) })
+    Some(unsafe { allocate_auxiliary_theap(selected, size, zero) })
 }
 
 /// `mi_heap_of`: the Heap currently named by the page containing `pointer`.
