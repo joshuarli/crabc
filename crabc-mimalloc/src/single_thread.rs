@@ -5266,6 +5266,7 @@ impl SourceRetainedTheapSession {
         unsafe { self.theap.as_ref() }
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     #[inline]
     fn theap_mut(&mut self) -> &mut Theap {
         // SAFETY: the constructor's retained-source exclusion gives this
@@ -5312,29 +5313,63 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
 
     #[inline]
     fn queue(&self, bin: usize) -> Option<&crate::types::PageQueue> {
-        self.theap().queue(bin)
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::local_queue_at(self.theap, bin) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap().queue(bin) }
     }
 
     #[inline]
     fn queue_mut(&mut self, bin: usize) -> Option<&mut crate::types::PageQueue> {
-        self.theap_mut().queue_mut(bin)
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::local_queue_mut_at(self.theap, bin) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap_mut().queue_mut(bin) }
     }
 
     #[inline]
     fn direct_page(&self, index: usize) -> Option<*mut Page> {
-        self.theap().direct_page(index)
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::local_direct_page_at(self.theap, index) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap().direct_page(index) }
     }
 
     #[inline]
     fn set_direct_page(&mut self, index: usize, page: *mut Page) -> bool {
-        self.theap_mut().set_direct_page(index, page)
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::set_local_direct_page_at(self.theap, index, page) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap_mut().set_direct_page(index, page) }
     }
 
     #[inline]
-    fn note_page_added(&mut self) { self.theap_mut().note_page_added() }
+    fn note_page_added(&mut self) {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::note_local_page_added_at(self.theap) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap_mut().note_page_added() }
+    }
 
     #[inline]
-    fn note_page_removed(&mut self) -> bool { self.theap_mut().note_page_removed() }
+    fn note_page_removed(&mut self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::note_local_page_removed_at(self.theap) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap_mut().note_page_removed() }
+    }
 
     #[inline]
     fn ensure_arena_pages(&mut self, _arena: &ArenaView<'_>, _config: crate::os::MemoryConfig) -> bool {
@@ -5377,15 +5412,34 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
     fn retire_page(&mut self, page: &mut Page) -> Option<MemoryId> { page.retire_exclusive() }
 
     #[inline]
-    fn retired_bounds(&self) -> (usize, usize) { self.theap().retired_bounds() }
-
-    #[inline]
-    fn note_retired_bin(&mut self, bin: usize) -> bool {
-        self.theap_mut().note_retired_bin(bin)
+    fn retired_bounds(&self) -> (usize, usize) {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::local_retired_bounds_at(self.theap) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap().retired_bounds() }
     }
 
     #[inline]
-    fn reset_retired_bounds(&mut self) { self.theap_mut().reset_retired_bounds() }
+    fn note_retired_bin(&mut self, bin: usize) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::note_local_retired_bin_at(self.theap, bin) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap_mut().note_retired_bin(bin) }
+    }
+
+    #[inline]
+    fn reset_retired_bounds(&mut self) {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: this retained session owns the named local fields; its
+        // lifetime does not grant exclusive access to Heap-list subobjects.
+        { unsafe { Theap::reset_local_retired_bounds_at(self.theap) } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.theap_mut().reset_retired_bounds() }
+    }
 
     #[inline]
     fn retain_unfinished_os_release(
@@ -46830,6 +46884,42 @@ mod tests {
         // SAFETY: force collection removed every page-map entry and all local
         // users before the explicit page-map destruction boundary.
         unsafe { page_map.destroy() }.unwrap();
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn source_retained_session_direct_cache_updates_preserve_queue_projection() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(64, false).unwrap();
+            let theap = allocator.allocation_theap();
+            // SAFETY: this exact current client retains its initialized page
+            // and immutable physical block geometry in every source profile.
+            let block_size = unsafe {
+                Page::block_size_at(NonNull::new(allocator.page_for_block(block)).unwrap())
+            };
+            let bin = size_class::bin(block_size).unwrap();
+            let mut retained = SourceRetainedTheapSession {
+                theap,
+                thread: allocator.session.thread_id().unwrap(),
+                sequence: allocator.thread_sequence,
+                _not_send_or_sync: PhantomData,
+            };
+            // SAFETY: the original initialized Theap and its live page stay
+            // resident through this synchronous owner operation. The queue
+            // is stable while only the disjoint direct-cache slot is updated.
+            unsafe {
+                let queue = Theap::local_queue_at(theap, bin).unwrap();
+                let first = queue.first();
+                assert!(!first.is_null());
+                let direct = Theap::local_direct_page_at(theap, 0).unwrap();
+                assert!(retained.set_direct_page(0, direct));
+                assert_eq!(queue.first(), first);
+                assert_eq!(queue.block_size(), block_size);
+            }
+            // SAFETY: the retained view ended and the original engine remains
+            // the sole owner of this exact still-live allocation.
+            assert!(unsafe { allocator.free(block) }.is_ok());
+        });
     }
 
     /// Runs one externally serialized detached metadata-theap lifecycle.
