@@ -1012,34 +1012,134 @@ mod tests {
         // owner initializes metadata before any list or client is published.
         unsafe { NativePage::publish_fresh_exclusive_at(page, &mut theap, &heap, id,
             32, ARENA_SLICE_SIZE, 8, 0, true, memory) }.unwrap();
+        let usable = 32 - crate::config::PADDING_SIZE;
+        #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+        let keys = unsafe { NativePage::source_page_keys_at(page) };
+        let page_address = page.as_ptr().addr();
+        let initialize_client = |block, zero| {
+            #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+            // SAFETY: the just-popped block owns its complete physical extent
+            // before client publication, including the trailing source record.
+            assert_eq!(unsafe { crate::alloc::initialize_source_padding(block, 32,
+                usable, page_address, keys, zero, false,
+                crate::alloc::selected_source_padding_policy()) }, Some(usable));
+            #[cfg(not(any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+            let _ = (block, zero, page_address);
+        };
+        let check_client_free = |block| {
+            #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+            // SAFETY: the exact current client is checked once before its
+            // source local or remote publication relinquishes ownership.
+            assert_eq!(unsafe { crate::alloc::check_source_padding_on_free(block,
+                32, page_address, keys, false,
+                crate::alloc::selected_source_padding_policy()) }, Ok(usable));
+            #[cfg(not(any(feature = "mi-debug-1", feature = "mi-secure-3")))]
+            let _ = (block, page_address);
+        };
         let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
-        list.extend_count_with_random(8, || Some(0x1234_5678)).unwrap();
+        list.extend_count_with_random(4, || Some(0x1234_5678)).unwrap();
+        let remote = list.pop(false).unwrap().unwrap();
+        initialize_client(remote, false);
+        let published = std::sync::atomic::AtomicPtr::new(remote.as_ptr());
         let mut clients = std::vec::Vec::new();
         for _ in 0..3 {
             let block = list.pop(false).unwrap().unwrap();
-            // SAFETY: pop transferred this complete distinct live client.
-            unsafe { block.as_ptr().write_bytes(0xa5, 32); }
+            initialize_client(block, false);
+            // SAFETY: pop transfers this distinct usable client extent;
+            // selected source padding stays outside client access.
+            unsafe { block.as_ptr().write_bytes(0xa5, usable); }
             clients.push(block);
         }
-        for block in clients {
-            // SAFETY: each current client is returned exactly once; this
-            // deferred list remains separate from five immediate blocks.
-            unsafe { list.push_local(block) }.unwrap();
-        }
-        drop(list);
-        // SAFETY: this exact live owner retains the complete Page allocation
-        // and excludes release, competing collection and ordinary mutation.
+        assert_eq!(list.capacity(), 4);
+        assert!(list.pop(false).unwrap().is_none());
+        // SAFETY: the complete backing and immutable geometry stay resident;
+        // the producer owns only its one current client and atomic projection.
+        let producer = unsafe { NativePage::remote_free_producer_state_at(page) };
+        let ready = std::sync::Barrier::new(2);
+        let owner_finished = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let ready = &ready;
+            let owner_finished = &owner_finished;
+            let published = &published;
+            scope.spawn(move || {
+                let block = NonNull::new(published.load(core::sync::atomic::Ordering::Acquire)).unwrap();
+                // SAFETY: these initialized atomic subobjects stay live across
+                // the owner's disjoint growth, collection, and zeroing writes.
+                let identity = unsafe { producer.xthread_id.as_ref() };
+                let remote_head = unsafe { producer.xthread_free.as_ref() };
+                ready.wait();
+                // SAFETY: this worker consumes its distinct current client
+                // exactly once. No owner list touches it before the worker joins.
+                check_client_free(block);
+                unsafe { crate::remote_free::push(producer, block) }.unwrap();
+                owner_finished.wait();
+                assert_eq!(identity.load(core::sync::atomic::Ordering::Acquire)
+                    & !crate::types::PAGE_FLAG_MASK, id.get());
+                assert_eq!(remote_head.load(core::sync::atomic::Ordering::Acquire) & 1, 1);
+            });
+            ready.wait();
+            // Only the accessible new suffix is threaded while a remote
+            // producer retains its original distinct allocated block.
+            list.extend_count_with_random(4, || Some(0x8765_4321)).unwrap();
+            assert_eq!(list.capacity(), 8);
+            let deferred_order = [clients[2], clients[1], clients[0]];
+            for block in clients {
+                // SAFETY: each current owner client is consumed exactly once;
+                // three deferred nodes stay distinct from four immediate nodes.
+                check_client_free(block);
+                unsafe { list.push_local(block) }.unwrap();
+            }
+            assert_eq!(list.used(), 1);
+            drop(list);
+            // SAFETY: this owner alone controls local lists; the producer may
+            // change only the remote atomic head and its distinct block link.
+            let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
+            assert_eq!(unsafe { collect_local(local, false) }, Ok(false));
+            let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
+            assert_eq!(unsafe { collect_local(local, true) }, Ok(true));
+            let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+            let mut reused = std::vec::Vec::new();
+            for index in 0..7 {
+                let block = list.pop(true).unwrap().unwrap();
+                assert_ne!(block, remote);
+                if index < deferred_order.len() {
+                    assert_eq!(block, deferred_order[index]);
+                }
+                // SAFETY: the owner has renewed this exact usable extent;
+                // the producer's client and source padding are not inspected.
+                assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), usable) }
+                    .iter().all(|byte| *byte == 0));
+                initialize_client(block, true);
+                reused.push(block);
+            }
+            assert!(list.pop(false).unwrap().is_none());
+            assert_eq!(list.used(), 8);
+            for block in reused {
+                check_client_free(block);
+                unsafe { list.push_local(block) }.unwrap();
+            }
+            assert_eq!(list.used(), 1);
+            drop(list);
+            let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
+            assert_eq!(unsafe { collect_local(local, false) }, Ok(true));
+            owner_finished.wait();
+        });
+        // SAFETY: the producer has joined before the owner detaches its exact
+        // publication and accounts for the last outstanding remote client.
+        let owner = unsafe { NativePage::remote_free_owner_state_at(page) }.unwrap();
+        assert_eq!(unsafe { crate::remote_free::collect(owner) }, Ok(1));
         let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
         assert_eq!(unsafe { collect_local(local, false) }, Ok(false));
         let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
         assert_eq!(unsafe { collect_local(local, true) }, Ok(true));
         let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
         let mut reused = std::vec::Vec::new();
-        for _ in 0..8 {
+        for index in 0..8 {
             let block = list.pop(true).unwrap().unwrap();
-            // SAFETY: renewed ownership covers every byte of this zeroed
-            // client, including the previously encoded local-list link.
-            assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 32) }.iter().all(|byte| *byte == 0));
+            if index == 0 { assert_eq!(block, remote); }
+            assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), usable) }
+                .iter().all(|byte| *byte == 0));
+            initialize_client(block, true);
             reused.push(block);
         }
         assert!(list.pop(false).unwrap().is_none());
@@ -1047,13 +1147,19 @@ mod tests {
         addresses.sort_unstable();
         let base = page.as_ptr().cast::<u8>().wrapping_add(ARENA_SLICE_SIZE).addr();
         assert_eq!(addresses, (0..8).map(|index| base + index * 32).collect::<std::vec::Vec<_>>());
-        for block in reused { unsafe { list.push_local(block) }.unwrap(); }
+        for block in reused {
+            check_client_free(block);
+            unsafe { list.push_local(block) }.unwrap();
+        }
         drop(list);
         let local = unsafe { NativePage::local_collect_state_for_owner_at(page, Some(id)) }.unwrap();
         assert_eq!(unsafe { collect_local(local, false) }, Ok(true));
         let state = unsafe { NativePage::validity_snapshot_at(page) };
         assert_eq!(state.used, 0);
+        assert_eq!((state.capacity, state.reserved), (8, 8));
+        assert!(!state.free.is_null());
         assert!(state.local_free.is_null());
+        assert!(state.remote.is_null());
     }
 
     fn list_for<const N: usize>(
