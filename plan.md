@@ -194,9 +194,19 @@ Update this small section in place when the implementation frontier changes.
   but its initial host load of 1.21 exceeds the qualification limit of 1.0.
   Exact source, artifacts and original measurements remain under
   `.work/x86_64/reports/integrated-lanes/allocatorperf161-348aa729d/`.
-  Sixteen separate compiler/source lanes investigate the observed cost while
-  retaining admission synchronization and pinned algorithms. Performance
-  acceptance and complete correctness/codegen prerequisites remain open.
+  Source-faithful compiler reductions now separate cold startup and TLS
+  publication, derive allocation facts from one retained ownership word,
+  defer bin selection until direct-cache misses, share scalar bitmap retries,
+  reuse validated purge ranges, and use validated power-of-two commit geometry.
+  Forced local-list traversal validates each node once. Bounded aligned
+  overallocated bases now complete through owner-local heads while preserving
+  guarded fallbacks, administration and full-page transitions. Nine merged
+  profiles, eight focused opt0 checks and the frozen inventories pass.
+  Required admission synchronization and pinned algorithms remain intact;
+  these individual compiler measurements do not establish combined throughput
+  acceptance. Quiet-host remeasurement and compiler analysis of the large
+  required teardown continuations follow. Performance acceptance and complete
+  correctness/codegen prerequisites remain open.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
