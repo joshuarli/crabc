@@ -3,6 +3,7 @@
 #include <link.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,15 @@ static unsigned completed[2];
 static unsigned *worker_addresses[2][2];
 static size_t module_ids[2];
 static void *main_tls_data[2];
+static pthread_key_t retirement_key;
+static atomic_uint retirement_passes;
+
+struct tls_retirement {
+    unsigned values[2];
+    unsigned *addresses[2];
+    unsigned pass;
+    unsigned char *allocation;
+};
 
 struct tls_snapshot {
     size_t ids[2];
@@ -95,6 +105,55 @@ static void announce(unsigned index)
     CHECK(pthread_mutex_unlock(&lock) == 0);
 }
 
+/* TSD callbacks run while this worker still owns its DTV generations. The
+ * DSO handles have already been closed and reopened; retained code, templates,
+ * module IDs and this worker's TLS addresses remain usable through cleanup. */
+static void retire_tls(void *argument)
+{
+    struct tls_retirement *retirement = argument;
+    CHECK(pthread_getspecific(retirement_key) == 0);
+    struct tls_snapshot snapshot = snapshot_tls();
+    for (unsigned index = 0; index != 2; ++index) {
+        CHECK(plugins[index].ready());
+        CHECK(plugins[index].address() == retirement->addresses[index]);
+        CHECK(plugins[index].get() == retirement->values[index]);
+        CHECK(snapshot.ids[index] == module_ids[index]);
+        CHECK(snapshot.data[index] != main_tls_data[index]);
+        check_tls_symbol(index);
+    }
+    for (size_t index = 0; index != 64 * 1024; ++index)
+        CHECK(retirement->allocation[index] == 0x53);
+    unsigned char *scratch = malloc(32 * 1024);
+    CHECK(scratch);
+    memset(scratch, 0x29, 32 * 1024);
+    for (size_t index = 0; index != 32 * 1024; ++index)
+        CHECK(scratch[index] == 0x29);
+    free(scratch);
+    atomic_fetch_add(&retirement_passes, 1);
+    if (++retirement->pass == 1) {
+        CHECK(pthread_setspecific(retirement_key, retirement) == 0);
+    } else {
+        CHECK(retirement->pass == 2);
+        free(retirement->allocation);
+        free(retirement);
+    }
+}
+
+static void register_tls_retirement(void)
+{
+    struct tls_retirement *retirement = malloc(sizeof *retirement);
+    CHECK(retirement);
+    retirement->allocation = malloc(64 * 1024);
+    CHECK(retirement->allocation);
+    memset(retirement->allocation, 0x53, 64 * 1024);
+    retirement->pass = 0;
+    for (unsigned index = 0; index != 2; ++index) {
+        retirement->values[index] = plugins[index].get();
+        retirement->addresses[index] = plugins[index].address();
+    }
+    CHECK(pthread_setspecific(retirement_key, retirement) == 0);
+}
+
 static void *worker(void *argument)
 {
     unsigned number = (unsigned)(uintptr_t)argument;
@@ -131,12 +190,13 @@ static void *worker(void *argument)
         CHECK(after_close.data[index] == before_close.data[index]);
         CHECK(after_close.data[index] != main_tls_data[index]);
     }
+    register_tls_retirement();
     return 0;
 }
 
 static void *fresh_worker(void *argument)
 {
-    (void)argument;
+    unsigned round = (unsigned)(uintptr_t)argument;
     CHECK(plugins[0].ready() && plugins[1].ready());
     CHECK(plugins[0].get() == 101 && plugins[1].get() == 202);
     CHECK(plugins[0].address() != plugins[1].address());
@@ -146,9 +206,10 @@ static void *fresh_worker(void *argument)
         CHECK(snapshot.data[index] != main_tls_data[index]);
         check_tls_symbol(index);
     }
-    plugins[0].set(301);
-    plugins[1].set(302);
-    CHECK(plugins[0].get() == 301 && plugins[1].get() == 302);
+    plugins[0].set(301 + round);
+    plugins[1].set(302 + round);
+    CHECK(plugins[0].get() == 301 + round && plugins[1].get() == 302 + round);
+    register_tls_retirement();
     return 0;
 }
 
@@ -177,6 +238,7 @@ static void wait_workers(unsigned index)
 int main(void)
 {
     pthread_t early, late;
+    CHECK(pthread_key_create(&retirement_key, retire_tls) == 0);
     CHECK(pthread_create(&early, 0, worker, (void *)(uintptr_t)1) == 0);
     wait_started(1);
     plugins[0] = open_plugin("libowned-runtime-tls-one.so");
@@ -222,11 +284,16 @@ int main(void)
     }
     advance(3);
     CHECK(pthread_join(early, 0) == 0 && pthread_join(late, 0) == 0);
-    pthread_t fresh;
-    CHECK(pthread_create(&fresh, 0, fresh_worker, 0) == 0);
-    CHECK(pthread_join(fresh, 0) == 0);
-    CHECK(plugins[0].get() == 131 && plugins[1].get() == 231);
+    CHECK(atomic_load(&retirement_passes) == 4);
+    for (uintptr_t round = 0; round != 2; ++round) {
+        pthread_t fresh;
+        CHECK(pthread_create(&fresh, 0, fresh_worker, (void *)round) == 0);
+        CHECK(pthread_join(fresh, 0) == 0);
+        CHECK(atomic_load(&retirement_passes) == 6 + 2 * round);
+        CHECK(plugins[0].get() == 131 && plugins[1].get() == 231);
+    }
+    CHECK(pthread_key_delete(retirement_key) == 0);
     CHECK(dlclose(plugins[1].handle) == 0 && dlclose(plugins[0].handle) == 0);
-    puts("runtime TLS: two growth generations, live-worker retained reopen, fresh worker");
+    puts("runtime TLS: two growth generations, retained reopen, successor workers, allocating TSD cleanup");
     return 0;
 }
