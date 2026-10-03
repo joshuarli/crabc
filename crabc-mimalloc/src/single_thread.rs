@@ -42911,6 +42911,314 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    fn allocate_fresh_os_page_checked(
+        &mut self, block_size: usize, alignment: usize,
+        enqueue_singleton: bool, commit: bool,
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
+        // A failed earlier OS-aligned release owns the sole pending slot. It
+        // must be retried before claiming another mapping; ordinary arena
+        // pages intentionally do not depend on this token.
+        if self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some() || !self.retry_pending_os_release() {
+            return Ok(None);
+        }
+        let config = self.page_map.memory_config();
+        let arena = &self.arena;
+        let requested = self.requested_arena;
+        #[cfg(target_arch = "x86_64")]
+        let mut storage = MaybeUninit::<OsAlignedPageClaim>::uninit();
+        #[cfg(target_arch = "x86_64")]
+        let destination = NonNull::from(&mut storage);
+        #[cfg(target_arch = "x86_64")]
+        let allocation = self.session.with_os_random_source(|random| {
+            if let Some(process) = arena.process() {
+                // SAFETY: the exact backing retains its process owner. This
+                // vacant stack destination never escapes to a warning callback;
+                // the scalar result names whether its original image is valid.
+                unsafe { OsAlignedPageClaim::initialize_borrowed_into(destination,
+                    process, config, block_size, alignment, requested, Some(random), commit) }
+            } else {
+                // SAFETY: random admission and process selection retain their
+                // original order. The same vacant private destination receives
+                // only the authentic processless allocation's retained owner.
+                unsafe { OsAlignedPageClaim::initialize_processless_into(
+                    destination, config, block_size, alignment) }
+            }
+        });
+        // SAFETY: acquisition initialized this exclusive original destination
+        // exactly when its scalar outcome says so. Random borrowing has ended;
+        // this session retains its pending slots and source backing through the
+        // original completion, retention, or explicit release transition.
+        unsafe { self.complete_fresh_os_page_initialization(
+            &mut storage, allocation, config, enqueue_singleton) }
+    }
+
+    /// Completes acquisition after its random-field borrowing has ended.
+    /// The original claim is prepared, published, retained or released in its
+    /// source order, with no alternative mapping or implicit destructor.
+    ///
+    /// # Safety
+    /// `storage` is the exclusive destination used for the exact acquisition
+    /// represented by `allocation`. Ready and Retained contain one complete
+    /// original claim to take once; Released forbids reading the destination.
+    /// The caller retains this session and its exact backing/process image,
+    /// excludes independent access to the claim, and has already admitted its
+    /// vacant pending slots. Completion preserves custody of any refused owner
+    /// in this same session until its explicit cleanup or publication.
+    #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
+    unsafe fn complete_fresh_os_page_initialization(
+        &mut self, storage: &mut MaybeUninit<OsAlignedPageClaim>,
+        allocation: OsAlignedPageClaimInitialization,
+        config: crate::os::MemoryConfig, enqueue_singleton: bool,
+    ) -> Result<Option<NonNull<Page>>, GenericPathError> {
+        let mut claim = match allocation {
+            // SAFETY: only these two outcomes initialized a complete original
+            // image. Each branch consumes that destination once; Released never
+            // reads it and carries no terminal mapping capability.
+            OsAlignedPageClaimInitialization::Ready => unsafe { storage.assume_init_read() },
+            OsAlignedPageClaimInitialization::Retained(_) => {
+                self.park_pending_os_release(OsAlignedPageOwner::Claim(unsafe { storage.assume_init_read() }));
+                return Ok(None);
+            }
+            OsAlignedPageClaimInitialization::Released(_) => return Ok(None),
+        };
+        let layout = claim.layout();
+        // All checks precede primary metadata, aliases, map publication and
+        // statistics. Keep the unique claim here and converge only these
+        // private-stage refusals on its original release operation.
+        let prepared = 'prepare: {
+            let metadata = match claim.metadata() {
+                Some(metadata) => metadata,
+                None => {
+                    break 'prepare None;
+                }
+            };
+            let slice_start = match claim.slice_start() {
+                Some(slice_start) => slice_start,
+                None => {
+                    break 'prepare None;
+                }
+            };
+            let memory = match claim.memory_id() {
+                Ok(memory) => memory,
+                Err(_) => {
+                    break 'prepare None;
+                }
+            };
+            let slice_pcommitted = if !memory.initially_committed() {
+                let page_size = config.page_size().bytes();
+                let prefix_pages = match page::initial_page_slice_pcommitted(
+                    layout.block_start_offset(),
+                    layout.block_size(),
+                    layout.allocation_size(),
+                    page_size,
+                ) {
+                    Some(prefix_pages) => prefix_pages,
+                    None => {
+                        break 'prepare None;
+                    }
+                };
+                let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
+                    Some(prefix_size) => prefix_size,
+                    None => {
+                        break 'prepare None;
+                    }
+                };
+                let committed = if let Some(process) = self.arena.process() {
+                    claim.commit_initial_page_prefix_for_process(process, prefix_size)
+                } else {
+                    claim.commit_initial_page_prefix(prefix_size)
+                };
+                if committed.is_err() {
+                    break 'prepare None;
+                }
+                prefix_pages
+            } else {
+                0
+            };
+            break 'prepare Some((metadata, slice_start, memory, slice_pcommitted));
+        };
+        let Some((metadata, slice_start, memory, slice_pcommitted)) = prepared else {
+            self.release_unpublished_claim_or_park(claim);
+            return Ok(None);
+        };
+        let page = match unsafe {
+            #[cfg(target_arch = "x86_64")]
+            let page = self.session.publish_fresh_primary_page(
+                metadata,
+                layout.block_size(),
+                layout.page_offset(),
+                layout.reserved(),
+                slice_pcommitted,
+                memory.initially_zero(),
+                memory,
+            );
+            #[cfg(not(target_arch = "x86_64"))]
+            let page = self.session.publish_fresh_page(
+                metadata,
+                layout.block_size(),
+                layout.page_offset(),
+                layout.reserved(),
+                slice_pcommitted,
+                memory.initially_zero(),
+                memory,
+            );
+            page
+        } {
+            Some(page) => page,
+            None => {
+                self.release_unpublished_claim_or_park(claim);
+                return Ok(None);
+            }
+        };
+        // SAFETY: this exact fresh span has primary metadata but no escaped
+        // alias, lookup, queue entry, or client when its source tail changes.
+        unsafe { crate::page_backing::set_source_page_guard(
+            config, self.arena.process(), memory, slice_start.as_ptr(), layout.allocation_size(),
+        ) };
+        if unsafe { !claim.publish_secondary_metadata(page) } {
+            self.rollback_fresh_os_aligned(claim, page, false, false);
+            return Ok(None);
+        }
+
+        // SAFETY: the primary is fully initialized; the exact source-clipped
+        // range is the only part published to page-map lookup. Larger OS
+        // mappings retain their full extent solely in `MemoryId`.
+        if unsafe {
+            self.page_map
+                .register_range(slice_start.as_ptr(), layout.page_map_size(), page)
+        }
+        .is_err()
+        {
+            self.rollback_fresh_os_aligned(claim, page, true, false);
+            return Ok(None);
+        }
+        // `arena.c:1110-1118` records every fresh page, an OS-backed one
+        // included, after its PageMap registration; its terminal release
+        // records the matching decrease.
+        let statistics_bin = unsafe { source_page_statistics_bin_at(page) }
+            .expect("fresh source page has one statistics bin");
+        let statistics_recorded = self.session.theap().record_page_registered(statistics_bin);
+        debug_assert!(statistics_recorded);
+
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: actual PageMap and matched statistics publication completed;
+        // the original session retains this Page before zero or list writes.
+        if !unsafe { self.session.initialize_fresh_page_keys(page) } {
+            return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
+                claim, page, theap: self.theap_identity(),
+                metadata_stage: FreshOsMetadataStage::Registered { statistics_bin },
+                failure: FreshOsPageInitializationFailure::PageKeysRefused,
+                retirement_marker: FreshTaskRetirementMarker::Unmarked,
+            }));
+        }
+
+        // SAFETY: the exact original claim retains its entire readable
+        // committed area; no free-list link or client has been published.
+        #[cfg(target_arch = "x86_64")]
+        if let Err(failure) = unsafe { self.observe_fresh_os_initialization(&claim, page) } {
+            return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
+                claim, page, theap: self.theap_identity(),
+                metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
+                retirement_marker: FreshTaskRetirementMarker::Unmarked,
+            }));
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let claim = unsafe { self.observe_fresh_os_initialization(claim, page, statistics_bin) }
+            .map_err(GenericPathError::FreshInitialization)?;
+
+        let initialized = (|| -> Result<(), FreshOsPageInitializationFailure> {
+            // SAFETY: an on-demand claim committed its first page area above;
+            // a full claim committed the entire area. Metadata is registered,
+            // but no source queue or client can select its unfinished list.
+            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
+                .map_err(FreshOsPageInitializationFailure::FreeList)?;
+            #[cfg(feature = "mi-stat-1")]
+            self.session.theap().record_page_extension_attempted();
+            if slice_pcommitted == 0 {
+                #[cfg(target_arch = "x86_64")]
+                let extension = free_list.extend_with_random(|| {
+                    // SAFETY: this active engine owns the selected Theap's
+                    // random field; no whole-Theap view crosses the draw.
+                    unsafe { Theap::next_os_reservation_random_at(
+                        self.session.local_field_theap_pointer(),
+                    ) }.map(|word| word as usize)
+                });
+                #[cfg(not(target_arch = "x86_64"))]
+                let extension = free_list.extend();
+                let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
+                if extended == 0 {
+                    return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
+                        expected: 1, actual: 0,
+                    });
+                }
+                #[cfg(feature = "mi-stat-1")]
+                self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
+                return Ok(());
+            }
+            let plan = page::page_area_commit_plan(
+                0,
+                layout.reserved(),
+                layout.block_size(),
+                slice_pcommitted,
+                config.page_size().bytes(),
+                layout.block_start_offset(),
+                layout.allocation_size(),
+            ).ok_or(FreshOsPageInitializationFailure::ExtensionPlanUnavailable)?;
+            if plan.commit_size != 0 {
+                return Err(FreshOsPageInitializationFailure::InitialPrefixNeedsCommit(plan.commit_size));
+            }
+            #[cfg(target_arch = "x86_64")]
+            let extension = free_list.extend_count_with_random(plan.extend, || {
+                // SAFETY: the selected session retains exclusive random-field ownership.
+                unsafe { Theap::next_os_reservation_random_at(
+                    self.session.local_field_theap_pointer(),
+                ) }.map(|word| word as usize)
+            });
+            #[cfg(not(target_arch = "x86_64"))]
+            let extension = free_list.extend_count(plan.extend);
+            let extended = extension.map_err(FreshOsPageInitializationFailure::FreeList)?;
+            if extended != plan.extend {
+                return Err(FreshOsPageInitializationFailure::ExtensionCountMismatch {
+                    expected: usize::from(plan.extend), actual: usize::from(extended),
+                });
+            }
+            #[cfg(feature = "mi-stat-1")]
+            self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
+            Ok(())
+        })();
+        if let Err(failure) = initialized {
+            #[cfg(target_arch = "x86_64")]
+            return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
+                claim, page, theap: self.theap_identity(),
+                metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
+                retirement_marker: FreshTaskRetirementMarker::Unmarked,
+            }));
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                let _ = failure;
+                self.rollback_fresh_os_aligned(claim, page, true, true);
+                return Ok(None);
+            }
+        }
+
+        if enqueue_singleton { self.push_regular_page(BIN_HUGE, page); }
+        // This is an infallible handoff under `OsAlignedPageClaim`'s private
+        // state machine: construction returns only an active `Mapping`; the
+        // only method that can close it is the consuming `release`, which has
+        // not run; and `into_published` performs no syscall after checking
+        // that active bit. Its Result preserves the lower-level defensive API,
+        // not a recoverable post-queue publication branch. A normal `None`
+        // here would strand the queue and erase the only claim token.
+        match claim.into_published() {
+            Ok(_) => {}
+            Err(_) => unreachable!("an unconsumed OS-aligned claim stays active"),
+        }
+        Ok(Some(page))
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
     fn allocate_fresh_os_page_checked(
         &mut self,
         block_size: usize,
