@@ -869,6 +869,43 @@ mod tests {
     }
 
     #[test]
+    fn selected_errors_preserve_completed_prefix_for_reset_and_repair() {
+        let inputs: [(Encoding, &[u8], &[u8], usize); 6] = [
+            (Encoding::Ascii, b"A\x80", b"B", 1),
+            (Encoding::Utf8, b"A\xe2(", b"B", 1),
+            (Encoding::Utf16Le, b"A\0\0\xd8\0\0", b"B\0", 2),
+            (Encoding::Utf16Be, b"\0A\xd8\0\0\0", b"\0B", 2),
+            (Encoding::Utf32Le, b"A\0\0\0\0\0\x11\0", b"B\0\0\0", 4),
+            (Encoding::Utf32Be, b"\0\0\0A\0\x11\0\0", b"\0\0\0B", 4),
+        ];
+        let outputs: [(Encoding, &[u8], usize); 6] = [
+            (Encoding::Ascii, b"AB", 1),
+            (Encoding::Utf8, b"AB", 1),
+            (Encoding::Utf16Le, b"A\0B\0", 2),
+            (Encoding::Utf16Be, b"\0A\0B", 2),
+            (Encoding::Utf32Le, b"A\0\0\0B\0\0\0", 4),
+            (Encoding::Utf32Be, b"\0\0\0A\0\0\0B", 4),
+        ];
+        for &(from, malformed, repaired, consumed) in &inputs {
+            for &(to, expected, produced) in &outputs {
+                let mut converter = Converter::new(from, to);
+                let mut output = [0x55; 12];
+                let error = converter.convert(malformed, &mut output).unwrap_err();
+                assert_eq!(error, ConvertError::Invalid { consumed, produced });
+                assert_eq!((error.consumed(), error.produced()), (consumed, produced));
+                assert_eq!(&output[..produced], &expected[..produced]);
+                assert!(output[produced..].iter().all(|&byte| byte == 0x55));
+                converter.reset();
+                let progress = converter.convert(repaired, &mut output[produced..]).unwrap();
+                assert_eq!((progress.consumed, progress.produced, progress.substitutions),
+                    (repaired.len(), produced, 0));
+                assert_eq!(&output[..expected.len()], expected);
+                assert!(output[expected.len()..].iter().all(|&byte| byte == 0x55));
+            }
+        }
+    }
+
+    #[test]
     fn output_full_reports_prior_progress() {
         let mut converter = Converter::new(Encoding::Utf8, Encoding::Utf16Le);
         let mut output = [0u8; 2];

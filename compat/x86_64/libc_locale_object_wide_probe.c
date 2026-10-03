@@ -19,6 +19,8 @@ struct worker_observation {
     locale_t c;
     locale_t utf8;
     int result;
+    mbstate_t inherited;
+    wchar_t retained[4];
 };
 
 static int string_equal(const char *left, const char *right)
@@ -138,6 +140,30 @@ static void worker_locale_cleanup(void *argument)
     observation->result = 0;
 }
 
+/* The caller owns both state and output; create/join delimit exclusive worker
+ * access. A count-only query must not consume the pending conversion state. */
+static int worker_resume_caller_state(struct worker_observation *observation)
+{
+    static const char tail[] = { (char)0x98, (char)0x80, 'A', 0 };
+    const char *source = tail;
+    unsigned char snapshot[sizeof observation->inherited];
+    memcpy(snapshot, &observation->inherited, sizeof snapshot);
+    errno = EINTR;
+    if (mbsrtowcs(NULL, &source, 0, &observation->inherited) != 2 ||
+        source != tail || errno != EINTR || mbsinit(&observation->inherited) ||
+        memcmp(snapshot, &observation->inherited, sizeof snapshot)) return 1;
+    if (mbsrtowcs(observation->retained, &source, 1, &observation->inherited) != 1 ||
+        source != tail + 2 || observation->retained[0] != 0x1f600 ||
+        !mbsinit(&observation->inherited) || errno != EINTR) return 2;
+    if (mbsrtowcs(observation->retained + 1, &source, 1, &observation->inherited) != 1 ||
+        source != tail + 3 || observation->retained[1] != L'A' || errno != EINTR) return 3;
+    if (mbsrtowcs(observation->retained + 2, &source, 1, &observation->inherited) != 0 ||
+        source != NULL || observation->retained[2] != 0 ||
+        observation->retained[3] != 0x55aa || errno != EINTR ||
+        uselocale(NULL) != observation->utf8) return 4;
+    return 0;
+}
+
 static void *worker_main(void *argument)
 {
     struct worker_observation *observation = argument;
@@ -153,6 +179,10 @@ static void *worker_main(void *argument)
     if (uselocale(observation->utf8) != LC_GLOBAL_LOCALE || MB_CUR_MAX != 4 ||
         mbrtowc(&wide, utf8, 2, &state) != 2 || wide != 0x00e4) {
         observation->result = 2;
+        return NULL;
+    }
+    if (worker_resume_caller_state(observation) != 0) {
+        observation->result = 5;
         return NULL;
     }
     state = (mbstate_t){ 0 };
@@ -174,17 +204,26 @@ static void *worker_main(void *argument)
 
 static int check_thread_isolation(locale_t c_locale, locale_t utf8_locale)
 {
-    struct worker_observation observation = { c_locale, utf8_locale, -1 };
+    struct worker_observation observation = { c_locale, utf8_locale, -1, {0}, {0} };
     pthread_t thread;
     unsigned generation;
 
     if (uselocale(utf8_locale) != LC_GLOBAL_LOCALE)
         return 1;
     for (generation = 0; generation != 2; ++generation) {
+        static const char lead[] = { (char)0xf0, (char)0x9f };
+        wchar_t wide = 0x55aa;
         observation.result = -1;
+        observation.inherited = (mbstate_t){0};
+        for (unsigned i = 0; i != 4; ++i) observation.retained[i] = 0x55aa;
+        if (mbrtowc(&wide, lead, sizeof lead, &observation.inherited) != (size_t)-2 ||
+            mbsinit(&observation.inherited) || wide != 0x55aa) return 5;
         if (pthread_create(&thread, NULL, worker_main, &observation) != 0)
             return 2;
-        if (pthread_join(thread, NULL) != 0 || observation.result != 0)
+        if (pthread_join(thread, NULL) != 0 || observation.result != 0 ||
+            !mbsinit(&observation.inherited) || observation.retained[0] != 0x1f600 ||
+            observation.retained[1] != L'A' || observation.retained[2] != 0 ||
+            observation.retained[3] != 0x55aa)
             return 3;
     }
     if (uselocale(NULL) != utf8_locale || MB_CUR_MAX != 4 ||
