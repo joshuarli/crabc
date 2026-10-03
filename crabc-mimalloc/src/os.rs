@@ -1018,9 +1018,7 @@ impl<'a> VmProcess<'a> {
         if let Err(error) = result {
             // The failed protection attempt has already consumed its commit
             // call, but cannot charge bytes or transfer release ownership.
-            self.policy.source_warning(SourceFormattedMessage::os_commit_failure(
-                error, address.addr(), normalized_length,
-            ));
+            self.policy.report_os_commit_failure(error, address.addr(), normalized_length);
             return Err(error);
         }
         statistics.committed_increase(length - stat_already_committed);
@@ -1451,6 +1449,44 @@ impl VmPolicy {
             // including warnings a `mi_option_get` itself can deliver.
             unsafe { output.warning_from_source_options(message) };
         }
+    }
+
+    /// Formats an OS allocation warning at the caller's source read point.
+    /// The caller still records its mmap attempt after output returns.
+    #[cfg_attr(target_arch = "x86_64", cold)]
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    fn report_os_alloc_failure(&self, error: Errno, address: usize, length: usize,
+        alignment: usize, committed: bool, allow_large: bool) {
+        self.source_warning(SourceFormattedMessage::os_alloc_failure(
+            error, address, length, alignment, committed, allow_large,
+        ));
+    }
+
+    /// Formats the source warning before releasing an unaligned direct map
+    /// or attempting its overmap. Mapping custody stays with the caller.
+    #[cfg_attr(target_arch = "x86_64", cold)]
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    fn report_aligned_direct_fallback(&self, length: usize, address: usize,
+        alignment: usize, committed: bool) {
+        self.source_warning(SourceFormattedMessage::aligned_direct_fallback(
+            length, address, alignment, committed,
+        ));
+    }
+
+    /// Reports a failed source free before its unconditional accounting edge.
+    /// Scalar facts carry no release right or live Mapping projection.
+    #[cfg_attr(target_arch = "x86_64", cold)]
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    fn report_os_free_failure(&self, error: Errno, length: usize, address: usize) {
+        self.source_warning(SourceFormattedMessage::os_free_failure(error, length, address));
+    }
+
+    /// Reports the already counted failed commit without charging any bytes.
+    /// The caller supplies the same normalized range used by its primitive.
+    #[cfg_attr(target_arch = "x86_64", cold)]
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    fn report_os_commit_failure(&self, error: Errno, address: usize, length: usize) {
+        self.source_warning(SourceFormattedMessage::os_commit_failure(error, address, length));
     }
 
     /// Delivers a source error after the owning caller ends allocator
@@ -2651,9 +2687,9 @@ impl Mapping {
             // `mmap_calls` event. The source hint address is null on this
             // route.
             let committed = matches!(access, MapAccess::Committed);
-            process.policy.source_warning(SourceFormattedMessage::os_alloc_failure(
+            process.policy.report_os_alloc_failure(
                 *error, 0, length, source_prim_try_alignment(config, length, try_alignment),
-                committed, committed && allow_large));
+                committed, committed && allow_large);
         }
         let stats = process.subprocess.vm_statistics();
         stats.mmap_call();
@@ -2724,14 +2760,12 @@ impl Mapping {
         if direct.is_ok() && !force_full_trim_for_test && direct_address % alignment == 0 {
             return direct.map_err(AlignedMappingFailure::new);
         }
-        process.policy.source_warning(SourceFormattedMessage::aligned_direct_fallback(
-            length, direct_address, alignment, committed));
+        process.policy.report_aligned_direct_fallback(length, direct_address, alignment, committed);
         if let Ok(mut direct) = direct {
             // A failed release leaves `direct` mapped; dropping this
             // non-RAII owner leaks it, as the source does.
             if let Err(error) = direct.unmap_for_process(process, if committed { length } else { 0 }, true) {
-                process.policy.source_warning(SourceFormattedMessage::os_free_failure(
-                    error, length, direct_address));
+                process.policy.report_os_free_failure(error, length, direct_address);
             }
         }
 
@@ -3282,9 +3316,7 @@ impl Mapping {
             Err(error) => Err(error),
         };
         if let Err(error) = result {
-            process.policy.source_warning(SourceFormattedMessage::os_free_failure(
-                error, length, address.addr(),
-            ));
+            process.policy.report_os_free_failure(error, length, address.addr());
         }
         let stats = process.subprocess.vm_statistics();
         if adjust {
@@ -3403,9 +3435,7 @@ impl Mapping {
             Ok(outcome) => outcome,
             Err(error) => {
                 if let Ok(Some(range)) = self.page_range(offset, length, PageAlignment::Covering) {
-                    process.policy.source_warning(SourceFormattedMessage::os_commit_failure(
-                        error, range.address.addr(), range.length,
-                    ));
+                    process.policy.report_os_commit_failure(error, range.address.addr(), range.length);
                 }
                 return Err(error);
             }
@@ -3734,9 +3764,7 @@ impl Mapping {
         };
         if warn_on_error {
             if let Err(error) = result {
-                process.policy.source_warning(SourceFormattedMessage::os_free_failure(
-                    error, self.length, self.address.addr(),
-                ));
+                process.policy.report_os_free_failure(error, self.length, self.address.addr());
             }
         }
         let stats = process.subprocess.vm_statistics();
@@ -3803,8 +3831,7 @@ impl Mapping {
         let address = if prefix { self.address } else { self.address.wrapping_add(self.length - length) };
         let result = if prefix { self.trim_prefix(length) } else { self.trim_suffix(length) };
         if let Err(error) = result {
-            process.policy.source_warning(SourceFormattedMessage::os_free_failure(
-                error, length, address.addr()));
+            process.policy.report_os_free_failure(error, length, address.addr());
         }
         let stats = process.subprocess.vm_statistics();
         if committed {
@@ -16461,6 +16488,17 @@ mod tests {
         std::println!("CRABC_M2_PROCESS_OWNED_MAP_FAULT_RUST_TRACE_BEGIN");
         for (field, value) in fields { std::println!("{field}={value}"); }
         std::println!("CRABC_M2_PROCESS_OWNED_MAP_FAULT_RUST_TRACE_END");
+        assert!(first_failed && first_no_owner);
+        assert_eq!(capture.count.load(Ordering::Acquire), 1);
+        assert!(capture.errno.load(Ordering::Acquire));
+        assert!(capture.size.load(Ordering::Acquire));
+        assert_eq!(capture.after_attempt.load(Ordering::Acquire), 1);
+        assert_eq!(capture.mmap_calls.load(Ordering::Acquire), before.mmap_calls);
+        assert_eq!(capture.commit_calls.load(Ordering::Acquire), before.commit_calls);
+        assert_eq!(capture.reserved.load(Ordering::Acquire), before.reserved_current);
+        assert_eq!(capture.committed.load(Ordering::Acquire), before.committed_current);
+        assert_eq!(failed.mmap_calls, before.mmap_calls + 1);
+        assert!(retry_succeeded && full_owner && writable && terminal_unmapped);
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -16663,6 +16701,17 @@ mod tests {
         for (field, value) in fields { std::println!("{field}={value}"); }
         std::println!("CRABC_M2_PROCESS_OWNED_COMMIT_FAULT_RUST_TRACE_END");
         assert_eq!(capture.count.load(Ordering::Acquire), 1);
+        assert!(first_failed && mapped_after_failure);
+        assert!(capture.exact.load(Ordering::Acquire));
+        assert_eq!(capture.offset.load(Ordering::Acquire), 0);
+        assert_eq!(capture.size.load(Ordering::Acquire), 2 * page);
+        assert_eq!(capture.after_attempt.load(Ordering::Acquire), 1);
+        assert_eq!(capture.commit_calls.load(Ordering::Acquire), at_map.commit_calls + 1);
+        assert_eq!(capture.mmap_calls.load(Ordering::Acquire), at_map.mmap_calls);
+        assert_eq!(capture.reserved.load(Ordering::Acquire), at_map.reserved_current);
+        assert_eq!(capture.committed.load(Ordering::Acquire), at_map.committed_current);
+        assert_eq!(after_failure.committed_current, at_map.committed_current);
+        assert!(retry_succeeded && writable_after_retry && third_page_mapped && full_owner && terminal_unmapped);
     }
 
     #[cfg(target_arch = "x86_64")]
