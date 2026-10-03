@@ -186,10 +186,29 @@ fn x86_64_prepared_child_replaces_descriptor_actions() {
         &[cstr(b"sh\0"), cstr(b"-c\0"), cstr(b"exit 17\0")],
         &[],
     ).unwrap()
-        .with_actions(&[process::FdAction::dup2(&writer, -1)])
-        .with_actions(&[]);
-    let child = prepared.spawn().expect("empty replacement removes invalid prior action");
+        .with_actions(&[
+            process::FdAction::dup2(&writer, 1),
+            process::FdAction::close(&writer),
+        ])
+        .with_actions(&[process::FdAction::dup2(&writer, 1)]);
+    let child = prepared.spawn().expect("replacement removes the prior source close");
     assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().unwrap().exit_status(), Some(17));
+
+    // The parent owns a known slot which exec will close unless a retained
+    // dup2 action clears its close-on-exec flag in the child.
+    let target = io::fcntl_dupfd_cloexec(&writer, 64).unwrap();
+    let command = std::ffi::CString::new(format!(
+        "test ! -e /proc/self/fd/{}", target.as_raw_fd(),
+    )).unwrap();
+    let cleared = process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), command.as_c_str()],
+        &[],
+    ).unwrap()
+        .with_actions(&[process::FdAction::dup2(&writer, target.as_raw_fd())])
+        .with_actions(&[]);
+    assert_eq!(cleared.spawn().unwrap().wait(process::WaitOptions::empty())
+        .unwrap().unwrap().exit_status(), Some(0));
 }
 
 #[test]
@@ -211,4 +230,42 @@ fn x86_64_prepared_child_applies_actions_in_declared_order() {
     ]);
     assert_eq!(prepared.spawn().unwrap().wait(process::WaitOptions::empty())
         .unwrap().unwrap().exit_status(), Some(7));
+}
+
+#[test]
+fn x86_64_prepared_children_keep_parent_descriptor_ownership() {
+    let (reader, writer) = pipe::pipe_with(pipe::PipeFlags::CLOEXEC)
+        .expect("create parent-owned close-on-exec pipe");
+    let actions = [
+        process::FdAction::close(&reader),
+        process::FdAction::dup2(&writer, 1),
+        process::FdAction::close(&writer),
+    ];
+    let prepared = process::PreparedExec::new(
+        cstr(b"/bin/sh\0"),
+        &[cstr(b"sh\0"), cstr(b"-c\0"), cstr(b"printf owned\0")],
+        &[],
+    ).unwrap().with_actions(&actions);
+
+    // Child-side close actions affect only each cloned descriptor table. The
+    // parent keeps both owners, allowing the same prepared image to be reused.
+    for _ in 0..2 {
+        let child = prepared.spawn().expect("reuse borrowed parent descriptors");
+        assert_eq!(child.wait(process::WaitOptions::empty()).unwrap().unwrap()
+            .exit_status(), Some(0));
+        assert!(io::fcntl_getfd(&reader).unwrap().contains(io::FdFlags::CLOEXEC));
+        assert!(io::fcntl_getfd(&writer).unwrap().contains(io::FdFlags::CLOEXEC));
+    }
+    drop(prepared);
+    drop(writer);
+    let mut output = [0_u8; 10];
+    let mut filled = 0;
+    while filled != output.len() {
+        let count = io::read(&reader, &mut output[filled..]).unwrap();
+        assert_ne!(count, 0, "both exec images must retain their stdout duplicate");
+        filled += count;
+    }
+    assert_eq!(&output, b"ownedowned");
+    assert_eq!(io::read(&reader, &mut [0_u8; 1]).unwrap(), 0,
+        "reaped children and dropped parent writer leave no writer owner");
 }
