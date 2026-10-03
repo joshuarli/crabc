@@ -1,9 +1,9 @@
 //! Stateless byte-oriented filename pattern matching.
 //!
-//! This is the implementation seam for the native Rust facade and the C
-//! `fnmatch` adapter. Inputs are borrowed NUL-free byte slices because the C
-//! boundary is responsible for converting its NUL-terminated strings first.
-//! No allocation, process-global state, locale state, or C ABI call is needed.
+//! This is the implementation seam for the native Rust facade. Inputs are
+//! borrowed NUL-free byte slices, preserving Unix filename bytes without
+//! consulting locale state. The C adapter owns its separate locale-aware
+//! matcher. No allocation, process-global state, or C ABI call is needed.
 
 /// A `*` may match `/` when this flag is absent.
 pub const FNM_PATHNAME: u32 = 0x1;
@@ -182,12 +182,22 @@ fn bracket_matches(
 
     while cursor < end {
         if pattern[cursor] == b'-' && cursor + 1 < end && pattern[cursor + 1] != b']' {
-            let (mut low, mut high) = (pattern[cursor - 1], pattern[cursor + 1]);
-            if casefold_enabled(flags) {
-                low = ascii_casefold(low);
-                high = ascii_casefold(high);
-            }
-            if low <= high && folded >= low && folded <= high {
+            let (low, high) = (pattern[cursor - 1], pattern[cursor + 1]);
+            #[cfg(not(target_arch = "x86_64"))]
+            let (low, high) = if casefold_enabled(flags) {
+                (ascii_casefold(low), ascii_casefold(high))
+            } else {
+                (low, high)
+            };
+            // The x86 C-locale rule preserves literal range endpoints and
+            // tests both the original candidate and its opposite ASCII case.
+            // Folding endpoints would discard punctuation inside [A-z].
+            #[cfg(target_arch = "x86_64")]
+            let in_range = (candidate >= low && candidate <= high)
+                || (folded >= low && folded <= high);
+            #[cfg(not(target_arch = "x86_64"))]
+            let in_range = folded >= low && folded <= high;
+            if low <= high && in_range {
                 return !inverted;
             }
             cursor += 2;
@@ -238,7 +248,15 @@ fn token_matches(
         Token::Question { .. } => true,
         Token::Bracket { next } => {
             let folded = if casefold_enabled(flags) {
-                ascii_casefold(candidate)
+                #[cfg(target_arch = "x86_64")]
+                {
+                    let upper = candidate.to_ascii_uppercase();
+                    if upper == candidate { candidate.to_ascii_lowercase() } else { upper }
+                }
+                #[cfg(not(target_arch = "x86_64"))]
+                {
+                    ascii_casefold(candidate)
+                }
             } else {
                 candidate
             };
@@ -398,4 +416,30 @@ pub fn fnmatch(pattern: &[u8], candidate: &[u8], flags: u32) -> bool {
         }
     }
     component_matches(pattern, candidate, flags)
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::{fnmatch, FNM_CASEFOLD};
+
+    #[test]
+    fn casefold_preserves_literal_bracket_endpoints_and_opposite_case_classes() {
+        let cases: &[(&[u8], &[u8], bool, bool)] = &[
+            (b"[A-z]", b"_", true, true),
+            (b"[a-Z]", b"b", false, false),
+            (b"[A-C]", b"b", false, true),
+            (b"[a-c]", b"B", false, true),
+            (b"[[:upper:]]", b"b", false, true),
+            (b"[[:lower:]]", b"B", false, true),
+            (b"[![:upper:]]", b"b", true, false),
+            (b"[![:lower:]]", b"B", true, false),
+        ];
+        for &(pattern, candidate, exact, folded) in cases {
+            for flags in 0..32 {
+                let expected = if flags & FNM_CASEFOLD != 0 { folded } else { exact };
+                assert_eq!(fnmatch(pattern, candidate, flags), expected,
+                    "pattern={pattern:?}, candidate={candidate:?}, flags={flags}");
+            }
+        }
+    }
 }
