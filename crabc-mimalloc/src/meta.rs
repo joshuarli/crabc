@@ -3964,6 +3964,34 @@ pub(crate) enum ChildThreadStartFailure {
     },
 }
 
+/// Whether caller-retained child-owner storage contains an initialized
+/// owner after metadata allocation. Retained keeps the original partial
+/// TLD, Theap and registration custody; Rejected owns no source resource.
+#[cfg(target_arch = "x86_64")]
+#[must_use = "initialized child-owner storage must be consumed or retained"]
+enum ChildThreadOwnerInitializationOutcome {
+    Ready,
+    Rejected(ChildThreadStartError),
+    Retained(ChildThreadStartError),
+}
+
+#[cfg(target_arch = "x86_64")]
+impl ChildThreadOwnerInitializationOutcome {
+    fn reject_cold_owner(owner: &mut ChildThreadOwner, error: ChildThreadStartError) -> Self {
+        debug_assert!(owner.tld.is_none() && owner.theap.is_none() && owner.registration.is_none()
+            && owner.pending_os_release.is_none() && owner.pending_fresh_initialization.is_none()
+            && owner.pending_live_page_validity.is_none() && owner.thread_locals.is_none()
+            && owner.pending_thread_locals.is_none() && owner.heap_theap_pending_os_release.is_none()
+            && owner.heap_theap_pending_fresh_initialization.is_none()
+            && owner.heap_theap_pending_live_page_validity.is_none());
+        // SAFETY: this completely initialized cold owner acquired no source
+        // image or registration. Ending its value returns the destination to
+        // vacant storage, which the caller will not read or drop as an owner.
+        unsafe { core::ptr::drop_in_place(owner) };
+        Self::Rejected(error)
+    }
+}
+
 enum ChildThreadAllocationOutcome {
     Ready {
         tld: ChildMetadataImageBlock,
@@ -4619,10 +4647,20 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Result<PendingChildThreadInitialization, ChildThreadStartFailure> {
         // SAFETY: this candidate uses the same exact allocation and
         // registration route while the caller owns the child operation.
-        let mut owner = match unsafe { self.allocate_child_thread_owner(binding) } {
-            Ok(owner) => owner,
-            Err(failure) => return Err(failure),
+        let mut destination = core::mem::MaybeUninit::uninit();
+        // SAFETY: this initializer owns its local vacant destination across
+        // allocation; callbacks cannot access it, and nested initializers
+        // keep separate destinations under their original admissions.
+        match unsafe { self.allocate_child_thread_owner_into(binding, NonNull::from(&mut destination)) } {
+            ChildThreadOwnerInitializationOutcome::Ready => {},
+            ChildThreadOwnerInitializationOutcome::Rejected(error) => return Err(ChildThreadStartFailure::Rejected(error)),
+            ChildThreadOwnerInitializationOutcome::Retained(error) => return Err(ChildThreadStartFailure::Retained {
+                owner: unsafe { destination.as_ptr().read() }, error,
+            }),
         };
+        // SAFETY: Ready established every field. Allocation callbacks have
+        // ended; this initializer exclusively retains the original owner.
+        let owner = unsafe { &mut *destination.as_mut_ptr() };
         let theap = owner.theap.as_ref().expect("stored child Theap block").pointer.cast::<Theap>();
         let tld = owner.tld.as_ref().expect("stored child TLD block").pointer.cast::<ThreadLocalData>();
         // SAFETY: this owner retains the original allocated blocks and
@@ -4642,13 +4680,18 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 Err(crate::types::TheapMainStaticInitError::InvalidInput)
             }
         };
+        // Each branch consumes the exact initialized owner once. Its short
+        // projection ends before the final keeper or retained error is formed;
+        // MaybeUninit never independently drops the consumed destination.
         match prepared {
             Ok(phase) => Ok(PendingChildThreadInitialization {
-                keeper: ChildThreadInitializationOwner(owner), phase,
+                // SAFETY: Ready initialized every field; the original owner
+                // has not moved or been consumed during source preparation.
+                keeper: ChildThreadInitializationOwner(unsafe { destination.as_ptr().read() }), phase,
             }),
             Err(error) => {
                 owner.state = ChildThreadOwnerState::Terminal;
-                Err(ChildThreadStartFailure::Retained { owner,
+                Err(ChildThreadStartFailure::Retained { owner: unsafe { destination.as_ptr().read() },
                     error: ChildThreadStartError::TheapInitialization(child_dynamic_init_error(error)) })
             }
         }
@@ -4660,6 +4703,136 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// # Safety
     /// The caller owns current-thread TLS admission and excludes competing
     /// child operations until the allocated blocks and registration are retained.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn allocate_child_thread_owner(
+        &mut self, binding: crate::process_init::ProcessMainBackingBinding,
+    ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
+        let mut destination = core::mem::MaybeUninit::uninit();
+        // SAFETY: this local destination is vacant and exclusively retained;
+        // each initialized outcome moves its exact owner once into the result.
+        match unsafe { self.allocate_child_thread_owner_into(binding, NonNull::from(&mut destination)) } {
+            ChildThreadOwnerInitializationOutcome::Ready => Ok(unsafe { destination.assume_init() }),
+            ChildThreadOwnerInitializationOutcome::Rejected(error) => Err(ChildThreadStartFailure::Rejected(error)),
+            ChildThreadOwnerInitializationOutcome::Retained(error) => Err(ChildThreadStartFailure::Retained {
+                owner: unsafe { destination.assume_init() }, error,
+            }),
+        }
+    }
+
+    /// Constructs one child owner in caller-retained vacant storage.
+    ///
+    /// # Safety
+    /// The caller owns this current-thread child operation and exclusive
+    /// aligned writable vacant storage for `ChildThreadOwner` through return.
+    /// Ready and Retained leave exactly one initialized owner there; the
+    /// caller must consume or retain it. Rejected leaves vacant storage that
+    /// must not be read or dropped as an owner. No destination projection may
+    /// overlap this call or a metadata callback.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn allocate_child_thread_owner_into(
+        &mut self,
+        binding: crate::process_init::ProcessMainBackingBinding,
+        destination: NonNull<core::mem::MaybeUninit<ChildThreadOwner>>,
+    ) -> ChildThreadOwnerInitializationOutcome {
+        if self.stage != ChildMainHeapStage::HeapReady
+            || self.page_engine != ChildPageEngineState::Active
+            || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
+        {
+            return ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::InvalidTransition);
+        }
+        let thread = match crate::compiler_tls::current_thread_identity() {
+            Some(thread) => thread,
+            None => return ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::CurrentThread),
+        };
+        let numa = match i32::try_from(crate::os::numa_node()) {
+            Ok(numa) => numa,
+            Err(_) => return ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::NumaNode),
+        };
+        let (Some(heap), Some(image)) = (
+            self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity),
+            self.context.with_image(|child| NonNull::from(child.get_ref())),
+        ) else {
+            return ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::InvalidTransition);
+        };
+        let owner_pointer = destination.cast::<ChildThreadOwner>().as_ptr();
+        // SAFETY: all scalar admission checks precede this first write. The
+        // caller owns vacant aligned storage; each field is initialized once
+        // before any complete-owner projection or metadata allocation.
+        unsafe {
+            core::ptr::addr_of_mut!((*owner_pointer).image).write(image);
+            core::ptr::addr_of_mut!((*owner_pointer).heap).write(heap);
+            core::ptr::addr_of_mut!((*owner_pointer).parent_subprocess).write(self.context.parent_subprocess);
+            core::ptr::addr_of_mut!((*owner_pointer).config).write(self.context.config);
+            core::ptr::addr_of_mut!((*owner_pointer).pending_os_release).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).pending_fresh_initialization).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).pending_live_page_validity).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).page_engine).write(ChildPageEngineState::Active);
+            core::ptr::addr_of_mut!((*owner_pointer).thread_locals).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).pending_thread_locals).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).heap_theap_pending_os_release).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).heap_theap_pending_fresh_initialization).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).heap_theap_pending_live_page_validity).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).tld).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).theap).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).registration).write(None);
+            core::ptr::addr_of_mut!((*owner_pointer).thread).write(thread);
+            core::ptr::addr_of_mut!((*owner_pointer).sequence).write(ThreadSequence::from_previous_total_count(0));
+            core::ptr::addr_of_mut!((*owner_pointer).state).write(ChildThreadOwnerState::Starting);
+        }
+
+        let mut allocation_outcome = None;
+        let page_result = self.with_metadata_page_engine(binding, |child, engine| {
+            let outcome = Self::allocate_child_thread_images(child, engine, thread, numa);
+            allocation_outcome = Some(outcome);
+        });
+        // SAFETY: every owner field is initialized above, and all child
+        // metadata projections have ended before this exclusive observation.
+        let owner = unsafe { &mut *owner_pointer };
+        if let Err(error) = page_result {
+            return match allocation_outcome {
+                Some(ChildThreadAllocationOutcome::Ready { tld, theap, registration, sequence }) => {
+                    owner.tld = Some(tld);
+                    owner.theap = Some(theap);
+                    owner.registration = Some(registration);
+                    owner.sequence = sequence;
+                    owner.state = ChildThreadOwnerState::Terminal;
+                    ChildThreadOwnerInitializationOutcome::Retained(ChildThreadStartError::PageEngine(error))
+                }
+                Some(ChildThreadAllocationOutcome::Retained { tld, registration, sequence, error: _ }) => {
+                    owner.tld = Some(tld);
+                    owner.registration = registration;
+                    owner.sequence = sequence;
+                    owner.state = ChildThreadOwnerState::Terminal;
+                    ChildThreadOwnerInitializationOutcome::Retained(ChildThreadStartError::PageEngine(error))
+                }
+                Some(ChildThreadAllocationOutcome::Rejected(_)) | None => {
+                    ChildThreadOwnerInitializationOutcome::reject_cold_owner(owner, ChildThreadStartError::PageEngine(error))
+                }
+            };
+        }
+
+        match allocation_outcome.expect("successful child page session records its allocation outcome") {
+            ChildThreadAllocationOutcome::Rejected(error) => {
+                ChildThreadOwnerInitializationOutcome::reject_cold_owner(owner, error)
+            }
+            ChildThreadAllocationOutcome::Retained { tld, registration, sequence, error } => {
+                owner.tld = Some(tld);
+                owner.registration = registration;
+                owner.sequence = sequence;
+                owner.state = ChildThreadOwnerState::Terminal;
+                ChildThreadOwnerInitializationOutcome::Retained(error)
+            }
+            ChildThreadAllocationOutcome::Ready { tld, theap, registration, sequence } => {
+                owner.tld = Some(tld);
+                owner.theap = Some(theap);
+                owner.registration = Some(registration);
+                owner.sequence = sequence;
+                ChildThreadOwnerInitializationOutcome::Ready
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
     unsafe fn allocate_child_thread_owner(
         &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
@@ -4672,14 +4845,12 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 ChildThreadStartError::InvalidTransition,
             ));
         }
-        let thread = match crate::compiler_tls::current_thread_identity() {
-            Some(thread) => thread,
-            None => return Err(ChildThreadStartFailure::Rejected(ChildThreadStartError::CurrentThread)),
-        };
-        let numa = match i32::try_from(crate::os::numa_node()) {
-            Ok(numa) => numa,
-            Err(_) => return Err(ChildThreadStartFailure::Rejected(ChildThreadStartError::NumaNode)),
-        };
+        let thread = crate::compiler_tls::current_thread_identity().ok_or_else(|| {
+            ChildThreadStartFailure::Rejected(ChildThreadStartError::CurrentThread)
+        })?;
+        let numa = i32::try_from(crate::os::numa_node()).map_err(|_| {
+            ChildThreadStartFailure::Rejected(ChildThreadStartError::NumaNode)
+        })?;
         let (Some(heap), Some(image)) = (
             self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity),
             self.context.with_image(|child| NonNull::from(child.get_ref())),
@@ -8277,6 +8448,52 @@ mod tests {
                 injection.set(fault::Plan::disabled());
                 pending.unmap().expect("the exact failed mapping owner remains retained");
             });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn child_owner_destination_stays_vacant_until_heap_is_ready() {
+        crate::main_heap_page::tests::with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
+            let (parent, registry, binding) =
+                crate::subproc::lifecycle::tests::child_fixture_inputs(attachment, pair);
+            let config = attachment.memory_config().unwrap();
+            let mut context = ChildContextOwner::allocate(
+                attachment.parent_metadata_allocator(), parent, config,
+            ).ok().expect("ordinary child context allocation");
+            let memory = context.with_lease(|lease| lease.context_memory_id());
+            context.with_image(|image| {
+                // SAFETY: the isolated registry holds this parent and the
+                // exclusively owned child has not yet been published.
+                unsafe { registry.initialize_child(image.get_ref(), parent.identity(), memory) }
+                    .expect("ordinary source child registration");
+            }).unwrap();
+            let storage = heap_owner.allocate_child_heap_storage(attachment).unwrap().unwrap();
+            let mut child = context.bind_heap_storage(ChildHeapStorage::Parent(storage))
+                .ok().expect("ordinary parent-issued Heap storage");
+            assert_eq!(child.stage(), ChildMainHeapStage::Registered);
+            let mut destination = core::mem::MaybeUninit::<ChildThreadOwner>::uninit();
+            // SAFETY: arbitrary initialized bytes are valid for MaybeUninit;
+            // no owner projection exists and its alignment/extent are exact.
+            unsafe { destination.as_mut_ptr().cast::<u8>().write_bytes(0xa5, size_of::<ChildThreadOwner>()) };
+            // SAFETY: this source initializer owns the child and the entire
+            // vacant destination. The registered child has no ready Heap yet.
+            let outcome = unsafe { child.allocate_child_thread_owner_into(binding, NonNull::from(&mut destination)) };
+            assert!(matches!(outcome, ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::InvalidTransition)));
+            // SAFETY: the scalar admission refusal precedes every destination
+            // write; all bytes still carry the initialized sentinel above.
+            let bytes = unsafe { core::slice::from_raw_parts(destination.as_ptr().cast::<u8>(), size_of::<ChildThreadOwner>()) };
+            assert!(bytes.iter().all(|byte| *byte == 0xa5));
+            // SAFETY: the sole child initializer now completes the ordinary
+            // source Heap and metadata-Theap publication in their original order.
+            unsafe { child.initialize_heap_and_metadata_theap(config) }.unwrap();
+            assert_eq!(child.stage(), ChildMainHeapStage::HeapReady);
+            // SAFETY: this child has no threads, user pages or escaped views.
+            unsafe { crate::subproc::lifecycle::destroy_child(
+                child, registry, binding, &mut [], attachment, &mut heap_owner,
+            ) }.ok().expect("ordinary empty child destruction");
+            heap_owner.finish(attachment).ok().expect("parent engine retirement");
+            attachment.finish_after_user_destructors().ok().expect("parent attachment retirement");
+        });
     }
 
     #[cfg(target_arch = "x86_64")]
