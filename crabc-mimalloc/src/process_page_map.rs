@@ -143,12 +143,13 @@ pub(crate) struct LiveAllocationPointer {
     client: NonNull<u8>,
     canonical_block: NonNull<u8>,
     block_size: usize,
+    // Source flags and ownership state are decoded from this retained atomic
+    // snapshot only when needed; no later page read may replace its identity.
     xthread_id: ThreadId,
-    page_flags: PageFlags,
-    page_state: LiveAllocationPageState,
-    has_interior_pointers: bool,
     // Only a root-backed observation carries the process-wide OS page size;
     // isolated metadata fixtures have no process initialization authority.
+    // The ordinary x86 source profile has no guard page to subtract.
+    #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
     os_page_size: Option<usize>,
 }
 
@@ -244,9 +245,11 @@ impl LiveAllocationPointer {
     /// the nonzero block size. Ordinary free does not need this extent.
     #[inline]
     pub(crate) fn usable_size(&self) -> usize {
-        self.usable_size_with_guarded_page_size(if crate::config::GUARDED {
-            self.os_page_size
-        } else { None })
+        #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+        let os_page_size = self.os_page_size;
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-guarded")))]
+        let os_page_size = None;
+        self.usable_size_with_guarded_page_size(os_page_size)
     }
 
     fn usable_size_with_guarded_page_size(&self, os_page_size: Option<usize>) -> usize {
@@ -280,7 +283,7 @@ impl LiveAllocationPointer {
     /// concurrent client mutation; this is never an arbitrary-pointer check.
     #[inline]
     pub(crate) fn is_guarded(&self) -> bool {
-        if !self.has_interior_pointers
+        if !self.has_interior_pointers()
             || self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr()
                 < core::mem::size_of::<usize>()
         {
@@ -310,8 +313,6 @@ impl LiveAllocationPointer {
         let word = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
         word.fetch_or(PAGE_HAS_INTERIOR_POINTERS, Ordering::Relaxed);
         self.xthread_id |= PAGE_HAS_INTERIOR_POINTERS;
-        self.page_flags |= PAGE_HAS_INTERIOR_POINTERS;
-        self.has_interior_pointers = true;
     }
 
     /// Consumes this observation into a bounded source for one replacement.
@@ -343,12 +344,12 @@ impl LiveAllocationPointer {
 
     /// Returns the two source page-flag bits captured with `xthread_id`.
     #[inline]
-    pub(crate) const fn page_flags(&self) -> PageFlags { self.page_flags }
+    pub(crate) const fn page_flags(&self) -> PageFlags { self.xthread_id & PAGE_FLAG_MASK }
 
     /// Returns the source ownership state decoded from the same atomic
     /// `xthread_id` snapshot.
     #[inline]
-    pub(crate) const fn page_state(&self) -> LiveAllocationPageState { self.page_state }
+    pub(crate) const fn page_state(&self) -> LiveAllocationPageState { source_page_state(self.xthread_id) }
 
     /// Reports whether the captured source identity names `owner`.
     ///
@@ -363,7 +364,9 @@ impl LiveAllocationPointer {
 
     /// Reports the source page-wide interior-pointer flag.
     #[inline]
-    pub(crate) const fn has_interior_pointers(&self) -> bool { self.has_interior_pointers }
+    pub(crate) const fn has_interior_pointers(&self) -> bool {
+        self.page_flags() & PAGE_HAS_INTERIOR_POINTERS != 0
+    }
 
 }
 
@@ -394,7 +397,6 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
     // acquiring a structural PageMap mutation lease.
     let xthread_id = xthread_id.load(Ordering::Relaxed);
     let page_flags = xthread_id & PAGE_FLAG_MASK;
-    let page_state = source_page_state(xthread_id);
     let has_interior_pointers = page_flags & PAGE_HAS_INTERIOR_POINTERS != 0;
     // SAFETY: source page publication fixes these geometry fields before the
     // allocation becomes visible. The caller's live-client proof keeps the
@@ -428,9 +430,7 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
         canonical_block,
         block_size,
         xthread_id,
-        page_flags,
-        page_state,
-        has_interior_pointers,
+        #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
         os_page_size: None,
     })
 }
@@ -1400,10 +1400,15 @@ impl ProcessPageMapRoot {
         // SAFETY: the same live source block keeps the selected PageMap entry
         // and metadata stable while immutable geometry plus the source atomic
         // ownership word are copied without forming `&Page`.
-        let mut allocation = unsafe { classify_live_allocation_in_page(page, client) };
-        if let Some(allocation) = allocation.as_mut() {
-            allocation.os_page_size = Some(self.storage.config().page_size().bytes());
-        }
+        let allocation = unsafe { classify_live_allocation_in_page(page, client) };
+        #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+        let allocation = {
+            let mut allocation = allocation;
+            if let Some(allocation) = allocation.as_mut() {
+                allocation.os_page_size = Some(self.storage.config().page_size().bytes());
+            }
+            allocation
+        };
         Ok(allocation)
     }
 
@@ -2253,9 +2258,13 @@ mod tests {
             store_source_xthread_id_for_pointer_test(page, 16 | PAGE_IN_FULL_QUEUE);
             let mut unmarked = unsafe { lease.lookup_live_allocation(canonical) }.unwrap().unwrap();
             unmarked.mark_page_has_interior_pointers();
+            assert_eq!(unmarked.page_flags(), PAGE_IN_FULL_QUEUE | PAGE_HAS_INTERIOR_POINTERS);
+            assert!(unmarked.has_interior_pointers());
+            assert_eq!(unmarked.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
             let marked = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(marked.xthread_id(), 16 | PAGE_IN_FULL_QUEUE | PAGE_HAS_INTERIOR_POINTERS);
             assert_eq!(marked.canonical_block(), canonical);
+            #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
             assert_eq!(marked.os_page_size, Some(4096));
         });
     }
@@ -2691,6 +2700,9 @@ mod tests {
         // unregistration, so this source flag can be published before the
         // read-only interior-client operation below.
         unsafe { page.as_mut() }.set_has_interior_pointers(true);
+        assert_eq!(normal.page_flags(), 0);
+        assert!(!normal.has_interior_pointers());
+        assert_eq!(normal.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert_eq!(normal.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE);
         let normal_reallocation = normal.into_reallocation_copy_source(BLOCK_SIZE + 1);
         assert_eq!(normal_reallocation.usable_prefix_len(), BLOCK_SIZE - crate::config::PADDING_SIZE);
@@ -2723,6 +2735,10 @@ mod tests {
         assert_eq!(last.usable_size(), 1);
 
         store_source_xthread_id_for_pointer_test(page, THREAD_ID_ABANDONED | PAGE_IN_FULL_QUEUE);
+        assert_eq!(pointer.xthread_id(), thread_id.get() | PAGE_HAS_INTERIOR_POINTERS);
+        assert_eq!(pointer.page_flags(), PAGE_HAS_INTERIOR_POINTERS);
+        assert!(pointer.has_interior_pointers());
+        assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
         let interior_reallocation = pointer.into_reallocation_copy_source(BLOCK_SIZE);
         assert_eq!(interior_reallocation.copy_client(), client);
