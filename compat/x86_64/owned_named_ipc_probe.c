@@ -263,7 +263,27 @@ static void failed_mapping_cleanup(void) {
     }
     child_ok(child);
 }
-int main(void) {
+static sem_t ordinary_local;
+static void *ordinary_post(void *unused) {
+    (void)unused; CHECK(sem_post(&ordinary_local)==0); return NULL;
+}
+static void ordinary_lifetimes(void) {
+    pthread_t thread;
+    CHECK(sem_init(&ordinary_local,0,0)==0);
+    CHECK(pthread_create(&thread,NULL,ordinary_post,NULL)==0);
+    struct timespec deadline; CHECK(clock_gettime(CLOCK_REALTIME,&deadline)==0);
+    deadline.tv_sec+=5;
+    CHECK(sem_timedwait(&ordinary_local,&deadline)==0);
+    CHECK(pthread_join(thread,NULL)==0 && sem_destroy(&ordinary_local)==0);
+    unlink_with_forked_mappings(); races_and_fork(); contended_fork();
+}
+/* The optional path retains live handles and mappings through every joined
+ * worker and reaped child; final close/unmap happens after their last use. */
+int main(int argc,char **argv) {
+    if(argc==2 && !strcmp(argv[1],"--ordinary")) {
+        ordinary_lifetimes(); puts("owned-named-ipc-ok"); return 0;
+    }
+    CHECK(argc==1);
     namespace_rules(); shared_namespace_and_lifetime(); permissions_and_precedence();
     unlink_with_forked_mappings(); races_and_fork(); saturation_and_reuse();
     contended_fork(); blocked_cancellation(); failed_mapping_cleanup();

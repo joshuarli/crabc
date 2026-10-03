@@ -343,10 +343,37 @@ static void direct_error_translation(void) {
     }
     child_ok(child);
 }
+/* Every send buffer covers its stated length and every receive buffer covers
+ * mq_msgsize. An unlinked descriptor remains live beside its replacement. */
+static void ordinary_transfer(void) {
+    mqd_t queue=create_queue();
+    struct mq_attr attributes;
+    CHECK(mq_getattr(queue,&attributes)==0 && attributes.mq_maxmsg==2 && attributes.mq_msgsize==32);
+    CHECK(fcntl(queue,F_GETFD)==FD_CLOEXEC);
+    char buffer[32]; unsigned priority;
+    CHECK(mq_send(queue,"low",3,1)==0 && mq_send(queue,"high",4,7)==0);
+    CHECK(mq_receive(queue,buffer,sizeof buffer,&priority)==4 && priority==7 && !memcmp(buffer,"high",4));
+    CHECK(mq_receive(queue,buffer,sizeof buffer,&priority)==3 && priority==1 && !memcmp(buffer,"low",3));
+    struct timespec deadline=deadline_after(5);
+    CHECK(mq_timedsend(queue,"timed",5,3,&deadline)==0);
+    CHECK(mq_timedreceive(queue,buffer,sizeof buffer,&priority,&deadline)==5 && priority==3 && !memcmp(buffer,"timed",5));
+    CHECK(mq_unlink(queue_name)==0);
+    mqd_t replacement=mq_open(queue_name,O_CREAT|O_EXCL|O_RDWR,0600,&attributes);
+    CHECK(replacement>=0 && mq_getattr(replacement,&attributes)==0 && attributes.mq_curmsgs==0);
+    CHECK(mq_send(queue,"live",4,0)==0 && mq_receive(queue,buffer,sizeof buffer,NULL)==4 && !memcmp(buffer,"live",4));
+    CHECK(mq_close(queue)==0); destroy_queue(replacement);
+}
 int main(int argc,char **argv) {
     int initial_tasks=proc_entries("/proc/self/task");
     int initial_descriptors=proc_entries("/proc/self/fd");
     CHECK(initial_tasks==1);
+    if(argc==2 && !strcmp(argv[1],"--ordinary")) {
+        ordinary_transfer(); inherited_unlinked_queue();
+        for(int send=0;send<2;send++) for(int timed=0;timed<2;timed++) blocking_transfer(send,timed,2);
+        signal_notifications();
+        wait_retirement("ordinary-transfer",initial_tasks,initial_descriptors);
+        puts("owned-message-queues-ok"); return 0;
+    }
     if(argc==2 && !strcmp(argv[1],"--retirement-only")) {
         thread_notifications();
         puts("owned-message-queues-ok");
