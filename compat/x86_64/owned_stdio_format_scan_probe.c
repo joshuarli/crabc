@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <locale.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -187,8 +188,91 @@ static void dump(const char *label, const void *data, size_t length)
     putchar('\n');
 }
 
+/* All storage and the locale token outlive the joined worker. No stream
+ * operation overlaps another thread's access, and only byte I/O or %ls
+ * conversion is used on the retained byte-oriented stream. */
+struct retained_format {
+    FILE *file;
+    locale_t locale;
+    char short_text[5];
+    int printed, counted, print_errno, flushed, oriented;
+    int bounded, bounded_count, bounded_errno;
+};
+
+static void *format_worker(void *opaque)
+{
+    struct retained_format *state = opaque;
+    if (!uselocale(state->locale)) pthread_exit((void *)1);
+    errno = ERANGE;
+    state->printed = forwarded_print(state->file, "%+d/%.2f/%ls%n!",
+        27, 1.25, L"\u00e9X", &state->counted);
+    state->print_errno = errno;
+    state->flushed = fflush(state->file);
+    state->oriented = fwide(state->file, 0) < 0;
+    errno = EDOM;
+    state->bounded = snprintf(state->short_text, sizeof state->short_text,
+        "%d/%ls%n", 27, L"\u00e9X", &state->bounded_count);
+    state->bounded_errno = errno;
+    pthread_exit(NULL);
+}
+
+static int retained_worker_format(void)
+{
+    char bytes[128] = {0}, stream_buffer[32];
+    struct retained_format state = {0};
+    locale_t utf8 = newlocale(LC_ALL_MASK, "C.UTF-8", (locale_t)0);
+    locale_t byte = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    if (!utf8 || !byte) return 30;
+    locale_t previous = uselocale(byte);
+    if (!previous) return 31;
+    state.locale = utf8;
+    state.file = fmemopen(bytes, sizeof bytes, "w+");
+    if (!state.file || setvbuf(state.file, stream_buffer, _IOFBF,
+            sizeof stream_buffer)) return 32;
+    pthread_t worker;
+    void *result = (void *)1;
+    errno = EDOM;
+    if (pthread_create(&worker, NULL, format_worker, &state) ||
+            pthread_join(worker, &result) || result) return 33;
+    int parent_errno = errno;
+    if (state.printed < 0 || (size_t)state.printed >= sizeof bytes) return 36;
+    printf("worker-print %d %d %d %d %d %d %ld\n", state.printed,
+        state.counted, state.print_errno, state.flushed, state.oriented,
+        parent_errno, ftell(state.file));
+    printf("worker-bounded %d %d %d\n", state.bounded,
+        state.bounded_count, state.bounded_errno);
+    dump("worker-bounded-bytes", state.short_text, sizeof state.short_text);
+    dump("worker-stream-bytes", bytes, (size_t)state.printed + 1);
+
+    /* The caller's current locale governs %ls on a byte stream, including
+     * one oriented in another thread whose locale state has been retired. */
+    for (int unicode = 0; unicode < 2; ++unicode) {
+        if (!uselocale(unicode ? utf8 : byte) ||
+                fseek(state.file, 0, SEEK_SET)) return 34;
+        int decimal = -1, consumed = -1;
+        double real = -1;
+        wchar_t text[8] = {0};
+        errno = EDOM;
+        int assigned = forwarded_scan(state.file, unicode ? "%d/%lf/%2ls%n" : "%d/%lf/%3ls%n",
+            &decimal, &real, text, &consumed);
+        int scan_errno = errno;
+        long position = ftell(state.file);
+        int next = fgetc(state.file);
+        printf("worker-scan %d %d %d %.2f %x %x %x %x %d %d %ld %d %d %d\n",
+            unicode, assigned, decimal, real, (unsigned)text[0],
+            (unsigned)text[1], (unsigned)text[2], (unsigned)text[3], consumed,
+            scan_errno, position, next, ferror(state.file), fwide(state.file, 0) < 0);
+    }
+    if (fclose(state.file) || !uselocale(previous)) return 35;
+    freelocale(byte);
+    freelocale(utf8);
+    return 0;
+}
+
 int main(void)
 {
+    int retained_status = retained_worker_format();
+    if (retained_status) return retained_status;
     int scan_status = scan_stream_boundaries();
     if (scan_status) return scan_status;
     char fixed[64] = {0};
