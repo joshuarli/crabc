@@ -1430,7 +1430,7 @@ impl VmPolicy {
             return unsafe { output.option_value(option.source()) };
         }
         if self.options_resolved.load(Ordering::Acquire) {
-            return self.resolved_options_snapshot().current_value(option);
+            return self.resolved_option_value(option);
         }
         self.option_value_after_unresolved_observation(option)
     }
@@ -1509,7 +1509,7 @@ impl VmPolicy {
     fn option_value_after_unresolved_observation(&self, option: VmOption) -> i64 {
         let mut access = self.acquire_option_access();
         if self.options_resolved.load(Ordering::Acquire) {
-            return access.resolved_snapshot().current_value(option);
+            return self.resolved_option_value(option);
         }
         let (value, resolved) = {
             let options = access.unresolved_options();
@@ -1532,6 +1532,17 @@ impl VmPolicy {
             self.options_resolved.store(true, Ordering::Release);
         }
         value
+    }
+
+    /// Reads only the selected scalar after completion was observed with
+    /// Acquire. The image was complete at construction or its final retry
+    /// ended before Release publication. Completed reads never mutate it.
+    #[inline]
+    fn resolved_option_value(&self, option: VmOption) -> i64 {
+        // SAFETY: both callers observed one-way completion with Acquire,
+        // including the stale slow reader's recheck after taking its gate.
+        // This immutable projection ends after the one descriptor read.
+        unsafe { (&*self.options.get()).current_value(option) }
     }
 
     /// Copies a terminal source descriptor image for the lock-free fast path.

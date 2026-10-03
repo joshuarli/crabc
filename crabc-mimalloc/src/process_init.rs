@@ -3259,6 +3259,78 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn final_process_policy_retries_its_retained_table_after_binding_refusal() {
+        use crate::config::SourceOption;
+        use core::ffi::c_char;
+        static ENVIRONMENT: AtomicPtr<*const c_char> = AtomicPtr::new(core::ptr::null_mut());
+        static READS: AtomicUsize = AtomicUsize::new(0);
+        unsafe fn environment() -> *const *const c_char {
+            READS.fetch_add(1, Ordering::Relaxed);
+            ENVIRONMENT.load(Ordering::Acquire).cast_const()
+        }
+        unsafe extern "C" {
+            static mut stderr: *mut core::ffi::c_void;
+            fn fputs(message: *const c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+        }
+        unsafe extern "C" fn primitive(message: *const c_char) {
+            // SAFETY: the native test runtime retains musl's FILE and the
+            // output owner supplies a valid terminated source fragment.
+            unsafe { let _ = fputs(message, stderr); }
+        }
+        let storage = ProcessMainInitializationStorage::test_static_owner();
+        let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(primitive)));
+        // SAFETY: the isolated owner has exclusive startup. The reader and
+        // its later published terminated vector have process lifetime.
+        unsafe { output.initialize_source_options(environment) };
+        let identity = OnceThreadId::new(current_thread_identity().unwrap().get()).unwrap();
+        let completion = storage.process_once.enter(identity).unwrap().unwrap();
+        storage.state.store(INITIALIZING, Ordering::Release);
+        // SAFETY: the once winner exclusively owns this uninitialized final
+        // slot and retains the initialized source table through all reads.
+        let policy = unsafe { storage.bind_process_options_vm_policy(output, None) }.unwrap();
+        assert_eq!(policy.purge_delay_milliseconds(), 1_000);
+        assert_eq!(policy.arena_purge_multiplier(), 4);
+        let reads_while_unavailable = READS.load(Ordering::Relaxed);
+        assert!(reads_while_unavailable > 0);
+
+        let other = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(primitive)));
+        unsafe fn unavailable_environment() -> *const *const c_char { core::ptr::null() }
+        // SAFETY: this second table has a process-lifetime reader and
+        // no concurrent reader, registration, or diagnostic delivery.
+        unsafe {
+            other.initialize_source_options(unavailable_environment);
+            other.option_set(SourceOption::PurgeDelay, 29).unwrap();
+        }
+        assert!(matches!(unsafe { storage.bind_process_options_vm_policy(other, None) },
+            Err(ProcessMainInitError::VmPolicyAlreadyBound)));
+        let available = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_purge_delay=71".as_ptr(),
+            c"mimalloc_arena_purge_mult=9".as_ptr(),
+            core::ptr::null(),
+        ]));
+        ENVIRONMENT.store(available.as_mut_ptr(), Ordering::Release);
+        assert_eq!(policy.purge_delay_milliseconds(), 71);
+        assert_eq!(policy.arena_purge_multiplier(), 9);
+        assert!(READS.load(Ordering::Relaxed) > reads_while_unavailable);
+        // SAFETY: the value wrapper retains the same process-lifetime table;
+        // it must observe completed descriptors without resolving an image.
+        let value_policy = unsafe { VmPolicy::from_process_options(output) };
+        let resolved_reads = READS.load(Ordering::Relaxed);
+        assert_eq!(value_policy.purge_delay_milliseconds(), 71);
+        assert_eq!(value_policy.arena_purge_multiplier(), 9);
+        assert_eq!(READS.load(Ordering::Relaxed), resolved_reads,
+            "both constructors use the resolved slots in the original table");
+        // SAFETY: this isolated source setter mutates only an atomic slot;
+        // no environment mutation or callback overlaps these observations.
+        unsafe { output.option_set(SourceOption::PurgeDelay, 43) }.unwrap();
+        assert_eq!(policy.purge_delay_milliseconds(), 43);
+        assert_eq!(value_policy.purge_delay_milliseconds(), 43);
+        assert_eq!(core::ptr::from_ref(policy), storage.vm_policy.get().cast::<VmPolicy>().cast_const());
+        storage.publish_terminal_state_and_release(completion, RETAINED);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn native_startup_errno_capability_resolves_calling_thread_tls() {
         unsafe extern "C" { fn __errno_location() -> *mut core::ffi::c_int; }
         unsafe fn store_errno(value: core::ffi::c_int) {
