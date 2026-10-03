@@ -31,6 +31,64 @@ unsafe extern "C-unwind" {
 unsafe extern "C" {
     fn dlopen(path: *const c_char, flags: c_int) -> *mut c_void;
     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    fn dlclose(handle: *mut c_void) -> c_int;
+    fn dl_iterate_phdr(callback: unsafe extern "C" fn(*mut PhdrInfo, usize, *mut c_void) -> c_int,
+                       data: *mut c_void) -> c_int;
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Phdr {
+    kind: u32, flags: u32, offset: u64, address: u64, physical: u64,
+    file_size: u64, memory_size: u64, alignment: u64,
+}
+
+#[repr(C)]
+struct PhdrInfo {
+    address: usize, name: *const c_char, headers: *const Phdr, count: u16,
+}
+
+struct CloseDuringVisit {
+    handle: *mut c_void,
+    function: usize,
+    closed: bool,
+}
+
+unsafe extern "C" fn close_runtime_mapping(info: *mut PhdrInfo, size: usize, data: *mut c_void) -> c_int {
+    assert!(size >= std::mem::size_of::<PhdrInfo>());
+    // SAFETY: enumeration supplies its live ABI prefix and the synchronous
+    // caller supplies one exclusive state pointer for the entire visit.
+    let state = unsafe { &mut *data.cast::<CloseDuringVisit>() };
+    let base = unsafe { (*info).address };
+    let headers = unsafe { (*info).headers };
+    let count = unsafe { (*info).count };
+    for index in 0..usize::from(count) {
+        // SAFETY: the loader's count describes its live program-header table.
+        let header = unsafe { headers.add(index).read() };
+        if header.kind != 1 || header.flags & 1 == 0 {
+            continue;
+        }
+        let start = base.checked_add(header.address as usize).unwrap();
+        let end = start.checked_add(header.memory_size as usize).unwrap();
+        if !(start..end).contains(&state.function) {
+            continue;
+        }
+        // SAFETY: the callback's loader-owned name is live and NUL terminated.
+        let name = unsafe { std::ffi::CStr::from_ptr((*info).name) }.to_bytes();
+        assert_eq!(name.rsplit(|byte| *byte == b'/').next().unwrap(),
+                   &RUNTIME_DSO[..RUNTIME_DSO.len() - 1]);
+        assert!((0..usize::from(count)).any(|entry| unsafe { headers.add(entry).read().kind == 0x6474e550 }));
+        // SAFETY: this is the sole live handle returned by our successful
+        // dlopen. The selected loader retains admitted mappings after close,
+        // including their program headers and executable unwind frames.
+        assert_eq!(unsafe { dlclose(state.handle) }, 0);
+        let after = unsafe { headers.add(index).read() };
+        assert_eq!((after.kind, after.address, after.memory_size),
+                   (header.kind, header.address, header.memory_size));
+        state.closed = true;
+        return 7;
+    }
+    0
 }
 
 struct Guard<'a> {
@@ -128,14 +186,19 @@ fn rounds(call_through: CallThrough) {
     round(call_through, resumes, 3);
 }
 
-fn runtime_call_through() -> CallThrough {
-    // SAFETY: the name is NUL-terminated and the handle is never closed, so
-    // the resolved function stays mapped for the process lifetime.
+fn runtime_call_through(retained: bool) -> CallThrough {
+    // SAFETY: the name is NUL-terminated. The selected loader retains the
+    // admitted mapping even when the optional visit closes its last handle.
     unsafe {
         let handle = dlopen(RUNTIME_DSO.as_ptr().cast(), RTLD_NOW);
         assert!(!handle.is_null(), "runtime DSO must load by basename");
         let symbol = dlsym(handle, CALL_THROUGH.as_ptr().cast());
         assert!(!symbol.is_null(), "runtime DSO must export its C frame");
+        if retained {
+            let mut state = CloseDuringVisit { handle, function: symbol as usize, closed: false };
+            assert_eq!(dl_iterate_phdr(close_runtime_mapping, (&mut state as *mut CloseDuringVisit).cast()), 7);
+            assert!(state.closed, "enumeration must visit the runtime DSO");
+        }
         std::mem::transmute::<*mut c_void, CallThrough>(symbol)
     }
 }
@@ -143,7 +206,7 @@ fn runtime_call_through() -> CallThrough {
 fn main() {
     panic::set_hook(Box::new(|_| {}));
     let initial: CallThrough = crabc_unwind_call_through;
-    let runtime = runtime_call_through();
+    let runtime = runtime_call_through(std::env::args().nth(1).as_deref() == Some("--retained-runtime"));
     WORKER_TLS.with(|state| state.borrow_mut().marker = 101);
     for call_through in [initial, runtime] {
         rounds(call_through);

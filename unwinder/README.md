@@ -464,6 +464,22 @@ keep its payload. The provider finds the C frame's FDE only through that
 DSO's `PT_GNU_EH_FRAME`, so the lane first reports a DSO the installed driver
 linked without `--eh-frame-hdr`.
 
+The same executable accepts `--retained-runtime` for an ordinary mapping
+lifetime check. Its `dl_iterate_phdr` callback finds the runtime C frame's
+executable load and EH header, closes the final valid `dlopen` handle, and
+rereads that callback's program header before returning a nonzero result.
+The selected loader retains admitted mappings after close. The saved C entry
+then receives the same main-thread and worker backtrace, panic cleanup and
+resume calls. Omitting the argument preserves the normal consumer behavior
+and output. This checks retained mappings, not an unloading implementation.
+
+`tests/provider_abi_frame.c` keeps RBX and R12–R15 live across the selected
+provider's `_Unwind_Backtrace` capture trampoline and checks their values on
+return, completion reason and ordinary compiler-frame count. It needs only
+owned C headers and the actual provider; no unwinder header or personality
+implementation is supplied by the C fixture. Its caller uses explicit owned
+CRT startup for executable, static PIE and interpreted dynamic modes.
+
 Each Rust image carries its own statically extracted provider; no shared
 unwinder is installed. The lane requires that no image's dynamic symbol table
 defines or imports an `_Unwind_*` name, so the executable resolves every
