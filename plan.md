@@ -86,8 +86,12 @@ Update this small section in place when the implementation frontier changes.
   warning storage is isolated: their opt0 frames fall from 3,080 to 1,064 bytes
   and from 1,192 to 184 bytes respectively. These are individual
   compiler frames, not peak-stack or 16-KiB qualification. Final child member
-  publication, VM warning argument transport and unpublished OS-claim
-  initialization remain in progress. Secure free-list extension keeps its fixed
+  publication now follows source callbacks in a separate frame. VM warning
+  gates borrow their caller's primary message. Unpublished borrowed OS claims
+  initialize in caller storage and return scalar custody outcomes; processless
+  allocation retains its original owner transport. Separating fresh-page
+  completion from mapping acquisition and isolating the huge retry warning
+  buffer remain in progress. Secure free-list extension keeps its fixed
   shuffle arrays outside entropy callbacks, with the existing permutation and
   publication order preserved in default, secure-2 and secure-3 checks.
   Metadata refusal tests
