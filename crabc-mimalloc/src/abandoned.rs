@@ -627,16 +627,40 @@ impl<M: MappedAbandonedPages> ReclaimOnFreeCandidate<'_, M> {
         if let Some(remove) = self.remove_non_arena_from_list {
             remove(self.page)?;
         }
-        // SAFETY: the held low owner bit makes this ordinary field writable.
-        unsafe { ptr::write(self.state.theap.as_ptr(), theap.as_ptr()) };
-        set_thread_identity(self.state, thread.get());
-        // SAFETY: the page is now associated with its new live owner, which
-        // holds the low bit and every ordinary field through this collection.
-        let owner = unsafe { Page::remote_free_owner_state_at(self.page) }
-            .ok_or(AbandonError::NotAbandoned)?;
-        unsafe { remote_free::collect_live_page_false(owner) }.map_err(AbandonError::RemoteFree)?;
-        Ok(self.page)
+        // SAFETY: this candidate retains the exact claimed page and its
+        // field authority after source bitmap/list removal; the target owner
+        // and queue-append obligations are unchanged.
+        unsafe { finish_reclaim_into_live_theap(self.page, self.state, theap, thread) }
     }
+}
+
+/// Completes the page-side reclaim after its abandoned bitmap/list removal.
+/// Keeping this body shared avoids repeating remote collection for each map
+/// representation; mapping callbacks and queue publication stay with callers.
+///
+/// # Safety
+/// The original Page and block backing remain initialized and live, with its
+/// low owner bit held and exclusive ordinary-field authority. `state` names
+/// that exact page's fields. Its abandoned bitmap or OS-list removal has
+/// completed, and `theap` is the admitted live owner for the same Heap and
+/// `thread`. The caller retains custody on error and appends a successful
+/// page to the target queue before any other Theap operation.
+#[inline(never)]
+unsafe fn finish_reclaim_into_live_theap(
+    page: NonNull<Page>,
+    state: &PageAbandonmentState,
+    theap: NonNull<Theap>,
+    thread: LiveThreadId,
+) -> Result<NonNull<Page>, AbandonError> {
+    // SAFETY: the held low owner bit makes this ordinary field writable.
+    unsafe { ptr::write(state.theap.as_ptr(), theap.as_ptr()) };
+    set_thread_identity(state, thread.get());
+    // SAFETY: the page is now associated with its new live owner, which
+    // holds the low bit and every ordinary field through this collection.
+    let owner = unsafe { Page::remote_free_owner_state_at(page) }
+        .ok_or(AbandonError::NotAbandoned)?;
+    unsafe { remote_free::collect_live_page_false(owner) }.map_err(AbandonError::RemoteFree)?;
+    Ok(page)
 }
 
 /// The regular claim tail either reclaimed its page into the freeing thread
@@ -6183,6 +6207,98 @@ mod tests {
         assert!(map.is_published(17));
         assert_eq!(page.abandoned_test_thread_id(), THREAD_ID_ABANDONED_MAPPED);
         assert_eq!(page.remote_free_test_head() & 1, 1);
+    }
+
+    #[test]
+    fn reclaim_offer_collects_late_remote_blocks_into_the_existing_owner() {
+        use crate::config::{ARENA_SLICE_SIZE, MEDIUM_PAGE_SIZE};
+        use crate::free_list::LocalFreeList;
+        use crate::remote_free::LiveRemoteFreePublish;
+        use crate::types::TheapOwner;
+
+        const BLOCK_SIZE: usize = 64 * 1024;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const RESERVED: usize = (MEDIUM_PAGE_SIZE - PAGE_OFFSET) / BLOCK_SIZE;
+        #[repr(C, align(65536))]
+        struct Storage([MaybeUninit<u8>; MEDIUM_PAGE_SIZE]);
+
+        let bin = size_class::bin(BLOCK_SIZE).unwrap();
+        let mut bitmap_storage = BitmapStorage::uninit();
+        let subprocess = crate::subproc::MainSubprocess::new();
+        let mut arena = map_fixture_for_bin_with_subprocess(
+            &mut bitmap_storage, bin, subprocess.as_ptr());
+        let arena_pointer = core::ptr::addr_of_mut!(arena);
+        let view = unsafe { ArenaView::from_ptr(arena_pointer).unwrap() };
+        let map = view.abandoned_pages(bin).unwrap();
+        let id = LiveThreadId::new(16).unwrap();
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let mut theap = Theap::empty();
+        let owner = bind_adopting_theap(&mut heap, &mut tld, &mut theap, id);
+        let heap_identity = NonNull::from(&heap);
+        let mut storage = std::boxed::Box::<Storage>::new_uninit();
+        let mut page = NonNull::new(storage.as_mut_ptr().cast::<Page>()).unwrap();
+        // SAFETY: the aligned allocation retains metadata and every source
+        // stride; the fixture owns initialization and all three live clients.
+        unsafe { Page::publish_fresh_exclusive_owner_at_with_pointers(
+            page, owner, heap_identity, TheapOwner::Live(id), BLOCK_SIZE,
+            PAGE_OFFSET, RESERVED as u16, 0, false, MemoryId::none()) }.unwrap();
+        assert!(unsafe { page.as_mut().abandoned_test_set_arena_memory(
+            arena_pointer, 17, MEDIUM_PAGE_SIZE / ARENA_SLICE_SIZE) });
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        assert_eq!(list.extend_count(3), Ok(3));
+        let first = list.pop(false).unwrap().unwrap();
+        let second = list.pop(false).unwrap().unwrap();
+        let survivor = list.pop(false).unwrap().unwrap();
+        drop(list);
+        // SAFETY: the owner changes only its atomic policy word while each
+        // current client retains the same page and immutable block geometry.
+        unsafe { Page::set_has_interior_pointers_at(page, true) };
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        assert_eq!(unsafe { abandon(page, Some(&map)) }, Ok(AbandonResult::UnownedMapped));
+        let claim = match unsafe { remote_free::push_live_allocation(
+            TestLiveRemoteAllocation { page, producer, canonical_block: first }) }.unwrap() {
+            LiveRemoteFreePublish::ClaimedAbandonedPage(claim) => claim,
+            _ => panic!("the first exact client claims the unowned page"),
+        };
+        // The outer tail collects the first publication before offering
+        // reclamation. A second current client arrives during that offer.
+        let result = unsafe { continue_post_owner_exit_remote_claim(
+            claim, |_memory, _size| Ok(&map),
+            |page| collect_post_owner_exit_local_free_false(page),
+            |candidate| {
+                assert!(map.is_published(17));
+                assert_eq!(candidate.page_heap(), heap_identity.as_ptr());
+                assert!(matches!(remote_free::push_live_allocation(
+                    TestLiveRemoteAllocation { page, producer, canonical_block: second }),
+                    Ok(LiveRemoteFreePublish::PublishedToOwner)));
+                assert_eq!(candidate.reclaim_into(owner, id), Ok(page));
+                crate::types::page_queue::page_queue_push_at_end_metadata(
+                    theap.queue_mut(bin).unwrap(), page.as_ptr());
+                theap.note_page_added();
+                ReclaimOnFreeOutcome::Reclaimed
+            }, |_page| panic!("the arena page has no OS-list removal"),
+            |_release| panic!("the survivor keeps this reclaimed page live")) }.unwrap();
+        assert!(matches!(result, ClaimedPostOwnerExitRegularFreeResult::ReclaimedOnFree));
+        assert!(!map.is_published(17));
+        let state = unsafe { Page::abandonment_state_at(page) };
+        assert!(is_owned(&state));
+        assert_eq!(source_thread_identity(&state), id.get());
+        assert_eq!(unsafe { state.theap.as_ptr().read() }, owner.as_ptr());
+        assert_ne!(unsafe { state.xthread_id.as_ref() }.load(Ordering::Acquire)
+            & crate::types::PAGE_HAS_INTERIOR_POINTERS, 0);
+        let image = unsafe { Page::owner_snapshot_at(page) };
+        assert_eq!(image.used, 1);
+        assert_eq!(image.free, first.cast::<Block>().as_ptr());
+        assert_eq!(image.local_free, second.cast::<Block>().as_ptr());
+        // SAFETY: the fixture owns the survivor and sole queue after the
+        // reclaim result, and retires their list state before backing ends.
+        let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+        unsafe { list.push_local(survivor) }.unwrap();
+        drop(list);
+        unsafe { crate::types::page_queue::page_queue_remove_metadata(
+            theap.queue_mut(bin).unwrap(), page.as_ptr()) };
+        assert!(theap.note_page_removed());
     }
 
     #[test]
