@@ -1074,7 +1074,7 @@ case "$command" in
         # Builds the four installed products with their own builders, whose
         # Cargo and scratch state stays below this checkout's .work/x86_64.
         ensure_image
-        run_in_container python3 compat/allocator/perf_integrated_x86_64.py "$@"
+        run_in_container --with-pinned-core-image python3 compat/allocator/perf_integrated_x86_64.py "$@"
         ;;
     allocator-codegen-audit)
         ensure_image

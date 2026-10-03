@@ -58,6 +58,16 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 self.assertEqual(arguments[index + 1], "correctness")
                 self.assertEqual(arguments[:index] + arguments[index + 2:], operation)
 
+    def test_integrated_products_use_core_image_without_moving_engine_execution(self) -> None:
+        runner, arguments = self.runner_arguments("allocator-perf-integrated", "--full")
+        self.assertEqual((runner, arguments), ("compat/allocator/perf_integrated_x86_64.py", ["--full"]))
+        run = next(call for call in self.calls() if call[0] == "run" and "python3" in call)
+        self.assertIn(fixture.PIN, run)
+        self.assertIn("CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=" + fixture.PIN, run)
+        self.runner_arguments("allocator-perf-engine", "--reader-tests")
+        run = next(call for call in self.calls() if call[0] == "run" and "python3" in call)
+        self.assertNotIn(fixture.PIN, run)
+
     def test_explicit_full_and_correctness_work_before_or_after_operation(self) -> None:
         for command, operation, flag in (
             ("allocator-m5", [], "--qualification-profile"),

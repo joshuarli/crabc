@@ -55,6 +55,38 @@ def synthetic_integrated(mi_malloc_version: int = 30500, backend: str = "pinned-
     return report
 
 
+class IntegratedBuildTests(unittest.TestCase):
+    def test_selected_oracle_probe_preserves_the_engine_default_and_version_key(self) -> None:
+        compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+        with patch.object(engine, "command_record", return_value={"status": 0, "stdout": "version"}) as command:
+            versions = engine.tool_versions(musl_compiler=compiler)
+            self.assertIn(((compiler, "--version"),), [call.args for call in command.call_args_list])
+            self.assertEqual(versions["musl-gcc"], "version")
+            command.reset_mock()
+            engine.tool_versions()
+            self.assertIn((("musl-gcc", "--version"),), [call.args for call in command.call_args_list])
+
+    def test_startup_launcher_uses_the_core_oracle_without_an_alias(self) -> None:
+        manifest = integrated.load_manifest()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = Path(directory)
+            products = {kind: {} for kind in manifest["products"]}
+            for kind in products:
+                for lane in engine.LANES:
+                    products[kind][lane] = work / f"product-{kind}-{lane}"
+                    products[kind][lane].mkdir()
+
+            def compile_output(command, log, *, cwd=ROOT):
+                Path(command[-1]).write_bytes(b"same compiled input")
+
+            with patch.object(integrated, "run_logged", side_effect=compile_output) as compile:
+                integrated.build_programs(manifest, products, work)
+            command = compile.call_args.args[0]
+            self.assertEqual(command[0], "/usr/local/bin/crabc-x86_64-musl-gcc")
+            self.assertIn("-static", command)
+            self.assertIn("-no-pie", command)
+
+
 class IntegratedReaderTests(unittest.TestCase):
     def setUp(self) -> None:
         for target, value in ((engine, "BOOTSTRAP_RESAMPLES"), (integrated, "source_seal_unmet")):

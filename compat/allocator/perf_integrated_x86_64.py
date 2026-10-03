@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Allocator C/Rust comparison through the installed static and dynamic products.
 
-plan.md's final allocator comparison uses "equivalent opaque C/Rust
-boundaries and fully integrated products". The engine matrix
-(``perf_engine_x86_64.py``) covers the first; this runner covers the second.
+The engine matrix compares equivalent opaque C/Rust boundaries; this runner
+compares the allocators through fully integrated installed runtime products.
 It builds four installed products with their own builders:
 
 * ``scripts/build_x86_64_owned_sysroot.py`` (static) and
@@ -46,6 +45,7 @@ from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[2]
 ALLOCATOR_ROOT = ROOT / "compat/allocator"
+PINNED_CORE_MUSL_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
 FIXTURE_ROOT = ALLOCATOR_ROOT / "perf-x86_64"
 MANIFEST = FIXTURE_ROOT / "integrated-matrix-v3.5.0.json"
 LIBC_BACKEND = FIXTURE_ROOT / "integrated-libc-backend.c"
@@ -247,7 +247,7 @@ def build_programs(manifest: Mapping[str, Any], products: Mapping[str, Mapping[s
         if objects["pinned_c"] != objects["rust_engine"]:
             raise HarnessError(f"{kind} objects differ between backends; the programs are not source- and build-identical")
     launcher = work / "programs" / "integrated-startup-launcher"
-    run_logged(["musl-gcc", "-std=c11", "-O2", "-fno-pie", "-static", "-no-pie", LAUNCHER, "-o", launcher], work / "launcher.log")
+    run_logged([PINNED_CORE_MUSL_COMPILER, "-std=c11", "-O2", "-fno-pie", "-static", "-no-pie", LAUNCHER, "-o", launcher], work / "launcher.log")
     records["launcher"] = engine.artifact_record(launcher)
     return {"binaries": binaries, "launcher": launcher, "records": records}
 
@@ -357,7 +357,7 @@ def run(arguments: argparse.Namespace) -> Path:
         "lane_meaning": {lane: f"installed products with --allocator-backend {backend}"
                          for lane, backend in manifest["backends"].items()},
         "provenance": {"seal": source_seal(), "git": engine.git_provenance(),
-                       "host": engine.host_provenance(measurement_cpus), "tools": engine.tool_versions(),
+                       "host": engine.host_provenance(measurement_cpus), "tools": engine.tool_versions(musl_compiler=PINNED_CORE_MUSL_COMPILER),
                        "manifest": engine.file_record(MANIFEST)},
         "products_reused": bool(arguments.reuse_products),
     }

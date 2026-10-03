@@ -1193,10 +1193,11 @@ def host_provenance(cpus: Sequence[int]) -> dict[str, Any]:
     }
 
 
-def tool_versions() -> dict[str, str]:
+def tool_versions(*, musl_compiler: str = "musl-gcc") -> dict[str, str]:
     versions = {}
     for tool, argument in (("rustc", "-Vv"), ("cargo", "-V"), ("musl-gcc", "--version"), ("readelf", "--version")):
-        record = command_record((tool, argument), cwd=ROOT)
+        executable = musl_compiler if tool == "musl-gcc" else tool
+        record = command_record((executable, argument), cwd=ROOT)
         require_success(record, f"{tool} version probe")
         versions[tool] = str(record["stdout"]).strip()
     return versions

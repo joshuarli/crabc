@@ -16,6 +16,13 @@ hidden by a Cargo-cache mount. Reviewed source manifests retain their original
 archive-path spelling; execution-path relocation does not change upstream
 identity or archive hash verification.
 
+`allocator-perf-integrated` runs in the pinned core image because its installed
+static and dynamic product builders require the owned Linux UAPI inputs. Its
+startup harness launcher and compiler version probe explicitly use
+`/usr/local/bin/crabc-x86_64-musl-gcc`, the pinned musl oracle in that image.
+`allocator-perf-engine` retains the allocator image and its `musl-gcc` compiler.
+Candidate programs continue to use only their installed product drivers.
+
 For one development regression, use
 `./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name`.
 The filter selects one complete Rust test name with `--exact` and preserves its
