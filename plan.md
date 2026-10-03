@@ -45,10 +45,11 @@ Update this small section in place when the implementation frontier changes.
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
   larger native worker stacks pass. Constructor and aggregate-copy improvements
   pass focused checks; they do not establish that either failure is repaired.
-- **Paused handoff (2026-10-02):** work is stopped at the user's request. All
-  active lanes are settled and integrated, their worktrees are removed, the lane
-  map is empty, and `main` is clean. Start no new work or lanes until the user
-  resumes the campaign. Source branches and compact evidence remain available.
+- **Resumed (2026-10-03):** the user resumed the campaign from this handoff.
+  Reconcile current-source allocator initialization, ownership and runtime
+  boundaries through source/compiler work and ordinary valid-client regressions.
+  The two reported native opt0 failures remain open until direct evidence repairs
+  them. Historical source branches and compact evidence remain available.
 - **Core fixes:** secure/guarded output formatting matches pinned C; the private
   context maps retained page-validity errors and counts a consumed free even when
   cleanup fails. The bounded queue retry reuses its frame. Fresh Heap/Theap and
@@ -101,8 +102,8 @@ Update this small section in place when the implementation frontier changes.
 
 ## Parallel lanes
 
-Campaign work is paused at the user's request. The following coordination rules
-apply only after the user resumes work; do not start successors during this pause.
+Campaign work resumed at the user's request on 2026-10-03. The following
+coordination rules apply to the active correctness and qualification work.
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
 lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
