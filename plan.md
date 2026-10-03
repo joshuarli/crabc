@@ -78,12 +78,18 @@ Update this small section in place when the implementation frontier changes.
   fresh OS prepublication refusal keeps the original claim outside observation
   error transport and converges on one release transition. Child construction
   validates before fieldwise writes into caller-retained storage. PageMap failure
-  output uses separate bounded message frames, and staged diagnostic delivery
-  drains its original initialized entries once. Ordinary OS mapping and commit
+  output uses separate bounded message frames. Child source phases keep the
+  original owner in caller storage, with an unwind guard retaining its actual
+  admission on terminal outcomes. Diagnostic staging borrows the primary body
+  and stores static option recipes, reducing its storage from 4,168 to 232 bytes;
+  delivery drains the original selected entries once. Ordinary OS mapping and commit
   warning storage is isolated: their opt0 frames fall from 3,080 to 1,064 bytes
   and from 1,192 to 184 bytes respectively. These are individual
-  compiler frames, not peak-stack or 16-KiB qualification. Caller-retained child
-  phase transport and unpublished OS-claim initialization remain in progress.
+  compiler frames, not peak-stack or 16-KiB qualification. Final child member
+  publication, VM warning argument transport and unpublished OS-claim
+  initialization remain in progress. Secure free-list extension keeps its fixed
+  shuffle arrays outside entropy callbacks, with the existing permutation and
+  publication order preserved in default, secure-2 and secure-3 checks.
   Metadata refusal tests
   distinguish one-shot recovery from sustained mapping unavailability.
 - **Verification:** merged source passes nine compiler profiles and focused opt0
