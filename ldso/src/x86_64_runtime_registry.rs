@@ -207,11 +207,12 @@ impl Drop for UnpublishedObjects {
                 if let ObjectStorage::Runtime(object) = &(*node).storage {
                     syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64);
                 }
-                // The node is raw loader memory, never dropped as a whole;
-                // release its one owned callback mapping explicitly.
-                core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).callbacks));
-                core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).needed));
-                core::ptr::drop_in_place(core::ptr::addr_of_mut!((*node).owned_name));
+                // This transaction owns the complete unpublished node. Its
+                // storage record only borrows ELF metadata; its other owning
+                // fields return their buffers to the loader pool or unmap them.
+                // No field destructor invokes an application callback. Dropping
+                // the node as a whole also covers an owned dependency scope.
+                core::ptr::drop_in_place(node);
                 super::x86_64_runtime_memory::release(node.cast(), core::mem::size_of::<RuntimeObject>(), core::mem::align_of::<RuntimeObject>());
                 node = previous;
             }

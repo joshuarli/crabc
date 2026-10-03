@@ -180,9 +180,20 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
             || (*REGISTRY.0.get()).count != 1 || (*REGISTRY.0.get()).tls_count != 1
             || !x86_64_runtime_tls_view::current(block.thread_pointer).is_null()
             || *original != 97 || mapped_file(b"loader109_failed_tls.so")? { return None; }
-        if !diagnostic.text.is_null() {
-            syscall2(SYS_MUNMAP, diagnostic.text as i64, diagnostic.text_len as i64);
-        }
+        // The receiver owns this copied error text after transaction rollback.
+        // Later successful requests may overwrite the wire record, but cannot
+        // release the receiver's allocation or read the destroyed object name.
+        let error_text = diagnostic.text;
+        let error_length = diagnostic.text_len;
+        let filename = MISSING.load(Ordering::Acquire);
+        let filename_length = bounded_nul(filename, isize::MAX as usize)?;
+        let missing_symbol = b"loader109_unavailable_dependency\0";
+        if error_text.is_null() || error_length != filename_length + 1 + missing_symbol.len()
+            || core::slice::from_raw_parts(error_text, filename_length)
+                != core::slice::from_raw_parts(filename, filename_length)
+            || *error_text.add(filename_length) != 0
+            || core::slice::from_raw_parts(error_text.add(filename_length + 1), missing_symbol.len())
+                != missing_symbol { return None; }
         let provider = runtime_open(PROVIDER.load(Ordering::Acquire), 2, &mut diagnostic);
         if provider.is_null() || diagnostic.kind != 0 || (*REGISTRY.0.get()).count != 2
             || (*REGISTRY.0.get()).tls_count != 2 { return None; }
@@ -201,7 +212,14 @@ fn failed_tls_load_rolls_back_before_successful_growth_and_retained_reopen() {
             || x86_64_runtime_tls_view::current(block.thread_pointer) != view
             || (*REGISTRY.0.get()).count != 2 || (*REGISTRY.0.get()).tls_count != 2
             || !mapped_file(b"loader109_provider_tls.so")? { return None; }
-        if x86_64_runtime_tls_view::release(block.thread_pointer) != 0
+        if !mapped(error_text)
+            || core::slice::from_raw_parts(error_text, filename_length)
+                != core::slice::from_raw_parts(filename, filename_length)
+            || *error_text.add(filename_length) != 0
+            || core::slice::from_raw_parts(error_text.add(filename_length + 1), missing_symbol.len())
+                != missing_symbol { return None; }
+        if syscall2(SYS_MUNMAP, error_text as i64, error_length as i64) != 0
+            || x86_64_runtime_tls_view::release(block.thread_pointer) != 0
             || syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) != 0
         { return None; }
         Some(true)
@@ -278,9 +296,18 @@ fn abandoned_registry_nodes_unmap_only_transaction_owned_images() {
             map_span_start: new_image as u64, map_span_byte_len: PAGE, ..EMPTY_OBJECT
         }), identity(2), 1, LoadedName::new(b"runtime"), true)?;
         nodes.append(runtime)?;
-        if !mapped(new_image) || !mapped(borrowed_image) { return None; }
+        unsafe extern "C" fn retained_callback() {}
+        let callbacks = LoaderBuffer::new(3000, retained_callback as *const () as usize)?;
+        let callback_mapping = callbacks.as_slice().as_ptr().cast_mut().cast::<u8>();
+        (*runtime).adopt_callbacks(Some(callbacks), 1500)?;
+        (*runtime).needed.reserve(3000)?;
+        for _ in 0..3000 { (*runtime).needed.push(initial)?; }
+        let dependency_mapping = (*runtime).needed.as_ptr().cast_mut().cast::<u8>();
+        if !mapped(new_image) || !mapped(borrowed_image)
+            || !mapped(callback_mapping) || !mapped(dependency_mapping) { return None; }
         drop(nodes);
-        let result = !mapped(new_image) && mapped(borrowed_image);
+        let result = !mapped(new_image) && mapped(borrowed_image)
+            && !mapped(callback_mapping) && !mapped(dependency_mapping);
         Some(syscall2(SYS_MUNMAP, borrowed_image as i64, PAGE as i64) == 0 && result)
     })().unwrap_or(false) } }
     unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }

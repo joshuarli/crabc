@@ -180,10 +180,10 @@ impl<T: Copy> Drop for LoaderBuffer<T> {
 ///
 /// The general loader must admit graphs of any size before libc (and its
 /// allocator) can run, as musl's loader does with its own reclaimed memory.
-/// Growth maps a larger span, moves the elements bitwise and unmaps the old
-/// span, so callers never hold a reference across a `push` (the borrow rules
-/// enforce this). An empty vector owns no mapping. Elements are dropped with
-/// the vector.
+/// Growth allocates a larger block, moves the elements bitwise and releases
+/// the old block: pooled blocks are recycled and larger mappings are unmapped.
+/// Callers never hold a reference across a `push` (the borrow rules enforce
+/// this). An empty vector owns no block. Elements are dropped with the vector.
 pub(super) struct LoaderVec<T> { pointer: *mut T, length: usize, capacity: usize }
 
 impl<T> LoaderVec<T> {
@@ -271,6 +271,54 @@ unsafe impl<T: Sync> Sync for LoaderVec<T> {}
 mod pool_tests {
     extern crate std;
     use super::*;
+
+    #[test]
+    fn vector_growth_and_refusal_preserve_owned_elements_until_reverse_drop() {
+        struct Element {
+            index: usize,
+            drops: std::sync::Arc<std::sync::Mutex<std::vec::Vec<usize>>>,
+        }
+        impl Drop for Element {
+            fn drop(&mut self) {
+                // Dropping an owned element may return another loader block.
+                // Vector teardown must not retain the pool lock across it.
+                let nested = allocate(97, 8).unwrap();
+                unsafe { release(nested, 97, 8); }
+                self.drops.lock().unwrap().push(self.index);
+            }
+        }
+        let drops = std::sync::Arc::new(std::sync::Mutex::new(std::vec::Vec::new()));
+        let mut values = LoaderVec::new();
+        for index in 0..100 {
+            values.push(Element { index, drops: drops.clone() }).unwrap();
+        }
+        let address = values.as_ptr();
+        assert!(values.reserve(usize::MAX).is_none());
+        assert_eq!(values.as_ptr(), address);
+        assert_eq!(values.len(), 100);
+        assert!(values.iter().enumerate().all(|(index, element)| index == element.index));
+        assert!(drops.lock().unwrap().is_empty());
+        values.truncate(3);
+        assert_eq!(*drops.lock().unwrap(), (3..100).rev().collect::<std::vec::Vec<_>>());
+        values.reserve(1000).unwrap();
+        assert_eq!(values.iter().map(|element| element.index).collect::<std::vec::Vec<_>>(), [0, 1, 2]);
+        assert_eq!(drops.lock().unwrap().len(), 97);
+        drop(values);
+        assert_eq!(*drops.lock().unwrap(), (0..100).rev().collect::<std::vec::Vec<_>>());
+    }
+
+    #[test]
+    fn buffer_and_vector_refuse_unrepresentable_spans_without_consuming_live_storage() {
+        assert!(LoaderBuffer::new(usize::MAX, 1usize).is_none());
+        let buffer = LoaderBuffer::new(33, 71usize).unwrap();
+        let address = buffer.as_slice().as_ptr();
+        let mut values = LoaderVec::new();
+        values.push(82usize).unwrap();
+        assert!(values.reserve(isize::MAX as usize).is_none());
+        assert_eq!(&*values, [82]);
+        assert_eq!(buffer.as_slice().as_ptr(), address);
+        assert!(buffer.as_slice().iter().all(|&value| value == 71));
+    }
 
     #[test]
     fn class_rounding_keeps_pool_and_mapping_boundaries() {
