@@ -611,17 +611,23 @@ impl<'main> MainHeapThreadAttachment<'main> {
             NonNull::new_unchecked(destination.as_mut_ptr()), main_heap,
             metadata, config, page_mode, generic_collect_policy,
         ) };
-        match result {
-            Ok(()) => Ok(unsafe { destination.assume_init_read() }),
+        let retained_error = match result {
+            Ok(()) => None,
             Err(MainHeapThreadAttachmentBeginIntoError::Rejected(error)) => {
-                Err(MainHeapThreadAttachmentBeginError::Rejected(error))
+                return Err(MainHeapThreadAttachmentBeginError::Rejected(error));
             }
-            Err(MainHeapThreadAttachmentBeginIntoError::Retained(error)) => {
-                Err(MainHeapThreadAttachmentBeginError::Retained {
-                    error,
-                    attachment: unsafe { destination.assume_init_read() },
-                })
-            }
+            Err(MainHeapThreadAttachmentBeginIntoError::Retained(error)) => Some(error),
+        };
+        // SAFETY: both remaining outcomes initialized the complete owner.
+        // Read it once at this value-returning compatibility boundary;
+        // MaybeUninit does not drop the logically moved source fields.
+        let attachment = unsafe { destination.assume_init_read() };
+        match retained_error {
+            None => Ok(attachment),
+            Some(error) => Err(MainHeapThreadAttachmentBeginError::Retained {
+                error,
+                attachment,
+            }),
         }
     }
 
