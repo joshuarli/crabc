@@ -2734,6 +2734,11 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             super::native_mimalloc_lifecycle::retain_selected_nonfinal_worker_after_process_done()
         };
     }
+    // Normal callback return retires loader diagnostics just like explicit
+    // pthread_exit. This only transfers the buffer to the loader's atomic
+    // retired list; it allocates and frees nothing after native owner finish.
+    // The final task exited above, retaining its diagnostic for exit callbacks.
+    unsafe { release_dlerror_buffer() };
     unsafe { retire_selected_worker_signal_target(control) };
     // SAFETY: a non-final worker has completed its selected state users and
     // returns only to the private clone tail that ends this Linux task.

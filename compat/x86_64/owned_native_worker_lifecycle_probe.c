@@ -13,6 +13,8 @@
  *     mappings, one reclaimed descriptor per joined worker;
  *   - all four TSD destructor passes retain their owner; worker-born and
  *     last-pass clients remain live until the joining thread frees them;
+ *   - pthread and C11 workers hand loader diagnostics back on normal return
+ *     and explicit exit, so the next loader error releases those buffers;
  *   - a refused pthread_create leaves no owner, and creation then succeeds;
  *   - the final worker's ordinary-exit callbacks run on a fresh owner that
  *     has not allocated, never on the finished owner reopened;
@@ -26,6 +28,7 @@
  * exited workers' blocks in every size class, run in both builds.
  */
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <malloc.h>
@@ -36,6 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <threads.h>
 #include <unistd.h>
 
 #define CHECK(c) do { if (!(c)) { dprintf(2, "worker lifecycle line %d errno %d\n", __LINE__, errno); _exit(1); } } while (0)
@@ -64,11 +68,82 @@ static void require_joined(size_t joined) {
     CHECK(value.attached_worker_owners == baseline.attached_worker_owners);
     CHECK(value.reclaimed_worker_descriptors == baseline.reclaimed_worker_descriptors + joined);
 }
+struct page_class_audit {
+    size_t registered_slices, small_empty_slices, small_used_slices;
+    size_t medium_empty_slices, medium_used_slices;
+    size_t large_empty_slices, large_used_slices;
+    size_t singleton_empty_slices, singleton_used_slices, unknown_kind_slices;
+    size_t abandoned_slices, detached_slices, attached_slices, nonprimary_slices;
+    size_t medium_abandoned_slices, medium_detached_slices, medium_attached_slices;
+    size_t medium_remote_pending_slices, medium_reusable_slices, medium_retired_slices;
+};
+int __crabc_x86_owned_allocator_page_class_test_audit(struct page_class_audit *);
+/* Joined workers and the main task are quiescent during this snapshot. */
+static size_t live_small_pages(void) {
+    struct page_class_audit value;
+    CHECK(__crabc_x86_owned_allocator_page_class_test_audit(&value) == 0);
+    return value.small_used_slices;
+}
 #else
 static void require_owner(int engine) { (void)engine; }
 static void mark_baseline(void) {}
 static void require_joined(size_t joined) { (void)joined; }
 #endif
+
+/* Each loader error replaces the main task's diagnostic and drains buffers
+ * handed back by exited threads. Consuming dlerror keeps its buffer alive
+ * until that replacement or thread exit. */
+static void loader_error(void) {
+    CHECK(dlopen("/proc/self/fd/-1", RTLD_NOW) == 0);
+    char *message = dlerror();
+    CHECK(message && message[0]);
+    CHECK(dlerror() == 0);
+}
+static void *loader_error_worker(void *argument) {
+    loader_error();
+    if (argument) pthread_exit(argument);
+    return argument;
+}
+static int loader_error_c11_worker(void *argument) {
+    loader_error();
+    if (argument) thrd_exit(7);
+    return 7;
+}
+static void loader_error_retirement(void) {
+    pthread_t thread;
+    void *result;
+    /* Warm the same owner, diagnostic and reclamation operations through
+     * explicit exit before comparing the normal return path. */
+    loader_error();
+    CHECK(pthread_create(&thread, 0, loader_error_worker, (void *)1) == 0);
+    CHECK(pthread_join(thread, &result) == 0 && result == (void *)1);
+    loader_error();
+#ifdef CRABC_NATIVE_WORKER_AUDIT
+    size_t before = live_small_pages();
+#endif
+    for (int mode = 0; mode < 2; mode++) {
+        CHECK(pthread_create(&thread, 0, loader_error_worker, (void *)(intptr_t)mode) == 0);
+        CHECK(pthread_join(thread, &result) == 0 && result == (void *)(intptr_t)mode);
+        loader_error();
+#ifdef CRABC_NATIVE_WORKER_AUDIT
+        size_t after = live_small_pages();
+        if (after != before)
+            dprintf(2, "loader diagnostic pages before %zu after %zu mode %d\n", before, after, mode);
+        CHECK(after == before);
+#endif
+    }
+    for (int mode = 0; mode < 2; mode++) {
+        thrd_t c11_thread;
+        int c11_result;
+        CHECK(thrd_create(&c11_thread, loader_error_c11_worker, (void *)(intptr_t)mode) == thrd_success);
+        CHECK(thrd_join(c11_thread, &c11_result) == thrd_success && c11_result == 7);
+        loader_error();
+#ifdef CRABC_NATIVE_WORKER_AUDIT
+        CHECK(live_small_pages() == before);
+#endif
+    }
+    dprintf(1, "loader diagnostic retirement\n");
+}
 
 static unsigned char *filled(size_t size, unsigned char byte) {
     unsigned char *block = malloc(size);
@@ -343,6 +418,7 @@ int main(int argc, char **argv) {
         CHECK(pthread_create(&thread, 0, deferred_worker, 0) == 0);
         pthread_exit(0);
     }
+    loader_error_retirement();
     mark_baseline();
     CHECK(pthread_create(&thread, 0, no_allocation, (void *)3) == 0);
     CHECK(pthread_join(thread, &result) == 0 && result == (void *)3);
