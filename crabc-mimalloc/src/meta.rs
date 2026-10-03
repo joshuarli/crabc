@@ -7633,6 +7633,9 @@ impl<'owner> MetadataEngine<'owner> {
 
     /// Initializes the bounded Rust backing for an already source-bound
     /// detached metadata image on its first real metadata request.
+    /// Keep first-backing temporaries out of the already-ready entry frame.
+    #[cold]
+    #[inline(never)]
     fn initialize_backing(
         self: Pin<&'owner Self>,
         entry: &mut MetaEntry<'_, 'owner>,
@@ -7965,6 +7968,8 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
         }
     }
 
+    // Keep the shared readiness checks separate from first-backing initialization.
+    #[inline(never)]
     fn ensure_ready(
         &mut self,
         config: MemoryConfig,
