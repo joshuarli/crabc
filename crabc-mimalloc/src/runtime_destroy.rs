@@ -705,7 +705,7 @@ mod tests {
                 let NativeOwnerExitDeferredFreePhase::Call(call) = phase;
                 assert!(!call.invokes_user_callback(), "no callback registration in this isolated process");
                 assert!(with_current_thread_native_persistent_owner(|owner|
-                    matches!(owner.state, NativePersistentThreadOwnerExitState::DeferredFreePending(_)))
+                    matches!(owner.state, NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, .. }))
                     .unwrap());
                 drop(operation);
                 assert_eq!(admission::current_native_allocator_callback_boundary_state(), (false, false));

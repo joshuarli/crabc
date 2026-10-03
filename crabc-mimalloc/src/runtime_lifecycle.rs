@@ -7248,7 +7248,7 @@ pub fn native_runtime_current_thread_attachment_test_audit(
                 .with_owner(|owner| {
                     matches!(
                         owner.get_mut().state,
-                        NativePersistentThreadOwnerExitState::PreDrain(_)
+                        NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine: _ }
                     )
                 })
                 .unwrap_or(false),
@@ -8019,15 +8019,26 @@ struct NativePersistentThreadOwner {
 /// an error. No variant carries a scheduler token, registry entry, route, or
 /// raw pointer capability.
 enum NativePersistentThreadOwnerExitState {
-    PreDrain(MainHeapThreadOwnerLocalPageEngine<'static>),
-    /// Phase A cleared the fixed fast root and selected the source
-    /// deferred-free boundary, but its foreign callback has not yet returned
-    /// through phase C. The engine remains in this owner so the pinned
-    /// callback may allocate through the still-live default Theap; terminal
-    /// transfer and ordinary teardown must retain it.
-    DeferredFreePending(MainHeapThreadOwnerLocalPageEngine<'static>),
-    RetainedTerminalEngine(MainHeapThreadOwnerLocalPageEngine<'static>),
+    Engine {
+        phase: NativePersistentThreadOwnerEnginePhase,
+        engine: MainHeapThreadOwnerLocalPageEngine<'static>,
+    },
     AttachmentOnly,
+}
+
+/// Exit authority of one continuously stored source engine. Non-consuming
+/// prefixes change only this scalar phase, so an unwinding owner projection
+/// retains the engine and its source clients in the compiler-TLS cell.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativePersistentThreadOwnerEnginePhase {
+    PreDrain,
+    /// The fast root is cleared. The deferred callback may allocate through
+    /// the still-live default Theap, while transfer and teardown must refuse
+    /// until the value-only callback returns for source collection.
+    DeferredFreePending,
+    /// An interrupted or failed prefix/drain can never be retried as ordinary
+    /// allocation or pre-drain work; the exact engine remains represented.
+    RetainedTerminal,
 }
 
 /// Why an installed native source owner could not enter one local allocator
@@ -8109,10 +8120,10 @@ impl NativePersistentThreadOwner {
     unsafe fn permits_child_source_retirement(&self) -> bool {
         if !unsafe { self.attachment.permits_child_source_retirement() } { return false; }
         match &self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => engine.permits_terminal_process_retirement(&self.attachment),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => engine.permits_terminal_process_retirement(&self.attachment),
             NativePersistentThreadOwnerExitState::AttachmentOnly => true,
-            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => false,
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine: _ } => false,
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => false,
         }
     }
 
@@ -8136,12 +8147,12 @@ impl NativePersistentThreadOwner {
             if !unsafe { tls.drain_vanished_auxiliary_theaps(fixed, thread, heap) } { return Err(()); }
         }
         match &mut self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => {
                 if !unsafe { engine.collect_abandon_vanished_child(&mut self.attachment) } { return Err(()); }
             }
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
-            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => return Err(()),
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => return Err(()),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine: _ } => return Err(()),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => return Err(()),
         }
         self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
         #[cfg(target_arch = "x86_64")]
@@ -8159,25 +8170,25 @@ impl NativePersistentThreadOwner {
         if self.generic_frequency_captures != 0 { return false; }
         if !unsafe { self.attachment.permits_terminal_source_transfer() } { return false; }
         match &self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => engine.permits_terminal_process_retirement(&self.attachment),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => engine.permits_terminal_process_retirement(&self.attachment),
             NativePersistentThreadOwnerExitState::AttachmentOnly => true,
             // Phase A already cleared the fast slot. Its caller-stack
             // callback lease and stored engine must complete phase C before
             // any terminal owner transfer, even if the B marker is not live.
-            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => false,
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine: _ } => false,
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => false,
         }
     }
 
     unsafe fn transfer_terminal_source_owner(&mut self) -> Result<(), ()> {
         if !unsafe { self.permits_terminal_transfer() } { return Err(()); }
         match &mut self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => {
                 if !unsafe { engine.retire_terminal_process_engine(&self.attachment) } { return Err(()); }
             }
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
-            NativePersistentThreadOwnerExitState::DeferredFreePending(_) => return Err(()),
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => return Err(()),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine: _ } => return Err(()),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => return Err(()),
         }
         // The engine now holds no source borrows, and its TLS lease Drop has
         // been disarmed without writing the originating thread's TLS globals.
@@ -8193,12 +8204,12 @@ impl NativePersistentThreadOwner {
         operation: impl FnOnce(&mut MainHeapThreadOwnerLocalAllocator<'_>) -> R,
     ) -> Result<R, NativePersistentThreadOwnerLocalAccessError> {
         let engine = match &mut self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine)
-            | NativePersistentThreadOwnerExitState::DeferredFreePending(engine) => engine,
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine }
+            | NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine } => engine,
             NativePersistentThreadOwnerExitState::AttachmentOnly => {
                 return Err(NativePersistentThreadOwnerLocalAccessError::AttachmentOnly);
             }
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => {
                 return Err(NativePersistentThreadOwnerLocalAccessError::Terminal);
             }
         };
@@ -8434,6 +8445,22 @@ impl NativePersistentThreadOwner {
         &mut self,
         pair: Option<ProcessPageBackingLease>,
     ) -> Result<NativeOwnerExitDeferredFreePhase, ()> {
+        self.begin_owner_exit_deferred_free_phase_with_prefix(
+            pair, MainHeapThreadOwnerLocalPageEngine::begin_owner_exit_deferred_free_phase,
+        )
+    }
+
+    /// Runs the synchronous non-consuming source prefix under the same
+    /// exclusive owner projection. The prefix returns only its callback token;
+    /// no engine or attachment borrow may escape or reach foreign code.
+    fn begin_owner_exit_deferred_free_phase_with_prefix(
+        &mut self,
+        pair: Option<ProcessPageBackingLease>,
+        prefix: impl FnOnce(
+            &mut MainHeapThreadOwnerLocalPageEngine<'static>,
+            &mut MainHeapThreadAttachment<'static>,
+        ) -> Result<crate::main_heap_thread::MainHeapThreadDeferredFreeCall, MainHeapThreadAttachmentError>,
+    ) -> Result<NativeOwnerExitDeferredFreePhase, ()> {
         #[cfg(target_arch = "x86_64")]
         if self.generic_frequency_captures != 0 { return Err(()); }
         // `_mi_thread_done` invokes `_mi_theap_collect_abandon` even when the
@@ -8450,27 +8477,20 @@ impl NativePersistentThreadOwner {
                 return Err(());
             }
         }
-        let state = core::mem::replace(
-            &mut self.state,
-            NativePersistentThreadOwnerExitState::AttachmentOnly,
-        );
-        let NativePersistentThreadOwnerExitState::PreDrain(mut engine) = state else {
-            self.state = state;
+        let NativePersistentThreadOwnerExitState::Engine { phase, engine } = &mut self.state else {
             return Err(());
         };
-        match engine.begin_owner_exit_deferred_free_phase(&mut self.attachment) {
+        if *phase != NativePersistentThreadOwnerEnginePhase::PreDrain { return Err(()); }
+        // The prefix may remove source roots before returning its token. Keep
+        // the engine in its owner and conservatively terminalize first, so an
+        // unwind cannot drop the original engine or mint retryable authority.
+        *phase = NativePersistentThreadOwnerEnginePhase::RetainedTerminal;
+        match prefix(engine, &mut self.attachment) {
             Ok(call) => {
-                self.state = NativePersistentThreadOwnerExitState::DeferredFreePending(engine);
+                *phase = NativePersistentThreadOwnerEnginePhase::DeferredFreePending;
                 Ok(NativeOwnerExitDeferredFreePhase::Call(call))
             }
-            Err(_) => {
-                // The lower phase marks an error after fast-slot removal
-                // terminal. A preflight failure before that boundary is also
-                // retained here because the enclosing native destructor can
-                // no longer safely proceed through another owner cell entry.
-                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
-                Err(())
-            }
+            Err(_) => Err(()),
         }
     }
 
@@ -8496,13 +8516,13 @@ impl NativePersistentThreadOwner {
             &mut self.state,
             NativePersistentThreadOwnerExitState::AttachmentOnly,
         );
-        let NativePersistentThreadOwnerExitState::DeferredFreePending(engine) = state else {
+        let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine } = state else {
             self.state = state;
             return Err(());
         };
         if let Some(lease) = lease {
             if self.attachment.complete_deferred_free_callback(lease).is_err() {
-                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine };
                 return Err(());
             }
         }
@@ -8522,7 +8542,7 @@ impl NativePersistentThreadOwner {
                     engine,
                 ),
             ) => {
-                self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+                self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine };
                 Err(())
             }
             Err(
@@ -8530,7 +8550,7 @@ impl NativePersistentThreadOwner {
                     engine,
                 ),
             ) => {
-                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine };
                 Err(())
             }
         }
@@ -8585,7 +8605,7 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::AttachmentOnly,
         );
         match state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => {
                 match engine.finish_after_collect_abandon(&mut self.attachment) {
                     Ok(()) => return Ok(()),
                     Err(
@@ -8593,7 +8613,7 @@ impl NativePersistentThreadOwner {
                             engine,
                         ),
                     ) => {
-                        self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+                        self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine };
                         return Err(());
                     }
                     Err(
@@ -8602,7 +8622,7 @@ impl NativePersistentThreadOwner {
                         ),
                     ) => {
                         self.state =
-                            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+                            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine };
                         return Err(());
                     }
                     Err(
@@ -8610,15 +8630,15 @@ impl NativePersistentThreadOwner {
                     ) => {}
                 }
             }
-            NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) => {
-                self.state = NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine);
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine } => {
+                self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine };
                 return Err(());
             }
-            NativePersistentThreadOwnerExitState::DeferredFreePending(engine) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine } => {
                 // A callback can still allocate through this exact default
                 // Theap. No teardown, process-done transfer, or second drain
                 // may consume it until its caller-stack phase C returns.
-                self.state = NativePersistentThreadOwnerExitState::DeferredFreePending(engine);
+                self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine };
                 return Err(());
             }
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
@@ -8648,7 +8668,7 @@ impl NativePersistentThreadOwner {
         #[cfg(target_arch = "x86_64")]
         if self.generic_frequency_captures != 0 { return false; }
         match &self.state {
-            NativePersistentThreadOwnerExitState::PreDrain(engine) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => {
                 engine.permits_process_done_source_retention(&self.attachment)
             }
             // Source process done disables automatic thread cleanup even
@@ -8658,8 +8678,8 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::AttachmentOnly => {
                 self.attachment.permits_process_done_source_retention()
             }
-            NativePersistentThreadOwnerExitState::DeferredFreePending(_)
-            | NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => false,
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine: _ }
+            | NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => false,
         }
     }
 
@@ -8686,9 +8706,9 @@ impl NativePersistentThreadOwner {
     ) -> Result<(), MainHeapThreadOwnerLocalPageEngineBeginError> {
         match &self.state {
             NativePersistentThreadOwnerExitState::AttachmentOnly => {}
-            NativePersistentThreadOwnerExitState::PreDrain(_) => return Ok(()),
-            NativePersistentThreadOwnerExitState::DeferredFreePending(_)
-            | NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => {
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine: _ } => return Ok(()),
+            NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine: _ }
+            | NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ } => {
                 return Err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment(
                     MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal,
                 ));
@@ -8699,7 +8719,7 @@ impl NativePersistentThreadOwner {
             ProcessPageBackingLease::LegacyPair(pair) => MainHeapThreadOwnerLocalPageEngine::begin(&mut self.attachment, pair),
             ProcessPageBackingLease::Process(binding) => MainHeapThreadOwnerLocalPageEngine::begin_for_process(&mut self.attachment, binding),
         }?;
-        self.state = NativePersistentThreadOwnerExitState::PreDrain(engine);
+        self.state = NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine };
         Ok(())
     }
 }
@@ -10258,7 +10278,7 @@ fn install_native_attachment_only_owner(
     struct AttachmentOnlyStateImage(NativePersistentThreadOwnerExitState);
     // SAFETY: the private immutable image is always AttachmentOnly, which
     // owns no engine or resource. It is never projected, activated, or mutated;
-    // the other variants' non-Sync source-owner payloads are never present.
+    // the Engine variant's non-Sync source owner is never present.
     unsafe impl Sync for AttachmentOnlyStateImage {}
     static ATTACHMENT_ONLY_STATE: AttachmentOnlyStateImage =
         AttachmentOnlyStateImage(NativePersistentThreadOwnerExitState::AttachmentOnly);
@@ -20566,9 +20586,9 @@ pub fn finish_current_thread_native_after_user_destructors() -> ThreadFinishResu
             |owner| {
                 if owner.generic_frequency_captures != 0 { return true; }
                 let engine = match &owner.state {
-                    NativePersistentThreadOwnerExitState::PreDrain(engine)
-                    | NativePersistentThreadOwnerExitState::DeferredFreePending(engine)
-                    | NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) => engine,
+                    NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine }
+                    | NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine }
+                    | NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine } => engine,
                     NativePersistentThreadOwnerExitState::AttachmentOnly => return false,
                 };
                 engine.allocation_theap().is_some_and(|theap| {
@@ -20777,7 +20797,7 @@ fn begin_current_thread_native_owner_exit_deferred_free_phase(
             let mut task = None;
             let result = with_current_thread_native_persistent_owner(|owner| {
                 let result = owner.begin_owner_exit_deferred_free_phase(pair);
-                if let NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) = &mut owner.state {
+                if let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine } = &mut owner.state {
                     task = engine.take_retained_live_page_validity();
                 }
                 result
@@ -20820,7 +20840,7 @@ fn resume_current_thread_native_owner_exit_deferred_free_phase(
         // a successful traversal returns a token without tearing it down.
         let selected = with_current_thread_native_persistent_owner(|issuer| {
             match &issuer.state {
-                NativePersistentThreadOwnerExitState::DeferredFreePending(engine) => engine.allocation_theap(),
+                NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::DeferredFreePending, engine } => engine.allocation_theap(),
                 _ => None,
             }
         }).ok().flatten().ok_or(NativePersistentThreadOwnerAccessError::Retained)?;
@@ -20832,7 +20852,7 @@ fn resume_current_thread_native_owner_exit_deferred_free_phase(
             let mut task = None;
             let result = with_current_thread_native_persistent_owner(|issuer| {
                 let result = issuer.collect_owner_exit_deferred_free_phase(lease.take());
-                if let NativePersistentThreadOwnerExitState::RetainedTerminalEngine(engine) = &mut issuer.state {
+                if let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine } = &mut issuer.state {
                     task = engine.take_retained_live_page_validity();
                 }
                 result
@@ -24423,7 +24443,7 @@ mod tests {
                         .expect("the focused attachment creates one persistent source owner engine");
                     let owner = NativePersistentThreadOwner {
                         attachment,
-                        state: NativePersistentThreadOwnerExitState::PreDrain(engine),
+                        state: NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine },
                         #[cfg(target_arch = "x86_64")]
                         generic_frequency_captures: 0,
                     };
@@ -25936,7 +25956,7 @@ mod tests {
     fn native_persistent_owner_collect_abandon_predrain_retains_the_exact_engine() {
         with_native_persistent_owner_fixture(|owner| {
             let NativePersistentThreadOwner { attachment: _, state, .. } = owner;
-            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+            let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } = state else {
                 panic!("the focused persistent owner starts before its drain boundary");
             };
             engine.test_begin_borrowed_state();
@@ -25948,11 +25968,11 @@ mod tests {
             );
             assert!(matches!(
                 owner.state,
-                NativePersistentThreadOwnerExitState::PreDrain(_)
+                NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine: _ }
             ));
 
             let NativePersistentThreadOwner { attachment, state, .. } = owner;
-            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+            let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } = state else {
                 panic!("the preflight failure restores its exact persistent engine");
             };
             engine.test_end_borrowed_state();
@@ -25980,7 +26000,7 @@ mod tests {
     fn native_persistent_owner_collect_abandon_failure_is_terminal_without_retry_or_allocation() {
         with_native_persistent_owner_fixture(|owner| {
             let NativePersistentThreadOwner { attachment, state, .. } = owner;
-            let NativePersistentThreadOwnerExitState::PreDrain(engine) = state else {
+            let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } = state else {
                 panic!("the focused persistent owner starts before its drain boundary");
             };
             engine
@@ -25999,7 +26019,7 @@ mod tests {
             );
             assert!(matches!(
                 owner.state,
-                NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+                NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ }
             ));
 
             let allocation_entered = core::cell::Cell::new(false);
@@ -26019,8 +26039,51 @@ mod tests {
             );
             assert!(matches!(
                 owner.state,
-                NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_)
+                NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine: _ }
             ));
+        });
+    }
+
+    #[test]
+    fn native_persistent_owner_exit_prefix_unwind_retains_engine_and_source_identity() {
+        with_native_persistent_owner_value_fixture(|owner| {
+            let cell = std::boxed::Box::pin(PersistentCompilerTlsOwnerCell::new());
+            assert!(cell.as_ref().initialize(owner, |_| Ok::<(), ()>(())).is_ok());
+            let (block, _) = run_native_deferred_free_fixture_allocation(cell.as_ref(), 73);
+            let block = block.expect("the installed source engine owns one ordinary live client");
+            let source_identity = cell.as_ref().with_owner(|owner| {
+                let owner = owner.get_mut();
+                match &owner.state {
+                    NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::PreDrain, engine } => engine.allocation_theap(),
+                    _ => None,
+                }
+            }).unwrap().unwrap();
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = cell.as_ref().with_owner(|owner| {
+                    owner.get_mut().begin_owner_exit_deferred_free_phase_with_prefix(None, |engine, attachment| {
+                        let call = engine.begin_owner_exit_deferred_free_phase(attachment)
+                            .expect("the legal source prefix completes before the injected Rust unwind");
+                        assert!(!call.invokes_user_callback(), "this fixture registers no foreign callback");
+                        panic!("unwind after the source exit prefix changed its roots");
+                    })
+                });
+            }));
+            assert!(unwound.is_err());
+            assert_eq!(cell.state_for_test(), crate::compiler_tls::PersistentCompilerTlsOwnerState::Retained);
+            assert_eq!(cell.as_ref().with_owner(|_| ()), Err(PersistentCompilerTlsOwnerError::Retained));
+            let observed = cell.as_ref().teardown(|owner| {
+                let owner = owner.get_mut();
+                let NativePersistentThreadOwnerExitState::Engine { phase: NativePersistentThreadOwnerEnginePhase::RetainedTerminal, engine } = &owner.state else {
+                    panic!("the retained cell must retain its original source engine after prefix unwind");
+                };
+                assert_eq!(engine.allocation_theap(), Some(source_identity));
+                // No collection or client release follows the interrupted
+                // prefix. The exact source owner remains permanently pinned.
+                Err::<(), ()>(())
+            });
+            assert!(matches!(observed, Err(PersistentCompilerTlsOwnerTeardownError::Owner(()))));
+            let _retained_client = block;
+            core::mem::forget(cell);
         });
     }
 
