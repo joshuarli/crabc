@@ -73,7 +73,7 @@ const RETAINED: u8 = 3;
 const SOURCE_ATTACHED: u8 = 4;
 const TERMINAL_CLOSED: u8 = 5;
 
-/// How this source-startup call owns an optional source VM policy.
+/// How startup carries the one optional policy input to final binding.
 ///
 /// The production path must execute the pinned Unix process-memory policy
 /// before it publishes any heap, metadata, or PageMap state. Ordinary
@@ -82,10 +82,10 @@ const TERMINAL_CLOSED: u8 = 5;
 /// exercises this transition runs its `ApplyProcessMemoryPolicy` branch only
 /// in a dedicated child process. Keeping the cases typed here prevents a test
 /// helper from silently claiming it performed a process-wide policy change.
-enum VmPolicyStartup {
+enum VmPolicyStartup<'policy> {
     None,
-    RetainOnly(VmPolicy),
-    ApplyProcessMemoryPolicy(VmPolicy),
+    RetainOnly(&'policy mut Option<VmPolicy>),
+    ApplyProcessMemoryPolicy(&'policy mut Option<VmPolicy>),
     // The only selected x86 raw-source construction joins the policy and
     // mandatory diagnostic inputs in one variant; no caller can represent a
     // VM-backed selected diagnostic owner without its process policy.
@@ -93,6 +93,15 @@ enum VmPolicyStartup {
     // `_mi_options_init`, so it carries no separately resolved image.
     #[cfg(target_arch = "x86_64")]
     ApplyProcessMemoryPolicyWithDiagnostics(ProcessDiagnosticInputs, ProcessStartEntry),
+}
+
+/// The policy input after source options have finished and before the
+/// process slot is initialized. Explicit images stay in their caller's
+/// offered slot; source descriptors construct only at the final destination.
+enum VmPolicyInitialization<'policy> {
+    Offered(&'policy mut Option<VmPolicy>),
+    #[cfg(target_arch = "x86_64")]
+    ProcessOptions(&'static OutputOwner, Option<SourceErrnoStore>),
 }
 
 /// Which pinned `src/init.c` entry reached the one `mi_process_init` body.
@@ -456,13 +465,13 @@ impl ProcessMainInitializationStorage {
         config: MemoryConfig,
         options: VmOptions,
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
-        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        let mut policy = Some(VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?);
         // SAFETY: the caller upholds the same process-static lifecycle
         // requirements as `initialize`; `policy` is moved into this storage.
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
+                VmPolicyStartup::ApplyProcessMemoryPolicy(&mut policy),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -498,15 +507,15 @@ impl ProcessMainInitializationStorage {
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
         // SAFETY: forwarded from this process-owner boundary; `VmPolicy`
         // retains the reader only beside the same permanent process policy.
-        let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
-            .map_err(ProcessMainInitError::VmPolicy)?;
+        let mut policy = Some(unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
+            .map_err(ProcessMainInitError::VmPolicy)?);
         // SAFETY: the caller upholds the same process-static lifecycle
         // requirements as `initialize_with_vm_options`; `policy` is moved
         // into this storage before any source root becomes visible.
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
+                VmPolicyStartup::ApplyProcessMemoryPolicy(&mut policy),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -614,12 +623,12 @@ impl ProcessMainInitializationStorage {
         metadata: core::pin::Pin<&'static MetaAllocator>,
         page_map_storage: &'static ProcessPageMapStorage,
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
-        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        let mut policy = Some(VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?);
         // SAFETY: forwarded to the shared one-time source transition.
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                VmPolicyStartup::RetainOnly(policy),
+                VmPolicyStartup::RetainOnly(&mut policy),
                 main_static,
                 subprocess,
                 metadata,
@@ -649,13 +658,13 @@ impl ProcessMainInitializationStorage {
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
         // SAFETY: the caller retains the initialized output table and its
         // callback for every policy read and warning in this process.
-        let policy = unsafe { VmPolicy::from_process_options(output) };
+        let mut policy = Some(unsafe { VmPolicy::from_process_options(output) });
         // SAFETY: forwarded process-static owners satisfy the same isolated
         // source transition as the image-policy test constructor above.
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                VmPolicyStartup::RetainOnly(policy),
+                VmPolicyStartup::RetainOnly(&mut policy),
                 main_static,
                 subprocess,
                 metadata,
@@ -676,9 +685,9 @@ impl ProcessMainInitializationStorage {
         metadata: core::pin::Pin<&'static MetaAllocator>, page_map_storage: &'static ProcessPageMapStorage,
         diagnostics: Option<&'static OutputOwner>,
     ) -> Result<(ProcessMainThread, ProcessMainStartup), ProcessMainInitError> {
-        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        let mut policy = Some(VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?);
         let (owner, mut startup) = unsafe {
-            self.prepare_with_components_after_claim(config, VmPolicyStartup::RetainOnly(policy),
+            self.prepare_with_components_after_claim(config, VmPolicyStartup::RetainOnly(&mut policy),
                 main_static, subprocess, metadata, page_map_storage, || {})
         }?;
         if let Some(output) = diagnostics {
@@ -709,13 +718,13 @@ impl ProcessMainInitializationStorage {
         metadata: core::pin::Pin<&'static MetaAllocator>,
         page_map_storage: &'static ProcessPageMapStorage,
     ) -> Result<ProcessMainThread, ProcessMainInitError> {
-        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        let mut policy = Some(VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?);
         // SAFETY: the caller has isolated the process-local kernel transition
         // and retains every supplied final source owner.
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
+                VmPolicyStartup::ApplyProcessMemoryPolicy(&mut policy),
                 main_static,
                 subprocess,
                 metadata,
@@ -789,7 +798,7 @@ impl ProcessMainInitializationStorage {
     unsafe fn initialize_with_components_after_claim<F, G>(
         &'static self,
         mut config: MemoryConfig,
-        vm_policy: VmPolicyStartup,
+        vm_policy: VmPolicyStartup<'_>,
         main_static: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
         metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -812,7 +821,7 @@ impl ProcessMainInitializationStorage {
     unsafe fn initialize_with_components_at_attachment<F, H, G>(
         &'static self,
         mut config: MemoryConfig,
-        vm_policy: VmPolicyStartup,
+        vm_policy: VmPolicyStartup<'_>,
         main_static: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
         metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -839,7 +848,7 @@ impl ProcessMainInitializationStorage {
     unsafe fn prepare_with_components_after_claim<F>(
         &'static self,
         mut config: MemoryConfig,
-        vm_policy: VmPolicyStartup,
+        vm_policy: VmPolicyStartup<'_>,
         main_static: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
         metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -918,11 +927,11 @@ impl ProcessMainInitializationStorage {
                     None, false, ProcessStartupDiagnostics::Unconnected, ProcessStartEntry::RuntimeStartup,
                 ),
                 VmPolicyStartup::RetainOnly(policy) => (
-                    Some(policy), false, ProcessStartupDiagnostics::Unconnected,
+                    Some(VmPolicyInitialization::Offered(policy)), false, ProcessStartupDiagnostics::Unconnected,
                     ProcessStartEntry::RuntimeStartup,
                 ),
                 VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (
-                    Some(policy), true, ProcessStartupDiagnostics::Unconnected,
+                    Some(VmPolicyInitialization::Offered(policy)), true, ProcessStartupDiagnostics::Unconnected,
                     ProcessStartEntry::RuntimeStartup,
                 ),
                 VmPolicyStartup::ApplyProcessMemoryPolicyWithDiagnostics(inputs, entry) => {
@@ -936,17 +945,16 @@ impl ProcessMainInitializationStorage {
                     // SAFETY: `_mi_options_init` just installed this process
                     // table, and the owner lives in this process-static slot.
                     // Every VM read point is a source `mi_option_get`.
-                    let policy = unsafe { VmPolicy::from_process_options(output) }
-                        .with_source_errno_store(source_errno_store);
-                    (Some(policy), true, ProcessStartupDiagnostics::Selected(output), entry)
+                    (Some(VmPolicyInitialization::ProcessOptions(output, source_errno_store)),
+                        true, ProcessStartupDiagnostics::Selected(output), entry)
                 }
             }
         };
         #[cfg(target_arch = "aarch64")]
         let (policy, apply_process_memory_policy) = match vm_policy {
             VmPolicyStartup::None => (None, false),
-            VmPolicyStartup::RetainOnly(policy) => (Some(policy), false),
-            VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (Some(policy), true),
+            VmPolicyStartup::RetainOnly(policy) => (Some(VmPolicyInitialization::Offered(policy)), false),
+            VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (Some(VmPolicyInitialization::Offered(policy)), true),
         };
         // Source init.c initializes its statistics clock after options and
         // before `_mi_os_init`, including process memory-policy operations.
@@ -965,7 +973,7 @@ impl ProcessMainInitializationStorage {
             // terminal and deliberately leaves this exact policy image
             // retained with its process.
             match unsafe {
-                self.retain_vm_process(
+                self.retain_startup_vm_process(
                     policy,
                     subprocess,
                     &mut config,
@@ -1379,6 +1387,35 @@ impl ProcessMainInitializationStorage {
         finish_preloading: bool,
     ) -> Result<VmProcess<'static>, ProcessMainInitError> {
         let policy = unsafe { self.bind_vm_policy(policy) }?;
+        self.initialize_bound_vm_process(policy, subprocess, config,
+            apply_process_memory_policy, finish_preloading)
+    }
+
+    /// Binds the selected source input under the caller's exclusive once
+    /// claim, then runs the unchanged preloading and process-policy effects.
+    unsafe fn retain_startup_vm_process(
+        &'static self, initialization: VmPolicyInitialization<'_>,
+        subprocess: &'static MainSubprocess, config: &mut MemoryConfig,
+        apply_process_memory_policy: bool, finish_preloading: bool,
+    ) -> Result<VmProcess<'static>, ProcessMainInitError> {
+        // SAFETY: the caller owns the source once claim and final slot; each
+        // input retains its exact policy image or initialized descriptor owner.
+        let policy = match initialization {
+            VmPolicyInitialization::Offered(offered) => unsafe { self.bind_offered_vm_policy(offered) }?,
+            #[cfg(target_arch = "x86_64")]
+            VmPolicyInitialization::ProcessOptions(output, errno_store) => unsafe {
+                self.bind_process_options_vm_policy(output, errno_store)
+            }?,
+        };
+        self.initialize_bound_vm_process(policy, subprocess, config,
+            apply_process_memory_policy, finish_preloading)
+    }
+
+    fn initialize_bound_vm_process(
+        &'static self, policy: &'static VmPolicy,
+        subprocess: &'static MainSubprocess, config: &mut MemoryConfig,
+        apply_process_memory_policy: bool, finish_preloading: bool,
+    ) -> Result<VmProcess<'static>, ProcessMainInitError> {
         if finish_preloading {
             policy.finish_preloading();
         }
@@ -1581,6 +1618,41 @@ impl ProcessMainInitializationStorage {
         self.initializing_thread.store(thread.get(), Ordering::Relaxed);
         self.state.store(SOURCE_ATTACHED, Ordering::Release);
         Ok(ProcessMainBackingBinding::new(self, process, page_map))
+    }
+
+    /// Consumes the explicit caller's offered image only at final binding.
+    /// The shared startup dispatcher carries this slot borrow without moving
+    /// the policy through each initialization envelope.
+    unsafe fn bind_offered_vm_policy(
+        &'static self, offered: &mut Option<VmPolicy>,
+    ) -> Result<&'static VmPolicy, ProcessMainInitError> {
+        let policy = offered.take().expect("explicit startup offers one policy image");
+        // SAFETY: the same exclusive source once claim owns final binding.
+        unsafe { self.bind_vm_policy(policy) }
+    }
+
+    /// Constructs the descriptor-backed policy only in its final process slot.
+    /// Refusal precedes all writes; the pointer is published only after every
+    /// field is initialized, before any process-policy callback can use it.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn bind_process_options_vm_policy(
+        &'static self, output: &'static OutputOwner,
+        errno_store: Option<SourceErrnoStore>,
+    ) -> Result<&'static VmPolicy, ProcessMainInitError> {
+        if !self.vm_policy_ptr.load(Ordering::Acquire).is_null() {
+            return Err(ProcessMainInitError::VmPolicyAlreadyBound);
+        }
+        let pointer = self.vm_policy.get().cast::<VmPolicy>();
+        // SAFETY: the source once claimant exclusively owns this uninitialized
+        // process-lifetime slot; source-option initialization already finished.
+        // No callback or policy reference spans its infallible field writes.
+        unsafe { VmPolicy::initialize_from_process_options_at(
+            NonNull::new_unchecked(pointer), output, errno_store,
+        ) };
+        self.vm_policy_ptr.store(pointer, Ordering::Release);
+        // SAFETY: Release publication follows complete initialization and
+        // the never-replaced final slot remains alive for the process lifetime.
+        Ok(unsafe { &*pointer })
     }
 
     /// Moves one resolved policy into its permanent process slot and returns
@@ -3141,6 +3213,48 @@ mod tests {
         unsafe { repeated.post_init(); }
         assert_eq!(FIRST_MATCHES.load(Ordering::Relaxed), 1);
         assert_eq!(SECOND_CALLS.load(Ordering::Relaxed), 0);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_descriptor_policy_binding_refuses_overwrite_and_keeps_final_owner() {
+        use crate::config::SourceOption;
+        unsafe fn absent_environment() -> *const *const core::ffi::c_char { core::ptr::null() }
+        unsafe extern "C" {
+            static mut stderr: *mut core::ffi::c_void;
+            fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> core::ffi::c_int;
+        }
+        unsafe extern "C" fn primitive(message: *const core::ffi::c_char) {
+            // SAFETY: the native test runtime retains musl's permanent stderr
+            // and this source callback supplies a valid terminated fragment.
+            unsafe { let _ = fputs(message, stderr); }
+        }
+        let first = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(primitive)));
+        let second = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(primitive)));
+        // SAFETY: these leaked fixture owners have exclusive descriptor setup
+        // and retain the actual process FILE primitive through every read.
+        unsafe {
+            first.initialize_source_options(absent_environment);
+            second.initialize_source_options(absent_environment);
+            first.option_set(SourceOption::PurgeDelay, 17).unwrap();
+            second.option_set(SourceOption::PurgeDelay, 29).unwrap();
+        }
+        let storage = ProcessMainInitializationStorage::test_static_owner();
+        let identity = OnceThreadId::new(current_thread_identity().unwrap().get()).unwrap();
+        let completion = storage.process_once.enter(identity).unwrap().unwrap();
+        storage.state.store(INITIALIZING, Ordering::Release);
+        // SAFETY: the isolated source once winner exclusively owns the final
+        // policy slot, and both source tables completed their option setup.
+        let policy = unsafe { storage.bind_process_options_vm_policy(first, None) }.unwrap();
+        assert_eq!(core::ptr::from_ref(policy), storage.vm_policy.get().cast::<VmPolicy>().cast_const());
+        assert_eq!(policy.purge_delay_milliseconds(), 17);
+        assert!(matches!(unsafe { storage.bind_process_options_vm_policy(second, None) },
+            Err(ProcessMainInitError::VmPolicyAlreadyBound)));
+        assert_eq!(policy.purge_delay_milliseconds(), 17,
+            "refusal preserves the original process descriptor owner");
+        unsafe { first.option_set(SourceOption::PurgeDelay, 43) }.unwrap();
+        assert_eq!(policy.purge_delay_milliseconds(), 43);
+        storage.publish_terminal_state_and_release(completion, RETAINED);
     }
 
     #[cfg(target_arch = "x86_64")]

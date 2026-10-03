@@ -1145,6 +1145,51 @@ impl VmPolicy {
         policy
     }
 
+    /// Initializes the selected process policy directly in its permanent slot.
+    ///
+    /// # Safety
+    /// `destination` is aligned, writable, uninitialized storage for one
+    /// policy, exclusively owned by the process initializer. No alias or
+    /// publication may observe it until this call returns. `output` has
+    /// completed source-option initialization and remains the process's exact
+    /// descriptor owner for the policy lifetime. The optional errno writer
+    /// satisfies its process-lifetime and current-thread calling obligations.
+    /// All writes are infallible and invoke no callback.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn initialize_from_process_options_at(
+        destination: NonNull<Self>,
+        output: &'static OutputOwner,
+        source_errno_store: Option<crate::process_init::SourceErrnoStore>,
+    ) {
+        static UNINITIALIZED_OPTIONS: VmOptions = VmOptions::uninitialized();
+        let pointer = destination.as_ptr();
+        // SAFETY: the caller owns the complete uninitialized destination.
+        // The immutable descriptor template contains no live owner or reader;
+        // copying its typed image preserves every source default and state.
+        unsafe {
+            core::ptr::addr_of_mut!((*pointer).process_options).write(Some(output));
+            core::ptr::addr_of_mut!((*pointer).source_errno_store).write(source_errno_store);
+            core::ptr::copy_nonoverlapping(
+                core::ptr::addr_of!(UNINITIALIZED_OPTIONS),
+                UnsafeCell::raw_get(core::ptr::addr_of_mut!((*pointer).options)),
+                1,
+            );
+            core::ptr::addr_of_mut!((*pointer).options_resolved).write(AtomicBool::new(false));
+            core::ptr::addr_of_mut!((*pointer).options_access).write(AtomicBool::new(false));
+            core::ptr::addr_of_mut!((*pointer).option_environment).write(None);
+            core::ptr::addr_of_mut!((*pointer).preloading).write(AtomicBool::new(true));
+            core::ptr::addr_of_mut!((*pointer).aligned_hint_base).write(AtomicUsize::new(0));
+            #[cfg(test)]
+            core::ptr::addr_of_mut!((*pointer).aligned_hint_test_phase).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*pointer).huge_hint_start).write(AtomicUsize::new(0));
+            #[cfg(test)]
+            core::ptr::addr_of_mut!((*pointer).large_page_retry_test_phase).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*pointer).large_page_try_ok).write(AtomicUsize::new(0));
+            core::ptr::addr_of_mut!((*pointer).huge_one_gib_unavailable).write(AtomicBool::new(false));
+            core::ptr::addr_of_mut!((*pointer).numa_node_count).write(AtomicUsize::new(0));
+        }
+    }
+
     /// Retains the embedding's current-thread errno writer for guarded
     /// protection failures; ordinary VM operations leave it unused.
     #[cfg(target_arch = "x86_64")]
@@ -9953,6 +9998,54 @@ mod tests {
             0,
             "the current-node condition maps values above INT_MAX to zero",
         );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn in_place_process_policy_keeps_live_descriptors_and_current_thread_errno() {
+        unsafe extern "C" { fn __errno_location() -> *mut core::ffi::c_int; }
+        unsafe fn store_errno(value: core::ffi::c_int) {
+            // SAFETY: the native test runtime installed this thread's musl TLS.
+            unsafe { *__errno_location() = value };
+        }
+        unsafe fn absent_environment() -> *const *const core::ffi::c_char {
+            core::ptr::null()
+        }
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(m2_fault_diagnostic_musl_stderr)));
+        // SAFETY: the leaked owner has exclusive source startup and uses the
+        // process-lifetime FILE transport; the reader retains no mutable data.
+        unsafe { output.initialize_source_options(absent_environment) };
+        let mut storage = core::mem::MaybeUninit::<VmPolicy>::uninit();
+        let destination = NonNull::from(&mut storage).cast::<VmPolicy>();
+        // SAFETY: this current-thread fixture exclusively owns uninitialized
+        // final storage. The output and current-thread errno writer stay live.
+        unsafe { VmPolicy::initialize_from_process_options_at(
+            destination, output, Some(crate::process_init::SourceErrnoStore::new(store_errno)),
+        ) };
+        // SAFETY: the infallible initializer completed every field at this
+        // exact address, retained for all observations and dropped once below.
+        let policy = unsafe { storage.assume_init_ref() };
+        assert_eq!(core::ptr::from_ref(policy), destination.as_ptr().cast_const());
+        assert!(policy.is_preloading());
+        assert_eq!(policy.test_numa_node_count_cache(), 0);
+        assert_eq!(policy.test_aligned_hint_cursor(), 0);
+        assert_eq!(policy.purge_delay_milliseconds(), 1_000);
+        // SAFETY: no concurrent descriptor mutation or diagnostic delivery
+        // exists in this isolated output owner.
+        unsafe { output.option_set(SourceOption::PurgeDelay, 17) }.unwrap();
+        assert_eq!(policy.purge_delay_milliseconds(), 17,
+            "the final policy reads the same retained descriptor owner");
+        policy.finish_preloading();
+        assert!(!policy.is_preloading());
+        // SAFETY: immediate current-thread TLS accesses never retain a slot.
+        let previous_errno = unsafe { *__errno_location() };
+        policy.source_errno_store.unwrap().store(Errno::NOMEM);
+        assert_eq!(unsafe { *__errno_location() }, Errno::NOMEM.raw());
+        unsafe { *__errno_location() = previous_errno };
+        // SAFETY: every policy projection ended, and this fixture initialized
+        // the storage exactly once without transferring its ownership.
+        unsafe { storage.assume_init_drop() };
     }
 
     #[test]
