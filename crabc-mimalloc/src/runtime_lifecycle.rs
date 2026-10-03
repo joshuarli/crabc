@@ -12779,7 +12779,7 @@ enum NativeAllocationShape {
 /// fixed alignment and offset values need no runtime shape transfer. The
 /// complete fallback stays out of line after this local attempt. Only the
 /// ordinary allocation entry expands the eight-word local head; replacement
-/// and aligned allocations use the common out-of-line local path.
+/// and aligned allocations use the common direct-head and queue path.
 #[inline(always)]
 fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
     request: usize,
@@ -12791,9 +12791,11 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
         return NativePageAllocationResult::Unavailable;
     };
     // The local fast path's gate excludes child-subprocess members. Its
-    // aligned branch accepts only an offset-zero, power-of-two alignment no
-    // larger than the request, so that branch may precede the aligned
-    // precheck below. Ordinary requests may use regular queue heads too.
+    // aligned branch accepts only an offset-zero, power-of-two alignment.
+    // Larger alignments use a bounded source overallocated ordinary base;
+    // its overflow and class checks precede any page mutation. This branch
+    // may therefore precede the aligned precheck below. Ordinary requests
+    // may use regular queue heads too.
     #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
     if let Some(owner) = native_local_fast_owner() {
         let alignment = match shape {
