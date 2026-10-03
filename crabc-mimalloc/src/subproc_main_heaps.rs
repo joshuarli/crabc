@@ -2061,7 +2061,9 @@ fn reclaim_on_free(
 ///
 /// # Safety
 /// `heap` is a live Heap from [`native_heap_new`] or the process main Heap;
-/// after a destroy no block of it is used again.
+/// after a destroy no block of it is used again. Any release failure can
+/// follow irreversible list, page or preparation mutations: retain all
+/// backing, never use this Heap or repeat its complete release transition.
 pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> Result<HeapReleaseOutcome, HeapReleaseError> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter().ok_or(HeapReleaseError::InvalidChild)?;
     let thread = current_main_thread().ok_or(HeapReleaseError::InvalidChild)?;
@@ -2116,9 +2118,15 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // image, each record and the image back through the native free.
     // SAFETY: the live Heap; each record is a live main-Heap block.
     #[cfg(target_arch = "x86_64")]
-    let freed = unsafe { heap.as_ref().take_non_main_arena_pages(|record| {
+    let freed = unsafe { Heap::take_non_main_arena_pages_at(heap, |record| {
         // SAFETY: the exact live record block, freed once.
-        unsafe { free_subproc_safe_with_progress(record) }
+        unsafe { free_subproc_safe_with_progress(&_operation, record) }.unwrap_or_else(|_| {
+            // Neither ingress error consumes; the failed full Heap release
+            // retains this live slot terminally without reading its payload.
+            crate::single_thread::LocalClientFreeProgress::RefusedBeforeConsumption(
+                crate::single_thread::FreeError::Lifecycle,
+            )
+        })
     }) };
     #[cfg(not(target_arch = "x86_64"))]
     // SAFETY: preserve this target's terminal legacy metadata-free contract.
@@ -2131,7 +2139,11 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     // SAFETY: forwarded; the Heap has no Theap or page left.
     let image = unsafe { crate::types::heap_registry::lifecycle::unlink_non_main_heap(heap, main_heap, main_subprocess.identity()) }?;
     // SAFETY: the exact live image block; nothing names it any longer.
-    if unsafe { free_subproc_safe(image.cast()) } {
+    #[cfg(target_arch = "x86_64")]
+    let image_freed = unsafe { free_subproc_safe(&_operation, image.cast()) };
+    #[cfg(not(target_arch = "x86_64"))]
+    let image_freed = unsafe { free_subproc_safe(image.cast()) };
+    if image_freed {
         Ok(HeapReleaseOutcome::Released)
     } else {
         Err(HeapReleaseError::Retained)
@@ -2199,9 +2211,14 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
         }
         // `mi_heap_free`: the records stay live main-Heap blocks.
         // SAFETY: the live Heap; its records are dropped, not freed.
-        if !unsafe { heap.as_ref().take_non_main_arena_pages(|_| {
+        #[cfg(target_arch = "x86_64")]
+        let records_transferred = unsafe { heap.as_ref().take_non_main_arena_pages(|_| {
             crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
-        }) } {
+        }) };
+        #[cfg(not(target_arch = "x86_64"))]
+        // SAFETY: terminal parent teardown retains all record backing.
+        let records_transferred = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|_| true) };
+        if !records_transferred {
             return false;
         }
         // SAFETY: the Heap has no Theap or page left; its image stays a
@@ -2384,9 +2401,33 @@ pub(crate) fn native_thread_done() -> bool {
 /// abandoned page is not reclaimed or released here.
 ///
 /// # Safety
-/// `block` is an exact live block, freed once.
+/// `block` is an exact live block, freed once. The caller retains native
+/// process admission, its PageMap and the issuing backing until completion,
+/// excluding concurrent process teardown and overlapping local projections.
+/// No owner or whole Heap projection spans preparation callbacks. A full
+/// Heap release is terminal on any error; preparation can destroy payload
+/// validity without consuming the allocation, and cannot be repeated.
 #[cfg(target_arch = "x86_64")]
-unsafe fn free_subproc_safe_with_progress(block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
+unsafe fn free_subproc_safe_with_progress(
+    operation: &crate::runtime_lifecycle::NativeSubprocessOperation,
+    block: NonNull<u8>,
+) -> Result<crate::single_thread::LocalClientFreeProgress, crate::runtime_lifecycle::NativeFreePreparationError> {
+    // SAFETY: exact live administration custody is retained with admission;
+    // no owner or whole Heap projection crosses ingress warning callbacks.
+    unsafe { operation.prepare_client_for_free(block) }?;
+    // SAFETY: successful source preparation authorizes this precise free.
+    Ok(unsafe { free_prepared_subproc_safe_with_progress(block) })
+}
+
+/// Source local or remote free after protection and padding preparation.
+///
+/// # Safety
+/// The caller retains native operation admission, this exact prepared live
+/// client, its PageMap and issuing backing. Preparation is performed once;
+/// a refused prepared client has release authority but no image access. No
+/// conflicting local engine projection spans this operation.
+#[cfg(target_arch = "x86_64")]
+pub(crate) unsafe fn free_prepared_subproc_safe_with_progress(block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
     use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
     let Some(binding) = binding() else { return Progress::RefusedBeforeConsumption(FreeError::Lifecycle) };
     // SAFETY: forwarded exact-live-block contract retains the PageMap observation.
@@ -2397,12 +2438,20 @@ unsafe fn free_subproc_safe_with_progress(block: NonNull<u8>) -> crate::single_t
     if local {
         #[cfg(target_arch = "x86_64")]
         {
-            let Some(thread) = current_main_thread() else {
-                return Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
-            };
-            // SAFETY: this exact current allocation retains the immutable issuer.
+            // SAFETY: this exact current allocation retains its immutable
+            // issuer and the caller retains that issuer's parent Heap lifetime.
             let Some(selected) = NonNull::new(unsafe { crate::types::Page::theap_at(allocation.page()) }) else {
                 return Progress::RefusedBeforeConsumption(FreeError::ForeignPage);
+            };
+            if crate::subproc::lifecycle::current_thread_is_child_member() {
+                // SAFETY: the admitted current child membership and retained
+                // parent Heap supply the original issuer's lifetime; the
+                // bridge checks its actual TLD/Heap before capturing an engine.
+                return unsafe { crate::subproc::lifecycle::native_child_theap_free_captured_with_progress(selected, allocation) }
+                    .unwrap_or(Progress::RefusedBeforeConsumption(FreeError::Lifecycle));
+            }
+            let Some(thread) = current_main_thread() else {
+                return Progress::RefusedBeforeConsumption(FreeError::Lifecycle);
             };
             if selected == thread.theap {
                 // SAFETY: the admitted process-main issuer owns the captured
@@ -2434,9 +2483,9 @@ unsafe fn free_subproc_safe_with_progress(block: NonNull<u8>) -> crate::single_t
 /// `block` is an exact live process-main administration allocation. A false
 /// result may follow consumption and is terminal for full Heap release.
 #[cfg(target_arch = "x86_64")]
-unsafe fn free_subproc_safe(block: NonNull<u8>) -> bool {
-    matches!(unsafe { free_subproc_safe_with_progress(block) },
-        crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
+unsafe fn free_subproc_safe(operation: &crate::runtime_lifecycle::NativeSubprocessOperation, block: NonNull<u8>) -> bool {
+    matches!(unsafe { free_subproc_safe_with_progress(operation, block) },
+        Ok(crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))))
 }
 
 /// Historical metadata-free route with terminal, unclassified local errors.

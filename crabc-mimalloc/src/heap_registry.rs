@@ -1001,17 +1001,43 @@ impl Heap {
     /// subprocess's retained bulk teardown owner, must not
     /// reenter this Heap's arena-record lock, and must not access or retry a
     /// consumed record. A refused record remains live through slot restoration.
+    /// The callback cannot invoke mutations conflicting with this borrowed
+    /// Heap; source warning callbacks use the raw field-only entry instead.
+    #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn take_non_main_arena_pages(
         &self,
+        free: impl FnMut(core::ptr::NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
+    ) -> bool {
+        // SAFETY: this retained Heap supplies the exact field addresses.
+        unsafe { Self::take_non_main_arena_pages_at(core::ptr::NonNull::from(self), free) }
+    }
+
+    /// Releases records using only their locked slot fields. Source warning
+    /// callbacks may run with this mutex held, but no whole Heap projection
+    /// spans them. A full Heap release that prepared a record and then failed
+    /// is terminal: a restored live slot does not restore initialized bytes.
+    ///
+    /// # Safety
+    /// `heap` and its record fields remain live through all callbacks. Every
+    /// installed record is an exact live client; the callback reports actual
+    /// consumption, never reenters this lock and never retries a consumed
+    /// client. A retained prepared client may only use its prepared free route.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn take_non_main_arena_pages_at(
+        heap: core::ptr::NonNull<Self>,
         mut free: impl FnMut(core::ptr::NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
     ) -> bool {
         use crate::single_thread::LocalClientFreeProgress;
-        if self.is_subprocess_main() {
-            return false;
-        }
-        let Ok(guard) = self.arena_pages_lock.lock() else { return false };
+        // SAFETY: the retained immutable classification is read before callbacks.
+        if unsafe { heap.as_ref() }.is_subprocess_main() { return false; }
+        let pointer = heap.as_ptr();
+        // SAFETY: only these retained field projections span callbacks. The
+        // mutex excludes record mutation and callback reentry into these slots.
+        let lock = unsafe { &*core::ptr::addr_of!((*pointer).arena_pages_lock) };
+        let slots = unsafe { &*core::ptr::addr_of!((*pointer).arena_pages) };
+        let Ok(guard) = lock.lock() else { return false };
         let mut freed = true;
-        for slot in &self.arena_pages {
+        for slot in slots {
             let pages = slot.load(Ordering::Relaxed);
             if let Some(pages) = core::ptr::NonNull::new(pages) {
                 slot.store(core::ptr::null_mut(), Ordering::Relaxed);
@@ -1454,6 +1480,7 @@ mod tests {
     use core::ptr::NonNull;
     use std::boxed::Box;
 
+    #[cfg(target_arch = "x86_64")]
     fn arena_record_fixture() -> (
         Box<Heap>,
         core::pin::Pin<&'static crate::meta::MetaAllocator>,
@@ -1489,6 +1516,7 @@ mod tests {
         (heap, metadata, allocation, layout, subprocess)
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn refused_arena_record_release_keeps_its_original_live_slot() {
         use crate::meta::{MetaRelease, MetaReleaseFailure};
@@ -1522,6 +1550,7 @@ mod tests {
         assert_eq!(heap.arena_pages_slot(0), None);
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn source_arena_record_release_visits_sparse_slots_in_arena_order() {
         use crate::meta::MetaRelease;
@@ -1556,6 +1585,7 @@ mod tests {
         assert!(owners.iter().all(|(slot, _, owner)| owner.is_none() && heap.arena_pages_slot(*slot).is_none()));
     }
 
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn consumed_arena_record_completion_failure_never_restores_a_freed_slot() {
         use crate::meta::MetaRelease;

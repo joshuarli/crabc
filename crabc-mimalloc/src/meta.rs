@@ -1872,11 +1872,23 @@ pub(crate) enum ChildHeapStorage<'heap> {
 }
 
 impl ChildHeapStorage<'_> {
+    /// Original address for identity comparisons only. It does not authorize
+    /// reading image bytes after preparation, consumption or rejection.
     #[inline]
     pub(crate) const fn pointer_for_identity(&self) -> NonNull<Heap> {
         match self {
             Self::Parent(allocation) => allocation.pointer_for_identity(),
             Self::Native(image) => image.pointer,
+        }
+    }
+
+    /// Returns projection authority only while native bytes remain a live
+    /// Heap image. Diagnostic identity is separately available after release.
+    #[cfg(target_arch = "x86_64")]
+    fn pointer_for_live_image(&self) -> Option<NonNull<Heap>> {
+        match self {
+            Self::Native(image) if image.state != NativeChildHeapImageState::Live => None,
+            _ => Some(self.pointer_for_identity()),
         }
     }
 
@@ -1924,12 +1936,28 @@ pub(crate) enum ChildHeapRelease<'a, 'heap> {
     Terminal,
 }
 
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NativeChildHeapImageState {
+    Live,
+    // Source free preparation can overwrite the payload and padding. The
+    // exact live allocation remains releasable, but is no longer a Heap image.
+    Prepared,
+    // This token keeps only the original diagnostic identity after consumed
+    // failure or padding rejection. The issuing allocator retains unfinished
+    // backing; bytes may be reused/unmapped after consumption. No image
+    // projection or release retry is permitted.
+    Terminal,
+}
+
 /// One zeroed Heap image allocated through the native runtime.
 /// The token owns the allocation; dropping it frees nothing.
 #[must_use = "a child Heap image must be freed after child Heap teardown"]
 pub(crate) struct NativeChildHeapImage {
     pointer: NonNull<Heap>,
     initialized: bool,
+    #[cfg(target_arch = "x86_64")]
+    state: NativeChildHeapImageState,
 }
 
 impl NativeChildHeapImage {
@@ -1962,7 +1990,7 @@ impl NativeChildHeapImage {
                 let _ = unsafe { crate::runtime_lifecycle::native_free(pointer) };
                 return None;
             }
-            Some(Self { pointer: pointer.cast(), initialized: false })
+            Some(Self { pointer: pointer.cast(), initialized: false, state: NativeChildHeapImageState::Live })
         }
         #[cfg(not(target_arch = "x86_64"))]
         match crate::runtime_lifecycle::native_allocate_aligned(
@@ -1981,6 +2009,8 @@ impl NativeChildHeapImage {
     }
 
     fn initialize_empty_image(&mut self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if self.state != NativeChildHeapImageState::Live { return false; }
         if self.initialized || self.pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0 {
             return false;
         }
@@ -1995,25 +2025,106 @@ impl NativeChildHeapImage {
         &mut self,
         operation: impl for<'image> FnOnce(Pin<&'image mut Heap>) -> R,
     ) -> Option<R> {
+        #[cfg(target_arch = "x86_64")]
+        if self.state != NativeChildHeapImageState::Live { return None; }
         if !self.initialized { return None; }
         // SAFETY: the linear token retains this exact allocation, no mutable
         // projection escapes the HRTB closure, and its address is stable.
         Some(operation(unsafe { Pin::new_unchecked(&mut *self.pointer.as_ptr()) }))
     }
 
-    /// Frees the image through the native runtime (`_mi_free_subproc_safe`).
-    /// A refused free returns the token.
+    /// Frees the image with the source `_mi_free_subproc_safe` policy.
+    /// On x86 a pre-consumption refusal returns its exact live token. A
+    /// prepared refusal retains only release authority, without image access.
+    /// A consumed error returns terminal diagnostic custody, which permits no
+    /// image access or release retry. Padding rejection is also diagnostic
+    /// terminal custody without claiming consumption. Other targets keep their historical
+    /// unclassified native result and the outer caller's terminal policy.
     ///
     /// # Safety
     /// Child Heap teardown is complete: the Heap is off every list, no Theap
-    /// or page names it, and no projection of it remains.
+    /// or page names it, and no projection of it remains. A live token owns
+    /// the exact current allocation. Terminal custody is admitted only to
+    /// refuse before any pointer is passed to the release primitive.
     pub(crate) unsafe fn free(self) -> Result<(), Self> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mut image = self;
+            if image.state == NativeChildHeapImageState::Terminal { return Err(image); }
+            let Some(operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+                return Err(image);
+            };
+            // SAFETY: this exact live token has completed teardown. No
+            // image projection spans source warning or padding callbacks.
+            if unsafe { image.prepare_for_free(&operation) }.is_err() { return Err(image); }
+            // SAFETY: retained admission and the exact prepared capability
+            // authorize release. A retry does not repeat padding preparation.
+            return unsafe { image.free_with_progress(|pointer| {
+                unsafe { crate::subproc::main_heaps::free_prepared_subproc_safe_with_progress(pointer) }
+            }) };
+        }
+        #[cfg(not(target_arch = "x86_64"))]
         // SAFETY: the token owns this exact live native allocation.
         match unsafe { crate::runtime_lifecycle::native_free(self.pointer.cast()) } {
             crate::runtime_lifecycle::NativePageFreeResult::Freed => Ok(()),
             _ => Err(self),
         }
     }
+
+    /// # Safety
+    /// The exact live or prepared allocation and its issuing owner remain
+    /// retained with `operation`; teardown is complete. No image projection
+    /// spans preparation callbacks, which cannot free this in-flight client.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn prepare_for_free(
+        &mut self,
+        operation: &crate::runtime_lifecycle::NativeSubprocessOperation,
+    ) -> Result<(), crate::runtime_lifecycle::NativeFreePreparationError> {
+        use crate::runtime_lifecycle::NativeFreePreparationError;
+        match self.state {
+            NativeChildHeapImageState::Terminal => Err(NativeFreePreparationError::Retained),
+            NativeChildHeapImageState::Prepared => Ok(()),
+            NativeChildHeapImageState::Live => {
+                // SAFETY: exact retained custody and admission are forwarded.
+                match unsafe { operation.prepare_client_for_free(self.pointer.cast()) } {
+                    Ok(()) => {
+                        self.state = NativeChildHeapImageState::Prepared;
+                        self.initialized = false;
+                        Ok(())
+                    }
+                    Err(NativeFreePreparationError::Retained) => Err(NativeFreePreparationError::Retained),
+                    #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+                    Err(NativeFreePreparationError::PaddingRejected) => {
+                        self.state = NativeChildHeapImageState::Terminal;
+                        self.initialized = false;
+                        Err(NativeFreePreparationError::PaddingRejected)
+                    }
+                }
+            }
+        }
+    }
+
+    /// # Safety
+    /// Live or prepared custody owns the exact current allocation and its
+    /// completed teardown. `release` reports actual consumption and retains backing on
+    /// error. Terminal custody cannot invoke `release` or access image bytes.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn free_with_progress(
+        mut self,
+        release: impl FnOnce(NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress,
+    ) -> Result<(), Self> {
+        use crate::single_thread::LocalClientFreeProgress;
+        if self.state == NativeChildHeapImageState::Terminal { return Err(self); }
+        match release(self.pointer.cast()) {
+            LocalClientFreeProgress::Consumed(Ok(())) => Ok(()),
+            LocalClientFreeProgress::RefusedBeforeConsumption(_) => Err(self),
+            LocalClientFreeProgress::Consumed(Err(_)) => {
+                self.state = NativeChildHeapImageState::Terminal;
+                Err(self)
+            }
+        }
+    }
+
 }
 
 /// A child context whose main Heap image is retained by the exact parent
@@ -3521,6 +3632,7 @@ impl ChildThreadOwner {
     /// live captured allocation. Its source Theap owns the allocation and
     /// belongs to this owner's TLD. No competing local free or page mutation
     /// may race this operation. A consumed client is never accessed or retried.
+    #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn free_local_heap_metadata_with_progress(
         this: *mut Self,
         child: *mut ChildMainHeapContextOwner<'_>,
@@ -3760,7 +3872,8 @@ pub(crate) enum ChildMainHeapReleaseError {
     ArenaDestroy(crate::arena::ArenaDestroyError),
     ArenaReleaseRetained,
     ParentHeap(crate::main_heap_page::ParentHeapAllocationReleaseError),
-    /// The native runtime refused to free a native child Heap image.
+    /// Native image release failed. The retained owner's stage distinguishes
+    /// an exact live refusal from terminal consumed or padding-rejected custody.
     NativeHeapFree,
 }
 
@@ -3852,11 +3965,15 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         self.stage
     }
 
-    /// The child main Heap image address while this owner retains it. Only
+    /// The child main Heap image address while its bytes remain initialized.
+    /// Prepared and terminal native custody provide no projection authority. Only
     /// field-level projections that source performs on another Heap's main
     /// Heap (its statistics) may use it.
     #[inline]
     pub(crate) fn main_heap_pointer(&self) -> Option<NonNull<Heap>> {
+        #[cfg(target_arch = "x86_64")]
+        return self.heap_storage.as_ref().and_then(ChildHeapStorage::pointer_for_live_image);
+        #[cfg(not(target_arch = "x86_64"))]
         self.heap_storage.as_ref().map(ChildHeapStorage::pointer_for_identity)
     }
 
@@ -5057,8 +5174,28 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
     }
 
+    fn retain_native_heap_release_failure(
+        heap_storage: &mut Option<ChildHeapStorage<'heap>>,
+        stage: &mut ChildMainHeapStage,
+        image: NativeChildHeapImage,
+    ) {
+        debug_assert!(heap_storage.is_none());
+        #[cfg(target_arch = "x86_64")]
+        if image.state == NativeChildHeapImageState::Terminal {
+            // Earlier Heap teardown stays complete, but a consumed or rejected
+            // image cannot continue child release or regain live capability.
+            *stage = ChildMainHeapStage::Terminal;
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = stage;
+        *heap_storage = Some(ChildHeapStorage::Native(image));
+    }
+
     /// [`Self::release_after_empty_heap_teardown`] with the free route that
-    /// matches this child's Heap storage.
+    /// matches this child's Heap storage. An exact live image refusal keeps
+    /// only the final storage-release step available; a prepared refusal is
+    /// release-only. Consumed failure or padding rejection is terminal.
+    /// Neither result restarts completed Heap teardown steps.
     ///
     /// # Safety
     /// As for [`Self::release_after_empty_heap_teardown`]. A `Parent` route
@@ -5120,7 +5257,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 (ChildHeapStorage::Native(image), ChildHeapRelease::Native) => match unsafe { image.free() } {
                     Ok(()) => {}
                     Err(image) => {
-                        self.heap_storage = Some(ChildHeapStorage::Native(image));
+                        Self::retain_native_heap_release_failure(&mut self.heap_storage, &mut self.stage, image);
                         return retained(self, ChildMainHeapReleaseStage::ParentHeap,
                             ChildMainHeapReleaseError::NativeHeapFree);
                     }
@@ -7427,6 +7564,144 @@ mod tests {
 
     use crate::os::{fault, PageSize};
     use crate::types::MemoryKind;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn refused_native_child_heap_image_retains_exact_live_custody_for_release() {
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::refused_native_child_heap_image_retains_exact_live_custody_for_release", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                let mut image = NativeChildHeapImage::allocate().unwrap();
+                assert!(image.initialize_empty_image());
+                let original = image.pointer;
+                let mut pending = crate::os::Mapping::map_for_allocator(config(), 4096, crate::os::MapAccess::Committed).unwrap();
+                let injection = fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                // SAFETY: the unpublished image is still live and exclusive.
+                // This actual cleanup refusal happens before image consumption.
+                let retained = match unsafe { image.free_with_progress(|_| {
+                    assert_eq!(pending.unmap(), Err(crabc_core::Errno::NOMEM));
+                    Progress::RefusedBeforeConsumption(FreeError::Lifecycle)
+                }) } {
+                    Err(image) => image,
+                    Ok(()) => panic!("a refusal retains the exact live image"),
+                };
+                assert_eq!(retained.state, NativeChildHeapImageState::Live);
+                assert_eq!(retained.pointer, original);
+                let mut storage = None;
+                let mut stage = ChildMainHeapStage::HeapListRemoved;
+                ChildMainHeapContextOwner::retain_native_heap_release_failure(&mut storage, &mut stage, retained);
+                assert_eq!(storage.as_ref().and_then(ChildHeapStorage::pointer_for_live_image), Some(original));
+                assert_eq!(stage, ChildMainHeapStage::HeapListRemoved,
+                    "a live refusal keeps only the remaining image release step available");
+                let Some(ChildHeapStorage::Native(mut retained)) = storage.take() else {
+                    panic!("live refusal retains the exact native image owner");
+                };
+                assert_eq!(retained.with_heap(|heap| core::ptr::from_ref(heap.as_ref().get_ref()).addr()), Some(original.as_ptr().addr()));
+                injection.set(fault::Plan::disabled());
+                pending.unmap().unwrap();
+                // SAFETY: this generic pre-consumption retry has no earlier
+                // Heap-list or page mutation; source image teardown is complete.
+                assert!(unsafe { retained.free() }.is_ok());
+            });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn prepared_native_child_heap_image_refusal_retains_only_release_authority() {
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::prepared_native_child_heap_image_refusal_retains_only_release_authority", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                let mut image = NativeChildHeapImage::allocate().unwrap();
+                assert!(image.initialize_empty_image());
+                let original = image.pointer;
+                let operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter().unwrap();
+                // SAFETY: the unique unpublished image has no list, Theap or
+                // page users; source preparation runs with actual admission.
+                unsafe { image.prepare_for_free(&operation) }.unwrap();
+                let mut pending = crate::os::Mapping::map_for_allocator(config(), 4096, crate::os::MapAccess::Committed).unwrap();
+                let injection = fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                // SAFETY: this real cleanup refusal precedes consumption of
+                // the prepared image. Its allocation remains exactly live.
+                let retained = match unsafe { image.free_with_progress(|_| {
+                    assert_eq!(pending.unmap(), Err(crabc_core::Errno::NOMEM));
+                    Progress::RefusedBeforeConsumption(FreeError::Lifecycle)
+                }) } {
+                    Err(image) => image,
+                    Ok(()) => panic!("the prepared refusal retains release authority"),
+                };
+                assert_eq!(retained.state, NativeChildHeapImageState::Prepared);
+                assert_eq!(retained.pointer, original);
+                let mut storage = None;
+                let mut stage = ChildMainHeapStage::HeapListRemoved;
+                ChildMainHeapContextOwner::retain_native_heap_release_failure(&mut storage, &mut stage, retained);
+                assert_eq!(stage, ChildMainHeapStage::HeapListRemoved);
+                assert_eq!(storage.as_ref().and_then(ChildHeapStorage::pointer_for_live_image), None);
+                let Some(ChildHeapStorage::Native(mut retained)) = storage.take() else {
+                    panic!("prepared refusal retains the exact release-only token");
+                };
+                assert!(!retained.initialize_empty_image());
+                assert_eq!(retained.with_heap(|_| panic!("prepared bytes cannot be a Heap image")), None::<()>);
+                injection.set(fault::Plan::disabled());
+                pending.unmap().unwrap();
+                drop(operation);
+                // SAFETY: exact prepared custody authorizes only the final
+                // source free. A retry must not repeat padding marking/fill.
+                assert!(unsafe { retained.free() }.is_ok());
+            });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn consumed_native_child_heap_image_keeps_only_terminal_diagnostic_custody() {
+        use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
+        unsafe extern "C" fn silent(_: *const core::ffi::c_char) {}
+        crate::test_process::run_in_fresh_process(
+            "meta::tests::consumed_native_child_heap_image_keeps_only_terminal_diagnostic_custody", || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+                    unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(silent) }));
+                let mut image = NativeChildHeapImage::allocate().expect("the source parent allocates an unpublished image");
+                assert!(image.initialize_empty_image());
+                let original = image.pointer;
+                let mut pending = crate::os::Mapping::map_for_allocator(config(), 4096, crate::os::MapAccess::Committed).unwrap();
+                let injection = fault::install(fault::Plan::disabled());
+                // SAFETY: this unique unpublished image has no list, Theap or
+                // page users. Its actual free consumes it before mapping cleanup.
+                let retained = match unsafe { image.free_with_progress(|pointer| {
+                    assert_eq!(crate::runtime_lifecycle::native_free(pointer), crate::runtime_lifecycle::NativePageFreeResult::Freed);
+                    injection.set(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                    assert_eq!(pending.unmap(), Err(crabc_core::Errno::NOMEM));
+                    Progress::Consumed(Err(FreeError::Lifecycle))
+                }) } {
+                    Err(image) => image,
+                    Ok(()) => panic!("a completion failure retains diagnostic custody"),
+                };
+                assert_eq!(retained.pointer, original);
+                assert_eq!(retained.state, NativeChildHeapImageState::Terminal,
+                    "a consumed image token cannot offer live projection or release retry");
+                let mut storage = None;
+                let mut stage = ChildMainHeapStage::HeapListRemoved;
+                ChildMainHeapContextOwner::retain_native_heap_release_failure(&mut storage, &mut stage, retained);
+                assert_eq!(storage.as_ref().and_then(ChildHeapStorage::pointer_for_live_image), None);
+                assert_eq!(stage, ChildMainHeapStage::Terminal,
+                    "full child release cannot offer continuation after image consumption");
+                let Some(ChildHeapStorage::Native(mut retained)) = storage.take() else {
+                    panic!("terminal settlement retains the exact native diagnostic token");
+                };
+                assert!(!retained.initialize_empty_image());
+                assert_eq!(retained.with_heap(|_| panic!("a consumed image cannot be projected")), None::<()>);
+                // SAFETY: terminal custody must refuse before passing any
+                // address to a release primitive; no second source free runs.
+                assert!(unsafe { retained.free_with_progress(|_| panic!("terminal image reached a release primitive")) }.is_err());
+                injection.set(fault::Plan::disabled());
+                pending.unmap().expect("the exact failed mapping owner remains retained");
+            });
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]

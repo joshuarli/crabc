@@ -310,7 +310,9 @@ pub(crate) unsafe fn child_thread_free(
 ///
 /// # Safety
 /// As for [`child_heap_new`]; `heap` is the main Heap of `child` or a Heap
-/// that [`child_heap_new`] returned for it.
+/// that [`child_heap_new`] returned for it. Any failed full release retains
+/// backing terminally after possible list/page mutations; do not use this
+/// Heap again or repeat its complete release transition.
 pub(crate) unsafe fn child_heap_delete(
     child: &mut ChildMainHeapContextOwner<'_>,
     member: &mut ChildThreadMember,
@@ -455,9 +457,16 @@ unsafe fn child_heap_release_foreign(
     // on delete and are discarded only on the destructive release.
     unsafe { delete_heap_pages(child, binding, heap, target) }?;
     // SAFETY: each record remains a live child block until its own free.
-    if !unsafe { heap.as_ref().take_non_main_arena_pages(|record| {
+    #[cfg(target_arch = "x86_64")]
+    let records_released = unsafe { heap.as_ref().take_non_main_arena_pages(|record| {
         unsafe { free_foreign_child_block_with_progress(binding, record) }
-    }) } {
+    }) };
+    #[cfg(not(target_arch = "x86_64"))]
+    // SAFETY: retain the historical terminal legacy record-free contract.
+    let records_released = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|record| {
+        unsafe { free_foreign_child_block(binding, record) }
+    }) };
+    if !records_released {
         return Err(HeapReleaseError::Retained);
     }
     // SAFETY: the Heap now has no Theap or page and the child owns it.
@@ -475,6 +484,7 @@ unsafe fn child_heap_release_foreign(
 ///
 /// # Safety
 /// `block` is one exact live child allocation that no other thread frees.
+#[cfg(target_arch = "x86_64")]
 unsafe fn free_foreign_child_block_with_progress(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> crate::single_thread::LocalClientFreeProgress {
     use crate::single_thread::{FreeError, LocalClientFreeProgress as Progress};
     // SAFETY: the block stays live until its remote publication completes.
@@ -490,9 +500,25 @@ unsafe fn free_foreign_child_block_with_progress(binding: ProcessMainBackingBind
 
 /// # Safety
 /// `block` is an exact live foreign child allocation, retained until publication.
+#[cfg(target_arch = "x86_64")]
 unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
     matches!(unsafe { free_foreign_child_block_with_progress(binding, block) },
         crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
+}
+
+/// Historical foreign metadata free, with the caller retaining complete
+/// backing terminally after a false result.
+///
+/// # Safety
+/// `block` is one exact live foreign child allocation, freed once.
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
+    // SAFETY: the block remains live until source remote publication.
+    let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
+        return false;
+    };
+    // SAFETY: this caller does not own the page.
+    unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
 }
 
 /// Frees Heap administration with the source `allow_collect=false` policy.
@@ -503,6 +529,7 @@ unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: No
 /// # Safety
 /// `owner` is this thread's admitted child owner, `child` and `binding` retain
 /// its allocation backing, and `block` is an exact live block freed once.
+#[cfg(target_arch = "x86_64")]
 unsafe fn free_heap_metadata_with_progress(
     owner: *mut ChildThreadOwner,
     child: *mut ChildMainHeapContextOwner<'_>,
@@ -534,6 +561,7 @@ unsafe fn free_heap_metadata_with_progress(
 /// The admitted child owner and exact live metadata block obey the same
 /// obligations as `free_heap_metadata_with_progress`. Failure may follow
 /// consumption and is terminal for this full Heap release operation.
+#[cfg(target_arch = "x86_64")]
 unsafe fn free_heap_metadata(
     owner: *mut ChildThreadOwner,
     child: *mut ChildMainHeapContextOwner<'_>,
@@ -542,6 +570,34 @@ unsafe fn free_heap_metadata(
 ) -> bool {
     matches!(unsafe { free_heap_metadata_with_progress(owner, child, binding, block) },
         crate::single_thread::LocalClientFreeProgress::Consumed(Ok(())))
+}
+
+/// Historical local metadata free with unclassified terminal failures.
+///
+/// # Safety
+/// `owner` is this thread's admitted child owner, `child` and `binding`
+/// retain its backing, and `block` is an exact live allocation freed once.
+#[cfg(not(target_arch = "x86_64"))]
+unsafe fn free_heap_metadata(
+    owner: *mut ChildThreadOwner,
+    child: *mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+    block: NonNull<u8>,
+) -> bool {
+    // SAFETY: the exact live block remains held until source consumption.
+    let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
+        return false;
+    };
+    let local = crate::compiler_tls::current_thread_identity()
+        .is_some_and(|thread| allocation.is_associated_with(thread));
+    if local {
+        drop(allocation);
+        // SAFETY: this admitted owner holds the exact local allocation.
+        unsafe { ChildThreadOwner::free_block(owner, child, binding, block) }.is_ok()
+    } else {
+        // SAFETY: the caller does not own this page; collect remains disabled.
+        unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
+    }
 }
 
 /// `mi_heap_delete_pages` over the child's arenas; see
@@ -627,9 +683,17 @@ unsafe fn release_heap(
     let child_pointer: *mut ChildMainHeapContextOwner<'_> = child;
     // SAFETY: the live Heap; each record is a live block of the child main
     // Heap, freed once; neither pointer is otherwise borrowed meanwhile.
+    #[cfg(target_arch = "x86_64")]
     let freed = unsafe {
         heap.as_ref().take_non_main_arena_pages(|block| {
             free_heap_metadata_with_progress(owner, child_pointer, binding, block)
+        })
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    // SAFETY: retain this target's source metadata-free and terminal policy.
+    let freed = unsafe {
+        heap.as_ref().legacy_take_non_main_arena_pages(|block| {
+            free_heap_metadata(owner, child_pointer, binding, block)
         })
     };
     if !freed {
@@ -685,9 +749,14 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
     // SAFETY: the Theaps are detached above.
     unsafe { delete_heap_pages(child, binding, heap, None) }?;
     // SAFETY: the live Heap; its records go with the child arenas.
-    if !unsafe { heap.as_ref().take_non_main_arena_pages(|_record| {
+    #[cfg(target_arch = "x86_64")]
+    let records_transferred = unsafe { heap.as_ref().take_non_main_arena_pages(|_record| {
         crate::single_thread::LocalClientFreeProgress::Consumed(Ok(()))
-    }) } {
+    }) };
+    #[cfg(not(target_arch = "x86_64"))]
+    // SAFETY: terminal bulk teardown retains the records' complete backing.
+    let records_transferred = unsafe { heap.as_ref().legacy_take_non_main_arena_pages(|_| true) };
+    if !records_transferred {
         return Err(HeapReleaseError::Retained);
     }
     // SAFETY: forwarded obligations.
