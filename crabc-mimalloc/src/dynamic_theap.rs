@@ -23910,11 +23910,20 @@ mod tests {
             );
             let roots = UnrelatedRoots::capture();
             let dynamic_before = dynamic_backing_peek();
-            let fault = fault::install(fault::Plan::at(
+            // Process metadata can retry smaller arena or OS requests before
+            // rejecting an allocation. Refuse every mapping attempt so a
+            // retry cannot turn this TLD refusal into a live attachment.
+            #[cfg(target_arch = "x86_64")]
+            let (refusal, expected_error) = (fault::Plan::every(
+                fault::Point::Map, crabc_core::Errno::NOMEM,
+            ), MetaError::AllocationUnavailable);
+            #[cfg(not(target_arch = "x86_64"))]
+            let (refusal, expected_error) = (fault::Plan::at(
                 fault::Point::Map,
                 1,
                 crabc_core::Errno::NOMEM,
-            ));
+            ), MetaError::InitializationFailed);
+            let fault = fault::install(refusal);
             assert!(matches!(
                 unsafe {
                     DynamicTheapAttachment::begin_with_components(
@@ -23926,8 +23935,8 @@ mod tests {
                     )
                 },
                 Err(DynamicTheapBeginError::Rejected(DynamicTheapError::ThreadLocalData(
-                    ThreadLocalDataError::Metadata(MetaError::InitializationFailed)
-                )))
+                    ThreadLocalDataError::Metadata(error)
+                ))) if error == expected_error
             ));
             assert_eq!(subprocess.total_thread_count(), 2);
             assert_eq!(subprocess.live_thread_count(), 0);
