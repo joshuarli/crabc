@@ -40,6 +40,11 @@ impl SubprocessHeapList {
             live: AtomicUsize::new(0), total: AtomicUsize::new(0) }
     }
 
+    /// Source relaxed `heap_count` observation; it supplies no Heap lifetime
+    /// or list snapshot. Callers retain those independently across callbacks.
+    #[inline]
+    pub(crate) fn live_count_relaxed(&self) -> usize { self.live.load(Ordering::Relaxed) }
+
     pub(super) fn next_sequence(&self) -> usize { self.total.fetch_add(1, Ordering::Relaxed) }
 
     /// # Safety
@@ -268,7 +273,7 @@ impl SubprocessHeapList {
 
     #[cfg(test)]
     pub(crate) fn test_counter_values_relaxed(&self) -> (usize, usize) {
-        (self.live.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed))
+        (self.live_count_relaxed(), self.total.load(Ordering::Relaxed))
     }
 
     #[cfg(test)]
