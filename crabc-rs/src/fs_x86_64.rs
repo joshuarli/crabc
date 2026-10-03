@@ -1054,7 +1054,10 @@ impl FileType {
 ///
 /// `Dir` takes ownership of the directory descriptor and borrows caller-owned
 /// storage for `getdents64` records. Each entry borrows the stream, so an
-/// entry cannot remain live while the next call refills or advances it. `None`
+/// entry cannot remain live while the next call refills or advances it. Copy
+/// names and metadata before advancing when observations must be retained.
+/// The stream follows its open directory even if that directory is renamed;
+/// it does not resolve its original pathname again. `None`
 /// means end-of-directory; `Some(Err(_))` reports the first I/O or malformed
 /// record error, after which the stream is exhausted. Use [`RawDir`] when an
 /// undersized-buffer error must be recovered by dropping the iterator and
@@ -1163,6 +1166,10 @@ impl<'buffer> Dir<'buffer> {
 
     /// Borrows the owned directory descriptor for descriptor-relative
     /// operations without transferring ownership.
+    ///
+    /// Changing the file position through this borrow does not reset cached
+    /// records or end-of-directory state. Use [`Self::seek`] or [`Self::rewind`]
+    /// to reset that state when repositioning the stream.
     #[inline]
     pub fn as_fd(&self) -> BorrowedFd<'_> {
         self.entries.as_fd()
@@ -2810,6 +2817,10 @@ pub fn mkfifo<P: PathArg>(path: P, mode: Mode) -> Result<()> {
 
 /// Removes a path relative to `dirfd`.
 ///
+/// Removing a file's directory entry does not close its open descriptors.
+/// They continue to refer to the same file, including after its final link
+/// is removed, until the final open owner is released.
+///
 /// [`UnlinkAtFlags::REMOVEDIR`] selects removal of an empty directory. The
 /// closed flag type excludes `AT_EMPTY_PATH` and unrelated `AT_*` meanings.
 #[inline]
@@ -3102,6 +3113,9 @@ pub fn symlink<P: PathArg, Q: PathArg>(target: P, new_path: Q) -> Result<()> {
 }
 
 /// Renames a path or directory without special Linux rename flags.
+///
+/// This changes directory entries; retained descriptors continue to refer to
+/// their original filesystem objects, independently of the new pathname.
 #[inline]
 pub fn renameat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
     old_dirfd: PFd,

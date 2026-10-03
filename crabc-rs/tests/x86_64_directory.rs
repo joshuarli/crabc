@@ -113,3 +113,61 @@ fn x86_64_dir_reports_small_buffer_error_once_and_then_stops() {
         "a failed directory stream must not silently continue"
     );
 }
+
+#[test]
+fn x86_64_dirfd_stream_and_open_file_survive_rename_and_unlink() {
+    let (_cleanup, root, _host_directory, byte_name) = fixture();
+    let parent = fs::open(root.as_str(), OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty()).unwrap();
+    fs::mkdirat(&parent, "before", Mode::RWXU).unwrap();
+    let original = fs::openat(&parent, "before",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty()).unwrap();
+    let file = fs::openat(&original, byte_name.as_slice(),
+        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
+        Mode::RUSR | Mode::WUSR).unwrap();
+    io::write(&file, b"retained").unwrap();
+    let file_identity = fs::fstat(&file).unwrap();
+    for number in 0..12 {
+        drop(fs::openat(&original, format!("extra-{number}"),
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+            Mode::RUSR | Mode::WUSR).unwrap());
+    }
+    let directory_identity = fs::fstat(&original).unwrap();
+    let mut buffer = [MaybeUninit::uninit(); 96];
+    let mut stream = Dir::openat(&original, ".", &mut buffer).unwrap();
+    fs::renameat(&parent, "before", &parent, "after").unwrap();
+    fs::mkdirat(&parent, "before", Mode::RWXU).unwrap();
+    let replacement = fs::openat(&parent, "before",
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty()).unwrap();
+    assert_ne!(fs::fstat(&replacement).unwrap().st_ino, directory_identity.st_ino);
+    assert_eq!(fs::fstat(stream.as_fd()).unwrap().st_ino, directory_identity.st_ino);
+    drop(original);
+
+    // Copy each borrowed name before the small stream buffer is refilled.
+    // The descriptor follows the renamed directory, independently of its old path.
+    let mut snapshots = Vec::new();
+    while let Some(entry) = stream.next() {
+        let entry = entry.unwrap();
+        snapshots.push((entry.name_bytes().to_vec(), entry.ino()));
+    }
+    assert_eq!(snapshots.len(), 15);
+    assert!(snapshots.iter().any(|(name, inode)|
+        name == &byte_name && *inode == file_identity.st_ino));
+    let copied_names = snapshots.clone();
+    fs::renameat(stream.as_fd(), byte_name.as_slice(), &replacement, "moved").unwrap();
+    assert_eq!(fs::statat(&replacement, "moved", fs::AtFlags::empty()).unwrap().st_ino,
+        file_identity.st_ino);
+    assert_eq!(fs::fstat(&file).unwrap().st_nlink, 1);
+    fs::unlinkat(&replacement, "moved", fs::UnlinkAtFlags::empty()).unwrap();
+    let unlinked = fs::fstat(&file).unwrap();
+    assert_eq!(unlinked.st_ino, file_identity.st_ino);
+    assert_eq!(unlinked.st_nlink, 0);
+    let mut bytes = [0_u8; 8];
+    assert_eq!(io::pread(&file, &mut bytes, 0).unwrap(), 8);
+    assert_eq!(&bytes, b"retained");
+    drop(stream);
+    assert_eq!(snapshots, copied_names);
+    assert!(snapshots.iter().any(|(name, _)| name == &byte_name));
+    assert!(io::fcntl_getfd(&parent).unwrap().contains(io::FdFlags::CLOEXEC));
+    assert!(io::fcntl_getfd(&replacement).unwrap().contains(io::FdFlags::CLOEXEC));
+}
