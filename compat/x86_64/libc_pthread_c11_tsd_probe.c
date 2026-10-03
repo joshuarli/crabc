@@ -83,6 +83,108 @@ static int cross_low_is_c11;
 static volatile int cross_dtor_calls;
 static volatile int cross_dtor_failure;
 
+static pthread_key_t callback_keys[PTHREAD_KEYS_MAX];
+static pthread_key_t callback_low_key;
+static pthread_key_t callback_high_key;
+static pthread_key_t callback_replacement_key;
+static volatile int callback_original_calls;
+static volatile int callback_replacement_calls;
+static volatile int callback_replacement_failure;
+static _Thread_local int callback_tls_initialized = 47;
+static _Thread_local unsigned char callback_tls_zeroed[129]
+    __attribute__((aligned(64)));
+
+static void callback_replacement_destructor(void *value)
+{
+    if ((uintptr_t)value != 3 ||
+        pthread_getspecific(callback_replacement_key) != 0 ||
+        callback_tls_initialized != 99 || callback_tls_zeroed[0] != 11 ||
+        callback_tls_zeroed[128] != 19 || errno != EACCES)
+        __atomic_store_n(&callback_replacement_failure, 1, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&callback_replacement_calls, 1, __ATOMIC_RELAXED);
+}
+
+/* The earlier callback replaces a later pending key while every other slot
+ * remains allocated. Deletion clears the old value before the reused slot
+ * receives its new destructor and new value for the current scan. */
+static void callback_original_destructor(void *value)
+{
+    __atomic_fetch_add(&callback_original_calls, 1, __ATOMIC_RELAXED);
+    if ((uintptr_t)value != 1 || pthread_getspecific(callback_low_key) != 0 ||
+        (uintptr_t)pthread_getspecific(callback_high_key) != 2 ||
+        callback_tls_initialized != 99 || errno != EACCES) {
+        __atomic_store_n(&callback_replacement_failure, 2, __ATOMIC_RELAXED);
+        return;
+    }
+    if (pthread_key_delete(callback_high_key) != 0 ||
+        pthread_key_create(&callback_replacement_key,
+            callback_replacement_destructor) != 0 ||
+        callback_replacement_key != callback_high_key ||
+        pthread_getspecific(callback_replacement_key) != 0 ||
+        pthread_setspecific(callback_replacement_key, (void *)(uintptr_t)3) != 0 ||
+        errno != EACCES)
+        __atomic_store_n(&callback_replacement_failure, 3, __ATOMIC_RELAXED);
+}
+
+static void *callback_replacement_worker(void *opaque)
+{
+    unsigned int index;
+    (void)opaque;
+    if (callback_tls_initialized != 47 || errno != 0 ||
+        (uintptr_t)callback_tls_zeroed % 64 != 0)
+        return (void *)(uintptr_t)1;
+    for (index = 0; index != sizeof(callback_tls_zeroed); ++index) {
+        if (callback_tls_zeroed[index] != 0)
+            return (void *)(uintptr_t)2;
+    }
+    callback_tls_initialized = 99;
+    callback_tls_zeroed[0] = 11;
+    callback_tls_zeroed[128] = 19;
+    errno = EACCES;
+    if (pthread_setspecific(callback_low_key, (void *)(uintptr_t)1) != 0 ||
+        pthread_setspecific(callback_high_key, (void *)(uintptr_t)2) != 0)
+        return (void *)(uintptr_t)3;
+    return 0;
+}
+
+static int run_callback_replacement_round(void)
+{
+    unsigned int round, index;
+    callback_tls_initialized = 101;
+    callback_tls_zeroed[0] = 33;
+    callback_tls_zeroed[128] = 39;
+    for (round = 0; round != 2; ++round) {
+        pthread_t worker;
+        void *result = (void *)(uintptr_t)9;
+        for (index = 0; index != PTHREAD_KEYS_MAX; ++index) {
+            if (pthread_key_create(&callback_keys[index], callback_original_destructor) != 0)
+                return 1;
+        }
+        callback_low_key = 0;
+        callback_high_key = 1;
+        __atomic_store_n(&callback_original_calls, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&callback_replacement_calls, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&callback_replacement_failure, 0, __ATOMIC_RELAXED);
+        if (pthread_create(&worker, 0, callback_replacement_worker, 0) != 0 ||
+            pthread_join(worker, &result) != 0)
+            return 2;
+        if (result != 0 ||
+            __atomic_load_n(&callback_original_calls, __ATOMIC_RELAXED) != 1 ||
+            __atomic_load_n(&callback_replacement_calls, __ATOMIC_RELAXED) != 1 ||
+            __atomic_load_n(&callback_replacement_failure, __ATOMIC_RELAXED) != 0)
+            return 3;
+        if (callback_tls_initialized != 101 || callback_tls_zeroed[0] != 33 ||
+            callback_tls_zeroed[128] != 39)
+            return 4;
+        for (index = 0; index != PTHREAD_KEYS_MAX; ++index) {
+            if (pthread_getspecific(callback_keys[index]) != 0 ||
+                pthread_key_delete(callback_keys[index]) != 0)
+                return 5;
+        }
+    }
+    return 0;
+}
+
 static void *cross_get(pthread_key_t key, int is_c11)
 {
     return is_c11 ? tss_get((tss_t)key) : pthread_getspecific(key);
@@ -531,6 +633,8 @@ static int run_pthread_c11_tsd(void)
         return 112 + status;
     if ((status = run_cross_key_round()) != 0)
         return 128 + status;
+    if ((status = run_callback_replacement_round()) != 0)
+        return 144 + status;
     if (errno != E2BIG)
         return 127;
     return 0;
