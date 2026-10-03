@@ -99,6 +99,12 @@ extern i128 __muloti4(i128, i128, int *);
 #define CALL_MULOTI4 __muloti4
 #endif
 
+/* Ordinary complex arithmetic gives the compiler responsibility for the
+ * four floating arguments and the two-register complex result. */
+__attribute__((noinline)) complex_double crabc_compiler_complex_product(complex_double a, complex_double b) {
+    return a * b;
+}
+
 static int equal_complex(complex_double value, double real, double imaginary) {
     return __real__ value == real && __imag__ value == imaginary;
 }
@@ -144,6 +150,9 @@ int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     if (CALL_ADDOTI4(maximum, 1, &overflow) != minimum || overflow != 1) return 16;
     if (CALL_SUBOTI4(minimum, 1, &overflow) != maximum || overflow != 1) return 17;
     if (CALL_MULOTI4(maximum, 2, &overflow) != -2 || overflow != 1) return 18;
+    volatile complex_double complex_left = __builtin_complex(3.0, 4.0);
+    volatile complex_double complex_right = __builtin_complex(2.0, -1.0);
+    if (!equal_complex(crabc_compiler_complex_product(complex_left, complex_right), 10.0, 5.0)) return 20;
     int binary64_status = crabc_x86_64_int128_casts_probe();
     if (binary64_status != 0) return binary64_status;
     return crabc_x86_64_binary32_casts_probe();

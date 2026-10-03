@@ -71,3 +71,14 @@ bit-based helpers preserve zero exception flags, including for signaling NaNs;
 they do not promise to follow the current floating-point rounding direction.
 The x86 System V ABI carries integer128 values in low/high register words,
 binary32 arguments in XMM0, and binary32 results in XMM0.
+
+The multiplication oracle is retained byte-for-byte as
+`fixtures/llvm22_muldc3/muldc3.c` from the same LLVM `llvmorg-22.1.3`
+snapshot, with its license and SHA-256 roster. Its unchanged includes use the
+matching headers retained in `fixtures/llvm22_divdc3`; the C kernel is test-only.
+`fixtures/x86_64_muldc3_differential.c` compares both complex result components
+and exception flags under all four rounding modes. Signed zeros and all
+non-NaN representations compare exactly; NaN payload selection is excluded.
+The aggregate C fixture additionally performs ordinary complex multiplication,
+and its assembly entry checks the four XMM argument registers, the two XMM
+result registers, stack restoration, and all six callee-saved integer registers.
