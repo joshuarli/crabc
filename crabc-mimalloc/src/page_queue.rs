@@ -2190,35 +2190,62 @@ mod tests {
     fn full_queue_transfers_account_reserved_block_bytes_once_per_membership_change() {
         let block_size = 32;
         let mut theap = Theap::empty();
+        let theap = NonNull::from(&mut theap);
         let mut regular = PageQueue::empty(block_size);
         let mut full = PageQueue::empty((LARGE_MAX_OBJ_WSIZE + 2) * WORD_SIZE);
         let mut first = page(block_size);
         let mut second = page(block_size);
         assert!(first.set_capacity_reserved(4, 4));
         assert!(second.set_capacity_reserved(8, 8));
-        first.abandoned_test_set_theap(&mut theap);
-        second.abandoned_test_set_theap(&mut theap);
+        first.abandoned_test_set_theap(theap.as_ptr());
+        second.abandoned_test_set_theap(theap.as_ptr());
+        let first = NonNull::from(&mut first);
+        let second = NonNull::from(&mut second);
 
-        // SAFETY: both full-capacity pages and their source Theap are pinned
-        // for this complete exclusive sequence; each transfer owns both
-        // disjoint intrusive queues and every changed link.
+        // SAFETY: these initialized page images and their one source Theap
+        // remain resident throughout the test. The owner accesses ordinary
+        // fields through the original pointers; producer atomic references
+        // remain live across every intrusive transition and geometry read.
         unsafe {
-            page_queue_push_metadata(&mut regular, &mut first);
-            page_queue_push_metadata(&mut regular, &mut second);
-            page_queue_enqueue_from_metadata(&mut full, &mut regular, &mut first);
-            assert_eq!(theap.pages_full_size(), 4 * block_size);
-            page_queue_enqueue_from_metadata(&mut full, &mut regular, &mut second);
-            assert_eq!(theap.pages_full_size(), 12 * block_size);
+            let first_state = Page::abandonment_state_at(first);
+            let second_state = Page::abandonment_state_at(second);
+            let first_remote = first_state.xthread_free.as_ref();
+            let second_remote = second_state.xthread_free.as_ref();
+            let first_flags = first_state.xthread_id.as_ref();
+            let second_flags = second_state.xthread_id.as_ref();
+            let observe = |expected_bytes, first_full, second_full| {
+                assert_eq!(core::ptr::addr_of!((*theap.as_ptr()).pages_full_size).read(), expected_bytes);
+                assert_eq!(first_remote.load(Ordering::Relaxed), 0);
+                assert_eq!(second_remote.load(Ordering::Relaxed), 0);
+                assert_eq!(first_flags.load(Ordering::Relaxed) & PAGE_IN_FULL_QUEUE != 0, first_full);
+                assert_eq!(second_flags.load(Ordering::Relaxed) & PAGE_IN_FULL_QUEUE != 0, second_full);
+                assert_eq!(crate::page::page_area_size(Page::block_size_at(first), Page::reserved_at(first)), Some(4 * block_size));
+                assert_eq!(crate::page::page_area_size(Page::block_size_at(second), Page::reserved_at(second)), Some(8 * block_size));
+            };
+
+            page_queue_push_metadata(&mut regular, first.as_ptr());
+            page_queue_push_metadata(&mut regular, second.as_ptr());
+            observe(0, false, false);
+            page_queue_enqueue_from_metadata(&mut full, &mut regular, first.as_ptr());
+            observe(4 * block_size, true, false);
+            page_queue_enqueue_from_metadata(&mut full, &mut regular, second.as_ptr());
+            observe(12 * block_size, true, true);
 
             // Moving a full member within the same queue clears and restores
             // the source flag; the resulting byte total must be unchanged.
-            page_queue_move_to_front_metadata(&mut full, &mut first);
-            assert_eq!(theap.pages_full_size(), 12 * block_size);
+            page_queue_move_to_front_metadata(&mut full, first.as_ptr());
+            observe(12 * block_size, true, true);
 
-            page_queue_enqueue_from_full_metadata(&mut regular, &mut full, &mut first);
-            assert_eq!(theap.pages_full_size(), 8 * block_size);
-            page_queue_remove_metadata(&mut full, &mut second);
-            assert_eq!(theap.pages_full_size(), 0);
+            page_queue_enqueue_from_full_metadata(&mut regular, &mut full, first.as_ptr());
+            observe(8 * block_size, false, true);
+            page_queue_remove_metadata(&mut full, second.as_ptr());
+            observe(0, false, false);
+            assert!(Page::queue_next_at(second).is_null());
+            assert!(Page::queue_prev_at(second).is_null());
+            page_queue_remove_metadata(&mut regular, first.as_ptr());
+            observe(0, false, false);
+            assert!(regular.is_empty());
+            assert!(full.is_empty());
         }
     }
 
@@ -3390,6 +3417,32 @@ mod tests {
         assert_eq!(theap.direct_page(3), Some(page.as_ptr()));
         assert_eq!(theap.direct_page(4), Some(page.as_ptr()));
         assert_eq!(theap.direct_page(5), Some(EMPTY_PAGE.as_ptr()));
+
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the original initialized Theap and page remain resident.
+        // Only this owner changes queue and direct-cache fields; the Heap-list
+        // and producer projections stay live while those disjoint fields move.
+        unsafe {
+            let theap = NonNull::from(&mut theap);
+            let heap_link = &*core::ptr::addr_of!((*theap.as_ptr()).hnext);
+            let producer = Page::abandonment_state_at(page).xthread_free.as_ref();
+            page_queue_remove_metadata(Theap::local_queue_mut_at(theap, bin).unwrap(), page.as_ptr());
+            assert!(theap_collect_abandon_update_direct_cache_at(theap, bin));
+            for index in 2..=5 {
+                assert_eq!(Theap::local_direct_page_at(theap, index), Some(EMPTY_PAGE.as_ptr()));
+            }
+            assert!(heap_link.get().read().is_null());
+            assert_eq!(producer.load(Ordering::Relaxed), 0);
+
+            page_queue_push_at_end_metadata(Theap::local_queue_mut_at(theap, bin).unwrap(), page.as_ptr());
+            assert!(theap_collect_abandon_update_direct_cache_at(theap, bin));
+            assert_eq!(Theap::local_direct_page_at(theap, 2), Some(EMPTY_PAGE.as_ptr()));
+            assert_eq!(Theap::local_direct_page_at(theap, 3), Some(page.as_ptr()));
+            assert_eq!(Theap::local_direct_page_at(theap, 4), Some(page.as_ptr()));
+            assert_eq!(Theap::local_direct_page_at(theap, 5), Some(EMPTY_PAGE.as_ptr()));
+            assert!(heap_link.get().read().is_null());
+            assert_eq!(producer.load(Ordering::Relaxed), 0);
+        }
     }
 
     #[test]
