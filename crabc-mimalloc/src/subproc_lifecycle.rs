@@ -1657,6 +1657,34 @@ unsafe fn add_native_child_thread_source(
     }
 }
 
+/// Publishes the original attached candidate after every source callback
+/// and initialization scope has ended. Genuine typed member/Option temporaries
+/// stay at this final boundary instead of spanning callback phase frames.
+///
+/// # Safety
+/// The storage holds this exact initialized attached candidate, and
+/// `record_member` is its already-issued original token. The current thread
+/// retains the child, binding and compiler-TLS roots, owns an empty actual
+/// member slot, and excludes concurrent root/member/lifecycle operations.
+/// Every source callback ended and the main local fast path was withdrawn.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+unsafe fn publish_native_child_thread_member(
+    storage: &mut crate::meta::ChildThreadInitializationStorage,
+    record_member: NativeChildRecordMember,
+    binding: ProcessMainBackingBinding,
+) {
+    // SAFETY: the same candidate completed source publication and its exact
+    // issued token is retained by this final synchronous publication boundary.
+    let member = ChildThreadMember { owner: unsafe { storage.take_attached_owner() } };
+    // SAFETY: this thread alone owns its empty member slot; no callback or
+    // other lifecycle step runs between the one owner move and publication.
+    *unsafe { current_child_member() } = Some(CurrentChildMember {
+        record_member, binding, member,
+        generic_frequency_captures: 0, allocation_scope: core::ptr::null(), retained_page_issuer: None,
+    });
+}
+
 /// Production `mi_subproc_add_current_thread` for a child from
 /// [`native_subproc_new`]; see [`add_current_thread`]. On success the
 /// member moves into the current thread's slot, so the native runtime
@@ -1695,16 +1723,10 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
                 // Source completion attached this exact owner and issued its
                 // member token before installing the default and fast roots.
                 let record_member = record_member.expect("actual admission issued its record token");
-                // SAFETY: the same candidate completed source publication;
-                // its exact token is owned above, and this original thread
-                // publishes it before any further callback or lifecycle step.
-                let member = ChildThreadMember { owner: unsafe { storage.take_attached_owner() } };
-                // SAFETY: this thread alone owns its empty member slot; every
-                // source callback ended before the final publication boundary.
-                *unsafe { current_child_member() } = Some(CurrentChildMember {
-                    record_member, binding, member,
-                    generic_frequency_captures: 0, allocation_scope: core::ptr::null(), retained_page_issuer: None,
-                });
+                // SAFETY: source phases ended with this exact attached
+                // candidate and issued token; the original thread owns its
+                // empty member slot and compiler-TLS roots through publication.
+                unsafe { publish_native_child_thread_member(&mut storage, record_member, binding) };
                 NativeChildThreadAdd::Added
             }
             NativeChildSourceThreadAdd::AlreadyInitialized { in_other_subprocess } => {
