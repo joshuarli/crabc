@@ -5965,7 +5965,7 @@ impl<'owner> MetadataEngine<'owner> {
             // derived from a whole-bootstrap mutable reference.
             let bootstrap = unsafe { NonNull::new_unchecked(this.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
             unsafe {
-                bootstrap.as_ptr().write(ExclusiveTheapBootstrap::new());
+                ExclusiveTheapBootstrap::write_empty_at(bootstrap);
                 *this.canonical_heap.get() = Some(heap);
                 (*this.config.get()).write(config);
             }
@@ -6871,10 +6871,9 @@ impl<'owner> MetadataEngine<'owner> {
         // SAFETY: COLD and the held private lock make this the one write to
         // the process-static, pinned bootstrap slot before any session may
         // borrow its self-referential fields.
-        unsafe { (*this.bootstrap.get()).write(ExclusiveTheapBootstrap::new()) };
-        let mut bootstrap = unsafe {
-            Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut())
-        };
+        let pointer = unsafe { NonNull::new_unchecked(this.bootstrap.get().cast::<ExclusiveTheapBootstrap>()) };
+        unsafe { ExclusiveTheapBootstrap::write_empty_at(pointer) };
+        let mut bootstrap = unsafe { Pin::new_unchecked(&mut *pointer.as_ptr()) };
         let bound = if let Some(heap) = unsafe { *this.canonical_heap.get() } {
             bootstrap.as_mut().bind_detached_for_main_heap(heap)
         } else {

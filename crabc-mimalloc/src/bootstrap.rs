@@ -132,6 +132,31 @@ impl ExclusiveTheapBootstrap {
         }
     }
 
+    /// Initializes an inert bootstrap directly in its final storage.
+    /// No Heap or Theap aggregate is materialized on the calling stack.
+    ///
+    /// # Safety
+    /// `destination` must own exclusive aligned writable storage for `Self`
+    /// with no live initialized value. No field view or published pointer may
+    /// exist before this complete write. Keep the image address-stable once
+    /// an activation or binding operation pins and wires its fields.
+    pub(crate) unsafe fn write_empty_at(destination: NonNull<Self>) {
+        let state = destination.as_ptr();
+        // SAFETY: every raw field belongs to the caller's fresh exclusive
+        // extent. The immutable source templates carry only cold state and
+        // static sentinel pointers; no active owner or lock is duplicated.
+        unsafe {
+            Heap::write_bootstrap_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).heap)));
+            core::ptr::addr_of_mut!((*state).tld).write(ThreadLocalData::detached());
+            Theap::write_empty_at(NonNull::new_unchecked(core::ptr::addr_of_mut!((*state).theap)));
+            core::ptr::addr_of_mut!((*state).bound_owner).write(None);
+            core::ptr::addr_of_mut!((*state).session_issued).write(false);
+            core::ptr::addr_of_mut!((*state).canonical_heap).write(None);
+            core::ptr::addr_of_mut!((*state)._not_send_or_sync).write(PhantomData);
+            core::ptr::addr_of_mut!((*state)._pin).write(PhantomPinned);
+        }
+    }
+
     /// Checks that a detached bootstrap image names one selected bounded
     /// process-main subprocess identity.
     pub(crate) fn is_detached_for_main_subprocess(
