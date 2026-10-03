@@ -105,10 +105,14 @@ Update this small section in place when the implementation frontier changes.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
-  the legacy source boundary. A fresh merged-source debug static aggregate links
-  through owned providers, but the member-only byte-closure reader still rejects
-  relocated location data and lacks inputs for owned source-core/libc callees.
-  That stronger debug closure remains unproved. The existing full 40-helper
+  the legacy source boundary. The retained ordinary debug static aggregate links
+  through owned providers. Inspection of the retained `ee44f3abc` debug ET_EXEC
+  confirms that seven relocated caller-location records occupy writable load
+  storage: its ordinary `crt1.o` does not seal GNU RELRO, as in pinned musl's
+  static startup. The immutable byte-closure reader correctly refuses those
+  records; source-core/libc callee closure also remains unproved. Do not weaken
+  that reader or change ordinary startup merely to admit this debug diagnostic.
+  The existing full 40-helper
   byte-closure reader passed optimized ordinary links in the held `6826b29ae`
   cohort; complete release qualification remains unclaimed.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
@@ -149,8 +153,8 @@ Update this small section in place when the implementation frontier changes.
   the repaired reader; original rejected preflights remain retained. This is
   component evidence.
 - **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
-  settled lanes' original programs/source, raw failures and focused proofs before
-  their worktrees are removed. Merged checks are in
+  settled lanes' original programs/source, raw failures, debug helper storage
+  facts and focused proofs before their worktrees are removed. Merged checks are in
   `.work/x86_64/tmp/resume12*-merged-*.log`, `resume13*-merged-*.log`, and
   `resume14*-merged-*.log`.
   All settled lane worktrees have been removed. Existing allocator and hardware-policy
