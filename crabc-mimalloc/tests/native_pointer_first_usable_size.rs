@@ -6,8 +6,6 @@
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;
 
-
-
 use std::sync::mpsc;
 
 use crabc_mimalloc::__crabc_runtime::{
@@ -112,6 +110,23 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
         // SAFETY: `later` remains this worker's exact current native client
         // until this one matching local pointer-first free.
         assert_eq!(unsafe { native_free(later) }, NativePageFreeResult::Freed);
+        // This owner's disjoint PageMap ranges are registered and removed
+        // while the initial thread continues observing its retained client.
+        for _ in 0..8 {
+            for request in [37, 12_289, 131_073, 524_289] {
+                let client = allocate_aligned_current(request, 256);
+                // SAFETY: this owner retains the entire requested payload
+                // until its one matching free below.
+                unsafe {
+                    client.as_ptr().write(0x35);
+                    client.as_ptr().add(request - 1).write(0xa7);
+                    assert!(native_usable_size(client).is_some_and(|size| size >= request));
+                    assert_eq!(client.as_ptr().read(), 0x35);
+                    assert_eq!(client.as_ptr().add(request - 1).read(), 0xa7);
+                    assert_eq!(native_free(client), NativePageFreeResult::Freed);
+                }
+            }
+        }
         finish_current_thread_native_after_user_destructors()
     });
 
@@ -129,6 +144,13 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
     resume_sender
         .send(())
         .expect("the worker resumes to free its local source");
+    loop {
+        // SAFETY: the initial client stays live until after the worker joins.
+        // Disjoint worker range mutations cannot retire this client's page.
+        assert_eq!(unsafe { native_usable_size(initial) }, Some(initial_usable));
+        if worker.is_finished() { break; }
+        std::thread::yield_now();
+    }
     assert_eq!(
         worker
             .join()
@@ -136,8 +158,8 @@ fn native_usable_size_observes_aligned_initial_and_later_clients_from_foreign_th
         ThreadFinishResult::Finished,
         "the later persistent owner completes its normal all-free lifecycle"
     );
-    let after_later_owner = native_runtime_lifecycle_test_audit()
-        .expect("the released later owner leaves the initial page audit readable");
+    assert!(native_runtime_lifecycle_test_audit().is_some(),
+        "the released later owner leaves the initial page audit readable");
     assert_eq!(
         // SAFETY: the later observer joined before this observation.
         unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },

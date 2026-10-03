@@ -1761,6 +1761,14 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
+    fn native_first_large_client_has_registered_valid_lists() {
+        native_registered_regular_client(
+            "page_validity::tests::native_first_large_client_has_registered_valid_lists",
+            131_072, crate::config::LARGE_PAGE_SIZE);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
     fn native_small_client_reservation_excludes_the_source_protected_tail() {
         native_registered_regular_client(
             "page_validity::tests::native_small_client_reservation_excludes_the_source_protected_tail",

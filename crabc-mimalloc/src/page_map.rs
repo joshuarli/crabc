@@ -2175,38 +2175,41 @@ mod tests {
 
     #[test]
     fn destroy_lazy_submap_release_failure_retains_the_exact_slot_for_retry() {
-        let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
-            .expect("initialize the selected partial map");
-        let first_index = page_map
-            .committed_count()
-            .expect("the initialized map exposes its committed prefix")
-            .checked_add(1)
-            .expect("the selected map has a representable first lazy index");
-        let second_index = first_index
-            .checked_add(1)
-            .expect("the selected map has a representable second lazy index");
-        let first = page_map
-            .ensure_submap_at(first_index)
-            .expect("the first lazy submap is published");
-        let second = page_map
-            .ensure_submap_at(second_index)
-            .expect("the second lazy submap is published");
-        assert_ne!(first, second);
-        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        for failing_unmap in [1, 2] {
+            let mut page_map = PageMap::initialize(memory_config(false), MAX_VABITS, false)
+                .expect("initialize the selected partial map");
+            let first_index = page_map
+                .committed_count()
+                .expect("the initialized map exposes its committed prefix")
+                .checked_add(1)
+                .expect("the selected map has a representable first lazy index");
+            let second_index = first_index
+                .checked_add(1)
+                .expect("the selected map has a representable second lazy index");
+            let first = page_map
+                .ensure_submap_at(first_index)
+                .expect("the first lazy submap is published");
+            let second = page_map
+                .ensure_submap_at(second_index)
+                .expect("the second lazy submap is published");
+            assert_ne!(first, second);
+            let fault = fault::install(fault::Plan::at(fault::Point::Unmap, failing_unmap, Errno::NOMEM));
 
-        // SAFETY: this test owns the only PageMap client and has no root or
-        // registered range. The injected failure must retain the first raw
-        // published-submap owner in its exact slot.
-        assert_eq!(unsafe { page_map.destroy() }, Err(Errno::NOMEM));
-        assert_eq!(fault.observed(), 1);
-        assert_eq!(page_map.submap_at(first_index), Ok(Some(first)));
-        assert_eq!(page_map.submap_at(second_index), Ok(Some(second)));
-        assert!(page_map.committed_count().is_ok());
+            // SAFETY: this test owns the only PageMap client and has no root or
+            // registered range. Earlier successful releases clear only their
+            // own slots; the failing raw owner remains in its exact slot.
+            assert_eq!(unsafe { page_map.destroy() }, Err(Errno::NOMEM));
+            assert_eq!(fault.observed(), failing_unmap);
+            assert_eq!(page_map.submap_at(first_index),
+                Ok(if failing_unmap == 1 { Some(first) } else { None }));
+            assert_eq!(page_map.submap_at(second_index), Ok(Some(second)));
+            assert!(page_map.committed_count().is_ok());
 
-        fault.set(fault::Plan::disabled());
-        // SAFETY: the failed release did not clear either ownership slot, and
-        // this test still supplies the destruction quiescence precondition.
-        unsafe { page_map.destroy() }.expect("the retained submap slots retry to release");
+            fault.set(fault::Plan::disabled());
+            // SAFETY: failed release retained every unreleased ownership slot,
+            // and this test still supplies the destruction quiescence precondition.
+            unsafe { page_map.destroy() }.expect("the retained submap slots retry to release");
+        }
     }
 
     #[test]

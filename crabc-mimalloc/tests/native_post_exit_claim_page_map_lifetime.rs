@@ -13,29 +13,38 @@ use crabc_mimalloc::__crabc_runtime::{
 use crabc_mimalloc::__crabc_runtime::native_runtime_lifecycle_test_audit;
 
 const PRODUCER_COUNT: usize = 4;
-const REQUEST: usize = 37;
 
 fn current_page_size() -> usize {
     crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
         .expect("the native Linux test process exposes AT_PAGESZ")
 }
 
-/// A source owner leaves four exact direct-small clients live after exit.
+/// A source owner leaves four exact clients live after exit.
 ///
 /// The first foreign free must claim the unowned low bit and complete its
-/// source tail while the other three clients still keep the same source page
-/// PageMap-published.  They then race their own `allow_collect=true` frees.
-/// This proves that terminal PageMap release cannot begin at the first claim:
-/// a remaining exact client is still queryable after that tail completes.
+/// source tail while the other three clients keep their pages PageMap-published.
+/// Regular-page clients share a page; OS-singleton clients retain independent
+/// spans. They then race their own `allow_collect=true` frees. A remaining
+/// exact client stays queryable after the first tail, and every application
+/// registration disappears only after all clients complete their frees.
 #[test]
 fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
+    // Requests span regular, medium, large, and OS-singleton pages. The
+    // aligned row also requires canonical-block recovery from the client.
+    for (request, alignment) in [(37, 16), (79, 256), (12_289, 16),
+        (131_073, 16), (524_289, 16)] {
+        assert_post_exit_claim_lifetime(request, alignment);
+    }
+}
+
+fn assert_post_exit_claim_lifetime(request: usize, alignment: usize) {
     assert!(
         native_runtime_test_support::initialize(current_page_size()),
         "the native runtime initializes before the claimed-page lifetime witness"
     );
     assert!(
         prepare_native_later_thread_arena(),
-        "the initial owner prepares the direct-small source arena"
+        "the initial owner prepares the source arena"
     );
     #[cfg(feature = "native-runtime-test-audit")]
     let baseline = native_runtime_lifecycle_test_audit()
@@ -44,7 +53,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
     #[cfg(feature = "native-runtime-test-audit")]
     let baseline_application_entries = unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() };
 
-    let clients = publish_exited_owner_clients();
+    let clients = publish_exited_owner_clients(request, alignment);
     #[cfg(feature = "native-runtime-test-audit")]
     {
         let after_owner_exit = native_runtime_lifecycle_test_audit()
@@ -67,7 +76,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
     let leader = std::thread::spawn(move || {
         assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let leader_client = exact_client(leader_address);
-        assert_live_source_client(leader_client, 0);
+        assert_live_source_client(leader_client, 0, request);
         leader_ready.wait();
 
         leader_start_receiver
@@ -96,7 +105,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
         followers.push(std::thread::spawn(move || {
             assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
             let client = exact_client(address);
-            assert_live_source_client(client, index);
+            assert_live_source_client(client, index, request);
             source_ready.wait();
 
             follower_start.wait();
@@ -137,7 +146,7 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
     }
     let late_client = exact_client(clients[1]);
     assert!(
-        unsafe { native_usable_size(late_client) }.is_some_and(|size| size >= REQUEST),
+        unsafe { native_usable_size(late_client) }.is_some_and(|size| size >= request),
         "a late producer's exact client remains PageMap-queryable after the winning claim tail"
     );
 
@@ -168,8 +177,8 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
 
     #[cfg(feature = "native-runtime-test-audit")]
     {
-        let after = native_runtime_lifecycle_test_audit()
-            .expect("all source producers joined before the terminal PageMap audit");
+        assert!(native_runtime_lifecycle_test_audit().is_some(),
+            "all source producers joined before the terminal PageMap audit");
         assert_eq!(
             // SAFETY: every source producer joined before this observation.
             unsafe { native_runtime_test_support::quiescent_application_page_map_entry_count() },
@@ -179,21 +188,21 @@ fn post_exit_claim_tail_keeps_page_map_live_for_late_same_page_producers() {
     }
 }
 
-fn publish_exited_owner_clients() -> [usize; PRODUCER_COUNT] {
+fn publish_exited_owner_clients(request: usize, alignment: usize) -> [usize; PRODUCER_COUNT] {
     let (sender, receiver) = mpsc::sync_channel(0);
     let owner = std::thread::spawn(move || {
         assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
         let mut clients = [0; PRODUCER_COUNT];
         for (index, client) in clients.iter_mut().enumerate() {
-            let block = match native_allocate_aligned(REQUEST, 16, false) {
+            let block = match native_allocate_aligned(request, alignment, false) {
                 NativePageAllocationResult::Allocated(block) => block,
-                _ => panic!("the source owner allocates exact direct-small client {index}"),
+                _ => panic!("the source owner allocates exact source client {index}"),
             };
             // SAFETY: the owner transfers each distinct, still-live client to
             // exactly one foreign producer after source owner exit.
             unsafe {
                 block.as_ptr().write((0x30 + index) as u8);
-                block.as_ptr().add(REQUEST - 1).write((0x90 + index) as u8);
+                block.as_ptr().add(request - 1).write((0x90 + index) as u8);
             }
             *client = block.as_ptr().addr();
         }
@@ -203,7 +212,7 @@ fn publish_exited_owner_clients() -> [usize; PRODUCER_COUNT] {
         assert_eq!(
             finish_current_thread_native_after_user_destructors(),
             ThreadFinishResult::Finished,
-            "the source owner abandons its still-live direct-small page before foreign frees"
+            "the source owner abandons its still-live source pages before foreign frees"
         );
     });
     let clients = receiver
@@ -221,15 +230,15 @@ fn exact_client(address: usize) -> core::ptr::NonNull<u8> {
     unsafe { core::ptr::NonNull::new_unchecked(address as *mut u8) }
 }
 
-fn assert_live_source_client(client: core::ptr::NonNull<u8>, index: usize) {
+fn assert_live_source_client(client: core::ptr::NonNull<u8>, index: usize, request: usize) {
     // SAFETY: the caller holds its unique exact client and has not entered its
     // consuming source free yet.
     unsafe {
         assert_eq!(client.as_ptr().read(), (0x30 + index) as u8);
-        assert_eq!(client.as_ptr().add(REQUEST - 1).read(), (0x90 + index) as u8);
+        assert_eq!(client.as_ptr().add(request - 1).read(), (0x90 + index) as u8);
     }
     assert!(
-        unsafe { native_usable_size(client) }.is_some_and(|size| size >= REQUEST),
+        unsafe { native_usable_size(client) }.is_some_and(|size| size >= request),
         "producer {index} completes a checked PageMap observation before its source CAS"
     );
 }
