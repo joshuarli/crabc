@@ -1348,29 +1348,36 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     #[cfg(target_arch = "x86_64")]
     let record = child.with_child_image(|image| image.native_control_pointer())
         .ok_or(NativeSubprocessError::Retained)?;
-    // SAFETY: the block is exclusively owned, zeroed, large enough, and
-    // aligned for the record, which is written whole before the id escapes.
+    // SAFETY: the block is exclusively owned, large enough, and aligned for
+    // the record. Write each field in final storage before any record
+    // projection or publication. UnsafeCell has its contained type's layout;
+    // writing through that representation avoids temporary owner wrappers.
     unsafe {
-        record.as_ptr().write(NativeChildSubprocess {
-            lock: crate::lock::PrivateLock::new(),
-            owner: core::cell::UnsafeCell::new(Some(child)),
-            #[cfg(target_arch = "x86_64")]
-            storage: core::cell::UnsafeCell::new(None),
-            #[cfg(not(target_arch = "x86_64"))]
-            storage: core::cell::UnsafeCell::new(Some(storage)),
-            #[cfg(target_arch = "x86_64")]
-            destroy_state: core::cell::UnsafeCell::new(None),
-            parent_metadata,
-            #[cfg(target_arch = "x86_64")]
-            parent_admission: core::cell::UnsafeCell::new(parent_admission),
-            registry,
-            members: core::cell::UnsafeCell::new(0),
-            #[cfg(target_arch = "x86_64")]
-            callback_leases: core::sync::atomic::AtomicUsize::new(0),
-        });
+        let image = record.as_ptr();
+        core::ptr::addr_of_mut!((*image).lock).write(crate::lock::PrivateLock::new());
+        core::ptr::addr_of_mut!((*image).owner)
+            .cast::<Option<ChildMainHeapContextOwner<'static>>>().write(Some(child));
+        #[cfg(target_arch = "x86_64")]
+        core::ptr::addr_of_mut!((*image).storage)
+            .cast::<Option<crate::meta::ChildMetadataAllocation>>().write(None);
+        #[cfg(not(target_arch = "x86_64"))]
+        core::ptr::addr_of_mut!((*image).storage)
+            .cast::<Option<crate::meta::ChildMetadataAllocation>>().write(Some(storage));
+        #[cfg(target_arch = "x86_64")]
+        core::ptr::addr_of_mut!((*image).destroy_state)
+            .cast::<Option<crate::meta::ChildMetadataAllocation>>().write(None);
+        core::ptr::addr_of_mut!((*image).parent_metadata).write(parent_metadata);
+        #[cfg(target_arch = "x86_64")]
+        core::ptr::addr_of_mut!((*image).parent_admission)
+            .cast::<Option<NativeChildCallbackLease>>().write(parent_admission);
+        core::ptr::addr_of_mut!((*image).registry).write(registry);
+        core::ptr::addr_of_mut!((*image).members).cast::<usize>().write(0);
+        #[cfg(target_arch = "x86_64")]
+        core::ptr::addr_of_mut!((*image).callback_leases)
+            .write(core::sync::atomic::AtomicUsize::new(0));
     }
-    // SAFETY: the record was written whole above and nothing else can reach
-    // the new child yet.
+    // SAFETY: every record field is initialized and nothing else can reach
+    // the new child record yet.
     let owner = unsafe { &mut *record.as_ref().owner.get() };
     let published = owner.as_mut()
         .and_then(|child| child.with_child_image(|image| image.get_ref().publish_native_record(record)));
