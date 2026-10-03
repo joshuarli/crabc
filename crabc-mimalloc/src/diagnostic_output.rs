@@ -1564,10 +1564,57 @@ unsafe impl Sync for OutputOwner {}
 
 const PENDING_SOURCE_WARNINGS: usize = 4;
 
-struct PendingSourceWarning {
+/// A selected primary body stays in its caller's immutable storage until
+/// synchronous delivery ends. Option bodies depend only on static descriptor
+/// names, so x86 stages their recipes and renders them after unlocking. The
+/// legacy route keeps formatting before the gate and moves its owned bytes.
+enum PendingSourceMessage<'message> {
+    #[cfg(target_arch = "x86_64")]
+    Primary(&'message SourceFormattedMessage),
+    #[cfg(target_arch = "x86_64")]
+    InvalidOption(SourceOption),
+    #[cfg(target_arch = "x86_64")]
+    DeprecatedOption(SourceOption),
+    #[cfg(not(target_arch = "x86_64"))]
+    Owned(SourceFormattedMessage, core::marker::PhantomData<&'message SourceFormattedMessage>),
+}
+
+impl<'message> PendingSourceMessage<'message> {
+    #[cfg(target_arch = "x86_64")]
+    fn primary(message: &'message SourceFormattedMessage) -> Self {
+        Self::Primary(message)
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    fn primary(message: SourceFormattedMessage) -> Self {
+        Self::Owned(message, core::marker::PhantomData)
+    }
+
+    fn invalid_option(option: SourceOption) -> Self {
+        #[cfg(target_arch = "x86_64")]
+        { Self::InvalidOption(option) }
+        #[cfg(not(target_arch = "x86_64"))]
+        { Self::Owned(invalid_source_option_message(option), core::marker::PhantomData) }
+    }
+
+    fn deprecated_option(option: SourceOption) -> Self {
+        #[cfg(target_arch = "x86_64")]
+        { Self::DeprecatedOption(option) }
+        #[cfg(not(target_arch = "x86_64"))]
+        { Self::Owned(deprecated_source_option_message(option), core::marker::PhantomData) }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    fn into_owned(self) -> SourceFormattedMessage {
+        let Self::Owned(message, _) = self;
+        message
+    }
+}
+
+struct PendingSourceWarning<'message> {
     kind: SourceMessageKind,
     options: DiagnosticOptionSnapshot,
-    message: SourceFormattedMessage,
+    message: PendingSourceMessage<'message>,
     /// The invalid-`verbose` warning of `mi_option_init`, which C delivers
     /// with `verbose` briefly set to one and restores to zero only after
     /// `_mi_warning_message` returns.
@@ -1595,21 +1642,21 @@ enum SourceMessageKind {
 /// zero after it returns, as pinned `mi_option_init` does. A delivery
 /// callback or FILE primitive therefore observes the source option state
 /// and may reenter any diagnostic route: no lock is held across delivery.
-struct PendingSourceWarnings {
-    entries: [core::mem::MaybeUninit<PendingSourceWarning>; PENDING_SOURCE_WARNINGS],
+struct PendingSourceWarnings<'message> {
+    entries: [core::mem::MaybeUninit<PendingSourceWarning<'message>>; PENDING_SOURCE_WARNINGS],
     length: usize,
 }
 
-impl PendingSourceWarnings {
+impl<'message> PendingSourceWarnings<'message> {
     const fn new() -> Self {
         Self { entries: [const { core::mem::MaybeUninit::uninit() }; PENDING_SOURCE_WARNINGS], length: 0 }
     }
 
-    fn push(&mut self, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
+    fn push(&mut self, options: DiagnosticOptionSnapshot, message: PendingSourceMessage<'message>) {
         self.push_kind(SourceMessageKind::Warning, options, message);
     }
 
-    fn push_kind(&mut self, kind: SourceMessageKind, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
+    fn push_kind(&mut self, kind: SourceMessageKind, options: DiagnosticOptionSnapshot, message: PendingSourceMessage<'message>) {
         debug_assert!(self.length < PENDING_SOURCE_WARNINGS);
         self.entries[self.length].write(PendingSourceWarning {
             kind, options, message, temporary_verbose: false,
@@ -1642,8 +1689,8 @@ impl PendingSourceWarnings {
                 unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 1);
             }
             match entry.kind {
-                SourceMessageKind::Warning => unsafe { output.warning(entry.options, entry.message) },
-                SourceMessageKind::Error => unsafe { output.error(entry.options, entry.message) },
+                SourceMessageKind::Warning => unsafe { output.warning(entry.options, entry.message.into_owned()) },
+                SourceMessageKind::Error => unsafe { output.error(entry.options, entry.message.into_owned()) },
             }
             if entry.temporary_verbose {
                 // `desc->value = 0` after the warning returns.
@@ -1654,9 +1701,9 @@ impl PendingSourceWarnings {
     }
 
     /// Drains the original staging storage after descriptor locking ends.
-    /// Moving the four-message buffer into delivery duplicates its entire
-    /// stack extent even when only one message is selected. The initialized
-    /// prefix is consumed once in place; nested callbacks stage independently.
+    /// The initialized recipe prefix is consumed once in place, and primary
+    /// bodies stay borrowed from their callers. Nested callbacks stage their
+    /// own independent selections without moving or modifying this storage.
     ///
     /// # Safety
     /// Descriptor locking has ended. Any table selected by temporary verbose
@@ -1668,8 +1715,8 @@ impl PendingSourceWarnings {
         self.length = 0;
         for index in 0..length {
             // SAFETY: staging initialized this exact prefix. Entries contain
-            // only scalar snapshots and message bytes, with no Drop-bearing
-            // resources. Their original bytes stay immutable through output;
+            // only scalar snapshots, static recipes, and immutable message
+            // borrows, with no Drop-bearing resources. Their original bytes stay immutable through output;
             // clearing the prefix prevents a second logical delivery.
             let entry = unsafe { self.entries[index].assume_init_ref() };
             if entry.temporary_verbose {
@@ -1677,9 +1724,16 @@ impl PendingSourceWarnings {
                 // its lock ended before this temporary source-visible value.
                 unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 1);
             }
-            match entry.kind {
-                SourceMessageKind::Warning => unsafe { output.warning_borrowed(entry.options, &entry.message) },
-                SourceMessageKind::Error => unsafe { output.error_borrowed(entry.options, &entry.message) },
+            match &entry.message {
+                PendingSourceMessage::Primary(message) => match entry.kind {
+                    SourceMessageKind::Warning => unsafe { output.warning_borrowed(entry.options, message) },
+                    SourceMessageKind::Error => unsafe { output.error_borrowed(entry.options, message) },
+                },
+                PendingSourceMessage::InvalidOption(_) | PendingSourceMessage::DeprecatedOption(_) => {
+                    // SAFETY: the selected snapshot and callback admission
+                    // are retained through this synchronous rendering call.
+                    unsafe { deliver_source_option_recipe(output, entry) };
+                }
             }
             if entry.temporary_verbose {
                 // SAFETY: the same installed table remains live after the
@@ -1687,6 +1741,25 @@ impl PendingSourceWarnings {
                 unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 0);
             }
         }
+    }
+}
+
+/// Only selected static option names are rendered here. The primary body is
+/// already formatted in caller storage and never enters this cold path.
+#[cfg(target_arch = "x86_64")]
+#[cold]
+#[inline(never)]
+unsafe fn deliver_source_option_recipe(output: &OutputOwner, entry: &PendingSourceWarning<'_>) {
+    let message = match &entry.message {
+        PendingSourceMessage::InvalidOption(option) => invalid_source_option_message(*option),
+        PendingSourceMessage::DeprecatedOption(option) => deprecated_source_option_message(*option),
+        PendingSourceMessage::Primary(_) => unreachable!("primary messages are delivered from caller storage"),
+    };
+    // SAFETY: the caller retains the selected snapshot and synchronous output
+    // admission; this local body stays immutable until both fragments return.
+    match entry.kind {
+        SourceMessageKind::Warning => unsafe { output.warning_borrowed(entry.options, &message) },
+        SourceMessageKind::Error => unsafe { output.error_borrowed(entry.options, &message) },
     }
 }
 
@@ -1884,6 +1957,10 @@ impl OutputOwner {
     /// [`ProcessDiagnosticInputs`]. The registered callback or default FILE
     /// primitive may synchronously reenter this route, as in pinned C.
     pub(crate) unsafe fn warning_from_source_options(&self, message: SourceFormattedMessage) {
+        #[cfg(target_arch = "x86_64")]
+        let message = PendingSourceMessage::primary(&message);
+        #[cfg(not(target_arch = "x86_64"))]
+        let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
         {
@@ -1908,7 +1985,7 @@ impl OutputOwner {
     /// [`Self::warning_from_source_options`] apply.
     unsafe fn with_source_options<R>(
         &self,
-        operation: impl FnOnce(&Self, &mut PendingSourceWarnings) -> R,
+        operation: impl FnOnce(&Self, &mut PendingSourceWarnings<'_>) -> R,
     ) -> Result<R, SourceOptionAccessError> {
         if self.source_options_ready.load(Ordering::Acquire) != 1 {
             return Err(SourceOptionAccessError::Unavailable);
@@ -2238,11 +2315,11 @@ impl OutputOwner {
     }
 
     /// Stages the warnings of one `mi_option_init` attempt in source order.
-    unsafe fn collect_source_option_init_warnings_unlocked(
+    unsafe fn collect_source_option_init_warnings_unlocked<'message>(
         &self,
         option: SourceOption,
         warnings: SourceOptionInitWarnings,
-        pending: &mut PendingSourceWarnings,
+        pending: &mut PendingSourceWarnings<'message>,
     ) {
         if warnings.deprecated {
             // The deprecated spelling has no gate descriptor of its own:
@@ -2250,7 +2327,7 @@ impl OutputOwner {
             // never reads the still-UNINIT descriptor that produced it.
             unsafe {
                 self.collect_warning_from_source_options_unlocked(
-                    deprecated_source_option_message(option), pending,
+                    PendingSourceMessage::deprecated_option(option), pending,
                 )
             };
         }
@@ -2263,10 +2340,10 @@ impl OutputOwner {
     /// `mi_option_get(show_errors)` gate. It deliberately never reads max:
     /// C captures that scalar after its startup descriptor loop and uses only
     /// its dedicated counter afterward.
-    unsafe fn collect_warning_from_source_options_unlocked(
+    unsafe fn collect_warning_from_source_options_unlocked<'message>(
         &self,
-        message: SourceFormattedMessage,
-        pending: &mut PendingSourceWarnings,
+        message: PendingSourceMessage<'message>,
+        pending: &mut PendingSourceWarnings<'message>,
     ) {
         unsafe { self.collect_gated_message_unlocked(SourceMessageKind::Warning, message, pending) };
     }
@@ -2274,11 +2351,11 @@ impl OutputOwner {
     /// The descriptor reads shared by `_mi_warning_message` and
     /// `mi_show_error_message`: `verbose` first and, only when disabled,
     /// `show_errors`. The counter gate runs at delivery.
-    unsafe fn collect_gated_message_unlocked(
+    unsafe fn collect_gated_message_unlocked<'message>(
         &self,
         kind: SourceMessageKind,
-        message: SourceFormattedMessage,
-        pending: &mut PendingSourceWarnings,
+        message: PendingSourceMessage<'message>,
+        pending: &mut PendingSourceWarnings<'message>,
     ) {
         let (verbose, verbose_warnings) = unsafe { self.source_option_get_unlocked(SourceOption::Verbose) };
         unsafe {
@@ -2306,10 +2383,10 @@ impl OutputOwner {
     /// temporarily one while staging its own warning and is restored before
     /// the parent gate continues; delivery repeats the temporary one around
     /// that warning's output (see [`PendingSourceWarnings`]).
-    unsafe fn collect_invalid_source_option_unlocked(
+    unsafe fn collect_invalid_source_option_unlocked<'message>(
         &self,
         option: SourceOption,
-        pending: &mut PendingSourceWarnings,
+        pending: &mut PendingSourceWarnings<'message>,
     ) {
         if option == SourceOption::Verbose {
             let snapshot = unsafe { self.source_option_snapshot_unlocked() };
@@ -2318,7 +2395,7 @@ impl OutputOwner {
                 let start = pending.length;
                 unsafe {
                     self.collect_warning_from_source_options_unlocked(
-                        invalid_source_option_message(option), pending,
+                        PendingSourceMessage::invalid_option(option), pending,
                     )
                 };
                 pending.mark_temporary_verbose_from(start);
@@ -2328,7 +2405,7 @@ impl OutputOwner {
         }
         unsafe {
             self.collect_warning_from_source_options_unlocked(
-                invalid_source_option_message(option), pending,
+                PendingSourceMessage::invalid_option(option), pending,
             )
         };
     }
@@ -2700,6 +2777,10 @@ impl OutputOwner {
     /// message, and a registered handler must satisfy
     /// [`Self::register_error`]'s contract.
     pub(crate) unsafe fn error_message(&self, error: Errno, message: SourceFormattedMessage) -> SourceErrorDisposition {
+        #[cfg(target_arch = "x86_64")]
+        let message = PendingSourceMessage::primary(&message);
+        #[cfg(not(target_arch = "x86_64"))]
+        let message = PendingSourceMessage::primary(message);
         debug_assert_eq!(self.source_options_ready.load(Ordering::Acquire), 1);
         let mut pending = PendingSourceWarnings::new();
         if self.source_options_ready.load(Ordering::Acquire) == 1 {
@@ -5105,8 +5186,10 @@ mod tests {
         unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
         capture.reset();
         let mut pending = super::PendingSourceWarnings::new();
-        pending.push(options, source_message(b"first staged warning\n\0"));
-        pending.push(options, source_message(b"second staged warning\n\0"));
+        let first = source_message(b"first staged warning\n\0");
+        let second = source_message(b"second staged warning\n\0");
+        pending.push(options, super::PendingSourceMessage::primary(&first));
+        pending.push(options, super::PendingSourceMessage::primary(&second));
         let original = core::ptr::addr_of!(pending.entries);
         // SAFETY: these entries need no temporary descriptor state, and
         // this test retains the registered output while no lock is held.
@@ -5120,13 +5203,85 @@ mod tests {
         // staging prefix grants no second delivery of either original entry.
         unsafe { pending.deliver(&owner) };
         assert_eq!(capture.count(), 4);
-        pending.push(options, source_message(b"new staged warning\n\0"));
+        let next = source_message(b"new staged warning\n\0");
+        pending.push(options, super::PendingSourceMessage::primary(&next));
         // SAFETY: only the newly initialized prefix is selected, under
         // the same retained callback lifetime and serialized delivery.
         unsafe { pending.deliver(&owner) };
         assert_eq!(pending.length, 0);
         assert_eq!(capture.count(), 6);
         assert_eq!(capture.message(5), b"new staged warning\n");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct StagedPrimaryCapture {
+        capture: Capture,
+        owner: *const OutputOwner,
+        primary: *const c_char,
+        primary_seen: AtomicBool,
+        reentered: AtomicBool,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_staged_primary(message: *const c_char, argument: *mut c_void) {
+        // SAFETY: the isolated test retains this capture and owner throughout
+        // registration and every synchronous nested dispatch.
+        let capture = unsafe { &*(argument as *const StagedPrimaryCapture) };
+        unsafe { capture_output(message, capture_argument(&capture.capture)) };
+        if message == capture.primary {
+            capture.primary_seen.store(true, Ordering::Relaxed);
+            if !capture.reentered.swap(true, Ordering::Relaxed) {
+                let owner = unsafe { &*capture.owner };
+                // SAFETY: the original message remains immutably borrowed;
+                // each nested gate owns independent staging and unlocks before
+                // invoking this same callback. NOMEM returns a disposition.
+                unsafe {
+                    owner.warning_from_source_options(source_message(b"nested warning\n\0"));
+                    let _ = owner.error_message(Errno::NOMEM, source_message(b"nested error\n\0"));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn staged_primary_keeps_caller_storage_through_warning_and_error_reentry() {
+        let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.lock()
+            .expect("diagnostic environment test lock is not poisoned");
+        let entries = environment_entries(&[b"mimalloc_show_errors=1"]);
+        install_option_trace_environment(&entries);
+        let owner = output_owner();
+        // SAFETY: the locked environment and owner remain live through all
+        // descriptor initialization and subsequent synchronous output.
+        unsafe { owner.initialize_source_options(option_trace_environment_reader) };
+        let primary = source_message(b"original caller body\n\0");
+        let capture = StagedPrimaryCapture {
+            capture: Capture::new(), owner: &owner,
+            primary: primary.as_c_str().as_ptr(),
+            primary_seen: AtomicBool::new(false), reentered: AtomicBool::new(false),
+        };
+        // SAFETY: this local registration and its opaque argument are retained
+        // until the original and both nested gates return.
+        unsafe { owner.register_output(Some(capture_staged_primary), core::ptr::from_ref(&capture).cast_mut().cast()) };
+        capture.capture.reset();
+        let mut pending = super::PendingSourceWarnings::new();
+        let options = DiagnosticOptionSnapshot::new(1, 0, 32);
+        pending.push(options, super::PendingSourceMessage::primary(&primary));
+        // SAFETY: the staging prefix and primary bytes stay in original
+        // storage, with descriptor locking ended before callback dispatch.
+        unsafe { pending.deliver(&owner) };
+        assert!(capture.primary_seen.load(Ordering::Relaxed));
+        assert!(capture.reentered.load(Ordering::Relaxed));
+        assert_eq!(pending.length, 0);
+        assert_eq!(capture.capture.count(), 6);
+        assert_eq!(capture.capture.message(1), b"original caller body\n");
+        assert_eq!(capture.capture.message(3), b"nested warning\n");
+        assert_eq!(capture.capture.message(5), b"nested error\n");
+        // SAFETY: the cleared prefix grants no second delivery, including
+        // after callbacks have independently staged warning and error bodies.
+        unsafe { pending.deliver(&owner) };
+        assert_eq!(capture.capture.count(), 6);
+        assert_eq!(primary.as_c_str().to_bytes(), b"original caller body\n");
     }
 
     #[test]
