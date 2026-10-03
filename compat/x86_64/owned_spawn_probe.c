@@ -69,6 +69,16 @@ static int denied_spawn(const char *mode) {
 static int child(int argc, char **argv) {
     CHECK(argc>=3 && getenv("SPAWN_TOKEN") && !strcmp(getenv("SPAWN_TOKEN"),"child-environment"));
     if (!strncmp(argv[2],"deny-",5)) return denied_spawn(argv[2]);
+    if (!strcmp(argv[2],"worker-actions")) {
+        sigset_t mask;
+        CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask) && !sigismember(&mask,SIGUSR2));
+        CHECK(!(fcntl(7,F_GETFD)&FD_CLOEXEC) && !(fcntl(9,F_GETFD)&FD_CLOEXEC));
+        for (int fd=3;fd<=6;fd++) CHECK(fcntl(fd,F_GETFD)==-1 && errno==EBADF);
+        char bytes[16]={0};
+        CHECK(read(7,bytes,sizeof bytes)==12 && !memcmp(bytes,"worker-input",12));
+        CHECK(write(9,"worker-output",13)==13);
+        return 23;
+    }
     if (!strncmp(argv[2],"abort-",6)) {
         if (!strcmp(argv[2],"abort-ignore")) signal(SIGABRT,SIG_IGN);
         if (!strcmp(argv[2],"abort-handler")) signal(SIGABRT,returning_handler);
@@ -117,6 +127,100 @@ static void *worker(void *unused) {
     if (posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) || reap(pid,23)) return (void *)1;
     return NULL;
 }
+struct worker_actions {
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    const char *directory;
+    int directory_fd;
+    unsigned char *retained;
+};
+static int check_worker_spawn(struct worker_actions *owner, int expected)
+{
+    sigset_t before, after;
+    CHECK(!sigprocmask(SIG_SETMASK,NULL,&before));
+    pid_t pid=-123;
+    char *arguments[]={"spawn-child","child","worker-actions",NULL};
+    errno=ENOSPC;
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&owner->actions,&owner->attributes,
+        arguments,child_environment)==expected && errno==ENOSPC);
+    if (expected) {
+        CHECK(pid==-123 && waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
+    } else CHECK(!reap(pid,23));
+    CHECK(!sigprocmask(SIG_SETMASK,NULL,&after));
+    for (int signal=1;signal<65;signal++)
+        CHECK(sigismember(&before,signal)==sigismember(&after,signal));
+    int old_state=-1;
+    CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&old_state) &&
+        old_state==PTHREAD_CANCEL_ENABLE && !pthread_setcancelstate(old_state,NULL));
+    /* The error pipe must be gone in the parent, while its original directory
+     * descriptor and offset remain available for the next action generation. */
+    int copy=dup(owner->directory_fd);
+    CHECK(copy==4 && !close(copy) && fcntl(owner->directory_fd,F_GETFD)==FD_CLOEXEC);
+    return 0;
+}
+static void *worker_actions_body(void *pointer)
+{
+    struct worker_actions *owner=pointer;
+    char output_copy[]="ordered-output", input_copy[]="ready-input";
+    owner->retained=malloc(8193);
+    if (!owner->retained) return (void *)1;
+    for (int i=0;i<8193;i++) owner->retained[i]=(unsigned char)(i*17+3);
+    if (posix_spawn_file_actions_init(&owner->actions) ||
+        posix_spawn_file_actions_addfchdir_np(&owner->actions,owner->directory_fd) ||
+        posix_spawn_file_actions_addopen(&owner->actions,5,output_copy,O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC,0600) ||
+        posix_spawn_file_actions_addclose(&owner->actions,4) ||
+        posix_spawn_file_actions_adddup2(&owner->actions,5,9) ||
+        posix_spawn_file_actions_addclose(&owner->actions,5) ||
+        posix_spawn_file_actions_addopen(&owner->actions,7,input_copy,O_RDONLY|O_CLOEXEC,0) ||
+        posix_spawn_file_actions_adddup2(&owner->actions,7,7) ||
+        posix_spawn_file_actions_addclose(&owner->actions,owner->directory_fd)) return (void *)2;
+    output_copy[0]='X'; input_copy[0]='X';
+    /* With fd 3 retained by the parent, OPEN 5 and CLOSE 4 each relocate the
+     * child error writer. A later missing file must still report and be reaped. */
+    for (int attempt=0;attempt<3;attempt++)
+        if (check_worker_spawn(owner,ENOENT)) return (void *)3;
+    char path[4096];
+    snprintf(path,sizeof path,"%s/ready-input",owner->directory);
+    int fd=open(path,O_CREAT|O_WRONLY,0600);
+    if (fd<0 || write(fd,"worker-input",12)!=12 || close(fd) ||
+        check_worker_spawn(owner,0)) return (void *)4;
+    return NULL;
+}
+static int ordinary_worker_actions(const char *directory)
+{
+    CHECK(!mkdir(directory,0700));
+    struct worker_actions owner={.directory=directory};
+    owner.directory_fd=open(directory,O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    CHECK(owner.directory_fd==3 && !posix_spawnattr_init(&owner.attributes));
+    sigset_t empty, blocked, saved;
+    sigemptyset(&empty); sigemptyset(&blocked); sigaddset(&blocked,SIGUSR2);
+    CHECK(!posix_spawnattr_setsigmask(&owner.attributes,&empty) &&
+        !posix_spawnattr_setflags(&owner.attributes,POSIX_SPAWN_SETSIGMASK));
+    CHECK(!sigprocmask(SIG_BLOCK,&blocked,&saved));
+    char before[4096], after[4096];
+    CHECK(getcwd(before,sizeof before));
+    pthread_t thread; void *result=(void *)1;
+    CHECK(!pthread_create(&thread,NULL,worker_actions_body,&owner) &&
+        !pthread_join(thread,&result) && !result);
+    /* Join transfers the allocated action records and retained allocation to
+     * this task. They remain usable after the constructing worker has exited. */
+    CHECK(!check_worker_spawn(&owner,0));
+    for (int i=0;i<8193;i++) CHECK(owner.retained[i]==(unsigned char)(i*17+3));
+    free(owner.retained);
+    CHECK(!posix_spawn_file_actions_destroy(&owner.actions) &&
+        !posix_spawnattr_destroy(&owner.attributes) && !close(owner.directory_fd));
+    CHECK(getcwd(after,sizeof after) && !strcmp(before,after));
+    CHECK(!sigprocmask(SIG_SETMASK,&saved,NULL));
+    char path[4096], bytes[16]={0};
+    snprintf(path,sizeof path,"%s/ordered-output",directory);
+    int fd=open(path,O_RDONLY);
+    CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==13 && !memcmp(bytes,"worker-output",13) &&
+        !close(fd) && !unlink(path));
+    snprintf(path,sizeof path,"%s/ready-input",directory);
+    CHECK(!unlink(path) && !rmdir(directory));
+    puts("owned-spawn-worker-actions-ok");
+    return 0;
+}
 static int action_failure_cases(const char *missing, char **arguments) {
     posix_spawn_file_actions_t actions;
     pid_t pid;
@@ -155,6 +259,8 @@ static int action_failure_cases(const char *missing, char **arguments) {
 }
 int main(int argc, char **argv) {
     if (argc>=2 && !strcmp(argv[1],"child")) return child(argc,argv);
+    if (argc==3 && !strcmp(argv[1],"ordinary-worker-actions"))
+        return ordinary_worker_actions(argv[2]);
     CHECK(argc==2); alarm(30);
     struct rlimit no_core={0,0}; CHECK(!setrlimit(RLIMIT_CORE,&no_core));
     CHECK(!mkdir(argv[1],0700));
