@@ -7,6 +7,8 @@ use crabc_mimalloc::source_api::{self, FreeOutcome};
 fn aligned_offset_client_keeps_usable_reallocation_and_free_contract() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
+    #[cfg(target_arch = "x86_64")]
+    arbitrary_offset_clients_preserve_byte_extents_through_canonical_free();
     selected_theap_reallocation_preserves_source_extent();
     let original = source_api::zalloc_aligned_at(81, 128, 11).value.unwrap();
     assert_eq!((original.as_ptr().addr() + 11) % 128, 0);
@@ -20,7 +22,8 @@ fn aligned_offset_client_keeps_usable_reallocation_and_free_contract() {
         let failed = source_api::realloc_aligned_at(original.as_ptr(), usize::MAX, 128, 11);
         assert!(failed.value.is_none());
         assert!(core::slice::from_raw_parts(original.as_ptr(), 81).iter().all(|byte| *byte == 0x63));
-        let reused = source_api::realloc_aligned_at(original.as_ptr(), 81, 128, 11);
+        let half = usable.value - usable.value / 2;
+        let reused = source_api::realloc_aligned_at(original.as_ptr(), half, 128, 11);
         assert_eq!(reused.value, Some(original));
         assert_eq!(reused.errno.apply(0), 0);
         let grown = source_api::realloc_aligned_at(original.as_ptr(), 257, 128, 11);
@@ -209,5 +212,74 @@ fn selected_theap_reallocation_preserves_source_extent() {
         assert!(heap_api::heap_release(source, false));
         assert!(heap_api::heap_release(target, false));
         assert_eq!(heap_api::theap_get_default(), base);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn arbitrary_offset_clients_preserve_byte_extents_through_canonical_free() {
+    let word = core::mem::size_of::<usize>();
+    for alignment in [2, 4, 8, 16, 128, 4096, 65_536] {
+        for request in [1, 7, 8, 9, 15, 17, 50, 81] {
+            for offset in [1, 7, request + 1, 65_537, usize::MAX] {
+                let original = source_api::zalloc_aligned_at(request, alignment, offset)
+                    .value.unwrap();
+                assert_eq!(original.as_ptr().addr().wrapping_add(offset) % alignment, 0);
+                if alignment >= word && offset % word != 0 {
+                    assert_ne!(original.as_ptr().addr() % word, 0,
+                        "an arbitrary-offset client may be unaligned independently of its canonical block");
+                }
+                // SAFETY: every pointer here is the exact live result of this
+                // thread. Each byte access stays within the queried client
+                // extent; no canonical prefix or freed storage is accessed.
+                unsafe {
+                    let extent = source_api::usable_size(original.as_ptr());
+                    assert!(extent >= request);
+                    assert!(core::slice::from_raw_parts(original.as_ptr(), extent)
+                        .iter().all(|byte| *byte == 0));
+                    original.as_ptr().write_bytes(0x6b, extent);
+                    let half = extent - extent / 2;
+                    let reused = source_api::rezalloc_aligned_at(
+                        original.as_ptr(), half, alignment, offset).value.unwrap();
+                    assert_eq!(reused, original);
+                    assert_eq!(source_api::usable_size(reused.as_ptr()), extent);
+                    assert!(core::slice::from_raw_parts(reused.as_ptr(), extent)
+                        .iter().all(|byte| *byte == 0x6b));
+
+                    let grown = source_api::rezalloc_aligned_at(
+                        reused.as_ptr(), extent + 23, alignment, offset).value.unwrap();
+                    assert_ne!(grown, reused);
+                    assert_eq!(grown.as_ptr().addr().wrapping_add(offset) % alignment, 0);
+                    let grown_extent = source_api::usable_size(grown.as_ptr());
+                    assert!(grown_extent >= extent + 23);
+                    assert!(core::slice::from_raw_parts(grown.as_ptr(), extent)
+                        .iter().all(|byte| *byte == 0x6b));
+                    assert!(core::slice::from_raw_parts(grown.as_ptr().add(extent), grown_extent - extent)
+                        .iter().all(|byte| *byte == 0));
+                    let shrunk = source_api::rezalloc_aligned_at(
+                        grown.as_ptr(), 1, alignment, offset).value.unwrap();
+                    assert_ne!(shrunk, grown);
+                    assert_eq!(shrunk.as_ptr().addr().wrapping_add(offset) % alignment, 0);
+                    let shrunk_extent = source_api::usable_size(shrunk.as_ptr());
+                    assert!(shrunk_extent >= 1);
+                    assert_eq!(shrunk.as_ptr().read(), 0x6b);
+                    assert!(core::slice::from_raw_parts(shrunk.as_ptr().add(1), shrunk_extent - 1)
+                        .iter().all(|byte| *byte == 0));
+                    let (freed, canonical_size) = source_api::ufree(shrunk.as_ptr());
+                    assert_eq!(freed, FreeOutcome::Freed);
+                    assert!(canonical_size >= shrunk_extent);
+                    assert_eq!(canonical_size % word, 0);
+
+                    // Following requests remain valid after canonical free,
+                    // even when their returned byte pointers do not have
+                    // the word alignment required by canonical free links.
+                    let next = source_api::malloc_aligned_at(request, alignment, offset)
+                        .value.unwrap();
+                    let next_extent = source_api::usable_size(next.as_ptr());
+                    assert!(next_extent >= request);
+                    next.as_ptr().write_bytes(0x39, next_extent);
+                    assert_eq!(source_api::free(next.as_ptr()), FreeOutcome::Freed);
+                }
+            }
+        }
     }
 }
