@@ -14,6 +14,9 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
+#ifndef _LARGEFILE64_SOURCE
+#define _LARGEFILE64_SOURCE 1
+#endif
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
     !defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
@@ -230,11 +233,12 @@ static int cleanup_paths(struct fixture_paths *paths)
 
 static int check_open_without_mode(void)
 {
+    int (*const open_entry)(const char *, int, ...) = &open64;
     int descriptor;
     long flags;
 
     errno = E2BIG;
-    descriptor = open("/dev/null", O_RDONLY);
+    descriptor = open_entry("/dev/null", O_RDONLY);
     if (descriptor < 0 || errno != E2BIG)
         return 1;
     flags = raw_fcntl(descriptor, F_GETFL, 0);
@@ -281,11 +285,12 @@ static int check_open_create_cloexec(const struct fixture_paths *paths)
 
 static int check_openat_relative_create(const struct fixture_paths *paths)
 {
+    int (*const openat_entry)(int, const char *, int, ...) = &openat64;
     struct stat value;
     int descriptor;
     long result;
 
-    descriptor = openat(paths->directory_fd, "openat",
+    descriptor = openat_entry(paths->directory_fd, "openat",
         O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0640);
     if (descriptor < 0)
         return 1;
@@ -309,7 +314,7 @@ static int check_openat_relative_create(const struct fixture_paths *paths)
         return 5;
 
     errno = ERANGE;
-    descriptor = openat(paths->directory_fd, "openat", O_RDONLY);
+    descriptor = openat_entry(paths->directory_fd, "openat", O_RDONLY);
     if (descriptor < 0 || errno != ERANGE)
         return 6;
     result = raw_fcntl(descriptor, F_GETFD, 0);
@@ -361,6 +366,34 @@ static int check_creat_truncates(const struct fixture_paths *paths)
     return raw_close(descriptor) == 0 ? 0 : 6;
 }
 
+static int check_unnamed_file_modes(const struct fixture_paths *paths)
+{
+    struct stat value;
+    int descriptor = open(paths->directory, O_TMPFILE | O_RDWR | O_CLOEXEC, 0640);
+
+    if (descriptor < 0)
+        return 1;
+    if (raw_fstat(descriptor, &value) != 0 ||
+        (value.st_mode & 0777) != 0640 || value.st_nlink != 0 ||
+        raw_fcntl(descriptor, F_GETFD, 0) != FD_CLOEXEC) {
+        (void)raw_close(descriptor);
+        return 2;
+    }
+    if (raw_close(descriptor) != 0)
+        return 3;
+
+    descriptor = openat(paths->directory_fd, ".", O_TMPFILE | O_RDWR, 0620);
+    if (descriptor < 0)
+        return 4;
+    if (raw_fstat(descriptor, &value) != 0 ||
+        (value.st_mode & 0777) != 0620 || value.st_nlink != 0 ||
+        raw_fcntl(descriptor, F_GETFD, 0) != 0) {
+        (void)raw_close(descriptor);
+        return 5;
+    }
+    return raw_close(descriptor) == 0 ? 0 : 6;
+}
+
 static int check_errors(const struct fixture_paths *paths)
 {
     errno = 0;
@@ -406,6 +439,8 @@ int crabc_x86_64_descriptor_entry_probe(void)
         status = check_openat_relative_create(&paths);
     if (status == 0)
         status = check_creat_truncates(&paths);
+    if (status == 0)
+        status = check_unnamed_file_modes(&paths);
     if (status == 0)
         status = check_errors(&paths);
 
