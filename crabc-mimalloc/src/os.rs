@@ -2904,6 +2904,22 @@ impl Mapping {
         Ok(())
     }
 
+    /// Formats the failed 1-GiB attempt's warning before the 2-MiB retry.
+    /// Mapping custody and the unavailable flag remain at the caller's source
+    /// transition; this reporting callee owns only its temporary message.
+    ///
+    /// # Safety
+    /// The source startup dispatch and callback lifetimes accepted by the
+    /// warning route stay admitted throughout synchronous delivery.
+    #[cfg(target_arch = "x86_64")]
+    #[cold]
+    #[inline(never)]
+    unsafe fn report_huge_one_gib_retry(warning: HugePageWarningRoute<'_>, error: Errno) {
+        // SAFETY: the caller retains the source warning route at the exact
+        // failed-map boundary, before constructing or issuing the retry.
+        unsafe { warning.huge_warning(SourceFormattedMessage::huge_one_gib_retry(error)) };
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn map_unix_policy(
         policy: &VmPolicy,
@@ -2961,9 +2977,7 @@ impl Mapping {
                                 // SAFETY: the source emits this warning after
                                 // its first failed map and before the retry;
                                 // the startup owner retains the output route.
-                                unsafe { warning.huge_warning(
-                                    SourceFormattedMessage::huge_one_gib_retry(first_error)
-                                ) };
+                                unsafe { Self::report_huge_one_gib_retry(warning, first_error) };
                             }
                         }
                         let fallback_flags = (large_flags & !MAP_HUGE_1GB) | MAP_HUGE_2MB;
