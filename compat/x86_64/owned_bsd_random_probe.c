@@ -125,7 +125,7 @@ static int run_state(void)
     union state_buffer invalid;
     unsigned char invalid_before[8];
     long expected;
-    long stream[128];
+    long stream[130];
     char *initial_state = NULL;
     char *returned;
     char *active;
@@ -157,7 +157,7 @@ static int run_state(void)
                        STATE_SIZES[index] < 128 ? 32 :
                        STATE_SIZES[index] < 256 ? 64 : 128;
 
-        memset(states[index].bytes, 0, sizeof(states[index].bytes));
+        memset(states[index].bytes, 0xa5, sizeof(states[index].bytes));
         errno = EDEADLK;
         returned = initstate((unsigned)(0x10203040U + index),
                              (char *)states[index].bytes, STATE_SIZES[index]);
@@ -167,6 +167,29 @@ static int run_state(void)
         }
         if (index == 0)
             initial_state = returned;
+        /* Observe initstate's seed before srandom can replace it.  The entire
+         * aligned caller-owned image includes the packed header, seeded words,
+         * and untouched trailing capacity. No other task uses these buffers. */
+        {
+            size_t byte;
+
+            printf("state-initial-%zu=", index);
+            for (byte = 0; byte < sizeof(states[index].bytes); byte++)
+                printf("%02x", (unsigned)states[index].bytes[byte]);
+            putchar('\n');
+        }
+        {
+            size_t draw;
+
+            for (draw = 0; draw < 4; draw++) {
+                if (checked_random(&stream[draw])) {
+                    result = 5;
+                    goto restore;
+                }
+            }
+            printf("state-initial-draws-%zu ", index);
+            print_values("stream", stream, 4);
+        }
         /* The additive classes cross their ring wraps more than twice: n=7
          * takes 16 draws, n=15 takes 32, n=31 takes 64, and n=63 takes 128.
          * The size 272 row also proves the final class above its threshold. */
@@ -188,31 +211,67 @@ static int run_state(void)
         result = 6;
         goto restore;
     }
-    returned = initstate(0x89abcdefU, (char *)retained_b.bytes, 256);
+    for (index = 0; index < 130; index++) {
+        if (checked_random(&stream[index])) {
+            result = 6;
+            goto restore;
+        }
+    }
+    print_values("retained-a-before-switch", stream, 130);
+    returned = initstate(0x89abcdefU, (char *)retained_b.bytes, 64);
     if (returned != (char *)retained_a.bytes) {
         result = 7;
         goto restore;
     }
     memcpy(snapshot, retained_a.bytes, sizeof(snapshot));
-    if (checked_random(&stream[0]) || memcmp(snapshot, retained_a.bytes, sizeof(snapshot)) != 0) {
-        result = 8;
-        goto restore;
+    for (index = 0; index < 34; index++) {
+        if (checked_random(&stream[index]) ||
+            memcmp(snapshot, retained_a.bytes, sizeof(snapshot)) != 0) {
+            result = 8;
+            goto restore;
+        }
     }
+    print_values("retained-b-before-switch", stream, 34);
     returned = setstate((char *)retained_a.bytes);
     if (returned != (char *)retained_b.bytes) {
         result = 9;
         goto restore;
     }
     memcpy(snapshot, retained_b.bytes, sizeof(snapshot));
-    if (checked_random(&stream[0]) || memcmp(snapshot, retained_b.bytes, sizeof(snapshot)) != 0) {
-        result = 10;
-        goto restore;
+    for (index = 0; index < 130; index++) {
+        if (checked_random(&stream[index]) ||
+            memcmp(snapshot, retained_b.bytes, sizeof(snapshot)) != 0) {
+            result = 10;
+            goto restore;
+        }
     }
-    returned = setstate((char *)retained_a.bytes);
+    print_values("retained-a-after-switch", stream, 130);
+    returned = setstate((char *)retained_b.bytes);
     if (returned != (char *)retained_a.bytes) {
         result = 11;
         goto restore;
     }
+    memcpy(snapshot, retained_a.bytes, sizeof(snapshot));
+    for (index = 0; index < 34; index++) {
+        if (checked_random(&stream[index]) ||
+            memcmp(snapshot, retained_a.bytes, sizeof(snapshot)) != 0) {
+            result = 11;
+            goto restore;
+        }
+    }
+    print_values("retained-b-after-switch", stream, 34);
+    returned = setstate((char *)retained_b.bytes);
+    if (returned != (char *)retained_b.bytes) {
+        result = 11;
+        goto restore;
+    }
+    for (index = 0; index < 34; index++) {
+        if (checked_random(&stream[index])) {
+            result = 11;
+            goto restore;
+        }
+    }
+    print_values("retained-b-after-self-switch", stream, 34);
 
 restore:
     /* No automatic buffer remains selected once this function returns. */
