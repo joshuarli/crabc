@@ -2591,6 +2591,125 @@ impl ChildThreadOwner {
     }
 }
 
+/// Physical initializedness of one caller-retained owner slot. This does
+/// not replace the source thread owner's lifecycle state.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChildThreadInitializationStorageState { Vacant, Owned, Consumed }
+
+/// One original child-thread owner retained in its caller's final storage
+/// across source callbacks. The exclusive borrow passed through preparation
+/// and completion prevents a caller from consuming it between those phases.
+/// Retained bytes deliberately have no implicit resource-releasing drop;
+/// the actual child initialization admission must survive a terminal outcome.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct ChildThreadInitializationStorage {
+    owner: core::mem::MaybeUninit<ChildThreadOwner>,
+    state: ChildThreadInitializationStorageState,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl ChildThreadInitializationStorage {
+    pub(crate) const fn vacant() -> Self {
+        Self { owner: core::mem::MaybeUninit::uninit(), state: ChildThreadInitializationStorageState::Vacant }
+    }
+
+    pub(crate) fn owns_candidate(&self) -> bool { self.state == ChildThreadInitializationStorageState::Owned }
+
+    fn owner_mut(&mut self) -> &mut ChildThreadOwner {
+        assert!(self.owns_candidate(), "only an initialized original owner may be projected");
+        // SAFETY: allocation records Owned only after writing every field;
+        // the exclusive storage borrow ends before any source callback.
+        unsafe { self.owner.assume_init_mut() }
+    }
+
+    pub(crate) fn retain_refusal(&mut self) -> ChildThreadStartError {
+        self.owner_mut().state = ChildThreadOwnerState::Terminal;
+        ChildThreadStartError::InvalidTransition
+    }
+
+    pub(crate) fn retain(&mut self, error: crate::types::TheapMainStaticInitError) -> ChildThreadStartError {
+        self.owner_mut().state = ChildThreadOwnerState::Terminal;
+        ChildThreadStartError::TheapInitialization(child_dynamic_init_error(error))
+    }
+
+    /// Consumes the original value once at the final keeper or publication
+    /// boundary. No image or registration is reconstructed from its address.
+    pub(crate) fn take_owner(&mut self) -> ChildThreadOwner {
+        assert!(self.owns_candidate(), "the original owner is consumed exactly once");
+        self.state = ChildThreadInitializationStorageState::Consumed;
+        // SAFETY: Owned proves all fields initialized and not consumed. The
+        // MaybeUninit field cannot drop this moved value a second time.
+        unsafe { self.owner.as_ptr().read() }
+    }
+
+    /// Consumes an attached owner only at its final member publication edge.
+    ///
+    /// # Safety
+    /// This slot holds the same candidate that completed source publication.
+    /// The caller already owns its exact issued record-member token, retains
+    /// the original child and compiler-TLS roots, and publishes this owner as
+    /// that token's member before any callback or competing lifecycle operation.
+    pub(crate) unsafe fn take_attached_owner(&mut self) -> ChildThreadOwner {
+        assert_eq!(self.owner_mut().state, ChildThreadOwnerState::Attached,
+            "member publication consumes an actually attached original owner");
+        self.take_owner()
+    }
+
+    pub(crate) fn theap_pointer(&mut self) -> Option<NonNull<Theap>> { self.owner_mut().theap_pointer() }
+
+    pub(crate) fn record_thread_attached(&mut self) -> bool {
+        self.owner_mut().with_child_image(|image| {
+            image.get_ref().identity().record_statistics_thread_attached();
+        }).is_some()
+    }
+
+    /// Counts and publishes this same candidate after every callback ended.
+    ///
+    /// # Safety
+    /// `ready` derives from this slot's exact preparation. The caller retains
+    /// its original child admission across all source phases and excludes
+    /// competing lifecycle mutation until this same candidate is published.
+    /// Every callback and candidate-image projection has ended.
+    pub(crate) unsafe fn complete_source(
+        &mut self, ready: crate::types::ReadyTheapInitialization,
+    ) -> Result<(), ChildThreadStartError> {
+        // SAFETY: the original initialized owner and admission are retained.
+        unsafe { complete_child_thread_source(self.owner_mut(), ready) }
+    }
+}
+
+/// Preparation returns only its source phase or scalar refusal. The original
+/// candidate stays in the caller-retained slot on every initialized outcome.
+#[cfg(target_arch = "x86_64")]
+#[must_use]
+pub(crate) enum ChildThreadPreparationOutcome {
+    Prepared(crate::types::PreparedTheapInitialization),
+    Rejected(ChildThreadStartError),
+    Retained(ChildThreadStartError),
+}
+
+/// Final source publication shared by direct keepers and caller-retained
+/// storage. A refusal terminalizes the original owner without guessed teardown.
+#[cfg(target_arch = "x86_64")]
+unsafe fn complete_child_thread_source(
+    owner: &mut ChildThreadOwner, ready: crate::types::ReadyTheapInitialization,
+) -> Result<(), ChildThreadStartError> {
+    if owner.with_child_image(|image| image.get_ref().identity().record_statistics_theap_linked()).is_none() {
+        owner.state = ChildThreadOwnerState::Terminal;
+        return Err(ChildThreadStartError::TheapInitialization(child_dynamic_init_error(
+            crate::types::TheapMainStaticInitError::InvalidInput)));
+    }
+    // SAFETY: this same candidate and original child registration are
+    // retained through the source counter and final list publication.
+    if let Err(error) = unsafe { ready.publish_heap() } {
+        owner.state = ChildThreadOwnerState::Terminal;
+        return Err(ChildThreadStartError::TheapInitialization(child_dynamic_init_error(error)));
+    }
+    owner.state = ChildThreadOwnerState::Attached;
+    Ok(())
+}
+
 /// The original child-thread blocks and registration awaiting source
 /// option and random phases. Dropping this owner never guesses teardown.
 #[cfg(target_arch = "x86_64")]
@@ -2635,14 +2754,12 @@ impl ChildThreadInitializationOwner {
     pub(crate) unsafe fn complete_source(
         mut self, ready: crate::types::ReadyTheapInitialization,
     ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
-        if self.0.with_child_image(|image| image.get_ref().identity().record_statistics_theap_linked()).is_none() {
-            return Err(self.retain(crate::types::TheapMainStaticInitError::InvalidInput));
+        // SAFETY: this keeper is the original allocated owner and its
+        // caller retains the exact child admission through publication.
+        match unsafe { complete_child_thread_source(&mut self.0, ready) } {
+            Ok(()) => Ok(self.0),
+            Err(error) => Err(ChildThreadStartFailure::Retained { owner: self.0, error }),
         }
-        // SAFETY: the original candidate and its child registration stay
-        // retained through the source counter and final list publication.
-        if let Err(error) = unsafe { ready.publish_heap() } { return Err(self.retain(error)); }
-        self.0.state = ChildThreadOwnerState::Attached;
-        Ok(self.0)
     }
 }
 
@@ -4645,22 +4762,39 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     pub(crate) unsafe fn prepare_child_thread_initialization(
         &mut self, binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<PendingChildThreadInitialization, ChildThreadStartFailure> {
-        // SAFETY: this candidate uses the same exact allocation and
-        // registration route while the caller owns the child operation.
-        let mut destination = core::mem::MaybeUninit::uninit();
-        // SAFETY: this initializer owns its local vacant destination across
-        // allocation; callbacks cannot access it, and nested initializers
-        // keep separate destinations under their original admissions.
-        match unsafe { self.allocate_child_thread_owner_into(binding, NonNull::from(&mut destination)) } {
-            ChildThreadOwnerInitializationOutcome::Ready => {},
-            ChildThreadOwnerInitializationOutcome::Rejected(error) => return Err(ChildThreadStartFailure::Rejected(error)),
-            ChildThreadOwnerInitializationOutcome::Retained(error) => return Err(ChildThreadStartFailure::Retained {
-                owner: unsafe { destination.as_ptr().read() }, error,
+        let mut destination = ChildThreadInitializationStorage::vacant();
+        // SAFETY: the legacy keeper route retains this child's actual
+        // admission and consumes the same original candidate exactly once.
+        match unsafe { self.prepare_child_thread_initialization_in(binding, &mut destination) } {
+            ChildThreadPreparationOutcome::Prepared(phase) => Ok(PendingChildThreadInitialization {
+                keeper: ChildThreadInitializationOwner(destination.take_owner()), phase,
             }),
-        };
-        // SAFETY: Ready established every field. Allocation callbacks have
-        // ended; this initializer exclusively retains the original owner.
-        let owner = unsafe { &mut *destination.as_mut_ptr() };
+            ChildThreadPreparationOutcome::Rejected(error) => Err(ChildThreadStartFailure::Rejected(error)),
+            ChildThreadPreparationOutcome::Retained(error) => Err(ChildThreadStartFailure::Retained {
+                owner: destination.take_owner(), error,
+            }),
+        }
+    }
+
+    /// Prepares the original images in caller-retained storage, leaving only
+    /// the typed source phase outside that slot during callback windows.
+    ///
+    /// # Safety
+    /// The caller retains the original child and current-thread admission
+    /// through callbacks and completion. Destination is vacant and exclusively
+    /// borrowed throughout; no competing lifecycle may consume its images.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn prepare_child_thread_initialization_in(
+        &mut self, binding: crate::process_init::ProcessMainBackingBinding,
+        destination: &mut ChildThreadInitializationStorage,
+    ) -> ChildThreadPreparationOutcome {
+        // SAFETY: the caller owns this vacant slot and exact child operation.
+        match unsafe { self.allocate_child_thread_owner_into(binding, destination) } {
+            ChildThreadOwnerInitializationOutcome::Ready => {},
+            ChildThreadOwnerInitializationOutcome::Rejected(error) => return ChildThreadPreparationOutcome::Rejected(error),
+            ChildThreadOwnerInitializationOutcome::Retained(error) => return ChildThreadPreparationOutcome::Retained(error),
+        }
+        let owner = destination.owner_mut();
         let theap = owner.theap.as_ref().expect("stored child Theap block").pointer.cast::<Theap>();
         let tld = owner.tld.as_ref().expect("stored child TLD block").pointer.cast::<ThreadLocalData>();
         // SAFETY: this owner retains the original allocated blocks and
@@ -4680,20 +4814,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 Err(crate::types::TheapMainStaticInitError::InvalidInput)
             }
         };
-        // Each branch consumes the exact initialized owner once. Its short
-        // projection ends before the final keeper or retained error is formed;
-        // MaybeUninit never independently drops the consumed destination.
         match prepared {
-            Ok(phase) => Ok(PendingChildThreadInitialization {
-                // SAFETY: Ready initialized every field; the original owner
-                // has not moved or been consumed during source preparation.
-                keeper: ChildThreadInitializationOwner(unsafe { destination.as_ptr().read() }), phase,
-            }),
-            Err(error) => {
-                owner.state = ChildThreadOwnerState::Terminal;
-                Err(ChildThreadStartFailure::Retained { owner: unsafe { destination.as_ptr().read() },
-                    error: ChildThreadStartError::TheapInitialization(child_dynamic_init_error(error)) })
-            }
+            Ok(phase) => ChildThreadPreparationOutcome::Prepared(phase),
+            Err(error) => ChildThreadPreparationOutcome::Retained(destination.retain(error)),
         }
     }
 
@@ -4707,14 +4830,14 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     unsafe fn allocate_child_thread_owner(
         &mut self, binding: crate::process_init::ProcessMainBackingBinding,
     ) -> Result<ChildThreadOwner, ChildThreadStartFailure> {
-        let mut destination = core::mem::MaybeUninit::uninit();
+        let mut destination = ChildThreadInitializationStorage::vacant();
         // SAFETY: this local destination is vacant and exclusively retained;
         // each initialized outcome moves its exact owner once into the result.
-        match unsafe { self.allocate_child_thread_owner_into(binding, NonNull::from(&mut destination)) } {
-            ChildThreadOwnerInitializationOutcome::Ready => Ok(unsafe { destination.assume_init() }),
+        match unsafe { self.allocate_child_thread_owner_into(binding, &mut destination) } {
+            ChildThreadOwnerInitializationOutcome::Ready => Ok(destination.take_owner()),
             ChildThreadOwnerInitializationOutcome::Rejected(error) => Err(ChildThreadStartFailure::Rejected(error)),
             ChildThreadOwnerInitializationOutcome::Retained(error) => Err(ChildThreadStartFailure::Retained {
-                owner: unsafe { destination.assume_init() }, error,
+                owner: destination.take_owner(), error,
             }),
         }
     }
@@ -4732,8 +4855,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     unsafe fn allocate_child_thread_owner_into(
         &mut self,
         binding: crate::process_init::ProcessMainBackingBinding,
-        destination: NonNull<core::mem::MaybeUninit<ChildThreadOwner>>,
+        destination: &mut ChildThreadInitializationStorage,
     ) -> ChildThreadOwnerInitializationOutcome {
+        assert_eq!(destination.state, ChildThreadInitializationStorageState::Vacant, "child owner destination is vacant");
         if self.stage != ChildMainHeapStage::HeapReady
             || self.page_engine != ChildPageEngineState::Active
             || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
@@ -4754,7 +4878,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         ) else {
             return ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::InvalidTransition);
         };
-        let owner_pointer = destination.cast::<ChildThreadOwner>().as_ptr();
+        let owner_pointer = destination.owner.as_mut_ptr();
         // SAFETY: all scalar admission checks precede this first write. The
         // caller owns vacant aligned storage; each field is initialized once
         // before any complete-owner projection or metadata allocation.
@@ -4780,6 +4904,9 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             core::ptr::addr_of_mut!((*owner_pointer).state).write(ChildThreadOwnerState::Starting);
         }
 
+        // Every field is initialized before callbacks may unwind. The
+        // enclosing actual admission guard can now retain this exact owner.
+        destination.state = ChildThreadInitializationStorageState::Owned;
         let mut allocation_outcome = None;
         let page_result = self.with_metadata_page_engine(binding, |child, engine| {
             let outcome = Self::allocate_child_thread_images(child, engine, thread, numa);
@@ -4806,14 +4933,18 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                     ChildThreadOwnerInitializationOutcome::Retained(ChildThreadStartError::PageEngine(error))
                 }
                 Some(ChildThreadAllocationOutcome::Rejected(_)) | None => {
-                    ChildThreadOwnerInitializationOutcome::reject_cold_owner(owner, ChildThreadStartError::PageEngine(error))
+                    let outcome = ChildThreadOwnerInitializationOutcome::reject_cold_owner(owner, ChildThreadStartError::PageEngine(error));
+                    destination.state = ChildThreadInitializationStorageState::Vacant;
+                    outcome
                 }
             };
         }
 
         match allocation_outcome.expect("successful child page session records its allocation outcome") {
             ChildThreadAllocationOutcome::Rejected(error) => {
-                ChildThreadOwnerInitializationOutcome::reject_cold_owner(owner, error)
+                let outcome = ChildThreadOwnerInitializationOutcome::reject_cold_owner(owner, error);
+                destination.state = ChildThreadInitializationStorageState::Vacant;
+                outcome
             }
             ChildThreadAllocationOutcome::Retained { tld, registration, sequence, error } => {
                 owner.tld = Some(tld);
@@ -8471,17 +8602,18 @@ mod tests {
             let mut child = context.bind_heap_storage(ChildHeapStorage::Parent(storage))
                 .ok().expect("ordinary parent-issued Heap storage");
             assert_eq!(child.stage(), ChildMainHeapStage::Registered);
-            let mut destination = core::mem::MaybeUninit::<ChildThreadOwner>::uninit();
+            let mut destination = ChildThreadInitializationStorage::vacant();
             // SAFETY: arbitrary initialized bytes are valid for MaybeUninit;
             // no owner projection exists and its alignment/extent are exact.
-            unsafe { destination.as_mut_ptr().cast::<u8>().write_bytes(0xa5, size_of::<ChildThreadOwner>()) };
+            unsafe { destination.owner.as_mut_ptr().cast::<u8>().write_bytes(0xa5, size_of::<ChildThreadOwner>()) };
             // SAFETY: this source initializer owns the child and the entire
             // vacant destination. The registered child has no ready Heap yet.
-            let outcome = unsafe { child.allocate_child_thread_owner_into(binding, NonNull::from(&mut destination)) };
+            let outcome = unsafe { child.allocate_child_thread_owner_into(binding, &mut destination) };
             assert!(matches!(outcome, ChildThreadOwnerInitializationOutcome::Rejected(ChildThreadStartError::InvalidTransition)));
+            assert!(!destination.owns_candidate());
             // SAFETY: the scalar admission refusal precedes every destination
             // write; all bytes still carry the initialized sentinel above.
-            let bytes = unsafe { core::slice::from_raw_parts(destination.as_ptr().cast::<u8>(), size_of::<ChildThreadOwner>()) };
+            let bytes = unsafe { core::slice::from_raw_parts(destination.owner.as_ptr().cast::<u8>(), size_of::<ChildThreadOwner>()) };
             assert!(bytes.iter().all(|byte| *byte == 0xa5));
             // SAFETY: the sole child initializer now completes the ordinary
             // source Heap and metadata-Theap publication in their original order.

@@ -1523,6 +1523,46 @@ pub(crate) enum NativeChildThreadAdd {
     Failed(ChildThreadStartError),
 }
 
+/// Scalar admission result while any original owner remains in its caller's
+/// storage. Only Added permits the final member-publication move.
+#[cfg(target_arch = "x86_64")]
+enum NativeChildSourceThreadAdd {
+    Added,
+    AlreadyInitialized { in_other_subprocess: bool },
+    Rejected(ChildThreadStartError),
+    Retained(ChildThreadStartError),
+}
+
+/// Keeps the actual initialization admission with an initialized original
+/// owner on any early return or Rust unwind. The storage borrow is local to
+/// this operation; no owner projection spans its source callbacks.
+#[cfg(target_arch = "x86_64")]
+struct NativeChildThreadInitializationCustody<'storage> {
+    storage: &'storage mut crate::meta::ChildThreadInitializationStorage,
+    scope: core::ptr::NonNull<NativeChildInitializationScope>,
+    armed: bool,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl NativeChildThreadInitializationCustody<'_> {
+    fn retain_admission(&mut self) {
+        if !self.armed { return; }
+        self.armed = false;
+        if self.storage.owns_candidate() { self.storage.retain_refusal(); }
+        // SAFETY: this guard belongs to this exact live scope. Every owner,
+        // metadata and callback projection ended before retention. Disarming
+        // first prevents a second retention during later unwind or return.
+        unsafe { NativeChildInitializationScope::retain_at(self.scope) };
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl Drop for NativeChildThreadInitializationCustody<'_> {
+    fn drop(&mut self) {
+        if self.armed && self.storage.owns_candidate() { self.retain_admission(); }
+    }
+}
+
 /// Native child admission stages source callbacks outside the original
 /// record and metadata projections. The direct owner route remains useful
 /// for isolated lifecycle fixtures and the non-x86 implementation.
@@ -1532,7 +1572,8 @@ pub(crate) enum NativeChildThreadAdd {
 #[cfg(target_arch = "x86_64")]
 unsafe fn add_native_child_thread_source(
     id: NativeSubprocessId, binding: ProcessMainBackingBinding,
-) -> Result<(Result<ChildThreadAddOutcome, ChildThreadStartFailure>, Option<NativeChildRecordMember>), NativeSubprocessError> {
+    storage: &mut crate::meta::ChildThreadInitializationStorage,
+) -> Result<(NativeChildSourceThreadAdd, Option<NativeChildRecordMember>), NativeSubprocessError> {
     let (heap, identity) = unsafe { id.with_owner(|owner| {
         let child = owner.as_mut().ok_or(NativeSubprocessError::Gone)?;
         if child.stage() != ChildMainHeapStage::HeapReady { return Err(NativeSubprocessError::Retained); }
@@ -1541,63 +1582,51 @@ unsafe fn add_native_child_thread_source(
     }) }??;
     // SAFETY: only this thread reads its own original default root.
     if let Some(subprocess) = unsafe { Theap::initialized_default_subprocess_at(default_theap()) } {
-        return Ok((Ok(ChildThreadAddOutcome::AlreadyInitialized {
+        return Ok((NativeChildSourceThreadAdd::AlreadyInitialized {
             in_other_subprocess: !subprocess.is_null() && subprocess != identity,
-        }), None));
+        }, None));
     }
     let scoped = unsafe { with_native_child_initialization_scope(id, heap, |scope| {
+        let mut custody = NativeChildThreadInitializationCustody { storage, scope, armed: true };
         let mut prepared = None;
         let entered = unsafe { id.with_owner(|owner| {
             if let Some(child) = owner.as_mut() {
-                // Capture actual custody before a later record unlock can
-                // fail; an outer error never drops an issued initializer.
-                prepared = Some(unsafe { child.prepare_child_thread_initialization(binding) });
+                // Physical custody is recorded before a later record unlock
+                // can fail, including unwind from a metadata callback.
+                prepared = Some(unsafe { child.prepare_child_thread_initialization_in(binding, custody.storage) });
             }
         }) };
-        if entered.is_err() {
-            if let Some(candidate) = prepared.take() {
-                match candidate {
-                    Ok(pending) => core::mem::forget(pending),
-                    Err(ChildThreadStartFailure::Retained { owner, .. }) => core::mem::forget(owner),
-                    Err(ChildThreadStartFailure::Rejected(_)) => {}
-                }
-            }
-            unsafe { NativeChildInitializationScope::retain_at(scope) };
-            return Err(entered.err().expect("failed original record operation"));
+        if let Err(error) = entered {
+            // The original record gate also stays retained on a refusal with
+            // no candidate; initialized storage remains physically owned.
+            custody.retain_admission();
+            return Err(error);
         }
-        let pending = match prepared {
-            Some(Ok(pending)) => pending,
-            Some(Err(failure)) => {
-                if matches!(&failure, ChildThreadStartFailure::Retained { .. }) {
-                    unsafe { NativeChildInitializationScope::retain_at(scope) };
-                }
-                return Ok((Err(failure), None));
+        let phase = match prepared {
+            Some(crate::meta::ChildThreadPreparationOutcome::Prepared(phase)) => phase,
+            Some(crate::meta::ChildThreadPreparationOutcome::Rejected(error)) => {
+                return Ok((NativeChildSourceThreadAdd::Rejected(error), None));
+            }
+            Some(crate::meta::ChildThreadPreparationOutcome::Retained(error)) => {
+                return Ok((NativeChildSourceThreadAdd::Retained(error), None));
             }
             None => return Err(NativeSubprocessError::Gone),
         };
-        let (keeper, phase) = pending.into_phase();
         let ready = match unsafe { initialize_native_child_theap_source(scope, phase) } {
             Ok(ready) => ready,
             Err(error) => {
-                let failure = keeper.retain(error);
-                unsafe { NativeChildInitializationScope::retain_at(scope) };
-                return Ok((Err(failure), None));
+                let error = custody.storage.retain(error);
+                return Ok((NativeChildSourceThreadAdd::Retained(error), None));
             }
         };
-        // SAFETY: this ready phase belongs to the exact keeper retained
-        // across all callbacks by the original child initialization admission.
-        let mut owner = match unsafe { keeper.complete_source(ready) } {
-            Ok(owner) => owner,
-            Err(failure) => {
-                unsafe { NativeChildInitializationScope::retain_at(scope) };
-                return Ok((Err(failure), None));
-            }
-        };
-        let Some(theap) = owner.theap_pointer() else {
-            unsafe { NativeChildInitializationScope::retain_at(scope) };
-            return Ok((Err(ChildThreadStartFailure::Retained {
-                owner, error: ChildThreadStartError::InvalidTransition,
-            }), None));
+        // SAFETY: this ready phase belongs to the same caller-retained owner;
+        // its original actual admission survived every callback window.
+        if let Err(error) = unsafe { custody.storage.complete_source(ready) } {
+            return Ok((NativeChildSourceThreadAdd::Retained(error), None));
+        }
+        let Some(theap) = custody.storage.theap_pointer() else {
+            let error = custody.storage.retain_refusal();
+            return Ok((NativeChildSourceThreadAdd::Retained(error), None));
         };
         let mut token = None;
         let counted = unsafe { id.with_owner(|_| {
@@ -1608,20 +1637,19 @@ unsafe fn add_native_child_thread_source(
             Ok(())
         }) };
         if let Err(error) = counted.and_then(|result| result) {
-            // This exact initialized owner and any already-issued token
-            // remain retained even when final record administration failed.
-            core::mem::forget(owner);
+            // Any already-issued token and the same initialized owner retain
+            // their exact count/custody after final record administration failed.
             if let Some(token) = token { core::mem::forget(token); }
-            unsafe { NativeChildInitializationScope::retain_at(scope) };
             return Err(error);
         }
         set_default_theap(theap);
         set_fast_slot(Some(theap.cast()));
-        let counted = owner.with_child_image(|image| {
-            image.get_ref().identity().record_statistics_thread_attached();
-        });
-        debug_assert!(counted.is_some(), "an attached child owner projects its image");
-        Ok((Ok(ChildThreadAddOutcome::Added(ChildThreadMember { owner })), token))
+        let counted = custody.storage.record_thread_attached();
+        debug_assert!(counted, "an attached child owner projects its image");
+        // The record token and source roots now permit the original caller's
+        // single member-publication move. No callback occurs after this handoff.
+        custody.armed = false;
+        Ok((NativeChildSourceThreadAdd::Added, token))
     }) };
     match scoped {
         Ok(outcome) => outcome,
@@ -1653,10 +1681,42 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
     // SAFETY: forwarded id and current-thread obligations; the record lock
     // excludes every other operation on the child context.
     #[cfg(target_arch = "x86_64")]
-    let (outcome, record_member) = match unsafe { add_native_child_thread_source(id, binding) } {
-        Ok(outcome) => outcome,
-        Err(error) => return Err(error),
-    };
+    {
+        let mut storage = crate::meta::ChildThreadInitializationStorage::vacant();
+        // SAFETY: the caller's original vacant slot remains exclusively
+        // borrowed through all actual child admissions and source callbacks.
+        let (outcome, record_member) = match unsafe { add_native_child_thread_source(id, binding, &mut storage) } {
+            Ok(outcome) => outcome,
+            Err(error) => return Err(error),
+        };
+        return Ok(match outcome {
+            NativeChildSourceThreadAdd::Added => {
+                crate::local_fast_path::withdraw();
+                // Source completion attached this exact owner and issued its
+                // member token before installing the default and fast roots.
+                let record_member = record_member.expect("actual admission issued its record token");
+                // SAFETY: the same candidate completed source publication;
+                // its exact token is owned above, and this original thread
+                // publishes it before any further callback or lifecycle step.
+                let member = ChildThreadMember { owner: unsafe { storage.take_attached_owner() } };
+                // SAFETY: this thread alone owns its empty member slot; every
+                // source callback ended before the final publication boundary.
+                *unsafe { current_child_member() } = Some(CurrentChildMember {
+                    record_member, binding, member,
+                    generic_frequency_captures: 0, allocation_scope: core::ptr::null(), retained_page_issuer: None,
+                });
+                NativeChildThreadAdd::Added
+            }
+            NativeChildSourceThreadAdd::AlreadyInitialized { in_other_subprocess } => {
+                NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess }
+            }
+            NativeChildSourceThreadAdd::Rejected(error) | NativeChildSourceThreadAdd::Retained(error) => {
+                // Retained original bytes have no implicit owner drop; the
+                // guard retained their exact child initialization admission.
+                NativeChildThreadAdd::Failed(error)
+            }
+        });
+    }
     #[cfg(not(target_arch = "x86_64"))]
     let (outcome, record_member) = unsafe {
         id.with_owner(|owner| match owner.as_mut() {
@@ -1675,6 +1735,7 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
             None => Err(NativeSubprocessError::Gone),
         })
     }??;
+    #[cfg(not(target_arch = "x86_64"))]
     Ok(match outcome {
         Ok(ChildThreadAddOutcome::Added(member)) => {
             // SAFETY: current-thread slot, checked empty above.
@@ -5228,6 +5289,66 @@ pub(crate) mod tests {
                 owner.join().expect("the owning thread finishes");
                 assert_eq!(unsafe { native_subproc_destroy(second) }, Ok(()));
                 assert_eq!(unsafe { native_subproc_destroy(first) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn child_initialization_rust_unwind_retains_original_owner_and_admission() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::child_initialization_rust_unwind_retains_original_owner_and_admission",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("ordinary child creation");
+                std::thread::spawn(move || {
+                    // SAFETY: this worker owns its fresh descriptor and roots.
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    let binding = native_backing();
+                    let heap = unsafe { id.with_owner(|child| child.as_mut().unwrap().main_heap_pointer().unwrap()) }.unwrap();
+                    let mut storage = crate::meta::ChildThreadInitializationStorage::vacant();
+                    let mut original = None;
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        // SAFETY: this actual admitted operation retains its
+                        // original child and exclusive vacant storage slot.
+                        unsafe { with_native_child_initialization_scope(id, heap, |scope| {
+                            let mut custody = NativeChildThreadInitializationCustody { storage: &mut storage, scope, armed: true };
+                            let prepared = id.with_owner(|child| {
+                                child.as_mut().unwrap().prepare_child_thread_initialization_in(binding, custody.storage)
+                            }).unwrap();
+                            assert!(matches!(prepared, crate::meta::ChildThreadPreparationOutcome::Prepared(_)));
+                            original = custody.storage.theap_pointer();
+                            // Only this Rust caller unwinds. The exact original
+                            // owner and admission remain live; no C ABI is crossed.
+                            panic!("ordinary Rust source initializer unwind");
+                        }) }.unwrap();
+                    }));
+                    assert!(storage.owns_candidate());
+                    assert_eq!(storage.theap_pointer(), original);
+                    assert!(result.is_err(), "the Rust unwind is caught by its caller");
+                    // SAFETY: the worker's original storage remains alive;
+                    // these are short observations after every callback ended.
+                    let record = unsafe { id.record() };
+                    assert_eq!(record.callback_leases.load(core::sync::atomic::Ordering::Acquire), 1,
+                        "the orphaned source candidate retains its actual child admission");
+                    assert_eq!(unsafe { *record.members.get() }, 0, "no member token was issued");
+                    assert!(unsafe { (*CURRENT_CHILD_MEMBER.get()).initialization.is_null() });
+                    assert!(unsafe { (*CURRENT_CHILD_MEMBER.get()).retained_initialization.is_some() });
+                    let facts = unsafe { id.with_owner(|child| child.as_mut().unwrap()
+                        .test_created_child_facts(crate::subproc::MainSubprocess::global()).unwrap()) }.unwrap();
+                    assert_eq!((facts.live_threads, facts.total_threads), (1, 1),
+                        "the original registered TLD count is neither released nor duplicated");
+                    assert_eq!(facts.metadata_theap_is_heap_only_member, true,
+                        "the candidate never published a Heap edge");
+                    // SAFETY: this is an ordinary non-consuming destruction
+                    // attempt while an actual original callback lease is held.
+                    assert_eq!(unsafe { native_subproc_destroy(id) }, Err(NativeSubprocessError::DestroyRefused(
+                        ChildSubprocessDestroyError::CallbackActive)));
+                }).join().expect("the worker catches its Rust unwind");
             },
         );
     }
