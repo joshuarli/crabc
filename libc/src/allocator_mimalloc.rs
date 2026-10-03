@@ -41,7 +41,12 @@ fn mimalloc_is_power_of_two(value: usize) -> bool {
 // that may fail internally, such as the NUMA node `access` probe that ends
 // in ENOENT, so the previous value is restored rather than trusted to
 // survive.
-#[inline]
+// Each x86 archive entry owns its backend closure. At opt0, outlining all
+// helper instances into one member makes internal allocation pull the public
+// calloc/realloc/aligned_alloc objects through their closure references, which
+// prevents an application from replacing those strong public symbols.
+#[cfg_attr(target_arch = "x86_64", inline(always))]
+#[cfg_attr(not(target_arch = "x86_64"), inline)]
 unsafe fn mimalloc_allocation<T>(allocate: impl FnOnce() -> *mut T) -> *mut T {
     let errno = cabi_allocator_errno();
     let ptr = allocate();
