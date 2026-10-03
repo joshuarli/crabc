@@ -2714,7 +2714,7 @@ mod tests {
             page: TheapCollectAbandonCurrentPage<'_>,
         ) -> Result<TheapCollectAbandonPageAction, Self::Error> {
             let page = page.page();
-            // SAFETY: every synthetic producer has joined before the source
+            // SAFETY: every remote publication has completed before the source
             // owner begins this traversal. The test keeps the page and all
             // published blocks live and gives this callback sole access to
             // the page-local owner fields. This projection is limited to the
@@ -2723,6 +2723,17 @@ mod tests {
                 .expect("the source queue keeps its page owner-associated");
             let collected = unsafe { crate::remote_free::collect(owner) }
                 .expect("the source owner force-collects the joined remote list");
+            #[cfg(target_arch = "x86_64")]
+            {
+                // SAFETY: remote detach has completed; this callback retains
+                // the live owner and the page's complete writable backing.
+                let local = unsafe { Page::local_collect_state_for_owner_at(page,
+                    crate::types::LiveThreadId::new(12)) }.unwrap();
+                assert!(unsafe { crate::free_list::collect_local(local, true) }.unwrap());
+                let state = unsafe { Page::owner_snapshot_at(page) };
+                assert!(!state.free.is_null());
+                assert!(state.local_free.is_null());
+            }
             // SAFETY: the same joined-producer and exclusive-owner proof makes
             // the post-collection `used` observation stable.
             let used = unsafe { page.as_ref() }.remote_free_test_used();
@@ -2753,7 +2764,7 @@ mod tests {
             page: TheapCollectAbandonAbandonedPage<'_>,
         ) -> Result<(), Self::Error> {
             // SAFETY: the coordinator detached this page and the test retains
-            // its sole metadata owner. Marking the synthetic page abandoned
+            // its sole metadata owner. Changing only the atomic identity
             // represents the source publication performed by this callback.
             unsafe { page.page().as_mut() }.remote_free_test_mark_abandoned();
             self.events.borrow_mut().push(MixedCollectAbandonEvent::Abandon(
@@ -2772,15 +2783,18 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     #[repr(align(16))]
     struct MixedCollectAbandonRemoteBlock([u8; 16]);
 
+    #[cfg(not(target_arch = "x86_64"))]
     impl MixedCollectAbandonRemoteBlock {
         fn pointer(&mut self) -> NonNull<u8> {
             NonNull::from(&mut self.0).cast()
         }
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     fn remotely_freed_page(block_size: usize, used: usize) -> Page {
         let mut page = Page::remote_free_test_page(
             u16::try_from(used).expect("the focused test page fits source capacity"),
@@ -2790,6 +2804,7 @@ mod tests {
         page
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     #[test]
     fn generic_collect_abandon_drains_a_mixed_theap_in_source_order() {
         let mut theap = Theap::empty();
@@ -2943,6 +2958,202 @@ mod tests {
         assert_eq!(theap.page_count(), 0);
         assert_eq!(theap.pages_full_size(), 0);
         assert!(!page_is_in_full(unsafe { full.as_ref() }));
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn generic_collect_abandon_drains_a_mixed_theap_in_source_order() {
+        use crate::config::ARENA_SLICE_SIZE;
+        use crate::free_list::LocalFreeList;
+        use crate::types::{Heap, LiveThreadId, MemoryId, ThreadLocalData};
+
+        struct Backing {
+            base: NonNull<u8>,
+            layout: std::alloc::Layout,
+        }
+        impl Drop for Backing {
+            fn drop(&mut self) {
+                // SAFETY: all client and metadata projections have ended;
+                // this exact allocation retains every published page stride.
+                unsafe { std::alloc::dealloc(self.base.as_ptr(), self.layout) };
+            }
+        }
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        let id = LiveThreadId::new(12).unwrap();
+        tld.attach_bootstrap_exclusive(id);
+        let mut theap = Theap::empty();
+        assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
+        let owner = NonNull::from(&mut theap);
+        let heap_pointer = NonNull::from(&heap);
+        let small_bin = crate::size_class::bin(16).unwrap();
+        let medium_bin = crate::size_class::bin(LARGE_MAX_OBJ_SIZE / 2).unwrap();
+        assert!(small_bin < medium_bin && medium_bin < BIN_FULL);
+        let small_size = (unsafe { Theap::local_queue_at(owner, small_bin) }).unwrap().block_size();
+        let medium_size = (unsafe { Theap::local_queue_at(owner, medium_bin) }).unwrap().block_size();
+        let mut backing = std::vec::Vec::new();
+        let mut pages = std::vec::Vec::new();
+        let mut clients = std::vec::Vec::new();
+        for (block_size, count) in [(small_size, 1), (small_size, 2),
+            (medium_size, 1), (medium_size, 1)] {
+            let bytes = ARENA_SLICE_SIZE + block_size * usize::from(count);
+            let layout = std::alloc::Layout::from_size_align(bytes, ARENA_SLICE_SIZE).unwrap();
+            // SAFETY: the layout covers aligned Page metadata and complete
+            // initialized physical blocks, including source padding records.
+            let base = NonNull::new(unsafe { std::alloc::alloc_zeroed(layout) }).unwrap();
+            let page = base.cast::<Page>();
+            let memory = MemoryId::external(base.as_ptr(), bytes, true, false, true);
+            unsafe { Page::publish_fresh_exclusive_owner_at_with_pointers(page, owner, heap_pointer, crate::types::TheapOwner::Live(id),
+                block_size, ARENA_SLICE_SIZE, count, 0, true, memory) }.unwrap();
+            let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
+            list.extend_count_with_random(count, || Some(0x1234_5678)).unwrap();
+            let mut page_clients = std::vec::Vec::new();
+            for _ in 0..count {
+                let block = list.pop(false).unwrap().unwrap();
+                let usable = block_size - crate::config::PADDING_SIZE;
+                #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+                assert_eq!(unsafe { crate::alloc::initialize_source_padding(block,
+                    block_size, usable, page.as_ptr().addr(), Page::source_page_keys_at(page),
+                    false, false, crate::alloc::selected_source_padding_policy()) }, Some(usable));
+                // SAFETY: pop transfers this distinct client payload; the
+                // source padding remains outside the client-written extent.
+                unsafe { block.as_ptr().write_bytes(0xa5, usable) };
+                page_clients.push(block);
+            }
+            assert!(list.pop(false).unwrap().is_none());
+            drop(list);
+            backing.push(Backing { base, layout });
+            pages.push(page);
+            clients.push(page_clients);
+        }
+        let [small_first, small_second, medium, full] = pages.as_slice() else { unreachable!() };
+        let (small_first, small_second, medium, full) = (*small_first, *small_second, *medium, *full);
+
+        // SAFETY: the four local pages begin detached and the test owns the
+        // complete source queue image while it assembles it.
+        unsafe {
+            page_queue_push_at_end_metadata(
+                Theap::local_queue_mut_at(owner, small_bin).unwrap(),
+                small_first.as_ptr(),
+            );
+            page_queue_push_at_end_metadata(
+                Theap::local_queue_mut_at(owner, small_bin).unwrap(),
+                small_second.as_ptr(),
+            );
+            page_queue_push_at_end_metadata(Theap::local_queue_mut_at(owner, medium_bin).unwrap(), medium.as_ptr());
+            page_queue_push_at_end_metadata(Theap::local_queue_mut_at(owner, BIN_FULL).unwrap(), full.as_ptr());
+        }
+        for _ in 0..4 {
+            unsafe { Theap::note_local_page_added_at(owner) };
+        }
+        assert!(unsafe { theap_collect_abandon_update_direct_cache_at(owner, small_bin) });
+        let small_direct = invariants::word_count(small_size).unwrap();
+        assert_eq!(unsafe { Theap::local_direct_page_at(owner, small_direct) }, Some(small_first.as_ptr()));
+        assert!(page_is_in_full(unsafe { full.as_ref() }));
+        assert_eq!(unsafe { core::ptr::addr_of!((*owner.as_ptr()).pages_full_size).read() }, medium_size);
+
+        // The remote side consumes one genuine client from each page.
+        // The second small page retains its other client through abandonment.
+        for (page, page_clients) in pages.iter().zip(&clients) {
+            let block = page_clients[0];
+            #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+            assert_eq!(unsafe { crate::alloc::check_source_padding_on_free(block,
+                Page::block_size_at(*page), page.as_ptr().addr(), Page::source_page_keys_at(*page),
+                false, crate::alloc::selected_source_padding_policy()) },
+                Ok(unsafe { Page::block_size_at(*page) } - crate::config::PADDING_SIZE));
+            // SAFETY: this exact client is published once; its complete backing
+            // remains resident until every callback and observation has ended.
+            unsafe { crate::remote_free::push(Page::remote_free_producer_state_at(*page), block) }.unwrap();
+        }
+        let atomic_states: std::vec::Vec<_> = pages.iter()
+            .map(|page| unsafe { Page::remote_free_producer_state_at(*page) }).collect();
+        let atomic_refs: std::vec::Vec<_> = atomic_states.iter()
+            .map(|state| unsafe { (state.xthread_free.as_ref(), state.xthread_id.as_ref()) }).collect();
+
+        let events = core::cell::RefCell::new(std::vec::Vec::new());
+        let terminal_calls = core::cell::Cell::new(0usize);
+        let mut callbacks = MixedCollectAbandonCallbacks {
+            small_direct,
+            events: &events,
+            terminal_calls: &terminal_calls,
+        };
+
+        // SAFETY: the test has exclusive access to the complete, acyclic
+        // mixed queue image. The typed callbacks can only choose all-free or
+        // live-page continuations; the coordinator owns the queue transitions.
+        assert!(unsafe {
+            theap_collect_abandon_queues_at(
+                owner,
+                TheapCollectAbandonFieldPrepass::new(
+                    |theap: &mut TheapCollectAbandonFieldAccess, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
+                        assert_eq!(theap.page_count(), 4);
+                        events
+                            .borrow_mut()
+                            .push(MixedCollectAbandonEvent::DeferredFrees);
+                        Ok::<_, ()>(())
+                    },
+                    |theap: &mut TheapCollectAbandonFieldAccess, _callbacks: &mut MixedCollectAbandonCallbacks<'_>| {
+                        assert_eq!(theap.page_count(), 4);
+                        events
+                            .borrow_mut()
+                            .push(MixedCollectAbandonEvent::RetiredPages);
+                        Ok::<_, ()>(())
+                    },
+                ),
+                &mut callbacks,
+            )
+            .is_ok()
+        });
+
+        assert_eq!(
+            events.into_inner(),
+            std::vec![
+                MixedCollectAbandonEvent::DeferredFrees,
+                MixedCollectAbandonEvent::RetiredPages,
+                MixedCollectAbandonEvent::Collect(small_first, 1, 0),
+                MixedCollectAbandonEvent::Release(
+                    small_first,
+                    3,
+                    Some(small_second.as_ptr()),
+                ),
+                MixedCollectAbandonEvent::Collect(small_second, 1, 1),
+                MixedCollectAbandonEvent::Abandon(
+                    small_second,
+                    2,
+                    Some(EMPTY_PAGE.as_ptr()),
+                ),
+                MixedCollectAbandonEvent::Collect(medium, 1, 0),
+                MixedCollectAbandonEvent::Release(
+                    medium,
+                    1,
+                    Some(EMPTY_PAGE.as_ptr()),
+                ),
+                MixedCollectAbandonEvent::Collect(full, 1, 0),
+                MixedCollectAbandonEvent::Release(full, 0, Some(EMPTY_PAGE.as_ptr())),
+            ],
+            "deferred then retired prepasses precede remote collection and every release/abandon continuation through BIN_FULL"
+        );
+        assert_eq!(terminal_calls.get(), 0);
+        assert!((unsafe { Theap::local_queue_at(owner, small_bin) }).unwrap().is_empty());
+        assert!((unsafe { Theap::local_queue_at(owner, medium_bin) }).unwrap().is_empty());
+        assert!((unsafe { Theap::local_queue_at(owner, BIN_FULL) }).unwrap().is_empty());
+        assert_eq!(unsafe { Theap::local_page_count_at(owner) }, 0);
+        assert_eq!(unsafe { core::ptr::addr_of!((*owner.as_ptr()).pages_full_size).read() }, 0);
+        assert!(!page_is_in_full(unsafe { full.as_ref() }));
+        for (index, (remote, identity)) in atomic_refs.iter().enumerate() {
+            assert_eq!(remote.load(Ordering::Acquire) & !1, 0);
+            assert_eq!(identity.load(Ordering::Acquire), if index == 1 {
+                crate::types::THREAD_ID_ABANDONED
+            } else { id.get() });
+        }
+        // SAFETY: the retained second client still owns its entire payload;
+        // abandonment and saved-successor traversal cannot consume it.
+        unsafe {
+            assert!(core::slice::from_raw_parts(clients[1][1].as_ptr(),
+                small_size - crate::config::PADDING_SIZE).iter().all(|byte| *byte == 0xa5));
+        }
+        drop(atomic_refs);
+        drop(backing);
     }
 
     #[derive(Debug, Eq, PartialEq)]
