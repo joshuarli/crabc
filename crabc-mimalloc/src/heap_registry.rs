@@ -298,7 +298,19 @@ impl Heap {
         exclusive_arena: *mut super::Arena,
         memory: super::MemoryId,
     ) {
-        *self = Heap::bootstrap_empty();
+        #[cfg(target_arch = "x86_64")]
+        {
+            let destination = core::ptr::NonNull::from(&mut *self);
+            // SAFETY: this exclusive initialization replaces the old cold
+            // image before publication. Drop ends its initialized value,
+            // then the immutable prototype restores every field in place.
+            unsafe {
+                core::ptr::drop_in_place(destination.as_ptr());
+                Heap::write_bootstrap_empty_at(destination);
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        { *self = Heap::bootstrap_empty(); }
         self.theap_slot = theap_slot as usize;
         self.subprocess = subprocess.as_ptr();
         self.heap_seq = subprocess.heap_list().next_sequence();
@@ -1484,6 +1496,43 @@ mod tests {
     use crate::types::{MemoryId, Theap, ThreadLocalData};
     use core::ptr::NonNull;
     use std::boxed::Box;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn cold_non_main_initialization_retains_storage_extent_and_source_identity() {
+        #[repr(C)]
+        struct BorderedHeap {
+            before: [u8; 32],
+            heap: Heap,
+            after: [u8; 32],
+        }
+        let subprocess = MainSubprocess::new();
+        let mut storage = Box::new(BorderedHeap {
+            before: [0x59; 32], heap: Heap::bootstrap_empty(), after: [0xa6; 32],
+        });
+        let original = core::ptr::addr_of_mut!(storage.heap);
+        let memory = MemoryId::malloc(original.cast(), core::mem::size_of::<Heap>(), true);
+        let key = 7 << crate::thread_local::TLS_INDEX_BITS;
+        storage.heap.initialize_non_main(subprocess.identity(), key, null_mut(), memory);
+        assert_eq!(core::ptr::addr_of_mut!(storage.heap), original);
+        assert_eq!(storage.before, [0x59; 32]);
+        assert_eq!(storage.after, [0xa6; 32]);
+        assert_eq!(storage.heap.theap_slot, key as usize);
+        assert_eq!(storage.heap.subprocess, subprocess.identity().as_ptr());
+        assert_eq!(storage.heap.heap_seq, 0);
+        assert!(storage.heap.next.is_null() && storage.heap.prev.is_null());
+        assert!(storage.heap.exclusive_arena.is_null());
+        assert_eq!(*storage.heap.numa_node.get_mut(), -1);
+        assert!(storage.heap.is_without_theaps_or_pages());
+        assert_eq!(storage.heap.memid.kind(), crate::types::MemoryKind::Malloc);
+        assert!(storage.heap.memid.initially_zero());
+        // SAFETY: the Malloc kind above establishes the active union field;
+        // this exact fixture storage remains exclusive and unpublished.
+        assert_eq!(unsafe { storage.heap.memid.info.malloc.base }, original.cast());
+        let statistics = storage.heap.statistics.snapshot();
+        assert_eq!((statistics.pages_total, statistics.pages_current, statistics.threads_total), (0, 0, 0));
+        assert_eq!(subprocess.identity().heap_list().test_counts(), (0, 1, true));
+    }
 
     #[cfg(target_arch = "x86_64")]
     fn arena_record_fixture() -> (

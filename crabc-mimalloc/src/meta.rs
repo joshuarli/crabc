@@ -4627,7 +4627,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         let prepared = unsafe {
             // The metadata allocation supplies zeroed storage. Establish the
             // empty Theap image before the typed initializer validates it.
-            core::ptr::write(theap.as_ptr(), Theap::empty());
+            Theap::write_empty_at(theap);
             if (*theap.as_ptr()).set_dynamic_metadata_memid(
                 MemoryId::malloc(theap.as_ptr().cast(), size_of::<Theap>(), true)) {
                 Theap::prepare_initialization_at(theap, owner.heap, tld,
