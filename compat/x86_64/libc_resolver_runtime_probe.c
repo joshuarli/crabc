@@ -289,10 +289,12 @@ static int check_thread_local_h_errno(void)
     return 0;
 }
 
-static int check_resolver_runtime(void)
+static int check_resolver_runtime(struct in_addr fixture_address)
 {
     static const unsigned char host_address[4] = { 192, 0, 2, 44 };
     static const unsigned char dns_address[4] = { 203, 0, 113, 9 };
+    static const unsigned char loopback6[16] = { 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 1 };
     static const unsigned char compressed_name[] = {
         3, 'd', 'n', 's', 7, 'f', 'i', 'x', 't', 'u', 'r', 'e',
         4, 't', 'e', 's', 't', 0,
@@ -316,15 +318,25 @@ static int check_resolver_runtime(void)
      * configuration boundary, so inspect it only on that arm. */
     state = __res_state();
     /* res_init loads configuration without publishing a lookup result. */
-    if (state == 0 || state->nscount != 1 || state->retrans != 1 ||
+    if (state == 0 || state->nscount != 3 || state->retrans != 1 ||
         state->retry != 1 || state->ndots != 1 || state->dnsrch[0] == 0 ||
         !text_equal(state->dnsrch[0], "fixture.test") ||
+        state->nsaddr_list[0].sin_family != AF_INET ||
+        state->nsaddr_list[0].sin_addr.s_addr != fixture_address.s_addr ||
+        state->nsaddr_list[1].sin_family != AF_UNSPEC ||
+        state->_u._ext.nscount6 != 1 || state->_u._ext.nsaddrs[1] == 0 ||
+        state->_u._ext.nsaddrs[1]->sin6_family != AF_INET6 ||
+        !bytes_equal(state->_u._ext.nsaddrs[1]->sin6_addr.s6_addr, loopback6, 16) ||
+        state->nsaddr_list[2].sin_family != AF_INET ||
+        state->nsaddr_list[2].sin_addr.s_addr != htonl(0x7f000001u) ||
         h_errno != NO_RECOVERY || state->res_h_errno != NO_RECOVERY ||
         __h_errno_location() != &h_errno ||
         errno != E2BIG)
         return 5;
 #else
     (void)state;
+    (void)fixture_address;
+    (void)loopback6;
 #endif
     if (check_thread_local_h_errno() != 0)
         return 38;
@@ -397,7 +409,7 @@ static int check_resolver_runtime(void)
 int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
 {
     struct in_addr loopback;
-    char address[INET_ADDRSTRLEN], configuration[160];
+    char address[INET_ADDRSTRLEN], configuration[192];
     pid_t process = getpid(), server, waited;
     int result = 3, status, descriptor, length;
     if (argc != 2 || process <= 0 || process > 0x7fffff) return 1;
@@ -412,13 +424,14 @@ int crabc_x86_64_resolver_runtime_probe(int argc, char **argv)
     if (enter_fixture_root(argv[1]) == 0 &&
         inet_ntop(AF_INET, &loopback, address, sizeof(address))) {
         length = snprintf(configuration, sizeof(configuration),
-            "nameserver %s\nsearch fixture.test\noptions ndots:1 timeout:1 attempts:1\n",
+            "nameserver %s\nnameserver ::1\nnameserver 127.0.0.1\n"
+            "nameserver 127.0.0.2\nsearch fixture.test\noptions ndots:1 timeout:1 attempts:1\n",
             address);
         descriptor = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0600);
         if (descriptor >= 0) {
             int written = length > 0 && (size_t)length < sizeof(configuration) &&
                 write(descriptor, configuration, (size_t)length) == length;
-            if (close(descriptor) == 0 && written) result = check_resolver_runtime();
+            if (close(descriptor) == 0 && written) result = check_resolver_runtime(loopback);
         }
     }
     /* Every failing assertion must retire the server, including failures

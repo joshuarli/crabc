@@ -549,14 +549,17 @@ unsafe fn parse_resolv_conf() {
         }
         if unsafe { ascii_equal(key, b"nameserver\0".as_ptr().cast()) } {
             let address = unsafe { next_field(&mut fields) };
-            if address.is_null() || !unsafe { next_field(&mut fields) }.is_null() {
+            if address.is_null() || !unsafe { next_field(&mut fields) }.is_null()
+                || unsafe { RESOLVER_RES_STATE.nscount } >= MAXNS as c_int
+            {
                 continue;
             }
+            // Each file entry consumes one ordered slot, regardless of its
+            // address family. IPv6 storage uses the same slot in the extension.
+            let index = unsafe { RESOLVER_RES_STATE.nscount as usize };
             let mut v4 = [0u8; 4];
             if unsafe { inet_address::inet_pton(AF_INET, address, v4.as_mut_ptr().cast()) } == 1
-                && unsafe { RESOLVER_RES_STATE.nscount } < MAXNS as c_int
             {
-                let index = unsafe { RESOLVER_RES_STATE.nscount as usize };
                 unsafe {
                     RESOLVER_RES_STATE.nsaddr_list[index] = SockaddrIn {
                         sin_family: AF_INET as u16,
@@ -570,20 +573,18 @@ unsafe fn parse_resolv_conf() {
             }
             let mut v6 = [0u8; 16];
             if unsafe { inet_address::inet_pton(AF_INET6, address, v6.as_mut_ptr().cast()) } == 1 {
-                let index = unsafe { RESOLVER_RES_STATE.u.ext.nscount6 as usize };
-                if index < MAXNS {
-                    unsafe {
-                        RESOLVER_IPV6_NAMESERVERS[index] = SockaddrIn6 {
-                            sin6_family: AF_INET6 as u16,
-                            sin6_port: DNS_PORT.to_be(),
-                            sin6_flowinfo: 0,
-                            sin6_addr: v6,
-                            sin6_scope_id: 0,
-                        };
-                        RESOLVER_RES_STATE.u.ext.nsaddrs[index] =
-                            core::ptr::addr_of_mut!(RESOLVER_IPV6_NAMESERVERS[index]);
-                        RESOLVER_RES_STATE.u.ext.nscount6 += 1;
-                    }
+                unsafe {
+                    RESOLVER_IPV6_NAMESERVERS[index] = SockaddrIn6 {
+                        sin6_family: AF_INET6 as u16,
+                        sin6_port: DNS_PORT.to_be(),
+                        sin6_flowinfo: 0,
+                        sin6_addr: v6,
+                        sin6_scope_id: 0,
+                    };
+                    RESOLVER_RES_STATE.u.ext.nsaddrs[index] =
+                        core::ptr::addr_of_mut!(RESOLVER_IPV6_NAMESERVERS[index]);
+                    RESOLVER_RES_STATE.nscount += 1;
+                    RESOLVER_RES_STATE.u.ext.nscount6 += 1;
                 }
             }
         } else if unsafe { ascii_equal(key, b"search\0".as_ptr().cast()) } {
@@ -821,21 +822,17 @@ unsafe fn exchange_config() -> Option<ExchangeConfig> {
     unsafe { ensure_initialized() };
     let mut servers = [NameServer::ipv4([127, 0, 0, 1]); MAX_NAMESERVERS];
     let mut count = 0usize;
-    let v4_count = unsafe { RESOLVER_RES_STATE.nscount.max(0) as usize }.min(MAXNS);
-    for index in 0..v4_count {
+    // nscount includes both families. A non-IPv4 slot projects its IPv6
+    // extension at the same index, preserving the configured file order.
+    let configured_count = unsafe { RESOLVER_RES_STATE.nscount.max(0) as usize }.min(MAXNS);
+    for index in 0..configured_count {
         let source = unsafe { RESOLVER_RES_STATE.nsaddr_list[index] };
-        if source.sin_family != AF_INET as u16 || count == MAX_NAMESERVERS {
+        if source.sin_family == AF_INET as u16 {
+            let mut server = NameServer::ipv4(source.sin_addr.s_addr.to_ne_bytes());
+            server.port = u16::from_be(source.sin_port);
+            servers[count] = server;
+            count += 1;
             continue;
-        }
-        let mut server = NameServer::ipv4(source.sin_addr.s_addr.to_ne_bytes());
-        server.port = u16::from_be(source.sin_port);
-        servers[count] = server;
-        count += 1;
-    }
-    let v6_count = unsafe { RESOLVER_RES_STATE.u.ext.nscount6 as usize }.min(MAXNS);
-    for index in 0..v6_count {
-        if count == MAX_NAMESERVERS {
-            break;
         }
         let source = unsafe { RESOLVER_RES_STATE.u.ext.nsaddrs[index] };
         if source.is_null() || unsafe { (*source).sin6_family } != AF_INET6 as u16 {
