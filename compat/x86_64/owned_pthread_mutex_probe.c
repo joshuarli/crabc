@@ -982,7 +982,9 @@ static int c11_recursive_timed_condition(void)
     return 0;
 }
 
-static int c11_condition_case(void)
+/* Both routes retain the same live mutex/condition transactions. The ordinary
+ * route excludes the separate invalid-deadline checks and their recursive case. */
+static int c11_condition_case(int validate_invalid_deadlines)
 {
     thrd_t waiters[C11_WAITERS];
     int result;
@@ -1014,9 +1016,10 @@ static int c11_condition_case(void)
         mtx_trylock(&c11_condition_mutex) != thrd_busy ||
         mtx_unlock(&c11_condition_mutex) != thrd_success || errno != E2BIG) return 118;
     struct timespec invalid = { .tv_sec = 0, .tv_nsec = 1000000000 };
-    if (mtx_lock(&c11_condition_mutex) != thrd_success ||
-        cnd_timedwait(&c11_condition, &c11_condition_mutex, &invalid) != thrd_error ||
-        mtx_trylock(&c11_condition_mutex) != thrd_busy || errno != E2BIG) return 130;
+    if (mtx_lock(&c11_condition_mutex) != thrd_success) return 130;
+    if (validate_invalid_deadlines &&
+        (cnd_timedwait(&c11_condition, &c11_condition_mutex, &invalid) != thrd_error ||
+        mtx_trylock(&c11_condition_mutex) != thrd_busy || errno != E2BIG)) return 130;
     struct timespec until = realtime_after(20);
     if (cnd_timedwait(&c11_condition, &c11_condition_mutex, &until) != thrd_timedout ||
         mtx_trylock(&c11_condition_mutex) != thrd_busy || errno != E2BIG) return 131;
@@ -1026,11 +1029,15 @@ static int c11_condition_case(void)
         mtx_unlock(&c11_condition_mutex) != thrd_success) return 132;
     int timed_result = c11_timed_condition_transaction();
     if (timed_result) return timed_result;
-    timed_result = c11_recursive_timed_condition();
-    if (timed_result) return timed_result;
+    if (validate_invalid_deadlines) {
+        timed_result = c11_recursive_timed_condition();
+        if (timed_result) return timed_result;
+    }
     cnd_destroy(&c11_condition);
     mtx_destroy(&c11_condition_mutex);
-    puts("C11 condition signal, broadcast, and expired timed wait: PASS");
+    puts(validate_invalid_deadlines
+        ? "C11 condition signal, broadcast, and expired timed wait: PASS"
+        : "C11 ordinary condition signal, broadcast, timed predicate and TSS teardown: PASS");
     return 0;
 }
 
@@ -1048,6 +1055,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "c11")) return c11_case();
     if (!strcmp(argv[1], "pi")) return pi_case();
     if (!strcmp(argv[1], "attributes")) return attribute_case();
-    if (!strcmp(argv[1], "c11-condition")) return c11_condition_case();
+    if (!strcmp(argv[1], "c11-condition")) return c11_condition_case(1);
+    if (!strcmp(argv[1], "c11-condition-ordinary")) return c11_condition_case(0);
     return 81;
 }
