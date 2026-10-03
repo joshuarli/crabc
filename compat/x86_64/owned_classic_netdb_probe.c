@@ -192,6 +192,38 @@ static void query_domain_answers(void) {
     freeaddrinfo(alias);
 }
 
+static void *dns_composition_worker(void *argument) {
+    (void)argument;
+    char *first=malloc(4096),*second=malloc(4096);
+    CHECK(first&&second);
+    struct hostent a,aaaa,*result;int error=97;
+    CHECK(!gethostbyname2_r("a.example.test",AF_INET,&a,first,4096,&result,&error)&&result==&a&&error==97);
+    CHECK(!gethostbyname2_r("aaaa.example.test",AF_INET6,&aaaa,second,4096,&result,&error)&&result==&aaaa&&error==97);
+    /* The resolver batch and later result destruction must leave both
+       independently owned reentrant results available to this worker. */
+    query_domain_answers();
+    address(&a,0,AF_INET,"198.51.100.42");
+    address(&aaaa,0,AF_INET6,"2001:db8::42");
+    CHECK(!strcmp(a.h_name,"a.example.test")&&!strcmp(aaaa.h_name,"aaaa.example.test"));
+    CHECK(a.h_name>=first&&a.h_name<first+4096&&aaaa.h_name>=second&&aaaa.h_name<second+4096);
+    int state;CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&state)&&state==PTHREAD_CANCEL_ENABLE);
+    CHECK(!pthread_setcancelstate(state,0));
+    free(second);free(first);
+    return argument;
+}
+static void dns_composition(void) {
+    int before=socket(AF_INET,SOCK_DGRAM,0);CHECK(before>=0&&!close(before));
+    h_errno=95;
+    for(unsigned round=0;round<4;round++) {
+        pthread_t workers[2];
+        for(unsigned i=0;i<2;i++)CHECK(!pthread_create(&workers[i],0,dns_composition_worker,(void*)(uintptr_t)(i+1)));
+        for(unsigned i=0;i<2;i++) {
+            void *result;CHECK(!pthread_join(workers[i],&result)&&result==(void*)(uintptr_t)(i+1));
+        }
+        CHECK(h_errno==95);
+    }
+    int after=socket(AF_INET,SOCK_DGRAM,0);CHECK(after==before&&!close(after));
+}
 static void host_dns(void) {
     query_domain_answers();
     struct hostent h,*r;char b[2048];int error=97;
@@ -565,7 +597,7 @@ static void allocation_failure(void) {
 }
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
-    if(!strcmp(s,"query-domain")){query_domain_construction();query_domain_answers();}else if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
+    if(!strcmp(s,"query-domain")){query_domain_construction();query_domain_answers();dns_composition();}else if(!strcmp(s,"dns-composition"))dns_composition();else if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
     else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services")){services();protocols();}else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }

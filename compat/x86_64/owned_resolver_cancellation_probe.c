@@ -25,6 +25,9 @@ static atomic_int worker_tid;
 static const char *scenario, *api;
 static int uses_server, tcp_case, initial_state, cancel_before_tcp, socket_failure, kernel_canceled;
 static int normal_case, retry_case, reuse_case, dual_mixed_later_errno_case, post_tcp_later_eagain_case;
+static int retained_case;
+static char *retained_buffer;
+static struct addrinfo *retained_result;
 static int descriptor_count(void) {
     int count=0;
     for(int fd=0;fd<512;fd++) {
@@ -36,6 +39,16 @@ static int descriptor_count(void) {
 static void cleanup(void *unused) {
     (void)unused;
     cleanup_fds=descriptor_count()-baseline-atomic_load(&extra_fds);
+    if(retained_case) {
+        /* Cancellation retires the in-flight resolver descriptors before
+           caller cleanup releases an earlier, independently owned result. */
+        CHECK(retained_result&&!retained_result->ai_next&&retained_result->ai_family==AF_INET);
+        CHECK(((struct sockaddr_in*)retained_result->ai_addr)->sin_addr.s_addr==htonl(INADDR_LOOPBACK));
+        CHECK(((struct sockaddr_in*)retained_result->ai_addr)->sin_port==htons(80));
+        for(unsigned i=0;i<4096;i++)CHECK(retained_buffer[i]==(char)(i%127));
+        freeaddrinfo(retained_result);free(retained_buffer);
+        retained_result=0;retained_buffer=0;
+    }
     cleanup_count++;
 }
 static void query(void) {
@@ -77,6 +90,12 @@ static void syscall_error(int number,int error,int stream_only) {
 static void *worker(void *unused) {
     (void)unused;
     atomic_store(&worker_tid,(int)syscall(SYS_gettid));
+    if(retained_case) {
+        retained_buffer=malloc(4096);CHECK(retained_buffer);
+        for(unsigned i=0;i<4096;i++)retained_buffer[i]=(char)(i%127);
+        struct addrinfo hints={.ai_family=AF_INET,.ai_socktype=SOCK_STREAM};
+        CHECK(!getaddrinfo("127.0.0.1","80",&hints,&retained_result)&&retained_result);
+    }
     pthread_cleanup_push(cleanup,0);
     if(!uses_server && !kernel_canceled) {
         CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,0));
@@ -227,6 +246,8 @@ static int network_main(const char *mode) {
 int main(int argc,char **argv) {
     CHECK(argc==3);scenario=argv[1];api=argv[2];
     if(!strncmp(scenario,"network-",8)) return network_main(scenario+8);
+    retained_case=!strcmp(scenario,"udp")||!strcmp(scenario,"tcp")||!strcmp(scenario,"reuse-cancel-udp")||
+                  !strcmp(scenario,"retained-cancel-udp")||!strcmp(scenario,"retained-cancel-tcp");
     uses_server=strstr(scenario,"udp")!=0 || strstr(scenario,"tcp")!=0;
     tcp_case=strstr(scenario,"tcp")!=0;
     normal_case=!strncmp(scenario,"normal-",7) || !strcmp(scenario,"retry-udp");
@@ -306,6 +327,7 @@ int main(int argc,char **argv) {
         } else if(!cancel_before_tcp && !post_tcp_later_eagain_case) { witness_blocked_wait();CHECK(!pthread_cancel(thread)); }
     }
     void *joined=0;CHECK(!pthread_join(thread,&joined));
+    if(retained_case)CHECK(!retained_result&&!retained_buffer);
     int leaked=descriptor_count()-baseline-atomic_load(&extra_fds);
     unsigned char packet[512];ssize_t received=recv(udp,packet,sizeof packet,MSG_DONTWAIT);
     CHECK(received>=0 || errno==EAGAIN);int transmitted=received>=0;
