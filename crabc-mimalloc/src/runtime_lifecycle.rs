@@ -10037,11 +10037,11 @@ fn begin_current_thread_native_initial_persistent_owner(
                 Ok(())
             }
             Err(_) => {
-                // Refusal never consumes the offered allocator. As with a
-                // rejected complete owner, dropping it latches the permanent
-                // session terminal; the caller retains the process instead
-                // of offering another permanent session or publishing a cell.
-                drop(allocator);
+                // Refusal leaves the allocator in this scope. Its in-place Drop
+                // latches the permanent session terminal before the admission
+                // gate returns; the caller retains the process without offering
+                // another session or publishing a cell. Scope cleanup avoids
+                // a by-value destructor argument.
                 Err(())
             }
         }
