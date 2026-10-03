@@ -46,7 +46,8 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering}
 use crabc_core::Errno;
 
 use crate::arena::{
-    ArenaId, ArenaPagesLayout, ArenaRegistry, ArenaView, manage_external_in_place,
+    ArenaId, ArenaPagesLayout, ArenaRegistry, ArenaView, MetadataGuardHook,
+    manage_external_in_place_with_guard,
 };
 use crate::bitmap::{BCHUNK_SIZE, BitmapLayout, BitmapView};
 use crate::bootstrap::{BootstrapError, ExclusiveTheapBootstrap};
@@ -7058,7 +7059,7 @@ impl<'owner> MetadataEngine<'owner> {
             Err(_) => return self.cleanup_mapping_and_page_map_after_failed_init(),
         };
         let managed = unsafe {
-            manage_external_in_place(
+            manage_external_in_place_with_guard(
                 &this.registry,
                 base,
                 length,
@@ -7069,6 +7070,7 @@ impl<'owner> MetadataEngine<'owner> {
                 -1,
                 false,
                 None,
+                Some(MetadataGuardHook::new(decommit_metadata_backing_guard, mapping)),
             )
         };
         let managed = match managed {
@@ -7140,6 +7142,24 @@ impl<'owner> MetadataEngine<'owner> {
             Err(MetaError::InitializationRetained)
         }
     }
+}
+
+/// Performs the arena metadata guard transition through its retained map.
+/// The synchronous callback ends before arena headers or bitmaps are exposed.
+unsafe fn decommit_metadata_backing_guard(
+    start: *mut u8, size: usize, argument: *const core::ffi::c_void,
+) {
+    // SAFETY: the hook borrows the exact final-slot mapping through arena
+    // initialization, before any typed view of the metadata guard exists.
+    let mapping = unsafe { &*argument.cast::<Mapping>() };
+    let base = mapping.base().expect("metadata backing retains its mapping");
+    let length = mapping.length().expect("metadata backing retains its extent");
+    let offset = start.addr().checked_sub(base.addr()).expect("metadata guard belongs to its mapping");
+    assert!(offset.checked_add(size).is_some_and(|end| end <= length),
+        "metadata guard stays inside its retained mapping");
+    // Source arena initialization proceeds after a guard transition failure;
+    // the original mapping owner still retains the complete backing.
+    let _ = mapping.decommit(offset, size);
 }
 
 /// Exclusive custody of one original static metadata slot while callback
@@ -7694,7 +7714,7 @@ mod tests {
             let registry = ArenaRegistry::new(subprocess.as_ptr());
             // SAFETY: this exclusive zeroed region has the required alignment
             // and remains live for the registry and every claim below.
-            let managed = unsafe { manage_external_in_place(
+            let managed = unsafe { crate::arena::manage_external_in_place(
                 &registry, region, ARENA_MIN_SIZE, PageSize::new(4096).unwrap(),
                 true, false, true, -1, true, None,
             ) }.unwrap();
@@ -9363,6 +9383,30 @@ mod tests {
             },
             "the rejected collision cannot create a caller-visible metadata capability"
         );
+    }
+
+    #[cfg(all(not(miri), any(feature = "mi-secure-1", feature = "mi-secure-2", feature = "mi-secure-3", feature = "mi-secure-4", feature = "mi-secure-5")))]
+    #[test]
+    fn mapped_metadata_backing_supplies_its_secure_guard_owner() {
+        for fail_guard in [false, true] {
+            let allocator = static_allocator();
+            let plan = if fail_guard {
+                fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM)
+            } else { fault::Plan::disabled() };
+            let fault = fault::install(plan);
+            let mut block = allocator.zalloc(config(), 64)
+                .expect("the retained private mapping supplies its metadata guard");
+            if fail_guard {
+                assert_eq!(fault.observed(), 1, "source initialization attempts the owned guard");
+            }
+            fault.set(fault::Plan::disabled());
+            // SAFETY: this exact live metadata capability owns all 64 bytes.
+            unsafe { core::ptr::write_bytes(block.pointer().as_ptr(), 0x63, 64); }
+            allocator.free(&mut block).expect("the ordinary metadata client frees");
+            assert_eq!(allocator.test_allocation_audit().live_capability_count, 0);
+            assert_eq!(allocator.status.load(Ordering::Acquire), READY,
+                "a guard failure retains the original usable backing");
+        }
     }
 
     #[test]
