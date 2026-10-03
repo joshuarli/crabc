@@ -926,16 +926,21 @@ fn raw_list_tail(
     state: &PageLocalCollectState,
     mut block: NonNull<Block>,
 ) -> Result<NonNull<Block>, FreeListError> {
+    if state.capacity == 0 {
+        return Err(FreeListError::CorruptFreeList);
+    }
+    validate_raw_initialized_block(state, block)?;
     let mut count = 0usize;
     loop {
         if count >= state.capacity as usize {
             return Err(FreeListError::CorruptFreeList);
         }
         count += 1;
-        validate_raw_initialized_block(state, block)?;
-        // SAFETY: `block` has just been validated as an initialized list node
-        // in the caller-proved writable page area. The source normal profile
-        // stores its unencoded next pointer in this first word.
+        // SAFETY: the head was validated before the loop, and every successor
+        // is validated below before becoming the current node. The owner
+        // keeps the page area and initialized capacity stable throughout this
+        // walk. The source normal profile stores its unencoded next pointer
+        // in this first word.
         #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
         let next = unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) };
         #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
