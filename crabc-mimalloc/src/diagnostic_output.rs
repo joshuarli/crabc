@@ -1626,6 +1626,7 @@ impl PendingSourceWarnings {
         }
     }
 
+    #[cfg(not(target_arch = "x86_64"))]
     unsafe fn deliver(self, output: &OutputOwner) {
         for index in 0..self.length {
             // SAFETY: `push` initializes exactly the prefix below `length`;
@@ -1647,6 +1648,42 @@ impl PendingSourceWarnings {
             if entry.temporary_verbose {
                 // `desc->value = 0` after the warning returns.
                 // SAFETY: as above.
+                unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 0);
+            }
+        }
+    }
+
+    /// Drains the original staging storage after descriptor locking ends.
+    /// Moving the four-message buffer into delivery duplicates its entire
+    /// stack extent even when only one message is selected. The initialized
+    /// prefix is consumed once in place; nested callbacks stage independently.
+    ///
+    /// # Safety
+    /// Descriptor locking has ended. Any table selected by temporary verbose
+    /// entries and the registered callbacks remain live under the caller's
+    /// output admission. Registration and replacement are serialized with delivery.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn deliver(&mut self, output: &OutputOwner) {
+        let length = self.length;
+        self.length = 0;
+        for index in 0..length {
+            // SAFETY: staging initialized this exact prefix. Entries contain
+            // only scalar snapshots and message bytes, with no Drop-bearing
+            // resources. Their original bytes stay immutable through output;
+            // clearing the prefix prevents a second logical delivery.
+            let entry = unsafe { self.entries[index].assume_init_ref() };
+            if entry.temporary_verbose {
+                // SAFETY: staging selected the installed descriptor table;
+                // its lock ended before this temporary source-visible value.
+                unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 1);
+            }
+            match entry.kind {
+                SourceMessageKind::Warning => unsafe { output.warning_borrowed(entry.options, &entry.message) },
+                SourceMessageKind::Error => unsafe { output.error_borrowed(entry.options, &entry.message) },
+            }
+            if entry.temporary_verbose {
+                // SAFETY: the same installed table remains live after the
+                // synchronous callback; restore the source option afterwards.
                 unsafe { output.source_options_ref_unlocked() }.set_value(SourceOption::Verbose, 0);
             }
         }
@@ -2550,6 +2587,9 @@ impl OutputOwner {
         options: DiagnosticOptionSnapshot,
         message: SourceFormattedMessage,
     ) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe { self.warning_borrowed(options, &message) };
+        #[cfg(not(target_arch = "x86_64"))]
         self.gated_output(
             options, &self.warning_count, self.max_warning_count.load(Ordering::Relaxed), WARNING_PREFIX_HEAD, message,
         );
@@ -2563,6 +2603,33 @@ impl OutputOwner {
     /// The same obligations as [`Self::warning`] apply.
     #[inline]
     unsafe fn error(&self, options: DiagnosticOptionSnapshot, message: SourceFormattedMessage) {
+        #[cfg(target_arch = "x86_64")]
+        unsafe { self.error_borrowed(options, &message) };
+        #[cfg(not(target_arch = "x86_64"))]
+        self.gated_output(
+            options, &self.error_count, self.max_error_count.load(Ordering::Relaxed), ERROR_PREFIX_HEAD, message,
+        );
+    }
+
+    /// Keeps the original bounded message live through synchronous output.
+    ///
+    /// # Safety
+    /// The same registration and callback lifetime obligations as `warning`
+    /// apply; the message must remain immutable until delivery returns.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn warning_borrowed(&self, options: DiagnosticOptionSnapshot, message: &SourceFormattedMessage) {
+        self.gated_output(
+            options, &self.warning_count, self.max_warning_count.load(Ordering::Relaxed), WARNING_PREFIX_HEAD, message,
+        );
+    }
+
+    /// Delivers the original message with the source error counter and prefix.
+    ///
+    /// # Safety
+    /// The same registration and callback lifetime obligations as `warning`
+    /// apply; the message must remain immutable until delivery returns.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn error_borrowed(&self, options: DiagnosticOptionSnapshot, message: &SourceFormattedMessage) {
         self.gated_output(
             options, &self.error_count, self.max_error_count.load(Ordering::Relaxed), ERROR_PREFIX_HEAD, message,
         );
@@ -2574,7 +2641,10 @@ impl OutputOwner {
         count: &AtomicUsize,
         max_count: isize,
         prefix_head: &[u8],
+        #[cfg(not(target_arch = "x86_64"))]
         message: SourceFormattedMessage,
+        #[cfg(target_arch = "x86_64")]
+        message: &SourceFormattedMessage,
     ) {
         if !options.verbose_enabled() {
             if !options.show_errors_enabled() {
@@ -5021,6 +5091,42 @@ mod tests {
         assert_eq!(capture.count(), 2);
         assert_live_thread_warning_prefix(capture.message(0));
         assert_eq!(capture.message(1), b"selected mbind failure\n");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn pending_warning_delivery_drains_original_storage_once() {
+        let options = DiagnosticOptionSnapshot::new(1, 1, -1);
+        let mut owner = output_owner();
+        owner.initialize_options(options);
+        let capture = Capture::new();
+        // SAFETY: this isolated owner serializes registration and delivery;
+        // the callback and capture remain live through every synchronous call.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        capture.reset();
+        let mut pending = super::PendingSourceWarnings::new();
+        pending.push(options, source_message(b"first staged warning\n\0"));
+        pending.push(options, source_message(b"second staged warning\n\0"));
+        let original = core::ptr::addr_of!(pending.entries);
+        // SAFETY: these entries need no temporary descriptor state, and
+        // this test retains the registered output while no lock is held.
+        unsafe { pending.deliver(&owner) };
+        assert_eq!(core::ptr::addr_of!(pending.entries), original);
+        assert_eq!(pending.length, 0);
+        assert_eq!(capture.count(), 4);
+        assert_eq!(capture.message(1), b"first staged warning\n");
+        assert_eq!(capture.message(3), b"second staged warning\n");
+        // SAFETY: the same serialized output contract holds; the empty
+        // staging prefix grants no second delivery of either original entry.
+        unsafe { pending.deliver(&owner) };
+        assert_eq!(capture.count(), 4);
+        pending.push(options, source_message(b"new staged warning\n\0"));
+        // SAFETY: only the newly initialized prefix is selected, under
+        // the same retained callback lifetime and serialized delivery.
+        unsafe { pending.deliver(&owner) };
+        assert_eq!(pending.length, 0);
+        assert_eq!(capture.count(), 6);
+        assert_eq!(capture.message(5), b"new staged warning\n");
     }
 
     #[test]
