@@ -23774,9 +23774,9 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn runtime_startup_runs_the_loader_tail_once_before_activation() {
+    fn runtime_startup_does_not_repeat_loader_output_after_allocation() {
         crate::test_process::run_in_fresh_process(
-            "runtime_lifecycle::tests::runtime_startup_runs_the_loader_tail_once_before_activation",
+            "runtime_lifecycle::tests::runtime_startup_does_not_repeat_loader_output_after_allocation",
             || {
                 assert!(publish_native_process_startup_facts(delayed_warning_startup_facts()));
                 assert!(initialize_process());
@@ -23784,9 +23784,11 @@ mod tests {
                     "_mi_auto_process_init clears os_preloading before its body");
                 assert!(captured_startup_stderr_contains(
                     b"environment option mimalloc_show_errors has an invalid value."));
-                let flushed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
-                assert!(flushed > 0);
+                assert!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire) > 0);
                 assert!(native_round_trip(48));
+                // The first arena may emit its own verbose reservation. Only
+                // deliveries after that allocation test repeated startup.
+                let flushed = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
                 assert!(initialize_process());
                 assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), flushed);
             },
@@ -23969,19 +23971,21 @@ mod tests {
         );
     }
 
-    /// First recursive allocation result observed from inside a startup
-    /// primitive: 0 none, 1 allocated, 2 unavailable, 3 other.
+    /// First allocation result observed from inside the registered output
+    /// callback: 0 none, 1 allocated, 2 unavailable, 3 other, 4 in progress.
     #[cfg(target_arch = "x86_64")]
-    static STARTUP_RECURSION_RESULT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+    static REGISTERED_OUTPUT_ALLOCATION_RESULT: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
     #[cfg(target_arch = "x86_64")]
-    static STARTUP_RECURSION_REENTERED_STARTUP: core::sync::atomic::AtomicU8 =
+    static REGISTERED_OUTPUT_REENTERED_STARTUP: core::sync::atomic::AtomicU8 =
         core::sync::atomic::AtomicU8::new(0);
 
-    /// Performs one recursive native allocation from a startup primitive,
-    /// frees it if it was granted, and records the outcome once.
+    /// Allocates and frees one native client during output registration,
+    /// recording the result while nested diagnostics use the custom route.
     #[cfg(target_arch = "x86_64")]
-    fn record_startup_recursive_allocation() {
-        if STARTUP_RECURSION_RESULT.load(Ordering::Acquire) != 0 { return; }
+    fn record_registered_output_first_allocation() {
+        if REGISTERED_OUTPUT_ALLOCATION_RESULT.compare_exchange(0, 4, Ordering::AcqRel, Ordering::Acquire).is_err() { return; }
+        // A first reservation can synchronously deliver another diagnostic.
+        // That nested delivery does not start a second probe allocation.
         let outcome = match native_allocate_aligned(32, 16, false) {
             NativePageAllocationResult::Allocated(block) => {
                 // SAFETY: the recursive client is exclusively owned here.
@@ -23993,52 +23997,103 @@ mod tests {
             NativePageAllocationResult::Unavailable => 2,
             _ => 3,
         };
-        STARTUP_RECURSION_RESULT.store(outcome, Ordering::Release);
+        REGISTERED_OUTPUT_ALLOCATION_RESULT.store(outcome, Ordering::Release);
     }
 
-    /// A FILE primitive that allocates and re-enters runtime startup while
-    /// the loader tail flushes delayed output through it.
+    /// Captures source fragments while preserving the host fixture's actual
+    /// permanent stderr transport, whose static backing needs no allocation.
     #[cfg(target_arch = "x86_64")]
-    unsafe extern "C" fn allocating_startup_stderr(message: *const core::ffi::c_char) {
-        record_startup_recursive_allocation();
-        if STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire) == 0 {
-            STARTUP_RECURSION_REENTERED_STARTUP.store(
+    unsafe extern "C" fn capture_startup_file_stderr(message: *const core::ffi::c_char) {
+        // SAFETY: both operations receive the same valid source fragment;
+        // the permanent FILE and atomic capture outlive this isolated process.
+        unsafe {
+            capture_startup_stderr(message);
+            deferred_free_boundary_test_stderr(message);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn file_output_startup_facts() -> NativeProcessStartupFacts {
+        // SAFETY: immutable static environment and actual permanent stderr.
+        unsafe { NativeProcessStartupFacts::new(
+            4096, delayed_warning_environment, RuntimeStderrOutput::new(capture_startup_file_stderr),
+        ) }.expect("the native x86 fixture uses a supported base page size")
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    static REGISTERED_OUTPUT_RESERVATION_SEEN: core::sync::atomic::AtomicBool =
+        core::sync::atomic::AtomicBool::new(false);
+
+    /// A registered output callback runs after its custom default is
+    /// published. Its first allocation can emit reservation diagnostics
+    /// through that same custom route without entering the delayed buffer.
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn allocating_registered_startup_output(
+        message: *const core::ffi::c_char, _argument: *mut core::ffi::c_void,
+    ) {
+        // SAFETY: source registration supplies a terminated callback fragment.
+        if unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes().starts_with(b"reserved ") {
+            REGISTERED_OUTPUT_RESERVATION_SEEN.store(true, Ordering::Release);
+        }
+        record_registered_output_first_allocation();
+        if REGISTERED_OUTPUT_REENTERED_STARTUP.load(Ordering::Acquire) == 0 {
+            REGISTERED_OUTPUT_REENTERED_STARTUP.store(
                 if initialize_process() { 1 } else { 2 }, Ordering::Release);
         }
-        // SAFETY: forwarded source message.
+        // SAFETY: source registration supplies a valid terminated fragment.
         unsafe { capture_startup_stderr(message) };
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn allocating_output_startup_facts() -> NativeProcessStartupFacts {
-        // SAFETY: immutable static reader vector; process-lifetime primitive.
-        unsafe {
-            NativeProcessStartupFacts::new(
-                4096,
-                delayed_warning_environment,
-                RuntimeStderrOutput::new(allocating_startup_stderr),
-            )
-        }
-        .expect("the native x86 fixture uses a supported base page size")
+    #[test]
+    fn runtime_startup_default_file_output_keeps_the_first_arena_cold() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::runtime_startup_default_file_output_keeps_the_first_arena_cold",
+            || {
+                assert!(publish_native_process_startup_facts(file_output_startup_facts()));
+                assert!(initialize_process());
+                assert_eq!(STARTUP_STDERR_CAPTURE.delayed_flushes.load(Ordering::Acquire), 1);
+                assert!(process_is_active());
+                assert!(!RUNTIME_PROCESS.initial_owner_is_installed());
+                // SAFETY: completed startup retains this coordinator; this
+                // isolated initial thread has no concurrent teardown.
+                let backing = unsafe { RUNTIME_PROCESS.active_owner() }.unwrap().ready().unwrap()
+                    .process_backing().unwrap();
+                assert_eq!(backing.process().subprocess().arena_backing().registry().count(), 0);
+                let calls = STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire);
+                assert!(initialize_process());
+                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), calls);
+            },
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn output_recursion_in_the_runtime_startup_tail_allocates_through_the_initial_owner() {
+    fn registered_output_flush_allocates_through_the_cold_initial_owner() {
         crate::test_process::run_in_fresh_process(
-            "runtime_lifecycle::tests::output_recursion_in_the_runtime_startup_tail_allocates_through_the_initial_owner",
+            "runtime_lifecycle::tests::registered_output_flush_allocates_through_the_cold_initial_owner",
             || {
-                assert!(publish_native_process_startup_facts(allocating_output_startup_facts()));
+                assert!(publish_native_process_startup_facts(file_output_startup_facts()));
                 assert!(initialize_process());
-                assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 1,
-                    "post-init output may allocate through the published initial owner");
-                assert_eq!(STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire), 1,
-                    "a recursive startup call returns without waiting on its own once");
-                // The one delayed flush is followed by `_mi_options_post_init`'s
-                // verbose `mi_options_print`, one delivery per line.
-                assert_eq!(STARTUP_STDERR_CAPTURE.delayed_flushes.load(Ordering::Acquire), 1,
-                    "the recursive call did not flush a second time");
-                assert!(process_is_active());
+                assert!(!RUNTIME_PROCESS.initial_owner_is_installed());
+                let arena_count = {
+                    // SAFETY: completed startup retains this coordinator;
+                    // every observation ends before callback registration.
+                    let ready = unsafe { RUNTIME_PROCESS.active_owner() }.unwrap().ready().unwrap();
+                    ready.process_backing().unwrap().process().subprocess().arena_backing().registry().count()
+                };
+                assert_eq!(arena_count, 0);
+                let output = crate::process_init::process_output_owner().unwrap();
+                // SAFETY: this isolated process serializes registration and
+                // retains the callback through its flush and nested delivery.
+                unsafe { output.register_output(Some(allocating_registered_startup_output), core::ptr::null_mut()); }
+                assert_eq!(REGISTERED_OUTPUT_ALLOCATION_RESULT.load(Ordering::Acquire), 1,
+                    "custom registration flush permits the first ordinary allocation");
+                assert_eq!(REGISTERED_OUTPUT_REENTERED_STARTUP.load(Ordering::Acquire), 1);
+                assert!(REGISTERED_OUTPUT_RESERVATION_SEEN.load(Ordering::Acquire),
+                    "the first reservation diagnostic reached the published custom route");
+                // SAFETY: synchronous delivery has ended; no argument escapes.
+                unsafe { output.register_output(None, core::ptr::null_mut()); }
                 assert!(native_round_trip(48));
             },
         );
@@ -24046,17 +24101,15 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn output_recursion_in_the_deferred_loader_tail_allocates_through_the_initial_owner() {
+    fn first_allocation_loader_tail_uses_the_permanent_file_output() {
         crate::test_process::run_in_fresh_process(
-            "runtime_lifecycle::tests::output_recursion_in_the_deferred_loader_tail_allocates_through_the_initial_owner",
+            "runtime_lifecycle::tests::first_allocation_loader_tail_uses_the_permanent_file_output",
             || {
-                assert!(publish_native_process_startup_facts(allocating_output_startup_facts()));
+                assert!(publish_native_process_startup_facts(file_output_startup_facts()));
                 assert!(native_round_trip(48));
-                assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 0,
+                assert_eq!(STARTUP_STDERR_CAPTURE.calls.load(Ordering::Acquire), 0,
                     "no output reached the FILE primitive before the loader tail");
                 assert!(initialize_process());
-                assert_eq!(STARTUP_RECURSION_RESULT.load(Ordering::Acquire), 1);
-                assert_eq!(STARTUP_RECURSION_REENTERED_STARTUP.load(Ordering::Acquire), 1);
                 assert_eq!(STARTUP_STDERR_CAPTURE.delayed_flushes.load(Ordering::Acquire), 1);
                 assert!(native_round_trip(64));
             },

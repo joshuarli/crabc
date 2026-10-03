@@ -98,8 +98,14 @@ impl RuntimeStderrOutput {
     /// preserve the selected `fputs(message, stderr)` FILE behavior, including
     /// its locking, buffering, and error/short-write semantics. Pinned
     /// `_mi_prim_out_stderr` deliberately ignores `fputs`'s integer result.
-    /// It may synchronously reenter the allocator's diagnostic routes, as
-    /// pinned C permits (the Linux `mi_recurse_enter_prim` always succeeds).
+    /// Delayed startup output invokes this primitive while retaining the
+    /// delayed-buffer lock and before publishing the stderr default. During
+    /// that flush, `invoke` must not emit allocator diagnostics: allocation
+    /// that reports a first arena reservation would reacquire the same lock.
+    /// The selected permanent stderr uses static backing without allocation.
+    /// Linux's always-successful recursion primitive does not release that
+    /// buffer lock. Registered output callbacks have their own publication
+    /// contract and are not substitutes for this FILE primitive.
     /// A raw descriptor write, an ambient symbol lookup, or a no-op callback
     /// does not satisfy this capability.
     #[inline]
