@@ -68,6 +68,20 @@ pub(crate) unsafe fn reset_source_page_guard(
     0
 }
 
+/// Copies immutable owner identity without retaining a reference to the
+/// mutable Heap across arena reservation callbacks.
+#[cfg(target_arch = "x86_64")]
+unsafe fn owner_arena_search(process: VmProcess<'_>, heap: core::ptr::NonNull<crate::types::Heap>,
+    requested: ArenaId, thread_sequence: usize, numa_node: i32) -> Option<ArenaSearch>
+{
+    // SAFETY: the caller's source session retains the Heap and subprocess;
+    // these projections read immutable fields and create no Heap reference.
+    let owner = unsafe { crate::types::Heap::source_snapshot_at(heap) };
+    if owner.subprocess != core::ptr::from_ref(process.subprocess()).cast_mut() { return None; }
+    Some(ArenaSearch { heap_sequence: unsafe { crate::types::Heap::heap_sequence_at(heap) },
+        heap_count: 0, thread_sequence, numa_node, requested, allow_pinned: true })
+}
+
 mod sealed {
     pub trait Sealed {}
     impl Sealed for crate::arena::ArenaView<'_> {}
@@ -96,6 +110,44 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
             // SAFETY: the backing retains this arena throughout the engine operation.
             unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut()) }
         }))
+    }
+    /// # Safety
+    /// The session retains `heap` and its subprocess through the cursor and
+    /// every returned view, excluding requesting Heap retirement and
+    /// subprocess destruction. The backing
+    /// must belong to that exact subprocess.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn reclaim_arenas_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
+        requested: ArenaId, thread_sequence: usize) -> PageArenaSearch<'arena>
+    {
+        let Some(process) = self.process() else {
+            return self.reclaim_arenas(requested, thread_sequence);
+        };
+        let Some(search) = (unsafe { owner_arena_search(process, heap, requested, thread_sequence, -1) }) else {
+            return PageArenaSearch::Selected(None);
+        };
+        // SAFETY: the session and backing retain this exact subprocess and
+        // its registry throughout the cursor lifetime.
+        PageArenaSearch::Registry(unsafe {
+            process.subprocess().arena_backing().registry().suitable_arenas_with_heap_list(
+                search, Some(process.subprocess().heap_list()))
+        })
+    }
+    /// # Safety
+    /// The session retains `heap`, its subprocess and Theap allocation facts
+    /// throughout this call. Heap retirement and subprocess destruction are
+    /// excluded; the backing must belong to that exact subprocess.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn claim_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
+        config: MemoryConfig, requested: ArenaId, slices: usize, commit: bool,
+        thread_sequence: usize, numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'arena>>
+    {
+        // Fixed arena fixtures and process-main metadata admission retain
+        // their explicit sequence-zero route. Application backings override
+        // this entry point with the actual requesting Heap identity.
+        let _ = heap;
+        self.claim_with_numa_node(config, requested, slices, commit, thread_sequence, numa_node, random)
     }
     /// # Safety
     /// An arena `memory` must come from an outstanding live claim or page
@@ -364,6 +416,31 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         }
     }
 
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn claim_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
+        config: MemoryConfig, requested: ArenaId, slices: usize, commit: bool,
+        thread_sequence: usize, allocation_numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'static>>
+    {
+        match self {
+            #[cfg(any(test, feature = "native-runtime-test-audit"))]
+            Self::SelectedSidecar(_) => self.claim_with_numa_node(config, requested, slices,
+                commit, thread_sequence, allocation_numa_node, random),
+            Self::SourceStartupRegular { process, numa_node, .. } | Self::SourceRegistry { process, numa_node } => {
+                if process.policy().disallow_arena_alloc()
+                    || slices > Self::max_process_arena_object_size(*process) / ARENA_SLICE_SIZE { return None; }
+                // SAFETY: forwarded session custody; identity is checked before search.
+                let search = unsafe { owner_arena_search(*process, heap, requested,
+                    thread_sequence, allocation_numa_node.unwrap_or(*numa_node)) }?;
+                // SAFETY: the matching process and session retain the registry,
+                // live Heap list and returned claim through release.
+                unsafe { process.subprocess().arena_backing().try_allocate_slices_with_random_and_heap_list(
+                    *process, config, search, Some(process.subprocess().heap_list()), slices,
+                    ARENA_SLICE_SIZE, commit, random) }
+            }
+        }
+    }
+
     unsafe fn release(&self, memory: MemoryId) -> bool {
         match self {
             #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
@@ -490,6 +567,23 @@ impl<'child> PageBacking<'child> for ChildMetadataArenaBacking<'child> {
     {
         self.claim_child_arena_slices_with_numa_node(config, requested, slices, commit,
             thread_sequence, allocation_numa_node, random)
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn claim_for_heap(&self, heap: core::ptr::NonNull<crate::types::Heap>,
+        config: MemoryConfig, requested: ArenaId, slices: usize, commit: bool,
+        thread_sequence: usize, numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'child>>
+    {
+        if self.pair.memory_config().ok()? != config
+            || self.process().policy().disallow_arena_alloc()
+            || slices > self.max_object_size() / ARENA_SLICE_SIZE { return None; }
+        // SAFETY: forwarded session custody; the child wrapper validates its
+        // registered parent chain and exact backing before allocation.
+        let search = unsafe { owner_arena_search(self.process(), heap, requested,
+            thread_sequence, numa_node.unwrap_or(-1)) }?;
+        unsafe { self.pair.arena_backing().try_allocate_child_slices_with_random_and_heap_list(
+            self.pair.child(), config, search, Some(self.process().subprocess().heap_list()),
+            slices, ARENA_SLICE_SIZE, commit, random) }
     }
     unsafe fn release(&self, memory: MemoryId) -> bool {
         unsafe { ChildMetadataArenaBacking::release(self, memory) }
@@ -657,6 +751,115 @@ mod tests {
     use crate::os::{PageSize, VmPolicy};
     use crate::subproc::MainSubprocess;
     use std::boxed::Box;
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_explicit_heap_fresh_page_uses_its_source_arena_fraction() {
+        crate::test_process::run_in_fresh_process(
+            "page_backing::tests::native_explicit_heap_fresh_page_uses_its_source_arena_fraction", || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                let output = unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) };
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, output));
+                let mut arenas = [core::ptr::null_mut(); 3];
+                // SAFETY: this isolated process owns the writable outputs,
+                // retains every published regular arena and the actual Heap,
+                // and releases its sole ordinary client before the Heap.
+                unsafe {
+                    for arena in &mut arenas {
+                        assert_eq!(crate::source_heap_api::reserve_os_memory_ex(
+                            64 * crate::config::MIB, true, false, false, arena).value, 0);
+                        assert!(!arena.is_null());
+                    }
+                    let heap = crate::source_heap_api::heap_new();
+                    let owner = core::ptr::NonNull::new(heap.cast::<crate::types::Heap>()).unwrap();
+                    let source = crate::types::Heap::source_snapshot_at(owner);
+                    let subprocess = &*source.subprocess;
+                    assert_eq!(crate::types::Heap::heap_sequence_at(owner), 1);
+                    assert_eq!(subprocess.heap_list().live_count_relaxed(), 2);
+                    assert_eq!(subprocess.arena_backing().registry().count(), 3);
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().unwrap();
+                    let backing = RuntimeFirstRegularPageBacking::source_registry(binding.process(), -1);
+                    let candidates: std::vec::Vec<_> = backing.reclaim_arenas_for_heap(owner,
+                        ArenaId::none(), 0).map(|view|
+                            core::ptr::from_ref(view.arena()).cast_mut().cast::<core::ffi::c_void>()).collect();
+                    assert_eq!(candidates, std::vec![arenas[1], arenas[0], arenas[2]]);
+                    let block = crate::source_heap_api::heap_malloc(heap, 32 * crate::config::KIB)
+                        .value.unwrap();
+                    assert_eq!(crate::source_heap_api::heap_of(block.as_ptr()), heap);
+                    assert!(crate::source_heap_api::arena_contains(arenas[1], block.as_ptr().cast()),
+                        "the explicit Heap's source fraction starts at arena one, independently of the default Heap");
+                    assert!(!crate::source_heap_api::arena_contains(arenas[0], block.as_ptr().cast()));
+                    block.as_ptr().write_bytes(0x5a, 32 * crate::config::KIB);
+                    assert_eq!(crate::source_api::free(block.as_ptr()), crate::source_api::FreeOutcome::Freed);
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                }
+            });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_live_heap_population_is_reloaded_only_at_numa_pass_boundary() {
+        crate::test_process::run_in_fresh_process(
+            "page_backing::tests::native_live_heap_population_is_reloaded_only_at_numa_pass_boundary", || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                let output = unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) };
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, output));
+                let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, false, false);
+                unsafe fn metadata_guard(start: *mut u8, size: usize, argument: *const core::ffi::c_void) {
+                    // SAFETY: the synchronous initialization hook borrows its
+                    // original mapping; no metadata or client aliases exist.
+                    let mapping = unsafe { &*argument.cast::<crate::os::Mapping>() };
+                    let offset = start.addr().checked_sub(mapping.base().unwrap().addr()).unwrap();
+                    assert!(mapping.protect(offset, size).unwrap());
+                }
+                // SAFETY: this fresh process retains real public Heap owners
+                // and the caller-owned arenas through every cursor and claim.
+                unsafe {
+                    let other = crate::source_heap_api::heap_new();
+                    let heap = crate::source_heap_api::heap_new();
+                    let owner = core::ptr::NonNull::new(heap.cast::<crate::types::Heap>()).unwrap();
+                    let source = crate::types::Heap::source_snapshot_at(owner);
+                    let subprocess = &*source.subprocess;
+                    assert_eq!(crate::types::Heap::heap_sequence_at(owner), 2);
+                    assert_eq!(subprocess.heap_list().live_count_relaxed(), 3);
+                    let registry = crate::arena::ArenaRegistry::new(source.subprocess);
+                    let mut mappings = std::vec::Vec::new();
+                    let mut identities = std::vec::Vec::new();
+                    for numa in [0, 0, 0, 1, 1, 0] {
+                        let mapping = crate::os::Mapping::map_aligned_for_allocator(config,
+                            crate::config::ARENA_MIN_SIZE, crate::config::ARENA_ALIGNMENT,
+                            crate::os::MapAccess::Committed).unwrap();
+                        let managed = crate::arena::manage_external_in_place_with_guard(&registry,
+                            mapping.base().unwrap(), crate::config::ARENA_MIN_SIZE, config.page_size(),
+                            true, false, true, numa, false, None,
+                            Some(crate::arena::MetadataGuardHook::new(metadata_guard, &mapping))).unwrap();
+                        identities.push(managed.arena_id());
+                        mappings.push(mapping);
+                    }
+                    let search = ArenaSearch { heap_sequence: 2, heap_count: 0, thread_sequence: 0,
+                        numa_node: 1, requested: ArenaId::none(), allow_pinned: true };
+                    let mut candidates = registry.suitable_arenas_with_heap_list(search,
+                        Some(subprocess.heap_list()));
+                    assert_eq!(core::ptr::from_ref(candidates.next().unwrap().arena()).cast_mut(), identities[3].as_ptr());
+                    let added = crate::source_heap_api::heap_new();
+                    assert!(!added.is_null());
+                    assert_eq!(subprocess.heap_list().live_count_relaxed(), 4);
+                    // The current pass keeps its original rotation even
+                    // after a callback adds a real Heap to the live list.
+                    assert_eq!(core::ptr::from_ref(candidates.next().unwrap().arena()).cast_mut(), identities[4].as_ptr());
+                    let remaining: std::vec::Vec<_> = candidates.map(|view|
+                        core::ptr::from_ref(view.arena()).cast_mut()).collect();
+                    // The refreshed fraction starts the nonpreferred pass at
+                    // arena two; the newest arena remains last.
+                    assert_eq!(remaining, std::vec![identities[2].as_ptr(), identities[0].as_ptr(), identities[1].as_ptr(), identities[5].as_ptr()]);
+                    assert!(crate::source_heap_api::heap_release(added, false));
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                    assert!(crate::source_heap_api::heap_release(other, false));
+                    for mut mapping in mappings { mapping.unmap().unwrap(); }
+                }
+            });
+    }
 
     #[test]
     fn source_registry_reclaim_visits_prior_regular_and_simulated_huge_arenas() {

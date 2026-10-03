@@ -37,8 +37,8 @@ pub(crate) fn arena_max_object_size(policy: &VmPolicy) -> usize {
 }
 
 /// The two possible source reservation attempts, before any mapping or stats
-/// mutation. A fallback is permitted only after clean failure of the primary;
-/// retained mapping ownership is never permission for another attempt.
+/// mutation. A nonzero primary reservation result permits the size-bounded
+/// fallback; any retained primary mapping keeps its independent cleanup owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ArenaReservationPlan {
     pub(crate) primary_size: usize,
@@ -169,6 +169,7 @@ pub(crate) struct ArenaCandidates<'arena> {
     count: usize,
     turn: usize,
     start: usize,
+    heap_list: Option<&'arena crate::types::heap_registry::SubprocessHeapList>,
 }
 
 impl<'arena> Iterator for ArenaCandidates<'arena> {
@@ -181,8 +182,12 @@ impl<'arena> Iterator for ArenaCandidates<'arena> {
                 self.pass += 1;
                 if self.pass == passes { return None; }
                 self.count = self.registry.count();
-                // Each NUMA pass observes one registry count and computes
-                // its spreading start once. New publications become visible
+                if let Some(heap_list) = self.heap_list {
+                    self.search.heap_count = heap_list.live_count_relaxed();
+                }
+                // Each NUMA pass observes one registry count and live Heap
+                // count, and computes its spreading start once.
+                // New publications become visible
                 // when the next pass begins, without restarting this pass.
                 self.start = self.search.start_index(self.count.saturating_sub(1));
                 self.turn = 0;
@@ -222,9 +227,27 @@ impl ArenaRegistry {
     /// Every published arena and `search.requested` must remain live through
     /// the cursor and every returned view; exclude registry destruction.
     pub(crate) unsafe fn suitable_arenas(&self, search: ArenaSearch) -> ArenaCandidates<'_> {
+        unsafe { self.suitable_arenas_with_heap_list(search, None) }
+    }
+
+    /// Uses the retained subprocess's live Heap count at each source pass.
+    /// The count grants no Heap lifetime; the caller separately retains the
+    /// requesting Heap and registry throughout traversal and callbacks.
+    ///
+    /// # Safety
+    /// Published arenas and any requested parent remain live through the
+    /// cursor. A supplied list belongs to that same retained subprocess;
+    /// neither registry destruction nor subprocess retirement may overlap.
+    pub(crate) unsafe fn suitable_arenas_with_heap_list<'arena>(
+        &'arena self, mut search: ArenaSearch,
+        heap_list: Option<&'arena crate::types::heap_registry::SubprocessHeapList>,
+    ) -> ArenaCandidates<'arena> {
         let count = self.count();
+        if let Some(heap_list) = heap_list {
+            search.heap_count = heap_list.live_count_relaxed();
+        }
         let start = search.start_index(count.saturating_sub(1));
-        ArenaCandidates { registry: self, search, pass: 0, count, turn: 0, start }
+        ArenaCandidates { registry: self, search, pass: 0, count, turn: 0, start, heap_list }
     }
 
     /// Searches the source NUMA-preferred pass, then only nonpreferred arenas.
@@ -260,6 +283,22 @@ impl ArenaRegistry {
         search: ArenaSearch,
         slice_count: usize,
         alignment: usize,
+        claim: impl FnMut(ArenaView<'arena>) -> Option<ArenaSliceClaim<'arena>>,
+    ) -> Option<ArenaSliceClaim<'arena>> {
+        unsafe { self.try_find_free_with_heap_list(search, None, slice_count, alignment, claim) }
+    }
+
+    /// Same candidate search with the caller's independently retained live
+    /// Heap count. Every callback and any returned claim retain the original
+    /// arena; a refusal changes neither that lifetime nor the next candidate.
+    ///
+    /// # Safety
+    /// The original search obligations apply. A supplied Heap list belongs
+    /// to the registry's retained subprocess and outlives every pass.
+    pub(super) unsafe fn try_find_free_with_heap_list<'arena>(
+        &'arena self, search: ArenaSearch,
+        heap_list: Option<&'arena crate::types::heap_registry::SubprocessHeapList>,
+        slice_count: usize, alignment: usize,
         mut claim: impl FnMut(ArenaView<'arena>) -> Option<ArenaSliceClaim<'arena>>,
     ) -> Option<ArenaSliceClaim<'arena>> {
         if alignment > ARENA_SLICE_SIZE || slice_count == 0 {
@@ -267,7 +306,7 @@ impl ArenaRegistry {
         }
         // SAFETY: the caller retains the registry and requested parent for
         // this complete search and any returned live claim.
-        for view in unsafe { self.suitable_arenas(search) } {
+        for view in unsafe { self.suitable_arenas_with_heap_list(search, heap_list) } {
             if let Some(claim) = claim(view) { return Some(claim); }
         }
         None
@@ -415,6 +454,54 @@ mod tests {
             identities[0].as_ptr(), identities[3].as_ptr()]);
         assert_eq!(claim.memory_id().arena_memory().unwrap().arena, identities[3].as_ptr());
         assert!(claim.release());
+        for mut mapping in mappings { mapping.unmap().unwrap(); }
+    }
+
+    #[test]
+    fn requested_exhaustion_preserves_sibling_and_exact_released_slice_retry() {
+        let subprocess = MainSubprocess::new();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let mut mappings = std::vec::Vec::new();
+        let mut identities = std::vec::Vec::new();
+        for numa in [0, 1] {
+            let mapping = Mapping::map_aligned_for_allocator(config(false), ARENA_MIN_SIZE,
+                ARENA_ALIGNMENT, MapAccess::Committed).unwrap();
+            // SAFETY: these caller-owned mappings and subprocess remain live
+            // until all exact claims below are released; no destruction races.
+            let managed = unsafe { manage_external_in_place(&registry, mapping.base().unwrap(),
+                ARENA_MIN_SIZE, config(false).page_size(), true, false, true, numa, false, None) }.unwrap();
+            identities.push(managed.arena_id());
+            mappings.push(mapping);
+        }
+        let requested = ArenaSearch { requested: identities[0], numa_node: 1, ..search() };
+        let mut held = std::vec::Vec::new();
+        while let Some(claim) = unsafe { registry.try_find_free(requested, 1, ARENA_SLICE_SIZE, true) } {
+            assert_eq!(claim.memory_id().arena_memory().unwrap().arena, identities[0].as_ptr());
+            held.push(claim);
+        }
+        assert!(!held.is_empty());
+        // Exhaustion of a requested parent cannot consume a sibling span.
+        assert!(unsafe { registry.try_find_free(requested, 1, ARENA_SLICE_SIZE, true) }.is_none());
+        let sibling = unsafe { registry.try_find_free(ArenaSearch { numa_node: 1, ..search() },
+            1, ARENA_SLICE_SIZE, true) }.unwrap();
+        assert_eq!(sibling.memory_id().arena_memory().unwrap().arena, identities[1].as_ptr());
+        assert!(sibling.release());
+        let released = held.pop().unwrap();
+        let address = released.start();
+        assert!(released.release());
+        let mut attempts = 0;
+        // A clean refusal on the first NUMA pass retains exact slice custody;
+        // the requested parent is retried on the second pass despite affinity.
+        let retry = unsafe { registry.try_find_free_with(requested, 1, ARENA_SLICE_SIZE, |view| {
+            attempts += 1;
+            assert_eq!(core::ptr::from_ref(view.arena()).cast_mut(), identities[0].as_ptr());
+            if attempts == 1 { return None; }
+            view.try_claim_suitable_slices(requested.requested, 1, true, requested.thread_sequence)
+        }) }.unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(retry.start(), address);
+        assert!(retry.release());
+        for claim in held { assert!(claim.release()); }
         for mut mapping in mappings { mapping.unmap().unwrap(); }
     }
 

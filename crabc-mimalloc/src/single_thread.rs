@@ -40014,6 +40014,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(self.session.theap());
         let page_map = self.page_map;
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the source session retains this exact target Heap and its
+        // subprocess throughout the reclaim cursor and excludes retirement.
+        let candidates = unsafe { self.arena.reclaim_arenas_for_heap(heap,
+            self.requested_arena, self.thread_sequence) };
+        #[cfg(not(target_arch = "x86_64"))]
         let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
         let Some((page, map)) = claim_child_mapped_regular_from_arenas(
             candidates,
@@ -40118,6 +40124,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // Copy the search facts into a value before any mutable engine
         // continuation. The cursor references only the process registry.
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the source session retains this exact target Heap and its
+        // subprocess throughout the reclaim cursor and excludes retirement.
+        let candidates = unsafe { self.arena.reclaim_arenas_for_heap(target_heap,
+            self.requested_arena, self.thread_sequence) };
+        #[cfg(not(target_arch = "x86_64"))]
         let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
         for selected in candidates {
             let arena = NonNull::from(selected.arena());
@@ -43459,6 +43471,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the owned session retains its Theap, Heap and TLD, and
         // source affinity setters cannot overlap an allocation read.
         let numa_node = unsafe { self.session.theap().page_allocation_numa_node() };
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the owned session retains its Theap and Heap; only the
+        // immutable owner pointer is copied before backing callbacks.
+        let owner_heap = NonNull::new(unsafe { Theap::heap_at(self.session.local_field_theap_pointer()) })
+            .ok_or(GenericPathError::Lifecycle)?;
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the source session retains the exact owner and subprocess
+        // through this claim and excludes retirement during callbacks.
+        let claim = unsafe { self.arena.claim_for_heap(owner_heap,
+            self.page_map.memory_config(), self.requested_arena, slice_count, commit,
+            self.thread_sequence, numa_node, Some(&mut random)) };
+        #[cfg(not(target_arch = "x86_64"))]
         let claim = self.arena.claim_with_numa_node(
             self.page_map.memory_config(),
             self.requested_arena,

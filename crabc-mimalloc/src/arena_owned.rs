@@ -978,8 +978,22 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn try_find_free(
         &self, search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
     ) -> Option<ArenaSliceClaim<'_>> {
+        unsafe { self.try_find_free_with_heap_list(search, None, slice_count, alignment, commit) }
+    }
+
+    /// Source arena search using a separately retained live Heap count.
+    ///
+    /// # Safety
+    /// This backing, every published arena and any requested parent remain
+    /// live through the complete search and any returned claim. A supplied
+    /// list belongs to this same retained subprocess; destruction is excluded.
+    pub(crate) unsafe fn try_find_free_with_heap_list<'arena>(
+        &'arena self, search: ArenaSearch,
+        heap_list: Option<&'arena crate::types::heap_registry::SubprocessHeapList>,
+        slice_count: usize, alignment: usize, commit: bool,
+    ) -> Option<ArenaSliceClaim<'arena>> {
         unsafe {
-            self.registry.try_find_free_with(search, slice_count, alignment, |view| {
+            self.registry.try_find_free_with_heap_list(search, heap_list, slice_count, alignment, |view| {
                 let owner = self.allocation_for_arena(view.arena())?;
                 let mut claim = view.try_claim_slices_with_owner(search.requested, slice_count, commit,
                     search.thread_sequence, Some(&owner))?;
@@ -1883,10 +1897,26 @@ impl ProcessArenaBacking {
         search: ArenaSearch, slice_count: usize, alignment: usize, commit: bool,
         random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaSliceClaim<'_>> {
+        unsafe { self.try_allocate_slices_with_random_and_heap_list(process, config, search,
+            None, slice_count, alignment, commit, random) }
+    }
+
+    /// Preserves the source search/reserve/search sequence while each search
+    /// independently observes the caller's retained subprocess Heap count.
+    ///
+    /// # Safety
+    /// The allocation, random adapter and backing obligations apply unchanged.
+    /// A supplied list belongs to this process and remains live throughout
+    /// reservation callbacks, all search passes and any returned claim.
+    pub(crate) unsafe fn try_allocate_slices_with_random_and_heap_list<'arena>(
+        &'arena self, process: VmProcess<'_>, config: MemoryConfig, search: ArenaSearch,
+        heap_list: Option<&'arena crate::types::heap_registry::SubprocessHeapList>,
+        slice_count: usize, alignment: usize, commit: bool, random: crate::os::OsRandom<'_>,
+    ) -> Option<ArenaSliceClaim<'arena>> {
         let requested_size = slice_count.checked_mul(crate::config::ARENA_SLICE_SIZE)?;
         if requested_size == 0 || requested_size > ARENA_MAX_SIZE
             || alignment > crate::config::ARENA_SLICE_SIZE { return None; }
-        if let Some(claim) = unsafe { self.try_find_free(search, slice_count, alignment, commit) } {
+        if let Some(claim) = unsafe { self.try_find_free_with_heap_list(search, heap_list, slice_count, alignment, commit) } {
             return Some(claim);
         }
         if !search.requested.as_ptr().is_null() || process.policy().disallow_os_alloc() {
@@ -1899,7 +1929,7 @@ impl ProcessArenaBacking {
                 let _ = unsafe { self.reserve_automatic_with_guard(process, config, requested_size, search.allow_pinned, random, guard) };
             }
         }
-        unsafe { self.try_find_free(search, slice_count, alignment, commit) }
+        unsafe { self.try_find_free_with_heap_list(search, heap_list, slice_count, alignment, commit) }
     }
 
     /// The reservation step of [`Self::try_allocate_slices_with_random`] for
@@ -2031,6 +2061,21 @@ impl ProcessArenaBacking {
         commit: bool,
         random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaSliceClaim<'child>> {
+        unsafe { self.try_allocate_child_slices_with_random_and_heap_list(
+            child, config, search, None, slice_count, alignment, commit, random) }
+    }
+
+    /// # Safety
+    /// The caller retains the parent-issued child owner and pinned child
+    /// image through every returned claim and final backing destruction.
+    /// Teardown and registry mutation cannot overlap. Search facts and the
+    /// optional live Heap list belong to this exact child; the random adapter
+    /// remains exclusively borrowed through each reservation callback.
+    pub(crate) unsafe fn try_allocate_child_slices_with_random_and_heap_list<'child>(
+        &'child self, child: crate::os::ChildVmProcess<'child>, config: MemoryConfig,
+        search: ArenaSearch, heap_list: Option<&'child crate::types::heap_registry::SubprocessHeapList>,
+        slice_count: usize, alignment: usize, commit: bool, random: crate::os::OsRandom<'_>,
+    ) -> Option<ArenaSliceClaim<'child>> {
         let identity = child.identity();
         // SAFETY: the live child process lease retains its parent chain
         // through this bounded arena claim.
@@ -2041,8 +2086,8 @@ impl ProcessArenaBacking {
             return None;
         }
         unsafe {
-            self.try_allocate_slices_with_random(
-                child.process(), config, search, slice_count, alignment, commit, random,
+            self.try_allocate_slices_with_random_and_heap_list(
+                child.process(), config, search, heap_list, slice_count, alignment, commit, random,
             )
         }
     }
