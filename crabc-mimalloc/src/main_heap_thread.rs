@@ -352,6 +352,14 @@ pub(crate) enum MainHeapThreadAttachmentBeginError<'main> {
     },
 }
 
+/// A publication failure before the attachment moves into its final result.
+/// The exact partial owner stays borrowed until the constructor decides
+/// whether cancellation released it or source state must remain retained.
+enum MainHeapThreadAttachmentPublicationError {
+    Rejected(MainHeapThreadAttachmentError),
+    Retained(MainHeapThreadAttachmentError),
+}
+
 /// The current-thread owner of a source later-ticket metadata TLD/Theap
 /// attached to the process-static main Heap.
 ///
@@ -623,31 +631,41 @@ impl<'main> MainHeapThreadAttachment<'main> {
             _not_send_or_sync: PhantomData,
         };
 
-        let allocation = match metadata.zalloc_for_main_subprocess(
-            config,
-            attachment.main_heap.subprocess(),
-            size_of::<Theap>(),
-        ) {
-            Ok(allocation) => allocation,
-            Err(error) => {
-                return match attachment.cancel_before_theap_publication() {
-                    Ok(()) => Err(MainHeapThreadAttachmentBeginError::Rejected(
-                        MainHeapThreadAttachmentError::TheapMetadata(error),
-                    )),
-                    Err(cleanup) => Err(attachment.into_retained_begin_failure(cleanup)),
-                };
-            }
-        };
-        attachment.theap = Some(allocation);
-
-        let initialize = attachment.initialize_and_publish();
-        match initialize {
+        match attachment.allocate_and_publish_theap() {
             Ok(()) => {
                 attachment.state = MainHeapThreadAttachmentState::Attached;
                 Ok(attachment)
             }
-            Err(error) => Err(attachment.into_retained_begin_failure(error)),
+            Err(MainHeapThreadAttachmentPublicationError::Rejected(error)) => {
+                Err(MainHeapThreadAttachmentBeginError::Rejected(error))
+            }
+            Err(MainHeapThreadAttachmentPublicationError::Retained(error)) => {
+                Err(attachment.into_retained_begin_failure(error))
+            }
         }
+    }
+
+    /// Completes publication through a borrowed owner so metadata and cleanup
+    /// failures return a small decision instead of moving the full attachment
+    /// through each intermediate failure result.
+    fn allocate_and_publish_theap(&mut self) -> Result<(), MainHeapThreadAttachmentPublicationError> {
+        let allocation = match self.metadata.zalloc_for_main_subprocess(
+            self.config,
+            self.main_heap.subprocess(),
+            size_of::<Theap>(),
+        ) {
+            Ok(allocation) => allocation,
+            Err(error) => {
+                return match self.cancel_before_theap_publication() {
+                    Ok(()) => Err(MainHeapThreadAttachmentPublicationError::Rejected(
+                        MainHeapThreadAttachmentError::TheapMetadata(error),
+                    )),
+                    Err(cleanup) => Err(MainHeapThreadAttachmentPublicationError::Retained(cleanup)),
+                };
+            }
+        };
+        self.theap = Some(allocation);
+        self.initialize_and_publish().map_err(MainHeapThreadAttachmentPublicationError::Retained)
     }
 
     /// Returns the exact process-main identity while this later-thread owner

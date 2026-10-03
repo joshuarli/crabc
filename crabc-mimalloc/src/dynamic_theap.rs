@@ -347,6 +347,14 @@ impl DynamicTheapStorage<'_> {
     }
 }
 
+/// A publication failure while the constructor still borrows its partial
+/// owner. Retention keeps the exact source state, including a pending key
+/// release, for the constructor's one final ownership transfer.
+enum DynamicTheapPublicationError {
+    Rejected(DynamicTheapError),
+    Retained(DynamicTheapError),
+}
+
 /// The exact private owner of one current-thread regular-key Theap.
 ///
 /// The caller's `Pin<&mut Heap>` proves the heap address stays stable while
@@ -1041,8 +1049,6 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         arena_allocation_allowed: bool, thread: LiveThreadId, roots: UnrelatedRoots,
         tld: DynamicAttachedThreadLocalData,
     ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        let requested_arena_pointer = requested_arena.as_ref()
-            .map(|arena| core::ptr::from_ref(arena.arena()).cast_mut());
         let mut attachment = Self {
             heap: Some(heap),
             binding: None,
@@ -1060,37 +1066,67 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             _not_send_or_sync: PhantomData,
         };
 
+        match attachment.allocate_and_publish_theap(
+            config, subprocess, metadata, registry, arena_allocation_allowed,
+        ) {
+            Ok(()) => {
+                attachment.state = DynamicAttachmentState::Attached;
+                Ok(attachment)
+            }
+            Err(DynamicTheapPublicationError::Rejected(error)) => {
+                Err(DynamicTheapBeginError::Rejected(error))
+            }
+            Err(DynamicTheapPublicationError::Retained(error)) => {
+                Err(attachment.into_retained_begin_failure(error))
+            }
+        }
+    }
+
+    /// Completes binding and publication through the retained partial owner.
+    /// This is called only by the constructor with its registered current-thread
+    /// TLD, pristine pinned Heap and process-lived metadata/key identities.
+    /// Failure decisions stay small until the constructor makes its single
+    /// final transfer of the complete source attachment.
+    fn allocate_and_publish_theap(
+        &mut self, config: MemoryConfig, subprocess: &'static MainSubprocess,
+        metadata: Pin<&'static MetaAllocator>, registry: &'static OwnedThreadLocalKeyRegistry,
+        arena_allocation_allowed: bool,
+    ) -> Result<(), DynamicTheapPublicationError> {
+        let requested_arena_pointer = self.requested_arena.as_ref()
+            .map(|arena| core::ptr::from_ref(arena.arena()).cast_mut());
+        // SAFETY: the constructor retains this thread's exclusive TLD and
+        // Heap lifecycle, and these metadata/subprocess identities outlive it.
         let backing = match unsafe {
             ThreadLocalBackingOwner::begin_with_metadata(metadata, subprocess, config)
         } {
             Ok(backing) => backing,
             Err(error) => {
-                return match attachment.cancel_before_heap_binding() {
-                    Ok(()) => Err(DynamicTheapBeginError::Rejected(
+                return match self.cancel_before_heap_binding() {
+                    Ok(()) => Err(DynamicTheapPublicationError::Rejected(
                         DynamicTheapError::Backing(error),
                     )),
-                    Err(cleanup) => Err(attachment.into_retained_begin_failure(cleanup)),
+                    Err(cleanup) => Err(DynamicTheapPublicationError::Retained(cleanup)),
                 };
             }
         };
-        attachment.backing = Some(backing);
+        self.backing = Some(backing);
 
         let lease = match registry.claim_for_main_subprocess(config, subprocess, metadata) {
             Ok(lease) => lease,
             Err(error) => {
-                return match attachment.cancel_before_heap_binding() {
-                    Ok(()) => Err(DynamicTheapBeginError::Rejected(DynamicTheapError::Key(error))),
-                    Err(cleanup) => Err(attachment.into_retained_begin_failure(cleanup)),
+                return match self.cancel_before_heap_binding() {
+                    Ok(()) => Err(DynamicTheapPublicationError::Rejected(DynamicTheapError::Key(error))),
+                    Err(cleanup) => Err(DynamicTheapPublicationError::Retained(cleanup)),
                 };
             }
         };
         let key = lease.key();
-        attachment.binding = Some(DynamicHeapBinding {
+        self.binding = Some(DynamicHeapBinding {
             lease,
             slot_bound: false,
         });
         let heap_initialized = {
-            let heap = attachment.heap_mut();
+            let heap = self.heap_mut();
             // SAFETY: the outer unsafe constructor carries the unique pristine
             // caller-heap image proof required by this narrow initializer.
             unsafe {
@@ -1102,12 +1138,12 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             }
         };
         if !heap_initialized {
-            return Err(attachment.into_retained_begin_failure(DynamicTheapError::HeapBinding));
+            return Err(DynamicTheapPublicationError::Retained(DynamicTheapError::HeapBinding));
         }
 
-        let selected_allocation = match attachment.requested_arena.as_ref() {
+        let selected_allocation = match self.requested_arena.as_ref() {
             Some(arena) => {
-                let tld = attachment.tld.as_mut().unwrap().current_mut().unwrap();
+                let tld = self.tld.as_mut().unwrap().current_mut().unwrap();
                 let sequence = tld.thread_sequence();
                 let numa_node = tld.numa_node();
                 let reservation = arena.try_reserve_exclusive_theap(
@@ -1126,23 +1162,16 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         let allocation = match selected_allocation {
             Ok(allocation) => allocation,
             Err(error) => {
-                return match attachment.cancel_before_theap_publication() {
-                    Ok(()) => Err(DynamicTheapBeginError::Rejected(
+                return match self.cancel_before_theap_publication() {
+                    Ok(()) => Err(DynamicTheapPublicationError::Rejected(
                         error,
                     )),
-                    Err(cleanup) => Err(attachment.into_retained_begin_failure(cleanup)),
+                    Err(cleanup) => Err(DynamicTheapPublicationError::Retained(cleanup)),
                 };
             }
         };
-        attachment.theap = Some(allocation);
-        let initialized = attachment.initialize_and_publish_theap();
-        match initialized {
-            Ok(()) => {
-                attachment.state = DynamicAttachmentState::Attached;
-                Ok(attachment)
-            }
-            Err(error) => Err(attachment.into_retained_begin_failure(error)),
-        }
+        self.theap = Some(allocation);
+        self.initialize_and_publish_theap().map_err(DynamicTheapPublicationError::Retained)
     }
 
     /// Returns the bound regular key while the attachment retains its lease.
