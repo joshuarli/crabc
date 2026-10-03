@@ -132,9 +132,22 @@ def require_matching_source_seals(static_manifest: dict, dynamic_manifest: dict,
     if dynamic_manifest.get("build_profile") == "debug":
         # Debug preparation seals source in the manifest. Its state describes
         # only the selected unqualified configuration, without release evidence.
-        require(dynamic_state.get("build_profile") == "debug"
-                and dynamic_state.get("status") == "materialized-unqualified",
+        debug_backends = ("accepted-c", "native-shadow", "native")
+        require(set(dynamic_state) == {"build_profile", "allocator_backend",
+                                      "allocator_lifecycle_test_audit", "status"}
+                and dynamic_state.get("build_profile") == "debug"
+                and dynamic_state.get("status") == "materialized-unqualified"
+                and isinstance(dynamic_state.get("allocator_backend"), str)
+                and dynamic_state["allocator_backend"] in debug_backends
+                and type(dynamic_state.get("allocator_lifecycle_test_audit")) is bool
+                and (dynamic_state["allocator_backend"] != "native"
+                     or not dynamic_state["allocator_lifecycle_test_audit"]),
                 "dynamic debug product state identity differs")
+        require(static_manifest.get("build_profile") == "debug"
+                and isinstance(static_manifest.get("allocator_backend"), str)
+                and static_manifest["allocator_backend"] in debug_backends
+                and type(static_manifest.get("allocator_lifecycle_test_audit")) is bool,
+                "static debug product configuration differs")
         dynamic_source = dynamic_manifest.get("source_sha256")
     else:
         require(dynamic_state.get("schema") == DYNAMIC_STATE_SCHEMA,

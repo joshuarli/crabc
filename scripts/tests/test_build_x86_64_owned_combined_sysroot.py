@@ -181,6 +181,41 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         with self.assertRaisesRegex(combined.CompositionError, "source seals differ"):
             self.compose("different-debug-source")
 
+    def test_debug_state_requires_actual_producer_shape_types_and_matching_configuration(self):
+        configuration = {"build_profile": "debug", "allocator_backend": "accepted-c",
+                         "allocator_lifecycle_test_audit": False}
+        state = {**configuration, "status": "materialized-unqualified"}
+        static = {**configuration, "source_sha256": self.source_sha256}
+        dynamic = {"build_profile": "debug", "source_sha256": self.source_sha256}
+        combined.require_matching_source_seals(static, dynamic, json.dumps(state).encode())
+        malformed = (
+            ("missing-audit", {key: value for key, value in state.items()
+                               if key != "allocator_lifecycle_test_audit"}, static),
+            ("extra-field", {**state, "source_sha256": self.source_sha256}, static),
+            ("unknown-backend", {**state, "allocator_backend": "other"},
+             {**static, "allocator_backend": "other"}),
+            ("non-string-backend", {**state, "allocator_backend": ["accepted-c"]},
+             {**static, "allocator_backend": ["accepted-c"]}),
+            ("integer-audit", {**state, "allocator_lifecycle_test_audit": 0},
+             {**static, "allocator_lifecycle_test_audit": 0}),
+            ("string-audit", {**state, "allocator_lifecycle_test_audit": "false"},
+             {**static, "allocator_lifecycle_test_audit": "false"}),
+            ("native-audit", {**state, "allocator_backend": "native", "allocator_lifecycle_test_audit": True},
+             {**static, "allocator_backend": "native", "allocator_lifecycle_test_audit": True}),
+            ("missing-static-audit", state, {key: value for key, value in static.items()
+                                           if key != "allocator_lifecycle_test_audit"}),
+        )
+        for label, candidate, manifest in malformed:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(combined.CompositionError, "debug product.*differs"):
+                    combined.require_matching_source_seals(manifest, dynamic, json.dumps(candidate).encode())
+        for backend, audit in (("native-shadow", False), ("accepted-c", True), ("native", False)):
+            selected = {**static, "allocator_backend": backend, "allocator_lifecycle_test_audit": audit}
+            selected_state = {**state, "allocator_backend": backend, "allocator_lifecycle_test_audit": audit}
+            combined.require_matching_source_seals(selected, dynamic, json.dumps(selected_state).encode())
+            with self.assertRaisesRegex(combined.CompositionError, "product configuration differs"):
+                combined.require_matching_source_seals(static, dynamic, json.dumps(selected_state).encode())
+
     def test_source_seals_must_match_before_composition(self):
         manifest_path = self.static / combined.MANIFEST
         manifest = json.loads(manifest_path.read_text())
