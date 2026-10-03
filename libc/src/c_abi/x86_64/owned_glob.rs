@@ -815,7 +815,9 @@ static_archive_member! { glob_source {
     ///
     /// `pattern` is a readable NUL-terminated C string and `result` is writable.
     /// With `GLOB_APPEND`, `result` must retain one exclusively owned valid prior
-    /// result from this entry; `globfree` releases every successful result.
+    /// result from this entry, with the same `GLOB_DOOFFS` selection and offset.
+    /// An error can retain a prior or partial result; the caller still owns its
+    /// pathname allocations and releases them with `globfree`.
     #[no_mangle]
     pub unsafe extern "C" fn glob(
         pattern: *const c_char,
@@ -866,15 +868,15 @@ static_archive_member! { glob_source {
             unsafe { cabi_free(copy.cast()) };
         }
 
+        if glob_error == GLOB_NOSPACE {
+            unsafe { free_list(&mut head) };
+            return glob_error;
+        }
         let mut count = 0usize;
         let mut record = head.next;
         while !record.is_null() {
             count += 1;
             record = unsafe { (*record).next };
-        }
-        if glob_error == GLOB_NOSPACE {
-            unsafe { free_list(&mut head) };
-            return glob_error;
         }
         if count == 0 {
             if flags & GLOB_NOCHECK != 0 {
@@ -946,8 +948,12 @@ static_archive_member! { glob_source {
     ///
     /// # Safety
     ///
-    /// `result` is an exclusively owned successful `glob` record. It must not be
-    /// null, copied, manually mutated, or freed through another allocator route.
+    /// `result` is an initialized empty record or an exclusively owned record
+    /// returned by `glob`, including a retained or partial result after an error.
+    /// Its count, vector, offset, and pathname pointers must still describe the
+    /// allocations returned by this entry. Reserved leading vector slots are
+    /// caller-owned and are not released here. The record must not be null,
+    /// copied into a second owner, or freed through another allocator route.
     #[no_mangle]
     pub unsafe extern "C" fn globfree(result: *mut Glob) {
         let count = unsafe { (*result).path_count };
