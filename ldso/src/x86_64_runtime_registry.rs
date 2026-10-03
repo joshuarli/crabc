@@ -160,12 +160,20 @@ impl RuntimeObject {
         Some(())
     }
 
-    fn initializers(&self) -> &[usize] {
-        self.callbacks.as_ref().map_or(&[], |buffer| &buffer.as_slice()[..self.initializer_count])
-    }
-
-    fn finalizers(&self) -> &[usize] {
-        self.callbacks.as_ref().map_or(&[], |buffer| &buffer.as_slice()[self.initializer_count..])
+    /// Project the immutable callback mapping and its two copied lengths.
+    /// No whole-node reference or slice survives into application callbacks:
+    /// reentry may mutate the node's scope and list links while dispatch runs.
+    ///
+    /// # Safety
+    /// `node` is live and has adopted its callback plan. The caller retains
+    /// that plan's mapping until dispatch finishes; neither the mapping nor
+    /// its lengths may change. Published nodes retain it until process exit.
+    unsafe fn callback_addresses(node: *const Self) -> (*const usize, usize, usize) {
+        // Only this immutable field is borrowed, and only while copying its
+        // mapping address. A missing buffer has two zero lengths.
+        let callbacks = unsafe { &*core::ptr::addr_of!((*node).callbacks) };
+        let addresses = callbacks.as_ref().map_or(core::ptr::null(), |buffer| buffer.as_slice().as_ptr());
+        (addresses, unsafe { (*node).initializer_count }, unsafe { (*node).finalizer_count })
     }
 }
 
@@ -505,7 +513,10 @@ unsafe fn initialize_object_as(node: *mut RuntimeObject, tid: i32) -> i32 {
         let generation = FORK_GENERATION.load(Ordering::Relaxed);
         drop(callbacks);
         drop(guard);
-        for &address in unsafe { (*node).initializers() } {
+        let (addresses, count, _) = unsafe { RuntimeObject::callback_addresses(node) };
+        for index in 0..count {
+            // SAFETY: the once-adopted mapping stays retained across reentry.
+            let address = unsafe { *addresses.add(index) };
             let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
             unsafe { callback(); }
         }
@@ -586,7 +597,11 @@ pub(super) unsafe fn finalize_process() {
         // skips the incomplete object; a vanished constructor cannot finish.
         if state == INITIALIZED {
             unsafe { (*node).callback_state.store(FINALIZING, Ordering::Release); }
-            for &address in unsafe { (*node).finalizers() } {
+            let (addresses, first, count) = unsafe { RuntimeObject::callback_addresses(node) };
+            for index in 0..count {
+                // SAFETY: the finalizer range follows the initializers in
+                // this immutable process-lifetime callback mapping.
+                let address = unsafe { *addresses.add(first + index) };
                 let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
                 unsafe { callback(); }
             }

@@ -308,6 +308,7 @@ fn runtime_scope_and_constructor_queue_are_resource_sized_and_cycle_safe() {
 static CALLBACK_NODE: AtomicPtr<RuntimeObject> = AtomicPtr::new(core::ptr::null_mut());
 static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 static FINALIZATIONS: AtomicUsize = AtomicUsize::new(0);
+static CALLBACK_ORDER: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
 fn initial_constructor_tid_consumes_handoff_once_and_repairs_a_fork_child() {
@@ -358,13 +359,23 @@ fn finalizer_tid_is_queried_only_for_an_active_constructor() {
 
 unsafe extern "C" fn recursive_initializer() {
     INITIALIZATIONS.fetch_add(1, Ordering::SeqCst);
+    record_callback(1);
     unsafe { initialize_object(CALLBACK_NODE.load(Ordering::SeqCst)); }
     std::thread::sleep(std::time::Duration::from_millis(10));
 }
 unsafe extern "C" fn recursive_finalizer() {
     FINALIZATIONS.fetch_add(1, Ordering::SeqCst);
+    record_callback(3);
     unsafe { finalize_process(); }
 }
+
+fn record_callback(digit: usize) {
+    let _ = CALLBACK_ORDER.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+        |order| Some(order.wrapping_mul(10).wrapping_add(digit)));
+}
+
+unsafe extern "C" fn following_initializer() { record_callback(2); }
+unsafe extern "C" fn following_finalizer() { record_callback(4); }
 
 #[test]
 fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
@@ -372,7 +383,9 @@ fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
         let mut nodes = UnpublishedObjects::new();
         let node = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(9), 0, LoadedName::new(b"callbacks"), true).unwrap();
         nodes.append(node).unwrap();
-        (*node).callbacks(&[recursive_initializer as *const () as usize], &[recursive_finalizer as *const () as usize]).unwrap();
+        (*node).callbacks(
+            &[recursive_initializer as *const () as usize, following_initializer as *const () as usize],
+            &[recursive_finalizer as *const () as usize, following_finalizer as *const () as usize]).unwrap();
         let saved = {
             let _guard = RuntimeGuard::acquire();
             core::mem::replace(&mut *REGISTRY.0.get(), RuntimeRegistry::empty())
@@ -384,10 +397,12 @@ fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
         })).collect();
         for thread in threads { thread.join().unwrap(); }
         assert_eq!(INITIALIZATIONS.load(Ordering::SeqCst), 1);
+        assert_eq!(CALLBACK_ORDER.load(Ordering::SeqCst), 12);
         assert_eq!((*node).callback_state.load(Ordering::SeqCst), INITIALIZED);
         finalize_process();
         finalize_process();
         assert_eq!(FINALIZATIONS.load(Ordering::SeqCst), 1);
+        assert_eq!(CALLBACK_ORDER.load(Ordering::SeqCst), 1234);
         assert_eq!((*node).callback_state.load(Ordering::SeqCst), FINALIZED);
         let _guard = RuntimeGuard::acquire();
         *REGISTRY.0.get() = saved;
