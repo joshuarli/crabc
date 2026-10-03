@@ -22,7 +22,11 @@
  * runs a failed load, reopens its still-constructing object and loads a new
  * TLS module before exiting; the parent constructor then completes.
  *
- * Usage: consumer threaded|constructor */
+ * `quiescent`: fork a fully initialized retained dependency closure after
+ * joining its TLS worker. Each process reopens the same graph and exits normally
+ * so constructor allocations and allocating finalizers retain independent copies.
+ *
+ * Usage: consumer threaded|constructor|quiescent */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <link.h>
@@ -174,11 +178,79 @@ static int threaded(void)
     return 0;
 }
 
+static int *(*quiescent_root_address)(void);
+static int *(*quiescent_dep_address)(void);
+
+static void *quiescent_worker(void *unused)
+{
+    (void)unused;
+    if (*quiescent_root_address() != 81 || *quiescent_dep_address() != 71) return (void *)1;
+    *quiescent_root_address() = 181;
+    *quiescent_dep_address() = 171;
+    return 0;
+}
+
+static int quiescent(void)
+{
+    void *root = dlopen("libfk_retained_root.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!root) return 10;
+    quiescent_root_address = dlsym(root, "fk_root_address");
+    quiescent_dep_address = dlsym(root, "fk_dep_address");
+    int (*ready)(void) = dlsym(root, "fk_root_ready");
+    if (!quiescent_root_address || !quiescent_dep_address || !ready || !ready()) return 11;
+    pthread_t worker;
+    void *worker_result = (void *)1;
+    if (pthread_create(&worker, 0, quiescent_worker, 0)
+        || pthread_join(worker, &worker_result) || worker_result) return 12;
+    if (*quiescent_root_address() != 81 || *quiescent_dep_address() != 71) return 13;
+    *quiescent_root_address() = 82;
+    *quiescent_dep_address() = 72;
+    if (dlclose(root)) return 14;
+    void *retained = dlopen("libfk_retained_root.so", RTLD_NOW | RTLD_NOLOAD);
+    if (retained != root || dlsym(retained, "fk_root_address") != quiescent_root_address
+        || dlsym(retained, "fk_dep_address") != quiescent_dep_address
+        || !ready() || dlclose(retained)) return 15;
+    puts("quiescent retained graph: ready; retired worker TLS: isolated");
+    fflush(stdout);
+    pid_t child = fork();
+    if (child < 0) return 16;
+    if (!child) {
+        void *reopened = dlopen("libfk_retained_root.so", RTLD_NOW);
+        if (reopened != root || dlsym(reopened, "fk_root_address") != quiescent_root_address
+            || dlsym(reopened, "fk_dep_address") != quiescent_dep_address
+            || !ready() || *quiescent_root_address() != 82
+            || *quiescent_dep_address() != 72) exit(17);
+        *quiescent_root_address() = 182;
+        *quiescent_dep_address() = 172;
+        void *fresh = dlopen("libcc_ok3.so", RTLD_NOW);
+        int (*read_tls)(void) = fresh ? dlsym(fresh, "cc_ok_tls_read3") : 0;
+        if (!read_tls || read_tls() != 803 || dlclose(fresh) || dlclose(reopened)) exit(18);
+        if (pthread_create(&worker, 0, quiescent_worker, 0)
+            || pthread_join(worker, &worker_result) || worker_result) exit(19);
+        if (*quiescent_root_address() != 182 || *quiescent_dep_address() != 172) exit(20);
+        puts("quiescent child retained graph and fresh TLS: valid");
+        exit(0);
+    }
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status)) return 21;
+    if (*quiescent_root_address() != 82 || *quiescent_dep_address() != 72) return 22;
+    if (dlopen("libcc_ok3.so", RTLD_NOW | RTLD_NOLOAD) || !dlerror()) return 23;
+    void *reopened = dlopen("libfk_retained_root.so", RTLD_NOW);
+    if (reopened != root || dlsym(reopened, "fk_root_address") != quiescent_root_address
+        || dlsym(reopened, "fk_dep_address") != quiescent_dep_address
+        || !ready() || dlclose(reopened)) return 24;
+    puts("quiescent parent retained graph and TLS: valid; child-only load absent");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) return 2;
     if (!strcmp(argv[1], "threaded")) {
         int status = threaded();
+        if (status) return status;
+    } else if (!strcmp(argv[1], "quiescent")) {
+        int status = quiescent();
         if (status) return status;
     } else if (!strcmp(argv[1], "constructor")) {
         void *handle = dlopen("libfk_ctor.so", RTLD_NOW);

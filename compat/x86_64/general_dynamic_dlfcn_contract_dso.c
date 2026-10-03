@@ -8,12 +8,15 @@
  * concurrent successes of general_dynamic_dlfcn_contract_concurrent.c.
  * RE_ROOT -> RE_DEP, RE_PLAIN and RE_SHARED_FAIL -> {RE_DEP, missing} are
  * general_dynamic_dlfcn_contract_reentrant.c constructor reentry objects.
- * FK_CTOR forks from its constructor for general_dynamic_dlfcn_contract_fork.c.
+ * FK_CTOR forks from its constructor; FK_RETAINED_ROOT -> FK_RETAINED_DEP
+ * retains allocating constructor/finalizer ownership across quiescent forks
+ * for general_dynamic_dlfcn_contract_fork.c.
  * RELR_DSO carries packed-relative relocations for ..._relr.py. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <link.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(BASE)
@@ -96,6 +99,49 @@ int CC_NAME(cc_ok_value, INDEX) = 900 + INDEX;
 __thread int CC_NAME(cc_ok_tls, INDEX) = 800 + INDEX;
 int CC_NAME(cc_ok_tls_read, INDEX)(void) { return CC_NAME(cc_ok_tls, INDEX); }
 #endif
+#elif defined(FK_RETAINED_DEP) || defined(FK_RETAINED_ROOT)
+/* The dependency initializes first; both retained allocations survive fork and
+ * dlclose, then each process frees its own copy during normal finalization. */
+#if defined(FK_RETAINED_DEP)
+#define FK_LABEL "dependency"
+__thread int fk_dep_tls = 71;
+int *fk_dep_address(void) { return &fk_dep_tls; }
+int fk_dep_constructors;
+#else
+#define FK_LABEL "root"
+extern int fk_dep_constructors;
+int *fk_dep_address(void);
+__thread int fk_root_tls = 81;
+int *fk_root_address(void) { return &fk_root_tls; }
+int fk_root_constructors;
+int fk_root_ready(void) { return fk_dep_constructors == 1 && fk_root_constructors == 1; }
+#endif
+static unsigned char *fk_retained_allocation;
+__attribute__((constructor)) static void fk_retained_construct(void)
+{
+    fk_retained_allocation = malloc(257);
+    if (!fk_retained_allocation) abort();
+    memset(fk_retained_allocation, 0x5a, 257);
+#if defined(FK_RETAINED_DEP)
+    ++fk_dep_constructors;
+#else
+    if (fk_dep_constructors != 1 || *fk_dep_address() != 71) abort();
+    ++fk_root_constructors;
+#endif
+    printf("quiescent constructor %s allocation=valid\n", FK_LABEL);
+}
+__attribute__((destructor)) static void fk_retained_finalize(void)
+{
+    for (int i = 0; i < 257; ++i) if (fk_retained_allocation[i] != 0x5a) abort();
+    free(fk_retained_allocation);
+    unsigned char *fresh = malloc(513);
+    if (!fresh) abort();
+    memset(fresh, 0xa5, 513);
+    for (int i = 0; i < 513; ++i) if (fresh[i] != 0xa5) abort();
+    free(fresh);
+    printf("quiescent destructor %s allocation=valid\n", FK_LABEL);
+    fflush(stdout);
+}
 #elif defined(FK_CTOR)
 /* Forks from its own constructor; the child loads, fails and reopens. */
 #include <sys/wait.h>

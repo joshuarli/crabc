@@ -485,14 +485,25 @@ printf 'general malformed input: PASS (musl differential, %s map_library rejecti
 
 # Fork against runtime-load transactions: repeated forks while another thread
 # fails and commits loads, and a constructor that forks, using the rollback
-# and concurrent objects above.
+# and concurrent objects above, plus a quiescent retained dependency graph
+# whose constructor allocations are finalized independently in parent and child.
 fork_consumer="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_fork.c"
 "$driver" --dynamic-shared-object -DFK_CTOR "$rollback_source" -o "$work/execution-root/concurrent-missing/libfk_ctor.so"
 "$oracle_cc" -fPIC -shared -DFK_CTOR "$rollback_source" -Wl,-z,now,-soname,libfk_ctor.so \
     -o "$work/oracle/concurrent-missing/libfk_ctor.so"
+"$driver" --dynamic-shared-object -DFK_RETAINED_DEP "$rollback_source" \
+    -o "$work/execution-root/concurrent-missing/libfk_retained_dep.so"
+"$driver" --dynamic-shared-object -DFK_RETAINED_ROOT "$rollback_source" \
+    --application-dso "$work/execution-root/concurrent-missing/libfk_retained_dep.so" \
+    -o "$work/execution-root/concurrent-missing/libfk_retained_root.so"
+"$oracle_cc" -fPIC -shared -DFK_RETAINED_DEP "$rollback_source" -Wl,-z,now,-soname,libfk_retained_dep.so \
+    -o "$work/oracle/concurrent-missing/libfk_retained_dep.so"
+"$oracle_cc" -fPIC -shared -DFK_RETAINED_ROOT "$rollback_source" \
+    -L"$work/oracle/concurrent-missing" -lfk_retained_dep -Wl,-z,now,-soname,libfk_retained_root.so \
+    -o "$work/oracle/concurrent-missing/libfk_retained_root.so"
 "$driver" "$entry_mode" "$fork_consumer" -o "$work/execution-root/fork-consumer"
 "$oracle_cc" "${oracle_entry_flags[@]}" "$fork_consumer" -pthread -o "$work/oracle/fork-consumer"
-for mode in threaded constructor; do
+for mode in threaded constructor quiescent; do
     status=0
     LD_LIBRARY_PATH=/concurrent-missing timeout 60 chroot "$work/execution-root" /fork-consumer "$mode" \
         >"$work/fork-$mode-candidate.stdout" 2>"$work/fork-$mode-candidate.stderr" || status=$?
@@ -506,7 +517,7 @@ for mode in threaded constructor; do
     fi
     grep -Fxq 'fork contract: complete' "$work/fork-$mode-candidate.stdout"
 done
-printf 'general load fork: PASS (musl differential, forks beside failing/committing loads and from a constructor); evidence: %s\n' "$work"
+printf 'general load fork: PASS (musl differential, forks beside failing/committing loads, from a constructor, and after retained graph quiescence); evidence: %s\n' "$work"
 
 # dlfcn reentry from dl_iterate_phdr callbacks while another thread loads.
 iterate_contract="$ROOT/compat/x86_64/general_dynamic_dlfcn_contract_iterate.c"
