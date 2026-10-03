@@ -1,11 +1,10 @@
-//! Private x86 full-LTO consumer of the AArch64 native-facade workload shape.
+//! Private x86 full-LTO consumer of direct native descriptor ownership.
 //!
-//! The descriptor workload deliberately mirrors
-//! `compat/lto/native-facade-lto-fixture/src/main.rs`: `/dev/null`, pipe,
-//! eventfd, descriptor flags, process identity, and direct process I/O all
-//! cross the typed `crabc-rs` facade. The lifecycle definitions at the end
-//! are private glue for the current x86 static-PIE CRT boundary; they do not
-//! imply an installed sysroot, libc, loader, or stock Rust `std`.
+//! Filesystem, pipe, eventfd, descriptor flags, process identity, and direct
+//! process I/O cross the typed facade. Duplicate descriptors share offsets
+//! and status flags while retaining independent close-on-exec state. The
+//! lifecycle definitions are private glue for the static-PIE CRT boundary;
+//! they do not imply an installed sysroot, libc, loader, or stock Rust std.
 #![no_main]
 #![no_std]
 
@@ -93,25 +92,93 @@ pub extern "C" fn native_facade_direct_route() -> i32 {
     }
     drop(null);
 
-    let (reader, writer) = match pipe::pipe_with(PipeFlags::CLOEXEC) {
+    // The running ELF is a stable readable file. Duplicate ownership must
+    // preserve the same open-file-description offset after the first owner
+    // closes, while positioned reads leave that shared offset unchanged.
+    let executable = match fs::openat(CWD, c"/proc/self/exe", OFlags::RDONLY | OFlags::CLOEXEC, Mode::empty()) {
+        Ok(fd) => fd,
+        Err(_) => return 2,
+    };
+    let duplicate = match io::dup(&executable) {
+        Ok(fd) => fd,
+        Err(_) => return 3,
+    };
+    if io::fcntl_getfd(&duplicate) != Ok(FdFlags::empty())
+        || io::fcntl_setfd(&duplicate, FdFlags::CLOEXEC).is_err()
+        || io::fcntl_setfd(&executable, FdFlags::empty()).is_err()
+        || io::fcntl_getfd(&duplicate) != Ok(FdFlags::CLOEXEC) {
+        return 3;
+    }
+    let mut magic = [0u8; 4];
+    if io::read(&executable, &mut magic[..1]) != Ok(1) || magic[0] != 0x7f
+        || io::read(&duplicate, &mut magic[1..]) != Ok(3) || &magic != b"\x7fELF" {
+        return 3;
+    }
+    if io::pread(&executable, &mut magic, 0) != Ok(4) || fs::tell(&duplicate) != Ok(4) {
+        return 3;
+    }
+    drop(executable);
+    if io::read(&duplicate, &mut magic[..1]) != Ok(1) || magic[0] != 2 {
+        return 3;
+    }
+    drop(duplicate);
+
+    let (reader, writer) = match pipe::pipe_with(PipeFlags::CLOEXEC | PipeFlags::NONBLOCK) {
         Ok(pair) => pair,
         Err(_) => return 4,
     };
+    let reader_alias = match io::dup(&reader) {
+        Ok(fd) => fd,
+        Err(_) => return 4,
+    };
+    let writer_alias = match io::dup(&writer) {
+        Ok(fd) => fd,
+        Err(_) => return 4,
+    };
+    let status = match fs::fcntl_getfl(&reader) {
+        Ok(flags) => flags,
+        Err(_) => return 4,
+    };
+    if !status.contains(OFlags::NONBLOCK)
+        || fs::fcntl_setfl(&reader_alias, status & !OFlags::NONBLOCK).is_err()
+        || fs::fcntl_getfl(&reader).map(|flags| flags.contains(OFlags::NONBLOCK)) != Ok(false)
+        || fs::fcntl_setfl(&reader_alias, status).is_err() {
+        return 4;
+    }
+    let mut guarded = [0xa5u8; 8];
+    if io::read(&reader_alias, &mut guarded) != Err(crabc_rs::Errno::AGAIN)
+        || guarded != [0xa5; 8] {
+        return 6;
+    }
     if io::write(&writer, b"pipe") != Ok(4) {
         return 5;
     }
-    let mut received = [MaybeUninit::<u8>::uninit(); 4];
-    let (initialized, _) = match io::read(&reader, &mut received) {
+    drop(writer);
+    drop(reader);
+    let mut received = [MaybeUninit::<u8>::uninit(); 8];
+    let (initialized, remaining) = match io::read(&reader_alias, &mut received) {
         Ok(value) => value,
         Err(_) => return 6,
     };
-    if initialized != b"pipe" {
+    if initialized != b"pipe" || remaining.len() != 4 {
         return 7;
     }
-    drop(writer);
-    drop(reader);
+    // The duplicate writer keeps the empty pipe live; only its consuming
+    // close changes a subsequent read from EAGAIN to EOF.
+    if io::read(&reader_alias, &mut guarded) != Err(crabc_rs::Errno::AGAIN)
+        || guarded != [0xa5; 8] || writer_alias.close().is_err() {
+        return 7;
+    }
+    let (initialized, remaining) = match io::read(&reader_alias, &mut received) {
+        Ok(value) => value,
+        Err(_) => return 6,
+    };
+    if !initialized.is_empty() || remaining.len() != 8 {
+        return 7;
+    }
+    drop(reader_alias);
 
-    let counter = match eventfd(0, EventfdFlags::CLOEXEC) {
+    let counter = match eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK) {
         Ok(fd) => fd,
         Err(_) => return 8,
     };
@@ -125,7 +192,7 @@ pub extern "C" fn native_facade_direct_route() -> i32 {
     if eventfd_write(&counter, 7).is_err() {
         return 11;
     }
-    if eventfd_read(&counter) != Ok(7) {
+    if eventfd_read(&counter) != Ok(7) || eventfd_read(&counter) != Err(crabc_rs::Errno::AGAIN) {
         return 12;
     }
     drop(counter);
@@ -133,7 +200,7 @@ pub extern "C" fn native_facade_direct_route() -> i32 {
     0
 }
 
-/// Stable inspection anchor around the AArch64-equivalent facade workload.
+/// Stable inspection anchor around the direct descriptor ownership workload.
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn crabc_x86_consumer_lto_route() -> i32 {

@@ -220,10 +220,21 @@ impl FromRawFd for OwnedFd {
 }
 
 impl AsFd for OwnedFd {
+    #[cfg_attr(target_arch = "x86_64", inline)]
     fn as_fd(&self) -> BorrowedFd<'_> {
-        // SAFETY: `OwnedFd` establishes that `self.fd` is open for the
-        // duration of the borrow, and its constructor rejects negative values.
-        unsafe { BorrowedFd::borrow_raw(self.fd) }
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Ownership already establishes an open, nonnegative descriptor.
+            // The returned lifetime keeps that owner borrowed; projecting its
+            // scalar does not need the unsafe raw-borrow constructor's checks.
+            BorrowedFd { fd: self.fd, _lifetime: PhantomData }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // SAFETY: `OwnedFd` establishes that `self.fd` is open for the
+            // duration of the borrow, and its constructor rejects negative values.
+            unsafe { BorrowedFd::borrow_raw(self.fd) }
+        }
     }
 }
 
