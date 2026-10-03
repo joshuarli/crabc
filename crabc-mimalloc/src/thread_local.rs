@@ -717,6 +717,32 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         self: Pin<&Self>,
         create: impl FnOnce() -> T,
     ) -> Result<(), PersistentCompilerTlsOwnerError> {
+        // SAFETY: the typed constructor either unwinds before any destination
+        // write or returns a fully initialized value for the one raw write.
+        unsafe { self.install_in_place(|destination| destination.write(create())) }
+    }
+
+    /// Constructs the complete owner in its final pinned storage after the
+    /// current thread's vacant cell accepts installation.
+    ///
+    /// Refusal never invokes `create`. Recursive entry during construction
+    /// sees `Initializing`; normal return publishes `Active`. An unwinding
+    /// constructor restores `Vacant` after the caller cleans partial storage.
+    ///
+    /// # Safety
+    ///
+    /// On normal return `create` must have initialized every field of one
+    /// valid `T` exactly once at `destination`. It must not read uninitialized
+    /// fields, move the initialized owner, or publish or let the pointer escape
+    /// to code that can access it during construction. Address relationships
+    /// contained within the owner may refer to its final pinned storage.
+    /// If construction unwinds, it must first drop every initialized field
+    /// and leave no live value or escaped capability in the destination; the
+    /// cell cannot discover or destroy a partially initialized `T`.
+    pub(crate) unsafe fn install_in_place(
+        self: Pin<&Self>,
+        create: impl FnOnce(*mut T),
+    ) -> Result<(), PersistentCompilerTlsOwnerError> {
         let cell = self.get_ref();
         if cell.state.get() != PersistentCompilerTlsOwnerState::Vacant {
             return Err(cell.state_error_for_initialization());
@@ -729,11 +755,11 @@ impl<T> PersistentCompilerTlsOwnerCell<T> {
         let mut transition = PersistentCompilerTlsOwnerTransition::new(
             cell, PersistentCompilerTlsOwnerState::Vacant,
         );
-        let owner = create();
-        // SAFETY: no payload exists in the accepted vacant cell. The typed
-        // constructor completed every field before this single write, and
-        // Initializing excludes recursive access to the destination.
-        unsafe { (&mut *cell.owner.get()).write(owner) };
+        // SAFETY: the vacant pinned cell owns uninitialized storage uniquely.
+        // Initializing excludes recursive projections; the caller initializes
+        // it completely before returning or cleans it before unwinding.
+        let destination = unsafe { (*cell.owner.get()).as_mut_ptr() };
+        create(destination);
         cell.state.set(PersistentCompilerTlsOwnerState::Active);
         transition.disarm();
         Ok(())
@@ -2625,6 +2651,88 @@ mod tests {
         })
         .join()
         .expect("the persistent compiler-TLS owner test completes");
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_in_place_constructor_keeps_final_address_and_refuses_reentry() {
+        struct Owner {
+            address: usize,
+            value: usize,
+            drops: Arc<AtomicUsize>,
+            _pinned: PhantomPinned,
+        }
+        impl Drop for Owner {
+            fn drop(&mut self) {
+                assert_eq!(self as *mut Self as usize, self.address);
+                assert_eq!(self.value, 42);
+                self.drops.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        thread::spawn(|| {
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::<Owner>::new());
+            let cell = cell.as_ref();
+            let drops = Arc::new(AtomicUsize::new(0));
+            // SAFETY: each field is written once in final storage, no pointer
+            // escapes construction, and the writes cannot unwind.
+            assert_eq!(unsafe { cell.install_in_place(|destination| {
+                assert_eq!(cell.with_owner(|_| ()),
+                    Err(PersistentCompilerTlsOwnerError::Initializing));
+                assert_eq!(cell.install_in_place(|_| panic!("recursive constructor must be refused")),
+                    Err(PersistentCompilerTlsOwnerError::Initializing));
+                core::ptr::addr_of_mut!((*destination).address).write(destination as usize);
+                core::ptr::addr_of_mut!((*destination).value).write(42);
+                core::ptr::addr_of_mut!((*destination).drops).write(Arc::clone(&drops));
+                core::ptr::addr_of_mut!((*destination)._pinned).write(PhantomPinned);
+            }) }, Ok(()));
+            // SAFETY: an active cell refuses this closure before it can write.
+            assert_eq!(unsafe { cell.install_in_place(|_| panic!("active constructor must be refused")) },
+                Err(PersistentCompilerTlsOwnerError::AlreadyActive));
+            assert_eq!(cell.with_owner(|owner| {
+                let owner = owner.as_ref().get_ref();
+                assert_eq!(owner as *const Owner as usize, owner.address);
+                owner.value
+            }), Ok(42));
+            assert_eq!(drops.load(Ordering::Relaxed), 0);
+            assert_eq!(cell.teardown(|_| Ok::<(), ()>(())), Ok(()));
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+        }).join().unwrap();
+    }
+
+    #[test]
+    fn persistent_compiler_tls_owner_in_place_unwind_after_partial_cleanup_permits_retry() {
+        struct Counted(Arc<AtomicUsize>);
+        impl Drop for Counted {
+            fn drop(&mut self) { self.0.fetch_add(1, Ordering::Relaxed); }
+        }
+        struct Owner { counted: Counted, value: usize }
+        thread::spawn(|| {
+            let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::<Owner>::new());
+            let cell = cell.as_ref();
+            let drops = Arc::new(AtomicUsize::new(0));
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                // SAFETY: only counted is initialized before this deliberate
+                // unwind. It is dropped first, so no live field remains and
+                // no pointer escapes when the cell returns to vacant.
+                let _ = unsafe { cell.install_in_place(|destination| {
+                    let counted = core::ptr::addr_of_mut!((*destination).counted);
+                    counted.write(Counted(Arc::clone(&drops)));
+                    core::ptr::drop_in_place(counted);
+                    panic!("partial owner construction cleaned its initialized field");
+                }) };
+            }));
+            assert!(result.is_err());
+            assert_eq!(drops.load(Ordering::Relaxed), 1);
+            assert_eq!(cell.state_for_test(), PersistentCompilerTlsOwnerState::Vacant);
+            // SAFETY: this retry writes one complete Owner without a callback
+            // or fallible operation after the initialized field is written.
+            assert_eq!(unsafe { cell.install_in_place(|destination| {
+                core::ptr::addr_of_mut!((*destination).counted).write(Counted(Arc::clone(&drops)));
+                core::ptr::addr_of_mut!((*destination).value).write(73);
+            }) }, Ok(()));
+            assert_eq!(cell.with_owner(|owner| owner.as_ref().get_ref().value), Ok(73));
+            assert_eq!(cell.teardown(|_| Ok::<(), ()>(())), Ok(()));
+            assert_eq!(drops.load(Ordering::Relaxed), 2);
+        }).join().unwrap();
     }
 
     #[test]
