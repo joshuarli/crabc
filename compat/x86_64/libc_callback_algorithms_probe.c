@@ -13,6 +13,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#if !defined(CRABC_CALLBACK_ALGORITHMS_FREESTANDING)
+#include <search.h>
+#include <string.h>
+#endif
 
 typedef int (*compare_signature)(const void *, const void *);
 typedef int (*compare_context_signature)(const void *, const void *, void *);
@@ -250,10 +254,162 @@ static int check_wide_records(void)
     return 0;
 }
 
+#if !defined(CRABC_CALLBACK_ALGORITHMS_FREESTANDING)
+/* Comparator reentry uses independent caller records. No callback mutates
+ * the array or tree being ordered, and no returned hash entry survives table
+ * destruction. The normal allocation provider owns every scratch block. */
+struct callback_owner {
+    int linear[4];
+    size_t count;
+    char hash_key[16];
+    int hash_value;
+    ENTRY *entry;
+    int *keys[5];
+    unsigned calls, visits, destroyed;
+    unsigned visited_keys, destroyed_keys;
+    int failed;
+};
+
+static struct callback_owner *active_owner;
+
+static void exercise_callback_owner(void)
+{
+    struct callback_owner *owner = active_owner;
+    static const int sorted[] = { -2, 1, 3, 6 };
+    int key = 3;
+    unsigned char *scratch = malloc(48);
+    if (!scratch) { owner->failed = 1; return; }
+    memset(scratch, 0x5a, 48);
+    unsigned char *grown = realloc(scratch, 96);
+    if (!grown) { free(scratch); owner->failed = 1; return; }
+    for (size_t index = 0; index < 48; ++index)
+        if (grown[index] != 0x5a) owner->failed = 1;
+    free(grown);
+    if (bsearch(&key, sorted, 4, sizeof key, compare_int) != sorted + 2 ||
+            lsearch(&key, owner->linear, &owner->count, sizeof key, compare_int)
+                != owner->linear + 1 || owner->count != 2 ||
+            lfind(&key, owner->linear, &owner->count, sizeof key, compare_int)
+                != owner->linear + 1) owner->failed = 1;
+    ENTRY lookup = { owner->hash_key, NULL };
+    ENTRY *entry = hsearch(lookup, FIND);
+    if (entry != owner->entry || !entry || entry->data != &owner->hash_value ||
+            entry->key != owner->hash_key) owner->failed = 1;
+    struct queue_node { struct queue_node *next, *previous; int value; };
+    struct queue_node first = {0}, second = {0};
+    insque(&first, NULL);
+    insque(&second, &first);
+    if (first.next != &second || second.previous != &first ||
+            first.previous || second.next) owner->failed = 1;
+    remque(&second);
+    if (first.next || second.previous != &first) owner->failed = 1;
+    remque(&first);
+    ++owner->calls;
+}
+
+static int compare_allocating(const void *left, const void *right)
+{
+    int result = compare_int(left, right);
+    exercise_callback_owner();
+    return result;
+}
+
+static int compare_allocating_context(const void *left, const void *right,
+    void *opaque)
+{
+    if (opaque != active_owner) active_owner->failed = 1;
+    return compare_allocating(left, right);
+}
+
+static void visit_allocating(const void *node, VISIT visit, int depth)
+{
+    if (depth < 0) active_owner->failed = 1;
+    if (visit == leaf || visit == postorder) {
+        const int *key = *(const int *const *)node;
+        size_t index;
+        for (index = 0; index < 5 && key != active_owner->keys[index]; ++index) {}
+        if (index == 5 || (active_owner->visited_keys & (1u << index)))
+            active_owner->failed = 1;
+        else active_owner->visited_keys |= 1u << index;
+        ++active_owner->visits;
+    }
+    exercise_callback_owner();
+}
+
+static void destroy_allocating(void *key)
+{
+    exercise_callback_owner();
+    size_t index;
+    for (index = 0; index < 5 && key != active_owner->keys[index]; ++index) {}
+    if (index == 5 || (active_owner->destroyed_keys & (1u << index))) {
+        active_owner->failed = 1;
+        return;
+    }
+    active_owner->destroyed_keys |= 1u << index;
+    ++active_owner->destroyed;
+    active_owner->keys[index] = NULL;
+    free(key);
+}
+
+static int check_reentrant_caller_ownership(void)
+{
+    struct callback_owner owner = { .linear = { 1 }, .count = 1,
+        .hash_key = "callback-owner", .hash_value = 41 };
+    ENTRY item = { owner.hash_key, &owner.hash_value };
+    if (!hcreate(16) || !(owner.entry = hsearch(item, ENTER))) return 1;
+    active_owner = &owner;
+    int values[] = { 4, 1, 7, 2, 5 };
+    qsort(values, 5, sizeof values[0], compare_allocating);
+    qsort_r(values, 5, sizeof values[0], compare_allocating_context, &owner);
+    for (size_t index = 1; index < 5; ++index)
+        if (values[index-1] > values[index]) owner.failed = 1;
+    int sought = 5;
+    if (bsearch(&sought, values, 5, sizeof values[0], compare_allocating)
+            != values + 3) owner.failed = 1;
+    void *root = NULL;
+    int **keys = owner.keys;
+    for (size_t index = 0; index < 5; ++index) {
+        keys[index] = malloc(sizeof *keys[index]);
+        if (!keys[index]) return 2;
+        *keys[index] = values[index];
+        void *node = tsearch(keys[index], &root, compare_allocating);
+        if (!node || *(int **)node != keys[index]) return 3;
+    }
+    twalk(root, visit_allocating);
+    if (owner.visits != 5 || owner.visited_keys != 31) owner.failed = 1;
+    for (size_t index = 0; index < 5; ++index) {
+        void *node = tfind(keys[index], &root, compare_allocating);
+        if (!node || *(int **)node != keys[index]) owner.failed = 1;
+    }
+    /* Deletion releases only its internal node. The caller releases the
+     * removed key; the returned parent hint is never dereferenced. */
+    if (!tdelete(keys[2], &root, compare_allocating)) {
+        tdestroy(root, destroy_allocating);
+        hdestroy();
+        active_owner = NULL;
+        return 4;
+    }
+    free(keys[2]);
+    keys[2] = NULL;
+    owner.destroyed_keys = 1u << 2;
+    tdestroy(root, destroy_allocating);
+    root = NULL;
+    if (owner.destroyed != 4 || owner.destroyed_keys != 31 ||
+            !owner.calls || owner.count != 2 ||
+            owner.linear[1] != 3 || owner.hash_value != 41) owner.failed = 1;
+    hdestroy();
+    active_owner = NULL;
+    return owner.failed ? 4 : 0;
+}
+#endif
+
 static int callback_algorithms_case(void)
 {
     int result;
 
+#if !defined(CRABC_CALLBACK_ALGORITHMS_FREESTANDING)
+    result = check_reentrant_caller_ownership();
+    if (result) return 40 + result;
+#endif
     result = check_bsearch();
     if (result != 0)
         return result;
