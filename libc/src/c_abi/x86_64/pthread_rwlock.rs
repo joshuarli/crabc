@@ -731,6 +731,11 @@ static_archive_member! { pthread_rwlock_unlock_source {
         let lock = unsafe { rwlock_word(rwlock, RWLOCK_LOCK_WORD) };
         let waiters = unsafe { rwlock_word(rwlock, RWLOCK_WAITERS_WORD) };
         let shared = unsafe { rwlock_word(rwlock, RWLOCK_SHARED_WORD) };
+        // Snapshot the immutable wake route before publishing the release,
+        // as musl does. Once the final hold is released, the wake needs only
+        // the lock address and the scalar observations from this operation.
+        // SAFETY: the caller still holds this live initialized rwlock here.
+        let private = futex_private_flag(unsafe { atomic::x86_64_load_relaxed_i32(shared) });
         loop {
             // SAFETY: all raw words belong to the live public rwlock and use the
             // same atomic protocol for their whole concurrent lifetime.
@@ -750,9 +755,6 @@ static_archive_member! { pthread_rwlock_unlock_source {
                 continue;
             }
             if replacement == 0 && (waiter_hint != 0 || observed < 0) {
-                // SAFETY: `_rw_shared` is immutable after init and the lock word
-                // remains live through the caller's required rwlock lifetime.
-                let private = futex_private_flag(unsafe { atomic::x86_64_load_relaxed_i32(shared) });
                 unsafe { futex_wake(lock, count, private) };
             }
             return 0;
