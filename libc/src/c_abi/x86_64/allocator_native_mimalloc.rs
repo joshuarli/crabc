@@ -99,12 +99,16 @@ unsafe fn native_mimalloc_allocate_malloc_shaped(size: usize, zero: bool) -> *mu
 /// Release one private selected-native allocation without a public C symbol
 /// lookup. Both public cleanup and libc's `__libc_free`-shaped clients retain
 /// the caller's errno, but only the former crosses the weak `free` ABI.
-unsafe fn native_mimalloc_deallocate(pointer: *mut c_void) {
-    if pointer.is_null() {
-        return;
-    }
+///
+/// Null release is handled at each entry before reaching the native engine.
+/// The nonnull helper owns source admission and page release; the null
+/// decision needs neither an errno read nor native client custody.
+///
+/// # Safety
+/// `block` is an exact live result of this selected native owner, and the
+/// caller transfers its final ownership here.
+unsafe fn native_mimalloc_deallocate(block: core::ptr::NonNull<u8>) {
     let saved_errno = unsafe { cabi_allocator_errno() };
-    let block = unsafe { core::ptr::NonNull::new_unchecked(pointer.cast::<u8>()) };
     if unsafe { native_free(block) }.permits_source_free_return() {
         unsafe { cabi_set_allocator_errno(saved_errno) };
     } else {
@@ -238,7 +242,9 @@ unsafe extern "C" fn libc_malloc(size: SizeT) -> *mut c_void {
 }
 
 unsafe extern "C" fn libc_free(pointer: *mut c_void) {
-    unsafe { native_mimalloc_deallocate(pointer) }
+    if let Some(block) = core::ptr::NonNull::new(pointer.cast::<u8>()) {
+        unsafe { native_mimalloc_deallocate(block) };
+    }
 }
 
 unsafe extern "C" fn libc_calloc(count: SizeT, size: SizeT) -> *mut c_void {
@@ -345,7 +351,9 @@ pub(super) unsafe fn allocate_zeroed_internal(size: usize) -> *mut c_void {
 /// `pointer` is null or an exact live result from this module's internal
 /// allocation functions, and the caller transfers its final ownership here.
 pub(super) unsafe fn deallocate_internal(pointer: *mut c_void) {
-    unsafe { native_mimalloc_deallocate(pointer) }
+    if let Some(block) = core::ptr::NonNull::new(pointer.cast::<u8>()) {
+        unsafe { native_mimalloc_deallocate(block) };
+    }
 }
 
 /// Link-time witness for the selected native x86 allocator boundary.

@@ -300,6 +300,9 @@ static void remote_ownership(void)
 
 int main(void)
 {
+    errno = ECHILD;
+    free(NULL);
+    CHECK(errno == ECHILD);
     size_classes();
     overflow_and_failure();
     realloc_transitions();
