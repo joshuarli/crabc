@@ -38,7 +38,9 @@ fn identity(number: u64) -> ObjectIdentity { ObjectIdentity { device: 1, inode: 
 
 #[test]
 fn local_dependency_scope_promotes_without_repeating_reentrant_constructor() {
+    const ENOENT: i32 = 2;
     static ROOT_PATH: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
+    static MISSING_PATH: AtomicPtr<u8> = AtomicPtr::new(core::ptr::null_mut());
 
     fn compile(source: &str, output: &std::path::Path, arguments: &[&str]) {
         let status = std::process::Command::new("/usr/local/bin/crabc-x86_64-musl-gcc")
@@ -82,8 +84,21 @@ fn local_dependency_scope_promotes_without_repeating_reentrant_constructor() {
             caller as usize, &mut error);
         if error != 0 || global != value.cast() || following != value.cast()
             || runtime_close(root) != 0 { return None; }
+        let additions = (*REGISTRY.0.get()).additions;
+        let missing = runtime_open(MISSING_PATH.load(Ordering::Acquire), 2, &mut diagnostic);
+        let unchanged = diagnostic.kind == DIAGNOSTIC_LOAD && diagnostic.number == ENOENT
+            && (*REGISTRY.0.get()).count == 4 && (*REGISTRY.0.get()).additions == additions;
+        // Any diagnostic mapping belongs to this receiver. Retained object
+        // maps and scoped symbols stay owned by ldso after the failed open.
+        if !diagnostic.text.is_null() {
+            syscall2(SYS_MUNMAP, diagnostic.text as i64, diagnostic.text_len as i64);
+        }
+        if !missing.is_null() || !unchanged { return None; }
         let retained = runtime_open(ROOT_PATH.load(Ordering::Acquire), 2 | 4, &mut diagnostic);
-        Some(retained == root && *calls == 1 && *reentry == 1 && *value == 73)
+        let global_after = runtime_symbol(core::ptr::null_mut(), b"loader110_next_value\0".as_ptr(), 0, &mut error);
+        let following_after = runtime_symbol(next, b"loader110_next_value\0".as_ptr(), caller as usize, &mut error);
+        Some(retained == root && error == 0 && global_after == value.cast() && following_after == value.cast()
+            && *calls == 1 && *reentry == 1 && *value == 73)
     })().unwrap_or(false) } }
 
     let directory = std::path::Path::new(".work/loader110/fixtures");
@@ -98,9 +113,14 @@ fn local_dependency_scope_promotes_without_repeating_reentrant_constructor() {
           "-l:libloader110-last.so", "-Wl,-rpath,$ORIGIN"]);
     let root = std::ffi::CString::new(std::fs::canonicalize(root).unwrap().as_os_str()
         .as_encoded_bytes()).unwrap();
+    let missing = std::fs::canonicalize(directory).unwrap().join("libloader110-missing.so");
+    assert!(!missing.exists());
+    let missing = std::ffi::CString::new(missing.as_os_str().as_encoded_bytes()).unwrap();
     ROOT_PATH.store(root.as_ptr().cast_mut().cast(), Ordering::Release);
+    MISSING_PATH.store(missing.as_ptr().cast_mut().cast(), Ordering::Release);
     unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
     ROOT_PATH.store(core::ptr::null_mut(), Ordering::Release);
+    MISSING_PATH.store(core::ptr::null_mut(), Ordering::Release);
 }
 
 #[test]

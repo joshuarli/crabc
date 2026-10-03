@@ -495,10 +495,12 @@ unsafe fn initialize_object_as(node: *mut RuntimeObject, tid: i32) -> i32 {
     loop {
         let guard = RuntimeGuard::acquire();
         let callbacks = CallbackGuard::acquire();
-        let registry = unsafe { &mut *REGISTRY.0.get() };
+        // Project only locked registry fields. Callback dispatch below may
+        // reenter and mutate this owner after both guards are released.
+        let registry = REGISTRY.0.get();
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
         if state < 0 || state == tid { return tid; }
-        if state > 0 || registry.shutting_down {
+        if state > 0 || unsafe { (*registry).shutting_down } {
             unsafe { (*node).callback_waiters.store(true, Ordering::Relaxed); }
             drop(callbacks);
             drop(guard);
@@ -507,8 +509,10 @@ unsafe fn initialize_object_as(node: *mut RuntimeObject, tid: i32) -> i32 {
         }
         unsafe { (*node).callback_state.store(tid, Ordering::Release); }
         if unsafe { (*node).finalizer_count } != 0 {
-            unsafe { (*node).fini_next = registry.fini_head; }
-            registry.fini_head = node;
+            unsafe {
+                (*node).fini_next = (*registry).fini_head;
+                (*registry).fini_head = node;
+            }
         }
         let generation = FORK_GENERATION.load(Ordering::Relaxed);
         drop(callbacks);
@@ -573,14 +577,17 @@ unsafe fn finalizer_tid(mut node: *mut RuntimeObject, current: impl FnOnce() -> 
 }
 
 pub(super) unsafe fn finalize_process() {
-    let guard = RuntimeGuard::acquire();
-    let registry = unsafe { &mut *REGISTRY.0.get() };
-    if registry.finalizing { return; }
-    let mut callbacks = CallbackGuard::acquire();
-    registry.shutting_down = true;
-    registry.finalizing = true;
-    let mut node = registry.fini_head;
-    drop(guard);
+    let (mut callbacks, mut node) = {
+        let _guard = RuntimeGuard::acquire();
+        let registry = unsafe { &mut *REGISTRY.0.get() };
+        if registry.finalizing { return; }
+        let callbacks = CallbackGuard::acquire();
+        registry.shutting_down = true;
+        registry.finalizing = true;
+        // Only the retained callback guard and raw list head leave this
+        // locked scope; no registry reference crosses application callbacks.
+        (callbacks, registry.fini_head)
+    };
     let tid = unsafe { finalizer_tid(node, current_tid) };
     while !node.is_null() {
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
