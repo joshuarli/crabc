@@ -1053,6 +1053,37 @@ pub(crate) unsafe fn try_with_native_child_callback_owner<R>(
     heap: core::ptr::NonNull<crate::types::Heap>,
     callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
 ) -> Result<R, NativeChildCallbackAdmissionError> {
+    // SAFETY: forwarded selected-owner lifetime and projection obligations.
+    let (_operation, binding, lease, retained_identity) = unsafe {
+        acquire_native_child_callback_owner(heap)
+    }?;
+    // SAFETY: this real admission prevents child reclamation. The identity
+    // view is scoped to the callback and never replaces its record lease.
+    let process = crate::os::VmProcess::new(binding.process().policy(), unsafe { &*retained_identity });
+    let result = callback(process);
+    drop(lease);
+    Ok(result)
+}
+
+/// Acquires the source record and process admissions before any callback.
+/// The same acquisition serves every callback result type; successful gate
+/// and record unlocks precede the returned lifetime authority.
+///
+/// # Safety
+/// `heap` is published; it, its selected Theap and member, and any in-flight client remain
+/// live through acquisition and use of the returned lease. No allocator
+/// projection or lock spans this call. The lease must outlive every view of
+/// its returned child identity and end before the process operation does.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+unsafe fn acquire_native_child_callback_owner(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+) -> Result<(
+    crate::runtime_lifecycle::NativeSubprocessOperation,
+    ProcessMainBackingBinding,
+    NativeChildCallbackLease,
+    *mut crate::subproc::SubprocessIdentity,
+), NativeChildCallbackAdmissionError> {
     use NativeChildCallbackAdmissionError::{Busy, Invalid};
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter().ok_or(Invalid)?;
     let (binding, registry) = crate::process_init::ProcessMainInitializationStorage::global()
@@ -1109,12 +1140,7 @@ pub(crate) unsafe fn try_with_native_child_callback_owner<R>(
         }
         _ => return Err(Invalid),
     };
-    // SAFETY: this real admission prevents child reclamation. The identity
-    // view is scoped to the callback and never replaces its record lease.
-    let process = crate::os::VmProcess::new(binding.process().policy(), unsafe { &*retained_identity });
-    let result = callback(process);
-    drop(lease);
-    Ok(result)
+    Ok((_operation, binding, lease, retained_identity))
 }
 
 /// An actual child admission for a private, not-yet-initialized Theap.
@@ -3463,7 +3489,7 @@ pub(crate) unsafe fn native_subproc_destroy(id: NativeSubprocessId) -> Result<()
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
         .ok_or(NativeSubprocessError::Closed)?;
     // SAFETY: forwarded id contract; the native runtime is admitted.
-    unsafe { destroy_record(id, ChildHeapRelease::Native) }
+    unsafe { destroy_record(id, false) }
 }
 
 /// Pinned `_mi_subprocs_unsafe_destroy_all`'s child walk
@@ -3500,7 +3526,7 @@ pub(crate) unsafe fn destroy_all_native_children_terminal() -> Result<(), Native
         let record = unsafe { child.as_ref() }.native_record().ok_or(NativeSubprocessError::Retained)?;
         // SAFETY: a published record lives until its child is destroyed, and
         // terminal admission excludes every other operation on it.
-        unsafe { destroy_record(NativeSubprocessId(record), ChildHeapRelease::Terminal) }?;
+        unsafe { destroy_record(NativeSubprocessId(record), true) }?;
     }
 }
 
@@ -3564,22 +3590,23 @@ unsafe fn native_child_destroy_tracking(
 }
 
 /// Pinned `mi_subproc_unsafe_destroy` for one production record, then the
-/// record itself. `release` is `Native` inside native admission and
-/// `Terminal` under permanent terminal admission.
+/// record itself. `terminal` selects permanent terminal admission; otherwise
+/// native admission retains orphan TLS members until their own finish. The
+/// record owns no parent-engine release route.
 ///
 /// # Safety
 /// The id is live, no other operation on it runs concurrently, and no block
-/// of the child is used again.
+/// of the child is used again. Native admission holds when `terminal` is
+/// false; permanent terminal admission excludes every native entry when true.
 unsafe fn destroy_record(
     id: NativeSubprocessId,
-    release: ChildHeapRelease<'_, 'static>,
+    terminal: bool,
 ) -> Result<(), NativeSubprocessError> {
     let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs()
         .ok_or(NativeSubprocessError::NotReady)?;
     let config = binding.page_map().memory_config().map_err(|_| NativeSubprocessError::NotReady)?;
     let metadata = crate::meta::MetaAllocator::global();
-    let terminal = matches!(release, ChildHeapRelease::Terminal);
     // SAFETY: forwarded id contract.
     let record = unsafe { id.record() };
     let destroyed = unsafe {
@@ -3646,6 +3673,7 @@ unsafe fn destroy_record(
             // SAFETY: the record lock excludes thread admission and finish.
             // The caller has permanently quiesced every member and ended all
             // child-block use before the terminal path releases their images.
+            let release = if terminal { ChildHeapRelease::Terminal } else { ChildHeapRelease::Native };
             match destroy_child_with(
                 child, record.registry, binding, tracking, metadata, config, release, source_live != 0 || members != 0,
             ) {
@@ -4695,7 +4723,7 @@ pub(crate) mod tests {
                 assert_eq!(retained, 1, "the exact parent stays owned through the delayed record release");
                 // Internal admission check; no caller claims source child use
                 // after teardown, and the actual record owner must refuse here.
-                assert_eq!(unsafe { destroy_record(parent, ChildHeapRelease::Native) },
+                assert_eq!(unsafe { destroy_record(parent, false) },
                     Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive)));
                 finish.send(true).unwrap();
                 worker.join().expect("last actual nested TLS token releases its record");
@@ -4739,7 +4767,7 @@ pub(crate) mod tests {
                             assert_eq!(record.callback_leases.load(core::sync::atomic::Ordering::Acquire), 2);
                             // This probes internal admission, not a public
                             // concurrent-destruction contract or source qualification.
-                            assert_eq!(destroy_record(id, ChildHeapRelease::Native),
+                            assert_eq!(destroy_record(id, false),
                                 Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive)));
                             let nested = native_child_heap_allocate(heap, 33).unwrap()
                                 .expect("same-Heap allocation reenters after its engine parked");
@@ -4825,7 +4853,7 @@ pub(crate) mod tests {
                     assert_eq!(child.record().callback_leases.load(core::sync::atomic::Ordering::Acquire), 1);
                     assert_eq!(neighbor.record().callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
                     assert!(child.record().lock.try_lock().is_some());
-                    assert_eq!(destroy_record(child, ChildHeapRelease::Native),
+                    assert_eq!(destroy_record(child, false),
                         Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive)));
                     // Reentry uses the actual calling thread's process-main
                     // allocator, without substituting its identity for the child.
