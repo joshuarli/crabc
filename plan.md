@@ -87,8 +87,10 @@ Update this small section in place when the implementation frontier changes.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
-  the legacy source boundary. Complete debug dependency closure remains unproved
-  for relocated read-only data, GOT and source-core forms; no release pass is claimed.
+  the legacy source boundary. A fresh merged-source debug static aggregate links
+  through owned providers, but the member-only byte-closure reader still rejects
+  relocated location data and lacks inputs for owned source-core/libc callees.
+  That stronger debug closure remains unproved; no release pass is claimed.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
