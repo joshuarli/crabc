@@ -10,6 +10,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -512,6 +513,38 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             self.assertIn('selected_feature', command)
             self.assertNotIn('x86-environment-runtime', command)
             self.assertNotIn('x86-resolver-runtime', command)
+
+    def test_static_native_dependencies_receive_the_initial_exec_tls_model(self) -> None:
+        commands = []
+        class CargoCaptured(Exception):
+            pass
+        def capture(command, **_):
+            commands.append(command)
+            raise CargoCaptured()
+        tools = {"rustup": {"path": "/opt/cargo/bin/rustup"},
+                 "rustc": {"sysroot": "/opt/rustup/test-sysroot"}}
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary, \
+             mock.patch.object(builder, "resolve_pinned_producer_tools", return_value=tools), \
+             mock.patch.object(builder, "producer_tool_path", return_value="/usr/bin/ar"), \
+             mock.patch.object(builder, "executable_identity", return_value={"path": "/usr/bin/objcopy"}), \
+             mock.patch.object(builder, "deterministic_environment", return_value={}), \
+             mock.patch.object(builder, "allocator_dependency_graph", return_value={}), \
+             mock.patch.object(builder, "run", side_effect=capture):
+            with self.assertRaises(CargoCaptured):
+                builder.build_runtime_inputs(Path(temporary), allocator_backend="native-shadow")
+        # Cargo options before its rustc separator govern target dependencies;
+        # the final crate's own rustc arguments cannot select their TLS model.
+        command = commands[0]
+        cargo = command[:command.index("--")]
+        configs = [tomllib.loads(cargo[index + 1])
+                   for index, argument in enumerate(cargo) if argument == "--config"]
+        flags = next((config["target"][builder.TARGET]["rustflags"]
+                      for config in configs if "target" in config), [])
+        self.assertIn("-Ztls-model=initial-exec", flags)
+        self.assertIn(["-C", "link-dead-code"],
+                      [flags[index:index + 2] for index in range(len(flags) - 1)])
 
     def test_producer_state_stays_in_checkout_without_changing_pinned_tools(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
