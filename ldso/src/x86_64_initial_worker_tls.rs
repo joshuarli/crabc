@@ -169,6 +169,103 @@ mod tests {
         }
     }
 
+    #[test]
+    fn retired_worker_generations_are_reclaimed_before_survivor_and_late_worker_growth() {
+        unsafe fn resident(address: usize) -> bool {
+            let mut residency = 0u8;
+            unsafe { syscall3(27, address as i64, 1,
+                core::ptr::addr_of_mut!(residency) as i64) == 0 }
+        }
+        unsafe fn register(block: InstalledInitialTls) -> WorkerTlsAllocation {
+            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+            let token = WorkerTlsAllocation { mapping: block.mapping,
+                mapping_size: block.mapping_byte_len, thread_pointer: block.thread_pointer,
+                allocation_id: id };
+            // The materializer reserved an exclusive registry-node prefix,
+            // disjoint from the owned TCB/DTV/images, just as allocate does.
+            unsafe { register_allocation(block.mapping.cast(), token); }
+            token
+        }
+        unsafe fn probe(guard: &Guard) -> bool { unsafe { (|| -> Option<bool> {
+            let image = [11u8, 13];
+            let runtime_image = [17u8, 19];
+            let mut initial = [EMPTY_OBJECT; 32];
+            initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 2,
+                tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+                tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+            let runtime = Object { tls_image: runtime_image.as_ptr(), tls_filesz: 2,
+                tls_memsz: 97, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT };
+            let modules = [initial[0], runtime,
+                Object { tls_module_id: 3, ..runtime }, Object { tls_module_id: 4, ..runtime }];
+            let main = materialize_initial_tls(&initial, 0)?;
+            let first = materialize_initial_tls(&initial, core::mem::size_of::<AllocationNode>())?;
+            let second = materialize_initial_tls(&initial, core::mem::size_of::<AllocationNode>())?;
+            adopt_after_fork(main.thread_pointer);
+            let first_token = register(first);
+            let second_token = register(second);
+            x86_64_runtime_tls_view::PreparedAllThreads::prepare(guard, &modules[..2])?.publish();
+            let old = x86_64_runtime_tls_view::current(first.thread_pointer) as usize;
+            let first_address = x86_64_runtime_tls_view::resolve(old as *mut _, 2, 0).cast::<u8>();
+            let second_address = x86_64_runtime_tls_view::resolve(
+                x86_64_runtime_tls_view::current(second.thread_pointer), 2, 0).cast::<u8>();
+            *first_address = 71;
+            *second_address = 73;
+            x86_64_runtime_tls_view::PreparedAllThreads::prepare(guard, &modules[..3])?.publish();
+            let latest = x86_64_runtime_tls_view::current(first.thread_pointer) as usize;
+            if old == latest || !resident(old) || !resident(latest) { return None; }
+            // All worker users are quiescent. Release reacquires the same
+            // graph lock through the exact runtime token release entry point.
+            Guard::complete_fork();
+            if release(&first_token) != 0 || resident(old) || resident(latest)
+                || resident(first.mapping as usize) { return None; }
+            {
+                let next_guard = Guard::acquire();
+                let mut count = 0;
+                visit_registered_threads(&next_guard, |_| { count += 1; Some(()) })?;
+                if count != 2 || !contains_thread(&next_guard, main.thread_pointer)
+                    || !contains_thread(&next_guard, second.thread_pointer) { return None; }
+                // Retired registry nodes are absent before the next growth;
+                // it publishes only to the main and surviving worker TCBs.
+                x86_64_runtime_tls_view::PreparedAllThreads::prepare(&next_guard, &modules)?.publish();
+                let second_view = x86_64_runtime_tls_view::current(second.thread_pointer);
+                if x86_64_runtime_tls_view::resolve(second_view, 2, 0).cast::<u8>() != second_address
+                    || *second_address != 73
+                    || *x86_64_runtime_tls_view::resolve(second_view, 4, 0).cast::<u8>() != 17
+                { return None; }
+            }
+            let late = materialize_initial_tls(&initial, core::mem::size_of::<AllocationNode>())?;
+            let late_token;
+            {
+                let next_guard = Guard::acquire();
+                late_token = register(late);
+                // A new worker uses the retained templates, not another
+                // worker's mutated live image, for all current modules.
+                x86_64_runtime_tls_view::PreparedTlsView::prepare(late.thread_pointer, &modules)?
+                    .publish(late.thread_pointer);
+                let view = x86_64_runtime_tls_view::current(late.thread_pointer);
+                if *x86_64_runtime_tls_view::resolve(view, 2, 0).cast::<u8>() != 17
+                    || *x86_64_runtime_tls_view::resolve(view, 4, 96).cast::<u8>() != 0
+                    || *second_address != 73 { return None; }
+                let mut count = 0;
+                visit_registered_threads(&next_guard, |_| { count += 1; Some(()) })?;
+                if count != 3 { return None; }
+            }
+            if release(&second_token) != 0 || release(&late_token) != 0 { return None; }
+            {
+                let next_guard = Guard::acquire();
+                let mut count = 0;
+                visit_registered_threads(&next_guard, |_| { count += 1; Some(()) })?;
+                if count != 1 || x86_64_runtime_tls_view::release(main.thread_pointer) != 0
+                    || syscall2(SYS_MUNMAP, main.mapping as i64, main.mapping_byte_len as i64) != 0
+                { return None; }
+            }
+            Some(true)
+        })().unwrap_or(false) } }
+        // Isolated address-space reclamation keeps mincore observations from
+        // racing unrelated harness mappings that reuse a released address.
+        unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
+    }
+
     /// Exercise the actual release boundary against owned native mappings,
     /// including forged spans, duplicate release and a reused-address stale ID.
     #[test]
