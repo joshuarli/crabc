@@ -3,6 +3,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -209,8 +210,88 @@ static int exercise_restart(int timeout) {
     printf("socket user signal restart=%d errno-preserved=%d\n",!timeout,!timeout);
     return 0;
 }
-int main(void) {
+struct ancillary_state {
+    int receiver, transferred, pending;
+    unsigned char *allocation;
+    _Atomic int received, cleanup;
+};
+static void cleanup_ancillary(void *opaque) {
+    struct ancillary_state *s=opaque;
+    if (s->transferred>=0 && close(s->transferred)) _exit(61);
+    if (close(s->receiver)) _exit(62);
+    if (!s->allocation || s->allocation[0]!=0x5a || s->allocation[65535]!=0xa5) _exit(63);
+    free(s->allocation);
+    s->allocation=NULL;
+    atomic_store(&s->cleanup,1);
+}
+static void *ancillary_worker(void *opaque) {
+    struct ancillary_state *s=opaque;
+    union { struct cmsghdr align; unsigned char bytes[CMSG_LEN(sizeof(int))]; } control={0};
+    char byte=0;
+    struct iovec vector={&byte,1};
+    struct msghdr message={.msg_iov=&vector,.msg_iovlen=1,
+        .msg_control=control.bytes,.msg_controllen=sizeof control.bytes};
+    s->allocation=malloc(65536);
+    if (!s->allocation) _exit(64);
+    s->allocation[0]=0x5a;s->allocation[65535]=0xa5;
+    pthread_cleanup_push(cleanup_ancillary,s);
+    if (s->pending==1 && pthread_cancel(pthread_self())) _exit(65);
+    if (recvmsg(s->receiver,&message,MSG_CMSG_CLOEXEC)!=1 || byte!='R') _exit(66);
+    struct cmsghdr *header=CMSG_FIRSTHDR(&message);
+    if (!header || header->cmsg_len!=CMSG_LEN(sizeof(int)) ||
+        header->cmsg_level!=SOL_SOCKET || header->cmsg_type!=SCM_RIGHTS ||
+        !(message.msg_flags&MSG_CTRUNC)) _exit(67);
+    memcpy(&s->transferred,CMSG_DATA(header),sizeof s->transferred);
+    if (fcntl(s->transferred,F_GETFD)!=FD_CLOEXEC) _exit(68);
+    atomic_store(&s->received,1);
+    if (s->pending==2 && pthread_cancel(pthread_self())) _exit(69);
+    if (send(s->transferred,"K",1,MSG_NOSIGNAL)!=1) _exit(70);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+static int exercise_ancillary_ownership(void) {
+    for (int iteration=0;iteration<16;iteration++) for (int pending=0;pending<3;pending++) {
+        int carrier[2],kept[2],discarded[2];
+        CHECK(!socketpair(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0,carrier));
+        CHECK(!socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,kept));
+        CHECK(!socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,discarded));
+        union { struct cmsghdr align; unsigned char bytes[CMSG_SPACE(2*sizeof(int))]; } control={0};
+        int rights[2]={kept[0],discarded[0]};char byte='R';
+        struct iovec vector={&byte,1};
+        struct msghdr message={.msg_iov=&vector,.msg_iovlen=1,
+            .msg_control=control.bytes,.msg_controllen=sizeof control.bytes};
+        struct cmsghdr *header=CMSG_FIRSTHDR(&message);
+        header->cmsg_len=CMSG_LEN(sizeof rights);header->cmsg_level=SOL_SOCKET;header->cmsg_type=SCM_RIGHTS;
+        memcpy(CMSG_DATA(header),rights,sizeof rights);
+        CHECK(sendmsg(carrier[0],&message,MSG_NOSIGNAL)==1);
+        CHECK(!close(carrier[0]) && !close(kept[0]) && !close(discarded[0]));
+        /* The queue now owns both source references. Normal truncation gives
+         * one to the worker; cancellation before dequeue closes the queue.
+         * After dequeue, send cancellation retires the returned descriptor
+         * through that same caller cleanup. */
+        struct ancillary_state state={.receiver=carrier[1],.transferred=-1,.pending=pending};
+        pthread_t worker;void *result=NULL;
+        CHECK(!pthread_create(&worker,NULL,ancillary_worker,&state));
+        CHECK(!pthread_join(worker,&result));
+        CHECK(result==(pending?PTHREAD_CANCELED:NULL) && atomic_load(&state.cleanup));
+        CHECK(atomic_load(&state.received)==(pending!=1) && !state.allocation);
+        if (!pending) CHECK(recv(kept[1],&byte,1,MSG_DONTWAIT)==1 && byte=='K');
+        CHECK(recv(kept[1],&byte,1,MSG_DONTWAIT)==0);
+        CHECK(recv(discarded[1],&byte,1,MSG_DONTWAIT)==0);
+        CHECK(!close(kept[1]) && !close(discarded[1]));
+        int after=socket(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0);
+        CHECK(after==carrier[0] && !close(after));
+    }
+    return 0;
+}
+int main(int argc,char **argv) {
     alarm(30);
+    if (argc==2 && !strcmp(argv[1],"ancillary-ownership")) {
+        CHECK(!exercise_ancillary_ownership());
+        puts("owned-socket-ancillary-ownership-ok");
+        return 0;
+    }
+    CHECK(argc==1 && !exercise_ancillary_ownership());
     for (int operation=SEND_BYTES;operation<=EMPTY_SEND_BATCH;operation++)
         for (int state=PTHREAD_CANCEL_ENABLE;state<=2;state++) CHECK(!exercise_socket(operation,state,0,0));
     for (int operation=SEND_BYTES;operation<=CONNECT_PEER;operation++) CHECK(!exercise_socket(operation,PTHREAD_CANCEL_ENABLE,1,0));
