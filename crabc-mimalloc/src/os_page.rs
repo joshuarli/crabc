@@ -534,7 +534,13 @@ impl OsAlignedPageAllocationFailure {
 
     #[inline]
     pub(crate) fn into_owner(self) -> Option<OsAlignedPageOwner> {
-        self.claim.map(OsAlignedPageOwner::Claim)
+        #[cfg(target_arch = "x86_64")]
+        { match self.claim {
+            Some(claim) => Some(OsAlignedPageOwner::Claim(claim)),
+            None => None,
+        } }
+        #[cfg(not(target_arch = "x86_64"))]
+        { self.claim.map(OsAlignedPageOwner::Claim) }
     }
 }
 
@@ -675,6 +681,12 @@ impl OsAlignedPageClaim {
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
             return Err(failed(Errno::NOMEM));
         }
+        #[cfg(target_arch = "x86_64")]
+        let layout = match OsAlignedPageLayout::for_fresh_page(config, block_size, alignment) {
+            Some(layout) => layout,
+            None => return Err(failed(Errno::INVAL)),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
@@ -717,8 +729,15 @@ impl OsAlignedPageClaim {
             return match unsafe { claim.release_for_process(process) } {
                 Ok(()) => Err(OsAlignedPageAllocationFailure::released(OsAlignedPageError::new(stage, error))),
                 Err(failure) => {
+                    #[cfg(target_arch = "x86_64")]
+                    let OsAlignedPageReleaseFailure { error: cleanup_error, owner } = failure;
+                    #[cfg(target_arch = "x86_64")]
+                    let cleanup = cleanup_error.operation();
+                    #[cfg(not(target_arch = "x86_64"))]
                     let cleanup = failure.error().operation();
-                    let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+                    #[cfg(not(target_arch = "x86_64"))]
+                    let owner = failure.into_owner();
+                    let OsAlignedPageOwner::Claim(claim) = owner else {
                         unreachable!("unpublished claim cleanup retains that exact claim");
                     };
                     Err(OsAlignedPageAllocationFailure::with_claim(
@@ -748,6 +767,12 @@ impl OsAlignedPageClaim {
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
             return Err(failed(Errno::NOMEM));
         }
+        #[cfg(target_arch = "x86_64")]
+        let layout = match OsAlignedPageLayout::for_fresh_page(config, block_size, alignment) {
+            Some(layout) => layout,
+            None => return Err(failed(Errno::INVAL)),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
         let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
@@ -782,8 +807,15 @@ impl OsAlignedPageClaim {
                 Ok(()) => Err(OsAlignedPageAllocationFailure::released(
                     OsAlignedPageError::new(OsAlignedPageFailureStage::MetadataCommit, error))),
                 Err(failure) => {
+                    #[cfg(target_arch = "x86_64")]
+                    let OsAlignedPageReleaseFailure { error: cleanup_error, owner } = failure;
+                    #[cfg(target_arch = "x86_64")]
+                    let cleanup = cleanup_error.operation();
+                    #[cfg(not(target_arch = "x86_64"))]
                     let cleanup = failure.error().operation();
-                    let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+                    #[cfg(not(target_arch = "x86_64"))]
+                    let owner = failure.into_owner();
+                    let OsAlignedPageOwner::Claim(claim) = owner else {
                         unreachable!("unpublished claim cleanup retains that exact claim");
                     };
                     Err(OsAlignedPageAllocationFailure::with_claim(
@@ -1983,19 +2015,45 @@ mod tests {
     #[test]
     fn paired_fresh_os_page_commit_failure_retains_accounted_cleanup_owner() {
         let fault = fault::install(fault::Plan::disabled());
-        for commit_call in [1, 2] {
+        for (borrowed, on_demand, commit_call) in [
+            (false, false, 1), (false, false, 2),
+            (true, false, 1), (true, false, 2), (true, true, 1),
+        ] {
             let process = process(false);
             let before = process.subprocess().vm_statistics().snapshot();
             fault.set(fault::Plan::at_pair(fault::Point::Commit, commit_call,
                 fault::Point::Unmap, 1, Errno::NOMEM));
-            let failure = OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB), 4096,
-                1, crate::arena::ArenaId::none()).err().expect("commit fault");
+            let allocation = if borrowed {
+                // SAFETY: this fixture retains the exact process image until
+                // the original refused claim has completed its raw retry.
+                unsafe {
+                    if on_demand {
+                        OsAlignedPageClaim::allocate_on_demand_for_borrowed_process_with_random(
+                            process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(), None,
+                        )
+                    } else {
+                        OsAlignedPageClaim::allocate_for_borrowed_process_with_random(
+                            process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(), None,
+                        )
+                    }
+                }
+            } else {
+                OsAlignedPageClaim::allocate_for_process(process, config(4 * KIB), 4096,
+                    1, crate::arena::ArenaId::none())
+            };
+            let failure = allocation.err().expect("commit fault");
+            assert_eq!(failure.error().stage(), if commit_call == 1 {
+                OsAlignedPageFailureStage::MetadataCommit
+            } else { OsAlignedPageFailureStage::BlockCommit });
             assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
             let OsAlignedPageOwner::Claim(claim) = failure.into_owner().expect("retained mapping") else { panic!("private claim") };
             assert!(claim.memory_id().is_err(), "failed commitment cannot publish a valid page");
+            assert!(claim.belongs_to_subprocess(process.subprocess()));
+            assert_eq!(claim.base().unwrap().addr() % PAGE_META_ALIGNMENT, 0);
             let after = process.subprocess().vm_statistics().snapshot();
             assert_eq!(after.reserved_current, before.reserved_current);
-            assert_eq!(after.committed_current - before.committed_current, -(claim.layout().mapping_length() as i64));
+            assert_eq!(after.committed_current - before.committed_current,
+                if on_demand { 0 } else { -(claim.layout().mapping_length() as i64) });
             fault.set(fault::Plan::disabled());
             assert!(claim.release().is_ok());
             assert_eq!(process.subprocess().vm_statistics().snapshot(), after);

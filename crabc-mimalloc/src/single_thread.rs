@@ -43079,13 +43079,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         // SAFETY: the exact original claim retains its entire readable
         // committed area; no free-list link or client has been published.
+        #[cfg(target_arch = "x86_64")]
+        if let Err(failure) = unsafe { self.observe_fresh_os_initialization(&claim, page) } {
+            return Err(self.retain_generic_fresh_error(PendingFreshOsPageInitialization {
+                claim, page, theap: self.theap_identity(),
+                metadata_stage: FreshOsMetadataStage::Registered { statistics_bin }, failure,
+                retirement_marker: FreshTaskRetirementMarker::Unmarked,
+            }));
+        }
+        #[cfg(not(target_arch = "x86_64"))]
         let claim = unsafe { self.observe_fresh_os_initialization(claim, page, statistics_bin) }
-            .map_err(|pending| {
-                #[cfg(target_arch = "x86_64")]
-                { self.retain_generic_fresh_error(pending) }
-                #[cfg(not(target_arch = "x86_64"))]
-                { GenericPathError::FreshInitialization(pending) }
-            })?;
+            .map_err(GenericPathError::FreshInitialization)?;
 
         let initialized = (|| -> Result<(), FreshOsPageInitializationFailure> {
             // SAFETY: an on-demand claim committed its first page area above;
@@ -43178,6 +43182,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     /// Observes source initialization while retaining the original claim.
+    /// The borrowed claim stays with the caller; a scalar observation failure
+    /// does not take its release capability or change publication progress.
     ///
     /// # Safety
     /// `page` is the initialized primary of this exact claim, with its aliases,
@@ -43185,6 +43191,33 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// by this session. The entire source committed observation
     /// region is initialized and readable, with no concurrent writes, free-list
     /// publication, client access or protection change.
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn observe_fresh_os_initialization(
+        &self, _claim: &OsAlignedPageClaim, page: NonNull<Page>,
+    ) -> Result<(), FreshOsPageInitializationFailure> {
+        #[cfg(target_arch = "x86_64")]
+        if crate::config::DEBUG_LEVEL > 2 {
+            // SAFETY: the caller retains the original committed mapping and
+            // excludes writes and protection changes through this observation.
+            let state = unsafe { Page::validity_snapshot_at(page) };
+            #[cfg(all(test, target_arch = "x86_64", not(miri)))]
+            if state.initially_zero {
+                // SAFETY: the observer is test-only and cannot allocate,
+                // output or reenter; the original claim exclusively retains
+                // this initialized readable region before all list writes.
+                unsafe { crate::page_validity::observe_fresh_page_initialization_for_test(&state, page) };
+            }
+            let observed = unsafe { crate::page_validity::source_initial_page_is_zero(
+                &state, self.page_map.memory_config().page_size().bytes(),
+            ) };
+            if let Err(failure) = observed {
+                return Err(FreshOsPageInitializationFailure::SourceObservation(failure));
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
     unsafe fn observe_fresh_os_initialization(
         &self, claim: OsAlignedPageClaim, page: NonNull<Page>, statistics_bin: usize,
     ) -> Result<OsAlignedPageClaim, PendingFreshOsPageInitialization> {
@@ -52171,6 +52204,11 @@ mod tests {
                 unsafe { allocator.page_map.register_range(start.as_ptr(), layout.page_map_size(), page) }.unwrap();
                 let statistics_bin = unsafe { source_page_statistics_bin_at(page) }.unwrap();
                 assert!(allocator.session.theap().record_page_registered(statistics_bin));
+                // Observation borrows the authentic claim without replacing
+                // its original release capability or publication geometry.
+                assert!(unsafe { allocator.observe_fresh_os_initialization(&claim, page) }.is_ok());
+                assert_eq!(claim.slice_start(), Some(start));
+                assert_eq!(claim.metadata(), Some(page));
                 // Stop at the real initialized-primary boundary before keys
                 // or list publication; the transport must own this exact claim.
                 let error = allocator.retain_generic_fresh_error(PendingFreshOsPageInitialization {
@@ -52381,13 +52419,18 @@ mod tests {
                 // whose byte disagrees with the claimed source zero property.
                 // No allocated client or list is modified by this fixture.
                 unsafe { state.area.as_ptr().write(byte); }
-                let observed = unsafe { allocator.observe_fresh_os_initialization(claim, primary, statistics_bin) };
+                let observed = unsafe { allocator.observe_fresh_os_initialization(&claim, primary) };
                 if byte == 0 {
-                    let claim = observed.unwrap();
+                    observed.unwrap();
                     allocator.rollback_fresh_os_aligned(claim, primary, true, true);
                     continue;
                 }
-                let pending = observed.err().unwrap();
+                let pending = PendingFreshOsPageInitialization {
+                    claim, page: primary, theap: allocator.theap_identity(),
+                    metadata_stage: FreshOsMetadataStage::Registered { statistics_bin },
+                    failure: observed.err().unwrap(),
+                    retirement_marker: FreshTaskRetirementMarker::Unmarked,
+                };
                 let error = allocator.retain_generic_fresh_error(pending);
                 allocator.cleanup_unphased_initialization_error(error);
                 let pending = allocator.take_pending_fresh_initialization()
