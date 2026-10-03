@@ -753,6 +753,9 @@ impl Chunk {
         }
     }
 
+    // Keep the scalar field dispatch shared when its retry body is outlined;
+    // otherwise the smaller dispatch gets duplicated into its callers.
+    #[cfg_attr(all(target_arch = "x86_64", not(feature = "mi-opt-simd")), inline(never))]
     fn try_claim_one(&self) -> Option<usize> {
         #[cfg(feature = "mi-opt-simd")]
         {
@@ -761,25 +764,38 @@ impl Chunk {
         #[cfg(not(feature = "mi-opt-simd"))]
         {
             for field_index in 0..BCHUNK_FIELDS {
-                let mut value = word_load_relaxed(self.field(field_index));
+                let field = self.field(field_index);
+                let value = word_load_relaxed(field);
                 if value == 0 {
                     continue;
                 }
-                let mut tries = 0;
-                loop {
-                    let mask = value & value.wrapping_neg();
-                    let previous = word_and_acq_rel(self.field(field_index), !mask);
-                    if previous & mask == mask {
-                        return Some(field_index * BFIELD_BITS + ctz(mask));
-                    }
-                    value = previous;
-                    tries += 1;
-                    if value == 0 || tries > 4 {
-                        break;
-                    }
+                if let Some(bit) = Self::try_claim_one_in_nonzero_field(field, value) {
+                    return Some(field_index * BFIELD_BITS + bit);
                 }
             }
             None
+        }
+    }
+
+    // Keep the source's bounded retry body shared across the scalar fields:
+    // inlining it duplicates five atomic attempts for every field. The caller
+    // retains the source initial load and skips empty fields before this call.
+    #[cfg(not(feature = "mi-opt-simd"))]
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    fn try_claim_one_in_nonzero_field(field: &AtomicWord, mut value: usize) -> Option<usize> {
+        debug_assert_ne!(value, 0);
+        let mut tries = 0;
+        loop {
+            let mask = value & value.wrapping_neg();
+            let previous = word_and_acq_rel(field, !mask);
+            if previous & mask == mask {
+                return Some(ctz(mask));
+            }
+            value = previous;
+            tries += 1;
+            if value == 0 || tries > 4 {
+                return None;
+            }
         }
     }
 
