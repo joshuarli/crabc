@@ -651,7 +651,7 @@ static void *identity_worker(void *argument)
     return NULL;
 }
 
-static void check_identity_lifetime(void)
+static void check_identity_lifetime(int conventional_records)
 {
     pthread_t first, second;
     struct passwd *shared_passwd;
@@ -660,7 +660,22 @@ static void check_identity_lifetime(void)
     FILE *group_stream;
     int iteration;
 
-    setup_identity_files();
+    if (conventional_records) {
+        static const char passwd_records[] =
+            "alice:x:1:2:Alice:/home/alice:/bin/sh\n"
+            "alice:x:1:2:Later:/later:/bin/sh\n"
+            "bob:x:2:2:Bob:/home/bob:/bin/sh\n"
+            "tail:x:3:3:Tail:/tail:/bin/sh\n";
+        static const char group_records[] =
+            "team:x:1:alice,bob\n"
+            "team:x:1:later\n"
+            "lab:x:2:bob,alice\n"
+            "tail:x:3:last\n";
+        write_file("/etc/passwd", passwd_records, sizeof passwd_records - 1);
+        write_file("/etc/group", group_records, sizeof group_records - 1);
+    } else {
+        setup_identity_files();
+    }
     setpwent();
     setgrent();
     shared_passwd = getpwent();
@@ -720,7 +735,8 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "usershell")) usershell();
     else if (!strcmp(argv[1], "cuserid")) cuserid_case();
     else if (!strcmp(argv[1], "identity-fields")) check_identity_fields();
-    else if (!strcmp(argv[1], "identity-lifetime")) check_identity_lifetime();
+    else if (!strcmp(argv[1], "identity-lifetime")) check_identity_lifetime(0);
+    else if (!strcmp(argv[1], "identity-local-lifetime")) check_identity_lifetime(1);
     else CHECK(!"unknown account-file scenario");
     puts("owned account files scenario passed");
     return 0;
