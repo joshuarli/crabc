@@ -284,14 +284,144 @@ static int exercise_ancillary_ownership(void) {
     }
     return 0;
 }
+struct vector_state {
+    int pair[2],pending;
+    unsigned char *allocation;
+    _Atomic int cleanup;
+};
+static void cleanup_vector(void *opaque) {
+    struct vector_state *s=opaque;
+    if (close(s->pair[0]) || close(s->pair[1])) _exit(71);
+    if (!s->allocation || s->allocation[65535]!=0xa5) _exit(72);
+    free(s->allocation);s->allocation=NULL;
+    atomic_store(&s->cleanup,1);
+}
+static int vector_datagrams(struct vector_state *s) {
+    int size=4096; socklen_t length=sizeof size;
+    CHECK(!setsockopt(s->pair[0],SOL_SOCKET,SO_SNDBUF,&size,sizeof size));
+    CHECK(!getsockopt(s->pair[0],SOL_SOCKET,SO_SNDBUF,&size,&length));
+    CHECK(size>0 && size<16384);
+    unsigned char *output=s->allocation+32768;
+    struct iovec first[2]={{(void*)"AB",2},{(void*)"CDE",3}};
+    struct iovec second={s->allocation,(size_t)size*2+1};
+    struct mmsghdr send_batch[2]={
+        {.msg_hdr={.msg_iov=first,.msg_iovlen=2},.msg_len=0x12345678},
+        {.msg_hdr={.msg_iov=&second,.msg_iovlen=1},.msg_len=0x12345678}};
+    /* An oversized readable datagram fails atomically after the first
+     * message completed. The LP64 source loop returns that completed count
+     * and retains the later failure's errno without publishing its length. */
+    errno=EDOM;
+    CHECK(sendmmsg(s->pair[0],send_batch,2,MSG_DONTWAIT|MSG_NOSIGNAL)==1);
+    CHECK(errno==EMSGSIZE && send_batch[0].msg_len==5 && send_batch[1].msg_len==0x12345678);
+    struct iovec receive[2]={{output,1},{output+1,2}};
+    struct msghdr message={.msg_iov=receive,.msg_iovlen=2};
+    errno=EDOM;
+    CHECK(recvmsg(s->pair[1],&message,MSG_TRUNC|MSG_DONTWAIT)==5 && errno==EDOM);
+    CHECK((message.msg_flags&MSG_TRUNC) && !memcmp(output,"ABC",3) && output[3]==0x5a);
+    CHECK(recvmsg(s->pair[1],&message,MSG_DONTWAIT)==-1 && errno==EAGAIN);
+    CHECK(!memcmp(output,"ABC",3) && output[3]==0x5a);
+    struct iovec queued[2]={{(void*)"abcdef",6},{(void*)"12",2}};
+    struct mmsghdr queued_batch[2]={
+        {.msg_hdr={.msg_iov=&queued[0],.msg_iovlen=1}},
+        {.msg_hdr={.msg_iov=&queued[1],.msg_iovlen=1}}};
+    errno=EDOM;
+    CHECK(sendmmsg(s->pair[0],queued_batch,2,MSG_DONTWAIT|MSG_NOSIGNAL)==2 && errno==EDOM);
+    memset(output,0x5a,24);
+    struct iovec receives[3][2];struct mmsghdr received[3]={0};
+    for (int i=0;i<3;i++) {
+        receives[i][0]=(struct iovec){output+8*i,1};
+        receives[i][1]=(struct iovec){output+8*i+1,2};
+        received[i].msg_hdr.msg_iov=receives[i];received[i].msg_hdr.msg_iovlen=2;
+        received[i].msg_len=0x12345678;
+    }
+    errno=EDOM;
+    CHECK(recvmmsg(s->pair[1],received,3,MSG_DONTWAIT,NULL)==2 && errno==EDOM);
+    CHECK(received[0].msg_len==3 && (received[0].msg_hdr.msg_flags&MSG_TRUNC));
+    CHECK(received[1].msg_len==2 && !(received[1].msg_hdr.msg_flags&MSG_TRUNC));
+    CHECK(received[2].msg_len==0x12345678);
+    CHECK(!memcmp(output,"abc",3) && !memcmp(output+8,"12",2));
+    CHECK(output[3]==0x5a && output[10]==0x5a && output[16]==0x5a);
+    return 0;
+}
+/* A nonblocking stream send reports its accepted byte prefix; a short
+ * receive retains the remaining bytes, unlike a truncated datagram. */
+static int vector_stream(struct vector_state *s) {
+    int size=4096;
+    CHECK(!setsockopt(s->pair[0],SOL_SOCKET,SO_SNDBUF,&size,sizeof size));
+    for (int i=0;i<32768;i++) s->allocation[i]=(unsigned char)i;
+    struct iovec input[2]={{s->allocation,8192},{s->allocation+8192,24576}};
+    struct msghdr send_message={.msg_iov=input,.msg_iovlen=2};
+    errno=EDOM;
+    ssize_t sent=sendmsg(s->pair[0],&send_message,MSG_DONTWAIT|MSG_NOSIGNAL);
+    CHECK(sent>2 && sent<32768 && errno==EDOM);
+    CHECK(input[0].iov_base==s->allocation && input[0].iov_len==8192 && input[1].iov_len==24576);
+    unsigned char *output=s->allocation+32768;
+    struct iovec receive[2]={{output,2},{output+2,(size_t)sent-2}};
+    struct msghdr message={.msg_iov=receive,.msg_iovlen=2};
+    errno=EDOM;
+    CHECK(recvmsg(s->pair[1],&message,MSG_WAITALL)==sent && errno==EDOM);
+    CHECK(!memcmp(output,s->allocation,(size_t)sent) && !(message.msg_flags&MSG_TRUNC));
+    input[0]=(struct iovec){(void*)"A",1};input[1]=(struct iovec){(void*)"BC",2};
+    CHECK(sendmsg(s->pair[0],&send_message,MSG_NOSIGNAL)==3);
+    receive[0].iov_len=1;receive[1]=(struct iovec){output+1,1};
+    CHECK(recvmsg(s->pair[1],&message,0)==2 && !memcmp(output,"AB",2));
+    receive[1].iov_len=0;
+    CHECK(recvmsg(s->pair[1],&message,MSG_DONTWAIT)==1 && output[0]=='C');
+    return 0;
+}
+static void *vector_worker(void *opaque) {
+    struct vector_state *s=opaque;
+    s->allocation=malloc(65536);
+    if (!s->allocation) _exit(73);
+    memset(s->allocation,0x5a,65536);s->allocation[65535]=0xa5;
+    pthread_cleanup_push(cleanup_vector,s);
+    if (s->pending) {
+        struct iovec output[2]={{s->allocation,2},{s->allocation+2,3}};
+        struct msghdr message={.msg_iov=output,.msg_iovlen=2};
+        if (pthread_cancel(pthread_self())) _exit(74);
+        recvmsg(s->pair[1],&message,0);
+        _exit(75);
+    }
+    if (vector_datagrams(s)) _exit(76);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+static void *vector_stream_worker(void *opaque) {
+    struct vector_state *s=opaque;
+    s->allocation=malloc(65536);
+    if (!s->allocation) _exit(77);
+    memset(s->allocation,0x5a,65536);s->allocation[65535]=0xa5;
+    pthread_cleanup_push(cleanup_vector,s);
+    if (vector_stream(s)) _exit(78);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+static int exercise_vector_ownership(void) {
+    for (int iteration=0;iteration<8;iteration++) for (int mode=0;mode<3;mode++) {
+        struct vector_state state={.pending=mode==2};
+        CHECK(!socketpair(AF_UNIX,(mode==1?SOCK_STREAM:SOCK_DGRAM)|SOCK_CLOEXEC,0,state.pair));
+        pthread_t worker;void *result=NULL;
+        CHECK(!pthread_create(&worker,NULL,mode==1?vector_stream_worker:vector_worker,&state));
+        CHECK(!pthread_join(worker,&result));
+        CHECK(result==(mode==2?PTHREAD_CANCELED:NULL) && atomic_load(&state.cleanup) && !state.allocation);
+        int after=socket(AF_UNIX,SOCK_DGRAM|SOCK_CLOEXEC,0);
+        CHECK(after==state.pair[0] && !close(after));
+    }
+    return 0;
+}
 int main(int argc,char **argv) {
     alarm(30);
+    if (argc==2 && !strcmp(argv[1],"vector-ownership")) {
+        CHECK(!exercise_vector_ownership());
+        puts("owned-socket-vector-ownership-ok");
+        return 0;
+    }
     if (argc==2 && !strcmp(argv[1],"ancillary-ownership")) {
         CHECK(!exercise_ancillary_ownership());
         puts("owned-socket-ancillary-ownership-ok");
         return 0;
     }
-    CHECK(argc==1 && !exercise_ancillary_ownership());
+    CHECK(argc==1 && !exercise_vector_ownership() && !exercise_ancillary_ownership());
     for (int operation=SEND_BYTES;operation<=EMPTY_SEND_BATCH;operation++)
         for (int state=PTHREAD_CANCEL_ENABLE;state<=2;state++) CHECK(!exercise_socket(operation,state,0,0));
     for (int operation=SEND_BYTES;operation<=CONNECT_PEER;operation++) CHECK(!exercise_socket(operation,PTHREAD_CANCEL_ENABLE,1,0));
