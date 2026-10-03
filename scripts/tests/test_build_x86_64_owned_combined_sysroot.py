@@ -152,6 +152,35 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
                 self.assertFalse((self.root / field).exists())
         (self.static / combined.MANIFEST).write_text(json.dumps(manifest))
 
+    def test_debug_products_compose_with_manifest_source_seals_and_unqualified_state(self):
+        configuration = {"build_profile": "debug", "allocator_backend": "native-shadow",
+                         "allocator_lifecycle_test_audit": False}
+        state_path = self.dynamic / combined.DYNAMIC_STATE
+        state_path.write_text(json.dumps({**configuration, "status": "materialized-unqualified"}))
+        for product in (self.static, self.dynamic):
+            path = product / combined.MANIFEST
+            manifest = json.loads(path.read_text())
+            if product == self.static:
+                manifest.update(configuration)
+            else:
+                manifest["build_profile"] = "debug"
+            manifest["source_sha256"] = self.source_sha256
+            if product == self.dynamic:
+                manifest["files"][combined.DYNAMIC_STATE] = combined.sha256_bytes(state_path.read_bytes())
+            path.write_text(json.dumps(manifest))
+        output = self.compose()
+        combined.validate(output)
+        archive = self.root / "debug.tar.gz"
+        combined.package(output, archive)
+        extracted = self.root / "debug-extracted"
+        combined.extract(archive, extracted)
+        combined.compare(output, extracted)
+        manifest = json.loads((self.dynamic / combined.MANIFEST).read_text())
+        manifest["source_sha256"] = "b" * 64
+        (self.dynamic / combined.MANIFEST).write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(combined.CompositionError, "source seals differ"):
+            self.compose("different-debug-source")
+
     def test_source_seals_must_match_before_composition(self):
         manifest_path = self.static / combined.MANIFEST
         manifest = json.loads(manifest_path.read_text())

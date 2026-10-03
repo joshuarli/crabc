@@ -117,7 +117,7 @@ def product_manifest(root: Path, product: str) -> dict:
     return record
 
 
-def require_matching_source_seals(static_manifest: dict, dynamic_state_payload: bytes) -> None:
+def require_matching_source_seals(static_manifest: dict, dynamic_manifest: dict, dynamic_state_payload: bytes) -> None:
     """Require the two embedded products to claim the same complete source tree."""
 
     static_source = static_manifest.get("source_sha256")
@@ -128,9 +128,18 @@ def require_matching_source_seals(static_manifest: dict, dynamic_state_payload: 
         dynamic_state = json.loads(dynamic_state_payload)
     except (ValueError, UnicodeDecodeError) as error:
         raise CompositionError("dynamic product state is invalid") from error
-    require(isinstance(dynamic_state, dict) and dynamic_state.get("schema") == DYNAMIC_STATE_SCHEMA,
-            "dynamic product state identity differs")
-    dynamic_source = dynamic_state.get("source_sha256")
+    require(isinstance(dynamic_state, dict), "dynamic product state identity differs")
+    if dynamic_manifest.get("build_profile") == "debug":
+        # Debug preparation seals source in the manifest. Its state describes
+        # only the selected unqualified configuration, without release evidence.
+        require(dynamic_state.get("build_profile") == "debug"
+                and dynamic_state.get("status") == "materialized-unqualified",
+                "dynamic debug product state identity differs")
+        dynamic_source = dynamic_manifest.get("source_sha256")
+    else:
+        require(dynamic_state.get("schema") == DYNAMIC_STATE_SCHEMA,
+                "dynamic product state identity differs")
+        dynamic_source = dynamic_state.get("source_sha256")
     require(isinstance(dynamic_source, str) and len(dynamic_source) == 64
             and all(character in "0123456789abcdef" for character in dynamic_source),
             "dynamic product source seal is missing or invalid")
@@ -162,7 +171,7 @@ def plan(products: Mapping[str, Path]) -> dict:
         dynamic_state = (products["dynamic"] / DYNAMIC_STATE).read_bytes()
     except OSError as error:
         raise CompositionError("dynamic product state is missing") from error
-    require_matching_source_seals(manifests["static"], dynamic_state)
+    require_matching_source_seals(manifests["static"], manifests["dynamic"], dynamic_state)
     toolchains = {record.get("toolchain") for record in manifests.values()}
     require(len(toolchains) == 1 and isinstance(next(iter(toolchains)), str),
             "products were built by different Rust toolchains")
@@ -264,7 +273,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
             and isinstance(record.get("toolchain"), str) and record.get("modes") == list(MODES),
             "combined package identity differs")
     claims: dict[str, str] = {}
-    static_manifest: dict | None = None
+    manifests: dict[str, dict] = {}
     for name in PRODUCTS:
         manifest_path = f"{METADATA_PREFIX}{name}/manifest.json"
         component = products[name]
@@ -284,8 +293,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                 and embedded.get("target") == TARGET
                 and embedded.get("toolchain") == record["toolchain"],
                 f"combined package {name} manifest identity differs")
-        if name == "static":
-            static_manifest = embedded
+        manifests[name] = embedded
         installed = embedded.get("installed")
         if name == "static":
             component_files = installed.get("files") if isinstance(installed, dict) else None
@@ -318,8 +326,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
     require(claims == record["files"], "unclaimed package payload")
     state_payload = embedded_payloads.get(dynamic_state_destination(record))
     require(isinstance(state_payload, bytes), "combined package dynamic product state is missing")
-    require(static_manifest is not None, "combined package static manifest is missing")
-    require_matching_source_seals(static_manifest, state_payload)
+    require_matching_source_seals(manifests["static"], manifests["dynamic"], state_payload)
 
 
 def validate(root: Path) -> dict:
