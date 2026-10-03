@@ -994,6 +994,34 @@ impl PageMap {
         unsafe { *(*submap.as_ptr().add(location.sub_index)).0.get() }
     }
 
+    /// Reads a retained live allocation through the selected source PageMap
+    /// lookup profile. Debug, secure, and checked-free profiles retain their
+    /// checked lookup; ordinary x86 clients already prove a published submap.
+    ///
+    /// # Safety
+    /// The map must remain active, and `address` must belong to a current
+    /// allocation whose page stays registered through this read. Its complete
+    /// Page metadata and allocation backing remain initialized, mapped, and
+    /// unreused through every use of the returned pointer. The exact client
+    /// lifetime excludes overlapping writes to its map entry; the pointer
+    /// grants no independent lifetime, mutation, or release authority.
+    #[inline(always)]
+    pub(crate) unsafe fn lookup_retained_live_page(&self, address: *const u8) -> *mut Page {
+        if cfg!(target_arch = "x86_64")
+            && crate::config::DEBUG_LEVEL == 0
+            && crate::config::SECURE_LEVEL == 0
+            && !crate::config::FREE_IS_CHECKED
+        {
+            // SAFETY: the retained allocation proves the submap and entry
+            // published. The source submap Acquire precedes the plain read.
+            unsafe { self.live_lookup(address) }
+        } else {
+            // SAFETY: the same allocation pins this active map and excludes
+            // a write to its source-plain entry through the checked read.
+            unsafe { self.checked_lookup_in_active_map(address) }
+        }
+    }
+
     /// Pinned `_mi_unchecked_ptr_page` for the two-level map: the page of an
     /// address inside a live registered allocation, with none of
     /// [`Self::checked_lookup`]'s activity, committed-count, and null-submap

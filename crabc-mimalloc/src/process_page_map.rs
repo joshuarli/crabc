@@ -1306,9 +1306,9 @@ impl ProcessPageMapRoot {
             return Err(ProcessPageMapError::Poisoned);
         }
         // SAFETY: the caller's exact-live-client proof excludes a register or
-        // unregister write to this allocation's arena slice for the duration
-        // of this source-plain lookup.
-        let page = unsafe { self.storage.page_map_ref().checked_lookup(client.as_ptr()) };
+        // unregister write to this allocation's arena slice and proves its
+        // submap committed and published throughout this source-plain lookup.
+        let page = unsafe { self.storage.page_map_ref().lookup_retained_live_page(client.as_ptr()) };
         Ok(NonNull::new(page))
     }
 
@@ -1391,8 +1391,9 @@ impl ProcessPageMapRoot {
         // SAFETY: the READY release follows root publication, so the acquire
         // check above proves this map initialized and active. Terminal
         // destruction ends all readers before changing that map's activity,
-        // and the exact live client excludes an overlapping entry write.
-        let page = unsafe { self.storage.page_map_ref().checked_lookup_in_active_map(client.as_ptr()) };
+        // and the exact live client proves its submap committed and published
+        // while excluding an overlapping entry write.
+        let page = unsafe { self.storage.page_map_ref().lookup_retained_live_page(client.as_ptr()) };
         let Some(page) = NonNull::new(page) else {
             return Ok(None);
         };
@@ -2290,7 +2291,7 @@ mod tests {
     }
 
     #[test]
-    fn retained_live_client_lookup_overlaps_disjoint_page_publication_and_removal() {
+    fn retained_live_client_lookup_overlaps_disjoint_page_publication_removal_and_reuse() {
         use core::mem::MaybeUninit;
         use crate::free_list::LocalFreeList;
 
@@ -2308,6 +2309,8 @@ mod tests {
                 // SAFETY: the retained current client pins its source-plain
                 // entry and immutable Page geometry through this observation.
                 let facts = unsafe { root.lookup_live_allocation(self.0) }.unwrap().unwrap();
+                assert_eq!(unsafe { root.lookup_page_for_live_client(self.0) }.unwrap(),
+                    Some(facts.page()));
                 (facts.page().as_ptr().addr(), facts.block_size())
             }
         }
@@ -2355,7 +2358,7 @@ mod tests {
             let reader_barrier = rendezvous.clone();
             let expected_page = pages[0].as_ptr().addr();
             let reader = thread::spawn(move || {
-                for _ in 0..2 {
+                for _ in 0..4 {
                     reader_barrier.wait();
                     assert_eq!(unsafe { client.observe(root) }, (expected_page, 48));
                     reader_barrier.wait();
@@ -2376,6 +2379,36 @@ mod tests {
             // once before any removal of that Page's source registration.
             unsafe { second.push_local(second_client) }.unwrap();
             drop(second);
+            rendezvous.wait();
+            unsafe { map.unregister_range(starts[1], ARENA_SLICE_SIZE) }.unwrap();
+            rendezvous.wait();
+
+            // The second allocation ended before withdrawal. Reinitialize
+            // its exclusively owned metadata at the same address; the first
+            // allocation still pins a different source-plain entry.
+            unsafe { Page::publish_fresh_exclusive_at(pages[1], &mut theap, &heap, id,
+                80, ARENA_SLICE_SIZE, 4, 0, true,
+                MemoryId::external(base.add(2 * ARENA_SLICE_SIZE),
+                    2 * ARENA_SLICE_SIZE, true, false, true)) }.unwrap();
+            rendezvous.wait();
+            unsafe { map.register_range(starts[1], ARENA_SLICE_SIZE, pages[1]) }.unwrap();
+            rendezvous.wait();
+            let mut reused = unsafe { LocalFreeList::from_page_at(pages[1]) }.unwrap();
+            reused.extend_count(4).unwrap();
+            let reused_client = reused.pop(false).unwrap().unwrap();
+            // SAFETY: the newly allocated canonical client pins the new
+            // registration, not an observation from the previous lifetime.
+            {
+                let facts = unsafe { root.lookup_live_allocation(reused_client) }.unwrap().unwrap();
+                assert_eq!(facts.page(), pages[1]);
+                assert_eq!(facts.block_size(), 80);
+                assert_eq!(unsafe { root.lookup_page_for_live_client(reused_client) }.unwrap(),
+                    Some(pages[1]));
+            }
+            // SAFETY: consume this new allocation once, then end all Page
+            // observations before withdrawing the reused registration.
+            unsafe { reused.push_local(reused_client) }.unwrap();
+            drop(reused);
             rendezvous.wait();
             unsafe { map.unregister_range(starts[1], ARENA_SLICE_SIZE) }.unwrap();
             rendezvous.wait();
