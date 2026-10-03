@@ -3,14 +3,29 @@
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;
 
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void};
 use core::ptr::null_mut;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use crabc_mimalloc::__crabc_runtime::{
     ThreadAttachResult, ThreadFinishResult, current_native_allocator_thread_descriptor,
     finish_current_thread_native_after_user_destructors,
     register_current_native_allocator_worker_descriptor,
-    source_api as api, source_heap_api as heaps,
+    source_api as api, source_heap_api as heaps, source_options_api as options,
 };
+
+static OTHER_SUBPROCESS_WARNINGS: AtomicUsize = AtomicUsize::new(0);
+const SHOW_ERRORS: i32 = 0;
+const MAX_WARNINGS: i32 = 20;
+
+unsafe extern "C" fn count_membership_warning(message: *const c_char, _: *mut c_void) {
+    // SAFETY: the output provider supplies a NUL-terminated source fragment
+    // valid for this synchronous callback; the counter lives for the process.
+    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+    if bytes.windows(b"unable to add thread to the subprocess".len())
+        .any(|part| part == b"unable to add thread to the subprocess") {
+        OTHER_SUBPROCESS_WARNINGS.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 struct Visit {
     heaps: Vec<usize>,
@@ -65,6 +80,9 @@ fn production_subprocess_identity_membership_and_nested_lifetime() {
     assert!(!outer.is_null() && outer != main);
     let outer_address = outer as usize;
     let main_address = main as usize;
+    let other = heaps::subproc_new();
+    assert!(!other.is_null() && other != outer);
+    let other_address = other as usize;
 
     // An initialized main member cannot switch to this child. It has made
     // no application allocation, so this exercises admission without asking
@@ -86,7 +104,22 @@ fn production_subprocess_identity_membership_and_nested_lifetime() {
         // application allocation; its child and roots stay live through finish.
         unsafe {
             assert_eq!(heaps::subproc_add_current_thread(outer), heaps::SubprocAddCurrentThread::Added);
+            // Callback registration is serialized here. Both subprocesses
+            // remain live, and the initialized worker retains its membership.
+            let show_errors = options::option_get(SHOW_ERRORS);
+            let max_warnings = options::option_get(MAX_WARNINGS);
+            options::option_set(SHOW_ERRORS, 1);
+            options::option_set(MAX_WARNINGS, 100);
+            options::register_output(Some(count_membership_warning), null_mut());
+            let warnings = OTHER_SUBPROCESS_WARNINGS.load(Ordering::Relaxed);
             assert_eq!(heaps::subproc_add_current_thread(outer), heaps::SubprocAddCurrentThread::Unchanged);
+            assert_eq!(OTHER_SUBPROCESS_WARNINGS.load(Ordering::Relaxed), warnings);
+            assert_eq!(heaps::subproc_add_current_thread(other_address as *mut c_void),
+                       heaps::SubprocAddCurrentThread::Unchanged);
+            assert_eq!(OTHER_SUBPROCESS_WARNINGS.load(Ordering::Relaxed), warnings + 1);
+            options::register_output(None, null_mut());
+            options::option_set(SHOW_ERRORS, show_errors);
+            options::option_set(MAX_WARNINGS, max_warnings);
             assert_eq!(heaps::subproc_add_current_thread(main_address as *mut c_void),
                        heaps::SubprocAddCurrentThread::Unchanged);
         }
@@ -163,6 +196,7 @@ fn production_subprocess_identity_membership_and_nested_lifetime() {
         assert!(heaps::subproc_destroy(inner_address as *mut c_void));
         api::free(outer_block);
         assert!(heaps::subproc_destroy(outer));
+        assert!(heaps::subproc_destroy(other));
         assert_eq!(heaps::subproc_current(), main);
         assert_eq!(heaps::heap_main(), initial_heap);
     }

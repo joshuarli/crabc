@@ -1631,10 +1631,10 @@ pub(crate) unsafe fn native_subproc_add_current_thread(
 ) -> Result<NativeChildThreadAdd, NativeSubprocessError> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()
         .ok_or(NativeSubprocessError::Closed)?;
-    // SAFETY: current-thread slot, no other reference live.
-    if unsafe { current_child_member() }.is_some() {
-        // Source finds the default Theap initialized and returns.
-        return Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess: false });
+    if let Some(current) = current_child_id() {
+        // An initialized member keeps its original subprocess. The public
+        // admission wrapper warns when the requested subprocess differs.
+        return Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess: current != id });
     }
     let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs()
@@ -5214,6 +5214,46 @@ pub(crate) mod tests {
                 owner.join().expect("the owning thread finishes");
                 assert_eq!(unsafe { native_subproc_destroy(second) }, Ok(()));
                 assert_eq!(unsafe { native_subproc_destroy(first) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn initialized_child_admission_distinguishes_same_and_other_subprocess() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::initialized_child_admission_distinguishes_same_and_other_subprocess",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let first = native_subproc_new().expect("the first child");
+                let second = native_subproc_new().expect("the second child");
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker owns its live allocator TLS through finish.
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    // SAFETY: both child identities remain live through worker join;
+                    // admission runs on this fresh worker before any allocation.
+                    unsafe {
+                        assert_eq!(native_subproc_add_current_thread(first), Ok(NativeChildThreadAdd::Added));
+                        let original = default_theap();
+                        assert_eq!(native_subproc_add_current_thread(first),
+                            Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess: false }));
+                        assert_eq!(native_subproc_add_current_thread(second),
+                            Ok(NativeChildThreadAdd::AlreadyInitialized { in_other_subprocess: true }));
+                        assert_eq!(default_theap(), original);
+                        assert_eq!(current_child_id(), Some(first));
+                    }
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                }).join().expect("the admitted worker finishes");
+                // SAFETY: the worker has joined and neither child has clients.
+                unsafe {
+                    assert_eq!(native_subproc_destroy(second), Ok(()));
+                    assert_eq!(native_subproc_destroy(first), Ok(()));
+                }
             },
         );
     }
