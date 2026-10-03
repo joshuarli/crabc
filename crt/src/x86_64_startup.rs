@@ -88,6 +88,13 @@ impl InitialProcess {
 /// and seals GNU RELRO, while `x86_64_crt1.rs` enters directly after final
 /// static linking. Both must preserve the untouched entry stack until the
 /// libc-owned TLS bootstrap succeeds.
+///
+/// # Safety
+/// Only the process entry may call this, once on the initial thread, after
+/// completing its relocation and protection duties. `initial_stack` must
+/// remain the readable kernel process stack, including its original argument,
+/// environment and auxiliary vectors. The executable and its lifecycle
+/// arrays must remain mapped through process finalization.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_static_pie_start(initial_stack: *const usize) -> ! {
     let process = match unsafe { InitialProcess::parse(initial_stack) } {
@@ -114,6 +121,12 @@ pub unsafe extern "C" fn __crabc_x86_64_static_pie_start(initial_stack: *const u
     }
 }
 
+/// Run the executable's static startup callbacks in their link order.
+///
+/// # Safety
+/// Libc startup must call this exactly once on the initial thread after TLS
+/// installation and before `main`. The linked arrays and their callable
+/// entries must remain mapped; callbacks must not reenter this array walk.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_executable_init() {
     unsafe {
@@ -131,6 +144,13 @@ pub unsafe extern "C" fn __crabc_x86_64_executable_init() {
     }
 }
 
+/// Run the static executable's finalizers in reverse construction order.
+///
+/// # Safety
+/// Process exit may call this at most once after startup registers the
+/// finalization hook, including when a constructor exits before `main`.
+/// The linked arrays and callable entries must remain mapped. Other threads
+/// and callbacks must not concurrently invoke or reenter this finalizer walk.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_executable_fini() {
     unsafe {

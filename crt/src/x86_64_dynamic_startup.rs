@@ -184,6 +184,13 @@ impl InitialProcess {
 /// uses its checked post-relocation data wire. Pinned musl's
 /// dynamic libc owns lifecycle invocation itself, so its launch behavior must
 /// not be used to infer whether these callback arguments were consumed.
+///
+/// # Safety
+/// Only the relocated executable entry may call this, once on the initial
+/// thread. `initial_stack` must retain the readable original process vectors.
+/// The interpreter must keep its handoff record, executable, dependencies and
+/// callbacks mapped through process exit. When a finalizer argument is
+/// present, it must be the one supplied by that interpreter at entry.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
     initial_stack: *const usize,
@@ -229,6 +236,13 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
     }
 }
 
+/// Dispatch the initial loader constructors or the private executable walk.
+///
+/// # Safety
+/// Libc startup must call this once on the initial thread after the dynamic
+/// handoff and TLS attachment are complete, before `main`. The handoff and
+/// linked callback arrays must remain mapped. No thread or callback may
+/// concurrently invoke or reenter this startup dispatcher.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init() {
     unsafe {
@@ -297,6 +311,14 @@ unsafe fn configure_owned_loader_handoff(handoff: *const OwnedCrtHandoffV1) -> O
 /// calls it before the loader's process finalizer, but the main image's
 /// DT_FINI_ARRAY and DT_FINI belong to that finalizer's reverse-construction
 /// list, exactly as in pinned musl's `__libc_exit_fini`.
+/// Finalize the executable when its lifecycle belongs to this CRT.
+/// The owned dynamic runtime instead finalizes it through the loader.
+///
+/// # Safety
+/// Libc exit may call this at most once after dynamic startup registers its
+/// finalization hook, including when a constructor exits before `main`.
+/// The linked arrays and callbacks must remain mapped. No thread or callback
+/// may concurrently invoke or reenter the private executable finalizer walk.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_fini() {
     #[cfg(not(crabc_owned_dynamic_runtime))]
