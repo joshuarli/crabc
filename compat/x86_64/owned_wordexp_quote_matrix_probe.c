@@ -12,8 +12,80 @@ struct wordexp_quote_case {
     const char *second;
 };
 
+/* The result record and locale token remain caller-owned through join.
+ * Environment values stay unchanged until all expansions have completed. */
+struct wordexp_worker_result {
+    wordexp_t words;
+    locale_t locale;
+    int status;
+    int cancellation_state;
+};
+
+static void *wordexp_quote_worker(void *opaque)
+{
+    struct wordexp_worker_result *state = opaque;
+    int previous;
+    if (!uselocale(state->locale) ||
+            pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previous)) {
+        state->status = -1;
+        return NULL;
+    }
+    state->status = wordexp("'\xc3\xa9' \"$CRABC_WORDEXP\" \"$(printf %s worker)\"",
+        &state->words, WRDE_DOOFFS);
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,
+            &state->cancellation_state) ||
+            pthread_setcancelstate(previous, NULL)) state->status = -1;
+    pthread_exit(NULL);
+}
+
+static int wordexp_joined_result_case(void)
+{
+    static const char *const produced[] = { "\xc3\xa9", "bar baz", "worker" };
+    static const char *const appended[] = {
+        "\xc3\xa9", "bar baz", "worker", "parent word", "5"
+    };
+    static const char *const replaced[] = { "replacement" };
+    struct wordexp_worker_result state = { .words = { .we_offs = 2 } };
+    locale_t byte = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    locale_t utf8 = newlocale(LC_ALL_MASK, "C.UTF-8", (locale_t)0);
+    if (!byte || !utf8) return 60;
+    locale_t previous = uselocale(byte);
+    if (!previous) return 61;
+    state.locale = utf8;
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, wordexp_quote_worker, &state) ||
+            pthread_join(worker, NULL)) return 62;
+    if (state.status || state.cancellation_state != PTHREAD_CANCEL_DISABLE ||
+            !check_words(&state.words, 3, produced) || state.words.we_offs != 2 ||
+            state.words.we_wordv[0] || state.words.we_wordv[1]) return 63;
+
+    /* Append transfers the old strings into its replacement vector. Their
+     * addresses remain valid after the producing worker's state has retired. */
+    char *prior[3];
+    for (size_t index = 0; index < 3; ++index)
+        prior[index] = state.words.we_wordv[2 + index];
+    if (wordexp("'parent word' $((2+3))", &state.words,
+            WRDE_DOOFFS | WRDE_APPEND | WRDE_NOCMD) ||
+            !check_words(&state.words, 5, appended) || state.words.we_offs != 2 ||
+            state.words.we_wordv[0] || state.words.we_wordv[1]) return 64;
+    for (size_t index = 0; index < 3; ++index)
+        if (state.words.we_wordv[2 + index] != prior[index]) return 65;
+    if (wordexp("replacement", &state.words, WRDE_DOOFFS | WRDE_REUSE) ||
+            !check_words(&state.words, 1, replaced) || state.words.we_offs != 2 ||
+            state.words.we_wordv[0] || state.words.we_wordv[1]) return 66;
+    wordfree(&state.words);
+    wordfree(&state.words);
+    if (state.words.we_wordv || state.words.we_wordc ||
+            state.words.we_offs != 2 || !uselocale(previous)) return 67;
+    freelocale(utf8);
+    freelocale(byte);
+    return 0;
+}
+
 static int wordexp_quote_matrix_case(void)
 {
+    int joined_status = wordexp_joined_result_case();
+    if (joined_status) return joined_status;
     static const struct wordexp_quote_case cases[] = {
         { "'a b'\"c d\"", 0, 0, 1, "a bc d", NULL },
         { "\"\"''", 0, 0, 1, "", NULL },
