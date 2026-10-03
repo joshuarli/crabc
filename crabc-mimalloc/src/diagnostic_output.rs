@@ -4760,6 +4760,73 @@ mod tests {
     }
 
     #[test]
+    fn statistics_callback_can_produce_and_reenter_without_changing_captured_output() {
+        struct StatisticsCapture<'owner> {
+            capture: Capture,
+            owner: &'owner OutputOwner,
+            statistics: &'owner crate::statistics::SubprocessStatistics,
+            reentered: AtomicBool,
+        }
+        unsafe extern "C" fn produce_and_reenter(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: the synchronous output phase retains this capture and
+            // both owners until every callback has returned.
+            let capture = unsafe { &*argument.cast::<StatisticsCapture<'_>>() };
+            // The source registration flush delivers its empty delayed image
+            // before the subsequent statistics phase begins.
+            if unsafe { CStr::from_ptr(message) }.to_bytes().is_empty() { return; }
+            unsafe { capture_output(message, capture_argument(&capture.capture)) };
+            capture.statistics.vm().reserve_increase(7);
+            capture.statistics.bitmap().busy_wait();
+            if !capture.reentered.swap(true, Ordering::Relaxed) {
+                // SAFETY: registration is already complete; nested dispatch
+                // retains the same callback pair and the message's storage.
+                unsafe { capture.owner.raw_message(source_message(b"nested statistics\n\0")) };
+            }
+        }
+
+        let statistics = crate::statistics::SubprocessStatistics::new();
+        statistics.vm().reserve_increase(11);
+        statistics.arena().high_water_arena_published();
+        let view = FinalProcessDiagnosticView::new(
+            7, statistics.final_output_snapshot(), FinalProcessInfo::new(0, 0, 0, 0, 0, 0),
+        );
+        let expected_owner = output_owner();
+        let expected = Capture::new();
+        // SAFETY: this explicit route is synchronous and retains its capture;
+        // the view contains only copied scalars, with no statistics borrow.
+        unsafe {
+            super::render_final_statistics(
+                super::StatisticsOutput::source(Some(&expected_owner), Some(capture_output), capture_argument(&expected)),
+                b"subproc", view, 0,
+            )
+        };
+        let owner = output_owner();
+        let capture = StatisticsCapture {
+            capture: Capture::new(), owner: &owner, statistics: &statistics,
+            reentered: AtomicBool::new(false),
+        };
+        // SAFETY: no delayed messages exist and this callback pair remains
+        // live through registration, rendering and its nested dispatch.
+        unsafe {
+            owner.register_output(Some(produce_and_reenter), &capture as *const _ as *mut c_void);
+            super::render_final_statistics(
+                super::StatisticsOutput::default_route(&owner), b"subproc", view, 0,
+            );
+        }
+        assert_eq!(capture.capture.message(0), expected.message(0));
+        assert_eq!(capture.capture.message(1), b"nested statistics\n");
+        assert_eq!(capture.capture.count(), expected.count() + 1);
+        for index in 1..expected.count() {
+            assert_eq!(capture.capture.message(index + 1), expected.message(index));
+        }
+        let live = statistics.final_output_snapshot();
+        assert_eq!(live.reserved.total, 11 + capture.capture.count() as i64 * 7);
+        assert_eq!(live.pages_unabandon_busy_wait, capture.capture.count() as i64);
+        assert_eq!(view.statistics.reserved.total, 11);
+        assert_eq!(view.statistics.pages_unabandon_busy_wait, 0);
+    }
+
+    #[test]
     fn disabled_final_statistics_and_verbose_tail_emit_nothing() {
         let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK
             .lock()

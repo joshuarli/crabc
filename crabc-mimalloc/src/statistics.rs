@@ -2010,6 +2010,58 @@ mod tests {
     }
 
     #[test]
+    fn subprocess_merge_preserves_live_destination_producers_and_detached_sources() {
+        const EVENTS: usize = 128;
+        let destination = SubprocessStatistics::new();
+        let start = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            let destination = &destination;
+            let start = &start;
+            scope.spawn(move || {
+                start.wait();
+                for _ in 0..EVENTS {
+                    destination.vm().reserve_increase(7);
+                    destination.vm().reserve_decrease(7);
+                    destination.bitmap().busy_wait();
+                    assert!(destination.bitmap().chunk_bin_update(4, 1));
+                    assert!(destination.bitmap().chunk_bin_update(4, -1));
+                }
+            });
+            scope.spawn(move || {
+                start.wait();
+                for _ in 0..EVENTS {
+                    // Each source is detached from producers before its reset;
+                    // only the shared destination remains concurrently live.
+                    let source = HeapTheapStatistics::new();
+                    source.reserved.update(11);
+                    source.reserved.update(-11);
+                    source.chunk_bins[4].update(1);
+                    source.chunk_bins[4].update(-1);
+                    source.pages_unabandon_busy_wait.increase(3);
+                    destination.merge_heap_and_reset(&source);
+                    assert_eq!(i64_load_relaxed(&source.reserved.total), 0);
+                    assert_eq!(i64_load_relaxed(&source.chunk_bins[4].total), 0);
+                    assert_eq!(i64_load_relaxed(&source.pages_unabandon_busy_wait.total), 0);
+                }
+            });
+            start.wait();
+            for _ in 0..EVENTS {
+                let observation = destination.final_output_snapshot();
+                assert!((0..=(EVENTS * 18) as i64).contains(&observation.reserved.total));
+                assert!((0..=(EVENTS * 4) as i64).contains(&observation.pages_unabandon_busy_wait));
+            }
+        });
+        let vm = destination.vm().snapshot();
+        let bitmap = destination.bitmap().snapshot();
+        assert_eq!(vm.reserved_total, (EVENTS * 18) as i64);
+        assert_eq!(vm.reserved_current, 0);
+        assert!((11..=18).contains(&vm.reserved_peak));
+        assert_eq!(bitmap.chunk_bins[4].total, (EVENTS * 2) as i64);
+        assert_eq!(bitmap.chunk_bins[4].current, 0);
+        assert_eq!(bitmap.pages_unabandon_busy_wait, (EVENTS * 4) as i64);
+    }
+
+    #[test]
     fn vm_statistics_exposes_only_named_vm_source_events() {
         let statistics = SubprocessStatistics::new();
         let stats = statistics.vm();
