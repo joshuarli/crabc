@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception AND MIT
+// The parent Rust module selects this x87 ABI only on x86-64.
+core::arch::global_asm!(r#"
 /* SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception AND MIT
  * Faithful binary80 compiler kernels with a local musl math closure.
  * The six public entries use the System V AMD64 x87 calling convention.
@@ -1430,3 +1433,5 @@ __crabc_binary80___signbitl:
 	.size	__crabc_binary80___signbitl, .-__crabc_binary80___signbitl
 
 .section .note.GNU-stack,"",@progbits
+
+"#, options(att_syntax));

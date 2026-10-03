@@ -90,7 +90,8 @@ The six x86 entries `__floattixf`, `__floatuntixf`, `__fixxfti`,
 `__fixunsxfti`, `__mulxc3`, and `__divxc3` are faithful assembly translations
 of the unchanged LLVM `llvmorg-22.1.3` C kernels retained under
 `fixtures/llvm22_binary80`, with their exact license and SHA-256 roster.
-`src/x86_64_binary80.S` is included as Rust global assembly only on x86-64;
+`src/x86_64_binary80.rs` contains the checked Rust global assembly in an
+x86-only Rust module;
 Rust has no scalar type expressing the System V AMD64 binary80 ABI.
 The runtime builder never compiles or links C or an external assembly object.
 
@@ -147,3 +148,11 @@ and finite/random representations. Both component bits (apart from NaN
 payloads) and all floating exception flags are checked. The aggregate assembly
 fixture checks four separate XMM argument registers, the packed XMM0 result,
 callee-saved integer registers and stack restoration.
+
+The binary80 generator emits its checked Rust module directly. Its global
+assembly payload is unchanged by the module wrapper. `src/lib.rs` selects
+`x86_64_binary80` only with the x86 target cfg; the paused AArch64 builder
+therefore retains its Rust-only local input and unchanged external native
+source/tool prohibitions. No separate assembly source is passed to a compiler
+or assembler. Hosted builder and mocked link-route tests check this input
+boundary without compiling or executing AArch64 programs.

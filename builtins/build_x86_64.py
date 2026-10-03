@@ -82,8 +82,8 @@ def native_source_definitions(source: Path) -> dict[str, str]:
         name = match.group(1)
         _require(name not in definitions, f"duplicate native helper definition: {name}")
         definitions[name] = " ".join(match.group(0).split())
-    if 'include_str!("x86_64_binary80.S")' in text:
-        assembly = source.with_name("x86_64_binary80.S").read_text()
+    if '#[cfg(target_arch = "x86_64")]\nmod x86_64_binary80;' in text:
+        assembly = source.with_name("x86_64_binary80.rs").read_text()
         for name in re.findall(r'^\s*\.globl\s+(__\w+)\s*$', assembly, re.M):
             _require(re.search(r'^\s*\.type\s+' + re.escape(name) + r',\s*@function\s*$', assembly, re.M) is not None,
                      "assembly export lacks function type: " + name)

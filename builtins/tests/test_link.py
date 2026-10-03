@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import importlib.util
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -142,6 +144,53 @@ class ArchiveLinkTests(unittest.TestCase):
             run(["ld.lld", "-r", str(object_file), str(archive), "-o", str(linked)])
             remaining = set(run(["llvm-nm", "--undefined-only", str(linked)]).split())
             self.assertFalse(expected.intersection(remaining), remaining)
+
+
+class HostedArchiveLinkContractTests(unittest.TestCase):
+    """Exercise the legacy link routes with hosted tool boundaries mocked."""
+
+    def check_link_route(self, method: str) -> None:
+        spec = importlib.util.spec_from_file_location("hosted_builtins_builder", ROOT / "build.py")
+        assert spec is not None and spec.loader is not None
+        builder = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(builder)
+        imports_seen = False
+
+        def hosted_run(command: list[str]) -> str:
+            nonlocal imports_seen
+            if command[0] == sys.executable:
+                inputs = builder.audit_source()
+                self.assertEqual([row["path"] for row in inputs],
+                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs"])
+                compile_command = builder.compiler_command(("mock-rustc",), pathlib.Path(command[-1]).with_suffix('.o'))
+                self.assertIn(builder.TARGET, compile_command)
+                self.assertIn(str(builder.SOURCE), compile_command)
+                self.assertFalse(any(argument.endswith(('.S', '.s', '.asm')) for argument in compile_command))
+                return ""
+            if command[0] == "clang":
+                self.assertIn(f"--target={TARGET}", command)
+                return ""
+            if command[0] == "llvm-nm":
+                if not imports_seen:
+                    imports_seen = True
+                    return "\n".join(builder.EXPECTED_SYMBOLS)
+                return ""
+            self.assertEqual(command[0], "ld.lld")
+            self.assertEqual(command[1], "-r")
+            self.assertEqual(pathlib.Path(command[3]).name, "libcrabc-builtins.a")
+            self.assertEqual(command[4], "-o")
+            return ""
+
+        case = ArchiveLinkTests(methodName=method)
+        with mock.patch(__name__ + ".run", side_effect=hosted_run):
+            getattr(case, method)()
+        self.assertTrue(imports_seen)
+
+    def test_integer_link_route_keeps_owned_aarch64_source_inputs(self) -> None:
+        self.check_link_route("test_archive_resolves_compiler_emitted_integer_division_helpers")
+
+    def test_floating_link_route_keeps_owned_aarch64_source_inputs(self) -> None:
+        self.check_link_route("test_archive_resolves_compiler_emitted_complex_and_binary128_helpers")
 
 
 if __name__ == "__main__":

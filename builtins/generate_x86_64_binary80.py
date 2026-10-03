@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Translate pinned binary80 kernels to checked Rust global-assembly input.
 
-The runtime build consumes assembly only. This development tool compiles the
+The runtime build consumes the checked Rust global-assembly module only. This development tool compiles the
 unchanged LLVM kernels and their small private musl math closure; it never
 installs a C object, target CRT, or external compiler runtime.
 """
@@ -73,7 +73,9 @@ def main():
             subprocess.run([args.cc, *FLAGS, *includes, '-S', str(source), '-o', str(assembly)], check=True)
             blocks += ['/* '+('musl 1.2.6' if private else 'LLVM 22.1.3')+' '+name+' */', transform(name, assembly.read_text(), private)]
     blocks.append('.section .note.GNU-stack,"",@progbits\n')
-    args.output.write_text('\n'.join(blocks))
+    args.output.write_text('// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception AND MIT\n'
+                           '// The parent Rust module selects this x87 ABI only on x86-64.\n'
+                           'core::arch::global_asm!(r#"\n' + '\n'.join(blocks) + '\n"#, options(att_syntax));\n')
 
 if __name__ == '__main__':
     main()

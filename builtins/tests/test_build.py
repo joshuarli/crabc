@@ -31,6 +31,32 @@ class BuildContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(BUILD.BuildError, "native source is forbidden"):
                     BUILD.source_files()
 
+    def test_x86_rust_global_assembly_module_is_not_an_external_aarch64_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            (root / "src").mkdir()
+            for name in ("Cargo.toml", "Cargo.lock", "build.py", "provenance.toml"):
+                (root / name).write_bytes((ROOT / name).read_bytes())
+            source = root / "src/lib.rs"
+            source.write_text('#![no_std]\n#[cfg(target_arch = "x86_64")]\nmod x86_64_binary80;\n')
+            module = root / "src/x86_64_binary80.rs"
+            module.write_text('core::arch::global_asm!(r#".text\n"#, options(att_syntax));\n')
+            with mock.patch.object(BUILD, "ROOT", root), mock.patch.object(BUILD, "SOURCE", source):
+                inputs = BUILD.audit_source()
+                self.assertEqual([row["path"] for row in inputs],
+                                 ["Cargo.toml", "Cargo.lock", "build.py", "provenance.toml", "src/lib.rs"])
+                command = BUILD.compiler_command(("mock-rustc",), root / "owned.o")
+                self.assertIn(BUILD.TARGET, command)
+                self.assertIn(str(source), command)
+                self.assertNotIn(str(module), command)
+                with mock.patch.object(BUILD, "run") as run, mock.patch.object(BUILD, "nm_symbols", return_value=[]):
+                    BUILD.closure_undefined_symbols("mock-nm", "mock-lld", root / "libcrabc-builtins.a", root)
+                run.assert_called_once_with(("mock-lld", "-r", "--whole-archive", str(root / "libcrabc-builtins.a"),
+                                             "--no-whole-archive", "-o", str(root / "all-helpers.o")))
+                (root / "src/foreign.S").write_text('.text\n')
+                with self.assertRaisesRegex(BUILD.BuildError, "native source is forbidden"):
+                    BUILD.audit_source()
+
     def test_symbol_contract_has_no_memory_or_atomic_exports(self) -> None:
         symbols = set(BUILD.EXPECTED_SYMBOLS)
         self.assertTrue(symbols)

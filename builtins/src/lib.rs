@@ -15,7 +15,7 @@
 // padded binary80 stack arguments and return scalar/complex values in ST0 or
 // ST0/ST1, while integer128 arguments and results use the integer register pair.
 #[cfg(target_arch = "x86_64")]
-core::arch::global_asm!(include_str!("x86_64_binary80.S"), options(att_syntax));
+mod x86_64_binary80;
 
 #[cfg(all(
     not(test),

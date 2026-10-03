@@ -56,7 +56,7 @@ SOURCE_FILES = (*(Path("builtins/fixtures/llvm22_float_complex") / name for name
                 Path("builtins/fixtures/x86_64_float_complex_probe.c"), Path("builtins/fixtures/x86_64_float_complex_differential.c"),
                 *(Path("builtins/fixtures/llvm22_divdc3") / name for name in
                   ("int_lib.h", "int_math.h", "int_types.h", "int_endianness.h", "int_util.h", "fp_lib.h", "divdc3.c", "LICENSE.TXT", "SHA256SUMS")),
-                Path("builtins/src/x86_64_binary80.S"), Path("builtins/generate_x86_64_binary80.py"),
+                Path("builtins/src/x86_64_binary80.rs"), Path("builtins/generate_x86_64_binary80.py"),
                 Path("builtins/fixtures/x86_64_binary80_probe.c"), Path("builtins/fixtures/x86_64_binary80_differential.c"),
                 *(Path("builtins/fixtures/llvm22_binary80") / name for name in
                   ("floattixf.c", "floatuntixf.c", "fixxfti.c", "fixunsxfti.c", "mulxc3.c", "divxc3.c", "LICENSE.TXT", "SHA256SUMS")),
@@ -225,8 +225,8 @@ def source_definitions(root: Path = ROOT) -> dict[str, str]:
         name = match.group(1)
         require(name not in result, f"duplicate compiler-helper source definition: {name}")
         result[name] = " ".join(match.group(0).split())
-    if 'include_str!("x86_64_binary80.S")' in text:
-        assembly = path.with_name("x86_64_binary80.S").read_text()
+    if '#[cfg(target_arch = "x86_64")]\nmod x86_64_binary80;' in text:
+        assembly = path.with_name("x86_64_binary80.rs").read_text()
         for name in re.findall(r'^\s*\.globl\s+(__\w+)\s*$', assembly, re.M):
             require(re.search(r'^\s*\.type\s+' + re.escape(name) + r',\s*@function\s*$', assembly, re.M) is not None,
                     "assembly export lacks function type: " + name)
