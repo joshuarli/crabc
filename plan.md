@@ -98,6 +98,10 @@ Update this small section in place when the implementation frontier changes.
   across its four owned products. Existing source-bound readers accepted their
   admitted component scopes. Excluded cases remain unproved; these results do
   not establish complete family qualification or transfer to newer source.
+  The remaining installed native-facade control, fat-LTO and stock-std-fat
+  components passed both allocator backends at `1e415ac59`: direct syscall
+  witnesses, facade/core LLVM bitcode and raw musl comparisons are retained.
+  Their partial gate reports preserve omitted scopes and make no LTO-into-libc claim.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
@@ -123,6 +127,9 @@ Update this small section in place when the implementation frontier changes.
   `.work/x86_64/reports/cohort141/`. Independent package extraction/admission
   passes for all four. Later changes retain new identities rather than relabeling
   this completed component cohort.
+  `.work/x86_64/reports/cohort143/` retains the separate `1e415ac59` four-product
+  tuple and exact source inputs used for the installed facade components;
+  independent package extraction/admission also passes for this tuple.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object
@@ -149,10 +156,10 @@ Update this small section in place when the implementation frontier changes.
   All settled lane worktrees have been removed. Existing allocator and hardware-policy
   reports remain available. Historical receipts are not transferred to current
   products; other projects' Docker state remains outside cleanup.
-- **On resume:** complete the remaining installed native-facade control, fat-LTO
-  and stock-std-fat components through the existing `lto-native-facade` gate;
-  continue independent source work and keep only constrained investigations
-  parked. Address actual allocator failures,
+- **On resume:** continue independent source work and keep constrained
+  investigations parked. The selected ordinary consumer components above are
+  settled; do not repeat them or rebuild unchanged providers just to update
+  handoff prose. Preserve their actual source identities. Address actual allocator failures,
   then investigate performance
   on an uncontended host and qualify the final merged-source release cohort. Use
   existing runners and direct regressions; avoid new catalogs or proof layers.
