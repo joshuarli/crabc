@@ -248,6 +248,7 @@ fn public_heap_and_theap_visitation_preserve_live_population_after_prior_heap_hi
     // libtest worker as another initial process thread.
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
+    abandoned_visitation_rotates_arenas_with_captured_heap_population();
     public_heap_visitation_tracks_live_population_early_stop_and_collection();
     std::thread::spawn(|| {
         assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
@@ -257,4 +258,119 @@ fn public_heap_and_theap_visitation_preserve_live_population_after_prior_heap_hi
     public_theap_visitation_finds_one_live_calloc_block();
     public_heap_visitation_tracks_live_population_early_stop_and_collection();
     abandoned_heap_visitation_keeps_reentrant_callbacks_outside_owner_views();
+}
+
+fn abandoned_visitation_rotates_arenas_with_captured_heap_population() {
+    struct Rotation {
+        heap: *mut c_void,
+        other: *mut c_void,
+        arenas: [*mut c_void; 3],
+        clients: Vec<usize>,
+        seen: Vec<bool>,
+        order: Vec<usize>,
+        siblings: Vec<*mut c_void>,
+        reenter: bool,
+        stop: bool,
+        count: usize,
+    }
+    unsafe extern "C" fn observe_rotation(
+        heap: *const c_void, area: *const heaps::HeapArea, block: *mut c_void,
+        block_size: usize, argument: *mut c_void,
+    ) -> bool {
+        // SAFETY: this synchronous callback has the unique capture. Its
+        // allocations use another retained Heap and never change visited
+        // pages or clients. All arena mappings stay published through it.
+        unsafe {
+            let capture = &mut *argument.cast::<Rotation>();
+            assert_eq!(heap, capture.heap.cast_const());
+            assert!(!area.is_null() && block_size > 0);
+            if block.is_null() {
+                if capture.reenter {
+                    capture.reenter = false;
+                    let client = heaps::heap_malloc(capture.other, 33).value.unwrap();
+                    assert_eq!(api::free(client.as_ptr()), api::FreeOutcome::Freed);
+                    for _ in 0..5 {
+                        let sibling = heaps::heap_new();
+                        assert!(!sibling.is_null());
+                        capture.siblings.push(sibling);
+                    }
+                }
+                return true;
+            }
+            let index = capture.clients.iter().position(|client| *client == block as usize).unwrap();
+            assert!(!capture.seen[index]);
+            capture.seen[index] = true;
+            let arena = capture.arenas.iter().position(|arena| heaps::arena_contains(*arena, block)).unwrap();
+            if !capture.order.contains(&arena) { capture.order.push(arena); }
+            capture.count += 1;
+            !capture.stop
+        }
+    }
+    // SAFETY: all reserved arenas, both Heaps, and every live allocation
+    // remain retained until the joined owner and every callback finish.
+    unsafe {
+        let mut arenas = [null_mut(); 3];
+        for arena in &mut arenas {
+            assert_eq!(heaps::reserve_os_memory_ex(64 * 1024 * 1024, true, false, false, arena).value, 0);
+            assert!(!arena.is_null());
+        }
+        let other = heaps::heap_new();
+        let heap = heaps::heap_new();
+        assert!(!other.is_null() && !heap.is_null());
+        let selected = heap as usize;
+        let clients = std::thread::spawn(move || {
+            assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
+            let mut clients = Vec::new();
+            // Keep the same full source block class when its padding word
+            // is enabled, so each medium page has sixteen client slots.
+            let padding = if cfg!(any(feature = "mi-debug-1", feature = "mi-secure-3")) { 8 } else { 0 };
+            for _ in 0..4096 {
+                clients.push(heaps::heap_malloc(selected as *mut c_void, 32 * 1024 - padding).value.unwrap().as_ptr() as usize);
+            }
+            // Leave ordinary source pages partially occupied: full arena
+            // pages are deliberately absent from abandoned-bin visitation.
+            for index in (0..clients.len()).step_by(16) {
+                assert_eq!(api::free(clients[index] as *mut u8), api::FreeOutcome::Freed);
+                clients[index] = 0;
+            }
+            assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+            clients
+        }).join().unwrap();
+        let mut capture = Rotation { heap, other, arenas, clients, seen: vec![false; 4096],
+            order: Vec::new(), siblings: Vec::new(), reenter: false, stop: false, count: 0 };
+        let run = |capture: &mut Rotation, reenter: bool, stop: bool, expected: &[usize]| {
+            capture.seen.fill(false);
+            capture.order.clear();
+            capture.count = 0;
+            capture.reenter = reenter;
+            capture.stop = stop;
+            assert_eq!(heaps::heap_visit_abandoned_blocks(heap, true, Some(observe_rotation),
+                (capture as *mut Rotation).cast()), !stop);
+            assert_eq!(capture.order, expected);
+            assert_eq!(capture.count, if stop { 1 } else { 3840 });
+            if !stop {
+                for (client, seen) in capture.clients.iter().zip(&capture.seen) {
+                    assert_eq!(*seen, *client != 0);
+                }
+            }
+        };
+        // The fresh Heap sequences and live Heap population place this Heap
+        // in the middle of the source's cycle below the final arena. Changes
+        // made by its callback affect the next traversal, not the current one.
+        run(&mut capture, false, false, &[1, 0, 2]);
+        run(&mut capture, true, true, &[1]);
+        run(&mut capture, false, false, &[0, 1, 2]);
+        for sibling in capture.siblings.drain(..) { assert!(heaps::heap_release(sibling, true)); }
+        run(&mut capture, false, false, &[1, 0, 2]);
+        run(&mut capture, true, false, &[1, 0, 2]);
+        run(&mut capture, false, false, &[0, 1, 2]);
+        run(&mut capture, false, true, &[0]);
+        for sibling in capture.siblings.drain(..) { assert!(heaps::heap_release(sibling, true)); }
+        run(&mut capture, false, false, &[1, 0, 2]);
+        for client in capture.clients.into_iter().filter(|client| *client != 0) {
+            assert_eq!(api::free(client as *mut u8), api::FreeOutcome::Freed);
+        }
+        assert!(heaps::heap_release(heap, true));
+        assert!(heaps::heap_release(other, true));
+    }
 }

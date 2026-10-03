@@ -2009,7 +2009,23 @@ unsafe fn heap_visit_blocks_selected(
     let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs() else { return false };
     let registry = subprocess.arena_backing().registry();
-    for index in 0..registry.count() {
+    // Source spreads Heaps through the arenas below the final slot. Both
+    // populations and the start are captured before delivery: callbacks may
+    // create or release other Heaps, but cannot reorder this traversal.
+    let count = registry.count();
+    let search = crate::arena::ArenaSearch {
+        // SAFETY: the caller retains this initialized Heap; sequence never
+        // changes during its published lifetime.
+        heap_sequence: unsafe { Heap::heap_sequence_at(heap) },
+        heap_count: subprocess.heap_list().live_count_relaxed(),
+        thread_sequence: 0,
+        numa_node: -1,
+        requested: crate::arena::ArenaId::none(),
+        allow_pinned: true,
+    };
+    let start = search.start_index(count.saturating_sub(1));
+    for turn in 0..count {
+        let Some(index) = crate::arena::ArenaSearch::registry_index(count, turn, start) else { return false };
         // SAFETY: the caller excludes arena retirement for this traversal.
         let Some(arena) = registry.arena_print_pointer(index) else { continue };
         // SAFETY: published arena geometry and its embedded pointer table
