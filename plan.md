@@ -92,13 +92,19 @@ Update this small section in place when the implementation frontier changes.
   this component result does not certify historical failure evidence or the full
   upstream corpus. Opt0 static application allocator replacement now links its
   original full-override object without extracting duplicate providers.
+  Optimized ordinary consumers cover resolver, process/thread/TLS, filesystem,
+  mappings, IPC, locale, stdio, math, crypt, callback algorithms, std and Lua.
+  These source-bound component results preserve excluded cases and receipt
+  eligibility failures; they do not establish complete family qualification.
 - **Compiler frontier:** eight missing binary80 and float-complex helpers now have
   owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
   ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
   the legacy source boundary. A fresh merged-source debug static aggregate links
   through owned providers, but the member-only byte-closure reader still rejects
   relocated location data and lacks inputs for owned source-core/libc callees.
-  That stronger debug closure remains unproved; no release pass is claimed.
+  That stronger debug closure remains unproved. The existing full 40-helper
+  byte-closure reader passes optimized ordinary links in the original release
+  preparation cohort; complete release qualification remains unclaimed.
 - **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
   Eight ordered gates are ready, zero qualified. Structural validation certifies
   no runtime or release behavior. C remains selected and public x86 support disabled.
@@ -113,6 +119,12 @@ Update this small section in place when the implementation frontier changes.
   Four optimized static/dynamic C/native-shadow products are built from source
   `a173e8c56`; ordinary consumer matrices are in progress against that immutable
   cohort. Later source changes retain their own identities rather than relabeling it.
+  Static target dependencies now compile with initial-exec TLS; the original
+  allocator dependency TLSGD references left an orphan undefined resolver symbol
+  after linker relaxation. Corrected static products pass the original object
+  audit without adding a resolver or relaxing the reader. Installed callable
+  compilation now resolves transitive kernel declarations through owned headers;
+  a real compiler regression rejects a missing owned header despite oracle access.
   Frozen ABI/header/coverage digests are unchanged.
 - **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
   settled lanes' original programs/source, raw failures and focused proofs before
