@@ -5296,6 +5296,9 @@ mod tests {
         let id = install(backing, process, MapAccess::Reserved);
         let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
         let start = claim.slice_index();
+        // SAFETY: both slices are committed and owned before release. The
+        // second marker is observed again only after that exact span is claimed.
+        unsafe { claim.start().add(ARENA_SLICE_SIZE).write(0x4c) };
         assert!(claim.release());
         let live = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
         assert_eq!(live.slice_index(), start);
@@ -5310,8 +5313,56 @@ mod tests {
         let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
         assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 2), Some(true));
         assert_eq!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire), 0);
+        assert_eq!(after.reserved_current, before.reserved_current);
+        assert_eq!(after.mmap_calls, before.mmap_calls);
+        assert_eq!(after.committed_current, before.committed_current,
+            "refused advice retains the source committed accounting");
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let dirty = unsafe { view.slices_dirty() }.unwrap();
+        let sibling = start + 1;
+        assert_eq!(free.is_clear_range(start, 1), Some(true));
+        assert_eq!(free.is_set_range(sibling, 1), Some(true));
+        assert_eq!(committed.is_set_range(sibling, 1), Some(!crate::os::decommit_needs_recommit()));
+
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let attempted = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) };
+        let reclaimed = if crate::os::decommit_needs_recommit() {
+            assert!(attempted.is_none(), "protected purge requires an explicit recommit");
+            assert_eq!(fault.observed(), 1);
+            assert_eq!(free.is_set_range(sibling, 1), Some(true));
+            assert_eq!(committed.is_clear_range(sibling, 1), Some(true));
+            assert_eq!(dirty.is_set_range(sibling, 1), Some(true),
+                "refused recommit returns availability without undoing dirty observation");
+            let refused = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(refused.committed_current, after.committed_current);
+            assert_eq!(refused.commit_calls, after.commit_calls + 1);
+            fault.set(fault::Plan::disabled());
+            unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap()
+        } else {
+            assert_eq!(fault.observed(), 0, "release purge preserves the fully committed reuse path");
+            attempted.expect("failed discard leaves the free sibling reusable")
+        };
+        assert_eq!(reclaimed.slice_index(), sibling);
+        assert!(reclaimed.memory_id().initially_committed());
+        assert!(!reclaimed.memory_id().initially_zero());
+        assert_eq!(free.is_clear_range(sibling, 1), Some(true));
+        assert_eq!(committed.is_set_range(sibling, 1), Some(true));
+        // SAFETY: only the newly claimed committed sibling and live survivor
+        // are observed; failed discard retained the sibling's original bytes.
+        unsafe {
+            assert_eq!(reclaimed.start().read(), 0x4c);
+            reclaimed.start().write(0x4d);
+            assert_eq!(live.start().read(), 0x7b);
+        }
+        let reused = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(reused.reserved_current, before.reserved_current);
+        assert_eq!(reused.mmap_calls, before.mmap_calls);
+        assert_eq!(backing.registry().count(), 1);
         fault.set(fault::Plan::disabled());
+        assert!(reclaimed.release());
         assert!(live.release());
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
     }
 
     #[test]
