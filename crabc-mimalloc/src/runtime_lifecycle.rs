@@ -10274,6 +10274,7 @@ fn current_native_process_backing_binding() -> Option<ProcessMainBackingBinding>
 /// follows pthread attach. The offered attachment is returned intact if this
 /// exact TLS cell was unexpectedly not vacant; the caller retains it and
 /// rejects the worker rather than dropping published source state.
+#[cfg(not(target_arch = "x86_64"))]
 fn install_native_attachment_only_owner(
     owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
     attachment: MainHeapThreadAttachment<'static>,
@@ -10308,6 +10309,67 @@ fn install_native_attachment_only_owner(
     match installed {
         Ok(()) => Ok(()),
         Err(_) => Err(attachment.expect("refused owner construction preserves its attachment")),
+    }
+}
+
+/// A source construction outcome at the accepted final compiler-TLS cell.
+/// A retained attachment is already fully represented in that cell; rejection
+/// leaves no payload, and cell refusal invokes no source constructor.
+#[cfg(target_arch = "x86_64")]
+enum NativeAttachmentOnlyOwnerInstallError {
+    Cell(PersistentCompilerTlsOwnerError),
+    Rejected(MainHeapThreadAttachmentError),
+    Retained(MainHeapThreadAttachmentError),
+}
+
+/// Constructs the later source attachment in its accepted final owner field.
+/// The current-thread attachment entry and allocator operation must remain
+/// held across this call, preventing diagnostic reentry from accessing the
+/// initializing payload. No attachment is moved through the caller or result.
+#[cfg(target_arch = "x86_64")]
+fn install_native_attachment_only_owner(
+    owner_cell: Pin<&PersistentCompilerTlsOwnerCell<NativePersistentThreadOwner>>,
+    main_heap: MainStaticHeapLease<'static>,
+    config: crate::os::MemoryConfig,
+    process: crate::os::VmProcess<'static>,
+) -> Result<(), NativeAttachmentOnlyOwnerInstallError> {
+    use crate::main_heap_thread::MainHeapThreadAttachmentBeginIntoError;
+    use crate::thread_local::PersistentCompilerTlsOwnerInstallError;
+    struct AttachmentOnlyStateImage(NativePersistentThreadOwnerExitState);
+    // SAFETY: this immutable typed image contains only the resource-free
+    // AttachmentOnly variant. No engine is present or ever projected.
+    unsafe impl Sync for AttachmentOnlyStateImage {}
+    static ATTACHMENT_ONLY_STATE: AttachmentOnlyStateImage =
+        AttachmentOnlyStateImage(NativePersistentThreadOwnerExitState::AttachmentOnly);
+    let mut retained = None;
+    // SAFETY: acceptance grants unique uninitialized final owner storage.
+    // Rejection cleans the attachment and leaves no initialized owner; success
+    // or retention initializes its exact field before the remaining infallible
+    // writes. No callback or unwind occurs after attachment construction.
+    let installed = unsafe { owner_cell.try_install_in_place(|destination| {
+        let attachment = NonNull::new_unchecked(core::ptr::addr_of_mut!((*destination).attachment));
+        match MainHeapThreadAttachment::begin_with_vm_process_into(attachment, main_heap, config, process) {
+            Ok(()) => {}
+            Err(MainHeapThreadAttachmentBeginIntoError::Rejected(error)) => return Err(error),
+            Err(MainHeapThreadAttachmentBeginIntoError::Retained(error)) => retained = Some(error),
+        }
+        // Copy the compiler's inert variant rather than materializing an
+        // engine-sized enum or guessing its representation.
+        core::ptr::copy_nonoverlapping(
+            core::ptr::addr_of!(ATTACHMENT_ONLY_STATE.0),
+            core::ptr::addr_of_mut!((*destination).state),
+            1,
+        );
+        core::ptr::addr_of_mut!((*destination).generic_frequency_captures).write(0);
+        Ok(())
+    }) };
+    match installed {
+        Err(PersistentCompilerTlsOwnerInstallError::State(error)) => Err(NativeAttachmentOnlyOwnerInstallError::Cell(error)),
+        Err(PersistentCompilerTlsOwnerInstallError::Constructor(error)) => Err(NativeAttachmentOnlyOwnerInstallError::Rejected(error)),
+        Ok(()) => match retained {
+            Some(error) => Err(NativeAttachmentOnlyOwnerInstallError::Retained(error)),
+            None => Ok(()),
+        },
     }
 }
 
@@ -20296,6 +20358,45 @@ fn attach_current_thread_after_entry(
         return Some(ThreadAttachResult::Retained);
     };
 
+    #[cfg(all(target_arch = "x86_64", not(test)))]
+    {
+        // The cell projection spans construction without a whole-slot borrow.
+        // Source diagnostics encounter the held entry and operation guards;
+        // the source constructor receives only its uninitialized final field.
+        let installed = install_native_attachment_only_owner(
+            current_thread_native_persistent_owner_cell(), main_heap, config, process,
+        );
+        if let Err(NativeAttachmentOnlyOwnerInstallError::Rejected(error)) = &installed {
+            if let Some(reports) = deferred_attach_reports(*error) {
+                return Some(defer_current_thread_attachment(reports, report_deferred));
+            }
+        }
+        // Construction and its cell projection ended before the lifecycle
+        // fields are accessed. Retention preserves the installed exact owner
+        // and admission; rejection/refusal offers no fallback or replacement.
+        let slot = current_thread_slot();
+        return Some(match installed {
+            Ok(()) => {
+                slot.native_persistent_owner_installed = true;
+                slot.state = ThreadLifecycleState::Attached;
+                ThreadAttachResult::Attached
+            }
+            Err(NativeAttachmentOnlyOwnerInstallError::Retained(_)) => {
+                slot.native_persistent_owner_installed = true;
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain();
+                ThreadAttachResult::Retained
+            }
+            Err(NativeAttachmentOnlyOwnerInstallError::Cell(_)
+                | NativeAttachmentOnlyOwnerInstallError::Rejected(_)) => {
+                slot.state = ThreadLifecycleState::Retained;
+                RUNTIME_PROCESS.retain();
+                ThreadAttachResult::Retained
+            }
+        });
+    }
+    #[cfg(any(test, not(target_arch = "x86_64")))]
+    {
     // SAFETY: libc installed this child TLS image and calls before user code;
     // `slot` retains the returned current-thread owner until its explicit
     // post-destructor finish. The static process owner is never torn down by
@@ -20372,6 +20473,7 @@ fn attach_current_thread_after_entry(
             ThreadAttachResult::Retained
         }
     })
+    }
 }
 
 /// The source reports of a metadata allocation failure during
