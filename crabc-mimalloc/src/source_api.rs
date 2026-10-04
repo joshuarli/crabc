@@ -51,7 +51,8 @@ use crabc_core::Errno;
 
 use crate::config::{MAX_ALLOC_SIZE, PAGE_MAX_OVERALLOC_ALIGN, PAGE_META_ALIGNMENT, PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2};
 use crate::runtime_lifecycle::{
-    native_allocate, native_allocate_aligned_at, native_block_size, native_collect, native_free,
+    native_allocate_after_source_sample, native_allocate_aligned_at_after_source_sample,
+    native_block_size, native_collect, native_free,
     native_os_page_size, native_pointer_is_mapped, native_reallocate_aligned_at,
     native_reallocate_source, native_usable_size, NativePageAllocationResult, NativePageFreeResult,
 };
@@ -194,8 +195,10 @@ fn malloc_zero(size: usize, zero: bool) -> Sourced<Block> {
 
 /// Allocate through the installed main or child owner after the default
 /// Theap has been resolved by the caller.
+/// Ordinary default, Theap and Heap ingress already made the guarded sampling
+/// decision. Continue through native admission without drawing another sample.
 pub(crate) fn malloc_zero_native(size: usize, zero: bool) -> Sourced<Block> {
-    match native_block(native_allocate(size, zero)) {
+    match native_block(native_allocate_after_source_sample(size, zero)) {
         Some(block) => Sourced::quiet(Some(block)),
         None => Sourced::with(None, SourceErrno::error_message(Errno::NOMEM)),
     }
@@ -1051,6 +1054,8 @@ fn malloc_zero_aligned_at(size: usize, alignment: usize, offset: usize, zero: bo
 
 /// Aligned allocation on the fixed main-Heap Theap, independent of a
 /// substituted default Theap. Heap-scoped calls use this after selection.
+/// This wrapper makes the guarded decision before ordinary size checks;
+/// its native continuation must not sample again or replace its errno effect.
 pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
     #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
     {
@@ -1074,7 +1079,7 @@ pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offse
     } else {
         None
     };
-    match native_block(native_allocate_aligned_at(size, alignment, offset, zero)) {
+    match native_block(native_allocate_aligned_at_after_source_sample(size, alignment, offset, zero)) {
         Some(block) => Sourced::quiet(Some(block)),
         None => Sourced::with(None, match refusal {
             Some(error) => SourceErrno::error_message(error),

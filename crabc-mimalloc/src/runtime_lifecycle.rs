@@ -12234,7 +12234,7 @@ pub fn native_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_allocate_shaped::<false>(request, NativeAllocationShape::Aligned { alignment, offset: 0 }, zero)
+    native_allocate_shaped::<false, true>(request, NativeAllocationShape::Aligned { alignment, offset: 0 }, zero)
 }
 
 /// Allocates one source ordinary block, pinned `_mi_theap_malloc_zero` on
@@ -12244,7 +12244,15 @@ pub fn native_allocate_aligned(
 #[doc(hidden)]
 #[inline]
 pub fn native_allocate(request: usize, zero: bool) -> NativePageAllocationResult {
-    native_allocate_shaped::<true>(request, NativeAllocationShape::Ordinary, zero)
+    native_allocate_shaped::<true, true>(request, NativeAllocationShape::Ordinary, zero)
+}
+
+/// Continues an ordinary source request whose selected Theap sampler already
+/// declined it. The public source wrapper retains its own errno effects; this
+/// continuation preserves native admission without advancing the sampler twice.
+#[inline]
+pub(crate) fn native_allocate_after_source_sample(request: usize, zero: bool) -> NativePageAllocationResult {
+    native_allocate_shaped::<true, false>(request, NativeAllocationShape::Ordinary, zero)
 }
 
 /// Allocates one block whose `pointer + offset` is aligned, pinned
@@ -12259,7 +12267,17 @@ pub fn native_allocate_aligned_at(
     offset: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_allocate_shaped::<false>(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
+    native_allocate_shaped::<false, true>(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
+}
+
+/// Continues an aligned source request after its selected sampler declined it.
+/// Alignment, size and offset refusal still belong to the native engine, while
+/// the source wrapper retains its earlier sampling and errno decisions.
+#[inline]
+pub(crate) fn native_allocate_aligned_at_after_source_sample(
+    request: usize, alignment: usize, offset: usize, zero: bool,
+) -> NativePageAllocationResult {
+    native_allocate_shaped::<false, false>(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
 }
 
 /// Resolves one retained subprocess without keeping its child-record lock
@@ -12791,7 +12809,7 @@ enum NativeAllocationShape {
 /// ordinary allocation entry expands the eight-word local head; replacement
 /// and aligned allocations use the common direct-head and queue path.
 #[inline(always)]
-fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
+fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUARDED: bool>(
     request: usize,
     shape: NativeAllocationShape,
     zero: bool,
@@ -12836,18 +12854,52 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
             }
         }
     }
-    native_allocate_shaped_slow(request, shape, zero)
+    native_allocate_shaped_slow::<SAMPLE_GUARDED>(request, shape, zero)
 }
 
 /// The admitted remainder of [`native_allocate_shaped`] after its local fast
 /// path, kept out of line so the fast path does not pay this path's frame.
 #[cold]
 #[inline(never)]
-fn native_allocate_shaped_slow(
+fn native_allocate_shaped_slow<const SAMPLE_GUARDED: bool>(
     request: usize,
     shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    {
+        if SAMPLE_GUARDED {
+            let aligned = match shape {
+                NativeAllocationShape::Ordinary => None,
+                NativeAllocationShape::Aligned { alignment, offset } => {
+                    if !crate::size_class::alignment_is_valid(alignment) {
+                        let _ = crate::process_init::process_error_message(
+                            SourceErrorReport::BadAlignment { size: request, alignment, offset },
+                        );
+                        return NativePageAllocationResult::AllocationFailed;
+                    }
+                    Some((alignment, offset))
+                }
+            };
+            let selected = crate::source_heap_api::fixed_runtime_theap()
+                .unwrap_or_else(crate::compiler_tls::default_theap);
+            // SAFETY: allocation admission retains this calling thread's fixed
+            // Theap through the complete operation. Before initialization the
+            // empty compiler-TLS image has an immutable rate-zero sampler. No
+            // engine or metadata projection spans sampling or its callbacks.
+            match unsafe { crate::source_heap_api::guarded_allocate_selected(selected, request, aligned, zero) } {
+                crate::source_heap_api::GuardedAllocationResult::NotSampled => {},
+                crate::source_heap_api::GuardedAllocationResult::Allocated(result) =>
+                    return NativePageAllocationResult::Allocated(result.value),
+                crate::source_heap_api::GuardedAllocationResult::Refused(_) =>
+                    return NativePageAllocationResult::AllocationFailed,
+            }
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    let request = if request == 0 && matches!(shape, NativeAllocationShape::Ordinary) {
+        crate::config::WORD_SIZE
+    } else { request };
     // An invalid alignment fails before any allocation. An oversized request
     // is not refused here: as in pinned `_mi_malloc_generic`, the engine
     // counts it, runs administration, and retries once after a forced
@@ -13066,7 +13118,7 @@ fn native_reallocate_pointer_first_local(
     // normal nested allocation, but it must never inherit an outer pointer
     // lifetime or an owner-local mutable projection.
     drop(allocation);
-    let replacement = match native_allocate_shaped::<false>(new_size, replacement_shape, false) {
+    let replacement = match native_allocate_shaped::<false, true>(new_size, replacement_shape, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -13286,7 +13338,7 @@ fn native_reallocate_pointer_first_nonlocal(
     // Preserve only scalar comparison inputs and reacquire the exact live
     // source after replacement allocation finishes its callback phase.
     drop(allocation);
-    let replacement = match native_allocate_shaped::<false>(new_size, replacement_shape, false) {
+    let replacement = match native_allocate_shaped::<false, true>(new_size, replacement_shape, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -13630,7 +13682,7 @@ unsafe fn native_reallocate_inner(
         }
     };
     let Some(block) = block else {
-        let result = native_allocate_shaped::<false>(new_size, replacement_shape, zero);
+        let result = native_allocate_shaped::<false, true>(new_size, replacement_shape, zero);
         return match result {
             NativePageAllocationResult::Allocated(replacement)
                 if source_kernel && new_size == 0 && !zero => {

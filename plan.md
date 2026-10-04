@@ -220,8 +220,19 @@ Update this small section in place when the implementation frontier changes.
   stride without unrelated page classification. Nine combined compiler profiles
   and eleven focused opt0 checks pass, including aligned boundary/guarded
   payload preservation and ordinary teardown. Rejected compiler trials retain
-  their measured code or stack regressions. Performance acceptance and complete
-  correctness/codegen prerequisites remain open.
+  their measured code or stack regressions. At `8f8139534`, three complete engine
+  runs on CPUs 8–15 qualify physically and agree. Suite throughput lower95 is
+  0.3297–0.3389 of pinned C; all ten critical throughput rows and nine or ten
+  tail rows fail. RSS/PSS bounds pass; allocator code is 983,115 bytes versus
+  C's 108,311 bytes. Exact source, reports and products remain under
+  `.work/x86_64/reports/integrated-lanes/allocatorperf166-8f8139534/`.
+  Fixed native guarded allocation and replacement now sample at ingress;
+  source wrappers use explicit continuations after their own sampling decision.
+  A real-owner opt0 regression fails before the correction and passes after it,
+  including alternating countdown selection, sibling payloads and zeroed growth.
+  Three existing guarded controls and nine compiler profiles also pass.
+  Performance acceptance and complete correctness/codegen prerequisites remain
+  open.
   Static target dependencies now compile with initial-exec TLS; the original
   allocator dependency TLSGD references left an orphan undefined resolver symbol
   after linker relaxation. Corrected static products pass the original object

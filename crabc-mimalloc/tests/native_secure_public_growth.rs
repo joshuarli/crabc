@@ -112,6 +112,96 @@ fn guarded_public_aligned_growth() {
         heaps::theap_guarded_set_size_bound(selected, 0, usize::MAX);
         heaps::theap_guarded_set_sample_rate(selected, 1, 0);
     }
+    // Exercise the installed fixed owner directly. The source API wrappers
+    // below perform their own sampling and cannot prove native ingress.
+    {
+        use crabc_mimalloc::__crabc_runtime as native;
+        let mut clients = std::vec::Vec::new();
+        for (size, alignment) in [(64usize, None), (8, Some(16usize)), (64, Some(16))] {
+            for zero in [false, true] {
+                let result = match alignment {
+                    None => native::native_allocate(size, zero),
+                    Some(alignment) => native::native_allocate_aligned(size, alignment, zero),
+                };
+                let native::NativePageAllocationResult::Allocated(client) = result else {
+                    panic!("the installed owner returns its explicitly sampled native client");
+                };
+                if let Some(alignment) = alignment {
+                    assert_eq!(client.as_ptr().addr() % alignment, 0);
+                }
+                // SAFETY: the exact successful native client stays exclusively
+                // live through its capacity query and subsequent matching free.
+                let usable = unsafe { native::native_usable_size(client) }.unwrap();
+                assert!(usable >= size);
+                let tail = client.as_ptr().addr().checked_add(usable).unwrap();
+                assert_eq!(tail % page_size, 0);
+                assert!(permissions(tail).unwrap().starts_with("---"),
+                    "native allocation honors the installed owner's sampler");
+                let pattern = clients.len() as u8 + 0x40;
+                // SAFETY: only the reported writable extent is accessed. The
+                // following protected mapping is queried but never dereferenced.
+                unsafe {
+                    let bytes = core::slice::from_raw_parts_mut(client.as_ptr(), usable);
+                    if zero { assert!(bytes[..size].iter().all(|byte| *byte == 0)); }
+                    bytes.fill(pattern);
+                }
+                clients.push((client, usable, pattern, size == 8 && !zero));
+            }
+        }
+        for (client, usable, pattern, grow) in clients {
+            // SAFETY: siblings remain live until their own exact free. Growth
+            // retains this old client until the successful result consumes it.
+            unsafe {
+                assert!(core::slice::from_raw_parts(client.as_ptr(), usable)
+                    .iter().all(|byte| *byte == pattern));
+                let final_client = if grow {
+                    let growth_size = usable.checked_add(64).unwrap();
+                    let native::NativePageAllocationResult::Allocated(replacement) =
+                        native::native_reallocate_aligned_zeroed(Some(client), growth_size, 16)
+                    else { panic!("the installed owner replaces its sampled tiny client"); };
+                    assert_ne!(replacement, client);
+                    assert_eq!(replacement.as_ptr().addr() % 16, 0);
+                    let capacity = native::native_usable_size(replacement).unwrap();
+                    assert!(capacity >= growth_size);
+                    let bytes = core::slice::from_raw_parts(replacement.as_ptr(), capacity);
+                    assert!(bytes[..usable].iter().all(|byte| *byte == pattern));
+                    assert!(bytes[usable..growth_size].iter().all(|byte| *byte == 0));
+                    let tail = replacement.as_ptr().addr().checked_add(capacity).unwrap();
+                    assert!(permissions(tail).unwrap().starts_with("---"));
+                    replacement
+                } else { client };
+                assert_eq!(native::native_free(final_client), native::NativePageFreeResult::Freed);
+            }
+        }
+        // Seed one unsampled call before each selected call. Ordinary aligned
+        // base allocation must not consume a second countdown step.
+        // SAFETY: this thread exclusively owns the initialized sampler and
+        // no allocation overlaps this deterministic countdown reset.
+        unsafe { heaps::theap_guarded_set_sample_rate(selected, 2, 1); }
+        let mut alternating = std::vec::Vec::new();
+        for sampled in [false, true, false, true] {
+            let native::NativePageAllocationResult::Allocated(client) =
+                native::native_allocate_aligned(8, 16, false)
+            else { panic!("the native sampler returns each live alternating client"); };
+            assert_eq!(client.as_ptr().addr() % 16, 0);
+            // SAFETY: this successful exact client stays live until its free;
+            // querying its tail mapping does not access any protected bytes.
+            let usable = unsafe { native::native_usable_size(client) }.unwrap();
+            assert!(usable >= 8);
+            let tail = client.as_ptr().addr().checked_add(usable).unwrap();
+            assert_eq!(permissions(tail).unwrap().starts_with("---"), sampled,
+                "one original request consumes one source sampler step");
+            alternating.push(client);
+        }
+        for client in alternating {
+            // SAFETY: consume each retained exact client once, without any
+            // access to its adjacent protected or unallocated memory.
+            assert_eq!(unsafe { native::native_free(client) }, native::NativePageFreeResult::Freed);
+        }
+        // SAFETY: no native client remains in this segment, and this thread
+        // exclusively owns the initialized sampler through its restoration.
+        unsafe { heaps::theap_guarded_set_sample_rate(selected, 1, 0); }
+    }
     // Both the tiny overallocated shape and a naturally aligned small shape
     // must still obey this explicit sample selection before taking a local
     // head. Keep their exact clients live together to check independent tails.
