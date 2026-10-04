@@ -2830,13 +2830,25 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         ) {
             return None;
         }
-        let normalized = request.max(crate::config::WORD_SIZE);
-        if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_))
-            && !size_class::request_size_is_valid(normalized)
+        #[cfg(target_arch = "x86_64")]
+        if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_)) {
+            // Only an inactive owner needs the normalized request to refuse
+            // backing preparation; the active engine handles the source request.
+            let normalized = request.max(crate::config::WORD_SIZE);
+            if !size_class::request_size_is_valid(normalized) {
+                return self.begin_engine_less_generic_refusal(normalized);
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
         {
-            // Materializing an engine (or a first arena) for a request no
-            // page can satisfy would be a second, non-source policy decision.
-            return self.begin_engine_less_generic_refusal(normalized);
+            let normalized = request.max(crate::config::WORD_SIZE);
+            if !matches!(&self.state, MainStaticRuntimeFirstArenaPageAllocatorState::Active(_))
+                && !size_class::request_size_is_valid(normalized)
+            {
+                // Materializing an engine (or a first arena) for a request no
+                // page can satisfy would be a second, non-source policy decision.
+                return self.begin_engine_less_generic_refusal(normalized);
+            }
         }
         self.allocate_with(request, |engine| {
             match engine.begin_deferred_free_allocation(request, zero) {
