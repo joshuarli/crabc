@@ -74,8 +74,13 @@ Update this small section in place when the implementation frontier changes.
   free-list successors, and skip duplicate Theap field reads for identical
   retained owners. Immutable metadata configuration remains borrowed through
   readiness checks; actual production opt0 chain reservations fall by 352 bytes.
-  A large opt0 child-header staging image remains. Rejected transport and
-  size-class trials are restored; compiler gains do not establish timing gains.
+  Child destruction initializes its empty pending owner from typed static
+  storage; its emitted opt0 local frame falls from 16,888 to 1,464 bytes. The
+  first header initialization now copies a 15,456-byte immutable prototype.
+  That cold-path size/copy cost remains; these compiler results do not establish
+  peak stack, deferred failure repair or installed-product qualification.
+  Rejected transport and size-class trials are restored; compiler gains do not
+  establish timing gains.
 - **Verification:** merged source passes all nine compiler profiles and focused
   allocation, guard, ownership, metadata and worker regressions. Geometry and
   aligned tests distinguish padded client usable size from physical block stride;
