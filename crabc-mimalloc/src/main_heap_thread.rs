@@ -1785,6 +1785,10 @@ impl<'main> MainHeapThreadAttachment<'main> {
     /// A source fast selector may name a younger same-TLD main-Heap Theap.
     fn fast_root_matches_local_owner(&self, owner: NonNull<Theap>) -> bool {
         let Some(fast) = fast_slot_peek().map(|slot| slot.cast::<Theap>()) else { return true };
+        #[cfg(target_arch = "x86_64")]
+        // Both pointers name the same retained image. No callback can change
+        // its fields between this root read and the source comparisons.
+        if fast == owner { return true; }
         // SAFETY: the attached thread retains the selected fast root and its
         // fixed owner; only this thread replaces the fast selector.
         unsafe {
@@ -3695,6 +3699,52 @@ mod tests {
                         "the ordinary source image selects page.c full-page abandonment"
                     );
                     drop(session);
+                    assert_eq!(
+                        owner.prevalidate_owner_local_operation().unwrap().as_ptr(),
+                        theap_pointer,
+                    );
+                    let mut sibling = metadata.zalloc_for_main_subprocess(
+                        memory_config(), subprocess, size_of::<Theap>(),
+                    ).expect("the same owner supplies the sibling metadata");
+                    let sibling_pointer = {
+                        let image = sibling.initialize_dynamic_theap_metadata().unwrap();
+                        let mut heap = main_heap.lock_heap().unwrap();
+                        // SAFETY: the metadata token, current TLD and guarded
+                        // main Heap remain live until both sibling lists detach.
+                        unsafe {
+                            image.initialize_dynamic_metadata_on_tld(
+                                heap.heap_mut(), owner.current_tld_mut().unwrap(),
+                                TheapPageMode::OrdinaryAbandoning, true,
+                            ).unwrap();
+                        }
+                        heap.unlock().unwrap();
+                        NonNull::from(image)
+                    };
+                    assert_ne!(sibling_pointer.as_ptr(), theap_pointer);
+                    set_fast_slot(Some(sibling_pointer.cast()));
+                    assert_eq!(
+                        owner.prevalidate_owner_local_operation().unwrap().as_ptr(),
+                        theap_pointer,
+                        "a younger same-Heap sibling retains the original local owner",
+                    );
+                    let session = owner.page_session().unwrap();
+                    assert_eq!(session.local_theap_pointer().as_ptr(), theap_pointer);
+                    drop(session);
+                    assert_eq!(default_theap().as_ptr(), theap_pointer);
+                    set_fast_slot(Some(NonNull::new(theap_pointer).unwrap().cast()));
+                    {
+                        let mut heap = main_heap.lock_heap().unwrap();
+                        owner.current_tld_mut().unwrap()
+                            .detach_one_theap_from_shared_main_heap(
+                                heap.heap_mut(), sibling_pointer.as_ptr(),
+                            ).unwrap();
+                        heap.unlock().unwrap();
+                    }
+                    owner.current_tld_mut().unwrap()
+                        .detach_one_theap_from_tld(sibling_pointer.as_ptr()).unwrap();
+                    assert!(sibling.dynamic_theap_mut().unwrap()
+                        .clear_dynamic_metadata_after_detach());
+                    metadata.free(&mut sibling).unwrap();
                     assert_eq!(
                         owner
                             .current_tld_mut()
