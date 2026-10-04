@@ -205,9 +205,11 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     let key = slot.key().raw();
     let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     // SAFETY: the zeroed block is exclusively owned, large enough, and
-    // aligned. Initialize both fields before any list publishes the image;
-    // the slot moves once into its sole release owner.
+    // aligned. The slot moves once into its sole release owner before Heap
+    // initialization and list publication. A refused child projection retains
+    // this allocation and key without reading or dropping its Heap bytes.
     unsafe {
+        #[cfg(not(target_arch = "x86_64"))]
         Heap::write_bootstrap_empty_at(image.cast());
         core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
@@ -216,8 +218,11 @@ pub(crate) unsafe fn child_heap_new_in_arena(
         let identity = image_ref.identity();
         // SAFETY: the image is exclusively owned until the list publishes it,
         // and stays pinned in its allocation until `mi_heap_free`.
-        let heap = unsafe { &mut *heap.as_ptr() };
         // heap.c:103-114, then the list push at 115-124.
+        #[cfg(target_arch = "x86_64")]
+        unsafe { Heap::write_non_main_at(heap, identity, key, arena.as_ptr(), memory) };
+        let heap = unsafe { &mut *heap.as_ptr() };
+        #[cfg(not(target_arch = "x86_64"))]
         heap.initialize_non_main(identity, key, arena.as_ptr(), memory);
         // SAFETY: the Heap was initialized for this subprocess just above.
         unsafe { identity.heap_list().link_non_main(heap, identity) }
@@ -792,15 +797,19 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     let image = block.cast::<NonMainHeapImage>();
     // SAFETY: the forwarded extent and exclusive fresh-storage obligations
-    // cover both fields. Move the slot once into its sole release owner,
-    // after initializing the Heap and before publishing it on the list.
+    // cover both fields. Retain the slot in its sole release owner before
+    // the complete Heap initialization and subsequent list publication.
     unsafe {
+        #[cfg(not(target_arch = "x86_64"))]
         Heap::write_bootstrap_empty_at(image.cast());
         core::ptr::addr_of_mut!((*image.as_ptr()).slot).write(Some(slot));
     }
     let heap = image.cast::<Heap>();
     // SAFETY: the image is exclusively owned until the push publishes it.
+    #[cfg(target_arch = "x86_64")]
+    unsafe { Heap::write_non_main_at(heap, subprocess, key, exclusive_arena.as_ptr(), memory) };
     let heap_ref = unsafe { &mut *heap.as_ptr() };
+    #[cfg(not(target_arch = "x86_64"))]
     heap_ref.initialize_non_main(subprocess, key, exclusive_arena.as_ptr(), memory);
     // SAFETY: the Heap was initialized for this subprocess just above.
     unsafe { subprocess.heap_list().link_non_main(heap_ref, subprocess) }.map_err(HeapNewError::List)?;

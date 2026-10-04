@@ -301,22 +301,54 @@ impl Heap {
         #[cfg(target_arch = "x86_64")]
         {
             let destination = core::ptr::NonNull::from(&mut *self);
-            // SAFETY: this exclusive initialization replaces the old cold
-            // image before publication. Drop ends its initialized value,
-            // then the immutable prototype restores every field in place.
+            // SAFETY: this exclusive initialization ends the old cold value
+            // before writing the replacement into the same unpublished image.
             unsafe {
                 core::ptr::drop_in_place(destination.as_ptr());
-                Heap::write_bootstrap_empty_at(destination);
+                Self::write_non_main_at(destination, subprocess, theap_slot, exclusive_arena, memory);
             }
         }
         #[cfg(not(target_arch = "x86_64"))]
-        { *self = Heap::bootstrap_empty(); }
-        self.theap_slot = theap_slot as usize;
-        self.subprocess = subprocess.as_ptr();
-        self.heap_seq = subprocess.heap_list().next_sequence();
-        self.exclusive_arena = exclusive_arena;
-        *self.numa_node.get_mut() = -1;
-        self.memid = memory;
+        {
+            *self = Heap::bootstrap_empty();
+            self.theap_slot = theap_slot as usize;
+            self.subprocess = subprocess.as_ptr();
+            self.heap_seq = subprocess.heap_list().next_sequence();
+            self.exclusive_arena = exclusive_arena;
+            *self.numa_node.get_mut() = -1;
+            self.memid = memory;
+        }
+    }
+
+    /// Initializes a non-main Heap once in its final unpublished storage.
+    /// Its dynamic key is already owned by the containing allocation; list
+    /// publication follows only after every source field is initialized.
+    ///
+    /// # Safety
+    /// `destination` owns exclusive aligned writable storage for `Self` with
+    /// no initialized value. The subprocess remains live and the destination
+    /// stays pinned after publication. The key and non-null exclusive arena
+    /// used for subsequent publication belong to this subprocess and retain
+    /// their original owners through every resulting Heap operation.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn write_non_main_at(
+        destination: core::ptr::NonNull<Self>,
+        subprocess: &SubprocessIdentity,
+        theap_slot: u64,
+        exclusive_arena: *mut super::Arena,
+        memory: super::MemoryId,
+    ) {
+        // SAFETY: the caller retains exclusive fresh storage; only the cold
+        // template is copied before its source identity fields are assigned.
+        unsafe { Self::write_bootstrap_empty_at(destination) };
+        // SAFETY: the complete cold image now exists and remains unpublished.
+        let heap = unsafe { &mut *destination.as_ptr() };
+        heap.theap_slot = theap_slot as usize;
+        heap.subprocess = subprocess.as_ptr();
+        heap.heap_seq = subprocess.heap_list().next_sequence();
+        heap.exclusive_arena = exclusive_arena;
+        *heap.numa_node.get_mut() = -1;
+        heap.memid = memory;
     }
 
     /// Whether this non-main Heap owns no Theap and no page: the state in
@@ -1532,6 +1564,43 @@ mod tests {
         let statistics = storage.heap.statistics.snapshot();
         assert_eq!((statistics.pages_total, statistics.pages_current, statistics.threads_total), (0, 0, 0));
         assert_eq!(subprocess.identity().heap_list().test_counts(), (0, 1, true));
+
+        #[repr(C)]
+        struct VacantBorderedHeap {
+            before: [u8; 32],
+            heap: core::mem::MaybeUninit<Heap>,
+            after: [u8; 32],
+        }
+        let mut fresh = Box::new(VacantBorderedHeap {
+            before: [0x59; 32], heap: core::mem::MaybeUninit::uninit(), after: [0xa6; 32],
+        });
+        let destination = NonNull::new(fresh.heap.as_mut_ptr()).unwrap();
+        let memory = MemoryId::malloc(destination.as_ptr().cast(), size_of::<Heap>(), true);
+        // SAFETY: the bordered allocation retains exclusive aligned vacant
+        // Heap storage. This cold image never publishes its key or list links.
+        unsafe { Heap::write_non_main_at(destination, subprocess.identity(), key, null_mut(), memory) };
+        // SAFETY: the constructor initialized every field at this destination.
+        let heap = unsafe { fresh.heap.assume_init_ref() };
+        assert_eq!(core::ptr::from_ref(heap), destination.as_ptr());
+        assert_eq!(fresh.before, [0x59; 32]);
+        assert_eq!(fresh.after, [0xa6; 32]);
+        assert_eq!(heap.theap_slot, key as usize);
+        assert_eq!(heap.subprocess, subprocess.identity().as_ptr());
+        assert_eq!(heap.heap_seq, 1);
+        assert!(heap.next.is_null() && heap.prev.is_null());
+        assert!(heap.exclusive_arena.is_null());
+        assert_eq!(unsafe { heap.numa_node.get().read() }, -1);
+        assert!(heap.is_without_theaps_or_pages());
+        assert_eq!(heap.memid.kind(), crate::types::MemoryKind::Malloc);
+        assert!(heap.memid.initially_zero());
+        // SAFETY: this image's active Malloc union and exclusive allocation
+        // remain retained through the complete metadata observation.
+        assert_eq!(unsafe { heap.memid.info.malloc.base }, destination.as_ptr().cast());
+        let statistics = heap.statistics.snapshot();
+        assert_eq!((statistics.pages_total, statistics.pages_current, statistics.threads_total), (0, 0, 0));
+        assert_eq!(subprocess.identity().heap_list().test_counts(), (0, 2, true));
+        // SAFETY: the sole initialized value owns no published resource.
+        unsafe { fresh.heap.assume_init_drop() };
     }
 
     #[cfg(target_arch = "x86_64")]
