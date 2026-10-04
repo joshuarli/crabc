@@ -3549,6 +3549,10 @@ struct NativeChildArenaDestroyState {
     words: usize,
 }
 
+// Fresh raw field assignment must not drop a previous header image.
+#[cfg(target_arch = "x86_64")]
+const _: () = assert!(!core::mem::needs_drop::<NativeChildArenaDestroyState>());
+
 #[cfg(target_arch = "x86_64")]
 impl NativeChildArenaDestroyState {
     fn tracking_offset() -> usize {
@@ -3585,7 +3589,13 @@ unsafe fn native_child_destroy_tracking(
         // Parent metadata guarantees ordinary word alignment; this exact
         // fresh capability receives a complete header before publication.
         assert_eq!(state.as_ptr().addr() % core::mem::align_of::<NativeChildArenaDestroyState>(), 0);
-        unsafe { state.as_ptr().write(NativeChildArenaDestroyState { pending: None, words }); }
+        // The header has no Drop, so these raw place assignments read no
+        // previous image. Both fields reach final storage before publication;
+        // no fallible operation or callback runs between their initialization.
+        unsafe {
+            *core::ptr::addr_of_mut!((*state.as_ptr()).pending) = None;
+            *core::ptr::addr_of_mut!((*state.as_ptr()).words) = words;
+        }
         *slot = Some(allocation);
     }
     let allocation = slot.as_ref().expect("retained native destruction scratch");
