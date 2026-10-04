@@ -43634,17 +43634,38 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     #[cfg(target_arch = "x86_64")]
     fn take_generic_error_phase(&mut self, error: GenericPathError) -> GuardedCanonicalAllocationPhase {
-        let phase = match error {
-            GenericPathError::FreshInitialization => self.take_pending_fresh_initialization()
-                .map(DeferredFreeAllocationPhase::FreshInitialization),
-            GenericPathError::LiveValidity => self.take_pending_live_page_validity()
-                .map(DeferredFreeAllocationPhase::LiveValidity),
-            _ => None,
-        };
-        phase.ok_or_else(|| {
-            self.page_commit_poison = true;
-            GuardedCanonicalAllocationRefusal
-        })
+        match error {
+            GenericPathError::FreshInitialization => self.take_fresh_initialization_phase(),
+            GenericPathError::LiveValidity => self.take_live_validity_phase(),
+            _ => {
+                self.page_commit_poison = true;
+                Err(GuardedCanonicalAllocationRefusal)
+            }
+        }
+    }
+
+    // Each task has a different owned payload. Transfer the selected original
+    // directly into its checked phase without staging the other task's image.
+    #[cfg(target_arch = "x86_64")]
+    fn take_fresh_initialization_phase(&mut self) -> GuardedCanonicalAllocationPhase {
+        match self.take_pending_fresh_initialization() {
+            Some(task) => Ok(DeferredFreeAllocationPhase::FreshInitialization(task)),
+            None => {
+                self.page_commit_poison = true;
+                Err(GuardedCanonicalAllocationRefusal)
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn take_live_validity_phase(&mut self) -> GuardedCanonicalAllocationPhase {
+        match self.take_pending_live_page_validity() {
+            Some(task) => Ok(DeferredFreeAllocationPhase::LiveValidity(task)),
+            None => {
+                self.page_commit_poison = true;
+                Err(GuardedCanonicalAllocationRefusal)
+            }
+        }
     }
 
     /// Retains a refused cleanup at its exact remaining metadata stage.
