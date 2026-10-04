@@ -120,12 +120,9 @@ pub(crate) const fn pointer_adjustment(
     if !size_class::alignment_is_valid(alignment) {
         return None;
     }
-    let misalignment = address.wrapping_add(offset) & (alignment - 1);
-    Some(if misalignment == 0 {
-        0
-    } else {
-        alignment - misalignment
-    })
+    // Negation modulo the power-of-two alignment gives the same correction
+    // for both an already aligned address and a nonzero source misalignment.
+    Some(address.wrapping_add(offset).wrapping_neg() & (alignment - 1))
 }
 
 pub(crate) const fn recover_block_start(
@@ -330,9 +327,14 @@ mod tests {
     #[test]
     fn pointer_adjustment_aligns_pointer_plus_offset() {
         for alignment in [1usize, 8, 16, 64, 4096, 65536] {
-            for address in [0x1000usize, 0x1001, 0x103f, usize::MAX - 7] {
+            for address in [0x1000usize, 0x1001, 0x103f, usize::MAX - 7, usize::MAX] {
                 for offset in [0usize, 1, 7, alignment.saturating_sub(1), 50, 51, usize::MAX] {
                     let adjust = pointer_adjustment(address, alignment, offset).unwrap();
+                    let source_misalignment = address.wrapping_add(offset) & (alignment - 1);
+                    let source_adjust = if source_misalignment == 0 { 0 } else {
+                        alignment - source_misalignment
+                    };
+                    assert_eq!(adjust, source_adjust);
                     assert!(adjust < alignment);
                     assert_eq!(address.wrapping_add(adjust).wrapping_add(offset) & (alignment - 1), 0);
                 }
