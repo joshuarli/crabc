@@ -1069,22 +1069,21 @@ pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offse
             return result;
         }
     }
-    // The native aligned entry reports these pre-allocation refusals through
-    // `_mi_error_message` (`alloc-aligned.c:81-84,163-166,191-193`) and then
-    // fails; the errno effect follows each report.
-    let refusal = if !size_class::alignment_is_valid(alignment) || !size_class::request_size_is_valid(size) {
-        Some(Errno::INVAL)
-    } else if alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
-        Some(Errno::OVERFLOW)
-    } else {
-        None
-    };
     match native_block(native_allocate_aligned_at_after_source_sample(size, alignment, offset, zero)) {
         Some(block) => Sourced::quiet(Some(block)),
-        None => Sourced::with(None, match refusal {
-            Some(error) => SourceErrno::error_message(error),
-            None => aligned_failure_errno(size, alignment, offset),
-        }),
+        None => {
+            // Native allocation has already reported any pre-allocation
+            // refusal. Classify its errno only after failure, so successful
+            // clients do not repeat alignment, size and offset checks.
+            let errno = if !size_class::alignment_is_valid(alignment) || !size_class::request_size_is_valid(size) {
+                SourceErrno::error_message(Errno::INVAL)
+            } else if alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
+                SourceErrno::error_message(Errno::OVERFLOW)
+            } else {
+                aligned_failure_errno(size, alignment, offset)
+            };
+            Sourced::with(None, errno)
+        }
     }
 }
 
