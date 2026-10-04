@@ -762,15 +762,15 @@ impl SourceFormattedMessage {
     pub(crate) fn os_free_failure(errno: Errno, size: usize, address: usize) -> Self {
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         let mut length = 0;
-        append_mbind_bytes(&mut bytes, &mut length, b"unable to free OS memory (error: ");
+        append_os_literal(&mut bytes, &mut length, b"unable to free OS memory (error: ");
         append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_os_literal(&mut bytes, &mut length, b" (0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b"), size: 0x");
+        append_os_literal(&mut bytes, &mut length, b"), size: 0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" bytes, address: ");
+        append_os_literal(&mut bytes, &mut length, b" bytes, address: ");
         append_source_pointer(&mut bytes, &mut length, address);
-        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        append_os_literal(&mut bytes, &mut length, b")\n");
         Self { bytes, length }
     }
 
@@ -779,15 +779,15 @@ impl SourceFormattedMessage {
     pub(crate) fn os_commit_failure(errno: Errno, address: usize, size: usize) -> Self {
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         let mut length = 0;
-        append_mbind_bytes(&mut bytes, &mut length, b"cannot commit OS memory (error: ");
+        append_os_literal(&mut bytes, &mut length, b"cannot commit OS memory (error: ");
         append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_os_literal(&mut bytes, &mut length, b" (0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_os_literal(&mut bytes, &mut length, b"), address: ");
         append_source_pointer(&mut bytes, &mut length, address);
-        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_os_literal(&mut bytes, &mut length, b", size: 0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        append_os_literal(&mut bytes, &mut length, b" bytes)\n");
         Self { bytes, length }
     }
 
@@ -796,15 +796,15 @@ impl SourceFormattedMessage {
     pub(crate) fn os_decommit_failure(errno: Errno, address: usize, size: usize) -> Self {
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         let mut length = 0;
-        append_mbind_bytes(&mut bytes, &mut length, b"cannot decommit OS memory (error: ");
+        append_os_literal(&mut bytes, &mut length, b"cannot decommit OS memory (error: ");
         append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_os_literal(&mut bytes, &mut length, b" (0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_os_literal(&mut bytes, &mut length, b"), address: ");
         append_source_pointer(&mut bytes, &mut length, address);
-        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_os_literal(&mut bytes, &mut length, b", size: 0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        append_os_literal(&mut bytes, &mut length, b" bytes)\n");
         Self { bytes, length }
     }
 
@@ -813,15 +813,15 @@ impl SourceFormattedMessage {
     pub(crate) fn os_reset_failure(errno: Errno, address: usize, size: usize) -> Self {
         let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
         let mut length = 0;
-        append_mbind_bytes(&mut bytes, &mut length, b"cannot reset OS memory (error: ");
+        append_os_literal(&mut bytes, &mut length, b"cannot reset OS memory (error: ");
         append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_os_literal(&mut bytes, &mut length, b" (0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_os_literal(&mut bytes, &mut length, b"), address: ");
         append_source_pointer(&mut bytes, &mut length, address);
-        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_os_literal(&mut bytes, &mut length, b", size: 0x");
         append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
-        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        append_os_literal(&mut bytes, &mut length, b" bytes)\n");
         Self { bytes, length }
     }
 
@@ -1036,6 +1036,27 @@ impl SourceFormattedMessage {
         unsafe { CStr::from_bytes_with_nul_unchecked(&self.bytes[..=self.length]) }
     }
 }
+
+// Literal arrays keep their complete copy width visible independently of
+// numeric conversions. Variable strings and digits retain the bounded loop.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn append_os_literal<const N: usize>(
+    bytes: &mut [u8; SOURCE_FORMAT_STORAGE_BYTES], length: &mut usize, literal: &[u8; N],
+) {
+    let start = *length;
+    if start <= SOURCE_FORMAT_PAYLOAD_BYTES && N <= SOURCE_FORMAT_PAYLOAD_BYTES - start {
+        bytes[start..start + N].copy_from_slice(literal);
+        *length = start + N;
+    } else {
+        // Retain partial payload writes and the original bounds behavior
+        // when the whole literal does not fit or the cursor is malformed.
+        append_mbind_bytes(bytes, length, literal);
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+use self::append_mbind_bytes as append_os_literal;
 
 #[inline]
 fn append_mbind_bytes(
@@ -4422,6 +4443,34 @@ mod tests {
         let length = unsafe { CStr::from_ptr(message) }.to_bytes().len();
         capture.last_length.store(length, Ordering::Relaxed);
         capture.count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn os_literal_append_preserves_bounded_payload_and_reserved_tail() {
+        let literal = b"0123456789abcdefghijklmnopqrstuv";
+        for start in [0, 1, 958, 959, 988, 989, 990] {
+            let mut bytes = [b'!'; super::SOURCE_FORMAT_STORAGE_BYTES];
+            let mut length = start;
+            super::append_os_literal(&mut bytes, &mut length, literal);
+            let copied = core::cmp::min(literal.len(), super::SOURCE_FORMAT_PAYLOAD_BYTES - start);
+            assert_eq!(length, start + copied);
+            assert!(bytes[..start].iter().all(|byte| *byte == b'!'));
+            assert_eq!(&bytes[start..length], &literal[..copied]);
+            assert!(bytes[length..].iter().all(|byte| *byte == b'!'));
+            let retained = bytes;
+            super::append_os_literal(&mut bytes, &mut length, b"");
+            assert_eq!(bytes, retained);
+            assert_eq!(length, start + copied);
+        }
+    }
+
+    #[test]
+    fn commit_warning_preserves_source_address_size_and_errno() {
+        let message = SourceFormattedMessage::os_commit_failure(Errno::NOMEM, 0x7F1234560000, 0x10000);
+        assert_eq!(&message.bytes[..message.length],
+            b"cannot commit OS memory (error: 12 (0x0C), address: 0x7F1234560000, size: 0x10000 bytes)\n");
+        assert_eq!(message.bytes[message.length], 0);
     }
 
     #[test]
