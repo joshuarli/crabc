@@ -98,11 +98,12 @@ STATIC_ARCHIVE_PROFILE = (
     "--config",
     "profile.release.codegen-units=65536",
 )
-# Cargo target flags reach every target dependency before ThinLTO imports its
-# code into libc. A final-crate rustc flag alone leaves allocator TLS accesses
-# in the GD model, introducing an unowned resolver import into static links.
-# Retain the build-wide dead-code setting when selecting the static TLS model.
-STATIC_TARGET_TLS_CONFIG = (
+# Installed libc and its allocator dependencies use initial-exec TLS. Cargo
+# target flags reach every dependency; a final-crate rustc flag alone leaves
+# allocator accesses in the GD model, requiring module-base resolution even
+# when that allocator is part of the initial runtime image. Retain the
+# build-wide dead-code setting when selecting the target TLS model.
+TARGET_TLS_CONFIG = (
     "--config",
     f'target.{TARGET}.rustflags=["-C","link-dead-code","-Ztls-model=initial-exec"]',
 )
@@ -1331,7 +1332,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
         "--target-dir",
         str(cargo_root),
         *STATIC_ARCHIVE_PROFILE,
-        *STATIC_TARGET_TLS_CONFIG,
+        *TARGET_TLS_CONFIG,
         "--",
         "--cfg",
         "crabc_owned_static_sysroot",
@@ -1452,7 +1453,7 @@ def build_runtime_inputs(stage: Path, *, allocator_backend: str = DEFAULT_ALLOCA
             "--target-dir",
             "$CRABC_X86_BUILD/cargo",
             *STATIC_ARCHIVE_PROFILE,
-            *STATIC_TARGET_TLS_CONFIG,
+            *TARGET_TLS_CONFIG,
             "--",
             "--cfg",
             "crabc_owned_static_sysroot",

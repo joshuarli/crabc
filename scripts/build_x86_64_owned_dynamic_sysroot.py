@@ -701,7 +701,8 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
                                                          "accepted-c" if accepted_c else allocator_backend, environment)
     libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release", "--no-default-features",
          "--features", ",".join(features), "--target", common.TARGET,
-         "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
+         "--target-dir", str(stage / "cargo"), *common.TARGET_TLS_CONFIG,
+         "--", "--cfg", "crabc_owned_static_sysroot",
          "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG,
          "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec",
          # C requires distinct functions to have distinct addresses; rustc's

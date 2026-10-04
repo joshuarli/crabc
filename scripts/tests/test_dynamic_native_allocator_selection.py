@@ -1,5 +1,7 @@
 """Dynamic shadow selection must exclude the attested C implementation."""
 import sys
+import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -13,6 +15,43 @@ class DynamicNativeAllocatorSelectionTests(unittest.TestCase):
         'c.libc.rcgu.o', 'abc-static.o', 'compiler_builtins-abc.rcgu.o',
         '45c91108d938afe8-addvdi3.o',
     )
+
+    def test_dynamic_native_dependencies_receive_the_initial_exec_tls_model(self):
+        commands = []
+
+        class CargoCaptured(Exception):
+            pass
+
+        def capture(command, **_):
+            commands.append(command)
+            raise CargoCaptured()
+
+        tools = {'rustup': {'path': '/opt/cargo/bin/rustup'}}
+        scratch = Path(__file__).resolve().parents[2] / '.work/x86_64/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary, \
+             patch.object(builder.common, 'resolve_pinned_producer_tools', return_value=tools), \
+             patch.object(builder.common, 'producer_tool_path', return_value='/usr/bin/ar'), \
+             patch.object(builder.common, 'pinned_rustc_sysroot', return_value=Path('/opt/rustup/test-sysroot')), \
+             patch.object(builder.common, 'deterministic_environment', return_value={}), \
+             patch.object(builder.common, 'allocator_dependency_graph', return_value={}), \
+             patch.object(builder.common, 'run', side_effect=capture):
+            work = Path(temporary)
+            (work / 'stage').mkdir()
+            with self.assertRaises(CargoCaptured):
+                builder.build_staged_payload(work / 'product', work / 'stage', allocator_backend='native')
+
+        # Cargo target configuration reaches dependencies; final-crate rustc
+        # arguments after the separator cannot select their TLS model.
+        command = commands[0]
+        cargo = command[:command.index('--')]
+        configs = [tomllib.loads(cargo[index + 1])
+                   for index, argument in enumerate(cargo) if argument == '--config']
+        flags = next((config['target'][builder.common.TARGET]['rustflags']
+                      for config in configs if 'target' in config), [])
+        self.assertIn('-Ztls-model=initial-exec', flags)
+        self.assertIn(['-C', 'link-dead-code'],
+                      [flags[index:index + 2] for index in range(len(flags) - 1)])
 
     def test_default_keeps_only_the_attested_c_backend(self):
         selected, excluded = builder.select_allocator_members(self.roster, 'abc-static.o', 'accepted-c')
