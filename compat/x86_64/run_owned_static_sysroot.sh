@@ -864,6 +864,32 @@ if not valid_loopback or fields[1] == "127.0.0.1":
 PY
 }
 
+run_static_tbss() {
+    local installed_root="$1"
+    local mode="$2"
+    local mode_root="$3"
+    local label="$4"
+    local candidate_output
+
+    mkdir "$mode_root"
+    (
+        cd "$mode_root"
+        "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -c \
+            "$ROOT_DIR/compat/x86_64/general_dynamic_tbss.c" -o probe.o
+        "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -c \
+            "$ROOT_DIR/compat/x86_64/libc_crt_static_tls_peer.c" -o peer.o
+        "$installed_root/bin/crabc-cc" "$mode" -std=c11 -D_GNU_SOURCE -c \
+            "$ROOT_DIR/compat/x86_64/owned_static_sysroot_builtins.c" -o builtins.o
+        "$installed_root/bin/crabc-cc" "$mode" --link-receipt link.receipt.json -o candidate \
+            probe.o peer.o builtins.o
+    )
+    audit_link_receipt "$installed_root" "$mode_root" "$mode" \
+        "$mode_root/candidate" "$mode_root/link.receipt.json"
+    candidate_output="$(env -i "$mode_root/candidate")" || fail "${label} TBSS candidate failed"
+    [ "$candidate_output" = 'initial-tbss=8192,worker=isolated' ] ||
+        fail "${label} TBSS candidate output drifted: $candidate_output"
+}
+
 run_static_mode() {
     local installed_root="$1"
     local mode="$2"
@@ -1250,6 +1276,7 @@ run_static_mode() {
             "$label wide formatting" wide-format "$printf_matrix_reference.wide-format"
     fi
     if [ "$consumer_kind" = tls ]; then
+        run_static_tbss "$installed_root" "$mode" "$mode_root/tbss" "$label"
         # Exercise the composed worker/once/TSD/synchronization body through
         # the installed CRT, not the legacy fixture's private startup object.
         run_static_mode "$installed_root" "$mode" "$mode_root/pthread" \
