@@ -49618,26 +49618,32 @@ mod tests {
 
             for request in requests {
                 let block = allocator.allocate(request, false).unwrap();
-                let expected_usable = if request <= LARGE_MAX_OBJ_SIZE {
+                // Padding participates in the regular-bin limit and the
+                // OS-rounded singleton block size beyond that limit.
+                let padded_request = request.checked_add(PADDING_SIZE).expect("the boundary fixture fits padding");
+                let expected_block_size = if padded_request <= LARGE_MAX_OBJ_SIZE {
                     size_class::good_size(
                         request,
                         allocator.page_map.memory_config().page_size().bytes(),
                     )
                     .unwrap()
                 } else {
-                    allocator.page_map.memory_config().good_alloc_size(request)
+                    allocator.page_map.memory_config().good_alloc_size(padded_request)
                 };
-                let expected_kind = size_class::page_kind_for_block_size(expected_usable).unwrap();
+                let expected_kind = size_class::page_kind_for_block_size(expected_block_size).unwrap();
                 let expected_slices = match expected_kind {
                     PageKind::Small | PageKind::Medium | PageKind::Large => {
                         page::regular_page_slice_count(expected_kind).unwrap()
                     }
-                    PageKind::Singleton => page::singleton_page_slice_count(expected_usable, allocator.page_map.memory_config().page_size()).unwrap(),
+                    PageKind::Singleton => page::singleton_page_slice_count(expected_block_size, allocator.page_map.memory_config().page_size()).unwrap(),
                 };
+                // A trailing padding record reports the logical request
+                // extent; page geometry still uses the full rounded stride.
+                let expected_usable = if PADDING_SIZE == 0 { expected_block_size } else { request };
                 assert_eq!(unsafe { allocator.usable_size(block) }, Some(expected_usable));
                 let (start, size, block_size) = mapped_span(allocator, block, expected_kind);
                 assert_eq!(size, expected_slices * ARENA_SLICE_SIZE);
-                assert_eq!(block_size, expected_usable);
+                assert_eq!(block_size, expected_block_size);
                 starts[start_count] = start;
                 start_count += 1;
                 // SAFETY: each boundary allocation remains live exactly until
