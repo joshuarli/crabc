@@ -3573,6 +3573,16 @@ unsafe fn native_child_destroy_tracking(
 ) -> Result<&'static mut [usize], NativeSubprocessError> {
     let slot = unsafe { &mut *(*record.as_ptr()).destroy_state.get() };
     if slot.is_none() {
+        // Assigning typed None directly stages the full inactive arena payload
+        // on an unoptimized stack. Copy its immutable typed prototype into
+        // final storage instead; the full copy runs only for the first scratch
+        // header and carries no retained arena owner or tracking borrow.
+        struct EmptyNativeChildArenaPending(Option<crate::arena::DestroyedArenas<'static>>);
+        // SAFETY: the sole instance is immutable None and is only read as a
+        // prototype. No operation can populate or expose its inactive payload.
+        unsafe impl Sync for EmptyNativeChildArenaPending {}
+        static EMPTY_NATIVE_CHILD_ARENA_PENDING: EmptyNativeChildArenaPending = EmptyNativeChildArenaPending(None);
+
         let words = child.with_child_image(|image| unsafe {
             image.identity().arena_backing().terminal_tracking_words()
         }).ok_or(NativeSubprocessError::Retained)?
@@ -3589,11 +3599,18 @@ unsafe fn native_child_destroy_tracking(
         // Parent metadata guarantees ordinary word alignment; this exact
         // fresh capability receives a complete header before publication.
         assert_eq!(state.as_ptr().addr() % core::mem::align_of::<NativeChildArenaDestroyState>(), 0);
-        // The header has no Drop, so these raw place assignments read no
+        // The header has no Drop, so these raw field initializations read no
         // previous image. Both fields reach final storage before publication;
         // no fallible operation or callback runs between their initialization.
         unsafe {
-            *core::ptr::addr_of_mut!((*state.as_ptr()).pending) = None;
+            // The typed prototype has the exact pending-field representation.
+            // Its immutable storage is disjoint from this fresh parent-issued
+            // allocation; the raw destination forms no uninitialized reference.
+            core::ptr::copy_nonoverlapping(
+                core::ptr::addr_of!(EMPTY_NATIVE_CHILD_ARENA_PENDING.0),
+                core::ptr::addr_of_mut!((*state.as_ptr()).pending),
+                1,
+            );
             *core::ptr::addr_of_mut!((*state.as_ptr()).words) = words;
         }
         *slot = Some(allocation);
