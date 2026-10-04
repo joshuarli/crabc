@@ -77,10 +77,11 @@ Update this small section in place when the implementation frontier changes.
   A large opt0 child-header staging image remains. Rejected transport and
   size-class trials are restored; compiler gains do not establish timing gains.
 - **Verification:** merged source passes all nine compiler profiles and focused
-  allocation, guard, ownership, metadata and worker regressions. The geometry
-  test now distinguishes padded client usable size from physical block stride
-  and applies padding at the huge-bin boundary; its original failed expectations
-  remain retained. The frozen inventory remains 223 capabilities and 26 families.
+  allocation, guard, ownership, metadata and worker regressions. Geometry and
+  aligned tests distinguish padded client usable size from physical block stride;
+  geometry expectations apply padding at the huge-bin boundary. Original failed
+  expectations remain retained. The frozen inventory remains 223 capabilities and
+  26 families.
   Historical compatibility, header, std/LTO, unwind and Lua components retain
   original source/product identities; changed products require fresh evidence.
   Component checks do not establish full release qualification. Installed
