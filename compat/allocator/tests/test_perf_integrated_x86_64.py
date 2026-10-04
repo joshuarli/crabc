@@ -7,11 +7,13 @@ replaced where a test is not about it.
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,6 +58,57 @@ def synthetic_integrated(mi_malloc_version: int = 30500, backend: str = "pinned-
 
 
 class IntegratedBuildTests(unittest.TestCase):
+    def test_full_preparation_settles_before_host_measurement(self) -> None:
+        for full, load, expected in (
+                (True, 1.13, ["products", "programs", "load", "sleep", "start"]),
+                (True, engine.UNCONTENDED_START_LOAD1_MAX, ["products", "programs", "load", "start"]),
+                (True, 0.1, ["products", "programs", "load", "start"]),
+                (False, 1.13, ["products", "programs", "start"])):
+            with self.subTest(full=full, load=load), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+                events = []
+                work = Path(directory)
+                products = {kind: {lane: work / kind / lane for lane in engine.LANES}
+                            for kind in ("static", "dynamic")}
+                arguments = argparse.Namespace(full=full, label="settle-test", reuse_products=False,
+                                               cpus="0,1,2,3", timeout=1)
+
+                def prepared_products(*args, **kwargs):
+                    events.append("products")
+                    return products
+
+                def prepared_programs(*args, **kwargs):
+                    events.append("programs")
+                    return {"records": {}}
+
+                def current_load():
+                    events.append("load")
+                    return (load, 0.1, 0.1)
+
+                def pause(seconds):
+                    self.assertEqual(seconds, 60)
+                    events.append("sleep")
+
+                def start(cpus):
+                    events.append("start")
+                    raise RuntimeError("stop before workload execution")
+
+                with ExitStack() as mocks:
+                    mocks.enter_context(patch.object(integrated, "WORK_ROOT", work))
+                    mocks.enter_context(patch.object(integrated, "source_seal", return_value={}))
+                    mocks.enter_context(patch.object(integrated, "c_reference", return_value={}))
+                    mocks.enter_context(patch.object(integrated, "build_products", side_effect=prepared_products))
+                    mocks.enter_context(patch.object(integrated, "build_programs", side_effect=prepared_programs))
+                    mocks.enter_context(patch.object(engine.shared, "require_native_x86_64", return_value={}))
+                    for name in ("git_provenance", "host_provenance", "tool_versions", "file_record"):
+                        mocks.enter_context(patch.object(engine, name, return_value={}))
+                    mocks.enter_context(patch.object(engine, "choose_cpus", return_value=[0, 1, 2, 3]))
+                    mocks.enter_context(patch.object(integrated.os, "getloadavg", side_effect=current_load))
+                    mocks.enter_context(patch("time.sleep", side_effect=pause))
+                    mocks.enter_context(patch.object(engine, "host_record_start", side_effect=start))
+                    with self.assertRaisesRegex(RuntimeError, "stop before workload execution"):
+                        integrated.run(arguments)
+                self.assertEqual(events, expected)
+
     def test_selected_oracle_probe_preserves_the_engine_default_and_version_key(self) -> None:
         compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
         with patch.object(engine, "command_record", return_value={"status": 0, "stdout": "version"}) as command:

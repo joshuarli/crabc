@@ -39,6 +39,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -368,6 +369,11 @@ def run(arguments: argparse.Namespace) -> Path:
     report["c_reference"] = c_reference(products)
     programs = build_programs(manifest, products, work)
     report["programs"] = programs["records"]
+    # Product preparation can leave the one-minute host load above the
+    # qualification ceiling. Give that activity one bounded settling interval;
+    # the unchanged host reader still refuses any remaining contention.
+    if arguments.full and os.getloadavg()[0] > engine.UNCONTENDED_START_LOAD1_MAX:
+        time.sleep(60)
     with tempfile.TemporaryDirectory(prefix="crabc-integrated-perf-", dir=work) as temporary:
         scratch = Path(temporary)
         host_evidence = engine.host_record_start(measurement_cpus)
