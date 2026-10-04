@@ -4929,6 +4929,40 @@ impl Page {
         }
     }
 
+    /// Publishes the primary owner of an initialized secondary metadata slot.
+    /// Ordinary alias fields retain their source image; only `self` changes.
+    ///
+    /// # Safety
+    /// `slot` names the initialized atomic `self` field in committed, retained
+    /// separate page metadata. The caller owns the corresponding arena slice
+    /// claim and excludes any conflicting live primary or alias publication.
+    /// `owner` is its initialized, address-stable primary Page and remains live
+    /// while a current client can look up this slot. The caller computes the
+    /// exact source alias span before publication; this grants no release right.
+    #[inline]
+    pub(crate) unsafe fn publish_aligned_alias_owner_at(
+        slot: NonNull<Page>, owner: NonNull<Page>,
+    ) {
+        // SAFETY: the claim retains this initialized atomic subobject and
+        // authorizes its source Release publication, without borrowing Page.
+        unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
+            .store(owner.as_ptr(), core::sync::atomic::Ordering::Release);
+    }
+
+    /// Reads only the primary owner atomic of a live aligned metadata slot.
+    ///
+    /// # Safety
+    /// The caller retains the committed slot backing and its initialized
+    /// `self` atomic through this read. A current allocation or the source
+    /// owner operation separately keeps the returned primary Page live;
+    /// the loaded pointer itself supplies no lifetime or release authority.
+    #[inline]
+    pub(crate) unsafe fn aligned_alias_owner_at(slot: NonNull<Page>) -> *mut Page {
+        // SAFETY: only the retained initialized atomic field is projected.
+        unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
+            .load(core::sync::atomic::Ordering::Acquire)
+    }
+
     /// Initializes one secondary `_mi_aligned_ptr_page0` metadata slot.
     ///
     /// The slot is a lookup alias, not an allocator page: every field remains
@@ -4949,10 +4983,9 @@ impl Page {
         // SAFETY: the caller supplies uninitialized/exclusively reusable slot
         // storage; writing a complete valid image precedes all observation.
         unsafe { slot.as_ptr().write(Self::empty_aligned_alias()) };
-        // SAFETY: the preceding write initialized the complete `Page` image
-        // and the caller retains exclusive publication rights to its atomic.
-        unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
-            .store(owner.as_ptr(), core::sync::atomic::Ordering::Release);
+        // SAFETY: the preceding write initialized the complete alias image;
+        // its exclusive slot and retained primary satisfy owner publication.
+        unsafe { Self::publish_aligned_alias_owner_at(slot, owner) };
     }
 
     /// Clears one secondary aligned-metadata alias before mapping release.
@@ -13977,6 +14010,21 @@ mod tests {
         // SAFETY: the alias no longer names the primary, so a second clear is
         // rejected without changing any ownership state.
         assert!(!unsafe { Page::clear_aligned_alias_at(alias, primary) });
+
+        // Inactive separate arena metadata can retain ordinary fields from a
+        // retired page. Source secondary publication updates only its owner.
+        // SAFETY: both initialized stack pages remain exclusive and stable;
+        // the earlier shared alias projection ends before these field writes.
+        unsafe {
+            core::ptr::addr_of_mut!((*alias.as_ptr()).page_offset).write(128);
+            core::ptr::addr_of_mut!((*alias.as_ptr()).capacity).write(7);
+            Page::publish_aligned_alias_owner_at(alias, primary);
+            assert_eq!(Page::aligned_alias_owner_at(alias), primary.as_ptr());
+            assert_eq!(core::ptr::addr_of!((*alias.as_ptr()).page_offset).read(), 128);
+            assert_eq!(core::ptr::addr_of!((*alias.as_ptr()).capacity).read(), 7);
+            assert!(Page::clear_aligned_alias_at(alias, primary));
+            assert!(Page::aligned_alias_owner_at(alias).is_null());
+        }
     }
 
     #[test]
