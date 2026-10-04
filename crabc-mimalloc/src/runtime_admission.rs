@@ -109,9 +109,9 @@ fn take_fork_test_fault(fault: NativeAllocatorForkTestFault) -> bool {
 ///
 /// Entry is one side of a Dekker handshake: it stores `entered` and then
 /// loads the epoch, while a closing writer stores the epoch and then loads
-/// every `entered`. Each side needs StoreLoad ordering. A symmetric SeqCst
-/// store is a locked `xchg` on every allocation and free; pinned mimalloc's
-/// local path takes no atomic read-modify-write on owner-local state. On
+/// every `entered`. Each side needs StoreLoad ordering. On x86, symmetric SeqCst
+/// publication emits a locked atomic operation on every allocation and free;
+/// pinned mimalloc's local path takes no atomic read-modify-write on owner-local state. On
 /// targets that select it, once the process is registered for
 /// `MEMBARRIER_CMD_PRIVATE_EXPEDITED`, the rare writer instead supplies the
 /// full barrier on every running thread of
@@ -119,7 +119,7 @@ fn take_fork_test_fault(fault: NativeAllocatorForkTestFault) -> bool {
 /// fence between its store and load. This is decided once, during
 /// single-threaded startup in [`register_initial_descriptor`] before any
 /// descriptor is registered, and stays fixed; the registration survives
-/// `fork`. Native x86 keeps the symmetric SeqCst store: registering the
+/// `fork`. Native x86 keeps symmetric SeqCst publication: registering the
 /// process here changes the observable membarrier state before executable
 /// preinit and in forked children. Other targets retain the asymmetric
 /// selection and its symmetric fallback if registration is refused.
@@ -127,7 +127,7 @@ static ASYMMETRIC_ENTRY_FENCE: AtomicBool = AtomicBool::new(false);
 
 /// Selects the entry fence once, before the initial descriptor is published.
 /// Native x86 must leave process-private expedited membarrier unregistered
-/// until an application explicitly registers it; the symmetric entry store
+/// until an application explicitly registers it; symmetric entry publication
 /// supplies the StoreLoad ordering needed by the closing writer.
 fn select_asymmetric_entry_fence() {
     #[cfg(not(target_arch = "x86_64"))]
@@ -298,8 +298,10 @@ impl NativeAllocatorOperationGuard {
             #[cfg(target_arch = "x86_64")]
             {
                 // The closing writer's SeqCst epoch store and entered scan
-                // pair with this SeqCst store and the following epoch load.
-                record.entered.store(true, Ordering::SeqCst);
+                // pair with this SeqCst publication and the following epoch
+                // load. OR with true publishes the same flag; its previous
+                // value is unused, and the full StoreLoad ordering is retained.
+                let _ = record.entered.fetch_or(true, Ordering::SeqCst);
             }
             #[cfg(not(target_arch = "x86_64"))]
             {
@@ -1440,7 +1442,7 @@ mod tests {
     #[test]
     fn entry_never_overlaps_a_completed_writer_drain() {
         // Entry and writer need a StoreLoad handshake. The symmetric protocol
-        // uses a SeqCst entry store; the asymmetric protocol uses a compiler
+        // uses SeqCst entry publication; the asymmetric protocol uses a compiler
         // fence and an expedited writer barrier. Each round releases one
         // entry and one terminal writer together, the store-buffering race
         // that a missing barrier loses.
