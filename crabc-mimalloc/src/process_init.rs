@@ -1250,6 +1250,11 @@ impl ProcessMainInitializationStorage {
         Ok(ProcessMainReadyLease {
             storage: self,
             page_map,
+            // SAFETY: READY Acquire publishes this permanent immutable slot;
+            // the constructor checked its value against the offered config.
+            #[cfg(target_arch = "x86_64")]
+            config: unsafe { (*self.config.get()).assume_init_ref() },
+            #[cfg(not(target_arch = "x86_64"))]
             config,
             subprocess,
         })
@@ -2697,7 +2702,13 @@ impl ProcessMainAllocationLease {
             return Err(ProcessMainInitError::Initializing);
         }
         Ok(ProcessMainReadyLease {
-            storage: self.storage, config: self.config,
+            storage: self.storage,
+            // SAFETY: this lease already binds the immutable process tuple,
+            // and the READY Acquire above publishes its permanent config slot.
+            #[cfg(target_arch = "x86_64")]
+            config: unsafe { (*self.storage.config.get()).assume_init_ref() },
+            #[cfg(not(target_arch = "x86_64"))]
+            config: self.config,
             subprocess: self.subprocess, page_map: self.page_map,
         })
     }
@@ -2712,6 +2723,12 @@ impl ProcessMainAllocationLease {
 pub(crate) struct ProcessMainReadyLease {
     storage: &'static ProcessMainInitializationStorage,
     page_map: ProcessPageMapRoot,
+    // READY publishes one immutable process-lifetime configuration. Borrowing
+    // its final slot keeps repeated owner capture from transporting its full
+    // image before an operation actually requests the configuration value.
+    #[cfg(target_arch = "x86_64")]
+    config: &'static MemoryConfig,
+    #[cfg(not(target_arch = "x86_64"))]
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
 }
@@ -2787,6 +2804,9 @@ impl ProcessMainReadyLease {
             // SAFETY: READY published this exact process-static map owner;
             // only its normal entry is revoked, not the owner storage itself.
             page_map_storage: unsafe { page_map_storage.as_ref() },
+            #[cfg(target_arch = "x86_64")]
+            config: *self.config,
+            #[cfg(not(target_arch = "x86_64"))]
             config: self.config,
         })
     }
@@ -2813,7 +2833,10 @@ impl ProcessMainReadyLease {
     #[inline]
     pub(crate) fn memory_config(self) -> Result<MemoryConfig, ProcessMainInitError> {
         self.ensure_ready()?;
-        Ok(self.config)
+        #[cfg(target_arch = "x86_64")]
+        { Ok(*self.config) }
+        #[cfg(not(target_arch = "x86_64"))]
+        { Ok(self.config) }
     }
 
     #[inline]
@@ -2866,11 +2889,17 @@ impl ProcessMainReadyLease {
         Ok(self.subprocess.arena_backing())
     }
 
+    // Both constructors bind the exact immutable configuration, subprocess,
+    // and PageMap tuple before issuing this lease. On x86 only the state can
+    // subsequently revoke that authority; reloading the tuple cannot observe
+    // a replacement. Keep the Acquire on every projection so callbacks and
+    // terminal sealing cannot leave a copied lease admitted afterward.
     #[inline]
     fn ensure_ready(self) -> Result<(), ProcessMainInitError> {
         if self.storage.state.load(Ordering::Acquire) != READY {
             return Err(ProcessMainInitError::Retained);
         }
+        #[cfg(not(target_arch = "x86_64"))]
         if self.storage.config() != self.config
             || !core::ptr::eq(
                 self.storage.subprocess.load(Ordering::Acquire),
@@ -3688,6 +3717,12 @@ mod tests {
 
             owner.teardown().expect("the bounded ticket-zero owner tears down");
             assert!(matches!(ready.root(), Err(ProcessMainInitError::Retained)));
+            assert!(matches!(ready.memory_config(), Err(ProcessMainInitError::Retained)));
+            assert!(matches!(ready.subprocess(), Err(ProcessMainInitError::Retained)));
+            assert!(matches!(ready.page_map(), Err(ProcessMainInitError::Retained)));
+            assert!(matches!(ready.process_backing(), Err(ProcessMainInitError::Retained)));
+            #[cfg(target_arch = "x86_64")]
+            assert!(matches!(ready.diagnostic_output(), Err(ProcessMainInitError::Retained)));
         })
         .join()
         .expect("process-main initialization test thread completes");
@@ -4643,6 +4678,10 @@ mod tests {
             assert!(matches!(
                 storage.ready_lease(different_config, subprocess),
                 Err(ProcessMainInitError::ConfigurationMismatch)
+            ));
+            assert!(matches!(
+                storage.ready_lease(config, MainSubprocess::test_static_owner()),
+                Err(ProcessMainInitError::SubprocessMismatch)
             ));
             assert_eq!(subprocess.total_thread_count(), 1);
             owner.teardown().expect("the first owner still owns teardown");
