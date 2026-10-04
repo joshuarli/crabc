@@ -6222,7 +6222,7 @@ impl SourceInitializationOutputWitness<'_, '_, '_> {
         { return Err(Error::OriginMismatch); }
         let entry = self.issuer.allocator.enter().map_err(Error::Metadata)?;
         if !matches!(entry.status(), BOUND | READY) { return Err(Error::OriginMismatch); }
-        entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess).map_err(Error::Metadata)?;
+        entry.validate_bound_tuple(&self.issuer.config, self.issuer.subprocess).map_err(Error::Metadata)?;
         // SAFETY: this short entry serializes immutable backing selection.
         // The copied binding retains the actual process map; no projection
         // survives this validation or a later output callback.
@@ -6246,7 +6246,7 @@ impl SourceInitializationOutputWitness<'_, '_, '_> {
         let mut entry = self.issuer.allocator.enter()
             .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
         if entry.status() != READY { return Ok(None); }
-        entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess)
+        entry.validate_bound_tuple(&self.issuer.config, self.issuer.subprocess)
             .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
         Ok(entry.allocator().take_pending_fresh_initialization())
     }
@@ -6261,7 +6261,7 @@ impl SourceInitializationOutputWitness<'_, '_, '_> {
         let mut entry = self.issuer.allocator.enter()
             .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
         if entry.status() != READY { return Ok(None); }
-        entry.validate_bound_tuple(self.issuer.config, self.issuer.subprocess)
+        entry.validate_bound_tuple(&self.issuer.config, self.issuer.subprocess)
             .map_err(SourceInitializationOutputAdmissionError::Metadata)?;
         Ok(entry.allocator().take_pending_live_page_validity())
     }
@@ -6317,7 +6317,7 @@ impl<'owner> MetaAllocatorBound<'owner> {
         if !scope.matches_subprocess(self.subprocess) { return Err(Error::OriginMismatch); }
         let entry = self.allocator.enter().map_err(Error::Metadata)?;
         if !matches!(entry.status(), BOUND | READY) { return Err(Error::OriginMismatch); }
-        entry.validate_bound_tuple(self.config, self.subprocess).map_err(Error::Metadata)?;
+        entry.validate_bound_tuple(&self.config, self.subprocess).map_err(Error::Metadata)?;
         // SAFETY: the original metadata entry excludes selection changes;
         // these copies retain the actual already selected process backing.
         let backing = unsafe { *self.allocator.get_ref().process_backing.get() }
@@ -6552,7 +6552,7 @@ impl<'owner> MetadataEngine<'owner> {
             return Err(MetaError::SubprocessMismatch);
         }
         let mut entry = self.enter()?;
-        entry.ensure_bound(config, subprocess)?;
+        entry.ensure_bound(&config, subprocess)?;
         Ok(MetaAllocatorBound {
             allocator: self,
             config,
@@ -6698,7 +6698,7 @@ impl<'owner> MetadataEngine<'owner> {
         // Startup owns the final source image; no prior metadata allocation
         // or source identity is silently migrated to the canonical Heap.
         unsafe { *self.get_ref().canonical_heap.get() = Some(foundation.metadata_heap()); }
-        entry.ensure_bound(config, subprocess)?;
+        entry.ensure_bound(&config, subprocess)?;
         Ok(MetaAllocatorBound { allocator: self, config, subprocess })
     }
 
@@ -6871,7 +6871,7 @@ impl<'owner> MetadataEngine<'owner> {
         let config = page_map.memory_config().map_err(|_| MetaError::InitializationFailed)?;
         let mut entry = self.enter()?;
         entry.ensure_bound(
-            config,
+            &config,
             process.main_subprocess().ok_or(MetaError::SubprocessMismatch)?,
         )?;
         // SAFETY: this owner creates only disjoint fresh page ranges and
@@ -6992,7 +6992,7 @@ impl<'owner> MetadataEngine<'owner> {
     ) -> Result<MetaAllocation<'owner>, MetaError> {
         self.require_published_detached_metadata_theap(subprocess)?;
         let mut entry = self.enter_for_main_subprocess(subprocess)?;
-        entry.ensure_ready(config, subprocess)?;
+        entry.ensure_ready(&config, subprocess)?;
         #[cfg(test)]
         if size != 0
             && self
@@ -7095,7 +7095,7 @@ impl<'owner> MetadataEngine<'owner> {
         }
         self.require_published_detached_metadata_theap(subprocess)?;
         let mut entry = self.enter_for_main_subprocess(subprocess)?;
-        entry.ensure_ready(config, subprocess)?;
+        entry.ensure_ready(&config, subprocess)?;
         #[cfg(test)]
         if size != 0 && self.fail_next_aligned_zeroed_size.load(Ordering::Acquire) == size {
             let attempts = self.fail_aligned_zeroed_size_attempts.fetch_update(
@@ -7194,7 +7194,7 @@ impl<'owner> MetadataEngine<'owner> {
 
         let (replacement, copy_size) = {
             let mut entry = self.enter_for_main_subprocess(subprocess)?;
-            entry.ensure_ready(config, subprocess)?;
+            entry.ensure_ready(&config, subprocess)?;
             if !old.claim(ALLOCATION_LIVE, ALLOCATION_MOVING)
                 || !old.has_consistent_malloc_provenance()
             {
@@ -7697,7 +7697,7 @@ impl<'owner> MetadataEngine<'owner> {
     fn initialize_backing(
         self: Pin<&'owner Self>,
         entry: &mut MetaEntry<'_, 'owner>,
-        config: MemoryConfig,
+        config: &MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
@@ -7710,7 +7710,7 @@ impl<'owner> MetadataEngine<'owner> {
             }
             return self.initialize_process_backing(backing);
         }
-        self.initialize_legacy_backing(entry, config, subprocess)
+        self.initialize_legacy_backing(entry, *config, subprocess)
     }
 
     /// Activates the explicit process-backed session without reserving its
@@ -8012,14 +8012,14 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
     /// arena, or allocator projection available.
     fn ensure_bound(
         &mut self,
-        config: MemoryConfig,
+        config: &MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError>
     where
         'borrow: 'owner,
     {
         match self.status() {
-            COLD => self.owner.bind_empty_detached_identity(config, subprocess),
+            COLD => self.owner.bind_empty_detached_identity(*config, subprocess),
             BOUND | READY => self.validate_bound_tuple(config, subprocess),
             FAILED => Err(MetaError::InitializationRetained),
             _ => Err(MetaError::InitializationRetained),
@@ -8030,7 +8030,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
     #[cfg_attr(target_arch = "x86_64", inline(never))]
     fn ensure_ready(
         &mut self,
-        config: MemoryConfig,
+        config: &MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError>
     where
@@ -8049,12 +8049,12 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
 
     fn validate_bound_tuple(
         &self,
-        config: MemoryConfig,
+        config: &MemoryConfig,
         subprocess: &'static MainSubprocess,
     ) -> Result<(), MetaError> {
         // SAFETY: BOUND Release-publishes this immutable tuple before the
         // current held lock can observe it; READY retains the same tuple.
-        let stored = unsafe { self.owner.get_ref().config.get().read().assume_init() };
+        let stored = unsafe { (*self.owner.get_ref().config.get()).assume_init_ref() };
         if stored != config {
             return Err(MetaError::ConfigurationMismatch);
         }
@@ -8082,7 +8082,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
         if self.status() != READY {
             return Err(MetaError::InitializationRetained);
         }
-        self.validate_bound_tuple(config, subprocess)
+        self.validate_bound_tuple(&config, subprocess)
     }
 
     #[inline]
