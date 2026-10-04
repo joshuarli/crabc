@@ -134,7 +134,14 @@ rejects ambient header/CRT/library search, linker injection, libgcc,
 compiler-rt, loader, and dynamic-mode flags before translating or linking.
 Receipt-bearing links accept only caller-owned object inputs, reserve their
 JSON/map/trace sidecars before linking, and reject output aliases of those
-sidecars or any installed-tree path. The source translator remains a
+sidecars or any installed-tree path. Receipt output, map, trace, and application
+input paths identify physical files: relative paths resolve from the receipt's
+parent directory, never the invocation's working directory. The driver records
+relative invocation paths below that directory relative to it; paths outside
+it and absolute inputs are recorded as physical absolute paths, avoiding
+lexical parent traversal. The resolved linker is always physical and absolute.
+Runtime input roster paths retain their distinct installed-sysroot-relative
+meaning. The source translator remains a
 fixed-image development-environment tool; it is not a target runtime input.
 When an admitted source request enables GCC debug information with `-g`, the
 helper passes `-gz=none` unless that exact option is already present. This

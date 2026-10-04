@@ -1155,6 +1155,50 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             finally:
                 os.chdir(original_cwd)
 
+    def test_static_driver_nested_receipt_paths_resolve_from_receipt_directory(self) -> None:
+        """A nested receipt identifies the same files after the invocation ends."""
+
+        sys.path.insert(0, str(ROOT / "compat/x86_64"))
+        import owned_posix_product_evidence as evidence
+
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            workspace = Path(temporary)
+            root = workspace / "sysroot"
+            self.materialize_static_driver_sysroot(root)
+            (workspace / "nested/evidence").mkdir(parents=True)
+            (workspace / "objects").mkdir()
+            application = workspace / "objects/application.o"
+            self.write_elf64_relocatable(application)
+            linker = workspace / "ld.lld"
+            linker.write_bytes(b"linker")
+            output = workspace / "nested/application"
+            output.write_bytes(b"ordinary output")
+            receipt = Path("nested/evidence/link.json")
+            previous = Path.cwd()
+            try:
+                os.chdir(workspace)
+                map_path = receipt.with_suffix(".map")
+                trace_path = receipt.with_suffix(".trace")
+                map_path.write_bytes(b"ordinary map")
+                trace_path.write_bytes(b"ordinary trace")
+                driver.write_link_receipt(
+                    root, driver.STATIC_ET_EXEC, [Path("objects/application.o")],
+                    Path("nested/application"), linker, receipt, map_path, trace_path,
+                )
+            finally:
+                os.chdir(previous)
+            receipt = workspace / receipt
+            record = json.loads(receipt.read_text())
+            for field, expected in (("output", output), ("map", receipt.with_suffix(".map")),
+                                    ("trace", receipt.with_suffix(".trace")), ("resolved_linker", linker)):
+                with self.subTest(field=field):
+                    evidence._check_file_record(record[field], receipt, expected, field)
+            self.assertEqual(evidence._recorded_file(record["input_receipts"][-1]["path"],
+                                                    receipt, "application"), application)
+            self.assertEqual(record["input_receipts"][0]["path"], "usr/lib/crt1.o")
+
     def test_static_driver_receipt_trace_requires_exact_owned_and_admitted_inputs(self) -> None:
         """A receipt cannot attest a link whose trace reached an ambient input."""
 

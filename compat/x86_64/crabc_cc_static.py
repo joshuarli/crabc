@@ -909,7 +909,24 @@ def validate_link_trace(
         raise DriverError(f"owned static link trace omitted expected input: {missing[0]}")
 
 
-def receipt_input_records(root: Path, mode: StaticMode, applications: Sequence[Path]) -> list[dict[str, str]]:
+def receipt_file_path(path: Path, receipt: Path) -> str:
+    """Record relative files below the receipt directory without parent traversal.
+
+    Absolute inputs retain physical absolute paths. Other files outside the
+    receipt directory require absolute paths because receipt readers reject
+    lexical parent traversal.
+    """
+
+    physical = resolved_path(path, "link receipt file")
+    if not path.is_absolute():
+        try:
+            return str(physical.relative_to(resolved_path(receipt.parent, "link receipt directory")))
+        except ValueError:
+            pass
+    return str(physical)
+
+
+def receipt_input_records(root: Path, mode: StaticMode, applications: Sequence[Path], receipt: Path) -> list[dict[str, str]]:
     """Hash the exact target inputs consumed by one sealed static link."""
 
     library = root / "usr" / "lib"
@@ -931,7 +948,7 @@ def receipt_input_records(root: Path, mode: StaticMode, applications: Sequence[P
     records.extend(
         {
             "role": "application",
-            "path": str(path),
+            "path": receipt_file_path(path, receipt),
             "sha256": sha256_file(path),
         }
         for path in applications
@@ -966,14 +983,14 @@ def write_link_receipt(
             "interpreter": "absent",
         },
         "resolved_linker": {
-            "path": str(linker_path),
+            "path": str(resolved_path(linker_path, "resolved linker")),
             "sha256": sha256_file(linker_path),
         },
         "owned_link_contract": owned_link_plan(root, mode),
-        "input_receipts": receipt_input_records(root, mode, applications),
-        "output": {"path": str(output), "sha256": sha256_file(output)},
-        "map": {"path": str(map_path), "sha256": sha256_file(map_path)},
-        "trace": {"path": str(trace_path), "sha256": sha256_file(trace_path)},
+        "input_receipts": receipt_input_records(root, mode, applications, receipt),
+        "output": {"path": receipt_file_path(output, receipt), "sha256": sha256_file(output)},
+        "map": {"path": receipt_file_path(map_path, receipt), "sha256": sha256_file(map_path)},
+        "trace": {"path": receipt_file_path(trace_path, receipt), "sha256": sha256_file(trace_path)},
     }
     try:
         with receipt.open("x", encoding="utf-8", newline="\n") as stream:
