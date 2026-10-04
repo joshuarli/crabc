@@ -230,7 +230,9 @@ for line in trace:
                       if line == archive or (line.startswith(archive + "(") and line.endswith(")"))))
     else:
         fail(f"trace escaped the owned inputs: {line}")
-if seen != direct_inputs | archives:
+# LLD reports archive members only when extracted. The builtins archive is
+# still bound by the declared link vector and input digest even when unused.
+if not direct_inputs | {str(library / "libc.a")} <= seen:
     fail("trace omitted an owned or workload input")
 map_text = receipt_path.with_suffix(".map").read_text(encoding="utf-8")
 for pattern in (r"/opt/musl-", r"/usr/lib/(gcc|clang)", r"/lib/ld-",

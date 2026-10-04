@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -249,6 +252,140 @@ class OwnedProcessControlTests(unittest.TestCase):
                     self.assertEqual(output.read_text(), "raw stdout\n")
                     self.assertEqual(output.with_suffix(".stderr").read_text(), "raw stderr\n")
                     self.assertEqual(output.with_suffix(".status").read_text(), f"{status}\n")
+
+
+class StaticProcessReceiptTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.product = self.work / "product"
+        self.library = self.product / "usr/lib"
+        self.library.mkdir(parents=True)
+        for name in ("crt1.o", "rcrt1.o", "crti.o", "crtn.o", "libc.a", "libcrabc-builtins.a"):
+            (self.library / name).write_text(name)
+        manifest = self.product / "share/crabc/manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({
+            "format": "crabc-x86-64-owned-static-sysroot-v1",
+            "target": "x86_64-unknown-linux-musl",
+            "installed": {"files": {
+                path.relative_to(self.product).as_posix(): self.digest(path)
+                for path in self.library.iterdir()
+            }},
+        }))
+        self.object = self.work / "workload.o"
+        self.object.write_text("owned workload")
+        self.consumer = self.work / "consumer"
+        self.consumer.write_text("owned consumer")
+        self.linker = self.work / "ld.lld"
+        self.linker.write_text("resolved linker")
+        self.receipt = self.work / "consumer.receipt.json"
+        self.receipt.with_suffix(".map").write_text("owned link map")
+        Path(str(self.consumer) + ".segments").write_text("LOAD")
+        Path(str(self.consumer) + ".dynamic").write_text("no dynamic section")
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.checker = runner.split("<<'PY_STATIC'\n", 1)[1].split("\nPY_STATIC", 1)[0]
+
+    @staticmethod
+    def digest(path: Path) -> str:
+        return sha256(path.read_bytes()).hexdigest()
+
+    def make_receipt(self, mode: str, *, extract_builtins: bool = False) -> dict:
+        pie = mode == "static-pie"
+        entry = "rcrt1.o" if pie else "crt1.o"
+        runtime = list(zip(
+            ("crt-entry", "crt-prologue", "libc", "builtins", "crt-epilogue"),
+            (self.library / name for name in
+             (entry, "crti.o", "libc.a", "libcrabc-builtins.a", "crtn.o")),
+        ))
+        # LLD traces direct inputs and extracted archive members. An archive
+        # supplied on the link vector need not provide any referenced member.
+        self.trace = [str(self.library / entry), str(self.library / "crti.o"),
+                      str(self.object), str(self.library / "libc.a") + "(runtime.o)",
+                      str(self.library / "crtn.o")]
+        if extract_builtins:
+            self.trace.append(str(self.library / "libcrabc-builtins.a") + "(helper.o)")
+        Path(str(self.consumer) + ".header").write_text(
+            "Type: " + ("DYN" if pie else "EXEC") + " (owned)\n"
+            "Machine: Advanced Micro Devices X86-64\n"
+        )
+        return {
+            "schema": 1,
+            "format": "crabc-x86-64-sealed-static-driver-v1",
+            "target": "x86_64-unknown-linux-musl",
+            "mode": {"id": "static-pie" if pie else "static-et-exec",
+                     "elf_type": "ET_DYN" if pie else "ET_EXEC",
+                     "crt_object": entry, "interpreter": "absent"},
+            "input_receipts": [
+                {"role": role, "path": path.relative_to(self.product).as_posix(),
+                 "sha256": self.digest(path)} for role, path in runtime
+            ] + [{"role": "application", "path": str(self.object),
+                  "sha256": self.digest(self.object)}],
+            "resolved_linker": {"path": str(self.linker), "sha256": self.digest(self.linker)},
+            "owned_link_contract": [
+                "ld.lld", "-static", *(["-pie"] if pie else []),
+                "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
+                "-z", "relro", "-z", "now", "-e", "_start", str(self.library / entry),
+                str(self.library / "crti.o"), "<application-objects>",
+                str(self.library / "libc.a"), str(self.library / "libcrabc-builtins.a"),
+                str(self.library / "crtn.o"), "-o", "<output>",
+            ],
+            "output": {"path": str(self.consumer), "sha256": self.digest(self.consumer)},
+        }
+
+    def audit(self, mode: str, record: dict) -> subprocess.CompletedProcess:
+        self.receipt.with_suffix(".trace").write_text("\n".join(self.trace) + "\n")
+        for field, suffix in (("map", ".map"), ("trace", ".trace")):
+            sidecar = self.receipt.with_suffix(suffix)
+            record[field] = {"path": sidecar.name, "sha256": self.digest(sidecar)}
+        self.receipt.write_text(json.dumps(record))
+        return subprocess.run(
+            [sys.executable, "-B", "-", str(self.product), str(self.consumer), mode,
+             str(self.object), str(self.receipt)],
+            input=self.checker, capture_output=True, text=True, cwd=ROOT,
+        )
+
+    def test_unused_builtins_archive_remains_declared_without_extraction(self) -> None:
+        for mode in ("static", "static-pie"):
+            for extracted in (False, True):
+                with self.subTest(mode=mode, extracted=extracted):
+                    result = self.audit(mode, self.make_receipt(mode, extract_builtins=extracted))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_trace_requires_libc_and_every_direct_input(self) -> None:
+        for mode in ("static", "static-pie"):
+            for index in range(5):
+                with self.subTest(mode=mode, omitted=index):
+                    record = self.make_receipt(mode)
+                    del self.trace[index]
+                    result = self.audit(mode, record)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("trace omitted an owned or workload input", result.stderr)
+
+    def test_trace_rejects_an_undeclared_input(self) -> None:
+        record = self.make_receipt("static")
+        self.trace.append(str(self.work / "unexpected.a") + "(helper.o)")
+        result = self.audit("static", record)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("trace escaped the owned inputs", result.stderr)
+
+    def test_unused_builtins_still_requires_exact_declaration_and_hash(self) -> None:
+        for mutation in ("missing-record", "hash", "vector"):
+            with self.subTest(mutation=mutation):
+                record = self.make_receipt("static")
+                if mutation == "missing-record":
+                    del record["input_receipts"][3]
+                elif mutation == "hash":
+                    record["input_receipts"][3]["sha256"] = "0" * 64
+                else:
+                    record["owned_link_contract"].remove(str(self.library / "libcrabc-builtins.a"))
+                result = self.audit("static", record)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("receipt drifted" if mutation != "vector" else "link contract drifted",
+                              result.stderr)
 
 
 if __name__ == "__main__":
