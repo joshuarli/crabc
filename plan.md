@@ -58,7 +58,10 @@ Update this small section in place when the implementation frontier changes.
   Cold guarded allocation preserves the empty Theap's first sampling decision;
   cold oversized aligned refusal reports source EINVAL before process or thread
   initialization. Default and guarded regressions pass. Later READY sampling
-  and real attached-worker guarded allocation/growth controls pass.
+  and real attached-worker guarded allocation/growth controls pass. READY
+  admission borrows the permanent immutable configuration instead of copying
+  it. Fast-free decline retains its page under continuous admission in the
+  unchecked default profile; checked and secure profiles retain their walks.
 - **Compiler boundaries:** installed static and dynamic target dependencies use
   the selected initial-exec TLS model. Fresh dynamic allocator code uses direct
   TLS access while ordinary application dynamic TLS remains functional. Both
@@ -66,12 +69,17 @@ Update this small section in place when the implementation frontier changes.
   population-count caller witness applies only to its C provider. Ordinary
   static weak undefined metadata retains the existing narrow link-reader rule.
   Required admission synchronization and pinned allocator algorithms remain intact.
+  Merged aligned arithmetic, callback phase projection, child-header placement
+  and cold task construction reduce reached code or stack costs. A large opt0
+  child-header staging image remains. Rejected local-zeroing and bitmap-return
+  trials retain their original proofs without entering production.
 - **Verification:** current source passes all nine compiler profiles and focused
   cold allocation, guarded worker, ownership and child-header regressions.
   The frozen inventory remains 223 capabilities and 26 families. Historical
   compatibility, header, std/LTO, unwind and Lua component cohorts retain their
   original source/product identities; rebuild for changed products. Component
   checks and structural validation do not establish full release qualification.
+  Installed logarithm entries pass real pthread/fenv composition against musl.
 - **Performance:** the latest retained three agreeing engine measurements,
   at `8f8139534`, qualify physically but fail numerical promotion bounds.
   Suite throughput lower95 is 0.3297–0.3389 of pinned C; all ten critical
@@ -87,7 +95,11 @@ Update this small section in place when the implementation frontier changes.
   gates are ready, zero qualified. The `e66fab1a8` four-product preparation and
   independently reproduced packages remain under
   `.work/x86_64/reports/cohort159/`; they are not current qualification.
-  A fresh release cohort starts at `d294dd879`. C remains selected and public
+  The `d294dd879` cohort has independently reproduced static/dynamic C/native
+  packages and retained worker/TLS, resolver, Lua, std/LTO, POSIX and text/stdio
+  component results. Its frozen source and physical artifacts remain under
+  `.work/x86_64/reports/cohort170/source/`; partial components and subsequent
+  source changes prevent a full admission claim. C remains selected and public
   x86 support disabled. Baseline qualification, post-switch reruns and public
   promotion remain open.
 - **Evidence:** `.work/x86_64/reports/integrated-lanes/` retains settled lanes'
