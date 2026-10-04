@@ -22532,6 +22532,71 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
+    fn native_medium_arena_clients_retain_published_aligned_metadata_aliases() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_medium_arena_clients_retain_published_aligned_metadata_aliases",
+            || {
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                let mut clients = std::vec::Vec::new();
+                let mut aliases_observed = 0;
+                let mut missing_aliases = 0;
+                let mut allocation_failed = false;
+                let mut missing_registration = false;
+                let mut nonarena_client = false;
+                for _ in 0..16 {
+                    let NativePageAllocationResult::Allocated(client) =
+                        native_allocate_aligned(32 * 1024, 16, false)
+                    else { allocation_failed = true; break; };
+                    clients.push(client);
+                    // SAFETY: this ordinary client remains live, and the sole
+                    // thread samples between allocator operations. The generic
+                    // lookup retains its independent registration contract.
+                    let Some(page) = (unsafe { map.lookup_page_for_live_client(client) }).ok().flatten()
+                    else { missing_registration = true; continue; };
+                    // SAFETY: the quiescent exact client retains this immutable
+                    // arena provenance; there is no concurrent owner mutation.
+                    if unsafe { page.as_ref() }.memid().arena_memory().is_none() {
+                        nonarena_client = true;
+                        continue;
+                    }
+                    let prefix = client.as_ptr().addr() & !(crate::config::PAGE_META_ALIGNMENT - 1);
+                    let index = (client.as_ptr().addr() - prefix) / crate::config::ARENA_SLICE_SIZE;
+                    let slot_address = prefix + index * core::mem::size_of::<crate::types::Page>();
+                    if slot_address != page.as_ptr().addr() { aliases_observed += 1; }
+                    // SAFETY: the fresh anonymous arena's aligned metadata
+                    // prefix is committed and zero initialized before the page
+                    // is published. The exact live client pins that prefix.
+                    // Page's first field is the source atomic self pointer;
+                    // only that word is read, never an uninitialized Page image.
+                    let slot = page.as_ptr().cast::<u8>().map_addr(|_| slot_address)
+                        .cast::<*mut crate::types::Page>();
+                    let owner = unsafe { core::sync::atomic::AtomicPtr::from_ptr(slot) }
+                        .load(core::sync::atomic::Ordering::Acquire);
+                    if owner != page.as_ptr() { missing_aliases += 1; }
+                }
+                let mut all_freed = true;
+                for client in clients {
+                    // SAFETY: each exact client is still live and is consumed
+                    // once through the normal pointer-first source free.
+                    all_freed &= unsafe { native_free(client) } == NativePageFreeResult::Freed;
+                }
+                assert!(all_freed);
+                assert!(!allocation_failed);
+                assert!(!missing_registration);
+                assert!(!nonarena_client);
+                assert!(aliases_observed != 0);
+                assert_eq!(missing_aliases, 0, "every secondary slice must publish its primary owner");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
     fn live_client_geometry_tracks_initial_arena_capacity_and_os_page() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::live_client_geometry_tracks_initial_arena_capacity_and_os_page",
