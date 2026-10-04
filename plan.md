@@ -231,6 +231,21 @@ Update this small section in place when the implementation frontier changes.
   A real-owner opt0 regression fails before the correction and passes after it,
   including alternating countdown selection, sibling payloads and zeroed growth.
   Three existing guarded controls and nine compiler profiles also pass.
+  The native C boundary now fail-stops terminal nonnull `realloc` retention
+  after runtime cleanup; ordinary policy cases retain errno and retryable
+  client custody. Six installed policy modes and nine compiler profiles pass;
+  terminal ordering is established by source and emitted edges, without
+  reproducing terminal failure. Physical destruction constructs failed-arena
+  ownership directly in its retained slot, preserving partial custody after
+  commitment. Selected frame reservations fall from 66,752 to 9,176 bytes;
+  the valid empty-owner constant costs 15,360 bytes of rodata while executable
+  text shrinks 256 bytes. This is a storage tradeoff, not a code-size-bound pass.
+  Nine merged compiler profiles and six focused opt0 checks pass. Fresh core
+  fenv state/SIMD tests and the same final debug ELF's no-`fxrstor` check pass.
+  The native shared-helper placement runner admits its fresh product and all
+  forty private helpers, then refuses its C-only allocator caller predicate:
+  native population counting is emitted inline, with no `__popcountdi2`
+  transfer. That full native runner obligation remains open.
   Performance acceptance and complete correctness/codegen prerequisites remain
   open.
   Static target dependencies now compile with initial-exec TLS; the original

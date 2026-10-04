@@ -42,6 +42,10 @@ hidden process-CWD traversal policy.
 | Legacy PRNG | Only the provenance-preserving musl 1.2.6 `random`/`srandom`/`initstate`/`setstate` semantic port, including recurrence, seeding and state switching. Never security-sensitive randomness, entropy or allocator hardening. |
 
 Allocator evidence alone cannot establish runtime/public-platform support.
+In native x86 allocator products, a `realloc` operation that terminally retains
+ownership terminates the process after runtime cleanup. Ordinary failure still
+returns null with the original client live and unchanged; terminal retention
+cannot grant that client back to the caller.
 Keep exact C-v3.5.0 source as the native-engine oracle, preserve architecture-
 qualified evidence, and do not equate the currently accepted C provider with
 that oracle. Algorithmic changes require explicit source, differential and
