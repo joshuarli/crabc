@@ -447,22 +447,11 @@ impl StaticInitialTlsPlan {
                 if header.memory_size == 0 {
                     (core::ptr::null(), 0, 0, core::mem::align_of::<usize>())
                 } else {
-                    // A template with no initialized bytes is never read:
-                    // the block is zero-filled. Linkers give a `.tbss`-only
-                    // PT_TLS an address that no PT_LOAD need cover (LLD puts
-                    // it in the gap before the writable segment), as when a
-                    // static program replaces the whole malloc family and
-                    // the allocator's `.tdata` is not linked.
-                    if header.file_size != 0 && !unsafe {
-                        virtual_range_within_load(
-                            phdr_address,
-                            phnum,
-                            header.virtual_address,
-                            header.memory_size,
-                        )
-                    } {
-                        return None;
-                    }
+                    // Only the initialized prefix is read from the executable.
+                    // The TBSS tail is zero-filled in each separate TLS mapping,
+                    // so its memory extent need not fit any PT_LOAD, including
+                    // when the template also has initialized bytes. An entirely
+                    // zero-filled image requires no readable template range.
                     if header.file_size != 0
                         && !unsafe {
                             virtual_range_within_readable_file_load(
@@ -726,30 +715,11 @@ unsafe fn program_header_at(table: usize, index: usize) -> Option<ProgramHeader>
     })
 }
 
-unsafe fn virtual_range_within_load(
-    table: usize,
-    phnum: usize,
-    address: usize,
-    length: usize,
-) -> bool {
-    unsafe { virtual_range_within_load_kind(table, phnum, address, length, false) }
-}
-
 unsafe fn virtual_range_within_readable_file_load(
     table: usize,
     phnum: usize,
     address: usize,
     length: usize,
-) -> bool {
-    unsafe { virtual_range_within_load_kind(table, phnum, address, length, true) }
-}
-
-unsafe fn virtual_range_within_load_kind(
-    table: usize,
-    phnum: usize,
-    address: usize,
-    length: usize,
-    require_readable_file_data: bool,
 ) -> bool {
     let Some(end) = address.checked_add(length) else {
         return false;
@@ -761,15 +731,10 @@ unsafe fn virtual_range_within_load_kind(
         if header.kind != PT_LOAD || header.file_size > header.memory_size {
             continue;
         }
-        if require_readable_file_data && header.flags & PF_R == 0 {
+        if header.flags & PF_R == 0 {
             continue;
         }
-        let range_size = if require_readable_file_data {
-            header.file_size
-        } else {
-            header.memory_size
-        };
-        let Some(load_end) = header.virtual_address.checked_add(range_size) else {
+        let Some(load_end) = header.virtual_address.checked_add(header.file_size) else {
             return false;
         };
         if address >= header.virtual_address && end <= load_end {
