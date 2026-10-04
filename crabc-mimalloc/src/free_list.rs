@@ -378,13 +378,16 @@ impl LocalFreeList {
         let last = self.block_at(last_index)?;
 
         let mut index = first_index;
+        let mut block = first;
         while index < last_index {
-            let block = self.block_at(index)?;
             let next = self.block_at(index + 1)?;
             // SAFETY: `block` and `next` are distinct aligned block starts
             // within the uniquely owned backing allocation. This writes the
             // selected profile's source free-list link.
             unsafe { self.write_next(block, next.as_ptr()) };
+            // The checked successor is the next iteration's current block.
+            // Link writes cannot change its address or retained backing.
+            block = next;
             index += 1;
         }
         // SAFETY: `last` is the final initialized block. `free` is null by
