@@ -94,19 +94,24 @@ impl PreparedTlsView {
         } else {
             unsafe { ((*previous).dtv, (*previous).sizes, (*previous).module_count) }
         };
-        let count = modules.iter().map(|object| object.tls_module_id).max().unwrap_or(0);
-        if count < old_count { return None; }
-        let words = count.checked_add(1)?;
-        let header_bytes = core::mem::size_of::<RuntimeTlsView>();
-        let table_bytes = words.checked_mul(core::mem::size_of::<usize>())?;
-        let mut bytes = header_bytes.checked_add(table_bytes.checked_mul(2)?)?;
-        for module in modules.iter().filter(|module| module.tls_module_id > old_count) {
+        let mut count = 0usize;
+        let mut image_bytes = 0usize;
+        // Old module blocks remain in their original mappings. This pass
+        // determines the complete table population and reserves only new images.
+        for module in modules {
+            count = count.max(module.tls_module_id);
+            if module.tls_module_id <= old_count { continue; }
             if module.tls_memsz == 0 || module.tls_filesz > module.tls_memsz
                 || !module.tls_align.is_power_of_two()
                 || (module.tls_filesz != 0 && module.tls_image.is_null())
             { return None; }
-            bytes = bytes.checked_add(module.tls_align - 1)?.checked_add(module.tls_memsz)?;
+            image_bytes = image_bytes.checked_add(module.tls_align - 1)?.checked_add(module.tls_memsz)?;
         }
+        if count < old_count { return None; }
+        let words = count.checked_add(1)?;
+        let header_bytes = core::mem::size_of::<RuntimeTlsView>();
+        let table_bytes = words.checked_mul(core::mem::size_of::<usize>())?;
+        let bytes = header_bytes.checked_add(table_bytes.checked_mul(2)?)?.checked_add(image_bytes)?;
         if bytes > isize::MAX as usize { return None; }
         let mapped = unsafe { syscall6(SYS_MMAP, 0, bytes as i64,
             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
