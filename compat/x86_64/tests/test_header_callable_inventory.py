@@ -49,6 +49,22 @@ AUDIT = load_module("header_callable_linkage_audit_test", AUDIT_PATH)
 
 
 class HeaderCallableInventoryTests(unittest.TestCase):
+    def test_installed_private_uapi_keeps_the_public_header_roster(self) -> None:
+        scratch = ROOT / ".work/x86_64/header-callable-inventory-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            include = Path(temporary) / "include"
+            shutil.copytree(ROOT / "include", include)
+            private = include / "crabc-linux-uapi/linux/types.h"
+            private.parent.mkdir(parents=True)
+            private.write_text("typedef unsigned int __u32;\n")
+            pinned = INVENTORY.load_headers(INVENTORY.load_contract().public_headers)
+            self.assertEqual(INVENTORY.candidate_header_paths(include, pinned),
+                             INVENTORY.candidate_header_paths(ROOT / "include", pinned))
+            (include / "unexpected.h").write_text("int unexpected(void);\n")
+            with self.assertRaises(INVENTORY.InventoryError):
+                INVENTORY.candidate_header_paths(include, pinned)
+
     @unittest.skipUnless(
         Path("/opt/musl-1.2.6/include").is_dir()
         and Path("/opt/linux-5.10-uapi/include").is_dir()

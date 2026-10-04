@@ -662,6 +662,26 @@ class HeaderDeclarationInventoryTests(unittest.TestCase):
         shutil.rmtree(staging)
         return output, selection
 
+    def test_retained_private_uapi_is_sealed_without_becoming_a_public_root(self) -> None:
+        output, _selection = self._host_replay_fixture()
+        report = INVENTORY.load_json_object(output / "report.json", "fixture report")
+        inputs = report["inputs"]
+        logical = "crabc-linux-uapi/linux/types.h"
+        key = "candidate-header-root/" + logical
+        original = "/unavailable/project/" + logical
+        source = output / "private-source.h"
+        source.write_text("typedef unsigned int __u32;\n")
+        snapshot = INVENTORY.snapshot_regular_file(output, source, "inputs/dependencies/" + key, original)
+        source.unlink()
+        inputs["dependency_snapshots"].append({
+            "classification": "candidate-header-root", "key": key, "logical_path": logical,
+            "original_path_observation": original, "snapshot": snapshot,
+        })
+        INVENTORY.validate_retained_inputs(output, inputs)
+        (output / snapshot["retained"]["path"]).write_text("typedef unsigned long __u32;\n")
+        with self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, "retained bytes"):
+            INVENTORY.validate_retained_inputs(output, inputs)
+
     def test_host_replay_uses_retained_inputs_without_compiler_or_original_oracle_paths(self) -> None:
         output, selection = self._host_replay_fixture()
         report_path = output / "report.json"

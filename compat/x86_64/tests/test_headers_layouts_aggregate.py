@@ -42,12 +42,20 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
             root = Path(temporary)
             (root / "include").mkdir()
             (root / "include/a.h").write_text("int a(void);\n")
+            (root / "include/bits").mkdir()
+            (root / "include/bits/types.h").write_text("typedef int private_type;\n")
+            (root / "include/compiler.inc").write_text("#define COMPILER_INPUT 1\n")
             paths = {kind: root / ".work" / kind for kind in ("static", "dynamic")}
             source = {"revision": "1" * 40, "content_sha256": "2" * 64}
             records = {}
             for kind, path in paths.items():
                 (path / "usr/include").mkdir(parents=True)
                 (path / "usr/include/a.h").write_text("int a(void);\n")
+                (path / "usr/include/bits").mkdir()
+                (path / "usr/include/bits/types.h").write_text("typedef int private_type;\n")
+                (path / "usr/include/compiler.inc").write_text("#define COMPILER_INPUT 1\n")
+                (path / "usr/include/crabc-linux-uapi/linux").mkdir(parents=True)
+                (path / "usr/include/crabc-linux-uapi/linux/types.h").write_text("typedef unsigned int __u32;\n")
                 (path / "share/crabc").mkdir(parents=True)
                 manifest = path / "share/crabc/manifest.json"
                 record = {"source_sha256": source["content_sha256"], "allocator_backend": "accepted-c"}
@@ -61,7 +69,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                 result = AGGREGATE.supplied_header_product_inputs(paths["static"], paths["dynamic"], source)
                 self.assertEqual(result["installed_headers"]["static"]["tree_sha256"],
                                  result["installed_headers"]["dynamic"]["tree_sha256"])
-                for mutation in ("source", "allocator", "headers"):
+                for mutation in ("source", "allocator", "headers", "extra-header", "private-headers"):
                     with self.subTest(mutation=mutation):
                         state = paths["dynamic"] / "share/crabc/dynamic-product-state.json"
                         changed = {"source_sha256": source["content_sha256"], "allocator_backend": "accepted-c"}
@@ -69,12 +77,35 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                             changed["source_sha256"] = "3" * 64
                         elif mutation == "allocator":
                             changed["allocator_backend"] = "native-shadow"
-                        else:
+                        elif mutation == "headers":
                             (paths["dynamic"] / "usr/include/a.h").write_text("long a(void);\n")
+                        elif mutation == "extra-header":
+                            (paths["dynamic"] / "usr/include/unexpected.h").write_text("int unexpected(void);\n")
+                        else:
+                            (paths["dynamic"] / "usr/include/crabc-linux-uapi/linux/types.h").write_text("typedef unsigned long __u32;\n")
                         state.write_text(json.dumps(changed))
                         with self.assertRaises(AGGREGATE.AggregateError):
                             AGGREGATE.supplied_header_product_inputs(paths["static"], paths["dynamic"], source)
                         (paths["dynamic"] / "usr/include/a.h").write_text("int a(void);\n")
+                        (paths["dynamic"] / "usr/include/unexpected.h").unlink(missing_ok=True)
+                        (paths["dynamic"] / "usr/include/crabc-linux-uapi/linux/types.h").write_text("typedef unsigned int __u32;\n")
+
+                for relative, content, original in (
+                    ("bits/types.h", "typedef long private_type;\n", "typedef int private_type;\n"),
+                    ("compiler.inc", "#define COMPILER_INPUT 2\n", "#define COMPILER_INPUT 1\n"),
+                    ("unexpected.inc", "#define EXTRA_INPUT 1\n", None),
+                ):
+                    with self.subTest(shared_mutation=relative):
+                        for path in paths.values():
+                            (path / "usr/include" / relative).write_text(content)
+                        with self.assertRaisesRegex(AGGREGATE.AggregateError, "differ from source"):
+                            AGGREGATE.supplied_header_product_inputs(paths["static"], paths["dynamic"], source)
+                        for path in paths.values():
+                            changed_file = path / "usr/include" / relative
+                            if original is None:
+                                changed_file.unlink()
+                            else:
+                                changed_file.write_text(original)
 
     def test_supplied_pair_arguments_fail_before_compiler_collection(self) -> None:
         for arguments in (("--static-product", ".work/static"),

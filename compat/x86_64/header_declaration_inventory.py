@@ -2249,8 +2249,8 @@ def validate_retained_inputs(output: Path, inputs: Mapping[str, Any]) -> dict[st
 
     selection = validate_selection_source(output, selection_source(inputs), source_contracts)
     # Each finite direct include emits its own physical PP marker.  Rebuild
-    # the public `.h` roster from retained dependencies, excluding musl's
-    # private `bits/` namespace exactly as the source roster does.  Equality
+    # the public `.h` roster from retained dependencies using the same private
+    # namespace boundary as direct include selection.  Equality
     # prevents a self-consistent smaller selected roster from claiming a
     # complete collection merely because omitted headers happen to be reached
     # transitively by another direct include.
@@ -2259,8 +2259,7 @@ def validate_retained_inputs(output: Path, inputs: Mapping[str, Any]) -> dict[st
             item["logical_path"]
             for item in dependency_keys.values()
             if item["classification"] == classification
-            and item["logical_path"].endswith(".h")
-            and Path(item["logical_path"]).parts[0] != "bits"
+            and callable_inventory.is_public_header_path(Path(item["logical_path"]))
         ]
         return sorted(headers)
 

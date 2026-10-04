@@ -251,15 +251,21 @@ def load_headers(path: Path) -> list[str]:
     return headers
 
 
+def is_public_header_path(relative: Path) -> bool:
+    """Select public roots while retaining private headers as compiler dependencies.
+
+    The installed kernel interface tree lives under its owned private namespace;
+    project and musl implementation headers live under ``bits``.
+    """
+    return relative.suffix == ".h" and relative.parts[0] not in {"bits", "crabc-linux-uapi"}
+
+
 def public_header_paths(header_root: Path) -> list[str]:
     paths: list[str] = []
     for path in header_root.rglob("*.h"):
         require(path.is_file() and not path.is_symlink(), f"public header is unsafe: {path}")
         relative = path.relative_to(header_root)
-        # Match the established public-header closure boundary: `bits/` is
-        # a private implementation namespace reached through public roots,
-        # never a public pathname in its own right.
-        if relative.parts[0] == "bits":
+        if not is_public_header_path(relative):
             continue
         paths.append(relative.as_posix())
     paths.sort()

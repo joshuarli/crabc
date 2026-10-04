@@ -600,6 +600,17 @@ class HeaderAbiMatrixTests(unittest.TestCase):
         self.assertEqual(spaced, ("MAP_FAILED", "object-like: ((void *) -1)"))
         self.assertEqual(compact, ("MAP_FAILED", "object-like: ((void *)-1)"))
 
+    def test_header_tree_digest_seals_private_installed_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory(dir=self.matrix_test_work_root()) as temporary:
+            root = Path(temporary) / "include"
+            private = root / "crabc-linux-uapi/linux/types.h"
+            private.parent.mkdir(parents=True)
+            (root / "demo.h").write_text("int demo(void);\n")
+            private.write_text("typedef unsigned int __u32;\n")
+            sealed = MATRIX.header_tree_digest(root)
+            private.write_text("typedef unsigned long __u32;\n")
+            self.assertNotEqual(MATRIX.header_tree_digest(root), sealed)
+
     def test_header_tree_digest_rejects_symlink_escape(self) -> None:
         with tempfile.TemporaryDirectory(
             prefix="compiler-collection-symlink-",

@@ -1690,15 +1690,21 @@ def supplied_header_product_inputs(
 ) -> dict[str, Any]:
     """Authenticate installed payloads before borrowing their header trees.
 
-    Equal header bytes establish one compiler input across the two supplied
-    products. Payload validation and matching source and allocator selections
-    keep that equality from admitting an unrelated or mixed runtime pair.
+    All project include files must match source. Installed private kernel headers
+    remain covered by product payload validation and the complete compiler-tree
+    digest. Matching source and allocator selections bind the runtime pair.
     """
     import header_abi_matrix
     import owned_posix_product_evidence as products
     import owned_posix_static_products as static_products
 
-    source_headers = header_abi_matrix.header_tree_digest(ROOT / "include")
+    source_include = ROOT / "include"
+    # Validate the entire physical source tree before comparing file projections.
+    header_abi_matrix.header_tree_digest(source_include)
+    source_files = {
+        path.relative_to(source_include).as_posix(): header_abi_matrix.sha256_file(path)
+        for path in source_include.rglob("*") if path.is_file()
+    }
     records, headers = {}, {}
     for kind, path, validator in (
         ("static", static_product, products._validate_static_product),
@@ -1718,7 +1724,12 @@ def supplied_header_product_inputs(
                 f"supplied {kind} header product allocator is invalid")
         include = path / "usr/include"
         tree_digest = header_abi_matrix.header_tree_digest(include)
-        require(tree_digest == source_headers, f"supplied {kind} installed header bytes differ from source")
+        project_files = {
+            entry.relative_to(include).as_posix(): header_abi_matrix.sha256_file(entry)
+            for entry in include.rglob("*")
+            if entry.is_file() and entry.relative_to(include).parts[0] != "crabc-linux-uapi"
+        }
+        require(project_files == source_files, f"supplied {kind} installed project include bytes differ from source")
         records[kind] = {
             "path": path.relative_to(ROOT).as_posix(), "manifest": pair_file_identity(manifest),
             "source_state": pair_file_identity(state_path), "source_sha256": state["source_sha256"],
@@ -1727,6 +1738,8 @@ def supplied_header_product_inputs(
         headers[kind] = {"path": include.relative_to(ROOT).as_posix(), "tree_sha256": tree_digest}
     require(records["static"]["allocator_backend"] == records["dynamic"]["allocator_backend"],
             "supplied header product allocator selections differ")
+    require(headers["static"]["tree_sha256"] == headers["dynamic"]["tree_sha256"],
+            "supplied header product compiler trees differ")
     return {"products": records, "installed_headers": headers}
 
 
