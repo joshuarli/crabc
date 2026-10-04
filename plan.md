@@ -50,18 +50,19 @@ Update this small section in place when the implementation frontier changes.
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
   larger native worker stacks pass. Source/compiler improvements and ordinary
   valid-client checks continue; they do not establish repairs of those failures.
-- **Current source:** merged ownership paths retain exact allocation, arena and
-  terminal custody, construct large runtime images in final storage, and use
-  narrow metadata projections. Child destruction now obtains its parent-owned
-  retention header before mutation, including children without huge arenas.
-  The fixed header costs 15,464 bytes at alignment 8, plus huge-arena words.
-  Cold guarded allocation preserves the empty Theap's first sampling decision;
-  cold oversized aligned refusal reports source EINVAL before process or thread
-  initialization. Default and guarded regressions pass. Later READY sampling
-  and real attached-worker guarded allocation/growth controls pass. READY
-  admission borrows the permanent immutable configuration instead of copying
-  it. Fast-free decline retains its page under continuous admission in the
-  unchecked default profile; checked and secure profiles retain their walks.
+- **Current source:** native arena pages now publish secondary slice-owner
+  aliases before PageMap registration; a reproduced medium-allocation regression
+  and ordinary free/query controls pass. Exact live-client lookup uses those
+  aliases, while checked and secure paths retain their selected validation.
+  Pointer geometry retains the checked client adjustment and derives its
+  canonical pointer only when needed. Ownership paths retain exact arena,
+  allocation and terminal custody; child destruction obtains its parent-owned
+  retention header before mutation. The header still costs 15,464 bytes at
+  alignment 8, plus huge-arena words. Cold guarded sampling and aligned-refusal
+  ordering remain covered. Static TLS now admits a readable initialized prefix
+  whose separately zero-filled tail extends beyond executable load segments.
+  The tracked ET_EXEC/static-PIE regression reproduces exit127 before repair
+  and passes afterwards. Its separate oracle execution remains unqualified.
 - **Compiler boundaries:** installed static and dynamic target dependencies use
   the selected initial-exec TLS model. Fresh dynamic allocator code uses direct
   TLS access while ordinary application dynamic TLS remains functional. Both
@@ -69,17 +70,21 @@ Update this small section in place when the implementation frontier changes.
   population-count caller witness applies only to its C provider. Ordinary
   static weak undefined metadata retains the existing narrow link-reader rule.
   Required admission synchronization and pinned allocator algorithms remain intact.
-  Merged aligned arithmetic, callback phase projection, child-header placement
-  and cold task construction reduce reached code or stack costs. A large opt0
-  child-header staging image remains. Rejected local-zeroing and bitmap-return
-  trials retain their original proofs without entering production.
-- **Verification:** current source passes all nine compiler profiles and focused
-  cold allocation, guarded worker, ownership and child-header regressions.
-  The frozen inventory remains 223 capabilities and 26 families. Historical
-  compatibility, header, std/LTO, unwind and Lua component cohorts retain their
-  original source/product identities; rebuild for changed products. Component
-  checks and structural validation do not establish full release qualification.
-  Installed logarithm entries pass real pthread/fenv composition against musl.
+  Source changes remove reached allocation/phase copies, reuse checked
+  free-list successors, and skip duplicate Theap field reads for identical
+  retained owners. Immutable metadata configuration remains borrowed through
+  readiness checks; actual production opt0 chain reservations fall by 352 bytes.
+  A large opt0 child-header staging image remains. Rejected transport and
+  size-class trials are restored; compiler gains do not establish timing gains.
+- **Verification:** merged source passes all nine compiler profiles and focused
+  allocation, guard, ownership, metadata and worker regressions. The geometry
+  test now distinguishes padded client usable size from physical block stride
+  and applies padding at the huge-bin boundary; its original failed expectations
+  remain retained. The frozen inventory remains 223 capabilities and 26 families.
+  Historical compatibility, header, std/LTO, unwind and Lua components retain
+  original source/product identities; changed products require fresh evidence.
+  Component checks do not establish full release qualification. Installed
+  logarithm entries pass real pthread/fenv composition against musl.
 - **Performance:** the latest retained three agreeing engine measurements,
   at `b414a1e33`, qualify physically but fail numerical promotion bounds.
   Suite throughput lower95 is 0.3332–0.3374 of pinned C; all ten critical
