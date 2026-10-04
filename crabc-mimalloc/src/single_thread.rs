@@ -47369,8 +47369,16 @@ mod tests {
 
         #[test]
         fn medium_last_slot_refusal_preserves_owner_before_one_full_transition() {
+            regular_last_slot_refusal_preserves_owner_before_one_full_transition(SMALL_MAX_OBJ_SIZE + WORD_SIZE, PageKind::Medium);
+        }
+
+        #[test]
+        fn large_last_slot_refusal_preserves_owner_before_one_full_transition() {
+            regular_last_slot_refusal_preserves_owner_before_one_full_transition(262144, PageKind::Large);
+        }
+
+        fn regular_last_slot_refusal_preserves_owner_before_one_full_transition(request: usize, kind: PageKind) {
             with_non_abandoning_local_fast_owner_allocator(|allocator| {
-                let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
                 let bin = size_class::bin(request).unwrap();
                 let first = allocator.allocate(request, false).unwrap();
                 // SAFETY: the first exact client pins its map-published page.
@@ -47380,7 +47388,8 @@ mod tests {
                 clients.push(first);
                 loop {
                     let image = owner_image(allocator, page, first, bin);
-                    assert_eq!(size_class::page_kind_for_block_size(image.geometry.0), Some(PageKind::Medium));
+                    assert_eq!(size_class::page_kind_for_block_size(image.geometry.0),
+                        Some(kind));
                     assert_eq!(image.queues.0.0, page.as_ptr());
                     assert!(image.geometry.3 > 1);
                     assert_eq!(image.geometry.4, clients.len());
@@ -47445,8 +47454,16 @@ mod tests {
 
         #[test]
         fn administration_refusal_preserves_owner_before_one_phased_mini_collection() {
+            regular_administration_refusal_preserves_owner_before_one_phased_mini_collection(SMALL_MAX_OBJ_SIZE + WORD_SIZE);
+        }
+
+        #[test]
+        fn large_administration_refusal_preserves_owner_before_one_phased_mini_collection() {
+            regular_administration_refusal_preserves_owner_before_one_phased_mini_collection(262144);
+        }
+
+        fn regular_administration_refusal_preserves_owner_before_one_phased_mini_collection(request: usize) {
             with_non_abandoning_local_fast_owner_allocator(|allocator| {
-                let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
                 let bin = size_class::bin(request).unwrap();
                 let anchor = allocator.allocate(request, false).unwrap();
                 // SAFETY: this live sibling pins the real page through all cycles.
@@ -47496,6 +47513,119 @@ mod tests {
                 unsafe { allocator.free(client).unwrap(); allocator.free(anchor).unwrap(); }
             });
         }
+
+        #[test]
+        fn regular_queue_head_ordinary_aligned_and_zero_extents_match_source() {
+            for (size, kind) in [(65536, PageKind::Medium), (262144, PageKind::Large)] {
+                for alignment in [None, Some(16), Some(4096), Some(16384)] {
+                    with_non_abandoning_local_fast_owner_allocator(|allocator| {
+                        let physical = match alignment {
+                            Some(a) if a != 4096 => size + a - 1,
+                            _ => size,
+                        };
+                        let bin = size_class::bin(physical).unwrap();
+                        let anchor = allocator.allocate(physical, false).unwrap();
+                        // SAFETY: the exact live anchor pins its initialized page.
+                        let page = NonNull::new(unsafe { allocator.page_for_block(anchor) }).unwrap();
+                        allocator.extend_page_before_allocation(page).unwrap();
+                        let before = owner_image(allocator, page, anchor, bin);
+                        assert_eq!(size_class::page_kind_for_block_size(before.geometry.0), Some(kind));
+                        assert!(!before.heads.0.is_null());
+                        assert!(before.geometry.4 + 1 < usize::from(before.geometry.3));
+                        assert!(before.geometry.3 > 2);
+                        let owner = allocator.local_fast_owner().unwrap();
+                        // SAFETY: the retained exclusive owner supplies an available regular head.
+                        let client = unsafe { crate::local_fast_path::allocate(
+                            owner.theap, size, alignment, true,
+                        ) }.expect("regular available head must supply the source allocation");
+                        let after = owner_image(allocator, page, anchor, bin);
+                        assert_eq!(after.geometry.4, before.geometry.4 + 1);
+                        assert_eq!((after.geometry.0, after.geometry.1, after.geometry.2,
+                            after.geometry.3, after.geometry.5),
+                            (before.geometry.0, before.geometry.1, before.geometry.2,
+                            before.geometry.3, before.geometry.5));
+                        let base = before.heads.0.cast::<u8>();
+                        let adjustment = alignment.map_or(0, |a| (0usize.wrapping_sub(base.addr())) & (a - 1));
+                        // SAFETY: the source padded base retains this in-block adjustment.
+                        assert_eq!(client.as_ptr(), unsafe { base.add(adjustment) });
+                        assert_eq!(after.heads, (before.head_links.0.unwrap() as *mut Block,
+                            before.heads.1, before.heads.2));
+                        assert_eq!(after.retirement, (0, before.retirement.1));
+                        assert_eq!(after.links, before.links);
+                        let expected_flags = before.ownership.2 | if adjustment == 0 { 0 }
+                            else { crate::types::PAGE_HAS_INTERIOR_POINTERS };
+                        assert_eq!(after.ownership, (before.ownership.0, before.ownership.1,
+                            expected_flags, before.ownership.3));
+                        assert_eq!(after.administration,
+                            (before.administration.0, before.administration.1 + 1, before.administration.2));
+                        assert_eq!(after.queues, before.queues);
+                        assert_eq!(after.registration, before.registration);
+                        assert_eq!(after.page_count, before.page_count);
+                        assert_eq!(after.full_bytes, before.full_bytes);
+                        assert_one_allocation_statistics(&before, &after, physical, bin);
+                        assert!(alignment.is_none_or(|a| client.as_ptr().addr() & (a - 1) == 0));
+                        // SAFETY: this exact live client owns its complete usable extent.
+                        let extent = unsafe { allocator.usable_size(client) }.unwrap();
+                        assert!(extent >= size);
+                        assert!(unsafe { bytes_equal(client, extent, 0) });
+                        let mut siblings = Vec::new();
+                        while unsafe { Page::owner_used_at(page) } < usize::from(before.geometry.3) {
+                            let (sibling, _, _) = allocate_phased(allocator, physical);
+                            assert_eq!(unsafe { allocator.page_for_block(sibling) }, page.as_ptr());
+                            siblings.push(sibling);
+                        }
+                        // SAFETY: initialize the exact writable extent, then consume the client once.
+                        unsafe { client.as_ptr().write_bytes(0xa5, extent); allocator.free(client).unwrap(); }
+                        let owner = allocator.local_fast_owner().unwrap();
+                        // SAFETY: freeing from the non-abandoning full page restored its regular queue.
+                        let before_refusal = owner_image(allocator, page, anchor, bin);
+                        let reused = unsafe { crate::local_fast_path::allocate(
+                            owner.theap, size, alignment, true,
+                        ) };
+                        // A final-slot pop must continue through the complete full transition.
+                        assert!(reused.is_none());
+                        assert_eq!(owner_image(allocator, page, anchor, bin), before_refusal);
+                        // Free another exact live sibling to retain a spare slot for the local pop.
+                        let sibling = siblings.pop().unwrap();
+                        // SAFETY: the exact sibling owns its full reported extent.
+                        unsafe {
+                            let extent = allocator.usable_size(sibling).unwrap();
+                            sibling.as_ptr().write_bytes(0x5a, extent);
+                            allocator.free(sibling).unwrap();
+                        }
+                        let owner = allocator.local_fast_owner().unwrap();
+                        let reused = unsafe { crate::local_fast_path::allocate(
+                            owner.theap, size, alignment, true,
+                        ) }.unwrap();
+                        let extent = unsafe { allocator.usable_size(reused) }.unwrap();
+                        assert!(unsafe { bytes_equal(reused, extent, 0) });
+                        // SAFETY: returning this exact client leaves the original dirty block
+                        // on the immediate list and a spare slot for its next allocation.
+                        unsafe { allocator.free(reused).unwrap(); }
+                        let owner = allocator.local_fast_owner().unwrap();
+                        let reused = unsafe { crate::local_fast_path::allocate(
+                            owner.theap, size, alignment, true,
+                        ) }.unwrap();
+                        assert_eq!(reused, client);
+                        let extent = unsafe { allocator.usable_size(reused) }.unwrap();
+                        assert!(unsafe { bytes_equal(reused, extent, 0) });
+                        let snapshot = owner_image(allocator, page, anchor, bin);
+                        for (request, align) in [(crate::config::LARGE_MAX_OBJ_SIZE, Some(16)),
+                            (usize::MAX, Some(16)), (size, Some(3)), (size, Some(usize::MAX))] {
+                            assert!(unsafe { crate::local_fast_path::allocate(owner.theap, request, align, false) }.is_none());
+                            assert_eq!(owner_image(allocator, page, anchor, bin), snapshot);
+                        }
+                        // SAFETY: consume every remaining distinct client once; no page access follows final free.
+                        unsafe {
+                            allocator.free(reused).unwrap();
+                            for sibling in siblings { allocator.free(sibling).unwrap(); }
+                            allocator.free(anchor).unwrap();
+                        }
+                    });
+                }
+            }
+        }
+
     }
 
     fn with_local_fast_owner_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {

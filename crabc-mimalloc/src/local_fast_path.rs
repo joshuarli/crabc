@@ -22,7 +22,7 @@
 //! makes the identical source decision. They never perform generic
 //! administration, queue search beyond the first head, page extension,
 //! fresh-page allocation, `_mi_page_free`, `_mi_page_unfull`, or remote frees.
-//! For a regular medium queue head, the source's generic fallback performs
+//! For a regular medium or large queue head, the source's generic fallback performs
 //! the same quick collect after administration has no work to do; this path
 //! declines before a pop that would move the page to its full queue.
 //!
@@ -34,11 +34,9 @@
 use core::ptr::NonNull;
 
 use crate::config::{
-    BIN_HUGE, MAX_ALIGN_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_START_BLOCK_ALIGN2,
+    BIN_HUGE, LARGE_MAX_OBJ_SIZE, MAX_ALIGN_SIZE, PAGE_MAX_START_BLOCK_ALIGN2,
     PAGE_OSPAGE_BLOCK_ALIGN2, PAGE_MAX_OVERALLOC_ALIGN, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
-#[cfg(feature = "mi-stat-1")]
-use crate::config::LARGE_MAX_OBJ_SIZE;
 use crate::single_thread::{RETIRE_CYCLES, RETIRE_MAX_PAGES};
 use crate::types::{Block, Page, Theap};
 use crate::{invariants, size_class};
@@ -113,10 +111,10 @@ pub(crate) fn published() -> Option<LocalFastOwner> {
     }
 }
 
-/// Source `alloc-aligned.c:mi_malloc_is_naturally_aligned` for requests up
-/// to `SMALL_SIZE_MAX`, where `mi_good_size` is the bin size.
+/// Source `alloc-aligned.c:mi_malloc_is_naturally_aligned` for regular
+/// requests, where `mi_good_size` is the bin size.
 #[inline]
-fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
+fn is_naturally_aligned_regular(size: usize, alignment: usize) -> Option<bool> {
     if alignment > size {
         return Some(false);
     }
@@ -135,16 +133,16 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// (`mi_theap_malloc_zero_aligned_at`). Both take the source order: the
 /// direct page's immediate head (`_mi_page_malloc_zero`, which leaves
 /// `retire_expire` alone), when aligned entries find it suitably aligned;
-/// a request whose alignment exceeds its size uses the source's padded
+/// a request without natural alignment uses the source's padded
 /// ordinary base through that base class's direct or queue head;
-/// otherwise, for an ordinary or naturally aligned small request,
+/// otherwise, for an ordinary or naturally aligned regular request,
 /// `_mi_malloc_generic`'s counter step and its queue-head
 /// `mi_page_free_quick_collect`, which clears `retire_expire` before the
 /// pop. A regular small request above the direct-cache range reaches the
-/// same queue-head step from `_mi_malloc_generic`. A medium ordinary request
-/// reaches it through `mi_malloc_generic_fallback` after its administration
+/// same queue-head step from `_mi_malloc_generic`. Medium and large requests
+/// reach it through `mi_malloc_generic_fallback` after its administration
 /// check. Both fast branches require the counter below its threshold; the
-/// medium branch also declines a pop that would move the page to its full
+/// medium and large branches decline a pop that would move the page to its full
 /// queue.
 ///
 /// # Safety
@@ -170,8 +168,17 @@ pub(crate) unsafe fn allocate(
         return unsafe { allocate_overalloc_head(theap, size, alignment, zero) };
     }
     let direct_small = size <= SMALL_SIZE_MAX;
-    if !direct_small && (size > MEDIUM_MAX_OBJ_SIZE || alignment.is_some()) {
-        return None;
+    if !direct_small {
+        if size > LARGE_MAX_OBJ_SIZE {
+            return None;
+        }
+        if let Some(alignment) = alignment {
+            if !is_naturally_aligned_regular(size, alignment)? {
+                // SAFETY: the source generic aligned branch obtains its
+                // padded ordinary base before adjusting the client pointer.
+                return unsafe { allocate_overalloc_head(theap, size, alignment, zero) };
+            }
+        }
     }
     let mut observed_empty_direct_page = core::ptr::null_mut();
     if direct_small {
@@ -202,7 +209,7 @@ pub(crate) unsafe fn allocate(
         }
         observed_empty_direct_page = direct;
         if let Some(alignment) = alignment {
-            if !is_naturally_aligned_small(size, alignment)? {
+            if !is_naturally_aligned_regular(size, alignment)? {
                 return None;
             }
         }
@@ -215,13 +222,13 @@ pub(crate) unsafe fn allocate(
 }
 
 /// The source queue-head allocation after a direct head could not supply a
-/// block. Keeping administration and medium-page checks here leaves direct
+/// block. Keeping administration and regular-page checks here leaves direct
 /// allocation independent of queue selection and retirement temporaries.
 ///
 /// # Safety
 ///
 /// The caller owns the live Theap and every selected page's ordinary fields.
-/// `size` names a regular small or medium class. `observed_empty_direct_page`
+/// `size` names a regular small, medium, or large class. `observed_empty_direct_page`
 /// is null, or the owner's direct page whose immediate head was just empty;
 /// no owner mutation or callback may intervene after that observation.
 #[inline(never)]
@@ -239,10 +246,10 @@ unsafe fn allocate_queue_head(
         // SAFETY: the queue head is a live page of this Theap.
         let block_size = unsafe { Page::block_size_at(first) };
         if block_size <= SMALL_MAX_OBJ_SIZE
-            || block_size > MEDIUM_MAX_OBJ_SIZE
+            || block_size > LARGE_MAX_OBJ_SIZE
             || unsafe { Page::owner_used_at(first) } + 1 >= usize::from(unsafe { Page::reserved_at(first) })
         {
-            // `mi_malloc_generic_fallback` moves a newly full medium page
+            // `mi_malloc_generic_fallback` moves a newly full regular page
             // to the full queue after its pop, which belongs to the complete
             // owner path.
             return None;
@@ -296,14 +303,14 @@ unsafe fn allocate_queue_head(
     Some((first, block))
 }
 
-/// `mi_theap_malloc_zero_aligned_at_overalloc` with an ordinary small or
-/// medium base already available from the owner. Larger bases and the source
+/// `mi_theap_malloc_zero_aligned_at_overalloc` with an ordinary regular
+/// base already available from the owner. Huge bases and the source
 /// OS-aligned singleton branch stay on the complete allocation path.
 ///
 /// # Safety
 ///
 /// `theap` is the published exclusive owner for this operation. `alignment`
-/// is a nonzero power of two larger than `size`, and no callback or owner
+/// is a nonzero power of two, and no callback or owner
 /// transition occurs while the base allocation and interior marking complete.
 #[inline(never)]
 unsafe fn allocate_overalloc_head(
@@ -316,7 +323,7 @@ unsafe fn allocate_overalloc_head(
         return None;
     }
     let request = size.max(MAX_ALIGN_SIZE).checked_add(alignment - 1)?;
-    if request > MEDIUM_MAX_OBJ_SIZE {
+    if request > LARGE_MAX_OBJ_SIZE {
         return None;
     }
     let mut observed_empty_direct_page = core::ptr::null_mut();
