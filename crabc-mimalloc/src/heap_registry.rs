@@ -327,9 +327,10 @@ impl Heap {
     /// # Safety
     /// `destination` owns exclusive aligned writable storage for `Self` with
     /// no initialized value. The subprocess remains live and the destination
-    /// stays pinned after publication. The key and non-null exclusive arena
-    /// used for subsequent publication belong to this subprocess and retain
-    /// their original owners through every resulting Heap operation.
+    /// stays pinned after publication. The key used for subsequent publication
+    /// belongs to this live subprocess and retains its original owner.
+    /// `exclusive_arena` may be null; otherwise it points to a live parent arena
+    /// owned by this subprocess and retained through every resulting Heap operation.
     #[cfg(target_arch = "x86_64")]
     pub(crate) unsafe fn write_non_main_at(
         destination: core::ptr::NonNull<Self>,
