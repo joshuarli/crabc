@@ -321,11 +321,13 @@ def derive_static_translation(
     translation_flags = getattr(contract, "HOSTED_TRANSLATION_FLAGS", None)
     if not isinstance(translation_flags, tuple) or not all(isinstance(flag, str) for flag in translation_flags):
         fail("current static driver hosted translation flags drifted")
+    include_flags = ["-nostdinc", "-isystem", str(headers)]
+    private_uapi = headers / "crabc-linux-uapi"
+    if private_uapi.is_dir():
+        include_flags.extend(["-isystem", str(private_uapi)])
     expected_compile = [
         selected,
-        "-nostdinc",
-        "-isystem",
-        str(headers),
+        *include_flags,
         *translation_flags,
         *STATIC_SOURCE_FLAGS,
         "-fPIE",
@@ -339,9 +341,7 @@ def derive_static_translation(
     dependency_command = [*compile_command[:-4], "-M", "-H", str(source)]
     expected_dependency = [
         selected,
-        "-nostdinc",
-        "-isystem",
-        str(headers),
+        *include_flags,
         *translation_flags,
         *STATIC_SOURCE_FLAGS,
         "-fPIE",

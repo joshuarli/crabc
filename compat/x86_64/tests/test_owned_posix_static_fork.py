@@ -145,7 +145,7 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         with mock.patch.object(evidence, "__file__", str(helper)):
             yield checkout
 
-    def _make_role(self, root, checkout, role, *, mutate=None):
+    def _make_role(self, root, checkout, role, *, private_uapi=False, mutate=None):
         root.mkdir()
         product = root / "product"
         product.mkdir()
@@ -161,6 +161,10 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
             header = headers / relative
             header.parent.mkdir(parents=True, exist_ok=True)
             header.write_text(f"/* {relative} */\n", encoding="utf-8")
+        uapi_header = headers / "crabc-linux-uapi/linux/types.h"
+        if private_uapi:
+            uapi_header.parent.mkdir(parents=True)
+            uapi_header.write_text("/* private kernel types */\n", encoding="utf-8")
         role_directory = root / role
         role_directory.mkdir()
         workload = role_directory / "workload.o"
@@ -176,6 +180,8 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
             checkout, product, role, source, workload
         )
         dependencies = [source, *(headers / item for item in closure)]
+        if private_uapi:
+            dependencies.append(uapi_header)
         dependency_trace = role_directory / "headers.d"
         dependency_trace.write_text(
             "workload.o: \\\n " + " \\\n ".join(str(item) for item in dependencies) + "\n",
@@ -238,6 +244,34 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
         if mutate is not None:
             mutate(checkout, product, role_directory)
         return product, source, role_directory
+
+    def test_translation_matches_installed_private_uapi_presence_and_absence(self):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            base = Path(temporary)
+            for role in evidence.ROLE_SOURCES:
+                for private_uapi in (False, True):
+                    with self.subTest(role=role, private_uapi=private_uapi):
+                        case = base / f"{role}-{private_uapi}"
+                        case.mkdir()
+                        with self._checkout(case) as checkout:
+                            product, source, directory = self._make_role(
+                                case / "fixture", checkout, role, private_uapi=private_uapi
+                            )
+                            record = json.loads((directory / "compile.json").read_text(encoding="utf-8"))
+                            translation = record["translation"]
+                            headers = product / "usr/include"
+                            prefix = [translation["compiler"]["selected_path"], "-nostdinc",
+                                      "-isystem", str(headers)]
+                            if private_uapi:
+                                prefix.extend(["-isystem", str(headers / "crabc-linux-uapi")])
+                            prefix.extend(["-fstack-protector-strong", "-std=c11", "-fPIE"])
+                            self.assertEqual(translation["compile_command"],
+                                             [*prefix, "-c", str(source), "-o", str(directory / "workload.o")])
+                            self.assertEqual(translation["dependency_audit_command"],
+                                             [*prefix, "-M", "-H", str(source)])
+                            evidence.write_workload_evidence(checkout, role, source, directory, product)
 
     def test_dependency_closure_is_derived_from_the_source_includes(self):
         scratch = ROOT / ".work/x86_64/tmp"
@@ -390,24 +424,26 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
                 "object-binding": object_binding,
             }
             for label, mutate in mutations.items():
-                with self.subTest(label=label):
-                    case = base / label
-                    case.mkdir()
-                    with self._checkout(case) as checkout:
-                        product, source, role_directory = self._make_role(
-                            case / "fixture",
-                            checkout,
-                            "static-posix-forkexec",
-                            mutate=mutate,
-                        )
-                        with self.assertRaises(evidence.EvidenceError):
-                            evidence.write_workload_evidence(
+                for private_uapi in (False, True):
+                    with self.subTest(label=label, private_uapi=private_uapi):
+                        case = base / f"{label}-{private_uapi}"
+                        case.mkdir()
+                        with self._checkout(case) as checkout:
+                            product, source, role_directory = self._make_role(
+                                case / "fixture",
                                 checkout,
                                 "static-posix-forkexec",
-                                source,
-                                role_directory,
-                                product,
+                                private_uapi=private_uapi,
+                                mutate=mutate,
                             )
+                            with self.assertRaises(evidence.EvidenceError):
+                                evidence.write_workload_evidence(
+                                    checkout,
+                                    "static-posix-forkexec",
+                                    source,
+                                    role_directory,
+                                    product,
+                                )
 
 
 
