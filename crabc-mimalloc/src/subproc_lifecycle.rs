@@ -286,8 +286,9 @@ pub(crate) enum ChildSubprocessDestroyError {
     CallbackActive,
     /// The owner is not a created child or is terminally retained.
     InvalidState,
-    /// External huge-release ownership bits could not be allocated before
-    /// source teardown. The complete live child remains available for retry.
+    /// The retained release header and huge-release ownership bits could not
+    /// be allocated before source teardown. The complete live child remains
+    /// available for retry.
     #[cfg(target_arch = "x86_64")]
     TrackingAllocation(MetaError),
     Attachment(MainHeapThreadAttachmentError),
@@ -372,7 +373,7 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
     unsafe {
         destroy_child_with(
             child, registry, binding, tracking, metadata, config,
-            ChildHeapRelease::Parent { heap_owner, attachment }, false,
+            ChildHeapRelease::Parent { heap_owner, attachment }, false, None,
         )
     }
 }
@@ -382,6 +383,8 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
 /// # Safety
 /// As for [`destroy_child`], with `metadata` the parent's metadata allocator
 /// and `release` the free route matching the child's Heap storage.
+/// If supplied, the empty arena destination stays retained with this exact
+/// child owner and is disjoint from the tracking storage outside child arenas.
 unsafe fn destroy_child_with<'heap, 'tracking>(
     mut child: ChildMainHeapContextOwner<'heap>,
     registry: &'static SourceSubprocessRegistry,
@@ -391,6 +394,7 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
     config: crate::os::MemoryConfig,
     release: ChildHeapRelease<'_, 'heap>,
     under_threads: bool,
+    arena_destination: Option<&mut Option<crate::arena::DestroyedArenas<'tracking>>>,
 ) -> Result<(), ChildSubprocessDestroyFailure<'heap, 'tracking>> {
     // Process destruction, and `mi_subproc_destroy` of a child that threads
     // still belong to, destroy the child under those threads.
@@ -471,7 +475,13 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
                 // SAFETY: every list transition completed above and the
                 // caller's route matches the child Heap storage.
                 let release = release.take().expect("the release route is consumed once");
-                return unsafe { child.release_after_empty_heap_teardown_with(tracking, release) }
+                return match arena_destination {
+                    // SAFETY: the retained destination is disjoint from the
+                    // supplied tracking tail and outlives child raw retries.
+                    Some(destination) => unsafe { child.release_after_empty_heap_teardown_with_into(tracking, release, destination) },
+                    // SAFETY: forwarded exact release-route obligations.
+                    None => unsafe { child.release_after_empty_heap_teardown_with(tracking, release) },
+                }
                     .map_err(ChildSubprocessDestroyFailure::Release);
             }
             ChildMainHeapStage::Registered | ChildMainHeapStage::Terminal => {
@@ -762,8 +772,8 @@ pub(crate) struct NativeChildSubprocess {
     /// teardown; other targets retain their separate control allocation.
     /// Release waits for the last actual TLS member to finish.
     storage: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
-    /// Exact parent-issued destruction scratch exists only when published
-    /// huge owners need raw failure bits. Its pending owner retains those
+    /// Exact parent-issued destruction scratch retains ordinary raw failures
+    /// as well as any huge-owner failure bits. Its pending owner retains those
     /// bits through retry and never enlarges the inline birth control image.
     #[cfg(target_arch = "x86_64")]
     destroy_state: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
@@ -3563,7 +3573,8 @@ unsafe fn native_child_destroy_tracking(
             image.identity().arena_backing().terminal_tracking_words()
         }).ok_or(NativeSubprocessError::Retained)?
             .map_err(|_| NativeSubprocessError::Retained)?;
-        if words == 0 { return Ok(&mut []); }
+        // Regular mappings can retain raw release failures even when huge
+        // tracking needs no words. Every first pass needs the same header.
         let bytes = words.checked_mul(core::mem::size_of::<usize>())
             .and_then(|bytes| NativeChildArenaDestroyState::tracking_offset().checked_add(bytes))
             .ok_or(NativeSubprocessError::Retained)?;
@@ -3618,12 +3629,12 @@ unsafe fn destroy_record(
                 return Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive));
             }
             #[cfg(target_arch = "x86_64")]
-            let pending = unsafe { match (*record.destroy_state.get()).as_ref() {
+            let retained_state = unsafe { match (*record.destroy_state.get()).as_ref() {
                 // A prior parent return may have ended this scratch capability
                 // after source teardown. Its retained record grants no access
                 // to the former header, even when no child owner remains.
                 Some(allocation) if !allocation.is_live() => return Err(NativeSubprocessError::Retained),
-                Some(allocation) => (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending.take(),
+                Some(allocation) => Some(allocation.pointer().cast::<NativeChildArenaDestroyState>()),
                 None => None,
             } };
             let mut child = match owner.take() {
@@ -3637,19 +3648,18 @@ unsafe fn destroy_record(
                 None => return Err(NativeSubprocessError::Gone),
             };
             #[cfg(target_arch = "x86_64")]
-            if let Some(destroyed) = pending {
-                let failure = ChildMainHeapReleaseFailure::ArenaBacking { owner: child, destroyed };
-                child = match failure.retry_arena_backing() {
-                    Ok(child) => child,
-                    Err(ChildMainHeapReleaseFailure::ArenaBacking { owner: child, destroyed }) => {
-                        let state = unsafe { (*record.destroy_state.get()).as_ref().unwrap().pointer()
-                            .cast::<NativeChildArenaDestroyState>() };
-                        unsafe { (*state.as_ptr()).pending = Some(destroyed); }
+            if let Some(state) = retained_state {
+                // SAFETY: the live parent-issued header is protected by the
+                // record lock; no tracking-tail projection exists yet.
+                let pending = unsafe { &mut (*state.as_ptr()).pending };
+                if pending.is_some() {
+                    // SAFETY: this record retains the original child context
+                    // and the same failure slot through every raw retry.
+                    if unsafe { child.retry_arena_backing_into(pending) }.is_err() {
                         *owner = Some(child);
                         return Err(NativeSubprocessError::Retained);
                     }
-                    Err(_) => unreachable!("raw retry retains its original child arena owner"),
-                };
+                }
             }
             #[cfg(target_arch = "x86_64")]
             let tracking = if child.stage() == ChildMainHeapStage::ArenaBackingDestroyed {
@@ -3662,6 +3672,16 @@ unsafe fn destroy_record(
             };
             #[cfg(not(target_arch = "x86_64"))]
             let tracking = &mut [];
+            #[cfg(target_arch = "x86_64")]
+            let arena_destination = unsafe {
+                let allocation = (*record.destroy_state.get()).as_ref()
+                    .expect("native destruction issued its retained header");
+                // The retained header and the tracking slice above are
+                // disjoint projections of this same live allocation.
+                Some(&mut (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending)
+            };
+            #[cfg(not(target_arch = "x86_64"))]
+            let arena_destination = None;
             // Source destroys a child under its permanently quiescent
             // threads. Rust TLS can still retain a member after the source
             // registration ended, so actual tokens retain this control record.
@@ -3676,6 +3696,7 @@ unsafe fn destroy_record(
             let release = if terminal { ChildHeapRelease::Terminal } else { ChildHeapRelease::Native };
             match destroy_child_with(
                 child, record.registry, binding, tracking, metadata, config, release, source_live != 0 || members != 0,
+                arena_destination,
             ) {
                 Ok(()) => {
                     // Destruction consumes no actual TLS token; each member
@@ -3694,14 +3715,6 @@ unsafe fn destroy_record(
                 Err(ChildSubprocessDestroyFailure::Release(ChildMainHeapReleaseFailure::Retained {
                     owner: child, ..
                 })) => {
-                    *owner = Some(child);
-                    Err(NativeSubprocessError::Retained)
-                }
-                #[cfg(target_arch = "x86_64")]
-                Err(ChildSubprocessDestroyFailure::Release(ChildMainHeapReleaseFailure::ArenaBacking { owner: child, destroyed })) => {
-                    let state = unsafe { (*record.destroy_state.get()).as_ref().unwrap().pointer()
-                        .cast::<NativeChildArenaDestroyState>() };
-                    unsafe { (*state.as_ptr()).pending = Some(destroyed); }
                     *owner = Some(child);
                     Err(NativeSubprocessError::Retained)
                 }
@@ -5575,6 +5588,61 @@ pub(crate) mod tests {
                 assert_eq!(free(blocks[0]), NativePageFreeResult::Freed, "the page stays abandoned");
                 assert_eq!(free(blocks[2]), NativePageFreeResult::Freed, "the page is released");
                 // SAFETY: the id is live and the remaining block is never used again.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_regular_child_destroy_retains_a_header_without_huge_tracking_words() {
+        use crate::runtime_lifecycle::{finish_current_thread_native_after_user_destructors,
+            native_allocate_aligned, prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, NativePageAllocationResult, ThreadFinishResult};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_regular_child_destroy_retains_a_header_without_huge_tracking_words",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("registered child");
+                std::thread::spawn(move || {
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(
+                        crate::__crabc_runtime::current_native_allocator_thread_descriptor()) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(1000, 16, false)
+                        else { panic!("ordinary child block"); };
+                    unsafe { block.as_ptr().write_bytes(0x55, 1000); }
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("registered member finishes");
+                // SAFETY: the member finished and the retained block is never
+                // used again. The record lock excludes every child operation.
+                unsafe { id.with_owner(|owner| {
+                    let child = owner.as_mut().expect("original child owner");
+                    let identity = child.identity_pointer().expect("original child identity");
+                    assert_eq!(child.with_child_image(|image| {
+                        assert!(image.identity().arena_backing().registry().count() != 0,
+                            "the child retains actual ordinary arenas");
+                        image.identity().arena_backing().terminal_tracking_words()
+                    }), Some(Ok(0)));
+                    std::println!("child-destroy-scratch.header-bytes={} alignment={} tracking-offset={}",
+                        core::mem::size_of::<NativeChildArenaDestroyState>(),
+                        core::mem::align_of::<NativeChildArenaDestroyState>(),
+                        NativeChildArenaDestroyState::tracking_offset());
+                    let tracking = native_child_destroy_tracking(id.0, child).expect("destruction scratch");
+                    assert!(tracking.is_empty());
+                    let record = id.record();
+                    let allocation = (*record.destroy_state.get()).as_ref()
+                        .expect("regular releases require a retained header too");
+                    assert!(allocation.is_live());
+                    let state = allocation.pointer().cast::<NativeChildArenaDestroyState>();
+                    assert_eq!((*state.as_ptr()).words, 0);
+                    assert!((*state.as_ptr()).pending.is_none());
+                    assert_eq!(child.identity_pointer(), Some(identity));
+                    assert_eq!(child.stage(), ChildMainHeapStage::HeapReady);
+                }).expect("live record"); }
+                // SAFETY: all members finished, and no child block is used again.
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );

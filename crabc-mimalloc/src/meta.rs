@@ -5728,14 +5728,42 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// is the owner-local engine that allocated the image; the `Native` route
     /// may run on any thread with the native runtime active.
     pub(crate) unsafe fn release_after_empty_heap_teardown_with<'tracking>(
+        self,
+        tracking: &'tracking mut [usize],
+        release: ChildHeapRelease<'_, 'heap>,
+    ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
+        let mut destination = None;
+        // SAFETY: forwarded teardown and exact release-route obligations.
+        match unsafe { self.release_after_empty_heap_teardown_with_into(tracking, release, &mut destination) } {
+            Err(ChildMainHeapReleaseFailure::Retained { owner, stage: ChildMainHeapReleaseStage::ArenaBacking,
+                error: ChildMainHeapReleaseError::ArenaReleaseRetained }) => {
+                Err(ChildMainHeapReleaseFailure::ArenaBacking {
+                    owner, destroyed: destination.take().expect("retained child arena releases"),
+                })
+            }
+            result => result,
+        }
+    }
+
+    /// Releases the child while initializing arena failures directly in
+    /// caller-retained storage. A failure leaves the exact child owner in the
+    /// result and any committed arena releases in `destination`.
+    ///
+    /// # Safety
+    /// The same teardown and exact release-route obligations apply as to
+    /// `release_after_empty_heap_teardown_with`. The empty destination and
+    /// tracking storage live outside every retiring child arena and remain
+    /// allocated alongside this child owner until raw retries complete.
+    pub(crate) unsafe fn release_after_empty_heap_teardown_with_into<'tracking>(
         mut self,
         tracking: &'tracking mut [usize],
         release: ChildHeapRelease<'_, 'heap>,
+        destination: &mut Option<crate::arena::DestroyedArenas<'tracking>>,
     ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
         let retained = |owner, stage, error| {
             Err(ChildMainHeapReleaseFailure::Retained { owner, stage, error })
         };
-        if self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
+        if destination.is_some() || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.metadata_pages_may_exist
             || !self.page_engine.permits_teardown()
             || !matches!(
@@ -5813,21 +5841,28 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
         if self.stage == ChildMainHeapStage::HeapStorageReleased {
             let destroyed = self.context.with_image(|child| unsafe {
-                // This exact context stays in the aggregate failure owner
-                // until every raw retry finishes; no process-static lifetime
-                // is inferred for the reclaimable child identity.
-                child.identity().arena_backing().destroy_all_retained_child(tracking)
+                // This exact context stays retained until every raw retry
+                // finishes; the caller's destination grants no lifetime to
+                // the reclaimable child identity or its selected VM policy.
+                child.identity().arena_backing().destroy_all_retained_child_into(tracking, destination)
             }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
             match destroyed {
                 Err(error) => {
+                    if destination.is_some() {
+                        // The registry pass committed but did not finish.
+                        // Recorded raw retries cannot account for unvisited
+                        // entries, even when the failure array is empty.
+                        self.stage = ChildMainHeapStage::Terminal;
+                    }
                     return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
                         ChildMainHeapReleaseError::ArenaDestroy(error));
                 }
-                Ok(destroyed) if !destroyed.is_released() => {
-                    return Err(ChildMainHeapReleaseFailure::ArenaBacking { owner: self, destroyed });
+                Ok(()) if !destination.as_ref().expect("committed child arena releases").is_released() => {
+                    return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
+                        ChildMainHeapReleaseError::ArenaReleaseRetained);
                 }
-                Ok(destroyed) => {
-                    drop(destroyed);
+                Ok(()) => {
+                    drop(destination.take());
                     self.stage = ChildMainHeapStage::ArenaBackingDestroyed;
                 }
             }
@@ -5847,6 +5882,29 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             return retained(self, ChildMainHeapReleaseStage::Context,
                 ChildMainHeapReleaseError::Metadata(error));
         }
+        Ok(())
+    }
+
+    /// Retries arena failures in their retained slot without transporting
+    /// the child owner or the failure array through an aggregate result.
+    ///
+    /// # Safety
+    /// The destination is the committed arena failure owner produced by this
+    /// exact child. Its tracking allocation and this child's context remain
+    /// live and exclusively retained; no child operation can resume.
+    pub(crate) unsafe fn retry_arena_backing_into(
+        &mut self,
+        destination: &mut Option<crate::arena::DestroyedArenas<'_>>,
+    ) -> Result<(), ChildMainHeapReleaseError> {
+        if self.stage != ChildMainHeapStage::HeapStorageReleased {
+            return Err(ChildMainHeapReleaseError::InvalidTransition);
+        }
+        let destroyed = destination.as_mut().ok_or(ChildMainHeapReleaseError::InvalidTransition)?;
+        if destroyed.retry_raw().is_err() || !destroyed.is_released() {
+            return Err(ChildMainHeapReleaseError::ArenaReleaseRetained);
+        }
+        self.stage = ChildMainHeapStage::ArenaBackingDestroyed;
+        drop(destination.take());
         Ok(())
     }
 }
