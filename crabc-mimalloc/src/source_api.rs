@@ -432,14 +432,18 @@ unsafe fn theap_realloc_zero(
     let mut result = unsafe { crate::source_heap_api::theap_malloc(theap, new_size, false) }.after(earlier);
     let Some(replacement) = result.value else { return result };
     let copy = size.min(new_size);
-    let word = core::mem::size_of::<usize>();
-    let zero_start = copy.saturating_sub(word) & !(word - 1);
     // SAFETY: the two live exclusive allocations do not overlap, and the
     // queried usable extent belongs to the newly returned block.
     unsafe {
         let usable = usable_size_validated(replacement.as_ptr());
-        if zero && usable > zero_start {
-            replacement.as_ptr().add(zero_start).write_bytes(0, usable - zero_start);
+        if zero {
+            let word = core::mem::size_of::<usize>();
+            let zero_start = copy.saturating_sub(word) & !(word - 1);
+            if usable > zero_start {
+                replacement.as_ptr().add(zero_start).write_bytes(0, usable - zero_start);
+            } else if new_size == 0 {
+                replacement.as_ptr().write(0);
+            }
         } else if new_size == 0 {
             replacement.as_ptr().write(0);
         }
