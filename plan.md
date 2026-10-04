@@ -126,6 +126,10 @@ Update this small section in place when the implementation frontier changes.
   one allocation thread. All 64 samples complete; the four-worker result is noisy.
   Original publication is restored, with nine profiles and ordinary default
   workers passing. Neither comparison establishes full performance qualification.
+  A regular queue-head trial through the 512-KiB class passes focused default
+  and statistics regressions, all nine compiler profiles and ordinary workers.
+  Its matched comparison with the corrected fixture awaits an idle host;
+  the allocator change remains in its isolated worktree.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `0f46a88a4cd9`, allocator image
