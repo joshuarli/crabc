@@ -121,6 +121,72 @@ fn current_page_size() -> usize {
         .expect("the native Linux witness has a validated page size")
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(feature = "mi-secure-3")))]
+#[test]
+fn cold_native_guarded_first_request_preserves_empty_sampler_decision() {
+    use crabc_mimalloc::__crabc_runtime as native;
+    // The process owner initializes irreversibly. Run this cold entry alone,
+    // with source options published before any native allocator operation.
+    std::env::set_var("mimalloc_guarded_sample_rate", "1");
+    std::env::set_var("mimalloc_guarded_min", "0");
+    std::env::set_var("mimalloc_guarded_max", "1024");
+    let page_size = current_page_size();
+    // SAFETY: this hosted fixture supplies its own live environment and a
+    // process-lifetime musl FILE output provider, without initializing owners.
+    let facts = unsafe { native::NativeProcessStartupFacts::new(
+        page_size, native_runtime_test_support::host_environment,
+        native_runtime_test_support::stderr_output(),
+    ) }.unwrap();
+    assert!(native::publish_native_process_startup_facts(facts));
+    let permissions = |address: usize| {
+        fs::read_to_string("/proc/self/maps").unwrap().lines().find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (start, end) = fields.next()?.split_once('-')?;
+            let start = usize::from_str_radix(start, 16).ok()?;
+            let end = usize::from_str_radix(end, 16).ok()?;
+            (start <= address && address < end).then(|| fields.next().unwrap().to_owned())
+        })
+    };
+    let mut clients = std::vec::Vec::new();
+    for (guarded, pattern) in [(false, 0x31u8), (true, 0x72)] {
+        let native::NativePageAllocationResult::Allocated(client) =
+            native::native_allocate_aligned(8, 16, false)
+        else { panic!("the cold native request and its initialized successor allocate"); };
+        assert_eq!(client.as_ptr().addr() % 16, 0);
+        // SAFETY: the exact client stays live through its capacity query,
+        // bounded payload writes, and eventual matching native free.
+        let usable = unsafe { native::native_usable_size(client) }.unwrap();
+        assert!(usable >= 8);
+        let tail = client.as_ptr().addr().checked_add(usable).unwrap();
+        let tail_permissions = permissions(tail).unwrap();
+        if guarded {
+            assert_eq!(tail % page_size, 0);
+            assert!(tail_permissions.starts_with("---"));
+        } else {
+            assert!(tail_permissions.starts_with("rw"),
+                "the original empty-Theap decision keeps the first client ordinary");
+        }
+        // SAFETY: the whole reported usable extent is writable. Neither the
+        // protected successor mapping nor any other allocation is accessed.
+        unsafe { client.as_ptr().write_bytes(pattern, usable); }
+        clients.push((client, usable, pattern));
+    }
+    for (client, usable, pattern) in clients {
+        // SAFETY: both exact clients remained live while their sibling was
+        // allocated; each payload is checked and then consumed once.
+        unsafe {
+            assert!(core::slice::from_raw_parts(client.as_ptr(), usable)
+                .iter().all(|byte| *byte == pattern));
+            assert_eq!(native::native_free(client), native::NativePageFreeResult::Freed);
+        }
+    }
+    let selected = crabc_mimalloc::source_heap_api::theap_get_default();
+    assert!(!selected.is_null());
+    // SAFETY: lazy startup installed this thread's actual retained Theap;
+    // all clients are freed and no allocation overlaps the sampler reset.
+    unsafe { crabc_mimalloc::source_heap_api::theap_guarded_set_sample_rate(selected, 0, 0); }
+}
+
 fn run_in_clean_source_environment() {
     let trace_file = ChildTraceFile::create();
     let output = Command::new(

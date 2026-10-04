@@ -12814,6 +12814,12 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
     shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
+    // Admission can initialize the calling thread's Theap. Preserve the
+    // immutable empty image's rate-zero decision using only its address;
+    // initialized sampler fields remain inside the admitted operation.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    let entered_with_empty_sampler = SAMPLE_GUARDED
+        && crate::compiler_tls::default_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr();
     #[cfg(target_arch = "x86_64")]
     let Some(_operation) = enter_native_allocation_operation() else {
         return NativePageAllocationResult::Unavailable;
@@ -12854,6 +12860,10 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
             }
         }
     }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    if entered_with_empty_sampler {
+        return native_allocate_shaped_slow::<false>(request, shape, zero);
+    }
     native_allocate_shaped_slow::<SAMPLE_GUARDED>(request, shape, zero)
 }
 
@@ -12884,9 +12894,9 @@ fn native_allocate_shaped_slow<const SAMPLE_GUARDED: bool>(
             let selected = crate::source_heap_api::fixed_runtime_theap()
                 .unwrap_or_else(crate::compiler_tls::default_theap);
             // SAFETY: allocation admission retains this calling thread's fixed
-            // Theap through the complete operation. Before initialization the
-            // empty compiler-TLS image has an immutable rate-zero sampler. No
-            // engine or metadata projection spans sampling or its callbacks.
+            // Theap through the complete operation. The caller already
+            // preserves an empty ingress image's rate-zero decision. No engine
+            // or metadata projection spans sampling or its callbacks.
             match unsafe { crate::source_heap_api::guarded_allocate_selected(selected, request, aligned, zero) } {
                 crate::source_heap_api::GuardedAllocationResult::NotSampled => {},
                 crate::source_heap_api::GuardedAllocationResult::Allocated(result) =>
