@@ -527,12 +527,17 @@ fn current_main_thread() -> Option<MainThread> {
     let (thread, sequence, numa_node) = unsafe {
         ThreadLocalData::attached_thread_identity_at(tld, main.identity())
     }?;
+    // This observation has no allocator callbacks. The calling thread's
+    // default root and its retained Theap's TLD remain the ones read above.
     if crate::compiler_tls::current_thread_identity() != Some(thread)
         // SAFETY: the fixed owner belongs to this subprocess main Heap.
         || unsafe { Theap::heap_at(theap) } != main.ready_main_heap_pointer()
-        // SAFETY: a switched default must share this thread's TLD.
-        || unsafe { Theap::tld_at(default_theap()) } != tld.as_ptr()
     {
+        return None;
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    // SAFETY: a switched default must share this thread's TLD.
+    if unsafe { Theap::tld_at(default_theap()) } != tld.as_ptr() {
         return None;
     }
     Some(MainThread { theap, tld, thread, sequence, numa_node })
