@@ -96,15 +96,27 @@ fixture executable and application DSO are copied only to a separate private
 execution root, so the observed installed product remains unchanged. A direct
 executable and a helper-using application DSO must each
 extract `crabc-builtins.o` from the installed archive under the existing owned
-driver. A strong exported `__popcountdi2` in a separate executable cannot
-preempt libc's direct allocator bitmap-helper transfer. This is focused product
-evidence only; it is not a dynamic qualification or a complete helper family.
+driver. Every selected helper copy in libc remains local and absent from
+`.dynsym`, including definitions that its compiler-generated code does not use.
+These private definitions cannot be preempted by an executable's public helper.
+
+For an admitted C allocator backend, the runner additionally requires the
+emitted `mi_bbitmap_try_find_and_clearNC` caller to transfer directly to local
+`__popcountdi2`. The strong exported `__popcountdi2` fixture must still allocate
+and free successfully. For `native-shadow` and `native`, population counting
+may compile to inline arithmetic without a helper transfer. The runner keeps
+the same private-placement, direct executable, application DSO, and strong
+helper fixture checks, but does not require a C allocator caller or claim native
+allocator consumption of `__popcountdi2`. Backend applicability comes from the
+admitted product's allocator provenance. This is focused product evidence only;
+it is not a dynamic qualification or a complete helper family.
 
 To reuse the selected dynamic product of a larger collection, pass its absolute
 checkout-local path as the runner's sole argument. The owning product reader
 admits it before and after execution, and fixtures still run in a separate
 copy. That path omits only `product-build`; it retains every placement,
-ordinary-consumer, interposition, source-seal, and product-invariance check.
+ordinary-consumer, interposition fixture, source-seal, and product-invariance
+check, with the direct allocator caller witness applying to C backends.
 Output paths inside the supplied physical product are rejected before creating
 the evidence directory, so an invalid invocation preserves the sealed input.
 

@@ -4,8 +4,11 @@
 # It accepts a supplied materialized dynamic product or builds one. The
 # installed archive remains an ordinary GLOBAL DEFAULT provider for executable
 # and application-DSO consumers; only the exact copy pulled into libc.so is
-# local. The raw commands, source seal and installed artifacts remain below the
-# caller-selected checkout-local work directory for host inspection.
+# local. A C allocator retains its direct helper-call witness; native counting
+# can compile inline. Both selections require ordinary archive consumers and
+# the strong public helper fixture. The raw commands, source seal and installed
+# artifacts remain below the caller-selected checkout-local work directory for
+# host inspection.
 set -euo pipefail
 umask 002
 
@@ -78,7 +81,26 @@ record libc-dynsym readelf --dyn-syms -W "$LIBC"
 record libc-symtab readelf --symbols -W "$LIBC"
 record libc-undefined nm --undefined-only "$LIBC"
 record loader-undefined nm --undefined-only "$LOADER"
-record libc-bitmap-caller objdump --disassemble=mi_bbitmap_try_find_and_clearNC "$LIBC"
+record allocator-backend python3 - "$PRODUCT/share/crabc/libc-shared.provenance.json" <<'PY_BACKEND'
+import json
+from pathlib import Path
+import sys
+
+backend = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8')).get('allocator_backend')
+if backend not in {'accepted-c', 'pinned-c-evidence', 'native-shadow', 'native'}:
+    raise SystemExit('shared-helper product allocator backend differs')
+print(backend)
+PY_BACKEND
+readonly ALLOCATOR_BACKEND="$(cat "$WORK_DIR/raw/allocator-backend.stdout")"
+case "$ALLOCATOR_BACKEND" in
+    accepted-c|pinned-c-evidence)
+        record libc-bitmap-caller objdump --disassemble=mi_bbitmap_try_find_and_clearNC "$LIBC"
+        ;;
+    native-shadow|native)
+        # Native counting can lower inline, without an allocator helper call.
+        # Private placement and ordinary archive consumers remain required.
+        ;;
+esac
 python3 - "$ROOT_DIR/builtins/x86_64-helper-contract.toml" \
     "$PRODUCT/share/crabc/builtins.provenance.json" "$PRODUCT/share/crabc/libc-shared.provenance.json" \
     "$ARCHIVE" "$WORK_DIR/raw/archive-symbols.stdout" "$WORK_DIR/raw/libc-dynsym.stdout" \
@@ -133,9 +155,10 @@ if (len(local) != len(expected) or {row[-1] for row in local} != expected
 for path, label in ((libc_undefined_path, 'libc'), (loader_undefined_path, 'loader')):
     if any(line.split() and line.split()[-1] in expected for line in path.read_text(encoding='utf-8').splitlines()):
         raise SystemExit(label + ' has an unexpected helper import')
-caller = caller_path.read_text(encoding='utf-8', errors='replace')
-if re.search(r'call\S*\s+[^\n]*<__popcountdi2>', caller) is None:
-    raise SystemExit('allocator bitmap caller does not retain its direct local __popcountdi2 transfer')
+if libc_provenance['allocator_backend'] in {'accepted-c', 'pinned-c-evidence'}:
+    caller = caller_path.read_text(encoding='utf-8', errors='replace')
+    if re.search(r'call\S*\s+[^\n]*<__popcountdi2>', caller) is None:
+        raise SystemExit('allocator bitmap caller does not retain its direct local __popcountdi2 transfer')
 PY
 
 record direct-link "$DRIVER" --dynamic-pie "$DIRECT" -o "$WORK_DIR/direct"

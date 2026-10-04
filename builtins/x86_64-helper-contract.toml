@@ -21,6 +21,9 @@ name = "libcrabc-builtins.a"
 member = "crabc-builtins.o"
 placements = ["static-builtins", "dynamic-builtins"]
 
+# Every selected helper copy remains private, including unused definitions.
+# Compiler-generated calls that are emitted resolve to these local copies;
+# an inline operation does not require an out-of-line allocator helper call.
 [shared_libc]
 artifact = "candidate-shared"
 linker_option = "--exclude-libs=libcrabc-builtins.a"
