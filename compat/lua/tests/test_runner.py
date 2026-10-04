@@ -7,6 +7,7 @@ import concurrent.futures
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +26,14 @@ assert SPEC is not None and SPEC.loader is not None
 RUNNER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
+
+DRIVER_SPEC = importlib.util.spec_from_file_location(
+    "crabc_lua_static_driver", RUNNER.ROOT / "compat/x86_64/crabc_cc_static.py"
+)
+assert DRIVER_SPEC is not None and DRIVER_SPEC.loader is not None
+DRIVER = importlib.util.module_from_spec(DRIVER_SPEC)
+sys.modules[DRIVER_SPEC.name] = DRIVER
+DRIVER_SPEC.loader.exec_module(DRIVER)
 
 
 class ManifestTests(unittest.TestCase):
@@ -316,6 +325,78 @@ class NativeStaticContracts(unittest.TestCase):
                 mode=RUNNER.STATIC_ET_EXEC,
                 label="fixture",
             )
+
+    def static_receipt_fixture(self, mode: RUNNER.StaticLuaMode, output_name: str = "candidate/lua") -> dict[str, object]:
+        work = self.temporary / mode.identifier
+        library = work / "sysroot/usr/lib"
+        library.mkdir(parents=True)
+        runtime = [library / name for name in (mode.crt_object, "crti.o", "libc.a", "libcrabc-builtins.a", "crtn.o")]
+        application = work / "lua.o"
+        linker = work / "ld.lld"
+        output = work / output_name
+        output.parent.mkdir(parents=True, exist_ok=True)
+        for path in (*runtime, application, linker, output):
+            path.write_bytes(path.name.encode())
+        receipt = work / "receipts/lua.json"
+        receipt.parent.mkdir(exist_ok=True)
+        receipt.with_suffix(".map").write_text("owned Lua link\n", encoding="utf-8")
+        receipt.with_suffix(".trace").write_text(
+            "\n".join(str(path) for path in (*runtime, application)) + "\n", encoding="utf-8"
+        )
+        # Use the producer's real serialization with the runner's relative argv.
+        with contextlib.chdir(work):
+            DRIVER.write_link_receipt(
+                work / "sysroot", DRIVER.static_mode(mode.driver_id), [application],
+                Path(output_name), linker, Path("receipts/lua.json"),
+                Path("receipts/lua.map"), Path("receipts/lua.trace"),
+            )
+        return {
+            "sysroot": work / "sysroot", "mode": mode, "objects": [application],
+            "output": output, "receipt": receipt,
+        }
+
+    def test_static_receipt_uses_nested_receipt_directory_anchor(self) -> None:
+        for mode in (RUNNER.STATIC_ET_EXEC, RUNNER.STATIC_PIE):
+            with self.subTest(mode=mode.identifier):
+                arguments = self.static_receipt_fixture(mode)
+                self.assertEqual(RUNNER.audit_static_link_receipt(**arguments)["status"], "passed")
+
+    def test_static_receipt_accepts_output_below_receipt_directory(self) -> None:
+        arguments = self.static_receipt_fixture(RUNNER.STATIC_ET_EXEC, "receipts/program/lua")
+        self.assertEqual(RUNNER.audit_static_link_receipt(**arguments)["status"], "passed")
+
+    def test_static_receipt_rejects_forged_paths_hashes_and_inputs(self) -> None:
+        arguments = self.static_receipt_fixture(RUNNER.STATIC_ET_EXEC)
+        receipt = arguments["receipt"]
+        assert isinstance(receipt, Path)
+        original = json.loads(receipt.read_text(encoding="utf-8"))
+        for field in ("output", "map", "trace"):
+            for key, value in (
+                ("path", "../candidate/lua"),
+                ("path", str(receipt.parent / "other")),
+                ("path", "candidate/lua" if field == "output" else f"receipts/lua.{field}"),
+                ("sha256", "0" * 64),
+            ):
+                with self.subTest(field=field, key=key, value=value):
+                    forged = json.loads(json.dumps(original))
+                    forged[field][key] = value
+                    receipt.write_text(json.dumps(forged), encoding="utf-8")
+                    with self.assertRaisesRegex(RUNNER.RunnerError, f"{field} receipt drifted"):
+                        RUNNER.audit_static_link_receipt(**arguments)
+        for index in (0, len(original["input_receipts"]) - 1):
+            with self.subTest(input_index=index):
+                forged = json.loads(json.dumps(original))
+                forged["input_receipts"][index]["sha256"] = "0" * 64
+                receipt.write_text(json.dumps(forged), encoding="utf-8")
+                with self.assertRaisesRegex(RUNNER.RunnerError, "receipt drifted"):
+                    RUNNER.audit_static_link_receipt(**arguments)
+        receipt.write_text(json.dumps(original), encoding="utf-8")
+        trace = receipt.with_suffix(".trace")
+        trace.write_text(trace.read_text(encoding="utf-8") + "/unowned/input.o\n", encoding="utf-8")
+        original["trace"]["sha256"] = RUNNER.sha256_file(trace)
+        receipt.write_text(json.dumps(original), encoding="utf-8")
+        with self.assertRaisesRegex(RUNNER.RunnerError, "trace consumed an unowned input"):
+            RUNNER.audit_static_link_receipt(**arguments)
 
     def test_static_execution_protocol_has_no_loader_path_and_selects_preloads(self) -> None:
         fixture = self.temporary / "fixture"

@@ -1559,7 +1559,6 @@ def audit_static_link_receipt(
     sysroot: Path,
     mode: StaticLuaMode,
     objects: Sequence[Path],
-    work: Path,
     output: Path,
     receipt: Path,
 ) -> dict[str, object]:
@@ -1599,11 +1598,18 @@ def audit_static_link_receipt(
         if actual != expected:
             raise RunnerError(f"sealed static Lua application receipt drifted: {path.name}")
     output_record = decoded.get("output")
-    if output_record != {"path": str(output.relative_to(work)), "sha256": sha256_file(output)}:
+    # The driver anchors relative records at the receipt directory and uses
+    # the physical absolute path for an output outside that directory.
+    output_path = output.resolve(strict=True)
+    try:
+        recorded_output_path = str(output_path.relative_to(receipt.parent.resolve(strict=True)))
+    except ValueError:
+        recorded_output_path = str(output_path)
+    if output_record != {"path": recorded_output_path, "sha256": sha256_file(output)}:
         raise RunnerError("sealed static Lua output receipt drifted")
     for field, suffix in (("map", ".map"), ("trace", ".trace")):
         sidecar = receipt.with_suffix(suffix)
-        expected = {"path": str(sidecar.relative_to(work)), "sha256": sha256_file(sidecar)}
+        expected = {"path": sidecar.name, "sha256": sha256_file(sidecar)}
         if decoded.get(field) != expected:
             raise RunnerError(f"sealed static Lua {field} receipt drifted")
     trace_path = receipt.with_suffix(".trace")
@@ -1678,7 +1684,6 @@ def static_link_program(
         sysroot=sysroot,
         mode=mode,
         objects=objects,
-        work=work,
         output=artifact,
         receipt=work / receipt,
     )
