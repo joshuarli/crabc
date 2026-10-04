@@ -128,8 +128,11 @@ Update this small section in place when the implementation frontier changes.
   workers passing. Neither comparison establishes full performance qualification.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
-- **Qualification:** authenticated core image `a635e97c4bb5`, allocator image
-  `3d5e3a88e4f5`, pinned sources and consumer inputs are available. Eight ordered
+- **Qualification:** authenticated core image `0f46a88a4cd9`, allocator image
+  `0ee122ffc790`, pinned sources and consumer inputs are available. The missing
+  images were rebuilt from their unchanged recipes; dated Rust, musl 1.2.6,
+  tool hashes and the Linux 5.10 header inputs pass their existing checks.
+  Earlier artifacts retain their original image identities. Eight ordered
   gates are ready, zero qualified. The `e66fab1a8` four-product preparation and
   independently reproduced packages remain under
   `.work/x86_64/reports/cohort159/`; they are not current qualification.
