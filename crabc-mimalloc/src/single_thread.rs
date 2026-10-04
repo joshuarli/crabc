@@ -44098,6 +44098,28 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return Ok(None);
         };
 
+        // The arena's separate metadata prefix has one slot per slice.
+        // Regular pages publish every secondary slot; a singleton needs
+        // only the first two, including a possible guarded-start offset.
+        let metadata_count = if kind == PageKind::Singleton {
+            claim.slice_count().min(2)
+        } else {
+            claim.slice_count()
+        };
+        for index in 1..metadata_count {
+            // SAFETY: the fresh claim exclusively owns these slices and
+            // page_metadata committed their separate initialized metadata
+            // prefix. No slot is a live primary or visible to a client yet.
+            // Publish only its source atomic owner, preserving the inactive
+            // slot's other fields. The primary stays live until source
+            // unregistration and retirement precede return of the claim.
+            unsafe {
+                Page::publish_aligned_alias_owner_at(
+                    NonNull::new_unchecked(metadata.as_ptr().add(index)), page,
+                );
+            }
+        }
+
         // SAFETY: the unique fresh claim retains its initialized primary;
         // no arena bitmap, PageMap, queue, or client observes it yet.
         unsafe { crate::page_backing::set_source_page_guard(
