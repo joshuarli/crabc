@@ -13833,6 +13833,8 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
             Err(None) => return NativePageFreeResult::Retained,
         }
     }
+    #[cfg(target_arch = "x86_64")]
+    let mut captured_page = None;
     #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
     if let Some(owner) = native_local_fast_owner().filter(|owner| {
         // The fast path charges its page owner. Optional free statistics use
@@ -13855,10 +13857,21 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
                 note_local_fast_operation();
                 return NativePageFreeResult::Freed;
             }
+            // SAFETY: the exact page was selected by this process map under
+            // admission. The fast attempt declined without mutation or callbacks;
+            // the cold path rechecks readiness and takes a fresh ownership word.
+            if crate::config::DEBUG_LEVEL == 0 && crate::config::SECURE_LEVEL == 0
+                && !crate::config::FREE_IS_CHECKED
+            {
+                captured_page = Some(page);
+            }
         }
     }
     // SAFETY: forwarded exact-live-allocation contract.
-    unsafe { native_free_pointer_first(block) }
+    #[cfg(target_arch = "x86_64")]
+    { unsafe { native_free_pointer_first(block, captured_page) } }
+    #[cfg(not(target_arch = "x86_64"))]
+    { unsafe { native_free_pointer_first(block) } }
 }
 
 /// Runs source free ingress without activating an engine or consuming a client.
@@ -13979,9 +13992,17 @@ unsafe fn check_source_native_free_padding(
 ///
 /// Same exact-live-allocation contract as [`native_free`], under its
 /// admitted operation.
+/// On x86, a supplied page must be this operation's successful same-map
+/// selection in the normal unchecked profile, followed only by a fast free
+/// that declined without mutation or callbacks. The exact client and its
+/// registration remain retained; the process readiness and ownership word
+/// are observed again here. Checked profiles must supply no captured page.
 #[cold]
 #[inline(never)]
-unsafe fn native_free_pointer_first(block: core::ptr::NonNull<u8>) -> NativePageFreeResult {
+unsafe fn native_free_pointer_first(
+    block: core::ptr::NonNull<u8>,
+    #[cfg(target_arch = "x86_64")] captured_page: Option<core::ptr::NonNull<crate::types::Page>>,
+) -> NativePageFreeResult {
     let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
         // The pointer contract could not obtain its one process-published
         // PageMap witness. No caller-local fallback can establish a source
@@ -13993,7 +14014,13 @@ unsafe fn native_free_pointer_first(block: core::ptr::NonNull<u8>) -> NativePage
     // Its source lifetime keeps the selected registration and page metadata
     // stable until one branch below consumes the observation. The lookup
     // takes no PageMap lifecycle lease.
-    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: a supplied page is the retained same-map selection from an
+    // unchanged fast refusal; absent capture uses the selected lookup mode.
+    let lookup = unsafe { page_map.lookup_live_allocation_with_captured_page(block, captured_page) };
+    #[cfg(not(target_arch = "x86_64"))]
+    let lookup = unsafe { page_map.lookup_live_allocation(block) };
+    let allocation = match lookup {
         Ok(Some(allocation)) => allocation,
         Ok(None) => return NativePageFreeResult::InvalidPointer,
         Err(_) => {

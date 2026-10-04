@@ -1387,21 +1387,83 @@ impl ProcessPageMapRoot {
         self,
         client: NonNull<u8>,
     ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: no captured page bypasses this exact client's source lookup.
+            unsafe { self.lookup_live_allocation_with_captured_page(client, None) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            self.ensure_ready()?;
+            // SAFETY: the READY release follows root publication, so the acquire
+            // check above proves this map initialized and active. Terminal
+            // destruction ends all readers before changing that map's activity,
+            // and the exact live client proves its submap committed and published
+            // while excluding an overlapping entry write.
+            let page = unsafe { self.storage.page_map_ref().lookup_retained_live_page(client.as_ptr()) };
+            let Some(page) = NonNull::new(page) else {
+                return Ok(None);
+            };
+            // SAFETY: the same live source block keeps the selected PageMap entry
+            // and metadata stable while immutable geometry plus the source atomic
+            // ownership word are copied without forming `&Page`.
+            let allocation = unsafe { classify_live_allocation_in_page(page, client) };
+            #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+            let allocation = {
+                let mut allocation = allocation;
+                if let Some(allocation) = allocation.as_mut() {
+                    allocation.os_page_size = Some(self.storage.config().page_size().bytes());
+                }
+                allocation
+            };
+            Ok(allocation)
+        }
+    }
+
+    /// Looks up an exact live client, optionally reusing its selected source page.
+    ///
+    /// This rechecks process readiness, performs the selected source lookup
+    /// when no page is supplied, and takes one fresh ownership word snapshot.
+    ///
+    /// # Safety
+    ///
+    /// A supplied `page` must be the result of a successful retained-live lookup
+    /// for `client` in this exact process map during the current operation.
+    /// That lookup must use the selected normal or checked source profile;
+    /// an unchecked selection cannot replace a configured checked lookup.
+    /// The caller retains the process lifetime, including actual operation
+    /// admission for native runtime callers, and the exact live client
+    /// continuously from that lookup through this observation's last
+    /// use, excluding its consumption, reuse, entry mutation, and page
+    /// unregistration. Any intervening free attempt must have declined without
+    /// changing the allocation or page; no intervening callback may invalidate
+    /// that custody. The returned facts grant no additional owner, mutation,
+    /// or release authority. They have the same operation-scoped lifetime as
+    /// [`Self::lookup_live_allocation`].
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn lookup_live_allocation_with_captured_page(
+        self,
+        client: NonNull<u8>,
+        captured_page: Option<NonNull<Page>>,
+    ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
         self.ensure_ready()?;
-        // SAFETY: the READY release follows root publication, so the acquire
-        // check above proves this map initialized and active. Terminal
-        // destruction ends all readers before changing that map's activity,
-        // and the exact live client proves its submap committed and published
-        // while excluding an overlapping entry write.
-        let page = unsafe { self.storage.page_map_ref().lookup_retained_live_page(client.as_ptr()) };
-        let Some(page) = NonNull::new(page) else {
-            return Ok(None);
+        let page = match captured_page {
+            Some(page) => page,
+            None => {
+                // SAFETY: READY publishes this active map; the retained client
+                // excludes overlapping entry writes through the selected lookup.
+                let page = unsafe { self.storage.page_map_ref().lookup_retained_live_page(client.as_ptr()) };
+                let Some(page) = NonNull::new(page) else { return Ok(None); };
+                page
+            }
         };
-        // SAFETY: the same live source block keeps the selected PageMap entry
-        // and metadata stable while immutable geometry plus the source atomic
-        // ownership word are copied without forming `&Page`.
+        // SAFETY: the same-map lookup and continuously retained live client
+        // keep this exact page registered, initialized, mapped, and unreused.
+        // Classification reads a fresh atomic ownership word, never ordinary
+        // mutable Page fields or a former free attempt's ownership snapshot.
         let allocation = unsafe { classify_live_allocation_in_page(page, client) };
-        #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
+        #[cfg(feature = "mi-guarded")]
         let allocation = {
             let mut allocation = allocation;
             if let Some(allocation) = allocation.as_mut() {
@@ -2234,6 +2296,13 @@ mod tests {
             }
             let allocation = unsafe { lease.lookup_live_allocation(canonical) }.unwrap().unwrap();
             assert_eq!(allocation.usable_size(), 128);
+            // SAFETY: the successful same-map lookup above and this fixture's
+            // exclusive live client retain the page without an intervening free.
+            let captured = unsafe { lease.lookup_live_allocation_with_captured_page(canonical, Some(allocation.page())) }
+                .unwrap().unwrap();
+            assert_eq!(captured.canonical_block(), allocation.canonical_block());
+            assert_eq!(captured.xthread_id(), allocation.xthread_id());
+            assert_eq!(captured.usable_size(), allocation.usable_size());
             // SAFETY: this exact live client retains its registered page and
             // physical stride even though padding shortens its usable extent.
             assert_eq!(unsafe { lease.lookup_live_block_size(canonical) }, Ok(Some(allocation.block_size())));
@@ -2249,6 +2318,12 @@ mod tests {
             let client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(16)) };
             let aligned = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(aligned.usable_size(), 112);
+            // SAFETY: this adjusted client retains the exact same-map page
+            // selected above throughout both padding-aware observations.
+            let captured = unsafe { lease.lookup_live_allocation_with_captured_page(client, Some(aligned.page())) }
+                .unwrap().unwrap();
+            assert_eq!(captured.canonical_block(), aligned.canonical_block());
+            assert_eq!(captured.usable_size(), aligned.usable_size());
             // SAFETY: the same live adjusted client retains the complete
             // physical source block, including its adjustment and padding.
             assert_eq!(unsafe { lease.lookup_live_block_size(client) }, Ok(Some(aligned.block_size())));
@@ -2268,6 +2343,16 @@ mod tests {
             let client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(4096 - 81)) };
             let allocation = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
             assert_eq!(allocation.canonical_block(), canonical);
+            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            {
+                // SAFETY: the exact adjusted client retains its captured page
+                // and readable canonical tag throughout this same-map scope.
+                let captured = unsafe { lease.lookup_live_allocation_with_captured_page(client, Some(allocation.page())) }
+                    .unwrap().unwrap();
+                assert_eq!(captured.os_page_size, allocation.os_page_size);
+                assert_eq!(captured.usable_size(), 81);
+                assert_eq!(captured.guarded_tail_page(4096), allocation.guarded_tail_page(4096));
+            }
             assert_eq!(allocation.guarded_tail_page(4096).unwrap().as_ptr(),
                 unsafe { canonical.as_ptr().add(4096) });
             assert_eq!(allocation.usable_size_with_guarded_page_size(Some(4096)), 81);
@@ -2741,6 +2826,18 @@ mod tests {
         // immutable stride through this scalar-only observation.
         assert_eq!(unsafe { lease.lookup_live_block_size(block) }, Ok(Some(normal.block_size())));
         assert_eq!(normal.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE);
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: this same-map lookup selected the exact retained page;
+            // the fixture excludes every overlapping entry write or free.
+            let captured = unsafe { lease.lookup_live_allocation_with_captured_page(block, Some(normal.page())) }
+                .unwrap().unwrap();
+            assert_eq!(captured.client(), normal.client());
+            assert_eq!(captured.canonical_block(), normal.canonical_block());
+            assert_eq!(captured.block_size(), normal.block_size());
+            assert_eq!(captured.xthread_id(), normal.xthread_id());
+            assert_eq!(captured.usable_size(), normal.usable_size());
+        }
 
         // SAFETY: the fixture owns the page exclusively until map
         // unregistration, so this source flag can be published before the
@@ -2774,6 +2871,17 @@ mod tests {
         // block; its stride is independent of canonical-block recovery.
         assert_eq!(unsafe { lease.lookup_live_block_size(client) }, Ok(Some(pointer.block_size())));
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: the exact live adjusted client pins the selected page
+            // through fresh classification without an intervening callback.
+            let captured = unsafe { lease.lookup_live_allocation_with_captured_page(client, Some(pointer.page())) }
+                .unwrap().unwrap();
+            assert_eq!(captured.client(), pointer.client());
+            assert_eq!(captured.canonical_block(), pointer.canonical_block());
+            assert_eq!(captured.xthread_id(), pointer.xthread_id());
+            assert_eq!(captured.usable_size(), pointer.usable_size());
+        }
         // The final public client byte belongs to this canonical block and
         // leaves exactly one usable byte before any source padding record.
         let last_client = NonNull::new(unsafe { block.as_ptr().add(BLOCK_SIZE - crate::config::PADDING_SIZE - 1) })
@@ -2794,6 +2902,8 @@ mod tests {
         assert!(pointer.has_interior_pointers());
         assert_eq!(pointer.page_state(), LiveAllocationPageState::LiveOwnerAssociated);
         assert_eq!(pointer.usable_size(), BLOCK_SIZE - crate::config::PADDING_SIZE - 5);
+        #[cfg(target_arch = "x86_64")]
+        let retained_page = pointer.page();
         let interior_reallocation = pointer.into_reallocation_copy_source(BLOCK_SIZE);
         assert_eq!(interior_reallocation.copy_client(), client);
         assert_eq!(interior_reallocation.canonical_block_for_release(), block);
@@ -2811,6 +2921,16 @@ mod tests {
         assert_eq!(abandoned.page_flags(), PAGE_IN_FULL_QUEUE);
         assert_eq!(abandoned.page_state(), LiveAllocationPageState::Abandoned);
         assert!(!abandoned.is_associated_with(thread_id));
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: the fixture's original page selection remains registered
+            // for this exact live block despite the atomic ownership transition.
+            let captured = unsafe { lease.lookup_live_allocation_with_captured_page(block, Some(retained_page)) }
+                .unwrap().unwrap();
+            assert_eq!(captured.xthread_id(), abandoned.xthread_id());
+            assert_eq!(captured.page_state(), LiveAllocationPageState::Abandoned);
+            assert!(!captured.has_interior_pointers());
+        }
 
         store_source_xthread_id_for_pointer_test(
             page,
