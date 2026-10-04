@@ -464,3 +464,167 @@ fn attach_pins_a_page_empty_owner_until_normal_no_allocation_teardown() {
         "normal no-allocation teardown releases the worker admission"
     );
 }
+
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+#[test]
+fn attached_worker_guarded_sampling_preserves_live_siblings_and_normal_teardown() {
+    use crabc_mimalloc::{__crabc_runtime as native, source_heap_api as heaps};
+
+    fn allocated(result: NativePageAllocationResult) -> core::ptr::NonNull<u8> {
+        let NativePageAllocationResult::Allocated(client) = result else {
+            panic!("the attached owner returns its ordinary valid client");
+        };
+        client
+    }
+
+    fn protected_tail(client: core::ptr::NonNull<u8>, usable: usize, page_size: usize) -> bool {
+        let tail = client.as_ptr().addr().checked_add(usable).unwrap();
+        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
+        let permissions = maps.lines().find_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (start, end) = fields.next()?.split_once('-')?;
+            let start = usize::from_str_radix(start, 16).ok()?;
+            let end = usize::from_str_radix(end, 16).ok()?;
+            (start <= tail && tail < end).then(|| fields.next().unwrap())
+        }).expect("the live client tail has an adjacent mapped extent");
+        let protected = permissions.starts_with("---");
+        if protected {
+            assert_eq!(tail % page_size, 0);
+        } else {
+            assert!(permissions.starts_with("rw"));
+        }
+        protected
+    }
+
+    let page_size = current_page_size();
+    assert!(native_runtime_test_support::initialize(page_size));
+    assert!(prepare_native_later_thread_arena());
+    let initial_theap = heaps::theap_get_default();
+    assert!(!initial_theap.is_null());
+    let initial_address = initial_theap.addr();
+    let mut initial_clients = Vec::new();
+    for (size, pattern) in [(97, 0x51), (251, 0x72)] {
+        let client = allocated(native::native_allocate(size, false));
+        // SAFETY: the initial owner retains each exact client through the
+        // worker's complete lifetime. Only its requested extent is written.
+        unsafe { client.as_ptr().write_bytes(pattern, size) };
+        initial_clients.push((client, size, pattern));
+    }
+
+    std::thread::spawn(move || {
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
+        assert_eq!(native_runtime_current_thread_attachment_test_audit().persistent_owner_installed, 1);
+        let selected = heaps::theap_get_default();
+        assert!(!selected.is_null());
+        assert_ne!(selected.addr(), initial_address);
+        // SAFETY: this worker exclusively owns its actual initialized source
+        // Theap. No allocation or teardown overlaps either sampler setter.
+        unsafe {
+            heaps::theap_guarded_set_size_bound(selected, 0, usize::MAX);
+            heaps::theap_guarded_set_sample_rate(selected, 1, 0);
+        }
+
+        let mut clients = Vec::new();
+        for (size, alignment) in [(64, None), (8, Some(16)), (64, Some(16))] {
+            for zero in [false, true] {
+                let client = allocated(match alignment {
+                    None => native::native_allocate(size, zero),
+                    Some(alignment) => native_allocate_aligned(size, alignment, zero),
+                });
+                if let Some(alignment) = alignment {
+                    assert_eq!(client.as_ptr().addr() % alignment, 0);
+                }
+                // SAFETY: this exact client remains live. Its reported usable
+                // extent is writable; the adjacent guard is never accessed.
+                let usable = unsafe { native_usable_size(client) }.unwrap();
+                assert!(usable >= size);
+                assert!(protected_tail(client, usable, page_size));
+                let pattern = clients.len() as u8 + 0x40;
+                // SAFETY: only the live client's reported capacity is viewed.
+                unsafe {
+                    let bytes = core::slice::from_raw_parts_mut(client.as_ptr(), usable);
+                    if zero { assert!(bytes[..size].iter().all(|byte| *byte == 0)); }
+                    bytes.fill(pattern);
+                }
+                clients.push((client, usable, pattern, alignment, zero));
+            }
+        }
+        assert_eq!(heaps::theap_get_default(), selected);
+        for (client, usable, pattern, alignment, zero) in clients {
+            let growth = usable.checked_add(64).unwrap();
+            // SAFETY: each exact old client remains exclusively live until a
+            // successful replacement consumes it. Other siblings stay live.
+            unsafe {
+                assert!(core::slice::from_raw_parts(client.as_ptr(), usable)
+                    .iter().all(|byte| *byte == pattern));
+                let replacement = allocated(match (alignment, zero) {
+                    (None, false) => native_reallocate(Some(client), growth),
+                    (None, true) => native::native_reallocate_zeroed(Some(client), growth),
+                    (Some(alignment), false) => native::native_reallocate_aligned(Some(client), growth, alignment),
+                    (Some(alignment), true) => native::native_reallocate_aligned_zeroed(Some(client), growth, alignment),
+                });
+                assert_ne!(replacement, client);
+                if let Some(alignment) = alignment {
+                    assert_eq!(replacement.as_ptr().addr() % alignment, 0);
+                }
+                let capacity = native_usable_size(replacement).unwrap();
+                assert!(capacity >= growth);
+                assert!(protected_tail(replacement, capacity, page_size));
+                let bytes = core::slice::from_raw_parts(replacement.as_ptr(), capacity);
+                assert!(bytes[..usable].iter().all(|byte| *byte == pattern));
+                if zero { assert!(bytes[usable..growth].iter().all(|byte| *byte == 0)); }
+                assert_eq!(native_free(replacement), NativePageFreeResult::Freed);
+            }
+        }
+
+        // SAFETY: the same live worker exclusively owns the sampler. Seed one
+        // gives one unsampled request before each sampled request at rate two.
+        unsafe { heaps::theap_guarded_set_sample_rate(selected, 2, 1) };
+        let mut alternating = Vec::new();
+        for (size, alignment, zero, sampled) in [
+            (8, Some(16), false, false), (64, None, false, true),
+            (8, Some(16), true, false), (64, None, true, true),
+        ] {
+            let client = allocated(match alignment {
+                None => native::native_allocate(size, zero),
+                Some(alignment) => native_allocate_aligned(size, alignment, zero),
+            });
+            if let Some(alignment) = alignment {
+                assert_eq!(client.as_ptr().addr() % alignment, 0);
+            }
+            // SAFETY: querying this retained exact client's capacity does not
+            // access its adjacent protected mapping or consume its ownership.
+            let usable = unsafe { native_usable_size(client) }.unwrap();
+            assert!(usable >= size);
+            assert_eq!(protected_tail(client, usable, page_size), sampled,
+                "one native ordinary or aligned request consumes one sampler step");
+            // SAFETY: only the requested writable extent is inspected.
+            if zero {
+                unsafe { assert!(core::slice::from_raw_parts(client.as_ptr(), size)
+                    .iter().all(|byte| *byte == 0)) };
+            }
+            alternating.push(client);
+        }
+        for client in alternating {
+            // SAFETY: each exact live alternating client is consumed once.
+            assert_eq!(unsafe { native_free(client) }, NativePageFreeResult::Freed);
+        }
+        assert_eq!(heaps::theap_get_default(), selected);
+        // SAFETY: no worker client remains, and the initialized Theap stays
+        // exclusively owned until the following normal finish retires it.
+        unsafe { heaps::theap_guarded_set_sample_rate(selected, 0, 0) };
+        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+        assert_eq!(native_runtime_current_thread_attachment_test_audit().persistent_owner_installed, 0);
+    }).join().expect("the guarded worker completes ordinary local ownership and teardown");
+
+    assert_eq!(heaps::theap_get_default(), initial_theap);
+    for (client, size, pattern) in initial_clients {
+        // SAFETY: worker operations never acquired these exact initial-owner
+        // clients. They remained live through join and are freed here once.
+        unsafe {
+            assert!(core::slice::from_raw_parts(client.as_ptr(), size)
+                .iter().all(|byte| *byte == pattern));
+            assert_eq!(native_free(client), NativePageFreeResult::Freed);
+        }
+    }
+}
