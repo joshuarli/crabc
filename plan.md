@@ -140,6 +140,11 @@ Update this small section in place when the implementation frontier changes.
   CPU controls stay near unchanged. Four-worker wall timing is noisy. These
   comparisons are between original and changed Rust products; fresh full
   engine and installed-product measurements remain required.
+  Subsequent full engine attempts remain unqualified: two reports record
+  zero-CPU batch failures in pinned C, and one complete run is rejected for
+  initial host contention. Failure reports and available raw output remain
+  retained; the first failed sample's complete output was lost before the
+  retention repair. New qualification measurements await an uncontended host.
   Installed-product full preparations allow one idle interval after builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `0f46a88a4cd9`, allocator image
@@ -147,7 +152,11 @@ Update this small section in place when the implementation frontier changes.
   images were rebuilt from their unchanged recipes; dated Rust, musl 1.2.6,
   tool hashes and the Linux 5.10 header inputs pass their existing checks.
   Earlier artifacts retain their original image identities. Eight ordered
-  gates are ready, zero qualified. The `e66fab1a8` four-product preparation and
+  gates are ready, zero qualified. At `1557f0d94`, accepted-C static packages
+  reproduce exactly and their retained preparation passes independent replay.
+  Fresh static/dynamic C/native comparison products pass all 16 ordinary
+  small, medium, large and four-worker probes; these are component checks.
+  The `e66fab1a8` four-product preparation and
   independently reproduced packages remain under
   `.work/x86_64/reports/cohort159/`; they are not current qualification.
   The `d294dd879` cohort has independently reproduced static/dynamic C/native
