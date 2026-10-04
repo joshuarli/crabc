@@ -13722,6 +13722,26 @@ unsafe fn native_reallocate_inner(
     // SAFETY: forwarded from this boundary's exact-live native-client
     // contract. The returned observation remains live through one local or
     // nonlocal source operation below.
+    #[cfg(target_arch = "x86_64")]
+    let allocation = {
+        // Keep the pointer facts at their use site: fitting reuse needs only
+        // immutable geometry and must not transport a full intermediate result.
+        let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageAllocationResult::Retained;
+        };
+        // SAFETY: this operation retains the exact live client through reuse
+        // or replacement; the selected lookup rechecks readiness and source mode.
+        match unsafe { page_map.lookup_live_allocation(block) } {
+            Ok(Some(allocation)) => allocation,
+            Ok(None) => return NativePageAllocationResult::Unavailable,
+            Err(_) => {
+                RUNTIME_PROCESS.retain_page_owner();
+                return NativePageAllocationResult::Retained;
+            }
+        }
+    };
+    #[cfg(not(target_arch = "x86_64"))]
     let allocation = match unsafe { native_live_allocation_for_pointer_reallocation(block) } {
         Ok(allocation) => allocation,
         Err(result) => return result,
