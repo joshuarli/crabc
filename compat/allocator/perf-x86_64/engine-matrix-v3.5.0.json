@@ -27,8 +27,8 @@
     },
     "rust_engine": {
       "backend": "compat/allocator/perf-x86_64/engine-rust-backend.rs",
-      "meaning": "crabc-mimalloc persistent per-thread source owners through the hidden __crabc_runtime entry points that crabc-libc's native-mimalloc-shadow selection calls (malloc = native_allocate_aligned(size, 16, false)).",
-      "allocation_entries": {"malloc": "native_allocate_aligned(size, 16, false)", "calloc": "native_allocate_aligned(count * size, 16, true)", "realloc": "native_reallocate", "aligned": "native_allocate_aligned(size, alignment, false)", "free": "native_free"},
+      "meaning": "crabc-mimalloc persistent per-thread source owners through the hidden __crabc_runtime entry points that crabc-libc's native-mimalloc-shadow selection calls; malloc and calloc select the 16-byte-aligned entry through 8 bytes and the ordinary entry above that size.",
+      "allocation_entries": {"malloc": "size <= 8: native_allocate_aligned(size, 16, false); size > 8: native_allocate(size, false)", "calloc": "total = count.checked_mul(size); total <= 8: native_allocate_aligned(total, 16, true); total > 8: native_allocate(total, true)", "realloc": "native_reallocate", "aligned": "native_allocate_aligned(size, alignment, false)", "free": "native_free"},
       "rustc_flags": [
         "-Copt-level=3",
         "-Clto=fat",
