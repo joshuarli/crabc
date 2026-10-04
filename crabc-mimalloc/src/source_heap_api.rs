@@ -3007,24 +3007,53 @@ pub unsafe fn heap_realloc_aligned(
     offset: Option<usize>,
     zero: bool,
 ) -> Sourced<(Block, FreeOutcome)> {
-    if offset.is_none() && alignment <= WORD {
-        // SAFETY: forwarded Heap lifetime and exact-live-client obligations.
-        // The word-aligned form enters the internal kernel even for null,
-        // retaining its zero-size byte clear rather than the public shortcut.
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: forwarded public Heap contract. Both forms resolve the
+        // same retained target before their original reallocation kernel.
         return match unsafe { resolve_heap_target(heap) } {
             None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
-            Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc_zero_native(block, new_size, zero) }),
-            Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero(heap, block, new_size, zero) },
+            Some(Target::Main) => {
+                // The word-aligned form enters the internal kernel even for
+                // null, retaining its zero-size byte clear.
+                // SAFETY: forwarded Heap lifetime and live-client obligations.
+                if offset.is_none() && alignment <= WORD {
+                    freed_with(unsafe { crate::source_api::realloc_zero_native(block, new_size, zero) })
+                } else {
+                    freed_with(unsafe { crate::source_api::realloc_zero_aligned_at_native(block, new_size, alignment, offset.unwrap_or(0), zero) })
+                }
+            }
+            Some(Target::NonMain(heap)) => {
+                // SAFETY: forwarded retained target and live-client obligations.
+                if offset.is_none() && alignment <= WORD {
+                    unsafe { heap_realloc_zero(heap, block, new_size, zero) }
+                } else {
+                    unsafe { heap_realloc_zero_aligned_at(heap, block, new_size, alignment, offset.unwrap_or(0), zero) }
+                }
+            }
         };
     }
-    let offset = offset.unwrap_or(0);
-    // SAFETY: forwarded public Heap contract.
-    match unsafe { resolve_heap_target(heap) } {
-        None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
-        // SAFETY: forwarded.
-        Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc_zero_aligned_at_native(block, new_size, alignment, offset, zero) }),
-        // SAFETY: forwarded.
-        Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero_aligned_at(heap, block, new_size, alignment, offset, zero) },
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        if offset.is_none() && alignment <= WORD {
+            // SAFETY: forwarded Heap lifetime and exact-live-client obligations.
+            // The word-aligned form enters the internal kernel even for null,
+            // retaining its zero-size byte clear rather than the public shortcut.
+            return match unsafe { resolve_heap_target(heap) } {
+                None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+                Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc_zero_native(block, new_size, zero) }),
+                Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero(heap, block, new_size, zero) },
+            };
+        }
+        let offset = offset.unwrap_or(0);
+        // SAFETY: forwarded public Heap contract.
+        match unsafe { resolve_heap_target(heap) } {
+            None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
+            // SAFETY: forwarded.
+            Some(Target::Main) => freed_with(unsafe { crate::source_api::realloc_zero_aligned_at_native(block, new_size, alignment, offset, zero) }),
+            // SAFETY: forwarded.
+            Some(Target::NonMain(heap)) => unsafe { heap_realloc_zero_aligned_at(heap, block, new_size, alignment, offset, zero) },
+        }
     }
 }
 
