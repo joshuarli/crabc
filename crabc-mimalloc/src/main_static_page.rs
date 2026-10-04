@@ -3269,7 +3269,13 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             }
             return Some(MainStaticDeferredFreeAllocationPhase::Collect { source, collection, continuation });
         }
-        self.allocate_with(WORD_SIZE, |engine| {
+        // The engine-less branch returned above. Reborrow the retained active
+        // engine directly so this resume cannot stage a replacement owner.
+        let MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) = &mut self.state else {
+            return None;
+        };
+        let engine = &mut active.engine;
+        {
             if !engine.deferred_free_source().is_some_and(|current| source.matches_current(current)) { return None; }
             // SAFETY: the caller retains the original issuer across the
             // getter, and this engine still matches the captured source.
@@ -3284,7 +3290,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     source: engine.deferred_free_source()?, collection, continuation,
                 }),
             }
-        })
+        }
     }
 
     /// Revalidates an initial source identity and resumes its selected
