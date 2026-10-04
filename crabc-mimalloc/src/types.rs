@@ -4934,7 +4934,7 @@ impl Page {
     ///
     /// # Safety
     /// `slot` names the initialized atomic `self` field in committed, retained
-    /// separate page metadata. The caller owns the corresponding arena slice
+    /// separate page metadata. The caller owns the corresponding page backing
     /// claim and excludes any conflicting live primary or alias publication.
     /// `owner` is its initialized, address-stable primary Page and remains live
     /// while a current client can look up this slot. The caller computes the
