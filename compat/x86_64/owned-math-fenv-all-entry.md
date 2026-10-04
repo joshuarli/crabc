@@ -34,6 +34,18 @@ stage records a zero status and that caller environment both before and after
 the probe. `validate_owned_math_fenv_all_entry.py` requires the fixed stage
 order, body sizes, zero statuses, and caller restoration.
 
+Before the framed probes, the driver also checks ordinary `log10`/`log10f`
+composition in the parent and two default-stack workers. Unity returns positive
+zero, negative zero returns negative infinity with divide-by-zero, and a negative
+finite argument returns NaN with invalid raised independently by each width.
+Positive nonintegral results exercise the reduction and polynomial paths; the
+joined worker's returned values must equal the parent's observations under the
+same inherited SSE direction. Existing sticky flags and the independent x87/SSE
+control modes survive those calls, and a worker's new flags do not reach its
+parent. The parent consumes the allocated result after worker exit. These checks
+add no stream stage or capability roster and do not replace the separate complete
+binary32/binary64 logarithm differential.
+
 Without a supplied pair, `./scripts/dev-x86_64.sh owned-math-fenv-all-entry`
 first builds current static and dynamic products inside its evidence
 directory, so the single command runs all six entry modes against the

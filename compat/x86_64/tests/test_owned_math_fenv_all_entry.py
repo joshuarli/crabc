@@ -29,6 +29,58 @@ DRIVER = ROOT / "compat/x86_64/owned_math_fenv_all_entry_driver.c"
 
 
 class OwnedMathFenvAllEntryTests(unittest.TestCase):
+    def test_decimal_logarithms_run_in_parent_and_joined_workers(self) -> None:
+        compiler = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
+        if not compiler.is_file():
+            self.skipTest("requires the pinned native musl compiler")
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="math-log-composition.", dir=scratch) as temporary:
+            work = Path(temporary)
+            source = work / "composition.c"
+            source.write_text(f'''#define log10 observed_log10
+#define log10f observed_log10f
+#define main composed_main
+#include "{DRIVER}"
+#undef main
+#undef log10
+#undef log10f
+extern double log10(double);
+extern float log10f(float);
+static pthread_t parent_thread;
+static unsigned int double_calls, float_calls, parent_double_calls, parent_float_calls;
+double observed_log10(double input) {{
+    __atomic_fetch_add(&double_calls, 1, __ATOMIC_RELAXED);
+    if (pthread_equal(pthread_self(), parent_thread))
+        __atomic_fetch_add(&parent_double_calls, 1, __ATOMIC_RELAXED);
+    return log10(input);
+}}
+float observed_log10f(float input) {{
+    __atomic_fetch_add(&float_calls, 1, __ATOMIC_RELAXED);
+    if (pthread_equal(pthread_self(), parent_thread))
+        __atomic_fetch_add(&parent_float_calls, 1, __ATOMIC_RELAXED);
+    return log10f(input);
+}}
+int main(void) {{
+    parent_thread = pthread_self();
+    if (check_worker_environment() != 0)
+        return 41;
+    return double_calls == 12 && float_calls == 12 &&
+        parent_double_calls == 4 && parent_float_calls == 4 ? 0 : 42;
+}}
+''', encoding="utf-8")
+            binary = work / "composition"
+            built = subprocess.run(
+                [str(compiler), "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
+                 "-frounding-math", "-ffunction-sections", "-fdata-sections",
+                 "-Wl,--gc-sections", str(source), "-pthread", "-lm", "-o", str(binary)],
+                cwd=ROOT, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(built.returncode, 0, built.stderr)
+            observed = subprocess.run([str(binary)], cwd=ROOT, capture_output=True,
+                                      text=True, check=False)
+            self.assertEqual(observed.returncode, 0, observed.stderr)
+
     def test_rehashed_transplanted_product_source_cannot_reseal(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)

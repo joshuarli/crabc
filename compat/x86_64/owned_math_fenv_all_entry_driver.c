@@ -151,8 +151,73 @@ struct worker_result {
 	long double rounded;
 	long double subnormal;
 	float complex conjugate;
+	double logarithms[4];
+	float narrow_logarithms[4];
 	int status;
 };
+
+static double (*volatile direct_log10)(double) = (log10);
+static float (*volatile direct_log10f)(float) = (log10f);
+
+static int decimal_logarithms_match(const struct worker_result *result)
+{
+	union { double value; uint64_t bits; } wide;
+	union { float value; uint32_t bits; } narrow;
+
+	wide.value = result->logarithms[0];
+	narrow.value = result->narrow_logarithms[0];
+	if (wide.bits != 0 || narrow.bits != 0)
+		return 0;
+	wide.value = result->logarithms[1];
+	narrow.value = result->narrow_logarithms[1];
+	if (wide.bits != UINT64_C(0xfff0000000000000) ||
+		narrow.bits != UINT32_C(0xff800000))
+		return 0;
+	if (!(result->logarithms[3] > 0.3 && result->logarithms[3] < 0.31) ||
+		!(result->narrow_logarithms[3] > 0.3f && result->narrow_logarithms[3] < 0.31f))
+		return 0;
+	wide.value = result->logarithms[2];
+	narrow.value = result->narrow_logarithms[2];
+	return (wide.bits & UINT64_C(0x7ff0000000000000)) == UINT64_C(0x7ff0000000000000) &&
+		(wide.bits & UINT64_C(0x000fffffffffffff)) != 0 &&
+		(narrow.bits & UINT32_C(0x7f800000)) == UINT32_C(0x7f800000) &&
+		(narrow.bits & UINT32_C(0x007fffff)) != 0;
+}
+
+/* The two scalar widths must leave control modes and existing flags intact.
+ * Clear only invalid between domain calls so each width must raise it itself. */
+static int observe_decimal_logarithms(struct worker_result *result)
+{
+	fenv_t before, after;
+	int flags = fetestexcept(ISO_EXCEPT);
+
+	if ((flags & FE_INVALID) != 0 || fegetenv(&before) != 0)
+		return 0;
+	result->logarithms[0] = direct_log10(1.0);
+	result->narrow_logarithms[0] = direct_log10f(1.0f);
+	if (fetestexcept(ISO_EXCEPT) != flags)
+		return 0;
+	result->logarithms[3] = direct_log10(2.0);
+	result->narrow_logarithms[3] = direct_log10f(2.0f);
+	flags |= FE_INEXACT;
+	if (fetestexcept(ISO_EXCEPT) != flags)
+		return 0;
+	result->logarithms[1] = direct_log10(-0.0);
+	result->narrow_logarithms[1] = direct_log10f(-0.0f);
+	flags |= FE_DIVBYZERO;
+	if (fetestexcept(ISO_EXCEPT) != flags)
+		return 0;
+	result->logarithms[2] = direct_log10(-1.0);
+	if (fetestexcept(ISO_EXCEPT) != (flags | FE_INVALID) ||
+		feclearexcept(FE_INVALID) != 0 || fetestexcept(ISO_EXCEPT) != flags)
+		return 0;
+	result->narrow_logarithms[2] = direct_log10f(-1.0f);
+	if (fetestexcept(ISO_EXCEPT) != (flags | FE_INVALID) ||
+		fegetenv(&after) != 0 || after.__control_word != before.__control_word ||
+		(after.__mxcsr & ~UINT32_C(0x3f)) != (before.__mxcsr & ~UINT32_C(0x3f)))
+		return 0;
+	return decimal_logarithms_match(result);
+}
 
 static void *math_worker(void *argument)
 {
@@ -179,6 +244,8 @@ static void *math_worker(void *argument)
 	result->conjugate = conjf(CMPLXF(-0.0f, 0.0f));
 	if (fetestexcept(ISO_EXCEPT) != (FE_DIVBYZERO | FE_INEXACT))
 		return result;
+	if (!observe_decimal_logarithms(result))
+		return result;
 	result->status = 0;
 	return result;
 }
@@ -190,6 +257,7 @@ static int check_worker_environment(void)
 	fenv_t original;
 	fenv_t split;
 	fenv_t after;
+	struct worker_result parent_result;
 	int status = 0;
 
 	if (fegetenv(&original) != 0)
@@ -202,6 +270,12 @@ static int check_worker_environment(void)
 	split.__mxcsr = (split.__mxcsr & ~0x6000) | (FE_UPWARD << 3);
 	if (fesetenv(&split) != 0 || feraiseexcept(FE_DIVBYZERO) != 0) {
 		status = 3;
+		goto restore;
+	}
+	if (!observe_decimal_logarithms(&parent_result) ||
+		feclearexcept(FE_INVALID | FE_INEXACT) != 0 ||
+		fetestexcept(ISO_EXCEPT) != FE_DIVBYZERO) {
+		status = 4;
 		goto restore;
 	}
 	for (int iteration = 0; iteration != 2; ++iteration) {
@@ -223,7 +297,9 @@ static int check_worker_environment(void)
 			status = 4;
 			break;
 		}
-		if (result->status != 0) {
+		if (result->status != 0 || !decimal_logarithms_match(result) ||
+			result->logarithms[3] != parent_result.logarithms[3] ||
+			result->narrow_logarithms[3] != parent_result.narrow_logarithms[3]) {
 			free(result);
 			status = 7;
 			break;
