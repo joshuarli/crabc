@@ -187,6 +187,44 @@ fn cold_native_guarded_first_request_preserves_empty_sampler_decision() {
     unsafe { crabc_mimalloc::source_heap_api::theap_guarded_set_sample_rate(selected, 0, 0); }
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(feature = "mi-secure-3")))]
+#[test]
+fn cold_native_aligned_size_refusal_preserves_uninitialized_source() {
+    use crabc_mimalloc::__crabc_runtime as native;
+    // Process initialization is irreversible; this cold refusal runs alone.
+    assert!(!native::process_is_active());
+    assert!(native::native_runtime_process_options_test_audit().is_none());
+    assert!(native::native_runtime_lifecycle_test_audit().is_none());
+    assert!(native::native_runtime_take_source_error_test_audit().is_none());
+    // SAFETY: the hosted environment and musl FILE remain valid for the
+    // process lifetime. Publishing these providers initializes no owner.
+    let facts = unsafe { native::NativeProcessStartupFacts::new(
+        current_page_size(), native_runtime_test_support::host_environment,
+        native_runtime_test_support::stderr_output(),
+    ) }.unwrap();
+    assert!(native::publish_native_process_startup_facts(facts));
+    assert!(!native::process_is_active());
+
+    // A valid alignment with an impossible size is a legal allocation
+    // refusal. No client or memory access follows this request.
+    let result = native::native_allocate_aligned(usize::MAX, 16, false);
+    let active = native::process_is_active();
+    let options = native::native_runtime_process_options_test_audit();
+    let policy = native::native_runtime_first_arena_policy_test_audit();
+    let lifecycle = native::native_runtime_lifecycle_test_audit();
+    let source_error = native::native_runtime_take_source_error_test_audit();
+    println!("cold aligned refusal: active={active}, options={options:?}, policy={policy:?}, lifecycle={lifecycle:?}, source_error={source_error:?}");
+    assert!(matches!(result, native::NativePageAllocationResult::AllocationFailed));
+    assert_eq!(source_error, Some(native::NativeSourceErrorAudit {
+        code: crabc_core::Errno::INVAL.raw(),
+        default_errno: crabc_core::Errno::INVAL.raw(),
+    }));
+    assert!(!active, "source aligned-size refusal precedes process and owner initialization");
+    assert!(options.is_none());
+    assert!(policy.is_none());
+    assert!(lifecycle.is_none());
+}
+
 fn run_in_clean_source_environment() {
     let trace_file = ChildTraceFile::create();
     let output = Command::new(
