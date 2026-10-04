@@ -187,7 +187,7 @@ fn cold_native_guarded_first_request_preserves_empty_sampler_decision() {
     unsafe { crabc_mimalloc::source_heap_api::theap_guarded_set_sample_rate(selected, 0, 0); }
 }
 
-#[cfg(all(target_arch = "x86_64", feature = "mi-guarded", not(feature = "mi-secure-3")))]
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn cold_native_aligned_size_refusal_preserves_uninitialized_source() {
     use crabc_mimalloc::__crabc_runtime as native;

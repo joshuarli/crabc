@@ -12814,6 +12814,18 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool, const SAMPLE_GUA
     shape: NativeAllocationShape,
     zero: bool,
 ) -> NativePageAllocationResult {
+    // An empty source Theap rejects an invalid aligned request before thread
+    // or process initialization. Its address grants no initialized projection;
+    // the existing error authority can report with no allocator borrow held.
+    #[cfg(target_arch = "x86_64")]
+    if let NativeAllocationShape::Aligned { alignment, offset } = shape {
+        if crate::compiler_tls::default_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr() {
+            if let Some(report) = SourceErrorReport::aligned_precheck(request, alignment, offset) {
+                let _ = crate::process_init::process_error_message(report);
+                return NativePageAllocationResult::AllocationFailed;
+            }
+        }
+    }
     // Admission can initialize the calling thread's Theap. Preserve the
     // immutable empty image's rate-zero decision using only its address;
     // initialized sampler fields remain inside the admitted operation.
