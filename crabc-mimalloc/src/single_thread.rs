@@ -44101,10 +44101,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // The arena's separate metadata prefix has one slot per slice.
         // Regular pages publish every secondary slot; a singleton needs
         // only the first two, including a possible guarded-start offset.
+        // The sole caller formed allocation_size by checked multiplication
+        // of the same slice count passed to the successful backing claim.
+        let slice_count = allocation_size / ARENA_SLICE_SIZE;
         let metadata_count = if kind == PageKind::Singleton {
-            claim.slice_count().min(2)
+            slice_count.min(2)
         } else {
-            claim.slice_count()
+            slice_count
         };
         for index in 1..metadata_count {
             // SAFETY: the fresh claim exclusively owns these slices and
