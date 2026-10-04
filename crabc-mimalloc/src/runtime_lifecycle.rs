@@ -6827,7 +6827,7 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller's exact-live-client and quiescent-owner proofs are
     // the same narrowed PageMap contract as the normal pointer-first lookup.
-    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
     // SAFETY: the live client keeps the selected page registered and its
     // arena provenance immutable. The documented quiescent sample condition
     // excludes a concurrent ordinary-field mutation while this audit copies
@@ -6877,7 +6877,7 @@ pub unsafe fn native_runtime_live_client_arena_span_test_audit(
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the exact live client and quiescent page owner keep this lookup
     // and its short immutable scalar projection valid.
-    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
     let page_ref = unsafe { page.as_ref() };
     let block_size = page_ref.block_size();
     let regular_medium = block_size > SMALL_SIZE_MAX && block_size <= MEDIUM_MAX_OBJ_SIZE;
@@ -6993,7 +6993,7 @@ pub unsafe fn native_runtime_live_client_memory_kind_test_audit(client: core::pt
     };
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller's exact-live-client proof, as for the page audit.
-    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
     // SAFETY: the live client keeps its page and immutable memid.
     Some(match unsafe { page.as_ref() }.memid().kind() {
         MemoryKind::None => 0,
@@ -7023,7 +7023,7 @@ pub unsafe fn native_runtime_live_client_slice_pcommitted_test_audit(client: cor
     };
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller's exact-live-client proof, as for the page audit.
-    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
     // SAFETY: the quiescent owner cannot extend the page during this read.
     Some(unsafe { page.as_ref() }.slice_pcommitted())
 }
@@ -7069,7 +7069,7 @@ pub unsafe fn native_runtime_live_client_page_geometry_test_audit(
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller pins this exact live client and excludes PageMap
     // retirement and reassociation during the validated lookup.
-    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
     // SAFETY: the selected live page remains registered, and the caller's
     // quiescence excludes mutations of every ordinary field copied below.
     let page_ref = unsafe { page.as_ref() };
@@ -7147,7 +7147,7 @@ pub unsafe fn native_runtime_live_client_uses_startup_regular_arena_test_audit(
     // SAFETY: the caller's exact-live allocation proof keeps the selected
     // PageMap entry and page metadata live while this immutable identity is
     // copied; no pointer is returned from this diagnostic.
-    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page = unsafe { page_map.lookup_native_page_for_live_client(client) }.ok()??;
     // SAFETY: the same client lifetime keeps its arena provenance immutable.
     let memory = unsafe { page.as_ref() }.memid().arena_memory()?;
     Some(memory.arena == core::ptr::from_ref(startup_arena.arena()).cast_mut())
@@ -7444,7 +7444,7 @@ pub unsafe fn native_runtime_process_done_retained_local_preflight_test_audit(
     };
     // SAFETY: the fixture supplies one exact still-live client at a quiescent
     // point before the matched free; this copies only its PageMap facts.
-    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+    let allocation = match unsafe { page_map.lookup_native_live_allocation(block) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) | Err(_) => return -2,
     };
@@ -7485,7 +7485,7 @@ unsafe fn native_runtime_local_page_test_audit_for_owner(
     };
     // SAFETY: the documented live sibling keeps its page registered and
     // initialized while this audit copies its source ownership facts.
-    let allocation = match unsafe { page_map.lookup_live_allocation(live_sibling) } {
+    let allocation = match unsafe { page_map.lookup_native_live_allocation(live_sibling) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) | Err(_) => return Err(-5),
     };
@@ -7599,12 +7599,12 @@ pub unsafe fn native_runtime_current_local_page_same_test_audit(
     };
     // SAFETY: the caller proves both exact live clients and excludes a source
     // page-map mutation while these two pointer-only observations are copied.
-    let first = match unsafe { page_map.lookup_live_allocation(first) } {
+    let first = match unsafe { page_map.lookup_native_live_allocation(first) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) | Err(_) => return Err(-5),
     };
     // SAFETY: same contract as the first exact-live allocation above.
-    let second = match unsafe { page_map.lookup_live_allocation(second) } {
+    let second = match unsafe { page_map.lookup_native_live_allocation(second) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) | Err(_) => return Err(-5),
     };
@@ -7794,7 +7794,7 @@ pub unsafe fn native_runtime_process_done_retained_live_page_test_audit(
     // SAFETY: the caller supplies the exact live second client and the
     // documented joined-worker quiescent boundary. This observation copies
     // source dispatch fields only; it does not form a release capability.
-    let second = match unsafe { page_map.lookup_live_allocation(second) } {
+    let second = match unsafe { page_map.lookup_native_live_allocation(second) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) | Err(_) => return false,
     };
@@ -7807,7 +7807,7 @@ pub unsafe fn native_runtime_process_done_retained_live_page_test_audit(
     if let Some(first) = first {
         // SAFETY: the optional first client remains live only before its
         // matched free and shares this joined worker's quiescent boundary.
-        let first = match unsafe { page_map.lookup_live_allocation(first) } {
+        let first = match unsafe { page_map.lookup_native_live_allocation(first) } {
             Ok(Some(allocation)) => allocation,
             Ok(None) | Err(_) => return false,
         };
@@ -11373,7 +11373,7 @@ fn with_current_thread_native_persistent_pointer<R>(
         // SAFETY: this private boundary is reached only from the native C
         // operation's exact-live-allocation contract. The observation stays
         // in this closure through the consuming local operation.
-        let pointer = unsafe { page_map.lookup_live_allocation(block) }.map_err(|_| ())?;
+        let pointer = unsafe { page_map.lookup_native_live_allocation(block) }.map_err(|_| ())?;
         let Some(pointer) = pointer else {
             return Ok(None);
         };
@@ -13021,7 +13021,7 @@ unsafe fn native_live_allocation_for_pointer_reallocation(
         return Err(NativePageAllocationResult::Retained);
     };
     // SAFETY: forwarded from this helper's exact-live native-client contract.
-    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+    let allocation = match unsafe { page_map.lookup_native_live_allocation(block) } {
         Ok(Some(allocation)) => allocation,
         Ok(None) => return Err(NativePageAllocationResult::Unavailable),
         Err(_) => {
@@ -13732,7 +13732,7 @@ unsafe fn native_reallocate_inner(
         };
         // SAFETY: this operation retains the exact live client through reuse
         // or replacement; the selected lookup rechecks readiness and source mode.
-        match unsafe { page_map.lookup_live_allocation(block) } {
+        match unsafe { page_map.lookup_native_live_allocation(block) } {
             Ok(Some(allocation)) => allocation,
             Ok(None) => return NativePageAllocationResult::Unavailable,
             Err(_) => {
@@ -13866,8 +13866,9 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         // readiness check; an active process's PageMap is published and
         // immutable, and the owner publication names it.
         // SAFETY: `native_free` accepts only an exact current native
-        // allocation, which keeps its PageMap registration and page live.
-        let page = unsafe { owner.page_map.as_ref().live_lookup(block.as_ptr()) };
+        // allocation, which retains its published native alias, map entry
+        // and primary page. The admitted owner keeps the map active.
+        let page = unsafe { owner.page_map.as_ref().lookup_native_retained_live_page(block.as_ptr()) };
         if let Some(page) = core::ptr::NonNull::new(page) {
             // SAFETY: the gate holds for this admitted operation; `page`
             // is `block`'s registered page and the caller consumes it. The
@@ -13941,7 +13942,7 @@ unsafe fn check_source_native_free_padding(
 ) -> Result<(), Option<SourceErrorReport>> {
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().ok_or(None)?;
     // SAFETY: the caller retains the exact live native allocation.
-    let allocation = unsafe { page_map.lookup_live_allocation(block) }
+    let allocation = unsafe { page_map.lookup_native_live_allocation(block) }
         .map_err(|_| None)?.ok_or(None)?;
     if crate::config::GUARDED && allocation.is_guarded() {
         // Guarded blocks omit ordinary padding records. Keep the canonical
@@ -14037,7 +14038,7 @@ unsafe fn native_free_pointer_first(
     #[cfg(target_arch = "x86_64")]
     // SAFETY: a supplied page is the retained same-map selection from an
     // unchanged fast refusal; absent capture uses the selected lookup mode.
-    let lookup = unsafe { page_map.lookup_live_allocation_with_captured_page(block, captured_page) };
+    let lookup = unsafe { page_map.lookup_native_live_allocation_with_captured_page(block, captured_page) };
     #[cfg(not(target_arch = "x86_64"))]
     let lookup = unsafe { page_map.lookup_live_allocation(block) };
     let allocation = match lookup {
@@ -14734,7 +14735,7 @@ unsafe fn unguard_native_live_client(block: core::ptr::NonNull<u8>) -> Option<()
     let _operation = NativeSubprocessOperation::enter()?;
     let map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller exclusively holds the exact live native client.
-    let allocation = match unsafe { map.lookup_live_allocation(block) }.ok()? {
+    let allocation = match unsafe { map.lookup_native_live_allocation(block) }.ok()? {
         Some(allocation) => allocation,
         None => return Some(()),
     };
@@ -15125,7 +15126,7 @@ unsafe fn native_guarded_owned_engine_return_facts(
     // client. Its actual admitted issuer retains the captured map/config and
     // metadata lifetime; no overlapping entry or client mutation is permitted.
     let page_map = original.owner.page_map().map_err(|_| MissingMapping)?;
-    let allocation = unsafe { page_map.lookup_live_allocation(original.block) }
+    let allocation = unsafe { page_map.lookup_native_live_allocation(original.block) }
         .map_err(|_| MissingMapping)?.ok_or(MissingMapping)?;
     if allocation.canonical_block() != original.block { return Err(NonCanonicalClient); }
     // SAFETY: the original live client retains this initialized Page. Compare
@@ -15238,7 +15239,7 @@ pub(crate) unsafe fn with_guarded_live_block<R>(
     let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(selected_theap) })?;
     let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
     // SAFETY: the caller exclusively holds the exact canonical live client.
-    let mut allocation = unsafe { page_map.lookup_live_allocation(block) }.ok()??;
+    let mut allocation = unsafe { page_map.lookup_native_live_allocation(block) }.ok()??;
     if allocation.canonical_block() != block {
         return None;
     }
@@ -15272,10 +15273,10 @@ pub(crate) unsafe fn with_guarded_live_block<R>(
     }
 }
 
-/// Returns the PageMap-derived usable size of one live native allocation.
+/// Returns the source page usable size of one live native allocation.
 ///
 /// This follows pinned `mi_usable_size`'s pointer/page geometry calculation:
-/// one immutable PageMap lookup captures the source extent, which this
+/// one selected native page lookup captures the source extent, which this
 /// boundary returns directly. Native admission pins the observation against
 /// terminal teardown; no current allocation owner, route, or page engine is
 /// selected to calculate the extent.
@@ -15294,7 +15295,7 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
     // SAFETY: `native_usable_size` receives an exact live native client. Its
     // allocation lifetime keeps this one PageMap source observation stable
     // until the captured scalar has been copied below.
-    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+    let allocation = match unsafe { page_map.lookup_native_live_allocation(block) } {
         Ok(Some(allocation)) => allocation,
         // A missing or unusable PageMap fact remains the C-shaped no-extent
         // result. Do not reinterpret it through an initial-thread, caller,
@@ -15326,7 +15327,7 @@ pub unsafe fn native_block_size(block: core::ptr::NonNull<u8>) -> Option<usize> 
     {
         // SAFETY: the exact live client retains the immutable source stride;
         // this observation grants no owner or canonical-block authority.
-        unsafe { page_map.lookup_live_block_size(block) }.ok().flatten()
+        unsafe { page_map.lookup_native_live_block_size(block) }.ok().flatten()
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -22545,6 +22546,7 @@ mod tests {
                 let mut clients = std::vec::Vec::new();
                 let mut aliases_observed = 0;
                 let mut missing_aliases = 0;
+                let mut incorrect_native_selection = false;
                 let mut allocation_failed = false;
                 let mut missing_registration = false;
                 let mut nonarena_client = false;
@@ -22578,6 +22580,14 @@ mod tests {
                     let owner = unsafe { core::sync::atomic::AtomicPtr::from_ptr(slot) }
                         .load(core::sync::atomic::Ordering::Acquire);
                     if owner != page.as_ptr() { missing_aliases += 1; }
+                    // SAFETY: the issuing native arena retains these source
+                    // aliases and the exact client throughout both observations.
+                    let selected = unsafe { map.lookup_native_page_for_live_client(client) }.ok().flatten();
+                    incorrect_native_selection |= selected != Some(page);
+                    let generic_stride = unsafe { map.lookup_live_block_size(client) }.ok().flatten();
+                    let native_stride = unsafe { map.lookup_native_live_block_size(client) }.ok().flatten();
+                    incorrect_native_selection |= native_stride != generic_stride;
+                    incorrect_native_selection |= unsafe { native_usable_size(client) }.is_none_or(|size| size < 32 * 1024);
                 }
                 let mut all_freed = true;
                 for client in clients {
@@ -22589,6 +22599,7 @@ mod tests {
                 assert!(!allocation_failed);
                 assert!(!missing_registration);
                 assert!(!nonarena_client);
+                assert!(!incorrect_native_selection);
                 assert!(aliases_observed != 0);
                 assert_eq!(missing_aliases, 0, "every secondary slice must publish its primary owner");
             },

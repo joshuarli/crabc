@@ -1089,6 +1089,44 @@ impl PageMap {
         }
     }
 
+    /// Selects the source page lookup for a client issued by a native backing.
+    /// Normal aligned-metadata mode reads its published alias; configured
+    /// debug, secure, and checked-free modes retain the checked PageMap lookup.
+    ///
+    /// # Safety
+    /// The map stays active. `address` is the exact current client returned by
+    /// a native arena or OS page allocation, including its source-derived
+    /// aligned or guarded adjustment. That backing retains the committed
+    /// aligned metadata prefix and published primary/secondary `self` slot
+    /// through this read and every use of the returned page. The live client
+    /// excludes retirement, reuse and release; generic registered external
+    /// clients without this native layout must use the PageMap lookup instead.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn lookup_native_retained_live_page(&self, address: *const u8) -> *mut Page {
+        if crate::config::PAGE_META_IS_ALIGNED
+            && crate::config::DEBUG_LEVEL == 0
+            && crate::config::SECURE_LEVEL == 0
+            && !crate::config::FREE_IS_CHECKED
+        {
+            let base = address.addr() & !(crate::config::PAGE_META_ALIGNMENT - 1);
+            let index = (address.addr() - base) / ARENA_SLICE_SIZE;
+            let slot_address = base + index * size_of::<Page>();
+            // Preserve the original native mapping provenance while selecting
+            // the prefix slot, rather than manufacturing a pointer from bits.
+            let slot = address.map_addr(|_| slot_address).cast::<Page>().cast_mut();
+            let Some(slot) = NonNull::new(slot) else { return null_mut(); };
+            // SAFETY: native publication initializes the source atomic slot
+            // before a client escapes; its exact live allocation pins both
+            // the alias backing and primary. Only that atomic is projected.
+            unsafe { Page::aligned_alias_owner_at(slot) }
+        } else {
+            // SAFETY: the same native client retains its registered map
+            // entry. This is the configured checked source policy.
+            unsafe { self.checked_lookup_in_active_map(address) }
+        }
+    }
+
     /// Pinned `_mi_unchecked_ptr_page` for the two-level map: the page of an
     /// address inside a live registered allocation, with none of
     /// [`Self::checked_lookup`]'s activity, committed-count, and null-submap

@@ -1506,6 +1506,123 @@ impl ProcessPageMapRoot {
         Ok((block_size != 0).then_some(block_size))
     }
 
+    /// Copies the page identity for an exact native arena or OS client.
+    /// Generic registered clients retain their independent PageMap lookup.
+    ///
+    /// # Safety
+    /// `client` was returned by a native page backing whose aligned metadata
+    /// alias is published and retained for this complete operation. Its live
+    /// allocation excludes alias/primary reuse, retirement and release.
+    /// The pointer grants no independent owner or mutation authority.
+    #[inline]
+    pub(crate) unsafe fn lookup_native_page_for_live_client(
+        self, client: NonNull<u8>,
+    ) -> Result<Option<NonNull<Page>>, ProcessPageMapError> {
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // SAFETY: the non-x86 target retains its existing source map policy.
+            unsafe { self.lookup_page_for_live_client(client) }
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            self.ensure_ready()?;
+            if self.storage.root.load().is_none() {
+                return Err(ProcessPageMapError::Poisoned);
+            }
+            // SAFETY: the exact native client retains both registered map state
+            // and the source alias prefix through the selected lookup.
+            Ok(NonNull::new(unsafe {
+                self.storage.page_map_ref().lookup_native_retained_live_page(client.as_ptr())
+            }))
+        }
+    }
+
+    /// Copies native pointer dispatch facts under its published alias lifetime.
+    ///
+    /// # Safety
+    /// The exact native client satisfies `lookup_native_page_for_live_client`'s
+    /// alias/backing contract, and remains live through the complete consuming
+    /// source operation as required by `lookup_live_allocation`.
+    #[inline]
+    pub(crate) unsafe fn lookup_native_live_allocation(
+        self, client: NonNull<u8>,
+    ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SAFETY: no capture bypasses the selected native source lookup.
+            unsafe { self.lookup_native_live_allocation_with_captured_page(client, None) }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            // SAFETY: the non-x86 target retains its existing source map policy.
+            unsafe { self.lookup_live_allocation(client) }
+        }
+    }
+
+    /// Copies fresh native geometry and ownership, optionally retaining a page
+    /// selected earlier in this same uninterrupted client operation.
+    ///
+    /// # Safety
+    /// The client satisfies `lookup_native_live_allocation`'s native backing
+    /// and consuming lifetime contract. A supplied page came from the selected
+    /// native normal or checked lookup in this exact map for this client, and
+    /// remains live without reuse or release. A prior refused consuming attempt
+    /// cannot supply capture; configured checked validation cannot be skipped.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn lookup_native_live_allocation_with_captured_page(
+        self, client: NonNull<u8>, captured_page: Option<NonNull<Page>>,
+    ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
+        self.ensure_ready()?;
+        let page = match captured_page {
+            Some(page) => page,
+            None => {
+                // SAFETY: READY admits this active map. The native exact client
+                // pins the published alias and PageMap entry in either mode.
+                let page = unsafe {
+                    self.storage.page_map_ref().lookup_native_retained_live_page(client.as_ptr())
+                };
+                let Some(page) = NonNull::new(page) else { return Ok(None); };
+                page
+            }
+        };
+        // SAFETY: the original native allocation pins initialized immutable
+        // geometry and the one atomic source owner word through classification.
+        let allocation = unsafe { classify_live_allocation_in_page(page, client) };
+        #[cfg(feature = "mi-guarded")]
+        let allocation = {
+            let mut allocation = allocation;
+            if let Some(allocation) = allocation.as_mut() {
+                allocation.os_page_size = Some(self.storage.config().page_size().bytes());
+            }
+            allocation
+        };
+        Ok(allocation)
+    }
+
+    /// Reads the immutable stride of an exact native arena or OS client.
+    ///
+    /// # Safety
+    /// The client satisfies `lookup_native_page_for_live_client`'s native alias
+    /// lifetime contract. The source block size stays fixed until final page
+    /// retirement. This grants no canonical-block, owner or release authority.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) unsafe fn lookup_native_live_block_size(
+        self, client: NonNull<u8>,
+    ) -> Result<Option<usize>, ProcessPageMapError> {
+        self.ensure_ready()?;
+        // SAFETY: READY publishes the map; the exact native client retains its
+        // source alias, page header and selected configured lookup mode.
+        let page = unsafe {
+            self.storage.page_map_ref().lookup_native_retained_live_page(client.as_ptr())
+        };
+        let Some(page) = NonNull::new(page) else { return Ok(None); };
+        // SAFETY: only the immutable source stride is read beside owner fields.
+        let block_size = unsafe { (*page.as_ptr().cast::<PagePointerGeometry>()).block_size };
+        Ok((block_size != 0).then_some(block_size))
+    }
+
     /// Starts the one explicit mutable PageMap lifecycle for this process
     /// root.
     ///
