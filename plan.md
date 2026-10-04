@@ -48,247 +48,60 @@ Update this small section in place when the implementation frontier changes.
 - **Feature status:** the selected surface is implemented. Two native opt0
   failures remain open: worker attachment on a legal 16-KiB pthread stack and
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
-  larger native worker stacks pass. Constructor and aggregate-copy improvements
-  pass focused checks; they do not establish that either failure is repaired.
-- **Resumed (2026-10-03):** source/compiler work and ordinary valid-client
-  checks from the settled parallel lanes are integrated. The current
-  construction frontier is settled. Independent release qualification and
-  performance work resumes with known blockers deferred to the end. Required
-  verification of the two reported opt0 failures remains constrained by the
-  recorded crash-investigation restriction. Historical branches and raw
-  failures are retained; promotion remains open.
-- **Core fixes:** mixed-family resolver configuration now retains the first three
-  nameservers in file order, and C zero-timeout batches retire their sockets and
-  preserve unanswered-result semantics. Rust filename matching preserves literal
-  bracket ranges and opposite-case classes. Accepted-C tiny calloc and aligned allocation satisfy
-  x86 natural alignment; open/openat use their actual variadic ABI; normal worker
-  return retires pending loader diagnostics. Generic post-exit frees complete local
-  collection before unownership. Heap key release refusal retains its exact lease,
-  arena-record release refusal restores its live slot, consumed completion errors
-  leave it cleared, and failed registry-bitmap cleanup retains its terminal token.
-  Prepared or consumed child Heap images refuse initialized projections. Child
-  TLS growth/free now separates consumption from completion and withdraws terminal
-  roots while retaining only exact live allocation custody. Arena allocation and
-  visitation use the actual Heap sequence and source population sampling.
-- **Ownership and construction:** initialized Heap/Theap, metadata, child and
-  attachment-only images use final storage. Non-consuming exit prefixes retain
-  the source engine across Rust unwind and change only their scalar phase.
-  Owner engine/fast-path reads use narrow raw projections; retained-client PageMap
-  lookups preserve source check modes. Retained sessions and callback pairing
-  project only the local or immutable fields they need. Secure metadata uses the actual mapping
-  owner. Compiler evidence removes large aggregate temporaries; ordinary tests
-  establish these changes without closing either reported runtime failure.
-  Direct worker installation reduces its opt0 entry frame from 4,744 to 952 bytes;
-  dynamic attachment transfers its retained image from initialized storage and
-  removes separate result temporaries. Scalar option reads remove two 304-byte
-  copies. The ordinary worker page-pop path now returns scalar selection state;
-  fresh OS prepublication refusal keeps the original claim outside observation
-  error transport and converges on one release transition. Child construction
-  validates before fieldwise writes into caller-retained storage. PageMap failure
-  output uses separate bounded message frames. Child source phases keep the
-  original owner in caller storage, with an unwind guard retaining its actual
-  admission on terminal outcomes. Diagnostic staging borrows the primary body
-  and stores static option recipes, reducing its storage from 4,168 to 232 bytes;
-  delivery drains the original selected entries once. Ordinary OS mapping and commit
-  warning storage is isolated: their opt0 frames fall from 3,080 to 1,064 bytes
-  and from 1,192 to 184 bytes respectively. These are individual
-  compiler frames, not peak-stack or 16-KiB qualification. Final child member
-  publication now follows source callbacks in a separate frame. VM warning
-  gates borrow their caller's primary message. Unpublished borrowed OS claims
-  initialize in caller storage and return scalar custody outcomes; processless
-  allocation retains its original owner transport. Fresh-page completion now
-  follows mapping acquisition in a separate frame, and the huge retry warning
-  buffer is isolated from ordinary mapping. Arena completion follows backing
-  selection, attachment field construction returns before Theap allocation,
-  and huge-warning routes borrow their original bodies through delivery.
-  Secure free-list extension keeps its fixed
-  shuffle arrays outside entropy callbacks, with the existing permutation and
-  publication order preserved in default, secure-2 and secure-3 checks.
-  Metadata refusal tests
-  distinguish one-shot recovery from sustained mapping unavailability.
-- **Verification:** merged source passes nine compiler profiles and focused opt0
-  ownership/worker/collection checks. Fresh debug comparisons cover selected-C
-  dynamic allocation and native fork, signals, timers, stdio, locale, TLS, loader,
-  CRT/helpers and Rust facade composition. Secure-1/2/3/4, stat-1/2 and explicitly
-  seeded guarded/stat combinations pass 4,314-key source comparisons. Default
-  entropy placement differences and guarded-debug oracle failures remain retained;
-  the latter combinations are unproved. No qualifying timing or release pass is
-  claimed for those component checks. The opt0 TSD runner's atomic check now follows called helpers; its direct
-  runtime and helper-disassembly evidence passes. The cold startup output timeout came from a FILE surrogate
-  violating the pinned delayed-flush contract; real FILE and registered allocating
-  callbacks have distinct passing checks, with the original timeout retained.
-  The unchanged upstream `functional/random` now passes all seven debug providers;
-  this component result does not certify historical failure evidence or the full
-  upstream corpus. Opt0 static application allocator replacement now links its
-  original full-override object without extracting duplicate providers.
-  One held-source snapshot, `6826b29ae`, passed the selected optimized ordinary
-  resolver, process/thread/TLS, filesystem, mapping, IPC, text/locale, stdio,
-  math, crypt, callback algorithm, header, std/LTO, unwind and Lua components
-  across its four owned products. Existing source-bound readers accepted their
-  admitted component scopes. Excluded cases remain unproved; these results do
-  not establish complete family qualification or transfer to newer source.
-  The remaining installed native-facade control, fat-LTO and stock-std-fat
-  components passed both allocator backends at `1e415ac59`: direct syscall
-  witnesses, facade/core LLVM bitcode and raw musl comparisons are retained.
-  Their partial gate reports preserve omitted scopes and make no LTO-into-libc claim.
-  The separate `9ddab8cf8` four-product snapshot passes the selected ordinary
-  compatibility and consumer components on installed and independently extracted
-  products. Its source-bound evidence remains separate from subsequent fixes.
-- **Compiler frontier:** eight missing binary80 and float-complex helpers now have
-  owned providers; the archive has 40 entries. Numerical, ABI, closed-consumer and
-  ordinary owned debug four-mode checks pass. Target-gated Rust assembly preserves
-  the legacy source boundary. The retained ordinary debug static aggregate links
-  through owned providers. Inspection of the retained `ee44f3abc` debug ET_EXEC
-  confirms that seven relocated caller-location records occupy writable load
-  storage: its ordinary `crt1.o` does not seal GNU RELRO, as in pinned musl's
-  static startup. The immutable byte-closure reader correctly refuses those
-  records; source-core/libc callee closure also remains unproved. Do not weaken
-  that reader or change ordinary startup merely to admit this debug diagnostic.
-  The existing full 40-helper
-  byte-closure reader passed optimized ordinary links in the held `6826b29ae`
-  cohort; complete release qualification remains unclaimed.
-  Optimized native shared libc now extracts the complete private helper archive
-  even when its allocator emits no helper imports. Both backend candidates pass
-  the unchanged 40-helper private-placement reader; other archives remain lazy.
-- **Qualification:** the frozen inventory remains 223 capabilities and 26 families.
-  Eight ordered gates are ready, zero qualified. Structural validation certifies
-  no runtime or release behavior. C remains selected and public x86 support disabled.
-  Independent release and performance work proceeds with known blockers
-  deferred; mandatory correctness remains required for the default switch and
-  public promotion.
-- **Inputs and tooling:** authenticated core image `a635e97c4bb5` and allocator
-  image `3d5e3a88e4f5` are restored, alongside pinned source oracles, package
-  archives, std/provider vendors and Lua/Rustybench/Rustix inputs. Current tool
-  authorities authenticate these inputs; resolver and C performance launches use
-  the inspected immutable image ID. Debug stdio producers and readers bind products
-  to source content without admitting debug products for release qualification.
-  Combined debug products require exact typed backend/audit configurations.
-  `.work/x86_64/reports/cohort159/` retains the `e66fab1a8` optimized
-  static/dynamic C/native-shadow products, independent reproductions, eight
-  reproducible packages and exact source inputs. Both genuine canonical static
-  preparation receipts pass; all fresh package extractions and product identity
-  checks pass. This is product preparation, not full runtime qualification.
-  Existing complete admission readers retain the missing prerequisite receipts;
-  the full dynamic roster requires 73 cases for each product placement.
-  Historical component cohorts keep their original identities and evidence.
-  The collector smoke now supplies its retained host capture paths, the private
-  allocator adapter selects its required page-size projection, and the scalar
-  C configuration oracle treats its undefined encoding switch as source zero.
-  Installed compiler-builtin provenance now records the generated object's
-  staging role while preserving compiler inputs, flags and raw actual argv.
-  Independent archive bytes and provenance agree; both backends pass the
-  unchanged canonical static preparation collector on the repaired source.
-  The allocator harness now accepts its existing `xmalloc` caller and selects
-  `MI_XMALLOC=1` with `mi-xmalloc`; returning allocation controls pass.
-  The ELF facts collector now authenticates each product's complete Linux UAPI
-  names and hashes against the pinned export manifest. A real accepted-C
-  inventory and all 17 ELF placements collect and replay successfully.
-  Integrated allocator performance preparation now uses the existing pinned
-  core image and its explicit musl compiler; four fresh products and benchmark
-  programs build successfully. At `348aa729d`, three complete engine measurements
-  qualify physically on an uncontended host and agree, but fail the numerical
-  promotion bounds: suite throughput lower95 is 0.315–0.320 of pinned C, all ten
-  critical throughput rows fail, and nine tail rows regress. RSS/PSS bounds pass;
-  Rust allocator code occupies 1,024,830 bytes versus C's 108,311 bytes. The fresh
-  integrated four-product run completes all 14 rows without workload failures,
-  but its initial host load of 1.21 exceeds the qualification limit of 1.0.
-  Exact source, artifacts and original measurements remain under
-  `.work/x86_64/reports/integrated-lanes/allocatorperf161-348aa729d/`.
-  Source-faithful compiler reductions now separate cold startup and TLS
-  publication, derive allocation facts from one retained ownership word,
-  defer bin selection until direct-cache misses, share scalar bitmap retries,
-  reuse validated purge ranges, and use validated power-of-two commit geometry.
-  Forced local-list traversal validates each node once. Bounded aligned
-  overallocated bases now complete through owner-local heads while preserving
-  guarded fallbacks, administration and full-page transitions. Nine merged
-  profiles, eight focused opt0 checks and the frozen inventories pass.
-  Required admission synchronization and pinned algorithms remain intact;
-  these individual compiler measurements do not establish combined throughput
-  acceptance. At `b80593052`, three complete engine runs on CPUs 8–15 qualify
-  physically and agree through the existing readers. Suite throughput lower95
-  is 0.3346–0.3362 of pinned C; all ten critical throughput rows and nine tail
-  rows fail. RSS/PSS bounds pass. Allocator code is 1,000,263 bytes versus C's
-  108,311 bytes. Original CPU-zero timing refusals remain retained with their
-  exact records. Source and products are retained under
-  `.work/x86_64/reports/integrated-lanes/allocatorperf164-b80593052/` and
-  `.work/allocator-x86_64/reports/allocator/x86_64/perf-engine/`.
-  Guarded profiles now use the complete engine for sampler advancement and
-  aligned-base tagging; focused opt0 owner cycles pass. Those changes follow
-  the measured snapshot. Further merged changes share startup and callback
-  admission, narrow native child release, remove owner-result transport, isolate
-  metadata initialization and static inactive preparation, and read live block
-  stride without unrelated page classification. Nine combined compiler profiles
-  and eleven focused opt0 checks pass, including aligned boundary/guarded
-  payload preservation and ordinary teardown. Rejected compiler trials retain
-  their measured code or stack regressions. At `8f8139534`, three complete engine
-  runs on CPUs 8–15 qualify physically and agree. Suite throughput lower95 is
-  0.3297–0.3389 of pinned C; all ten critical throughput rows and nine or ten
-  tail rows fail. RSS/PSS bounds pass; allocator code is 983,115 bytes versus
-  C's 108,311 bytes. Exact source, reports and products remain under
-  `.work/x86_64/reports/integrated-lanes/allocatorperf166-8f8139534/`.
-  Fixed native guarded allocation and replacement now sample at ingress;
-  source wrappers use explicit continuations after their own sampling decision.
-  A real-owner opt0 regression fails before the correction and passes after it,
-  including alternating countdown selection, sibling payloads and zeroed growth.
-  Three existing guarded controls and nine compiler profiles also pass.
-  The native C boundary now fail-stops terminal nonnull `realloc` retention
-  after runtime cleanup; ordinary policy cases retain errno and retryable
-  client custody. Six installed policy modes and nine compiler profiles pass;
-  terminal ordering is established by source and emitted edges, without
-  reproducing terminal failure. Physical destruction constructs failed-arena
-  ownership directly in its retained slot, preserving partial custody after
-  commitment. Selected frame reservations fall from 66,752 to 9,176 bytes;
-  the valid empty-owner constant costs 15,360 bytes of rodata while executable
-  text shrinks 256 bytes. This is a storage tradeoff, not a code-size-bound pass.
-  Nine merged compiler profiles and six focused opt0 checks pass. Fresh core
-  fenv state/SIMD tests and the same final debug ELF's no-`fxrstor` check pass.
-  The native shared-helper placement runner admits its fresh product and all
-  forty private helpers, then refuses its C-only allocator caller predicate:
-  native population counting is emitted inline, with no `__popcountdi2`
-  transfer. That full native runner obligation remains open.
-  Performance acceptance and complete correctness/codegen prerequisites remain
-  open.
-  Static target dependencies now compile with initial-exec TLS; the original
-  allocator dependency TLSGD references left an orphan undefined resolver symbol
-  after linker relaxation. Corrected static products pass the original object
-  audit without adding a resolver or relaxing the reader. Installed callable
-  compilation now resolves transitive kernel declarations through owned headers;
-  a real compiler regression rejects a missing owned header despite oracle access.
-  Frozen ABI/header/coverage digests are unchanged.
-- **Static link inspection:** ordinary static links can retain local undefined
-  metadata after a weak address resolves to zero.
-  `owned_static_link_authority.static_undefined_bindings` admits named local
-  rows with zero value and size only in the regular symbol table; relocation
-  operands and dynamic symbol exposure still require bindings.
-  A normal strict LLD regression fails before the repair and passes afterwards,
-  while its retained-relocation counterpart stays required. Five focused tests
-  and nine merged compiler profiles pass. The four original `6826b29ae` static
-  cleanup images using stock std or std built from source passed unchanged with
-  the repaired reader; original rejected preflights remain retained. This is
-  component evidence.
-- **Evidence and cleanup:** `.work/x86_64/reports/integrated-lanes/` retains
-  settled lanes' original programs/source, raw failures, debug helper storage
-  facts and focused proofs before their worktrees are removed. Merged checks are in
-  `.work/x86_64/tmp/resume12*-merged-*.log`, `resume13*-merged-*.log`, and
-  `resume14*-merged-*.log`, and `resume15*-merged-*.log`.
-  All settled lane worktrees have been removed. Existing allocator and hardware-policy
-  reports remain available. Historical receipts are not transferred to current
-  products; other projects' Docker state remains outside cleanup.
-- **On resume:** qualify the current merged-source release cohort and investigate
-  performance on an uncontended host, keeping known blockers until the end.
-  The historical ordinary consumer components above retain their actual source
-  identities; rebuild for changed products, not handoff prose. Use
-  existing runners and direct regressions; avoid new catalogs or proof layers.
-  Baseline allocator qualification, post-switch reruns and public promotion remain open.
-  No qualifying timing or full release-family pass is claimed.
-- **Constraint:** earlier crash-debugging lanes were rejected by automatic safety
-  review and were not restarted. Continue with source/compiler improvements and
-  ordinary valid-client checks; do not resume those rejected workflows.
-- **Host:** two allowed NUMA nodes and free explicit 2-MiB/1-GiB pages are unavailable. These
-  optional hardware modes remain unqualified; ordinary baseline promotion may
-  proceed once its other prerequisites pass. Do not repeat unchanged denied
-  `mbind`, alter shared pools/security policy, rent resources or reboot without
-  authorization.
+  larger native worker stacks pass. Source/compiler improvements and ordinary
+  valid-client checks continue; they do not establish repairs of those failures.
+- **Current source:** merged ownership paths retain exact allocation, arena and
+  terminal custody, construct large runtime images in final storage, and use
+  narrow metadata projections. Child destruction now obtains its parent-owned
+  retention header before mutation, including children without huge arenas.
+  The fixed header costs 15,464 bytes at alignment 8, plus huge-arena words.
+  Cold guarded allocation preserves the empty Theap's first sampling decision;
+  cold oversized aligned refusal reports source EINVAL before process or thread
+  initialization. Default and guarded regressions pass. Later READY sampling
+  and real attached-worker guarded allocation/growth controls pass.
+- **Compiler boundaries:** installed static and dynamic target dependencies use
+  the selected initial-exec TLS model. Fresh dynamic allocator code uses direct
+  TLS access while ordinary application dynamic TLS remains functional. Both
+  allocator backends retain all 40 private shared compiler helpers; the source-C
+  population-count caller witness applies only to its C provider. Ordinary
+  static weak undefined metadata retains the existing narrow link-reader rule.
+  Required admission synchronization and pinned allocator algorithms remain intact.
+- **Verification:** current source passes all nine compiler profiles and focused
+  cold allocation, guarded worker, ownership and child-header regressions.
+  The frozen inventory remains 223 capabilities and 26 families. Historical
+  compatibility, header, std/LTO, unwind and Lua component cohorts retain their
+  original source/product identities; rebuild for changed products. Component
+  checks and structural validation do not establish full release qualification.
+- **Performance:** the latest retained three agreeing engine measurements,
+  at `8f8139534`, qualify physically but fail numerical promotion bounds.
+  Suite throughput lower95 is 0.3297–0.3389 of pinned C; all ten critical
+  throughput rows and nine or ten tail rows fail. RSS/PSS bounds pass;
+  allocator code occupies 983,115 bytes versus C's 108,311 bytes.
+  Two later complete integrated runs at `13df6a63d` pass the existing physical
+  host checks and complete all 14 workload rows. Their raw numerical results
+  remain retained; subsequent correctness fixes require fresh measurements.
+  Full preparations now allow one idle interval after their builds when host
+  load exceeds the unchanged limit. Performance acceptance remains open.
+- **Qualification:** authenticated core image `a635e97c4bb5`, allocator image
+  `3d5e3a88e4f5`, pinned sources and consumer inputs are available. Eight ordered
+  gates are ready, zero qualified. The `e66fab1a8` four-product preparation and
+  independently reproduced packages remain under
+  `.work/x86_64/reports/cohort159/`; they are not current qualification.
+  A fresh release cohort starts at `d294dd879`. C remains selected and public
+  x86 support disabled. Baseline qualification, post-switch reruns and public
+  promotion remain open.
+- **Evidence:** `.work/x86_64/reports/integrated-lanes/` retains settled lanes'
+  exact source/artifacts, original failures and compiler proofs before worktree
+  removal. Existing ignored report locations retain raw measurements and
+  merged-check logs. Rejected trials are restored; historical receipts are
+  never transferred to new products. Git retains implementation history.
+- **Constraints:** known blockers remain deferred until the end. Earlier crash
+  investigation workflows were rejected by automatic safety review; do not
+  restart them. Continue source/compiler work and ordinary valid-client checks.
+  Physical NUMA and explicit 2-MiB/1-GiB modes remain unqualified on this host.
+  Ordinary baseline promotion may proceed once its other prerequisites pass.
+  Do not repeat unchanged denied `mbind`, alter shared pools/security policy,
+  rent resources or reboot without authorization. AArch64 remains paused.
 
 ## Parallel lanes
 
