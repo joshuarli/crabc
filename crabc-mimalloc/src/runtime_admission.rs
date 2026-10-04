@@ -265,6 +265,14 @@ impl NativeAllocatorOperationGuard {
         // SAFETY: this private entry accepts only the current TLS descriptor;
         // isolated tests use an exclusively owned live fixture on this thread.
         let record = unsafe { descriptor.as_ref() };
+        Self::publish_entry_at(epoch, record)?;
+        Ok(Self { descriptor, _not_send_sync: PhantomData })
+    }
+
+    // Return only admission status across this boundary. The caller already
+    // retains the descriptor and constructs its guard after successful entry;
+    // publication never needs to transport that pointer back to the caller.
+    fn publish_entry_at(epoch: &NativeAllocatorEpoch, record: &NativeAllocatorThreadDescriptor) -> Result<(), NativeAllocatorEntryError> {
         if record.registration.load(Ordering::Acquire) != REGISTERED {
             return Err(NativeAllocatorEntryError::Unregistered);
         }
@@ -278,7 +286,7 @@ impl NativeAllocatorOperationGuard {
             }
             let next = depth.checked_add(1).ok_or(NativeAllocatorEntryError::NestingOverflow)?;
             unsafe { *record.nesting.get() = next; }
-            return Ok(Self { descriptor, _not_send_sync: PhantomData });
+            return Ok(());
         }
         loop {
             let observed = epoch.state.load(Ordering::SeqCst);
@@ -309,7 +317,7 @@ impl NativeAllocatorOperationGuard {
             }
             if epoch.state.load(Ordering::SeqCst) == observed {
                 unsafe { *record.nesting.get() = 1; }
-                return Ok(Self { descriptor, _not_send_sync: PhantomData });
+                return Ok(());
             }
             record.entered.store(false, Ordering::SeqCst);
         }
