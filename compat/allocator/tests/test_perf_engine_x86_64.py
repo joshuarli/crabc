@@ -207,6 +207,48 @@ class SummaryTests(unittest.TestCase):
 
 
 class MeasurementFailureTests(unittest.TestCase):
+    def test_failed_fixture_output_survives_run_cleanup(self) -> None:
+        stdout = "batch ns=23585 cpu_ns=0 ops=20480\nok\n"
+        stderr = "fixture diagnostic\n"
+        outputs: list[str] = []
+
+        def rejected_sample(binary, row, *, scratch, sample_name, **kwargs):
+            outputs.append(sample_name)
+            (scratch / f"{sample_name}.stdout").write_text(stdout)
+            (scratch / f"{sample_name}.stderr").write_text(stderr)
+            engine.parse_timed_output(stdout, expected_batches=1)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            reports = root / "reports"
+            arguments = engine.parse_arguments(["--set", "architecture", "--label", "retained-failure"])
+            with patch.object(engine.shared, "require_native_x86_64", return_value={}), \
+                    patch.object(engine.shared, "fetch_archive", return_value=root / "archive"), \
+                    patch.object(engine.shared, "safe_extract", return_value=root / "source"), \
+                    patch.multiple(
+                        engine, REPORT_ROOT=reports, require_tool=lambda name: name,
+                        git_provenance=lambda: {}, host_provenance=lambda cpus: {},
+                        tool_versions=lambda: {}, input_provenance=lambda *args: {},
+                        build_lanes=lambda *args, **kwargs: {
+                            "records": {}, "binaries": {lane: root / lane for lane in engine.LANES}},
+                        code_size_comparison=lambda records: {},
+                        host_record_start=lambda cpus: {"windows": []},
+                        contention_window=lambda *args: {}, host_record_finish=lambda evidence: {},
+                        uncontended_host_record=lambda evidence: {},
+                        qualification_unmet=lambda report: ["fixture row failed"],
+                        run_timed_sample=rejected_sample,
+                    ):
+                with self.assertRaisesRegex(engine.HarnessError, "rows failed:"):
+                    engine.run(arguments)
+            report = json.loads((reports / "retained-failure.json").read_text())
+            self.assertEqual(report["status"], "failed-rows")
+            self.assertEqual(len(outputs), len(report["failed_rows"]))
+            self.assertGreater(len(outputs), 0)
+            retained = reports / "retained-failure.artifacts" / "output"
+            for sample_name in outputs:
+                self.assertEqual((retained / f"{sample_name}.stdout").read_text(), stdout)
+                self.assertEqual((retained / f"{sample_name}.stderr").read_text(), stderr)
+
     def test_a_failing_fixture_is_recorded_and_later_rows_still_run(self) -> None:
         rows = [
             {"name": "broken", "workload": "alloc_free", "params": {"size": 64, "iterations": 1, "batches": 1}},

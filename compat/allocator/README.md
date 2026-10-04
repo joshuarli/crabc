@@ -28,6 +28,10 @@ private to each thread. Independent workers must not race or contend on that
 accumulator. Both allocator backends compile the same fixture bytes; a fixture
 change requires fresh products and measurements in both lanes.
 
+The engine runner retains fixture stdout and stderr under each run's
+`<label>.artifacts/output` directory, including samples that fail before their row
+can produce a comparison.
+
 For one development regression, use
 `./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name`.
 The filter selects one complete Rust test name with `--exact` and preserves its

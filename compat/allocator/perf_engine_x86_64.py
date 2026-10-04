@@ -2086,7 +2086,9 @@ def run(arguments: argparse.Namespace) -> Path:
         built = build_lanes(manifest, source, artifacts, compiler=compiler, readelf=readelf)
         report["lanes"] = built["records"]
         report["code_size"] = code_size_comparison(built["records"])
-        scratch = temporary_path / "output"
+        # Keep complete fixture output when parsing or execution rejects a
+        # sample; the temporary source tree is removed before the report returns.
+        scratch = artifacts / "output"
         scratch.mkdir()
         load_before = list(os.getloadavg())
         host_evidence = host_record_start(measurement_cpus)

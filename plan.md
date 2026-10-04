@@ -103,7 +103,9 @@ Update this small section in place when the implementation frontier changes.
   follows sealed-driver receipt anchors and private UAPI include paths, retains
   all project include bytes in source comparison, permits declared unused
   builtins in link traces, forwards supplied mutex products and records the
-  active native benchmark's aligned/ordinary entry selection.
+  active native benchmark's aligned/ordinary entry selection. Engine runs
+  retain complete failed fixture output after temporary-source cleanup;
+  the reproduced retention regression and existing reader/fixture tests pass.
 - **Performance:** the latest retained three agreeing engine measurements,
   at `e8b25e956`, pass physical product/host checks but fail numerical bounds.
   Their scaling rows use a shared volatile observation accumulator with a C
@@ -138,7 +140,7 @@ Update this small section in place when the implementation frontier changes.
   CPU controls stay near unchanged. Four-worker wall timing is noisy. These
   comparisons are between original and changed Rust products; fresh full
   engine and installed-product measurements remain required.
-  Full preparations now allow one idle interval after their builds when host
+  Installed-product full preparations allow one idle interval after builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `0f46a88a4cd9`, allocator image
   `0ee122ffc790`, pinned sources and consumer inputs are available. The missing
