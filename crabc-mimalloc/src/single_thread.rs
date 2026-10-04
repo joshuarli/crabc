@@ -47121,7 +47121,292 @@ mod tests {
         });
     }
 
+    #[cfg(all(target_arch = "x86_64", not(any(
+        feature = "mi-debug-1", feature = "mi-secure-1", feature = "mi-guarded",
+    ))))]
+    mod local_fast_refusal_tests {
+        use super::*;
+        use crate::types::Block;
+
+        #[derive(Debug, Eq, PartialEq)]
+        struct OwnerImage {
+            geometry: (usize, usize, u16, u16, usize, u16),
+            heads: (*mut Block, *mut Block, *mut Block),
+            head_links: (Option<usize>, Option<usize>),
+            ownership: (*mut Heap, *mut Theap, usize, bool),
+            links: (*mut Page, *mut Page),
+            queues: ((*mut Page, *mut Page), (*mut Page, *mut Page)),
+            retirement: (u8, (usize, usize)),
+            administration: (u64, isize, isize),
+            page_count: usize,
+            full_bytes: usize,
+            statistics: crate::statistics::FinalStatisticsSnapshot,
+            registration: *mut Page,
+        }
+
+        fn owner_image(
+            allocator: &SingleThreadAllocator<'_, '_, '_>,
+            page: NonNull<Page>,
+            client: NonNull<u8>,
+            bin: usize,
+        ) -> OwnerImage {
+            // SAFETY: the exclusive fixture session retains the initialized
+            // page and current client, with no producer or callback active.
+            // All copied projections end before any allocator mutation.
+            let (state, validity, links, head_links) = unsafe {
+                let state = Page::owner_snapshot_at(page);
+                let validity = Page::validity_snapshot_at(page);
+                let link = |head: *mut Block| {
+                    (!head.is_null()).then(|| head.cast::<usize>().read())
+                };
+                (
+                    state,
+                    validity,
+                    (Page::queue_prev_at(page), Page::queue_next_at(page)),
+                    (link(state.free), link(state.local_free)),
+                )
+            };
+            let theap = allocator.session.local_field_theap_pointer();
+            let queue = allocator.session.queue(bin).unwrap();
+            let full = allocator.session.queue(BIN_FULL).unwrap();
+            OwnerImage {
+                geometry: (state.block_size, state.page_offset, state.capacity,
+                    state.reserved, state.used, state.slice_pcommitted),
+                heads: (state.free, state.local_free, validity.remote),
+                head_links,
+                ownership: (state.heap, state.theap, state.xthread_id, state.free_is_zero),
+                links,
+                queues: ((queue.first(), queue.last()), (full.first(), full.last())),
+                retirement: (state.retire_expire, allocator.session.retired_bounds()),
+                administration: allocator.session.theap().test_generic_administration_image(),
+                page_count: allocator.session.theap().page_count(),
+                full_bytes: allocator.session.theap().pages_full_size(),
+                // SAFETY: this fixture retains the original pinned Theap and
+                // its bootstrap Heap; the statistics projection is atomic.
+                statistics: unsafe { Theap::final_statistics_at(theap) }.unwrap().1,
+                // SAFETY: the client remains current in this exact engine.
+                registration: unsafe { allocator.page_for_block(client) },
+            }
+        }
+
+        fn allocate_phased(
+            allocator: &mut SingleThreadAllocator<'_, '_, '_>,
+            size: usize,
+        ) -> (NonNull<u8>, usize, usize) {
+            let mut frequency_phases = 0;
+            let mut collection_phases = 0;
+            let mut phase = allocator.begin_deferred_free_allocation(size, false);
+            loop {
+                phase = match phase {
+                    DeferredFreeAllocationPhase::Complete(block) => {
+                        return (block.expect("the available real owner page allocates"),
+                            frequency_phases, collection_phases);
+                    }
+                    DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
+                        frequency_phases += 1;
+                        assert_eq!(frequency_phases, 1);
+                        // SAFETY: the original exclusive bootstrap session and
+                        // backing stay retained; its source frequency is 10000.
+                        unsafe { allocator.resume_generic_allocation_frequency(
+                            request, 10_000, continuation,
+                        ) }
+                    }
+                    DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                        collection_phases += 1;
+                        assert_eq!(collection_phases, 1);
+                        assert!(matches!(collection, GenericAllocationCollection::Mini),
+                            "the available fixture needs only threshold mini collection");
+                        allocator.session.test_run_empty_deferred_free_phase(false);
+                        allocator.resume_deferred_free_allocation(collection, continuation)
+                    }
+                    DeferredFreeAllocationPhase::LiveValidity(task) => {
+                        core::mem::forget(task);
+                        panic!("a valid available page must not retain a validity refusal");
+                    }
+                    DeferredFreeAllocationPhase::FreshInitialization(task) => {
+                        // SAFETY: this original engine still retains the exact
+                        // unpublished task's session and backing authority.
+                        unsafe { allocator.cleanup_fresh_os_initialization(task) }.unwrap();
+                        panic!("an available existing page must not need fresh initialization");
+                    }
+                };
+            }
+        }
+
+        fn assert_payloads(clients: &[NonNull<u8>]) {
+            for (index, client) in clients.iter().enumerate() {
+                // SAFETY: each listed client remains live and owns these
+                // first 32 bytes, including after the retained full transition.
+                let payload = unsafe { core::slice::from_raw_parts(client.as_ptr(), 32) };
+                assert!(payload.iter().all(|byte| *byte == index as u8));
+            }
+        }
+
+        fn assert_one_allocation_statistics(before: &OwnerImage, after: &OwnerImage, size: usize, bin: usize) {
+            #[cfg(feature = "mi-stat-1")]
+            {
+                assert_eq!(after.statistics.malloc_normal.current,
+                    before.statistics.malloc_normal.current + before.geometry.0 as i64);
+                assert_eq!(after.statistics.malloc_normal.total,
+                    before.statistics.malloc_normal.total + before.geometry.0 as i64);
+            }
+            #[cfg(feature = "mi-stat-2")]
+            {
+                assert_eq!(after.statistics.malloc_normal_count,
+                    before.statistics.malloc_normal_count + 1);
+                assert_eq!(after.statistics.malloc_requested.total,
+                    before.statistics.malloc_requested.total + size as i64);
+                assert_eq!(after.statistics.malloc_bins[bin].total,
+                    before.statistics.malloc_bins[bin].total + 1);
+            }
+            let _ = (size, bin);
+        }
+
+        #[test]
+        fn medium_last_slot_refusal_preserves_owner_before_one_full_transition() {
+            with_non_abandoning_local_fast_owner_allocator(|allocator| {
+                let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+                let bin = size_class::bin(request).unwrap();
+                let first = allocator.allocate(request, false).unwrap();
+                // SAFETY: the first exact client pins its map-published page.
+                let page = NonNull::new(unsafe { allocator.page_for_block(first) }).unwrap();
+                assert!(!allocator.session.theap().allows_page_abandon());
+                let mut clients = Vec::new();
+                clients.push(first);
+                loop {
+                    let image = owner_image(allocator, page, first, bin);
+                    assert_eq!(size_class::page_kind_for_block_size(image.geometry.0), Some(PageKind::Medium));
+                    assert_eq!(image.queues.0.0, page.as_ptr());
+                    assert!(image.geometry.3 > 1);
+                    assert_eq!(image.geometry.4, clients.len());
+                    if image.geometry.4 + 1 == usize::from(image.geometry.3) { break; }
+                    assert!(image.geometry.4 + 1 < usize::from(image.geometry.3));
+                    let (client, frequencies, collections) = allocate_phased(allocator, request);
+                    assert_eq!((frequencies, collections), (0, 0));
+                    // SAFETY: each newly returned client remains current.
+                    assert_eq!(unsafe { allocator.page_for_block(client) }, page.as_ptr());
+                    clients.push(client);
+                }
+                for (index, client) in clients.iter().enumerate() {
+                    // SAFETY: each current client owns its first 32 bytes.
+                    unsafe { client.as_ptr().write_bytes(index as u8, 32) };
+                }
+                // Source extension batches can stop one block short of the
+                // reservation. Extend the real remaining prefix so this
+                // refusal isolates the final-pop full transition, rather
+                // than also needing the complete path's page extension.
+                allocator.extend_page_before_allocation(page).unwrap();
+                let before = owner_image(allocator, page, first, bin);
+                assert_eq!(before.geometry.2, before.geometry.3);
+                assert!(!before.heads.0.is_null());
+                assert!(before.administration.1 < 999);
+                let owner = allocator.local_fast_owner().unwrap();
+                assert_eq!(owner.theap, allocator.session.local_field_theap_pointer());
+                // SAFETY: the existing engine capability retains exclusive
+                // ownership and unencoded links through this synchronous call.
+                assert!(unsafe { crate::local_fast_path::allocate(
+                    owner.theap, request, None, false,
+                ) }.is_none());
+                assert_eq!(owner_image(allocator, page, first, bin), before);
+                assert_payloads(&clients);
+                let (last, frequencies, collections) = allocate_phased(allocator, request);
+                assert_eq!((frequencies, collections), (0, 0));
+                assert_eq!(last.as_ptr(), before.heads.0.cast::<u8>());
+                // SAFETY: the non-abandoning owner retains every exact client.
+                assert_eq!(unsafe { allocator.page_for_block(last) }, page.as_ptr());
+                let after = owner_image(allocator, page, first, bin);
+                assert_eq!(after.geometry.4, usize::from(after.geometry.3));
+                assert_eq!(after.geometry.4, before.geometry.4 + 1);
+                assert_eq!(after.queues.0, (null_mut(), null_mut()));
+                assert_eq!(after.queues.1, (page.as_ptr(), page.as_ptr()));
+                // SAFETY: the non-abandoning full queue retains the same
+                // initialized Page while its original clients remain live.
+                assert!(unsafe { Page::validity_snapshot_at(page) }.in_full);
+                assert_eq!(after.full_bytes - before.full_bytes,
+                    before.geometry.0 * usize::from(before.geometry.3));
+                assert_eq!(after.page_count, before.page_count);
+                assert_eq!(after.administration,
+                    (before.administration.0, before.administration.1 + 1, before.administration.2));
+                assert_one_allocation_statistics(&before, &after, request, bin);
+                assert_payloads(&clients);
+                clients.push(last);
+                for client in clients {
+                    // SAFETY: every exact client is consumed once by its
+                    // retained owner, including the final full-page client.
+                    unsafe { allocator.free(client) }.unwrap();
+                }
+            });
+        }
+
+        #[test]
+        fn administration_refusal_preserves_owner_before_one_phased_mini_collection() {
+            with_non_abandoning_local_fast_owner_allocator(|allocator| {
+                let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
+                let bin = size_class::bin(request).unwrap();
+                let anchor = allocator.allocate(request, false).unwrap();
+                // SAFETY: this live sibling pins the real page through all cycles.
+                unsafe { anchor.as_ptr().write_bytes(0x6d, 32) };
+                // SAFETY: the anchor is current in this exact retained engine.
+                let page = NonNull::new(unsafe { allocator.page_for_block(anchor) }).unwrap();
+                while allocator.session.theap().test_generic_administration_image().1 < 999 {
+                    let count = allocator.session.theap().test_generic_administration_image().1;
+                    let (client, frequencies, collections) = allocate_phased(allocator, request);
+                    assert_eq!((frequencies, collections), (0, 0));
+                    assert_eq!(allocator.session.theap().test_generic_administration_image().1, count + 1);
+                    // SAFETY: the new exact client remains current here.
+                    assert_eq!(unsafe { allocator.page_for_block(client) }, page.as_ptr());
+                    // SAFETY: the new exact client is current and distinct
+                    // from the retained sibling and consumed once here.
+                    unsafe { allocator.free(client) }.unwrap();
+                }
+                let before = owner_image(allocator, page, anchor, bin);
+                assert_eq!(before.administration.1, 999);
+                assert!(before.geometry.4 + 1 < usize::from(before.geometry.3));
+                assert!(!before.heads.0.is_null() || !before.heads.1.is_null());
+                let owner = allocator.local_fast_owner().unwrap();
+                // SAFETY: the real capability keeps the original page and
+                // Theap exclusively owned across the no-callback helper.
+                assert!(unsafe { crate::local_fast_path::allocate(
+                    owner.theap, request, None, false,
+                ) }.is_none());
+                assert_eq!(owner_image(allocator, page, anchor, bin), before);
+                // SAFETY: the retained sibling owns this initialized prefix.
+                assert!(unsafe { core::slice::from_raw_parts(anchor.as_ptr(), 32) }
+                    .iter().all(|byte| *byte == 0x6d));
+                let (client, frequencies, collections) = allocate_phased(allocator, request);
+                assert_eq!((frequencies, collections), (1, 1));
+                let after = owner_image(allocator, page, anchor, bin);
+                assert_eq!(after.administration,
+                    (before.administration.0.wrapping_add(1), 0, before.administration.2 + 1000));
+                assert_eq!(after.geometry.4, before.geometry.4 + 1);
+                assert_eq!(after.queues, before.queues);
+                assert_eq!(after.full_bytes, before.full_bytes);
+                assert_eq!(after.page_count, before.page_count);
+                assert_eq!(after.registration, before.registration);
+                assert_one_allocation_statistics(&before, &after, request, bin);
+                // SAFETY: the live sibling still owns the entire observed prefix.
+                assert!(unsafe { core::slice::from_raw_parts(anchor.as_ptr(), 32) }
+                    .iter().all(|byte| *byte == 0x6d));
+                // SAFETY: both exact live clients remain owned by this fixture.
+                unsafe { allocator.free(client).unwrap(); allocator.free(anchor).unwrap(); }
+            });
+        }
+    }
+
     fn with_local_fast_owner_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
+        with_local_fast_owner_allocator_policy(false, test);
+    }
+
+    fn with_non_abandoning_local_fast_owner_allocator(
+        test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>),
+    ) {
+        with_local_fast_owner_allocator_policy(true, test);
+    }
+
+    fn with_local_fast_owner_allocator_policy(
+        non_abandoning: bool,
+        test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>),
+    ) {
         let mut region = AlignedRegion::zeroed();
         let subprocess = MainSubprocess::new();
         let registry = ArenaRegistry::new(subprocess.as_ptr());
@@ -47150,7 +47435,12 @@ mod tests {
         let mut page_map = PageMap::initialize(config, 0, true).unwrap();
         let bootstrap = ExclusiveTheapBootstrap::new();
         let mut bootstrap = core::pin::pin!(bootstrap);
-        let mut allocator = SingleThreadAllocator::activate(
+        let activate = if non_abandoning {
+            SingleThreadAllocator::activate_non_abandoning
+        } else {
+            SingleThreadAllocator::activate
+        };
+        let mut allocator = activate(
             bootstrap.as_mut(),
             LiveThreadId::new(12).unwrap(),
             arena,
