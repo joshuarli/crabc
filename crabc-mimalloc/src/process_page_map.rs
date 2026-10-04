@@ -141,7 +141,9 @@ const fn source_page_state(xthread_id: ThreadId) -> LiveAllocationPageState {
 pub(crate) struct LiveAllocationPointer {
     page: NonNull<Page>,
     client: NonNull<u8>,
-    canonical_block: NonNull<u8>,
+    // The checked source interior offset keeps usable geometry scalar; a
+    // canonical pointer is projected from the retained client only when used.
+    client_adjustment: usize,
     block_size: usize,
     // Source flags and ownership state are decoded from this retained atomic
     // snapshot only when needed; no later page read may replace its identity.
@@ -191,7 +193,7 @@ impl LiveAllocationReallocationSource {
     /// is never the start of the replacement copy for an interior client.
     #[inline]
     pub(crate) const fn canonical_block_for_release(&self) -> NonNull<u8> {
-        self.allocation.canonical_block
+        self.allocation.canonical_block()
     }
 
     /// Returns the complete readable prefix that begins at [`Self::copy_client`].
@@ -234,7 +236,11 @@ impl LiveAllocationPointer {
     /// This equals [`Self::client`] for normal pages and is the aligned block
     /// base for pages whose source flag permits interior allocation pointers.
     #[inline]
-    pub(crate) const fn canonical_block(&self) -> NonNull<u8> { self.canonical_block }
+    pub(crate) const fn canonical_block(&self) -> NonNull<u8> {
+        // SAFETY: classification bounded this adjustment in the same live
+        // source block and checked that its canonical pointer is nonnull.
+        unsafe { NonNull::new_unchecked(self.client.as_ptr().wrapping_sub(self.client_adjustment)) }
+    }
 
     /// Returns the fixed source block size captured during classification.
     #[inline]
@@ -256,7 +262,7 @@ impl LiveAllocationPointer {
         if let Some(os_page_size) = os_page_size {
             if self.is_guarded() {
                 return self.block_size.saturating_sub(os_page_size).saturating_sub(
-                    self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr(),
+                    self.client_adjustment,
                 );
             }
         }
@@ -272,10 +278,10 @@ impl LiveAllocationPointer {
             // trailing record. Reallocation may copy only the logical client
             // extent, excluding both padding bytes and the record itself.
             unsafe { crate::alloc::source_padding_usable_size(
-                self.canonical_block, self.block_size, self.page.as_ptr().addr(), key,
+                self.canonical_block(), self.block_size, self.page.as_ptr().addr(), key,
             ) }
         };
-        canonical_usable.saturating_sub(self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr())
+        canonical_usable.saturating_sub(self.client_adjustment)
     }
 
     /// Recognizes only the source guarded tag of an exact live adjusted client.
@@ -284,14 +290,14 @@ impl LiveAllocationPointer {
     #[inline]
     pub(crate) fn is_guarded(&self) -> bool {
         if !self.has_interior_pointers()
-            || self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr()
+            || self.client_adjustment
                 < core::mem::size_of::<usize>()
         {
             return false;
         }
         // SAFETY: canonical recovery stays inside this exact live block,
         // whose source alignment permits the first-word tag read.
-        unsafe { self.canonical_block.cast::<usize>().as_ptr().read() == usize::MAX }
+        unsafe { self.canonical_block().cast::<usize>().as_ptr().read() == usize::MAX }
     }
 
     /// Copies the source tail-page address without changing its protection.
@@ -301,7 +307,7 @@ impl LiveAllocationPointer {
         let offset = self.block_size.checked_sub(os_page_size)?;
         if offset == 0 { return None; }
         // SAFETY: the source tail page is contained in the live block stride.
-        Some(unsafe { NonNull::new_unchecked(self.canonical_block.as_ptr().add(offset)) })
+        Some(unsafe { NonNull::new_unchecked(self.canonical_block().as_ptr().add(offset)) })
     }
 
     /// Marks the live page for source interior-client recovery, without
@@ -405,7 +411,7 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
     if block_size == 0 {
         return None;
     }
-    let canonical_block = if has_interior_pointers {
+    let client_adjustment = if has_interior_pointers {
         // Only adjusted clients need page-start geometry to recover their
         // canonical free-list block. A normal client is that block already.
         let page_offset = unsafe { (*geometry).page_offset };
@@ -420,14 +426,15 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
         // SAFETY: the source recovery rounds an exact live client down within
         // its same source block. Retaining `client` provenance while subtracting
         // the checked adjustment avoids manufacturing a pointer from an integer.
-        NonNull::new(client.as_ptr().wrapping_sub(adjustment))?
+        NonNull::new(client.as_ptr().wrapping_sub(adjustment))?;
+        adjustment
     } else {
-        client
+        0
     };
     Some(LiveAllocationPointer {
         page,
         client,
-        canonical_block,
+        client_adjustment,
         block_size,
         xthread_id,
         #[cfg(any(not(target_arch = "x86_64"), feature = "mi-guarded"))]
