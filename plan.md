@@ -81,13 +81,16 @@ Update this small section in place when the implementation frontier changes.
   checks and structural validation do not establish full release qualification.
   Installed logarithm entries pass real pthread/fenv composition against musl.
 - **Performance:** the latest retained three agreeing engine measurements,
-  at `8f8139534`, qualify physically but fail numerical promotion bounds.
-  Suite throughput lower95 is 0.3297–0.3389 of pinned C; all ten critical
-  throughput rows and nine or ten tail rows fail. RSS/PSS bounds pass;
-  allocator code occupies 983,115 bytes versus C's 108,311 bytes.
-  Two later complete integrated runs at `13df6a63d` pass the existing physical
-  host checks and complete all 14 workload rows. Their raw numerical results
-  remain retained; subsequent correctness fixes require fresh measurements.
+  at `b414a1e33`, qualify physically but fail numerical promotion bounds.
+  Suite throughput lower95 is 0.3332–0.3374 of pinned C; all ten critical
+  throughput rows and nine tail rows fail in each run. RSS/PSS bounds pass;
+  allocator code occupies 966,174 bytes versus C's 108,311 bytes.
+  A same-source integrated run passes the physical product and host checks,
+  agrees with that engine cohort, and completes all 14 static/dynamic workload
+  rows. Its raw numerical results remain retained. Frozen source and physical
+  engine/integrated artifacts remain under
+  `.work/x86_64/reports/integrated-lanes/perf171-b414a1e33/source/`;
+  subsequent source changes require fresh measurements.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `a635e97c4bb5`, allocator image
