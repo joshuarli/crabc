@@ -83,6 +83,10 @@ Update this small section in place when the implementation frontier changes.
   peak stack, deferred failure repair or installed-product qualification.
   Rejected transport, size-class and OS release-preflight factoring trials are
   restored; frame and text changes alone do not establish timing gains.
+  Published owner-local allocation now admits available regular queue heads
+  through the 512-KiB class, including natural alignment and padded ordinary
+  bases. Administration thresholds, final-slot full transitions, extension
+  and huge/singleton allocation remain on the complete owner path.
 - **Verification:** merged source passes all nine compiler profiles and focused
   allocation, guard, ownership, metadata and worker regressions. Geometry and
   aligned tests distinguish padded client usable size from physical block stride;
@@ -98,7 +102,8 @@ Update this small section in place when the implementation frontier changes.
   preparations and original oracle failures remain unqualified. Current tooling
   follows sealed-driver receipt anchors and private UAPI include paths, retains
   all project include bytes in source comparison, permits declared unused
-  builtins in link traces, and forwards supplied mutex products.
+  builtins in link traces, forwards supplied mutex products and records the
+  active native benchmark's aligned/ordinary entry selection.
 - **Performance:** the latest retained three agreeing engine measurements,
   at `e8b25e956`, pass physical product/host checks but fail numerical bounds.
   Their scaling rows use a shared volatile observation accumulator with a C
@@ -126,10 +131,13 @@ Update this small section in place when the implementation frontier changes.
   one allocation thread. All 64 samples complete; the four-worker result is noisy.
   Original publication is restored, with nine profiles and ordinary default
   workers passing. Neither comparison establishes full performance qualification.
-  A regular queue-head trial through the 512-KiB class passes focused default
-  and statistics regressions, all nine compiler profiles and ordinary workers.
-  Its matched comparison with the corrected fixture awaits an idle host;
-  the allocator change remains in its isolated worktree.
+  The regular queue-head change passes focused default/statistics regressions,
+  merged-source compiler profiles and ordinary workers. With the corrected
+  fixture, all 64 paired development samples complete: 256-KiB wall/CPU
+  throughput improves by 4.776/4.773 times; 64-byte, 32-KiB and four-worker
+  CPU controls stay near unchanged. Four-worker wall timing is noisy. These
+  comparisons are between original and changed Rust products; fresh full
+  engine and installed-product measurements remain required.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `0f46a88a4cd9`, allocator image
