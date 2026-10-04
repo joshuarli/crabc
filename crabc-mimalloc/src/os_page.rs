@@ -609,10 +609,10 @@ impl OsAlignedPageClaim {
         }
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
-        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+        let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
             layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let mapping = match allocation {
-            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Ok(mapping) => mapping,
             Err(failure) => {
                 let error = failure.error();
                 return match failure.into_mapping() {
@@ -729,11 +729,11 @@ impl OsAlignedPageClaim {
             Some(layout) => layout,
             None => return Released(OsAlignedPageError::new(OsAlignedPageFailureStage::Map, Errno::INVAL)),
         };
-        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+        let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
             layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let pointer = destination.cast::<Self>();
         let mapping = match allocation {
-            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Ok(mapping) => mapping,
             Err(failure) => {
                 let error = OsAlignedPageError::new(OsAlignedPageFailureStage::Map, failure.error());
                 return match failure.into_mapping() {
@@ -881,10 +881,10 @@ impl OsAlignedPageClaim {
         #[cfg(not(target_arch = "x86_64"))]
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
-        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+        let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
             layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let mapping = match allocation {
-            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Ok(mapping) => mapping,
             Err(failure) => {
                 let error = failure.error();
                 return match failure.into_mapping() {
@@ -986,10 +986,10 @@ impl OsAlignedPageClaim {
         #[cfg(not(target_arch = "x86_64"))]
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
-        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+        let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
             layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let mapping = match allocation {
-            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Ok(mapping) => mapping,
             Err(failure) => {
                 let error = failure.error();
                 return match failure.into_mapping() {
@@ -1072,10 +1072,10 @@ impl OsAlignedPageClaim {
         }
         let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
             .ok_or_else(|| failed(Errno::INVAL))?;
-        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+        let allocation = NormalOsAllocation::allocate_aligned_page_mapping_for_process(process, config,
             layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, random);
         let mapping = match allocation {
-            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Ok(mapping) => mapping,
             Err(failure) => {
                 let error = failure.error();
                 return match failure.into_mapping() {

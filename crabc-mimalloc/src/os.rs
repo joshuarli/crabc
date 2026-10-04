@@ -5186,6 +5186,36 @@ impl NormalOsAllocation {
         Self::into_base_allocation(allocation)
     }
 
+    /// Allocates a zero-offset page backing without transporting the temporary
+    /// normal-allocation memory identifier to the page owner. The same base
+    /// conversion validates the live mapping and its derived identifier before
+    /// handing off the original mapping; the page later derives its own extent.
+    pub(crate) fn allocate_aligned_page_mapping_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        size: usize,
+        alignment: usize,
+        access: MapAccess,
+        allow_large: bool,
+        default_random: OsRandom<'_>,
+    ) -> core::result::Result<Mapping, NormalOsAllocationFailure> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            let mapping = Self::allocate_aligned_mapping_for_process(
+                process, config, size, alignment, access, allow_large,
+                default_random, ThpAdvice::Source,
+            )?;
+            let allocation = Self::from_mapping(mapping, 0)?;
+            Ok(Self::into_base_allocation(allocation)?.into_mapping_and_memory().0)
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            Ok(Self::allocate_aligned_base_for_process(
+                process, config, size, alignment, access, allow_large, default_random,
+            )?.into_mapping_and_memory().0)
+        }
+    }
+
     /// [`Self::allocate_aligned_base_for_process`] for an arena reservation,
     /// the `_mi_os_alloc_aligned` call of source `mi_reserve_os_memory_ex2`.
     /// Its regular mapping takes [`ThpAdvice::Arena`].
