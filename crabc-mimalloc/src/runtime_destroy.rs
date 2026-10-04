@@ -286,8 +286,11 @@ impl NativePreparedProcessDestroy {
         let terminal = unsafe { self.ready.seal_terminal() }.map_err(|error| {
             owners.failure = Some(RetainedDestroyFailure::Coordinator(error)); NativeProcessDestroyError::Coordinator
         })?;
-        owners.arenas = Some(unsafe { process.subprocess().arena_backing().destroy_all(huge_tracking) }
-            .map_err(|error| { owners.failure = Some(RetainedDestroyFailure::Arena(error)); NativeProcessDestroyError::Arena })?);
+        // SAFETY: this permanent terminal slot and its tracking storage live
+        // outside retiring arenas; callbacks cannot access the retained owner.
+        // A post-commit error leaves every recorded failed release in the slot.
+        unsafe { process.subprocess().arena_backing().destroy_all_into(huge_tracking, &mut owners.arenas) }
+            .map_err(|error| { owners.failure = Some(RetainedDestroyFailure::Arena(error)); NativeProcessDestroyError::Arena })?;
         let all_arenas_released = owners.arenas.as_ref().unwrap().is_released();
         // Source subproc.c:244 prints after arena destruction and before
         // PageMap retirement. End the mutable retained-owner projection before

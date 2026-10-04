@@ -114,6 +114,29 @@ impl ProcessArenaBacking {
         unsafe { self.destroy_all_with_huge_process(tracking, self.process_lived_projection()) }
     }
 
+    /// Stores failed releases directly in the caller's terminal owner slot.
+    /// An occupied slot is refused without replacing its owner. Preflight
+    /// failure leaves an empty slot empty; after destruction commits, the
+    /// initialized owner remains stored even on a later error or unwind.
+    /// Success means the registry pass completed, not that every release
+    /// succeeded: inspect the stored owner's `is_released` separately.
+    ///
+    /// # Safety
+    /// The caller meets `destroy_all`'s exclusive shutdown obligations.
+    /// `destination` lives outside every retiring mapping and no callback
+    /// may access it during this call. The caller retains any stored owner
+    /// and its borrowed tracking storage until all raw retries succeed,
+    /// including when this method returns an error after destruction starts.
+    pub(crate) unsafe fn destroy_all_into<'tracking>(
+        &self,
+        tracking: &'tracking mut [usize],
+        destination: &mut Option<DestroyedArenas<'tracking>>,
+    ) -> Result<(), ArenaDestroyError> {
+        unsafe { self.destroy_all_with_huge_process_into(
+            tracking, self.process_lived_projection(), destination,
+        ) }
+    }
+
     /// Retire this exact child arena group under its actual context owner.
     /// A retained failed huge release carries a non-owning VM projection;
     /// the caller retains the child image until every such release ends.
@@ -149,9 +172,22 @@ impl ProcessArenaBacking {
     }
 
     unsafe fn destroy_all_with_huge_process<'tracking>(
-        &self, mut tracking: &'tracking mut [usize],
+        &self, tracking: &'tracking mut [usize],
         huge_process: Option<crate::os::VmProcess<'static>>,
     ) -> Result<DestroyedArenas<'tracking>, ArenaDestroyError> {
+        let mut destination = None;
+        unsafe { self.destroy_all_with_huge_process_into(tracking, huge_process, &mut destination) }?;
+        Ok(destination.take().expect("completed destruction initialized its failure owner"))
+    }
+
+    unsafe fn destroy_all_with_huge_process_into<'tracking>(
+        &self, mut tracking: &'tracking mut [usize],
+        huge_process: Option<crate::os::VmProcess<'static>>,
+        destination: &mut Option<DestroyedArenas<'tracking>>,
+    ) -> Result<(), ArenaDestroyError> {
+        if destination.is_some() {
+            return Err(ArenaDestroyError::InvalidOwnership);
+        }
         if self.destroyed.load(Ordering::Acquire) {
             return Err(ArenaDestroyError::AlreadyDestroyed);
         }
@@ -189,7 +225,7 @@ impl ProcessArenaBacking {
             return Err(ArenaDestroyError::TrackingCapacity { required_words });
         }
         self.destroyed.store(true, Ordering::Release);
-        let mut destroyed = DestroyedArenas { failures: [const { None }; ARENA_SLOT_COUNT] };
+        *destination = const { Some(DestroyedArenas { failures: [const { None }; ARENA_SLOT_COUNT] }) };
         // Snapshot before the first free: subarena headers can reside inside
         // a parent released at an earlier source registry index.
         let binding = unsafe { *self.binding.get() };
@@ -205,7 +241,7 @@ impl ProcessArenaBacking {
                         .map_err(|_| ArenaDestroyError::InvalidOwnership)?;
                     let size = mapping.length().expect("preflight validated live mapping");
                     if mapping.unmap_for_process_with_warning(binding.process.project(), size, false, true).is_err() {
-                        destroyed.failures[index] = Some(FailedArenaRelease::Regular(mapping));
+                        destination.as_mut().unwrap().failures[index] = Some(FailedArenaRelease::Regular(mapping));
                     }
                 }
                 MemoryKind::OsHuge => {
@@ -221,7 +257,7 @@ impl ProcessArenaBacking {
                     match allocation.release_for_process(words) {
                         Ok(()) => {}
                         Err(HugeOsReleaseFailure::FailedPages(retry)) => {
-                            destroyed.failures[index] = Some(FailedArenaRelease::Huge(retry));
+                            destination.as_mut().unwrap().failures[index] = Some(FailedArenaRelease::Huge(retry));
                         }
                         Err(HugeOsReleaseFailure::Tracking(_)) => unreachable!("preflight checked exact tracking capacity"),
                     }
@@ -231,7 +267,7 @@ impl ProcessArenaBacking {
             }
         }
         let _ = self.registry.count.compare_exchange(count, 0, Ordering::AcqRel, Ordering::Acquire);
-        Ok(destroyed)
+        Ok(())
     }
 }
 
