@@ -151,6 +151,39 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn destroy_all_retained_child<'tracking>(
         &self, tracking: &'tracking mut [usize],
     ) -> Result<DestroyedArenas<'tracking>, ArenaDestroyError> {
+        let process = unsafe { self.retained_child_huge_process() }?;
+        unsafe { self.destroy_all_with_huge_process(tracking, process) }
+    }
+
+    /// Stores this child group's failed releases in its retained context
+    /// owner's terminal slot. The child identity is never treated as a
+    /// process-lived main identity. Occupied storage is refused before
+    /// projecting that identity; later errors keep recorded failed releases.
+    ///
+    /// # Safety
+    /// The caller meets `destroy_all_retained_child`'s shutdown and exact
+    /// child-context retention obligations. The destination lives outside
+    /// every retiring mapping and no callback may access it during this call.
+    /// Retain the destination, tracking storage, child context, immutable
+    /// policy and statistics until every stored raw release succeeds, even
+    /// when an error follows the destruction commitment.
+    pub(crate) unsafe fn destroy_all_retained_child_into<'tracking>(
+        &self,
+        tracking: &'tracking mut [usize],
+        destination: &mut Option<DestroyedArenas<'tracking>>,
+    ) -> Result<(), ArenaDestroyError> {
+        if destination.is_some() {
+            return Err(ArenaDestroyError::InvalidOwnership);
+        }
+        let process = unsafe { self.retained_child_huge_process() }?;
+        unsafe { self.destroy_all_with_huge_process_into(tracking, process, destination) }
+    }
+
+    /// Copies only the VM identity whose actual child context is retained by
+    /// the caller through destruction and every failed release's raw retry.
+    unsafe fn retained_child_huge_process(
+        &self,
+    ) -> Result<Option<crate::os::VmProcess<'static>>, ArenaDestroyError> {
         let binding = unsafe { *self.binding.get() };
         let process = match binding {
             None => None,
@@ -168,7 +201,7 @@ impl ProcessArenaBacking {
                 Some(crate::os::VmProcess::new(unsafe { binding.process.policy.as_ref() }, identity))
             }
         };
-        unsafe { self.destroy_all_with_huge_process(tracking, process) }
+        Ok(process)
     }
 
     unsafe fn destroy_all_with_huge_process<'tracking>(
