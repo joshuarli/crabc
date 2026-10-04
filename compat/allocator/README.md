@@ -23,6 +23,11 @@ startup harness launcher and compiler version probe explicitly use
 `allocator-perf-engine` retains the allocator image and its `musl-gcc` compiler.
 Candidate programs continue to use only their installed product drivers.
 
+The shared engine fixture keeps its volatile payload and usable-size accumulator
+private to each thread. Independent workers must not race or contend on that
+accumulator. Both allocator backends compile the same fixture bytes; a fixture
+change requires fresh products and measurements in both lanes.
+
 For one development regression, use
 `./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name`.
 The filter selects one complete Rust test name with `--exact` and preserves its

@@ -1,7 +1,7 @@
-"""Reader contracts for the native x86-64 engine development performance runner.
+"""Reader and fixture contracts for the native x86-64 engine performance runner.
 
 These tests exercise the runner's pure manifest, fixture-grammar, statistics,
-link-map, and summary logic. They build and measure nothing.
+link-map, and summary logic, plus compiled fixtures with a libc-malloc stub.
 """
 
 from __future__ import annotations
@@ -756,6 +756,55 @@ class FixturePeakHookTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls.directory.cleanup()
+
+    def test_touch_sink_is_private_to_each_worker(self) -> None:
+        root = Path(self.directory.name)
+        source = root / "worker-sink.c"
+        binary = root / "worker-sink"
+        source.write_text("""\
+#define main engine_fixture_main
+#include "engine-fixture.c"
+#undef main
+
+struct sample { uint64_t before, after; unsigned first, last; };
+
+static void *sample_touch(void *argument) {
+  struct sample *sample = argument;
+  unsigned char block[2] = { 0 };
+  sample->before = sink;
+  touch(block, sizeof block, 0);
+  sample->after = sink;
+  sample->first = block[0];
+  sample->last = block[1];
+  return NULL;
+}
+
+int main(void) {
+  struct sample samples[2] = { 0 };
+  for (size_t index = 0; index < 2; index++) {
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, sample_touch, &samples[index]) != 0) return 1;
+    if (pthread_join(thread, NULL) != 0) return 2;
+    printf("before=%" PRIu64 " after=%" PRIu64 " first=%u last=%u\\n",
+           samples[index].before, samples[index].after,
+           samples[index].first, samples[index].last);
+  }
+  return 0;
+}
+""", encoding="utf-8")
+        compiler = engine.require_tool("musl-gcc")
+        built = engine.subprocess.run(
+            [compiler, "-std=gnu11", "-O3", "-pthread", "-I", str(engine.FIXTURE_ROOT),
+             str(source), str(root / "stub.c"), "-o", str(binary)],
+            capture_output=True, text=True)
+        self.assertEqual(built.returncode, 0, built.stderr)
+        # Joining each worker before the next starts makes the old shared
+        # accumulator's interference deterministic without running a data race.
+        executed = engine.subprocess.run([str(binary)], capture_output=True, text=True)
+        self.assertEqual(executed.returncode, 0, executed.stderr)
+        self.assertEqual(executed.stderr, "")
+        self.assertEqual(executed.stdout,
+                         "before=0 after=90 first=0 last=90\n" * 2)
 
     def test_destruction_rows_run_with_heap_entries_and_are_unavailable_without(self) -> None:
         for workload in ("heap_destroy", "subproc_destroy"):

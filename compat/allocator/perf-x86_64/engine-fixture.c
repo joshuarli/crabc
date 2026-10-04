@@ -60,7 +60,9 @@ enum {
   REMOTE_RING = 1024,
 };
 
-static volatile uint64_t sink;
+/* A separate accumulator per worker keeps payload observations from racing
+ * or sharing a writable cache line. */
+static _Thread_local volatile uint64_t sink;
 
 struct params {
   const char *workload;

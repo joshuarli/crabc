@@ -100,7 +100,12 @@ Update this small section in place when the implementation frontier changes.
   all project include bytes in source comparison, permits declared unused
   builtins in link traces, and forwards supplied mutex products.
 - **Performance:** the latest retained three agreeing engine measurements,
-  at `e8b25e956`, qualify physically but fail numerical promotion bounds.
+  at `e8b25e956`, pass physical product/host checks but fail numerical bounds.
+  Their scaling rows use a shared volatile observation accumulator with a C
+  data race; those rows cannot qualify scaling. The shared fixture now keeps
+  that accumulator private to each thread. A synchronized joined-worker
+  regression fails before repair and passes afterwards; fresh matched
+  products and measurements remain required.
   Suite throughput lower95 is 0.3693–0.3710 of pinned C; nine critical
   throughput rows and eight tail rows fail in each run. The second run also
   fails three critical RSS/PSS bounds. Allocator code occupies 977,406 bytes
