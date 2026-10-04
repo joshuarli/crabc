@@ -994,9 +994,11 @@ impl ProcessArenaBacking {
     ) -> Option<ArenaSliceClaim<'arena>> {
         unsafe {
             self.registry.try_find_free_with_heap_list(search, heap_list, slice_count, alignment, |view| {
-                let owner = self.allocation_for_arena(view.arena())?;
+                // Keep the published backing snapshot in its return slot;
+                // synchronous slice commitment borrows without consuming it.
+                let owner = self.allocation_for_arena(view.arena());
                 let mut claim = view.try_claim_slices_with_owner(search.requested, slice_count, commit,
-                    search.thread_sequence, Some(&owner))?;
+                    search.thread_sequence, Some(owner.as_ref()?))?;
                 claim.backing = Some(self);
                 Some(claim)
             })
