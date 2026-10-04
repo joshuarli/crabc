@@ -70,6 +70,8 @@ Update this small section in place when the implementation frontier changes.
   population-count caller witness applies only to its C provider. Ordinary
   static weak undefined metadata retains the existing narrow link-reader rule.
   Required admission synchronization and pinned allocator algorithms remain intact.
+  Native x86 entry publishes its flag with an ignored SeqCst atomic OR;
+  StoreLoad ordering and the unregistered initial membarrier state are preserved.
   Source changes remove reached allocation/phase copies, reuse checked
   free-list successors, and skip duplicate Theap field reads for identical
   retained owners. Immutable metadata configuration remains borrowed through
@@ -79,8 +81,8 @@ Update this small section in place when the implementation frontier changes.
   first header initialization now copies a 15,456-byte immutable prototype.
   That cold-path size/copy cost remains; these compiler results do not establish
   peak stack, deferred failure repair or installed-product qualification.
-  Rejected transport and size-class trials are restored; compiler gains do not
-  establish timing gains.
+  Rejected transport, size-class and OS release-preflight factoring trials are
+  restored; frame and text changes alone do not establish timing gains.
 - **Verification:** merged source passes all nine compiler profiles and focused
   allocation, guard, ownership, metadata and worker regressions. Geometry and
   aligned tests distinguish padded client usable size from physical block stride;
@@ -111,6 +113,9 @@ Update this small section in place when the implementation frontier changes.
   Earlier source cohorts and their original failed attempts remain retained.
   At `cd97064b8`, small-allocation diagnostic samples concentrate immediately
   after operation admission's locked exchange; fork ordering remains required.
+  The SeqCst atomic-OR replacement improves paired development wall-throughput
+  medians by 8.6–30.2% across four original workloads; all 64 samples complete.
+  Those samples do not establish a full performance qualification pass.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `a635e97c4bb5`, allocator image
