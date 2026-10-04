@@ -268,7 +268,22 @@ unsafe extern "C" fn libc_realloc(pointer: *mut c_void, new_size: SizeT) -> *mut
         return unsafe { native_mimalloc_allocate_malloc_shaped(new_size, false) };
     }
     let block = unsafe { core::ptr::NonNull::new_unchecked(pointer.cast::<u8>()) };
-    unsafe { native_mimalloc_allocation(|| unsafe { native_reallocate(Some(block), new_size) }) }
+    let saved_errno = unsafe { cabi_allocator_errno() };
+    // Match only after the runtime has ended its operation admission and
+    // completed any unpublished replacement cleanup. A terminal owner
+    // cannot grant the old client back through a retryable C failure.
+    match unsafe { native_reallocate(Some(block), new_size) } {
+        NativePageAllocationResult::Allocated(replacement) => {
+            unsafe { cabi_set_allocator_errno(saved_errno) };
+            replacement.as_ptr().cast()
+        }
+        NativePageAllocationResult::Unavailable | NativePageAllocationResult::AllocationFailed => {
+            // These refusals leave the old client live and unchanged.
+            unsafe { cabi_set_allocator_errno(ENOMEM) };
+            null_mut()
+        }
+        NativePageAllocationResult::Retained => super::immediate_termination::_Exit(134),
+    }
 }
 
 unsafe extern "C" fn libc_reallocarray(
