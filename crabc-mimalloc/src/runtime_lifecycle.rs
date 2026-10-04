@@ -10622,11 +10622,14 @@ fn resume_current_thread_native_deferred_free_allocation_with_path(
     lease: Option<crate::main_heap_thread::MainHeapThreadDeferredFreeCallbackLease>,
     path: NativeGenericAllocationPath,
 ) -> Result<NativeDeferredFreeAllocationPhase, NativePersistentThreadOwnerAccessError> {
+    // Every local refusal retains this same owner after its projection ends.
+    // Transport only the successful phase across the owner-cell boundary;
+    // no local error payload is observed by this adapter.
     match with_current_thread_native_persistent_owner(|owner| {
-        owner.resume_deferred_free_allocation_with_path(collection, continuation, lease, path)
+        owner.resume_deferred_free_allocation_with_path(collection, continuation, lease, path).ok()
     }) {
-        Ok(Ok(phase)) => Ok(phase),
-        Ok(Err(_)) | Err(_) => {
+        Ok(Some(phase)) => Ok(phase),
+        Ok(None) | Err(_) => {
             retain_current_thread_native_persistent_owner_for_teardown();
             Err(NativePersistentThreadOwnerAccessError::Retained)
         }
@@ -10656,10 +10659,10 @@ fn capture_current_thread_native_generic_allocation_frequency_with_path(
     // this getter; nested allocation receives a fresh ordinary admission.
     let frequency = capture.process.policy().generic_collect_frequency();
     match with_current_thread_native_persistent_owner(|owner| {
-        owner.resume_generic_allocation_frequency_with_path(capture, request, frequency, continuation, path)
+        owner.resume_generic_allocation_frequency_with_path(capture, request, frequency, continuation, path).ok()
     }) {
-        Ok(Ok(phase)) => Ok(phase),
-        Ok(Err(_)) | Err(_) => {
+        Ok(Some(phase)) => Ok(phase),
+        Ok(None) | Err(_) => {
             retain_current_thread_native_persistent_owner_for_teardown();
             Err(NativePersistentThreadOwnerAccessError::Retained)
         }
