@@ -84,7 +84,13 @@ Update this small section in place when the implementation frontier changes.
   Historical compatibility, header, std/LTO, unwind and Lua components retain
   original source/product identities; changed products require fresh evidence.
   Component checks do not establish full release qualification. Installed
-  logarithm entries pass real pthread/fenv composition against musl.
+  logarithm entries pass real pthread/fenv composition against musl. Fresh
+  `cd97064b8` components also cover FILE, filesystem, thread/TLS, resolver,
+  account/netdb, locale, BSD random and binary80 worker composition; incomplete
+  preparations and original oracle failures remain unqualified. Current tooling
+  follows sealed-driver receipt anchors and private UAPI include paths, retains
+  all project include bytes in source comparison, permits declared unused
+  builtins in link traces, and forwards supplied mutex products.
 - **Performance:** the latest retained three agreeing engine measurements,
   at `cd97064b8`, qualify physically but fail numerical promotion bounds.
   Suite throughput lower95 is 0.3369–0.3392 of pinned C; all ten critical
@@ -98,6 +104,8 @@ Update this small section in place when the implementation frontier changes.
   subsequent source changes require fresh measurements.
   The first attempt remains rejected and retained: two pinned-C batches
   recorded zero thread CPU time. The three later complete attempts qualify.
+  Same-source small-allocation diagnostic samples concentrate immediately after
+  operation admission's locked exchange; fork ordering remains required.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `a635e97c4bb5`, allocator image
