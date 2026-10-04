@@ -47284,6 +47284,65 @@ mod tests {
         }
 
         #[test]
+        fn queue_head_zeroing_preserves_pristine_and_reused_block_extents() {
+            with_local_fast_owner_allocator(|allocator| {
+                let request = 2047;
+                let anchor = allocator.allocate(request, false).unwrap();
+                // SAFETY: the anchor retains its registered source page.
+                let page = NonNull::new(unsafe { allocator.page_for_block(anchor) }).unwrap();
+                let block_size = unsafe { Page::block_size_at(page) };
+                assert!(block_size > request);
+                // SAFETY: the exact live anchor retains this reported extent.
+                assert_eq!(unsafe { allocator.usable_size(anchor) }, Some(block_size));
+                let owner = allocator.local_fast_owner().unwrap();
+                // SAFETY: this new arena's registered page is owned here;
+                // its immediate list retains the pristine-page zero status.
+                assert!(unsafe { *Page::local_free_list_state_at(page).free_is_zero.as_ptr() });
+                // This class selects the regular queue beyond the direct cache.
+                // SAFETY: the real engine retains this page and exclusive Theap.
+                let pristine = unsafe { crate::local_fast_path::allocate(
+                    owner.theap, request, None, true,
+                ) }.unwrap();
+                // SAFETY: this exact client reports the complete writable extent.
+                assert_eq!(unsafe { allocator.usable_size(pristine) }, Some(block_size));
+                assert!(unsafe { bytes_equal(pristine, block_size, 0) });
+                let mut siblings = std::vec::Vec::new();
+                while !unsafe { Page::free_list_head_at(page) }.is_null() {
+                    // SAFETY: the same real owner retains the available head;
+                    // this loop stops before a fresh-page continuation is needed.
+                    let sibling = unsafe { crate::local_fast_path::allocate(
+                        owner.theap, request, None, false,
+                    ) }.unwrap();
+                    assert_eq!(unsafe { allocator.page_for_block(sibling) }, page.as_ptr());
+                    siblings.push(sibling);
+                }
+                // SAFETY: fill the complete owned block, then return it once.
+                unsafe {
+                    pristine.as_ptr().write_bytes(0xa5, block_size);
+                    anchor.as_ptr().write_bytes(0x6d, request);
+                    allocator.free(pristine).unwrap();
+                }
+                let owner = allocator.local_fast_owner().unwrap();
+                // SAFETY: the original source owner keeps the returned local node
+                // and retained sibling allocations live through quick collection.
+                let reused = unsafe { crate::local_fast_path::allocate(
+                    owner.theap, request, None, true,
+                ) }.unwrap();
+                assert_eq!(reused, pristine);
+                assert!(unsafe { bytes_equal(reused, block_size, 0) });
+                assert!(unsafe { bytes_equal(anchor, request, 0x6d) });
+                assert_eq!(unsafe { Page::owner_used_at(page) }, siblings.len() + 2);
+                assert!(!unsafe { *Page::local_free_list_state_at(page).free_is_zero.as_ptr() });
+                // SAFETY: consume each distinct exact live block once.
+                unsafe {
+                    allocator.free(anchor).unwrap();
+                    allocator.free(reused).unwrap();
+                    for sibling in siblings { allocator.free(sibling).unwrap(); }
+                }
+            });
+        }
+
+        #[test]
         fn medium_last_slot_refusal_preserves_owner_before_one_full_transition() {
             with_non_abandoning_local_fast_owner_allocator(|allocator| {
                 let request = SMALL_MAX_OBJ_SIZE + WORD_SIZE;
