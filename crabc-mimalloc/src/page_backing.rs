@@ -288,12 +288,15 @@ impl RuntimeFirstRegularPageBacking {
         (core::ptr::from_ref(published).cast_mut() == pointer).then_some(view)
     }
 
-    fn max_process_arena_object_size(process: VmProcess<'static>) -> usize {
-        let requested = process.policy().arena_max_object_size_bytes();
-        let rounded = requested.wrapping_add(ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
+    // Every consumer needs the source limit in slices. Both clamp endpoints
+    // are slice-aligned, so project the wrapped align-up before clamping;
+    // no process capability needs to travel through this scalar calculation.
+    fn max_process_arena_object_slices(requested: usize) -> usize {
+        let rounded = requested.wrapping_add(ARENA_SLICE_SIZE - 1) / ARENA_SLICE_SIZE;
         let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
-            + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
-        rounded.clamp(ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNMENT - metadata)
+            + ARENA_SLICE_SIZE - 1) / ARENA_SLICE_SIZE;
+        rounded.clamp(ARENA_MIN_OBJ_SIZE / ARENA_SLICE_SIZE,
+            PAGE_META_ALIGNMENT / ARENA_SLICE_SIZE - metadata)
     }
 }
 
@@ -390,7 +393,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                 // `PageAllocatorEngine` owns only the separate direct-OS
                 // fallback after arena eligibility rejects the request.
                 if process.policy().disallow_arena_alloc()
-                    || slices > Self::max_process_arena_object_size(*process) / ARENA_SLICE_SIZE
+                    || slices > Self::max_process_arena_object_slices(process.policy().arena_max_object_size_bytes())
                 {
                     return None;
                 }
@@ -428,7 +431,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                 commit, thread_sequence, allocation_numa_node, random),
             Self::SourceStartupRegular { process, numa_node, .. } | Self::SourceRegistry { process, numa_node } => {
                 if process.policy().disallow_arena_alloc()
-                    || slices > Self::max_process_arena_object_size(*process) / ARENA_SLICE_SIZE { return None; }
+                    || slices > Self::max_process_arena_object_slices(process.policy().arena_max_object_size_bytes()) { return None; }
                 // SAFETY: forwarded session custody; identity is checked before search.
                 let search = unsafe { owner_arena_search(*process, heap, requested,
                     thread_sequence, allocation_numa_node.unwrap_or(*numa_node)) }?;
@@ -751,6 +754,31 @@ mod tests {
     use crate::os::{PageSize, VmPolicy};
     use crate::subproc::MainSubprocess;
     use std::boxed::Box;
+
+    #[test]
+    fn source_max_object_limit_projects_wrapped_aligned_endpoints_to_slices() {
+        let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
+            + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
+        let maximum = PAGE_META_ALIGNMENT - metadata;
+        assert_eq!(ARENA_MIN_OBJ_SIZE % ARENA_SLICE_SIZE, 0);
+        assert_eq!(maximum % ARENA_SLICE_SIZE, 0);
+        let requests = [0, 1, ARENA_MIN_OBJ_SIZE - 1, ARENA_MIN_OBJ_SIZE,
+            ARENA_MIN_OBJ_SIZE + 1, maximum - ARENA_SLICE_SIZE,
+            maximum - 1, maximum, maximum + 1,
+            usize::MAX - ARENA_SLICE_SIZE + 1,
+            usize::MAX - ARENA_SLICE_SIZE + 2, usize::MAX];
+        for requested in requests {
+            // The source first aligns bytes with unsigned wrapping, clamps
+            // that byte limit, and only then divides for fresh-page admission.
+            let aligned = requested.wrapping_add(ARENA_SLICE_SIZE - 1)
+                & !(ARENA_SLICE_SIZE - 1);
+            let expected = aligned.clamp(ARENA_MIN_OBJ_SIZE, maximum) / ARENA_SLICE_SIZE;
+            assert_eq!(RuntimeFirstRegularPageBacking::max_process_arena_object_slices(requested),
+                expected, "source limit for request {requested}");
+        }
+        assert_eq!(RuntimeFirstRegularPageBacking::max_process_arena_object_slices(usize::MAX),
+            ARENA_MIN_OBJ_SIZE / ARENA_SLICE_SIZE);
+    }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
