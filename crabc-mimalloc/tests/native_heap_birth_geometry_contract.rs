@@ -50,6 +50,13 @@ fn observe_birth() {
 }
 
 #[test]
+fn main_heap_birth_uses_source_sized_request_and_retains_aligned_image() {
+    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
+    assert!(native_runtime_test_support::initialize(page_size));
+    observe_birth();
+}
+
+#[test]
 fn heap_birth_uses_source_sized_request_and_retains_aligned_image() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
