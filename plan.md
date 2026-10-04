@@ -100,15 +100,16 @@ Update this small section in place when the implementation frontier changes.
   all project include bytes in source comparison, permits declared unused
   builtins in link traces, and forwards supplied mutex products.
 - **Performance:** the latest retained three agreeing engine measurements,
-  at `396a76d8f`, qualify physically but fail numerical promotion bounds.
-  Suite throughput lower95 is 0.3348–0.3434 of pinned C; all ten critical
-  throughput rows and nine tail rows fail in each run. RSS/PSS bounds pass;
-  allocator code occupies 977,409 bytes versus C's 108,311 bytes.
+  at `e8b25e956`, qualify physically but fail numerical promotion bounds.
+  Suite throughput lower95 is 0.3693–0.3710 of pinned C; nine critical
+  throughput rows and eight tail rows fail in each run. The second run also
+  fails three critical RSS/PSS bounds. Allocator code occupies 977,406 bytes
+  versus C's 108,311 bytes.
   A same-source integrated run passes the physical product and host checks,
   agrees with that engine cohort, and completes all 14 static/dynamic workload
   rows. Its raw numerical results remain retained. Frozen source and physical
   engine/integrated artifacts remain under
-  `.work/x86_64/reports/integrated-lanes/perf181-396a76d8f/source/`;
+  `.work/x86_64/reports/integrated-lanes/perf182-e8b25e956/source/`;
   subsequent source changes require fresh measurements.
   Earlier source cohorts and their original failed attempts remain retained.
   At `cd97064b8`, small-allocation diagnostic samples concentrate immediately
