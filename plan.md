@@ -112,11 +112,15 @@ Update this small section in place when the implementation frontier changes.
   `.work/x86_64/reports/integrated-lanes/perf182-e8b25e956/source/`;
   subsequent source changes require fresh measurements.
   Earlier source cohorts and their original failed attempts remain retained.
-  At `cd97064b8`, small-allocation diagnostic samples concentrate immediately
-  after operation admission's locked exchange; fork ordering remains required.
+  At `e8b25e956`, refreshed small-allocation diagnostic samples concentrate
+  immediately after admission's locked OR; fork ordering remains required.
   The SeqCst atomic-OR replacement improves paired development wall-throughput
   medians by 8.6–30.2% across four original workloads; all 64 samples complete.
-  Those samples do not establish a full performance qualification pass.
+  A release-store/SeqCst-fence trial lowers to a locked stack operation but
+  regresses paired wall-throughput medians by 1.4–3.3% on three workloads with
+  one allocation thread. All 64 samples complete; the four-worker result is noisy.
+  Original publication is restored, with nine profiles and ordinary default
+  workers passing. Neither comparison establishes full performance qualification.
   Full preparations now allow one idle interval after their builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
 - **Qualification:** authenticated core image `a635e97c4bb5`, allocator image
