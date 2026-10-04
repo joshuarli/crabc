@@ -8055,7 +8055,7 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
         // SAFETY: BOUND Release-publishes this immutable tuple before the
         // current held lock can observe it; READY retains the same tuple.
         let stored = unsafe { (*self.owner.get_ref().config.get()).assume_init_ref() };
-        if stored != config {
+        if <MemoryConfig as PartialEq>::ne(stored, config) {
             return Err(MetaError::ConfigurationMismatch);
         }
         if !core::ptr::eq(
