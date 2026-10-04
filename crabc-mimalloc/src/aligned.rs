@@ -28,7 +28,10 @@ use crate::alloc::{
 };
 use crate::size_class;
 
+// Keep the internal aligned-plan dispatch tag narrow while its request and
+// alignment payloads retain native-word size and alignment.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub(crate) enum AlignedAllocationPlan {
     Natural,
     Overallocate { request: usize },
