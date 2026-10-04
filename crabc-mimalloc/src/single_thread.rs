@@ -53672,10 +53672,14 @@ mod tests {
                 Page::canonical_remote_block_for_live_client_at(adjusted_page, adjusted_one)
             }.unwrap().as_ptr().addr();
             let block_size = unsafe { Page::abandonment_state_at(adjusted_page) }.block_size;
+            // A padding record reports the 80-byte overallocated request;
+            // the rounded physical stride also includes its trailing record.
+            let canonical_usable = if PADDING_SIZE == 0 { block_size } else { 80 };
+            assert_eq!(unsafe { allocator.usable_size(base) }, Some(canonical_usable));
             assert_eq!(
                 unsafe { allocator.usable_size(adjusted_one) },
                 aligned::usable_size(
-                    block_size,
+                    canonical_usable,
                     adjusted_one.as_ptr().addr(),
                     block_start,
                 ),
