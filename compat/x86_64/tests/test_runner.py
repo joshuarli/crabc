@@ -10817,6 +10817,97 @@ esac
             self.assertEqual(completed.returncode, 2)
             self.assertIn("refuses emulation", completed.stderr)
 
+    def test_owned_pthread_mutex_dispatch_preserves_supplied_product_arguments(self) -> None:
+        temporary_root = ROOT / ".work" / "x86_64" / "tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temporary_root) as temporary:
+            root = Path(temporary)
+            bin_directory = root / "bin"
+            bin_directory.mkdir()
+            capture = root / "docker.args"
+            static = root / "static product"
+            dynamic = root / "dynamic product"
+            static.mkdir()
+            dynamic.mkdir()
+            fake_uname = bin_directory / "uname"
+            fake_uname.write_text(
+                "#!/usr/bin/env bash\n"
+                "case \"$1\" in\n"
+                "  -s) printf 'Linux\\n' ;;\n"
+                "  -m) printf 'x86_64\\n' ;;\n"
+                "esac\n",
+                encoding="utf-8",
+            )
+            fake_uname.chmod(fake_uname.stat().st_mode | stat.S_IXUSR)
+            fake_docker = bin_directory / "docker"
+            # Replace product execution with its real argument parser so invalid
+            # forms retain the leaf's exit status without compiling a runtime.
+            fake_docker.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+                "  printf 'linux/amd64\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "[ \"$1\" = run ] || exit 64\n"
+                "printf '%s\\0' \"$@\" > \"${FAKE_DOCKER_ARGS:?}\"\n"
+                "while [ \"$1\" != bash ]; do shift; done\n"
+                "shift 2\n"
+                "ROOT=${FAKE_ROOT:?}\n"
+                ". \"$ROOT/compat/x86_64/owned_pthread_product_arguments.sh\"\n"
+                "owned_pthread_product_arguments pthread-mutex \"$@\"\n",
+                encoding="utf-8",
+            )
+            fake_docker.chmod(fake_docker.stat().st_mode | stat.S_IXUSR)
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": f"{bin_directory}{os.pathsep}{environment['PATH']}",
+                    "FAKE_DOCKER_ARGS": str(capture),
+                    "FAKE_ROOT": str(ROOT),
+                    "TMPDIR": str(root),
+                }
+            )
+            cases = (
+                ([], 0),
+                ([str(dynamic)], 0),
+                (["--static-sysroot", str(static), str(dynamic)], 0),
+                (["--static-sysroot"], 2),
+                (["--static-sysroot", str(static)], 2),
+                ([str(static), str(dynamic)], 2),
+                (["--unknown", str(static), str(dynamic)], 2),
+                ([str(root / "missing")], 1),
+                ([str(ROOT)], 1),
+            )
+            for supplied, expected_status in cases:
+                with self.subTest(arguments=supplied):
+                    capture.unlink(missing_ok=True)
+                    completed = subprocess.run(
+                        ["bash", str(RUNNER), "owned-pthread-mutex", *supplied],
+                        cwd=ROOT,
+                        env=environment,
+                        check=False,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    self.assertEqual(completed.returncode, expected_status, completed.stderr)
+                    self.assertTrue(capture.is_file(), completed.stderr)
+                    arguments = [
+                        value.decode("utf-8")
+                        for value in capture.read_bytes().split(bytes((0,)))
+                        if value
+                    ]
+                    self.assertEqual(arguments[arguments.index("--platform") + 1], "linux/amd64")
+                    self.assertEqual(
+                        arguments[arguments.index("bash"):],
+                        ["bash", "/workspace/compat/x86_64/run_owned_pthread_mutex.sh", *supplied],
+                    )
+                    if expected_status == 2:
+                        self.assertIn("usage:", completed.stderr)
+                    elif expected_status == 1:
+                        self.assertIn("product must be a checkout .work directory", completed.stderr)
+
     def test_core_uses_the_native_amd64_container_and_exact_cargo_scope(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -671,7 +671,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-join-cancel  test installed ordinary/try/timed join ownership and cancellation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
   owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
-  owned-pthread-mutex  test owned recursive, error-checking, and timed mutex behavior
+  owned-pthread-mutex [DYNAMIC_SYSROOT | --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test owned recursive, error-checking, and timed mutex behavior
   owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the declared owned static product suite; write its receipt
   lua-static-source-build [--allocator-backend native-shadow]  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
@@ -10227,8 +10227,7 @@ PY
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_timed.sh "$@"
         ;;
     owned-pthread-mutex)
-        [ "$#" -eq 0 ] || fail "owned-pthread-mutex takes no arguments"
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh "$@"
         ;;
     owned-posix-timers)
         run_in_container bash /workspace/compat/x86_64/run_owned_posix_timers.sh "$@"
