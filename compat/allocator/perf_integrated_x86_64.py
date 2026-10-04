@@ -38,7 +38,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -374,25 +373,27 @@ def run(arguments: argparse.Namespace) -> Path:
     # the unchanged host reader still refuses any remaining contention.
     if arguments.full and os.getloadavg()[0] > engine.UNCONTENDED_START_LOAD1_MAX:
         time.sleep(60)
-    with tempfile.TemporaryDirectory(prefix="crabc-integrated-perf-", dir=work) as temporary:
-        scratch = Path(temporary)
-        host_evidence = engine.host_record_start(measurement_cpus)
-        seed = 0x494E_5445_4752
-        report["rows"] = {}
-        for product_index, kind in enumerate(("static", "dynamic")):
-            # Row names become scratch file names, so the link mode joins with "-" there.
-            measured = engine.measure_rows(
-                [dict(row, name=f"{kind}-{row['name']}") for row in rows], programs["binaries"][kind], memory=False,
-                mode=mode, cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch,
-                seed=seed + 7919 * product_index, host_evidence=host_evidence, peak_hook=True)
-            report["rows"].update({f"{kind}/{name.removeprefix(kind + '-')}": entry for name, entry in measured.items()})
-            name = f"{kind}/{manifest['startup_row']['name']}"
-            host_evidence["windows"].append(engine.contention_window(f"row:{name}", engine.CONTENTION_ROW_WINDOW_SECONDS))
-            report["rows"][name] = measure_startup(
-                programs["binaries"][kind], programs["launcher"], manifest["startup_row"], mode=mode,
-                cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed + 104729 + product_index)
-            print(f"measured {name}", file=sys.stderr, flush=True)
-        report["uncontended_host"] = engine.uncontended_host_record(engine.host_record_finish(host_evidence))
+    # Keep producer output after a failed sample so diagnostics remain available
+    # even when the row cannot produce a comparison.
+    scratch = work / "output"
+    scratch.mkdir(parents=True, exist_ok=True)
+    host_evidence = engine.host_record_start(measurement_cpus)
+    seed = 0x494E_5445_4752
+    report["rows"] = {}
+    for product_index, kind in enumerate(("static", "dynamic")):
+        # Row names become scratch file names, so the link mode joins with "-" there.
+        measured = engine.measure_rows(
+            [dict(row, name=f"{kind}-{row['name']}") for row in rows], programs["binaries"][kind], memory=False,
+            mode=mode, cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch,
+            seed=seed + 7919 * product_index, host_evidence=host_evidence, peak_hook=True)
+        report["rows"].update({f"{kind}/{name.removeprefix(kind + '-')}": entry for name, entry in measured.items()})
+        name = f"{kind}/{manifest['startup_row']['name']}"
+        host_evidence["windows"].append(engine.contention_window(f"row:{name}", engine.CONTENTION_ROW_WINDOW_SECONDS))
+        report["rows"][name] = measure_startup(
+            programs["binaries"][kind], programs["launcher"], manifest["startup_row"], mode=mode,
+            cpu_pool=arguments.cpus, timeout=arguments.timeout, scratch=scratch, seed=seed + 104729 + product_index)
+        print(f"measured {name}", file=sys.stderr, flush=True)
+    report["uncontended_host"] = engine.uncontended_host_record(engine.host_record_finish(host_evidence))
     failed = sorted(name for name, row in report["rows"].items() if row["status"] != "measured")
     report["failed_rows"] = failed
     report["status"] = "failed-rows" if failed else "ok"

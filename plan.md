@@ -103,8 +103,8 @@ Update this small section in place when the implementation frontier changes.
   follows sealed-driver receipt anchors and private UAPI include paths, retains
   all project include bytes in source comparison, permits declared unused
   builtins in link traces, forwards supplied mutex products and records the
-  active native benchmark's aligned/ordinary entry selection. Engine runs
-  retain complete failed fixture output after temporary-source cleanup;
+  active native benchmark's aligned/ordinary entry selection. Engine and
+  installed-product runs retain complete failed fixture output after cleanup;
   the reproduced retention regression and existing reader/fixture tests pass.
 - **Performance:** the latest retained three agreeing engine measurements,
   at `e8b25e956`, pass physical product/host checks but fail numerical bounds.

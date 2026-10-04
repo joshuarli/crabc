@@ -30,7 +30,8 @@ change requires fresh products and measurements in both lanes.
 
 The engine runner retains fixture stdout and stderr under each run's
 `<label>.artifacts/output` directory, including samples that fail before their row
-can produce a comparison.
+can produce a comparison. The installed-product runner retains the same output
+under `.work/allocator-x86_64/integrated/<label>/output`.
 
 For one development regression, use
 `./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name`.

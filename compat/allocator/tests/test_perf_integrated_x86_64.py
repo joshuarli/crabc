@@ -58,6 +58,51 @@ def synthetic_integrated(mi_malloc_version: int = 30500, backend: str = "pinned-
 
 
 class IntegratedBuildTests(unittest.TestCase):
+    def test_failed_fixture_output_survives_run_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = Path(directory)
+            arguments = argparse.Namespace(full=False, label="retained-failure", reuse_products=False,
+                                           cpus="0", timeout=1)
+            outputs = []
+
+            def failed_measurement(rows, binaries, *, scratch, **kwargs):
+                name = rows[0]["name"]
+                stdout = scratch / f"{name}.stdout"
+                stderr = scratch / f"{name}.stderr"
+                stdout.write_text("batch_cpu_ns=0\n", encoding="utf-8")
+                stderr.write_text("fixture diagnostic\n", encoding="utf-8")
+                outputs.append((stdout, stderr))
+                return {name: {"status": "failed", "reason": "nonpositive batch CPU time"}}
+
+            with ExitStack() as mocks:
+                mocks.enter_context(patch.object(integrated, "WORK_ROOT", work))
+                mocks.enter_context(patch.object(integrated, "REPORT_ROOT", work / "reports"))
+                mocks.enter_context(patch.object(integrated, "source_seal", return_value={}))
+                mocks.enter_context(patch.object(integrated, "c_reference", return_value={}))
+                mocks.enter_context(patch.object(integrated, "build_products", return_value={}))
+                mocks.enter_context(patch.object(integrated, "build_programs", return_value={
+                    "records": {}, "binaries": {"static": {}, "dynamic": {}}, "launcher": work / "launcher"}))
+                mocks.enter_context(patch.object(engine.shared, "require_native_x86_64", return_value={}))
+                for name in ("git_provenance", "host_provenance", "tool_versions", "file_record"):
+                    mocks.enter_context(patch.object(engine, name, return_value={}))
+                mocks.enter_context(patch.object(engine, "choose_cpus", return_value=[0]))
+                mocks.enter_context(patch.object(engine, "host_record_start", return_value={"windows": []}))
+                mocks.enter_context(patch.object(engine, "contention_window", return_value={}))
+                mocks.enter_context(patch.object(engine, "host_record_finish", return_value={}))
+                mocks.enter_context(patch.object(engine, "uncontended_host_record", return_value={}))
+                mocks.enter_context(patch.object(engine, "measure_rows", side_effect=failed_measurement))
+                mocks.enter_context(patch.object(integrated, "measure_startup", return_value={"status": "measured"}))
+                mocks.enter_context(patch.object(integrated, "integrated_unmet", return_value=["fixture failed"]))
+                with self.assertRaisesRegex(integrated.HarnessError, "rows failed"):
+                    integrated.run(arguments)
+            report = json.loads((work / "reports/retained-failure.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "failed-rows")
+            self.assertEqual(len(report["failed_rows"]), 2)
+            self.assertEqual(len(outputs), 2)
+            for stdout, stderr in outputs:
+                self.assertEqual(stdout.read_text(encoding="utf-8"), "batch_cpu_ns=0\n")
+                self.assertEqual(stderr.read_text(encoding="utf-8"), "fixture diagnostic\n")
+
     def test_full_preparation_settles_before_host_measurement(self) -> None:
         for full, load, expected in (
                 (True, 1.13, ["products", "programs", "load", "sleep", "start"]),
