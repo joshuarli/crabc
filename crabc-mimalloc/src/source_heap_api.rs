@@ -2151,6 +2151,12 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         }
     }
     if fixed_runtime_theap().is_some_and(|fixed| fixed.as_ptr().cast::<c_void>() == selected) {
+        #[cfg(target_arch = "x86_64")]
+        return match request {
+            Request::Plain => crate::source_api::malloc_zero_native(size, zero),
+            Request::Aligned { alignment, offset } => crate::source_api::malloc_zero_aligned_at_native(size, alignment, offset, zero),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         return match (request, zero) {
             (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
             (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),
@@ -2165,6 +2171,12 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         if !unsafe { crate::subproc::lifecycle::native_child_heap_select_theap(heap) } {
             return Sourced { value: None, errno: report_failure(size, request) };
         }
+        #[cfg(target_arch = "x86_64")]
+        return match request {
+            Request::Plain => crate::source_api::malloc_zero_native(size, zero),
+            Request::Aligned { alignment, offset } => crate::source_api::malloc_zero_aligned_at_native(size, alignment, offset, zero),
+        };
+        #[cfg(not(target_arch = "x86_64"))]
         return match (request, zero) {
             (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
             (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),
