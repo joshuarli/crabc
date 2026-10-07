@@ -49,7 +49,7 @@ Update this small section in place when the implementation frontier changes.
   reset after harvesting existing work. No lane agents or secondary worktrees
   remain; accepted implementation and regressions are committed. The reset
   discards historical raw reports, products, caches and frozen source copies.
-  Outcomes below are historical summaries, not retained replayable evidence.
+  Pre-reset outcomes below are historical summaries, not retained replayable evidence.
   Functional blockers and all fresh qualification requirements remain open.
 
 - **Feature status:** the selected surface is implemented. Two native opt0
@@ -155,9 +155,11 @@ Update this small section in place when the implementation frontier changes.
 - **Qualification:** core image `0f46a88a4cd9` and allocator image
   `0ee122ffc790` were previously authenticated after rebuilds from unchanged
   recipes; dated Rust, musl 1.2.6, tool hashes and Linux 5.10 header inputs
-  passed their checks. Both local images are absent after the reboot audit;
-  pinned images and inputs must be restored before new native runs. Eight ordered
-  gates are ready, zero qualified. At `1557f0d94`, accepted-C static packages
+  passed their checks. The reboot audit found both local images absent.
+  Allocator image `d8aa8faef0b5` is now rebuilt from the same recipe and its
+  tool hashes, dated nightly and musl pin pass authentication. The core image
+  and other inputs still require restoration. Eight ordered gates remain,
+  zero qualified. At `1557f0d94`, accepted-C static packages
   reproduced exactly and their preparation passed independent replay.
   Fresh static/dynamic C/native comparison products pass all 16 ordinary
   small, medium, large and four-worker probes; these are component checks.
@@ -177,6 +179,18 @@ Update this small section in place when the implementation frontier changes.
   `recovery/work-20261007/*` branches in the primary repository.
   Rejected trials remain reverted. No deleted receipt establishes qualification;
   new products require fresh checks and measurements.
+- **Development tools:** after the reset, the exact regular queue-head
+  ordinary/aligned/zeroing unit regression passes twice at `8083b7f3b`, in
+  separate temporary worktrees with empty target directories and the pinned
+  native allocator image. Both test ELFs record mold 3.0.0. Explicit read-only
+  host-tool mounts and `RUSTC_WRAPPER`/link flags are required; the stock
+  container runners do not inherit host Cargo configuration. With incremental
+  compilation disabled and one shared checkout-local CAS, kache 1.0.0 restores
+  all 13 dependency crates in the second tree. The allocator test crate has a
+  different cache key, recompiles and deduplicates identical output bytes;
+  reuse of that expensive crate remains incomplete. Current probe output is
+  under `.work/mold-kache/reports/`. Temporary worktrees are removed. This
+  focused check establishes no performance or release qualification.
 - **Constraints:** known blockers remain deferred until the end. Earlier crash
   investigation workflows were rejected by automatic safety review; do not
   restart them. On resumption, continue source/compiler work and ordinary
@@ -189,8 +203,9 @@ Update this small section in place when the implementation frontier changes.
 ## Parallel lanes
 
 Campaign work is wound down at the user's request on 2026-10-07. Do not start
-new lanes or builds beyond the user-authorized single focused mold/kache
-development check. The following coordination rules apply on campaign resumption.
+new lanes or builds until the user resumes the campaign. The authorized
+single focused mold/kache development check is complete. The following
+coordination rules apply on campaign resumption.
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
 lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
