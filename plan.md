@@ -45,6 +45,13 @@ paused AArch64 behavior. A real behavior failure remains a bug.
 
 Update this small section in place when the implementation frontier changes.
 
+- **Wind-down (2026-10-07):** user requested no new work and a clean `.work`
+  reset after harvesting existing work. No lane agents or secondary worktrees
+  remain; accepted implementation and regressions are committed. The reset
+  discards historical raw reports, products, caches and frozen source copies.
+  Outcomes below are historical summaries, not retained replayable evidence.
+  Functional blockers and all fresh qualification requirements remain open.
+
 - **Feature status:** the selected surface is implemented. Two native opt0
   failures remain open: worker attachment on a legal 16-KiB pthread stack and
   the public-Theap consumer's child-subprocess phase. Accepted-C products and
@@ -91,10 +98,10 @@ Update this small section in place when the implementation frontier changes.
   allocation, guard, ownership, metadata and worker regressions. Geometry and
   aligned tests distinguish padded client usable size from physical block stride;
   geometry expectations apply padding at the huge-bin boundary. Original failed
-  expectations remain retained. The frozen inventory remains 223 capabilities and
-  26 families.
-  Historical compatibility, header, std/LTO, unwind and Lua components retain
-  original source/product identities; changed products require fresh evidence.
+  expectations remain in Git history. The frozen inventory remains 223
+  capabilities and 26 families.
+  Historical compatibility, header, std/LTO, unwind and Lua component outcomes
+  applied to their original sources/products; fresh evidence is required.
   Component checks do not establish full release qualification. Installed
   logarithm entries pass real pthread/fenv composition against musl. Fresh
   `cd97064b8` components also cover FILE, filesystem, thread/TLS, resolver,
@@ -106,7 +113,7 @@ Update this small section in place when the implementation frontier changes.
   active native benchmark's aligned/ordinary entry selection. Engine and
   installed-product runs retain complete failed fixture output after cleanup;
   the reproduced retention regression and existing reader/fixture tests pass.
-- **Performance:** the latest retained three agreeing engine measurements,
+- **Performance:** the last three agreeing historical engine measurements,
   at `e8b25e956`, pass physical product/host checks but fail numerical bounds.
   Their scaling rows use a shared volatile observation accumulator with a C
   data race; those rows cannot qualify scaling. The shared fixture now keeps
@@ -119,11 +126,9 @@ Update this small section in place when the implementation frontier changes.
   versus C's 108,311 bytes.
   A same-source integrated run passes the physical product and host checks,
   agrees with that engine cohort, and completes all 14 static/dynamic workload
-  rows. Its raw numerical results remain retained. Frozen source and physical
-  engine/integrated artifacts remain under
-  `.work/x86_64/reports/integrated-lanes/perf182-e8b25e956/source/`;
-  subsequent source changes require fresh measurements.
-  Earlier source cohorts and their original failed attempts remain retained.
+  rows. Its raw numerical results, frozen source and physical engine/integrated
+  artifacts are discarded by the reset; current source requires fresh measurements.
+  Earlier source cohorts and their original failed attempts are also discarded.
   At `e8b25e956`, refreshed small-allocation diagnostic samples concentrate
   immediately after admission's locked OR; fork ordering remains required.
   The SeqCst atomic-OR replacement improves paired development wall-throughput
@@ -142,38 +147,40 @@ Update this small section in place when the implementation frontier changes.
   engine and installed-product measurements remain required.
   Subsequent full engine attempts remain unqualified: two reports record
   zero-CPU batch failures in pinned C, and one complete run is rejected for
-  initial host contention. Failure reports and available raw output remain
-  retained; the first failed sample's complete output was lost before the
-  retention repair. New qualification measurements await an uncontended host.
+  initial host contention. Failure summaries remain here; their raw reports
+  are discarded by the reset. The first failed sample's complete output was
+  lost before the retention repair. New qualification measurements await an uncontended host.
   Installed-product full preparations allow one idle interval after builds when host
   load exceeds the unchanged limit. Performance acceptance remains open.
-- **Qualification:** authenticated core image `0f46a88a4cd9`, allocator image
-  `0ee122ffc790`, pinned sources and consumer inputs are available. The missing
-  images were rebuilt from their unchanged recipes; dated Rust, musl 1.2.6,
-  tool hashes and the Linux 5.10 header inputs pass their existing checks.
-  Earlier artifacts retain their original image identities. Eight ordered
+- **Qualification:** core image `0f46a88a4cd9` and allocator image
+  `0ee122ffc790` were previously authenticated after rebuilds from unchanged
+  recipes; dated Rust, musl 1.2.6, tool hashes and Linux 5.10 header inputs
+  passed their checks. Both local images are absent after the reboot audit;
+  pinned images and inputs must be restored before new native runs. Eight ordered
   gates are ready, zero qualified. At `1557f0d94`, accepted-C static packages
-  reproduce exactly and their retained preparation passes independent replay.
+  reproduced exactly and their preparation passed independent replay.
   Fresh static/dynamic C/native comparison products pass all 16 ordinary
   small, medium, large and four-worker probes; these are component checks.
-  The `e66fab1a8` four-product preparation and
-  independently reproduced packages remain under
-  `.work/x86_64/reports/cohort159/`; they are not current qualification.
+  The historical `e66fab1a8` four-product preparation and independently
+  reproduced packages are discarded by the reset; they were not current qualification.
   The `d294dd879` cohort has independently reproduced static/dynamic C/native
-  packages and retained worker/TLS, resolver, Lua, std/LTO, POSIX and text/stdio
-  component results. Its frozen source and physical artifacts remain under
-  `.work/x86_64/reports/cohort170/source/`; partial components and subsequent
+  packages and worker/TLS, resolver, Lua, std/LTO, POSIX and text/stdio
+  component results. Its frozen source and physical artifacts are discarded
+  by the reset; partial components and subsequent
   source changes prevent a full admission claim. C remains selected and public
   x86 support disabled. Baseline qualification, post-switch reruns and public
   promotion remain open.
-- **Evidence:** `.work/x86_64/reports/integrated-lanes/` retains settled lanes'
-  exact source/artifacts, original failures and compiler proofs before worktree
-  removal. Existing ignored report locations retain raw measurements and
-  merged-check logs. Rejected trials are restored; historical receipts are
-  never transferred to new products. Git retains implementation history.
+- **Evidence:** the user-directed reset discards ignored raw measurements,
+  original fixture output, products, compiler proofs and source snapshots.
+  Git retains accepted implementation, regressions and historical lane commits.
+  Recovered snapshot commits and scratch diffs remain on
+  `recovery/work-20261007/*` branches in the primary repository.
+  Rejected trials remain reverted. No deleted receipt establishes qualification;
+  new products require fresh checks and measurements.
 - **Constraints:** known blockers remain deferred until the end. Earlier crash
   investigation workflows were rejected by automatic safety review; do not
-  restart them. Continue source/compiler work and ordinary valid-client checks.
+  restart them. On resumption, continue source/compiler work and ordinary
+  valid-client checks.
   Physical NUMA and explicit 2-MiB/1-GiB modes remain unqualified on this host.
   Ordinary baseline promotion may proceed once its other prerequisites pass.
   Do not repeat unchanged denied `mbind`, alter shared pools/security policy,
@@ -181,8 +188,9 @@ Update this small section in place when the implementation frontier changes.
 
 ## Parallel lanes
 
-Campaign work resumed at the user's request on 2026-10-03. The following
-coordination rules apply to the active correctness and qualification work.
+Campaign work is wound down at the user's request on 2026-10-07. Do not start
+new lanes or builds beyond the user-authorized single focused mold/kache
+development check. The following coordination rules apply on campaign resumption.
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination and its referenced
 lane instructions. Keep 16 `gpt-6.1-sol` medium lanes occupied while useful
