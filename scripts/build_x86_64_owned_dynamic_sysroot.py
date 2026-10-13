@@ -617,6 +617,12 @@ def validate_native_allocator_symbols(definitions, imports, loader_symbols) -> N
         raise common.BuildError(f"native allocator ownership violated: C={c_symbols}, loader={sorted(loader_symbols & allocator_edges)}")
 
 
+def native_allocator_elf_audit_required(allocator_backend: str) -> bool:
+    """The production and qualification names select the same native ELF contract."""
+
+    return allocator_backend in common.NATIVE_ALLOCATOR_BACKENDS
+
+
 def elf_symbols(nm: str, artifact: Path, selector: str) -> set[str]:
     # The installed loader can be stripped of its ordinary symbol table.
     # Inspect dynamic symbols too, while retaining private libc fini entries.
@@ -843,7 +849,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     loader_artifact = stage / "loader" / common.TARGET / "release/libldso.so"
     common.copy_artifact(loader_artifact, interpreter)
     interpreter.chmod(0o755)
-    if allocator_backend == "native-shadow":
+    if native_allocator_elf_audit_required(recorded_backend):
         native_definitions = elf_symbols(nm, library / "libc.so", "--defined-only")
         native_imports = elf_symbols(nm, library / "libc.so", "--undefined-only")
         loader_imports = elf_symbols(nm, interpreter, "--undefined-only")
@@ -860,7 +866,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     (interpreter.parent / "ld-musl-x86_64.so.1").symlink_to(interpreter.name)
     metadata = output / "share/crabc"
     metadata.mkdir(parents=True)
-    if allocator_backend == "native-shadow":
+    if native_allocator_elf_audit_required(recorded_backend):
         common.copy_artifact(stage / "native-allocator-symbols.json", metadata / "native-allocator-symbols.json")
     common.copy_artifact(crt / "objects.json", metadata / "crt.provenance.json")
     common.copy_artifact(crt / "commands.json", metadata / "crt.commands.json")

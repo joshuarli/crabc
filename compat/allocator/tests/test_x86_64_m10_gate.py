@@ -84,6 +84,14 @@ class BackendSelectionTests(unittest.TestCase):
             common.backend_selection("native", True)
         self.assertEqual(common.parse_args([]).allocator_backend, "accepted-c")
 
+    def test_native_elf_audit_covers_production_and_shadow_selections(self) -> None:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import build_x86_64_owned_dynamic_sysroot as dynamic
+
+        self.assertTrue(dynamic.native_allocator_elf_audit_required("native"))
+        self.assertTrue(dynamic.native_allocator_elf_audit_required("native-shadow"))
+        self.assertFalse(dynamic.native_allocator_elf_audit_required("accepted-c"))
+
 
 class ConditionTests(unittest.TestCase):
     def test_the_switch_is_recorded_while_the_default_is_unchanged(self) -> None:
@@ -210,6 +218,54 @@ class ConditionTests(unittest.TestCase):
         self.assertEqual(result["overall_status"], "unmet")
         self.assertIn("m10.promotion-rerun", result["unmet"])
         self.assertNotIn("m10.switch", result["unmet"])
+
+    def test_full_profile_only_needs_switch_and_post_switch_rerun_before_switch(self) -> None:
+        met = lambda name: gate._condition(name, [], "validated fixture")
+        with (mock.patch.object(gate, "prior_milestones", return_value=met("m10.prior-milestones")),
+              mock.patch.object(gate, "promotion_gates", return_value=met("m10.promotion-gates")),
+              mock.patch.object(gate, "native_artifacts", return_value=met("m10.native-artifacts")),
+              mock.patch.object(gate, "oracle_retained", return_value=met("m10.oracle-retained"))):
+            result = gate.evaluate(m0={"status": 0}, receipt=Path("performance.json"),
+                                   qualification_receipt=None,
+                                   head={"head": "fixture", "clean": True}, profile="full")
+
+        self.assertEqual(set(result["unmet"]), {"m10.switch", "m10.promotion-rerun"})
+
+    def test_a_full_chain_receipt_for_the_switched_revision_completes_m10(self) -> None:
+        met = lambda name: gate._condition(name, [], "validated fixture")
+        receipt = Path("qualification-receipt.json")
+        chain = {"qualification_profile": "full", "complete_profile": True, "complete_chain": True,
+                 "outcome": "passed", "source_before": {"revision": "fixture"},
+                 "source_after": {"revision": "fixture"}}
+        with (mock.patch.object(gate, "prior_milestones", return_value=met("m10.prior-milestones")),
+              mock.patch.object(gate, "promotion_gates", return_value=met("m10.promotion-gates")),
+              mock.patch.object(gate, "native_artifacts", return_value=met("m10.native-artifacts")),
+              mock.patch.object(gate, "oracle_retained", return_value=met("m10.oracle-retained")),
+              mock.patch.object(gate, "switch_record", return_value=dict(gate.switch_record(), default="native")),
+              mock.patch.object(gate, "validate_chain_receipt", return_value=chain)):
+            result = gate.evaluate(m0={"status": 0}, receipt=Path("performance.json"),
+                                   qualification_receipt=receipt,
+                                   head={"head": "fixture", "clean": True}, profile="full")
+
+        self.assertEqual(result["unmet"], [])
+        self.assertEqual(result["overall_status"], "passed")
+
+    def test_promotion_rerun_rejects_nonfull_or_stale_chain_receipts(self) -> None:
+        current = {"head": "current", "clean": True}
+        full = {"qualification_profile": "full", "complete_profile": True, "complete_chain": True,
+                "outcome": "passed", "source_before": {"revision": "current"},
+                "source_after": {"revision": "current"}}
+        with mock.patch.object(gate, "validate_chain_receipt", return_value=full):
+            self.assertTrue(gate.promotion_rerun(current, Path("receipt.json"))["met"])
+        for mutation, expected in (({"qualification_profile": "correctness"}, "profile is"),
+                                   ({"complete_profile": False}, "incomplete"),
+                                   ({"outcome": "failed"}, "outcome is"),
+                                   ({"source_after": {"revision": "other"}}, "not HEAD current")):
+            with self.subTest(mutation=mutation), mock.patch.object(
+                    gate, "validate_chain_receipt", return_value={**full, **mutation}):
+                result = gate.promotion_rerun(current, Path("receipt.json"))
+                self.assertFalse(result["met"])
+                self.assertTrue(any(expected in item for item in result["detail"]), result)
 
     def test_the_gate_fails_closed_today(self) -> None:
         result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "none", "clean": True})

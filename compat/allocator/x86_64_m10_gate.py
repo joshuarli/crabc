@@ -256,6 +256,40 @@ def promotion_gates(receipt: Path | None) -> dict[str, Any]:
     return _condition("m10.promotion-gates", [], f"{harness.relative(receipt)} passes performance.release")
 
 
+def validate_chain_receipt(path: Path) -> Mapping[str, Any]:
+    """Replay an ordered qualification receipt with its owning reader."""
+
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    import run_qualification_manifest as qualification
+
+    return qualification.validate_chain_receipt(path)
+
+
+def promotion_rerun(head: Mapping[str, Any], receipt_path: Path | None) -> dict[str, Any]:
+    if receipt_path is None:
+        return _condition("m10.promotion-rerun", [
+            "no full-profile qualification chain receipt supplied (--qualification-receipt)"], "")
+    try:
+        receipt = validate_chain_receipt(receipt_path)
+    except Exception as error:  # noqa: BLE001 - the reader's refusal is the detail
+        return _condition("m10.promotion-rerun", [f"{type(error).__name__}: {error}"], "")
+
+    unmet: list[str] = []
+    if receipt.get("qualification_profile") != "full":
+        unmet.append(f"qualification receipt profile is {receipt.get('qualification_profile')!r}, not 'full'")
+    if receipt.get("outcome") != "passed":
+        unmet.append(f"qualification chain outcome is {receipt.get('outcome')!r}, not 'passed'")
+    if receipt.get("complete_profile") is not True or receipt.get("complete_chain") is not True:
+        unmet.append("qualification receipt is incomplete")
+    for key in ("source_before", "source_after"):
+        source = receipt.get(key)
+        revision = source.get("revision") if isinstance(source, Mapping) else None
+        if revision != head.get("head"):
+            unmet.append(f"qualification receipt {key} revision is {revision!r}, not HEAD {head.get('head')}")
+    return _condition("m10.promotion-rerun", unmet,
+                      f"full qualification chain passed at HEAD {head.get('head')}")
+
+
 def native_artifacts(head: Mapping[str, Any], path: Path = AUDIT_REPORT) -> dict[str, Any]:
     if not path.is_file():
         return _condition("m10.native-artifacts", ["no native artifact audit (allocator-m10 --build-audit)"], "")
@@ -317,6 +351,7 @@ def switch_condition(record: Mapping[str, Any], others_met: bool) -> dict[str, A
 
 
 def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, Any],
+             qualification_receipt: Path | None = None,
              profile: str = "full") -> dict[str, Any]:
     if profile not in {"full", "correctness", "baseline"}:
         raise harness.HarnessError(f"unknown M10 profile: {profile!r}")
@@ -328,9 +363,7 @@ def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, 
                       _condition("m10.performance-deferred", [], "performance qualification is outside this profile")])
     preconditions = [*prerequisites, native_artifacts(head), oracle_retained()]
     ready = all(row["met"] for row in preconditions)
-    conditions = [*preconditions,
-                  _condition("m10.promotion-rerun", ["the required native commands have not been rerun at a "
-                                                     "promotion revision (it exists only once the switch is committed)"], "")]
+    conditions = [*preconditions, promotion_rerun(head, qualification_receipt)]
     record = switch_record()
     conditions.append(switch_condition(record, ready))
     unmet = [row["id"] for row in conditions if not row["met"]]
@@ -350,6 +383,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="name every unmet M10 condition; builds nothing")
     mode.add_argument("--build-audit", action="store_true", help="build and audit the native static and dynamic products")
     parser.add_argument("--performance-receipt", type=Path, default=None)
+    parser.add_argument("--qualification-receipt", type=Path, default=None,
+                        help="validated full-profile chain receipt from this revision")
     parser.add_argument("--profile", choices=("full", "correctness", "baseline"), default="full")
     arguments = parser.parse_args(argv)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
@@ -365,7 +400,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["passed"] else 1
     m0 = harness.command_record(["python3", "compat/allocator/run.py", "--check", "--architecture", "x86_64",
                                  "--offline"], cwd=ROOT, timeout_seconds=900)
-    result = evaluate(m0={"status": m0["status"]}, receipt=arguments.performance_receipt, head=git_head(), profile=arguments.profile)
+    result = evaluate(m0={"status": m0["status"]}, receipt=arguments.performance_receipt,
+                      qualification_receipt=arguments.qualification_receipt,
+                      head=git_head(), profile=arguments.profile)
     report_path = ARTIFACTS / ("correctness-report.json" if arguments.profile == "correctness" else "report.json")
     harness.write_json(report_path, result)
     for row in result["conditions"]:
