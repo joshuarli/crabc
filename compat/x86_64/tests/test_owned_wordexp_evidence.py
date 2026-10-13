@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import sys
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -118,6 +119,57 @@ class OwnedWordexpPublicationTests(unittest.TestCase):
             with self.assertRaises(module.EvidenceError):
                 module._publish_report(root / "owned-wordexp-products.json", {}, {})
         self.assertEqual(output.getvalue(), "")
+
+
+class OwnedWordexpFileIdentityTests(unittest.TestCase):
+    def test_file_identity_binds_bytes_mode_and_rejects_symlink_ancestors(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, root)
+        directory = root / "physical"
+        directory.mkdir()
+        path = directory / "artifact"
+        path.write_bytes(b"sealed bytes")
+        path.chmod(0o644)
+        original = module._file_identity(root, "physical/artifact", "test artifact")
+        path.write_bytes(b"changed bytes")
+        changed = module._file_identity(root, "physical/artifact", "test artifact")
+        self.assertNotEqual(original["sha256"], changed["sha256"])
+        path.chmod(0o600)
+        self.assertEqual(module._file_identity(root, "physical/artifact", "test artifact")["mode"], 0o600)
+        (root / "alias").symlink_to(directory, target_is_directory=True)
+        with self.assertRaisesRegex(module.EvidenceError, "traverses a symlink"):
+            module._file_identity(root, "alias/artifact", "test artifact")
+        (root / "linked-file").symlink_to(path)
+        with self.assertRaisesRegex(module.EvidenceError, "not a physical regular file"):
+            module._file_identity(root, "linked-file", "test artifact")
+
+
+class OwnedWordexpDiagnosticTests(unittest.TestCase):
+    def test_cell_replay_does_not_publish_component_evidence(self) -> None:
+        module = load_module()
+        output = io.StringIO()
+        label = "dynamic-pie-kernel-normal"
+        arguments = ["wordexp", "validate-cell", "--report", "retained.json",
+                     "--expected-inputs", "expected.json", "--cell", label]
+        with unittest.mock.patch.object(sys, "argv", arguments), contextlib.redirect_stdout(output), \
+                unittest.mock.patch.object(module, "_load_expected_native_inputs", return_value={}), \
+                unittest.mock.patch.object(module, "_validate_report", create=True) as replay, \
+                unittest.mock.patch.object(module, "_publish_report") as publish:
+            self.assertEqual(module.main(), 0)
+        replay.assert_called_once_with(ROOT, Path("retained.json"), {}, cell=label)
+        publish.assert_not_called()
+        self.assertEqual(output.getvalue(), f"wordexp cell {label}: PASS (diagnostic only; no component receipt)\n")
+
+    def test_full_validation_cannot_select_a_cell(self) -> None:
+        module = load_module()
+        arguments = ["wordexp", "validate", "--report", "retained.json",
+                     "--expected-inputs", "expected.json", "--cell", "dynamic-pie-kernel-normal"]
+        with unittest.mock.patch.object(sys, "argv", arguments), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                module.main()
+        self.assertEqual(error.exception.code, 2)
 
 
 class OwnedWordexpExecutionRootTests(unittest.TestCase):

@@ -216,6 +216,11 @@ def _relative(value: str, description: str) -> str:
 
 def _sha(path: Path) -> str:
     path = _physical(path, "hashed artifact", directory=False)
+    return _hash_physical_file(path)
+
+
+# The caller has already rejected symlinks and non-regular files.
+def _hash_physical_file(path: Path) -> str:
     result = sha256()
     try:
         with path.open("rb") as stream:
@@ -237,7 +242,7 @@ def _file_identity(root: Path, relative: str, description: str) -> dict[str, Any
         path.relative_to(root)
     except ValueError as error:
         raise EvidenceError(f"{description} escapes execution root") from error
-    return {"path": relative, "sha256": _sha(path), "mode": _mode(path)}
+    return {"path": relative, "sha256": _hash_physical_file(path), "mode": stat.S_IMODE(path.lstat().st_mode)}
 
 
 def _null_device_identity(root: Path, relative: str, description: str) -> dict[str, Any]:
@@ -1551,6 +1556,12 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
 
 
 def validate_report(root: Path, report_path: Path, expected_native_inputs: object) -> dict[str, Any]:
+    return _validate_report(root, report_path, expected_native_inputs, cell=None)
+
+
+# A selected cell is a development replay only; publication always calls
+# validate_report and therefore requires every retained observation.
+def _validate_report(root: Path, report_path: Path, expected_native_inputs: object, *, cell: str | None) -> dict[str, Any]:
     root = _physical(root, "checkout root", directory=True)
     report_path = _physical(report_path, "wordexp report", directory=False)
     try:
@@ -1643,13 +1654,19 @@ def validate_report(root: Path, report_path: Path, expected_native_inputs: objec
     expected_cell_labels = {f"{mode}-{case}" for mode in expected_modes for case in WORD_EXP_CASES}
     if not isinstance(cells, dict) or set(cells) != expected_cell_labels:
         fail("wordexp execution cell roster differs")
+    if cell is not None and cell not in expected_cell_labels:
+        fail("wordexp diagnostic cell is not in the execution roster")
     for mode in sorted(expected_modes):
+        if cell is not None and not any(cell == f"{mode}-{case}" for case in WORD_EXP_CASES):
+            continue
         link_name = mode if mode.startswith("static") else mode.rsplit("-", 1)[0]
         candidate = _identity_current(root, links[link_name]["executable"], f"wordexp {mode} linked consumer")
         dynamic_product = None if mode.startswith("static") else dynamic
         for case in WORD_EXP_CASES:
             shell_case, arguments, expected_stdout, comparison = _case_spec(case)
             label = f"{mode}-{case}"
+            if cell is not None and cell != label:
+                continue
             item = _exact_dict(cells[label], {"mode", "case", "shell_case", "comparison", "execution", "consumer_sources",
                                                "external_alias_overrides", "oracle", "candidate", "expected_stdout"},
                                f"wordexp cell {label}")
@@ -1704,6 +1721,12 @@ def main() -> int:
     validate.add_argument("--report", type=Path, required=True)
     validate.add_argument("--expected-inputs", type=Path, required=True,
                           help="independently captured native tool/oracle input seal")
+    diagnostic = commands.add_parser("validate-cell", help="diagnose one retained cell; never publish component evidence")
+    diagnostic.add_argument("--report", type=Path, required=True)
+    diagnostic.add_argument("--expected-inputs", type=Path, required=True,
+                            help="independently captured native tool/oracle input seal")
+    diagnostic.add_argument("--cell", required=True,
+                            choices=sorted(f"{mode}-{case}" for mode in MODE_SPECS for case in WORD_EXP_CASES))
     parsed = parser.parse_args()
     try:
         if parsed.action == "run":
@@ -1712,6 +1735,9 @@ def main() -> int:
             collect(parsed.dynamic_sysroot, parsed.static_sysroot)
         elif parsed.action == "capture-expected-inputs":
             capture_expected_native_inputs(parsed.dynamic_sysroot, parsed.static_sysroot)
+        elif parsed.action == "validate-cell":
+            _validate_report(ROOT, parsed.report, _load_expected_native_inputs(parsed.expected_inputs), cell=parsed.cell)
+            print(f"wordexp cell {parsed.cell}: PASS (diagnostic only; no component receipt)")
         else:
             validate_report(ROOT, parsed.report, _load_expected_native_inputs(parsed.expected_inputs))
     except EvidenceError as error:

@@ -224,6 +224,13 @@ and ELF observations, and exact execution-tree bytes, modes, aliases, raw
 results, and expected transcripts.  This proves only the bounded
 installed-product component; it does not qualify a family or public support.
 
+For an iteration on one retained observation, use the same host replay with
+`validate-cell --report REPORT --expected-inputs EXPECTED_INPUTS --cell dynamic-pie-kernel-normal`.
+This checks both shared input seals, every retained link, the complete cell
+roster, and the selected cell's physical execution tree and results. Its
+success message is diagnostic only; it never publishes component evidence.
+`run` and `validate` still require every case in every selected product mode.
+
 The separate expected-input seal compares the native compiler, linker, oracle
 compiler, shell, timeout, chroot, and `ldd` identities with both retained
 before/after input maps. It also compares the full pinned-musl oracle identity,
