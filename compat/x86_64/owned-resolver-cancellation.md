@@ -323,6 +323,11 @@ the complete oracle plus six installed entry-mode matrix: 847 zero-status raw
 observations. It reconstructs the admitted ordinary and source-later errno
 lists from those bytes; it does not trust either summary list by itself.
 
+The private resolver files retain their exact contents and remain writable
+only by their owner. Replay accepts mode `0600` during private execution and
+mode `0644` after the outer collector adds read access for retained evidence;
+other modes, symlinks, and nonregular files fail.
+
 The reader also validates the loopback-only namespace record and the retained
 fast-open and fallback-connect observations. It never builds, links, runs a
 resolver consumer, or contacts DNS. A dynamic-only 605-run producer directory

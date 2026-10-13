@@ -183,6 +183,27 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         providers.assert_called_once_with(self.work, self.dynamic, cancellation)
         return result
 
+    def test_retained_readable_fixture_replays_without_changing_contents(self) -> None:
+        from owned_dynamic_qualification import make_retained_evidence_readable
+
+        paths = tuple(self.work / 'execution-root/etc' / name for name in ('resolv.conf', 'hosts'))
+        original = [path.read_bytes() for path in paths]
+        self._validate()
+        make_retained_evidence_readable(self.work)
+        self.assertEqual([path.stat().st_mode & 0o777 for path in paths], [0o644, 0o644])
+        self.assertEqual([path.read_bytes() for path in paths], original)
+        self._validate()
+
+    def test_fixture_modes_reject_non_owner_writes_and_execution(self) -> None:
+        for name in ('resolv.conf', 'hosts'):
+            path = self.work / 'execution-root/etc' / name
+            for mode in (0o400, 0o444, 0o604, 0o620, 0o664, 0o646, 0o700, 0o744):
+                with self.subTest(name=name, mode=oct(mode)):
+                    path.chmod(mode)
+                    with self.assertRaises(receipt.ReceiptError):
+                        receipt._verify_dns_fixture(self.work)
+                    path.chmod(0o600)
+
     def test_complete_raw_matrix_replays_only_with_same_source_and_products(self) -> None:
         report = self._validate()
 

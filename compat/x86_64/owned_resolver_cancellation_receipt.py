@@ -273,17 +273,19 @@ def _verify_namespace(work: Path) -> dict[str, object]:
     return value
 
 
+# Each case rewrites these private files. The final case must leave its
+# resolver input in the retained execution root for independent replay.
+# Private execution uses owner-only reads; outer retention additionally
+# grants group/world read access without changing bytes or write access.
 def _verify_dns_fixture(work: Path) -> None:
-    # Each case rewrites these private files. The final case must leave its
-    # resolver input in the retained execution root for independent replay.
     root = physical_directory(work / "execution-root", "cancellation execution root")
     etc = physical_directory(root / "etc", "cancellation isolated etc directory")
     config = physical_file(etc / "resolv.conf", "cancellation isolated resolver configuration")
     hosts = physical_file(etc / "hosts", "cancellation isolated hosts fixture")
     require(config.read_bytes() == b"nameserver 127.0.0.2\nnameserver 127.0.0.1\noptions timeout:1 attempts:1\n"
-            and stat.S_IMODE(config.stat().st_mode) == 0o600,
+            and stat.S_IMODE(config.stat().st_mode) in {0o600, 0o644},
             "cancellation isolated resolver configuration differs")
-    require(hosts.read_bytes() == b"" and stat.S_IMODE(hosts.stat().st_mode) == 0o600,
+    require(hosts.read_bytes() == b"" and stat.S_IMODE(hosts.stat().st_mode) in {0o600, 0o644},
             "cancellation isolated hosts fixture differs")
 
 
