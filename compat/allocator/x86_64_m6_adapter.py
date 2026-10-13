@@ -73,8 +73,10 @@ heap.zalloc_aligned_at
 many.heaps
 many.ok
 membership.live
+membership.moved_owned
 membership.moved
 membership.moved_queries
+membership.owned
 membership.region
 membership.unmapped
 membership.utilization

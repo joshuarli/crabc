@@ -1222,6 +1222,9 @@ static void membership_section(void) {
          mi_any_heap_contains(block),
          mi_heap_of(block + 1) == heap,
          mi_heap_contains(NULL, block));
+  printf("membership.owned=%d,%d,%d,%d\n",
+         mi_check_owned(block), mi_check_owned(block + 1),
+         !mi_check_owned(&foreign), !mi_check_owned(NULL));
   printf("membership.unmapped=%d,%d,%d,%d\n",
          mi_heap_of(NULL) == NULL,
          !mi_any_heap_contains(&foreign),
@@ -1240,6 +1243,7 @@ static void membership_section(void) {
          mi_heap_of(block) == mi_heap_main(),
          mi_heap_contains(NULL, block),
          mi_any_heap_contains(block));
+  printf("membership.moved_owned=%d\n", mi_check_owned(block));
   printf("membership.moved_queries=%d,%d,%d\n",
          mi_is_in_heap_region(block + 1),
          !mi_unsafe_heap_page_is_under_utilized(NULL, block, 100),
