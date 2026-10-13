@@ -86,7 +86,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-heap-destroy
   allocator-reclaim-on-free
   allocator-subprocess-lifecycle
-  allocator-heap-lifecycle | allocator-m6-adapter
+  allocator-heap-lifecycle | allocator-m6-adapter [--matrix]
   allocator-upstream-subprocess-stress
   allocator-upstream-heap-stress
   allocator-public-heap-alignment | allocator-public-theap [--debug]
@@ -1141,9 +1141,14 @@ case "$command" in
         run_in_container python3 compat/allocator/heap_lifecycle.py
         ;;
     allocator-m6-adapter)
-        [ "$#" -eq 0 ] || fail "allocator-m6-adapter takes no arguments"
+        m6_adapter_arguments=()
+        if [ "$#" -eq 1 ] && [ "$1" = --matrix ]; then
+            m6_adapter_arguments=(--matrix)
+        elif [ "$#" -ne 0 ]; then
+            fail "allocator-m6-adapter accepts only --matrix"
+        fi
         ensure_image
-        run_in_container python3 compat/allocator/x86_64_m6_adapter.py
+        run_in_container python3 compat/allocator/x86_64_m6_adapter.py "${m6_adapter_arguments[@]}"
         ;;
     allocator-public-heap-alignment)
         [ "$#" -eq 0 ] || fail "allocator-public-heap-alignment takes no arguments"

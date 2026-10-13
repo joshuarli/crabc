@@ -160,6 +160,20 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 self.assert_rejected("allocator-m4", *arguments)
 
+    def test_m6_adapter_defaults_to_release_and_forwards_only_matrix(self) -> None:
+        expected_runner = "compat/allocator/x86_64_m6_adapter.py"
+        self.assertEqual(self.runner_arguments("allocator-m6-adapter"), (expected_runner, []))
+        self.assertEqual(self.runner_arguments("allocator-m6-adapter", "--matrix"),
+                         (expected_runner, ["--matrix"]))
+        for arguments in (("--read",), ("--profile", "stat-1"),
+                          ("--matrix", "--matrix"), ("--matrix", "--read")):
+            with self.subTest(arguments=arguments):
+                self.assert_rejected("allocator-m6-adapter", *arguments)
+        result = self.invoke("compat/allocator/run-x86_64.sh", "--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("allocator-heap-lifecycle | allocator-m6-adapter [--matrix]", result.stdout)
+        self.assertFalse(self.log.exists(), "help must not inspect or run Docker")
+
     def test_divergence_defaults_and_explicit_profiles_reach_reader(self) -> None:
         for operation in ([], ["--check"]):
             for profile in (None, "correctness", "full"):
