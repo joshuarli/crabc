@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -23,10 +25,20 @@ SPEC.loader.exec_module(BUILD)
 
 class StaticRuntimeArchiveTests(unittest.TestCase):
     def test_default_reports_stay_under_the_repository_work_directory(self) -> None:
-        self.assertEqual(BUILD.WORK_DIR, ROOT / ".work")
-        self.assertEqual(BUILD.REPORT, ROOT / ".work/reports/sysroot/latest.json")
+        # The test runner points these overrides at a private scratch tree;
+        # the defaults are what an unconfigured invocation resolves.
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"CRABC_WORK_DIR", "CRABC_STATIC_PTHREAD_TLS_REPORT"}
+        }
+        with mock.patch.dict(os.environ, environment, clear=True):
+            defaults = importlib.util.module_from_spec(SPEC)
+            SPEC.loader.exec_module(defaults)
+        self.assertEqual(defaults.WORK_DIR, ROOT / ".work")
+        self.assertEqual(defaults.REPORT, ROOT / ".work/reports/sysroot/latest.json")
         self.assertEqual(
-            BUILD.STATIC_PTHREAD_REPORT,
+            defaults.STATIC_PTHREAD_REPORT,
             ROOT / ".work/reports/static-pthread-tls/latest.json",
         )
 

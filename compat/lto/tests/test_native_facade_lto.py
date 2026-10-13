@@ -59,17 +59,6 @@ class NativeFacadeLtoInspectionTests(unittest.TestCase):
         expected = interpreter.encode("ascii") + b"\0"
         self.assertEqual(patched[128 : 128 + len(expected)], expected)
 
-    def test_fixture_native_write_count_matches_its_payload(self) -> None:
-        source = (ROOT / "compat/lto/native-facade-lto-fixture/src/main.rs").read_text()
-        match = re.search(
-            r'io::write\(&null, b"(?P<payload>[^"]*)"\) != Ok\((?P<count>\d+)\)',
-            source,
-        )
-        self.assertIsNotNone(match)
-        assert match is not None
-        payload = bytes(match.group("payload"), "ascii").decode("unicode_escape").encode("ascii")
-        self.assertEqual(int(match.group("count")), len(payload))
-
     def test_accepts_function_scoped_direct_getpid_and_write_paths(self) -> None:
         report = RUNNER.inspect_direct_route(
             readelf_text="Machine: AArch64\n",

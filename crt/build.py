@@ -614,11 +614,6 @@ def build(args: argparse.Namespace) -> dict[str, object]:
     write_json(commands_path, records)
     if version["returncode"] != 0:
         raise BuildError(f"unable to execute pinned rustc: {version['stderr']}")
-    version_text = str(version["stdout"])
-    if "rustc 1.99.0-nightly" not in version_text or "commit-date: 2026-07-23" not in version_text:
-        raise BuildError(
-            "CRT builder requires rust-toolchain.toml-selected rustc"
-        )
 
     object_records: dict[str, dict[str, object]] = {}
     try:

@@ -71,6 +71,17 @@ def tcp_events(iterations: int) -> list[dict[str, object]]:
     return events
 
 
+def can_bind_port_53() -> bool:
+    """Report whether this host lets the process bind loopback port 53."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.bind(("127.0.0.1", 53))
+        except OSError:
+            return False
+    return True
+
+
 class NetworkProfileTests(unittest.TestCase):
     def test_seven_fixed_rows_reject_a_mode_substitution(self) -> None:
         row = peers.load_network_row(ROOT, "loopback_tcp_ipv4_4k", "loopback_tcp_ipv4")
@@ -293,6 +304,9 @@ class PeerLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(peers.PeerError, "sequence-checked"):
                 peers.validate_context(ROOT, forged)
 
+    @unittest.skipUnless(
+        can_bind_port_53(), "the resolver peer binds privileged port 53 on loopback"
+    )
     def test_sealed_dns_evidence_survives_retained_read_normalization(self) -> None:
         # The DNS peer writes its event record itself (mkstemp: mode 0600).
         # The adapter later adds read bits to every retained file before it

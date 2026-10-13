@@ -293,6 +293,9 @@ class DescriptorClosureTests(unittest.TestCase):
     def test_kernel_ranges_close_a_high_inherited_descriptor(self) -> None:
         """The fixed-range path closes real inherited descriptors in a child."""
 
+        # The descriptor must sit above every kept one but below the soft
+        # limit, which is only 1024 on a default host.
+        high = os.sysconf("SC_OPEN_MAX") - 1
         read_fd, write_fd = os.pipe()
         pid = os.fork()
         if pid == 0:
@@ -300,9 +303,9 @@ class DescriptorClosureTests(unittest.TestCase):
                 os.close(read_fd)
                 source = os.open("/dev/null", os.O_RDONLY)
                 try:
-                    inherited = os.dup2(source, 131_072)
+                    inherited = os.dup2(source, high)
                 finally:
-                    if source != 131_072:
+                    if source != high:
                         os.close(source)
                 runner.close_inherited_descriptors({0, 1, 2, write_fd})
                 try:

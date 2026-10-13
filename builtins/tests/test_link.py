@@ -20,7 +20,26 @@ def run(command: list[str]) -> str:
     return completed.stdout
 
 
+def aarch64_rust_target_installed() -> bool:
+    libdir = subprocess.run(
+        ["rustc", "--print", "target-libdir", "--target", TARGET],
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+    ).stdout.strip()
+    return (pathlib.Path(libdir)).is_dir()
+
+
 class ArchiveLinkTests(unittest.TestCase):
+    # The AArch64 helper archive is built from source for the AArch64 Rust
+    # target; a host without that target's standard library cannot build it.
+    # The hosted route tests below call the methods directly and mock every
+    # tool, so they do not pass through this hook.
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not aarch64_rust_target_installed():
+            raise unittest.SkipTest(f"Rust target {TARGET} is not installed")
+
     def test_archive_resolves_compiler_emitted_integer_division_helpers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="crabc-builtins-link-") as temporary:
             directory = pathlib.Path(temporary)

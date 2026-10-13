@@ -14,6 +14,11 @@ PRODUCER = ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"
 
 
 class DynamicSysrootEntryTests(unittest.TestCase):
+    # The producer resolves its Rust and LLVM tools only from the fixed
+    # toolchain roots of the evidence image.
+    @unittest.skipUnless(
+        Path("/opt/cargo/bin/rustup").is_file(), "pinned evidence-image toolchain is absent"
+    )
     def test_shared_libc_extracts_private_helpers_without_allocator_imports(self):
         spec = importlib.util.spec_from_file_location("dynamic_private_helper_link", PRODUCER)
         builder = importlib.util.module_from_spec(spec)

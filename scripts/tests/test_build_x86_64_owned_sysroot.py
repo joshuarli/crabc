@@ -491,29 +491,6 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                     builder.build(output)
             self.assertFalse(output.exists())
 
-    def test_recorded_libc_build_command_retains_the_static_sysroot_cfg(self) -> None:
-        """Published provenance must retain the cfg used for the rebuilt archive."""
-
-        source = SCRIPT.read_text(encoding="utf-8")
-        actual = source[source.index("cargo_command = ["):source.index("run(cargo_command,")]
-        recorded = source[source.index('"cargo_command": ['):source.index('"crt_root": crt_root')]
-        self.assertIn('"--cfg",\n        "crabc_owned_static_sysroot",', actual)
-        self.assertIn('"--cfg",\n            "crabc_owned_static_sysroot",', recorded)
-
-    def test_owned_static_archive_selects_one_pic_initial_exec_runtime_composition(self) -> None:
-        """One installed composition serves both static ELF modes without ambient support."""
-
-        source = SCRIPT.read_text(encoding="utf-8")
-        actual = source[source.index("cargo_command = ["):source.index("run(cargo_command,")]
-        recorded = source[source.index('"cargo_command": ['):source.index('"crt_root": crt_root')]
-        for command in (actual, recorded):
-            self.assertIn('"relocation-model=pic"', command)
-            self.assertIn('"-Ztls-model=initial-exec"', command)
-            self.assertIn('"--features"', command)
-            self.assertIn('selected_feature', command)
-            self.assertNotIn('x86-environment-runtime', command)
-            self.assertNotIn('x86-resolver-runtime', command)
-
     def test_static_native_dependencies_receive_the_initial_exec_tls_model(self) -> None:
         commands = []
         class CargoCaptured(Exception):

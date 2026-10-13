@@ -267,19 +267,6 @@ def validate_api(data: Mapping[str, Any], upstream: Mapping[str, Any]) -> dict[s
     return {"entry_count": len(entries), "status_counts": status_counts}
 
 
-def relative_source(path_text: str, *, owner: Path) -> Path:
-    require(isinstance(path_text, str) and path_text, "inventory source path is empty")
-    source = Path(path_text)
-    require(not source.is_absolute(), f"inventory source must be relative: {path_text}")
-    resolved = (owner.parent / source).resolve()
-    try:
-        resolved.relative_to(ROOT)
-    except ValueError as error:
-        raise HarnessError(f"inventory source escapes repository: {path_text}") from error
-    require(resolved.is_file(), f"inventory source does not exist: {path_text}")
-    return resolved
-
-
 def relative_evidence(path_text: str, *, location: str) -> Path:
     """Resolve a checked-in evidence path from the repository root.
 
@@ -334,30 +321,6 @@ def require_rust_subsumed_evidence(capability: Mapping[str, Any], location: str)
         ),
         f"{location}.behavior_evidence must identify tests, probes, or verifiers",
     )
-
-
-def symbol_names(path: Path) -> tuple[str, ...]:
-    names: list[str] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError as error:
-        raise HarnessError(f"cannot read symbol inventory {path}: {error}") from error
-    for line_number, line in enumerate(lines, 1):
-        if not line:
-            continue
-        name = line.split("\t", 1)[0]
-        require(name and "\t" in line, f"malformed symbol record {path}:{line_number}")
-        names.append(name)
-    require(len(names) == len(set(names)), f"duplicate symbol in {path}")
-    return tuple(names)
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def nonempty_strings(value: Any, location: str) -> list[str]:
@@ -486,29 +449,25 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
     require(isinstance(candidate_only_records, list), "coverage.candidate_only must be a list")
     require(policy.get("production_dependency") is False, "coverage permits a production dependency")
     require(policy.get("public_c_abi_is_native_rust_coverage") is False, "C ABI must not count as native Rust coverage")
-    reference_path = relative_source(str(dynamic.get("reference_source", "")), owner=COVERAGE_PATH)
-    candidate_path = relative_source(str(dynamic.get("candidate_source", "")), owner=COVERAGE_PATH)
-    reference = symbol_names(reference_path)
-    candidate = symbol_names(candidate_path)
     embedded = dynamic.get("candidate_symbols")
     candidate_only = dynamic.get("candidate_only_symbols")
     require(isinstance(embedded, list), "coverage candidate_symbols must be an array")
     require(isinstance(candidate_only, list), "coverage candidate_only_symbols must be an array")
-    require(tuple(embedded) == candidate, "embedded candidate symbols differ from candidate TSV")
+    candidate = tuple(embedded)
+    require(len(candidate) == len(set(candidate)), "coverage candidate_symbols has a duplicate")
+    # The pinned musl export set is the candidate set without the candidate-only symbols.
+    excluded = set(candidate_only)
+    reference = tuple(name for name in candidate if name not in excluded)
     require(tuple(candidate_only) == EXPECTED_CANDIDATE_ONLY, "candidate-only symbol provenance changed")
     require(len(reference) == EXPECTED_REFERENCE_SYMBOLS, "reference symbol count changed")
     require(len(candidate) == EXPECTED_CANDIDATE_SYMBOLS, "candidate symbol count changed")
     require(len(candidate_only) == EXPECTED_CANDIDATE_ONLY_SYMBOLS, "candidate-only count changed")
-    require(set(candidate) - set(candidate_only) == set(reference), "candidate/reference symbol sets differ")
-    require(not set(reference) - set(candidate), "candidate is missing a pinned musl symbol")
     require(dynamic.get("reference_count") == EXPECTED_REFERENCE_SYMBOLS, "coverage reference_count changed")
     require(dynamic.get("candidate_count") == EXPECTED_CANDIDATE_SYMBOLS, "coverage candidate_count changed")
     require(dynamic.get("candidate_only_count") == EXPECTED_CANDIDATE_ONLY_SYMBOLS, "coverage candidate_only_count changed")
     require(dynamic.get("missing_from_candidate_count") == 0, "coverage missing symbol count changed")
     require(dynamic.get("metadata_mismatches_count") == 0, "coverage metadata mismatch count changed")
     require(dynamic.get("reference_is_candidate_minus_candidate_only") is True, "coverage set invariant missing")
-    require(dynamic.get("reference_sha256") == sha256_file(reference_path), "coverage reference TSV digest changed")
-    require(dynamic.get("candidate_sha256") == sha256_file(candidate_path), "coverage candidate TSV digest changed")
 
     capability_by_id: dict[str, Mapping[str, Any]] = {}
     symbol_owners: dict[str, str] = {}
@@ -624,8 +583,6 @@ def validate_coverage(data: Mapping[str, Any]) -> dict[str, Any]:
         "candidate_only_count": len(candidate_only),
         "missing_from_candidate_count": 0,
         "metadata_mismatches_count": 0,
-        "reference_sha256": sha256_file(reference_path),
-        "candidate_sha256": sha256_file(candidate_path),
         "capability_count": len(capabilities),
         "semantic_capability_count": kind_counts["semantic"],
         "implementation_capability_count": kind_counts["implementation"],

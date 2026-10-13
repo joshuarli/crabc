@@ -84,7 +84,22 @@ def inspect_static_pie(path: Path, *, packed_relr: bool) -> None:
         raise AssertionError("static PIE lacks DT_RELA")
 
 
+def aarch64_rust_target_installed() -> bool:
+    """Whether the pinned toolchain has the AArch64 standard library."""
+    rustup = shutil.which("rustup")
+    if rustup is None:
+        return False
+    completed = subprocess.run(
+        [rustup, "run", PINNED_TOOLCHAIN, "rustc", "--print", "target-libdir", "--target", TARGET],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
+    )
+    return completed.returncode == 0 and Path(completed.stdout.strip()).is_dir()
+
+
 class StaticPieLinkTests(unittest.TestCase):
+    # These objects are built for the paused AArch64 target, which a host
+    # without that target's standard library cannot compile.
+    @unittest.skipUnless(aarch64_rust_target_installed(), "AArch64 Rust target is not installed")
     def test_rcrt1_links_as_dependency_free_static_pie(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)

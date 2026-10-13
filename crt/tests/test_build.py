@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,18 @@ sys.modules[SPEC.name] = BUILD
 SPEC.loader.exec_module(BUILD)
 
 
+def aarch64_rust_target_installed() -> bool:
+    """Whether the pinned toolchain has the AArch64 standard library."""
+    rustup = shutil.which("rustup")
+    if rustup is None:
+        return False
+    completed = subprocess.run(
+        [rustup, "run", BUILD.PINNED_TOOLCHAIN, "rustc", "--print", "target-libdir", "--target", "aarch64-unknown-linux-musl"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
+    )
+    return completed.returncode == 0 and Path(completed.stdout.strip()).is_dir()
+
+
 class CrtBuildTests(unittest.TestCase):
     def test_builder_owns_its_rustc_temporary_directory(self) -> None:
         temporary = CRT_ROOT.parent / ".work/tmp/crt-build-environment"
@@ -29,6 +42,9 @@ class CrtBuildTests(unittest.TestCase):
         self.assertEqual(environment["TMPDIR"], str(temporary.resolve()))
         self.assertTrue(temporary.is_dir())
 
+    # These objects are built for the paused AArch64 target, which a host
+    # without that target's standard library cannot compile.
+    @unittest.skipUnless(aarch64_rust_target_installed(), "AArch64 Rust target is not installed")
     def test_builder_produces_all_aarch64_objects_with_recorded_commands(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "objects"

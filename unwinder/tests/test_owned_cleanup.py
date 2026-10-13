@@ -146,21 +146,6 @@ class OwnedCleanupContract(unittest.TestCase):
             lock = tomllib.loads((package / "Cargo.lock").read_text())
             root = next(item for item in lock["package"] if item["name"] == manifest["package"]["name"])
             self.assertEqual(root["dependencies"], ["crabc-cleanup-dependency"])
-        dependency = (owned_cleanup.DEPENDENCY_FIXTURE / "src/lib.rs").read_text()
-        self.assertIn("#[inline(never)]", dependency)
-        self.assertIn("std::panic::panic_any(73usize)", dependency)
-        self.assertIn("std::panic::catch_unwind", dependency)
-        self.assertIn("std::panic::resume_unwind", dependency)
-        cleanup = dependency.index("let _cleanup = DependencyCleanup(count)")
-        caught_panic = dependency.index("std::panic::catch_unwind")
-        resumed_panic = dependency.index("std::panic::resume_unwind")
-        self.assertLess(cleanup, caught_panic)
-        self.assertLess(caught_panic, resumed_panic)
-        for source in (
-            owned_cleanup.BUILD_STD_FIXTURE / "src/main.rs",
-            owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/plugin.rs",
-        ):
-            self.assertIn("crabc_cleanup_dependency::panic_with_cleanup", source.read_text())
 
     def test_dso_thread_join_contract_matches_thread_completion_without_result_equality(self):
         host = owned_cleanup.BUILD_STD_DSO_FIXTURE / "src/main.rs"

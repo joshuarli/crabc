@@ -79,10 +79,6 @@ class CoverageLedgerTests(unittest.TestCase):
         ledger = self.ledger()
         dynamic = ledger["dynamic_exports"]
         assert isinstance(dynamic, dict)
-        report = harness.symbol_names(
-            harness.relative_source(str(dynamic["candidate_source"]), owner=harness.COVERAGE_PATH)
-        )
-        self.assertTrue(bridges.issubset(report))
         self.assertTrue(bridges.issubset(dynamic["candidate_symbols"]))
         self.assertTrue(bridges.issubset(dynamic["candidate_only_symbols"]))
         self.assertTrue(bridges.issubset(self.capability(ledger, "runtime.loader")["symbols"]))

@@ -28,6 +28,9 @@ import tomllib
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "compat/x86_64"))
+import core_image
+
 
 SCHEMA = "crabc.perf.native-x86-rust-facade/v1"
 PREPARE_SCHEMA = "crabc.perf.native-x86-rust-facade-prepare/v1"
@@ -67,14 +70,14 @@ NUMERIC_RESOURCE_KEYS = RESOURCE_KEYS - {"status", "memory_status"}
 
 # The dispatcher passes the identity of the source-built core image, whose
 # filesystem layers include the pinned compiler, target std, and oracle tools.
-# Keep this identity equal to the execution profile's image identity.
-PINNED_IMAGE = "crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a"
+# The identity lives only in the core image module; the profile does not
+# restate it, and a validated profile reports it under `execution.image`.
+PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 PINNED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_EXECUTION = {
     "architecture": "x86_64",
     "os": "linux",
     "target": PINNED_TARGET,
-    "image": PINNED_IMAGE,
     "stock_std": "image-owned stock x86_64-unknown-linux-musl std measurement infrastructure",
 }
 EXPECTED_NORMAL_GEOMETRY = {
@@ -607,7 +610,9 @@ def load_profile(root: Path) -> dict[str, Any]:
         profile = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
         raise RunnerError(f"cannot read x86 native facade profile: {error}") from error
-    return validate_profile_contract(profile)
+    profile = validate_profile_contract(profile)
+    profile["execution"]["image"] = PINNED_IMAGE
+    return profile
 
 
 def row_names(profile: Mapping[str, Any]) -> tuple[str, ...]:

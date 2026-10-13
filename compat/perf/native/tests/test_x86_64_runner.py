@@ -390,9 +390,7 @@ class AdmissionAndPathTests(unittest.TestCase):
 
     def test_current_core_image_is_accepted_and_previous_image_is_rejected(self) -> None:
         profile = native_x86.load_profile(ROOT)
-        current_image = (
-            "crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a"
-        )
+        current_image = native_x86.core_image.CORE_IMAGE_REFERENCE
         with unittest.mock.patch.dict(os.environ, {"CRABC_PERF_X86_IMAGE_ID": current_image}):
             native_x86._execution_environment(profile)
         self.assertEqual(profile["execution"]["image"], current_image)
