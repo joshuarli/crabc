@@ -1,8 +1,11 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: paused 2026-10-13, ready to launch.** No lane, worktree, or
-process is running. Nothing has been qualified: 0 of 8 gates, 9 of 26
-families, and every earlier receipt was deleted with `.work/` on 2026-10-07.
+**Status: running unattended 2026-10-13.** The coordinator launched every
+initially ready lane in priority order: Corpus, Ledger tooling, R1–R5 and
+R7, Allocator failures, Allocator discovery, Seeds, Performance tooling,
+Reconnaissance, M10 tooling, and Dead-code inventory. R6 waits for G1b;
+R8 waits for G1a, G1b and R7. Nothing has been qualified: 0 of 8 gates,
+9 of 26 families. Earlier receipts were deleted with `.work/` on 2026-10-07.
 
 - **Resume:** "Read `plan.md` and `docs/lanes.md`, then run the campaign in
   `plan.md` as coordinator, unattended, launching every ready lane in the
@@ -579,6 +582,12 @@ Append one line per merge batch, per parked item, and per contract change.
   made green; the allocator's one-test route built unoptimized; comments and
   documentation cleaned of planning labels, run records and unverified
   quantities.
+
+- 2026-10-13: unattended campaign started at `e4be1288e`; baseline
+  campaign-status confirms 0 of 8 gates, 180 of 223 capabilities and 9 of
+  26 families. Fifteen ready lanes launched in priority order, each in its
+  own `.work/wt/` worktree. Native cold allocator builds reserve 8 GiB each;
+  initial available memory was 45 GiB, with a 12-GiB minimum margin.
 
 ## For the owner afterwards
 
