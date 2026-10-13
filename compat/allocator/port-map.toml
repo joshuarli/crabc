@@ -218,8 +218,8 @@ performance_qualified = false
 upstream = "src/arena.c"
 source_region = "arena reservation, slices, page ownership, and selected huge OS-page reservation"
 rust_module = "crabc_mimalloc::arena, crabc_mimalloc::arena::owned::huge, crabc_mimalloc::os_page, and crabc_mimalloc::single_thread"
-rust_item = "partial: identity/registry/layout, external-region management, contiguous arena claims, aligned metadata, OS-aligned singleton claims, rollback, exact arena/OS release, first-default OS-backed arena reservation and immutable published-pair reconstruction, source-startup huge-page reservation and typed backing installation, default delayed purge/decommit collection, and main-heap/dynamic abandoned-page bitmap ownership with an ordinary-page-bit gate that retains stale rejected candidates and their paired Heap counts"
-intentional_difference = "Registry-wide search, free-slice selection across registered arenas, later OS-backed reservation/scaling, alternate purge policy, complete statistics, and general/multi-arena heap-local arena-pages ownership remain absent. The frozen first-default reservation is one 1-GiB Linux/AArch64 arena with the source 128-MiB retry; after its separate Release publication, an owner may reconstruct only that matching immutable process pair. The selected huge-page route retains one typed 1-GiB primitive-map prefix until arena installation and does not qualify physical huge-page availability or NUMA placement. One private dynamic Heap/arena image is recorded separately. The bounded abandoned-page substrate requires caller-supplied stable metadata. Its mapped capabilities reject an abandoned bit once the paired ordinary `pages` bit is absent, restore that bit, and retain its count; this is not a PageMap lookup or a general reclaim lifecycle. Its mapped dynamic all-free caller integrates one exact queue-detached terminal release, while the initially-unmapped tail retains terminal-empty for a later lifecycle owner. A failed clock observation skips optional scheduling so terminal slice ownership is never lost."
+rust_item = "partial: identity/registry/layout, external-region management, contiguous arena claims, aligned metadata, OS-aligned singleton claims, rollback, exact arena/OS release, first-default OS-backed arena reservation and immutable published-pair reconstruction, source-startup huge-page reservation and typed backing installation, default delayed purge/decommit collection, main-heap/dynamic abandoned-page bitmap ownership with an ordinary-page-bit gate that retains stale rejected candidates and their paired Heap counts, and one joined child-owner-exit same-page reclaim route"
+intentional_difference = "Automatic existing-arena search and later reservation/count scaling, alternate purge options, complete statistics, and general multi-arena heap-local `arena_pages` ownership remain outside this fixed profile. The frozen first-default reservation is one selected 1-GiB Linux/AArch64 arena with the source 128-MiB retry; after separate Release publication, an owner reconstructs only that matching immutable process pair. The M2 huge-reservation trace verifies one partial successful huge mapping's software state/accounting and arena claim/release, but synthetic exact-address mmap does not qualify physical huge-page availability or NUMA placement. One private dynamic Heap/arena image is recorded separately. The bounded abandoned-page substrate requires caller-supplied stable metadata and rejects a candidate when its paired ordinary `pages` bit is absent, retaining that bit and count. M2 scenario 27 additionally compares a joined child-owner exit and same-page arena reclaim for small, medium, and large requests under blocked and unblocked owner claims; it confirms page/abandoned bookkeeping and terminal slice/PageMap return. Its PurgeDelay is -1, so that trace does not test purge; process-wide delayed purge has its own selected C/R trace. These witnesses do not establish general registry search, arbitrary abandonment/reclaim, multi-arena pages, or concurrent allocation. The mapped dynamic all-free caller integrates one exact queue-detached terminal release, while the initially-unmapped tail retains terminal-empty for a later lifecycle owner. A failed clock observation skips optional scheduling so terminal slice ownership is never lost."
 difference_kind = "boundary"
 tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/arena_huge.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-mimalloc/src/process_init.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/types.rs", "compat/allocator/run.py"]
 exported = false
@@ -353,12 +353,12 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/os.c"
-source_region = "selected allocator OS memory policy, normal and huge OS-page transitions, protection, reuse, and the fixed NUMA count-cache caller"
+source_region = "selected allocator OS memory policy, normal and huge OS-page transitions, reset/purge, protection, reuse, and the fixed NUMA count-cache caller"
 rust_module = "crabc_mimalloc::os, crabc_mimalloc::diagnostic_output, crabc_mimalloc::arena_huge, and crabc_mimalloc::arena::owned::huge"
-rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, typed aligned-overmap cleanup ownership, one fixed normal/offset non-huge OS allocation owner plus one selected base-only normal-aligned regular-OS arena caller carrying its exact Mapping/MemoryId, one source-startup huge OS-page allocation owner and warning route, the selected Linux contained-range reuse no-op and its separately mapped all-committed external-arena caller, source protect/unprotect wrappers, and one fixed no-option NUMA count-cache/current-node-normalization wrapper with one selected static ticket-zero live-TLD caller"
-intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. NormalOsBaseAllocation transfers only the zero-offset/base-equals-client aligned normal form and its exact MemoryId into the selected one-arena regular-OS reservation caller, while a nonzero offset remains unable to become arena backing. HugeOsAllocation retains one source-selected contiguous prefix of independently mapped 1-GiB pages until its typed arena installation/release; the C path returns a pointer and aggregate memory ID. Mapping::reuse admits only the selected source-conservative complete page range and returns an explicit Linux no-op without a syscall, fault seam, or ownership mutation; empty conservative ranges return None and invalid/closed Mapping inputs are Rust errors. The separately mapped all-committed external-arena caller supplies one non-owning exact-span use of the same no-op. Protect/unprotect retain Rust Errno results and the mapping after failure, while C returns a boolean and emits its warning. The separately mapped NUMA wrapper retains only the source raw branch: it omits `mi_option_use_numa_nodes` and verbose diagnostics, calls one selected ticket-zero static-TLD path after Rust static-MemoryId formation, has no arena-placement policy, and leaves the raw M1 primitive trace unchanged. The aligned-hint cursor, random draw, and CAS behavior have selected mappings and native M2 differential coverage; complete option-driven THP policy, complete OS allocation ownership, and source-backed runtime callers outside the selected regular and huge reservation, reuse, and ticket-zero NUMA paths remain absent."
+rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, typed aligned-overmap cleanup ownership, one fixed normal/offset non-huge OS allocation owner plus one selected base-only normal-aligned regular-OS arena caller carrying its exact Mapping/MemoryId, one source-startup huge OS-page allocation owner and warning route, selected process-owned reset/purge and protect/unprotect receivers, the selected Linux contained-range reuse no-op and its separately mapped all-committed external-arena caller, and one fixed no-option NUMA count-cache/current-node-normalization wrapper with one selected static ticket-zero live-TLD caller"
+intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. NormalOsBaseAllocation transfers only the zero-offset/base-equals-client aligned normal form and its exact MemoryId into the selected one-arena regular-OS reservation caller, while a nonzero offset remains unable to become arena backing. HugeOsAllocation retains one source-selected contiguous prefix of independently mapped 1-GiB pages until its typed arena installation/release; the selected M2 trace substitutes only successful huge mmap with an ordinary exact-address virtual mapping, so it qualifies software state and accounting but not physical huge-page residency or NUMA placement. Process-owned reset/purge receivers compare selected advice retry/fallback, mapping retention, and VM counters against C; the process-owned protect/unprotect C/R rows compare one injected interior-page failure/retry, mapping accounting, and warnings. Mapping retains Rust Errno results after failure, while C returns bool and warns. These checks do not establish the full OS source unit: alternate reset policy, debug/secure protection, option-driven THP, other reset/protection callers, complete OS allocation ownership, and source-backed runtime callers outside the selected regular and huge reservation, reuse, and ticket-zero NUMA paths remain absent. The separately mapped all-committed external-arena caller supplies one non-owning exact-span Linux reuse no-op. The separately mapped NUMA wrapper retains only the source raw branch: it omits `mi_option_use_numa_nodes` and verbose diagnostics, calls one selected ticket-zero static-TLD path after Rust static-MemoryId formation, and has no arena-placement policy. The aligned-hint cursor, random draw, and CAS behavior have selected mappings and native M2 differential coverage."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/arena_huge.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-core/src/miri_model.rs", "compat/allocator/m2_vm_x86_64.c", "compat/allocator/m2_vm_x86_64.py"]
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/arena_huge.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-core/src/miri_model.rs", "compat/allocator/m2_vm_x86_64.c", "compat/allocator/m2_vm_x86_64.py", "compat/allocator/m2_external_os_reset_policy_x86_64.py", "compat/allocator/m2_external_os_reset_fallback_x86_64.py", "compat/allocator/m2_external_os_reset_retry_x86_64.py", "compat/allocator/m2_huge_reservation_progress_x86_64.c", "compat/allocator/m2_huge_reservation_progress_x86_64.py", "compat/allocator/m2_process_owned_protect_fault_x86_64.c", "compat/allocator/m2_process_owned_protect_fault_x86_64.py", "compat/allocator/m2_process_owned_unprotect_fault_x86_64.c", "compat/allocator/m2_process_owned_unprotect_fault_x86_64.py", "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json", "compat/allocator/run.py"]
 exported = false
 implemented = false
 unit_verified = false
@@ -1892,11 +1892,11 @@ rust_module = "crabc_mimalloc::page_map"
 rust_item = "effective_virtual_address_bits/reserve_count"
 intentional_difference = "Source assertions and unrepresentable shifts are rejected by Option; global once/option selection remains separate from the live PageMap owner."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/page_map.rs"]
+tests = ["crabc-mimalloc/src/page_map.rs", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2034,13 +2034,13 @@ name = "mi_page_map_set_range_prim-span-arithmetic"
 source_region = "submap-spanning range iteration"
 rust_module = "crabc_mimalloc::page_map"
 rust_item = "PageMapRange/PageMapSpan"
-intentional_difference = "The validated iterator rejects unrepresentable Rust index advancement before the live registration path consumes it."
+intentional_difference = "The selected native C/Rust lifecycle trace registers and unregisters a two-slice span across adjacent submaps, then verifies the source-shaped rollback of a range that crosses the reserved limit. The validated iterator rejects unrepresentable Rust index advancement before the live registration path consumes it."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/page_map.rs"]
+tests = ["crabc-mimalloc/src/page_map.rs", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2850,14 +2850,14 @@ upstream = "src/page-map.c"
 name = "mapped-two-level-page-map-lifecycle"
 source_region = "header-inclusive reservation/commit sizing, mi_page_map_commit_entries/mi_page_map_ensure_committed direct lazy-commit failure before publication, locked lazy submap allocation/publication, range registration/rollback/lookup, and unsafe destruction"
 rust_module = "crabc_mimalloc::page_map"
-rust_item = "PageMapHeader/PageMapRoot/PageMap"
-intentional_difference = "The mapped header uses the allocator-private futex lock representation instead of pthread ABI layout, and the non-RAII Mapping owner remains outside mapped state. One direct initialized two-level `mi_page_map_ensure_submap_at` C/Rust trace injects a lexical source `_mi_os_commit` failure before committed-prefix publication and submap allocation; Rust injects before its matching mprotect. Both retain the top owner, then retry one submap. Header-size-dependent raw counts, C's global root versus Rust's local Mapping, error/diagnostic representation, release failure, and every other PageMap fault path remain explicit exclusions. Global once/empty-root policy remains absent; the private ordinary lifecycle owns page-derived registration."
+rust_item = "PageMap::initialize and PageMapRoot::{publish,clear}; PageMap::{ensure_committed,ensure_submap_at,register_range,unregister_range,destroy}"
+intentional_difference = "The selected native C/Rust traces compare mapped geometry, a cross-submap range registration and rollback, and one direct initialized two-level `mi_page_map_ensure_submap_at` commit failure before committed-prefix publication and submap allocation; Rust injects before its matching mprotect. Both retain the top owner and retry the submap. The mapped header uses the allocator-private futex lock representation rather than pthread ABI layout, and C's global root differs from Rust's separate root owner. This row excludes source-order startup policy, cleanup-release failures, general concurrent consumers, and every other PageMap fault path."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/page_map.rs", "crabc-mimalloc/src/os.rs", "crabc-core/src/miri_model.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/page_map.rs", "crabc-mimalloc/src/os.rs", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/m2_page_map_lazy_map_rollback_x86_64.py", "compat/allocator/m2_page_map_fallback_trim_fault_x86_64.py", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2899,13 +2899,13 @@ name = "bound-subprocess-metadata-page-identity-query"
 source_region = "mimalloc v3.5.0 src/subproc.c:84-88 `_mi_meta_is_meta_page`; include/mimalloc/types.h:667-668 `mi_subproc_t::{theap_meta,theap_meta_lock}` field context; and src/init.c:201-205 selected static detached-theap publication context"
 rust_module = "crabc_mimalloc::subproc"
 rust_item = "MainSubprocess::is_metadata_page(Option<&Page>) and meta::tests::bound_subprocess_metadata_page_query_is_exact_without_backing"
-intentional_difference = "Rust represents the C null page pointer as Option::None and requires an already-readable Page reference for the field load. It uses an Acquire load of its one-way published identity and compares only raw pointer values: a null page, null page Theap, or mismatched subprocess identity is false; only exact identity is true. The selected BOUND-state test keeps both private PageMap backings absent and holds one unrelated MetaAllocator entry while querying, proving this predicate takes no metadata allocator lock, subprocess lock, backing map, or detached session and never dereferences the Theap. It is not a byte-for-byte mi_subproc_t layout or a lock role (the separate direct-allocation record maps one selected `theap_meta_lock` role), general Theap API, Page lifetime/abandonment proof, normal _mi_meta_zalloc backing, generic metadata free, subprocess lifecycle, race proof, C ABI, or allocator integration."
+intentional_difference = "Rust represents the C null page pointer as Option::None and requires an already-readable Page reference for the field load. It uses an Acquire load of its one-way published identity and compares only raw pointer values: a null page, null page Theap, or mismatched subprocess identity is false; only exact identity is true. The native C/Rust ownership trace compares the selected predicate for parent-issued child images and live metadata pages owned by the child. A separate Rust-only BOUND-state test keeps both private PageMap backings absent and holds one unrelated MetaAllocator entry while querying, proving this predicate takes no metadata allocator lock, subprocess lock, backing map, or detached session and never dereferences the Theap. It is not a byte-for-byte mi_subproc_t layout or a lock role (the separate direct-allocation record maps one selected `theap_meta_lock` role), general Theap API, Page lifetime/abandonment proof, normal _mi_meta_zalloc backing, generic metadata free, subprocess lifecycle, race proof, C ABI, or allocator integration."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/meta.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/meta.rs", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/m2_metadata_ownership_x86_64.c", "compat/allocator/m2_metadata_ownership_x86_64.py", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2922,6 +2922,22 @@ exported = false
 implemented = true
 unit_verified = true
 differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/subproc.c"
+name = "bound-subprocess-metadata-zalloc-overlap-proof"
+source_region = "mimalloc v3.5.0 src/subproc.c:29-40 `_mi_meta_zalloc` direct allocation under `subproc->theap_meta_lock`; src/subproc.c:73-81 `_mi_meta_free` MI_MEM_MALLOC release while that lock is held; include/mimalloc/types.h:667-668 field context"
+rust_module = "crabc_mimalloc::meta and crabc_mimalloc::subproc"
+rust_item = "MetaAllocator::zalloc_for_main_subprocess; MainSubprocess::lock_metadata_theap; MetaEntry::drop; and meta::ownership_tests::{allocation_release_overlap,emit_native_metadata_ownership_trace}"
+intentional_difference = "The bounded C/R trace holds `theap_meta_lock` while one plain direct zalloc waits, then releases a previously published Malloc block. Pinned C completes the free under the window because its Malloc branch is lock-free; Rust blocks on its separate metadata backing lock. The trace compares only shared facts around that overlap and successful allocation, not lock-layout or concurrency equivalence, aligned zalloc, rezalloc, other lock users, or general metadata behavior."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/meta.rs", "compat/allocator/m2_metadata_ownership_x86_64.c", "compat/allocator/m2_metadata_ownership_x86_64.py", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2995,7 +3011,7 @@ name = "child-subprocess-add-current-thread"
 source_region = "283-299 mi_subproc_add_current_thread; src/init.c:236-282 mi_tld_init/mi_tld_create/mi_tld_free, 306-360 _mi_thread_init_with_heap, 377-421 mi_thread_theaps_done, 452-480 _mi_thread_done; src/theap.c:95-156 _mi_theap_collect_abandon, 236-306 _mi_theap_init theaps statistic, 347-354 mi_theap_free_mem; src/page.c:291-304 _mi_page_abandon; src/arena.c:699-723 mi_heap_ensure_arena_pages main-Heap arm, 1304-1356 _mi_arenas_page_abandon, 1383-1424 _mi_arenas_page_unabandon; src/free.c:372-493 mi_free_try_collect_mt without reclaim"
 rust_module = "crabc_mimalloc::subproc::lifecycle and crabc_mimalloc::meta"
 rust_item = "subproc::lifecycle::{add_current_thread,ChildThreadMember::thread_done,ChildThreadAddOutcome,free_child_block_nonlocal}; PageAllocatorEngine::{collect_abandon_child_thread_done,unregister_arena_pages_for_subprocess_destroy}; single_thread::free_child_page_block_nonlocal; Heap::{ensure_child_main_arena_pages,child_main_heap_of_page,is_subprocess_main}; Theap::initialized_default_subprocess_at; ChildMainHeapContextOwner::begin_child_thread and ChildThreadOwner::teardown theaps statistics; subproc::lifecycle::tests::source_ordered_child_subprocess_lifecycle_trace, subproc::lifecycle::tests::native_child_thread_finishes_with_live_blocks_and_the_child_is_destroyed"
-intentional_difference = "The refusal of a thread whose default Theap is initialized is a typed AlreadyInitialized outcome instead of a warning message. A member does not borrow the child: each admitted thread keeps its own page-engine state and runs page operations with neither a child lock nor a PageMap lifecycle lease, like the persistent later-main owner; destruction refuses while a member's registration keeps the child's live thread count raised (source would destroy the subprocess under its live threads). Re-adding a thread already in the child reports AlreadyInitialized without a change, as source returns. thread_done runs `_mi_theap_collect_abandon` through the shared owner-exit queue coordinator: all-free pages are released and pages with live blocks are abandoned to the child main Heap (a nonfull regular arena page mapped in its arena's pages_main with the Heap's abandoned_count, which child page sessions now install as source mi_heap_ensure_arena_pages does), but an OS-backed child page cannot be abandoned (the child main Heap's OS-abandoned list has no Rust owner) and returns PagesRemain with the engine terminal; deferred-free callbacks and the pages_abandoned statistic are not recorded. A nonlocal free of a block on a child page (single_thread::free_child_page_block_nonlocal, reached from native_free) publishes it to a live owner or claims the abandoned page and collects, releases, reabandons, or unowns it with the child's arenas and bitmap; it never reclaims into the freeing thread (source may, for a thread with a Theap for that Heap), and a retained failure leaves the page claimed forever. Child destruction removes every still-registered arena page, abandoned ones included, from the PageMap before the arenas go."
+intentional_difference = "The refusal of a thread whose default Theap is initialized is a typed AlreadyInitialized outcome instead of a warning message. A member does not borrow the child: each admitted thread keeps its own page-engine state and runs page operations with neither a child lock nor a PageMap lifecycle lease, like the persistent later-main owner; destruction refuses while a member's registration keeps the child's live thread count raised (source would destroy the subprocess under its live threads). Re-adding a thread already in the child reports AlreadyInitialized without a change, as source returns. thread_done runs `_mi_theap_collect_abandon` through the shared owner-exit queue coordinator: all-free pages are released and pages with live blocks are abandoned to the child main Heap (a nonfull regular arena page mapped in its arena's pages_main with the Heap's abandoned_count, which child page sessions now install as source mi_heap_ensure_arena_pages does), but an OS-backed child page cannot be abandoned (the child main Heap's OS-abandoned list has no Rust owner) and returns PagesRemain with the engine terminal; this owner-exit path does not record the `pages_abandoned` statistic. The selected forced-OOM child allocation callback is mapped separately; periodic/explicit collection callback paths and owner-exit callbacks remain outside. A nonlocal free of a block on a child page (single_thread::free_child_page_block_nonlocal, reached from native_free) publishes it to a live owner or claims the abandoned page and collects, releases, reabandons, or unowns it with the child's arenas and bitmap; it never reclaims into the freeing thread (source may, for a thread with a Theap for that Heap), and a retained failure leaves the page claimed forever. Child destruction removes every still-registered arena page, abandoned ones included, from the PageMap before the arenas go."
 difference_kind = "boundary"
 tests = ["crabc-mimalloc/src/subproc_lifecycle.rs", "compat/allocator/subprocess_lifecycle.c", "compat/allocator/subprocess_lifecycle.py"]
 exported = false
@@ -3011,7 +3027,7 @@ name = "native-child-subprocess-entry-points"
 source_region = "127-132 mi_subproc_main/mi_subproc_current; 158-194 mi_subproc_new, 255-259 mi_subproc_destroy, 265-277 _mi_subprocs_unsafe_destroy_all child walk, 283-299 mi_subproc_add_current_thread, 303-313 mi_subproc_visit_heaps; src/heap.c:130-147 _mi_heap_new_for_subproc main-Heap allocation from the calling thread, 223-226 _mi_free_subproc_safe of the Heap image"
 rust_module = "crabc_mimalloc::source_heap_api, crabc_mimalloc::subproc::lifecycle, crabc_mimalloc::meta, crabc_mimalloc::process_init, and compat/allocator/native-mi-adapter"
 rust_item = "source_heap_api::{subproc_main,subproc_current,subproc_new,subproc_destroy,subproc_add_current_thread,subproc_visit_heaps}; native-mi-adapter::{mi_subproc_main,mi_subproc_current,mi_subproc_new,mi_subproc_destroy,mi_subproc_add_current_thread,mi_subproc_visit_heaps}; subproc::lifecycle::{current_child_id,current_child_main_heap,native_subproc_new,native_subproc_add_current_thread,native_child_thread_done,native_child_thread_allocate,native_child_thread_free_local,native_subproc_visit_heaps,native_subproc_destroy,destroy_all_native_children_terminal,NativeChildSubprocess,NativeSubprocessId}; subproc::{ChildSubprocessImage::native_record,registry::SourceSubprocessRegistry::first_child_terminal}; runtime_lifecycle::{native_allocate_aligned,native_free,native_reallocate,finish_current_thread_native_after_user_destructors,NativeSubprocessOperation}; meta::{ChildHeapStorage,ChildHeapRelease,NativeChildHeapImage}; ProcessMainInitializationStorage::ready_child_subprocess_inputs; subproc::lifecycle::tests::native_child_threads_allocate_concurrently_and_another_thread_destroys"
-intentional_difference = "The id names a Rust record allocated from the parent metadata before the source child image, holding the child owner and a lock that serializes thread admission and finish, Heap visitation, and destruction (source uses theap_meta_lock and heaps_lock). The child main Heap image is allocated and freed through the native runtime allocation entry points. Destruction of a child that threads still belong to destroys it under them, as source does (their Theap pages leave the queues and PageMap and go with the child arenas, their Theaps leave the Heap and TLD lists and are counted out when that drops their last reference, and the statistics merge into main with those threads still counted); the record stays until the last such thread finishes, and each such thread's finish forgets its member and resets its roots without touching the destroyed child, where source would read released memory. A later irreversible failure retains (leaks) the remaining owners. Ids are unchecked, as in source. An admitted thread's member lives in a Rust thread-local slot that the native runtime allocate, free, realloc, and thread-exit entry points test first, routing that thread to its own child Theap (source reaches it as the default Theap); frees of other threads' blocks take the ordinary remote route. Every context operation runs inside native allocator admission, so fork and terminal quiescence exclude it. The child image carries a Rust-only pointer to its record, which process destruction follows from the source list; there, with the native entry points closed, the child main Heap image stays a live block on its main page for the main-subprocess destruction that follows, and a child that threads still belong to is destroyed under them, as in source: each thread's Theap pages leave the queues and PageMap and its Theap leaves the Heap and TLD lists with its statistics merged, while its Theap and TLD blocks go with the child arenas; non-main Heaps are force-destroyed with their images left on child pages. Deferred-free callbacks do not run on the child allocation route yet. source_heap_api exposes mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy (the main id is ignored), mi_subproc_add_current_thread (with the source warning for a thread already in another subprocess), and mi_subproc_visit_heaps, which the evidence-only native adapter exports; the id is the record address for a child and the main subprocess identity's address for main."
+intentional_difference = "The id names a Rust record allocated from the parent metadata before the source child image, holding the child owner and a lock that serializes thread admission and finish, Heap visitation, and destruction (source uses theap_meta_lock and heaps_lock). The child main Heap image is allocated and freed through the native runtime allocation entry points. Destruction of a child that threads still belong to destroys it under them, as source does (their Theap pages leave the queues and PageMap and go with the child arenas, their Theaps leave the Heap and TLD lists and are counted out when that drops their last reference, and the statistics merge into main with those threads still counted); the record stays until the last such thread finishes, and each such thread's finish forgets its member and resets its roots without touching the destroyed child, where source would read released memory. A later irreversible failure retains (leaks) the remaining owners. Ids are unchecked, as in source. An admitted thread's member lives in a Rust thread-local slot that the native runtime allocate, free, realloc, and thread-exit entry points test first, routing that thread to its own child Theap (source reaches it as the default Theap); frees of other threads' blocks take the ordinary remote route. Every context operation runs inside native allocator admission, so fork and terminal quiescence exclude it. The child image carries a Rust-only pointer to its record, which process destruction follows from the source list; there, with the native entry points closed, the child main Heap image stays a live block on its main page for the main-subprocess destruction that follows, and a child that threads still belong to is destroyed under them, as in source: each thread's Theap pages leave the queues and PageMap and its Theap leaves the Heap and TLD lists with its statistics merged, while its Theap and TLD blocks go with the child arenas; non-main Heaps are force-destroyed with their images left on child pages. The selected forced-OOM callback/reentrant allocation path is covered by `deferred-free-callback-registration`; this item does not claim periodic or explicit collection callback parity. source_heap_api exposes mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy (the main id is ignored), mi_subproc_add_current_thread (with the source warning for a thread already in another subprocess), and mi_subproc_visit_heaps, which the evidence-only native adapter exports; the id is the record address for a child and the main subprocess identity's address for main."
 difference_kind = "boundary"
 tests = ["crabc-mimalloc/src/subproc_lifecycle.rs", "compat/allocator/x86_64_m6_adapter_driver.c", "compat/allocator/x86_64_m6_adapter.py"]
 exported = false
@@ -3399,14 +3415,14 @@ upstream = "src/arena.c"
 name = "default-delayed-external-arena-purge"
 source_region = "mi_arena_schedule_purge/mi_arena_purge/mi_arena_purge_range/mi_arena_try_purge_range/mi_arena_try_purge_visitor/mi_arena_try_purge/_mi_bitmap_forall_setc_rangesn/_mi_arenas_collect with purge_decommits=1, including src/arena.c:2254-2282 mi_arena_purge's needs_recommit committed-bitmap transition, the selected scalar _mi_bitmap_forall_setc_ranges default-dispatch boundary recorded separately, plus src/os.c:655-680 _mi_os_purge_ex and src/prim/unix/prim.c:_mi_prim_decommit's frozen-Linux advisory-error outcome"
 rust_module = "crabc_mimalloc::arena, crabc_mimalloc::os, and crabc_mimalloc::single_thread"
-rust_item = "schedule_arena_purge/ArenaView::collect_scheduled_purge through BitmapView::visit_set_ranges_clear and ArenaView::purge_scheduled_range/purge_scheduled_slice/purge_owned_range (including source 64-bit BFIELD callback grouping, a failed whole-claim per-slice fallback, frozen-Linux advisory-error consumption, and one custom callback true-to-needs-recommit transition)/decommit_arena_range/SingleThreadAllocator::collect_retired"
-intentional_difference = "The frozen default retains the source 4-second schedule, pinned skip, free-bitmap ownership claim, per-64-bit-source-field callback grouping, non-owning decommit, and source error outcome: a default Linux MADV_DONTNEED error leaves the mapping accessible and committed, restores free availability, and consumes the already-cleared purge work. One external callback fixture separately returns true for commit=false: source-shaped Rust first sets the exact committed range, consumes true as needs_recommit, clears that exact committed range, restores free availability, consumes the purge bits/expiry, and exposes a later commit=false claim as initially uncommitted. For one two-slice default run after a low-slice allocation reclaim, a failed full free-bitmap claim skips the allocation-won low slice (whose source-cleared purge bit stays clear) and decommits/restores only the high free sibling. Direct clock failure skips optional scheduling instead of losing a terminal slice owner; alternate reset policy, registry-wide collection, statistics, and concurrent allocator lifecycle remain absent."
+rust_item = "schedule_arena_purge/ArenaView::collect_scheduled_purge through BitmapView::visit_set_ranges_clear and ArenaView::purge_scheduled_range/purge_scheduled_slice/purge_owned_range (including source 64-bit BFIELD callback grouping, a failed whole-claim per-slice fallback, frozen-Linux advisory-error consumption, and one custom callback true-to-needs_recommit transition)/decommit_arena_range/SingleThreadAllocator::collect_retired; ProcessArenaBacking::collect_purge"
+intentional_difference = "The frozen default retains the source 4-second schedule, pinned skip, free-bitmap ownership claim, per-64-bit-source-field callback grouping, non-owning decommit, and source error outcome: a default Linux MADV_DONTNEED error leaves the mapping accessible and committed, restores free availability, and consumes the already-cleared purge work. One external callback fixture separately returns true for commit=false: source-shaped Rust first sets the exact committed range, consumes true as needs_recommit, clears that exact committed range, restores free availability, consumes the purge bits/expiry, and exposes a later commit=false claim as initially uncommitted. A native M2 C/R trace compares the selected process-wide purge receiver over the three-arena expiry pass and two-slice default cases, including decommit/reset counters, committed bits, and registry count. For one two-slice default run after a low-slice allocation reclaim, a failed full free-bitmap claim skips the allocation-won low slice (whose source-cleared purge bit stays clear) and decommits/restores only the high free sibling. Direct clock failure skips optional scheduling instead of losing a terminal slice owner. This remains a bounded default policy trace, not alternate reset options, general caller coverage, or concurrent allocator lifecycle."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/os.rs", "crabc-core/src/miri_model.rs", "crabc-mimalloc/src/single_thread.rs"]
+tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/os.rs", "crabc-core/src/miri_model.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/m2_vm_x86_64.py", "compat/allocator/run.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -4265,17 +4281,33 @@ performance_qualified = false
 
 [[item]]
 upstream = "src/os.c"
+name = "process-owned-reset-advice-retry-and-purge-receiver"
+source_region = "mimalloc v3.5.0 src/os.c:623-680 `_mi_os_reset` and `_mi_os_purge_ex`; src/prim/unix/prim.c:571-597 `_mi_prim_reset` advice retry and DONTNEED fallback"
+rust_module = "crabc_mimalloc::os"
+rust_item = "Mapping::{reset_for_process,purge_for_process}/reset_with_advice on the selected regular process-owned mapping"
+intentional_difference = "The selected M2 C/R receivers compare the process-owned reset and purge advice path: EAGAIN retries the original FREE advice, FREE/EINVAL makes one DONTNEED fallback, and persistent fallback failure reaches purge while retaining the mapping and source counters. The no-fallback-retry child is isolated in the pinned C witness. This item does not claim option policy outside the selected mapping, debug reset memset, secure/decommit modes, other callers, or whole-OS statistics."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/os.rs", "compat/allocator/m2_external_os_reset_policy_x86_64.c", "compat/allocator/m2_external_os_reset_policy_x86_64.py", "compat/allocator/m2_external_os_reset_fallback_x86_64.c", "compat/allocator/m2_external_os_reset_fallback_x86_64.py", "compat/allocator/m2_external_os_reset_retry_x86_64.c", "compat/allocator/m2_external_os_reset_retry_x86_64.py", "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json", "compat/allocator/m2_vm_x86_64.py", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/os.c"
 name = "source-huge-os-page-allocation-and-warning-loop"
 source_region = "mimalloc v3.5.0 src/os.c:717-853 _mi_os_alloc_huge_os_pages/mi_os_free_huge_os_pages; src/prim/unix/prim.c:419-449 1-GiB-to-2-MiB retry warning and 630-657 huge mmap/mbind primitive"
-rust_module = "crabc_mimalloc::os and crabc_mimalloc::diagnostic_output"
-rust_item = "HugeOsAllocation::allocate_for_process_with_source_warnings; allocate_huge_pages_with_warnings; report_huge_one_gib_retry; HugePageWarningRoute::{huge_warning,mbind_failure}"
-intentional_difference = "Rust retains a typed owner for the source contiguous prefix of independently mapped 1-GiB pages until arena installation or explicit release; pinned C returns a raw pointer and aggregate memory ID. The mapped code preserves source warning branches and per-page release order but does not claim physical huge-page availability or NUMA placement."
+rust_module = "crabc_mimalloc::os, crabc_mimalloc::diagnostic_output, and crabc_mimalloc::arena::owned::huge"
+rust_item = "HugeOsAllocation::allocate_for_process_with_source_warnings; allocate_huge_pages_with_warnings; report_huge_one_gib_retry; HugePageWarningRoute::{huge_warning,mbind_failure}; ProcessArenaBacking::reserve_huge_at"
+intentional_difference = "The native M2 C/R trace compares one selected partial reservation: a successful first 1-GiB mapping, failed later 1-GiB and 2-MiB attempts, exact hint order and warnings, contiguous prefix identity, accounting, and release. Rust retains a typed owner for that source contiguous prefix; pinned C returns a raw pointer and aggregate memory ID. The fixture substitutes an ordinary exact-address mapping for successful huge mmap, so this verifies software progress and ownership but not physical huge-page availability or NUMA placement."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/arena_huge.rs"]
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/arena_huge.rs", "compat/allocator/m2_huge_reservation_progress_x86_64.c", "compat/allocator/m2_huge_reservation_progress_x86_64.py", "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json", "compat/allocator/run.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -4296,18 +4328,34 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/os.c"
+name = "process-owned-protect-unprotect-failure-retry"
+source_region = "mimalloc v3.5.0 src/os.c:689-712 `mi_os_protectx`/`_mi_os_protect`/`_mi_os_unprotect` conservative page-range transition and warning; src/prim/unix/prim.c:600-604 `_mi_prim_protect`"
+rust_module = "crabc_mimalloc::os"
+rust_item = "Mapping::{protect_for_process,unprotect_for_process}"
+intentional_difference = "The native M2 process-owned C/R receivers compare one contained interior page Protect failure and retry, then one Unprotect failure and retry, including warning text, mapping retention, range normalization, and VM accounting. Rust returns a typed Errno and keeps the Mapping; pinned C returns a boolean and emits the source warning. The injected error occurs before mprotect, so this does not claim kernel protection failure behavior, generic Mapping wrappers, guarded protection policy, or allocator integration."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/os.rs", "compat/allocator/m2_process_owned_protect_fault_x86_64.c", "compat/allocator/m2_process_owned_protect_fault_x86_64.py", "compat/allocator/m2_process_owned_unprotect_fault_x86_64.c", "compat/allocator/m2_process_owned_unprotect_fault_x86_64.py", "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json", "compat/allocator/m2_vm_x86_64.py", "compat/allocator/run.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/arena.c"
 name = "source-huge-page-arena-backing-installation"
 source_region = "mimalloc v3.5.0 src/arena.c:1794-1861 mi_manage_os_memory_ex2 range management/publication and 2167-2191 mi_reserve_huge_os_pages_at_ex; source huge allocation inputs are src/os.c:771-853"
 rust_module = "crabc_mimalloc::arena, crabc_mimalloc::arena::owned::huge, and crabc_mimalloc::os"
 rust_item = "arena::manage_in_place; ProcessArenaBacking::{install_owned_huge_allocation,install_owned_huge_allocation_for_retained_process}; ManagedExternalRegion"
-intentional_difference = "This maps the source huge allocation's transition into arena backing. Rust requires the exact process owner and keeps the huge mapping owner on rejected publication or cleanup failure; the pinned C path passes a memory ID through `mi_manage_os_memory_ex2` and releases the range on failure. The row does not claim every external-memory form or physical huge-page qualification."
+intentional_difference = "The native M2 C/R trace continues the selected partial huge reservation through successful `mi_reserve_huge_os_pages_at_ex` publication, one writable committed arena-slice claim/free, and terminal arena destruction. The fixture substitutes an ordinary exact-address mapping for successful huge mmap, so it verifies software ownership and accounting, not physical residency or NUMA placement. Rust also retains the exact process owner and mapping on rejected publication or cleanup failure, while pinned C releases on that branch; that failure behavior is covered only by Rust ownership tests, not this differential row."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/arena_huge.rs"]
+tests = ["crabc-mimalloc/src/arena.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/arena_huge.rs", "compat/allocator/m2_huge_reservation_progress_x86_64.c", "compat/allocator/m2_huge_reservation_progress_x86_64.py", "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json", "compat/allocator/run.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -4346,16 +4394,16 @@ performance_qualified = false
 [[item]]
 upstream = "src/page.c"
 name = "deferred-free-callback-registration"
-source_region = "mimalloc v3.5.0 src/page.c:1001-1004 mi_register_deferred_free release-stores callback context before callback pointer"
-rust_module = "crabc_mimalloc::source_options_api and crabc_mimalloc::runtime_lifecycle"
-rust_item = "source_options_api::register_deferred_free; runtime_lifecycle::register_native_deferred_free_callback"
-intentional_difference = "The callback and context remain owned by the selected process runtime and are observed by the mapped deferred-free invocation path; this is not a general callback registry."
+source_region = "mimalloc v3.5.0 src/page.c:986-1004 `_mi_deferred_free` heartbeat/acquire loads/recurse guard and `mi_register_deferred_free` context-before-callback Release publication; src/page.c:1044-1059 forced collect-and-retry on generic allocation failure; src/theap.c:123-129 deferred callback before collection"
+rust_module = "crabc_mimalloc::source_api, crabc_mimalloc::source_options_api, crabc_mimalloc::deferred_free, crabc_mimalloc::subproc_lifecycle, crabc_mimalloc::runtime_lifecycle, and crabc_mimalloc::single_thread"
+rust_item = "source_api::malloc; source_options_api::register_deferred_free; runtime_lifecycle::register_native_deferred_free_callback/native_allocate; subproc_lifecycle::{native_child_thread_allocate,native_child_theap_allocate_request_in_owner}; deferred_free::{begin_process,DeferredFreeCallbackInvocation::invoke}; PageAllocatorEngine::resume_deferred_free_allocation"
+intentional_difference = "A source-built child-subprocess C/R trace covers one process-global registration followed by an oversized default-child `mi_malloc` OOM, the forced callback, its heartbeat and force value, nested allocation/free through that same child Heap, and recursive collection suppression. It proves this selected OOM callback route only; periodic/explicit collection callbacks, owner-exit callbacks, concurrent registration replacement, and a general callback registry remain outside the mapping."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/source_options_api.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "compat/allocator/x86_64_m7_gate.py", "compat/allocator/x86_64_m7_options_oracle.c"]
+tests = ["crabc-mimalloc/src/source_options_api.rs", "crabc-mimalloc/src/deferred_free.rs", "crabc-mimalloc/src/subproc_lifecycle.rs", "crabc-mimalloc/src/runtime_lifecycle.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/x86_64_m6_public_child_heap_driver.c", "compat/allocator/x86_64_m6_public_child_heap.py", "compat/allocator/tests/test_x86_64_m6_child_heap_profiles.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -4372,5 +4420,21 @@ exported = false
 implemented = false
 unit_verified = false
 differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
+upstream = "src/arena.c"
+name = "cross-thread-abandoned-page-reclaim-after-child-owner-exit"
+source_region = "src/page.c:277-333 `_mi_theap_page_reclaim` and `_mi_page_abandon`; src/arena.c:655-778 `mi_arena_try_claim_abandoned`, 1285-1404 `_mi_arenas_page_free/_mi_arenas_page_abandon/_mi_arenas_page_unabandon`; src/init.c:452-480 `_mi_thread_done`; src/subproc.c:158-194 `mi_subproc_new`, 201-263 `mi_subproc_unsafe_destroy/mi_subproc_destroy`"
+rust_module = "crabc_mimalloc::source_heap_api, crabc_mimalloc::heap_lifecycle, crabc_mimalloc::subproc_lifecycle, crabc_mimalloc::runtime_lifecycle, crabc_mimalloc::meta, crabc_mimalloc::single_thread, crabc_mimalloc::arena, crabc_mimalloc::arena_purge, crabc_mimalloc::process_arena, and crabc_mimalloc::page_map"
+rust_item = "heap_lifecycle::child_heap_allocate_variant/child_heap_delete; ChildThreadOwner::{with_heap_theap_page_engine,drain_heap_theaps_for_thread_done}; ChildOrdinaryPageAllocator::{allocate,collect_abandon_for_thread_done,finish_operation}; ArenaAbandonedPages::try_claim; ProcessArenaBacking::release_slices; source_heap_api::{heap_malloc,heap_collect,heap_release}; runtime_lifecycle::finish_current_thread_native_after_user_destructors"
+intentional_difference = "The M2 arena lifecycle C/R trace compares the selected joined child-owner exit and same-page reclaim for small, medium, and large requests, each with the abandoned owner claim available or deliberately blocked. It checks the abandoned bit/count transition, client frees, return of the page and arena slice, PageMap removal, and child teardown. Both sides use PurgeDelay=-1, so this exact lifecycle witness does not test purge; general registry search, arbitrary multi-page reclaim, concurrent allocation, and unrelated child-owner routes remain outside this item."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/arena_owned.rs", "compat/allocator/m2_arena_lifecycle_x86_64.c", "compat/allocator/m2_arena_lifecycle_x86_64.py", "compat/allocator/m2-memory-substrate-x86_64-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
