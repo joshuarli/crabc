@@ -4529,11 +4529,11 @@ pub(crate) mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
-    fn child_destroy_retry_rejects_terminal_scratch_return_before_header_projection() {
+    fn child_destroy_orphan_finish_returns_gone_after_terminal_context_refusal() {
         use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
             test_initialize_process_from_host_environment};
         crate::test_process::run_in_fresh_process(
-            "subproc::lifecycle::tests::child_destroy_retry_rejects_terminal_scratch_return_before_header_projection",
+            "subproc::lifecycle::tests::child_destroy_orphan_finish_returns_gone_after_terminal_context_refusal",
             || {
                 assert!(test_initialize_process_from_host_environment(4096, unsafe {
                     crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
@@ -4554,10 +4554,9 @@ pub(crate) mod tests {
                     drop(admission);
                     ready_send.send(()).unwrap();
                     finish_receive.recv().unwrap();
-                    // The source child is gone. Only the enclosing record and
-                    // its exact parent-issued destruction scratch remain live.
-                    // A same-thread backing entry refusal makes general metadata
-                    // release terminal before the orphan token returns the record.
+                    // Source teardown already returned its destruction
+                    // scratch. Refuse only the orphan's final parent-context
+                    // return after it finishes the record token.
                     crate::meta::MetaAllocator::global().test_with_held_backing_entry(|| {
                         assert_eq!(native_child_thread_done(), Some(Ok(())));
                     }).unwrap();
@@ -4570,13 +4569,16 @@ pub(crate) mod tests {
                 worker.join().unwrap();
                 unsafe { child.with_owner(|owner| {
                     assert!(owner.is_none(), "source teardown already finished");
-                    let scratch = &*child.record().destroy_state.get();
-                    assert!(!scratch.as_ref().unwrap().is_live(), "the exact parent return failed terminally");
+                    let record = child.record();
+                    assert!((*record.destroy_state.get()).is_none(),
+                        "source destruction returned its scratch before orphan finish");
+                    assert!((*record.storage.get()).is_none(),
+                        "a terminal parent-context refusal leaves no reusable release capability");
                 }) }.unwrap();
-                // SAFETY: the retained enclosing record still owns this id;
-                // no TLS member or source child projection can run again.
-                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Retained));
-                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Retained));
+                // The terminal parent-context refusal keeps the dead record
+                // bytes reserved but gives the caller no release capability.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Gone));
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Err(NativeSubprocessError::Gone));
             },
         );
     }
