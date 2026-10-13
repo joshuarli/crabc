@@ -2,7 +2,8 @@
 
 **Status: running unattended 2026-10-13.** Ground tooling and pinned inputs
 have merged; all runtime lanes have run their independent checks. All three
-H0 dynamic products passed their cases; retained receipt validation continues.
+H0 dynamic products passed and were published after retained validation;
+POSIX-family, crypt, atomic and wordexp steps passed. POSIX-native continues.
 M1's layout prerequisite is parked after three narrow experiments failed to
 reproduce its aggregate failure. M2 has no failing executed check but remains
 partial. M3/M4/M5/M6, source convergence, focused defect fixes, cleanup and
@@ -608,6 +609,11 @@ Append one line per judgment call a reader would otherwise miss.
   then found acceptance checks that passed vacuously, two manual publication
   steps nothing performed, and unowned source-convergence work; those are
   fixed in T5, A3 to A5 and the prescribed decisions.
+- 2026-10-13: M7's opaque metadata-layout exclusions do not waive numeric
+  statistics parity. Preserve the child-control and positive-arena retry
+  storage's raw physical metadata charges and failing comparisons. The
+  empty-child correction avoids unnecessary storage; it does not establish
+  parity for populated children or authorize substituting C-sized charges.
 
 ## Campaign log
 
@@ -746,6 +752,35 @@ Append one line per merge batch, per parked item, and per contract change.
   has a 32-second narrow route; its snapshot spends substantial CPU forming
   relative paths. Tooling owns a snapshot-equivalence cleanup, preserving
   every file, mode, symlink, device and content check. No validation is skipped.
+- 2026-10-13: integration through `2811b1890` passes all 23 host test
+  directories, ledger/structure/inventory, nine Rust profiles and the TLS
+  code-generation probe profile. Native checks match 128 M2 VM fields and
+  184,350 arena lifecycle fields; the empty-child failure-storage regression
+  passes. `e53406289` restores forced default-child OOM callback timing;
+  its public C/R trace matches all 18 keys. `2811b1890` bypasses fixed arena
+  retry storage for genuinely empty children, retaining existing populated
+  child failure custody. `1efe2ff22` preserves byte-identical snapshots of
+  all 135,380 retained wordexp entries. Four C1 commits scope proven test-only
+  helpers; other source algorithms and unproven scripts remain.
+- 2026-10-13: `ee35efcba` and `2d08c815e` record bounded M2 and child-callback
+  proofs without closing aggregate source units. Source convergence has
+  156 unmet implementation rows, 24 transitional rows, five intentional
+  differences and two register conditions before the latest two bounded
+  mappings. M3's initial finite Miri matrices and M5's full-profile lifecycle
+  models remain active; no fresh full milestone pass is claimed.
+- 2026-10-13: the official M6 matrix at `4ca0812a2` matches all 143 keys in
+  release and both statistics profiles; all four native Heap contract checks
+  pass. Debug fails on the pinned source's valid offset-pointer rejection
+  and OS-address diagnostics. Its scoped source option correction and
+  original-option negative control pass against the corrected retained
+  native archive; the earlier replay against an older archive is withdrawn.
+  Integration waits for a retained-log replay correction, then reruns the
+  complete official matrix on a frozen merged revision.
+- 2026-10-13: H0 publishes the three dynamic products after all independent
+  receipt replays pass, then passes POSIX-family, crypt-profile, atomic-profile,
+  wordexp-profile and wordexp-inputs. POSIX-native differential passes and
+  its native os-test continues. The throwaway `21e9a89cf` branch still changes
+  no claims on main and is not a main qualification.
 
 ## For the owner afterwards
 
