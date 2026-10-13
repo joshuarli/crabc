@@ -824,7 +824,7 @@ def evidence_records(foundation: Mapping[str, Any], control: Mapping[str, Any]) 
 def validate_accounted_incomplete_linkage_audit_report(report: Mapping[str, Any]) -> None:
     """Require the fresh default-archive audit to retain its finite blocker."""
     # This is a fresh native audit of the current default archive. Provider
-    # additions must change its expected counts without reviving historical
+    # additions must change its expected counts without reviving earlier
     # gaps or weakening the requirement that every default symbol extracted.
     from header_callable_linkage_audit import (
         LinkageAuditError,

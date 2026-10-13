@@ -84,12 +84,11 @@ interposition coverage.
 ## Retained receipt and host replay
 
 `locale_alias_contract_receipt.py` wraps the existing runner; it does not turn
-an older shell transcript into current evidence. Current v4 receipts use
+a shell transcript into evidence. Receipts use
 `locale-alias-contract-image-inputs-v2.json`, whose image identity agrees with
 `core_image.py` and whose toolchain paths follow `rust-toolchain.toml`.
-`locale-alias-contract-image-inputs.json` retains the historical v3 image
-authority. Neither manifest transfers an older receipt to a newer image.
-The finite image-input manifests bind the selected image, musl
+The manifest does not transfer a receipt to a different image.
+The finite image-input manifest binds the selected image, musl
 1.2.6 archive/shared object/specs/compiler, the pinned target `llvm-ar`,
 `llvm-nm`, and `llvm-objdump`, and every runner or collector tool by physical
 path, bytes, and mode. Both static and dynamic product metadata must name those

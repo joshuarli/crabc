@@ -1044,7 +1044,7 @@ cleanup:
  *
  * musl's fnmatch treats an invalid multibyte pattern byte as UNMATCHABLE, and
  * its FNM_PATHNAME component scan never returns once it reaches one (the
- * `fnmatch-pathname-unmatchable` difference in owned-pattern.md). Word
+ * `fnmatch-pathname-unmatchable` difference). Word
  * expansion shares that matcher but never takes the FNM_PATHNAME path:
  * pathname expansion matches one component at a time and parameter removal
  * matches whole values. Each input therefore terminates in both runtimes,

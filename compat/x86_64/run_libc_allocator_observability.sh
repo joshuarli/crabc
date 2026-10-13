@@ -6,7 +6,7 @@
 # and its selected pthread/process/syscall leaves. The unchanged bundled
 # mimalloc object still has an exact eleven-object link-time support tail that x86 crabc
 # does not own; those exact pinned-musl members are ratcheted below. Crabc's
-# selected static archive now supplies `fputs`, `sleep`, and
+# selected static archive supplies `fputs`, `sleep`, and
 # `__stack_chk_fail`, and the link-map assertions below preserve that ownership.
 # The
 # candidate-local copy weakens only musl's duplicate `__progname` globals in
@@ -318,7 +318,7 @@ fi
 grep -Eq '\$0x39(,|[[:space:]]|$)' "$candidate_disassembly" \
     || fail "candidate lacks the fixture-contained raw x86 fork syscall"
 
-# These were previously part of the pinned-musl backend-support tail. Keep
+# These are not part of the pinned-musl backend-support tail. Keep
 # their source ownership explicit instead of merely shortening that tail: the
 # final LLD map must extract each from the feature-built crabc archive.
 for symbol in fputs sleep __stack_chk_fail; do

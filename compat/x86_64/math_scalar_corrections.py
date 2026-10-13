@@ -2,7 +2,8 @@
 
 The generators validate the unmodified complete upstream source tree first.
 These bounded changes preserve its numerical algorithms and source notices;
-see math-scalar-corrections.md for their proof and independent oracle results.
+verify_math_scalar_corrections.py checks them against independent oracle
+results.
 """
 
 

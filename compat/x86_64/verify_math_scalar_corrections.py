@@ -237,7 +237,7 @@ def main() -> int:
             checked = (*actual[:2], actual[2] & 61, actual[3])
             expected = tuple(case['expected'])
             if arm == 'candidate' and (actual[2] ^ oracle_records[index][2]) & 2:
-                # The finite powf identity now executes no floating arithmetic;
+                # The finite powf identity executes no floating arithmetic;
                 # this intentionally avoids the oracle's denormal-operand flag.
                 explained = case['input'][0] == 2 and case['input'][3] & 0x7fffffff < 0x800000 and not (actual[2] & 2)
                 denormal_differences.append(dict(index=index, name=case['name'], oracle=oracle_records[index], candidate=actual, explained_finite_powf_identity=explained))

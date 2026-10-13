@@ -100,7 +100,7 @@ deferred_linkage_owner_obligation = "final-callable-provider-archive-closure"
 explicit_nonrequirements = ["archive-extraction", "final-provider-archive-closure", "promotion-public-support", "runtime-semantics", "selected-provider-linkage-audit", "static-export-complement", "unprovided-callable-count"]
 description = "The aggregate's pure `header-foundation-v1` assessment requires the installed surface, declaration identity and source forms, callable visibility, prototype/named declarations, record layouts, and exact callable ownership routing. It reports but does not require the finite deferred provider/archive complement, selected-provider linkage audit, static-export complement, archive extraction, runtime semantics, promotion, or public support. A false or unavailable downstream provider/archive observation remains separately visible and cannot block this assessment."
 
-# This control closes Phase 0 accounting over the current finite header
+# This control closes accounting over the current finite header
 # evidence without treating its intentionally red reports as a waiver. It
 # records every direct probe, profile/facet/ownership roster, and checked
 # generic report in one digest-bound result. The separate

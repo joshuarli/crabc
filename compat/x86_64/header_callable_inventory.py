@@ -295,8 +295,8 @@ def load_static_exports(path: Path) -> list[str]:
         raise InventoryError(f"cannot read static export ratchet: {error}") from error
     exports = [value.strip() for value in values if value.strip() and not value.startswith("#")]
     require(len(exports) == len(set(exports)), "static export ratchet contains duplicates")
-    # The ratchet is an independent historical artifact whose comments claim
-    # ASCII ordering but whose current authoritative contents are not fully
+    # The ratchet is an independent artifact whose comments claim
+    # ASCII ordering but whose authoritative contents are not fully
     # ordered.  Treat it as an exact input (its complete-file digest is in the
     # report) and canonicalize only this generated view.
     return sorted(exports)

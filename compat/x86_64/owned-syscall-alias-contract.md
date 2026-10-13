@@ -130,23 +130,13 @@ providers: `__clock_gettime`, `__clock_nanosleep`, `__dup3`, `__fstat`,
 `__lsysinfo`, `__sigaction`, and `__libc_sigaction`. The two local statfs
 bodies remain outside that global export ledger.
 
-The historical component pair was built at clean runtime revision `3bf0a0cb`.
-The earlier harness revision `1494e97c` passed its signal-override checks but
-recompiled the oracle sources in its 45-command receipt. The corrected
-collector used 47 commands with the two unchanged objects across all fourteen
-links. Those historical reports lived in retired campaign worktrees and are
-no longer retained. Their source commits remain in Git; neither historical
-result supplies static preparation or product qualification for later source.
-
 ## Current component receipt
 
-The historical pair is not selectable evidence: `1494e97c` is the older
-45-command source-recompiling harness, while `3bf0a0cb` records the corrected
-47-command runner against its then-current runtime pair. Neither establishes a
-current selected static preparation, dynamic product, complete ELF facts, or
-base inventory.
+The runner uses 47 commands with the two unchanged oracle objects across all
+fourteen links. It does not by itself establish a selected static preparation,
+dynamic product, complete ELF facts, or base inventory.
 
-`owned_syscall_alias_contract_reader.py` supplies that current boundary. Run
+`owned_syscall_alias_contract_reader.py` supplies that boundary. Run
 `collect` only in the pinned core image, from a clean collector checkout, with
 fresh output below its `.work/x86_64` tree. The static product must be the
 `products/primary` payload beside the supplied preparation receipt. Full ELF
@@ -245,13 +235,10 @@ collector to inspect an older supplied product without calling that product
 current selected evidence.
 
 `owned-syscall-alias-image-inputs-current.json` is the finite image input
-authority for the current core image. The original
-`owned-syscall-alias-image-inputs.json` remains unchanged as the July 24
-historical authority. The collector also seals `rust-toolchain.toml`, from
-which its current Rust and LLD paths are derived. Reports naming a different
-image remain historical and cannot pass the reader. Updating this authority
-does not change any historical report or transfer its qualification.
-The current manifest records
+authority for the core image. The collector also seals `rust-toolchain.toml`,
+from which its Rust and LLD paths are derived. Reports naming a different
+image cannot pass the reader, and updating this authority does not transfer
+any report's qualification. The manifest records
 invocation paths, resolved paths, modes, sizes and SHA-256 values for
 the runner tools, product compiler/assembler/linker inputs, and pinned musl
 wrapper/archive/shared/specs. Regenerate it reproducibly from the exact image:

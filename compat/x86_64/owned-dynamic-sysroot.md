@@ -6,9 +6,6 @@ driver (`crabc_cc_owned_dynamic.py`, installed as `bin/crabc-cc-dynamic`) and
 native package gate. See [materialized-dynamic-sysroot.md](materialized-dynamic-sysroot.md)
 for its exact implementation, evidence and remaining conditions.
 
-`crabc_cc_dynamic.py` is the older plan-only link-plan seed. It is not the
-installed driver or evidence for the materialized component.
-
 `dynamic-product.toml` is the non-promoting contract for the
 Linux/x86-64 dynamic half of `sysroot.owned-artifact`. It makes the dynamic
 product obligations finite without treating the private static-only sysroot as
@@ -44,8 +41,8 @@ The target layout is deliberately conventional and target-specific:
 dynamic executables. `ld-musl-x86_64.so.1` is a relative compatibility alias
 to that exact installed file; it is not an ambient musl loader fallback.
 
-`crabc_cc_dynamic.py` is a sealed driver seed for this layout; the installed
-driver has the same three explicit modes:
+`crabc_cc_owned_dynamic.py` is the sealed driver for this layout; the installed
+driver has three explicit modes:
 
 - `--dynamic-pie`: `ET_DYN`, `Scrt1.o`, and the canonical `PT_INTERP`.
 - `--dynamic-non-pie`: `ET_EXEC`, `crt1.o`, and the canonical `PT_INTERP`.

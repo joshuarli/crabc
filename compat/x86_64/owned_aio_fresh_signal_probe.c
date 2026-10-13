@@ -92,8 +92,8 @@ static uint64_t monotonic_nanoseconds(void)
 
 /* Stagger each finite burst by a small per-attempt/lane offset.  A signal that
  * arrives before the internal mask can return from close; later sends still
- * exercise the fresh queue creation interval.  The bounded loop is vital:
- * an unbounded sender join was an invalid earlier stress receipt. */
+ * exercise the fresh queue creation interval.  The loop must stay
+ * bounded: an unbounded sender join is not a valid stress observation. */
 static void wait_until(uint64_t deadline)
 {
 	while (monotonic_nanoseconds() < deadline)

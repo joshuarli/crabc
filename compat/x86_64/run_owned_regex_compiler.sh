@@ -6,7 +6,7 @@
 # switches only that disposable copy to `owned_regex/mod.rs`, and proves the
 # pinned-musl compiler inputs plus candidate allocation-failure cleanup.  It
 # does not invoke regexec/regerror, alter the selected bounded regex leaf, or
-# make a runtime/support claim.  The complete owner now emits all four public
+# make a runtime/support claim.  The complete owner emits all four public
 # spellings from one Rust object, so their presence in this compiler-focused
 # link is intentionally not a failure; execution behavior has its own runner.
 set -euo pipefail

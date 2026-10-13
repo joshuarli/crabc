@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Behavior facts about the machine code a final x86-64 ELF runs from a root.
 
-Native C runners used to pin codegen shape: one ``raw_syscall::syscallN``
-archive member, a direct ``call`` from a wrapper to a named helper, an atomic
-instruction inside the wrapper's own symbol. Rust is free to inline or outline
-any of those, so the pins failed as optimizer choices drifted while the
-behavior they protected stayed intact.
+Pinning codegen shape (one ``raw_syscall::syscallN`` archive member, a direct
+``call`` from a wrapper to a named helper, an atomic instruction inside the
+wrapper's own symbol) is brittle: Rust is free to inline or outline any of
+those, so such pins fail as optimizer choices drift while the behavior they
+protect stays intact.
 
 This reader asks the behavior question instead. It disassembles one linked
 candidate once, takes the *call closure* of a root symbol (the root plus every

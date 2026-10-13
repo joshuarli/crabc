@@ -1,6 +1,6 @@
 # Current private x86-64 loader/libc TLS ownership contract. The owned_runtime
 # table names the implemented product path; qualification requires a live
-# three-product receipt. Earlier cfg-isolated foundation tables remain private
+# three-product receipt. The cfg-isolated foundation tables remain private
 # regression evidence and cannot stand in for growth, workers, CRT or lifecycle.
 
 schema = "crabc.x86_64-loader-libc-tls-runtime/v1"

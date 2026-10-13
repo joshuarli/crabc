@@ -323,14 +323,6 @@ def _validate_policy_status(value: object, description: str) -> dict[str, object
     return dict(POLICY_STATUS)
 
 
-def _validate_review_record(value: object) -> dict[str, object]:
-    value = _exact_mapping(value, frozenset({"path", "sha256", "size"}), "baseline review record")
-    require(isinstance(value["path"], str) and value["path"].startswith("/"), "baseline review path is malformed")
-    _digest(value["sha256"], "baseline review record")
-    require(type(value["size"]) is int and value["size"] > 0, "baseline review size is malformed")
-    return dict(value)
-
-
 def _validate_inventory_report_origin(value: object, description: str) -> dict[str, object]:
     report = _exact_mapping(
         value,
@@ -397,12 +389,8 @@ def _validate_candidate_origin(value: object, description: str) -> dict[str, obj
 
 
 def _validate_origin(origin: object) -> dict[str, object]:
-    origin = _exact_mapping(origin, frozenset({"inventory_report", "review", "oracle", "candidate"}), "baseline origin")
+    origin = _exact_mapping(origin, frozenset({"oracle", "candidate"}), "baseline origin")
     return {
-        "inventory_report": _validate_inventory_report_origin(
-            origin["inventory_report"], "baseline origin inventory report"
-        ),
-        "review": _validate_review_record(origin["review"]),
         "oracle": _validate_oracle_origin(origin["oracle"], "baseline oracle origin"),
         "candidate": _validate_candidate_origin(origin["candidate"], "baseline candidate origin"),
     }

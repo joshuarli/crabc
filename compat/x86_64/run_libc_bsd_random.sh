@@ -3,8 +3,8 @@
 #
 # `--expect-missing` is the pre-provider red-regression mechanism: one
 # project-header C fixture first executes against pinned musl, then its static
-# link must expose all four absent providers. The historical pre-provider
-# receipt captured archive-symbol absence only; this runner does not relabel it
+# link must expose all four absent providers. A pre-provider
+# receipt captures archive-symbol absence only; this runner does not relabel it
 # as an unexecuted link receipt. Once the provider exists, the same fixture
 # compares musl and an extracted provider object in a true -nostdlib static
 # executable.

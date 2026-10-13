@@ -60510,19 +60510,6 @@
         "size": 1499552
       }
     },
-    "inventory_report": {
-      "collector_execution_source": {
-        "clean": true,
-        "content_sha256": "1ae8fc14a981c36c776a966e97d3da9bfdb2ffc04290e623fa8bc7b3ae29efcd",
-        "revision": "4b1e653698c3a95945df6ecab71536a85ccb6b5d"
-      },
-      "image": "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d",
-      "path": "/home/josh/d/crabc/.work/worktrees/native_abi_inventory/.work/x86_64/native-abi-inventory-4b1e6536/one/report.json",
-      "schema": "crabc.x86_64-native-abi-inventory/v1",
-      "sha256": "aece2d1129f97e99ae2c3822f5f4adb7a00df168ecb372790286b2dfbf2a33ab",
-      "size": 3836276,
-      "target": "x86_64-unknown-linux-musl"
-    },
     "oracle": {
       "repository_pin": {
         "fallback_repository": "https://github.com/ifduyue/musl.git",
@@ -60537,11 +60524,6 @@
         "sha256": "8aea1cf45942b85b9d20bfcc4fbe78dcd6748f7d7c615513b38d3f9a897bdb65",
         "size": 798104
       }
-    },
-    "review": {
-      "path": "/home/josh/d/crabc/.work/worktrees/native_abi_inventory/.work/x86_64/parent-input-review/verification-4b1e6536.json",
-      "sha256": "8f163679d27c3e715e58a9f0fe92c6feb66165f533087a98bd1ea63cae3924df",
-      "size": 2272
     }
   },
   "schema": "crabc.x86_64-native-abi-dynamic-ratchet/v1",

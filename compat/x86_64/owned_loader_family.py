@@ -44,8 +44,7 @@ NONPROMOTING_FLAGS = {
     "public_support": False,
 }
 
-# These are the finite behavior boundaries of the Loader row in plan.md
-# (Families and public ABI).  The catalog rows below obtain their exact
+# These are the finite behavior boundaries of the Loader family.  The catalog rows below obtain their exact
 # current case IDs from the frozen runners instead of copying a second list
 # here.  A new runner case consequently remains required by the
 # full qualification and makes a stale behavior roster reject until reviewed.

@@ -324,7 +324,7 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
                     ('selected_runtime', FakeSyscallReader.RUNTIME_SOURCES),
                 )
             },
-            'tools': {}, 'runner': {}, 'historical_epochs': {},
+            'tools': {}, 'runner': {},
             'selection_projection': FakeSyscallReader.component_projection(),
         }
 

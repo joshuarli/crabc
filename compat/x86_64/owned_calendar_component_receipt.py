@@ -33,8 +33,7 @@ import core_image
 
 SCHEMA = "crabc.x86_64-owned-calendar-products/v1"
 SOURCE_MOUNT = "/workspace"
-# The current core-evidence image after the nightly-2026-09-15 toolchain pin.
-# Reports from the retired image remain historical, not current admission.
+# Reports from any other core-evidence image are not admitted.
 PINNED_IMAGE_ID = core_image.CORE_IMAGE_ID
 SCOPE = ("time.clock-calendar",)
 FULL_MODE = "full-six-mode"

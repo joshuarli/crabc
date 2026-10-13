@@ -2,7 +2,7 @@
 # Native Linux/x86-64 private crypt/allocator provider-composition evidence.
 #
 # The named Cargo feature is the sole supported composition route: it joins
-# the dependency-backed crypt adapter with the previously selected x86
+# the dependency-backed crypt adapter with the selected x86
 # allocator wrapper/backend. This is a mixed static candidate, not allocator
 # lifecycle, public x86 runtime, or capability-promotion evidence.
 set -euo pipefail

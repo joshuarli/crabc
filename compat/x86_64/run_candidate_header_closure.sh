@@ -423,7 +423,7 @@ report_tmp="$(mktemp "$REPORT_DIR/.latest.tsv.tmp.XXXXXX")"
 
 # The per-header rows below establish empty-TU closure across the complete
 # inventory. Keep this focused compile alongside them because it also names
-# the C++ spellings that previously regressed: alternative tokens, C++ builtin
+# the C++ spellings that are prone to regress: alternative tokens, C++ builtin
 # character types, and the affected C declaration pointer types.
 if ! compile_header candidate cxx17-gnu "$CXX_CLOSURE_PROBE" "$cxx_closure_stdout" \
     "$cxx_closure_diagnostic"; then

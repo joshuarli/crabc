@@ -40,7 +40,7 @@ export TMPDIR="$EXECUTION_TMPDIR"
 # The sealed static driver admits only a relative receipt/map/trace trio.  Run
 # that link from the evidence directory so the receipt records sidecar names
 # relative to its own physical parent; the reusable product validator rejects
-# the formerly nested checkout-relative spelling.
+# a nested checkout-relative spelling.
 cd "$ROOT"
 mkdir -p "$TMPDIR"
 

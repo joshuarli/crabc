@@ -438,8 +438,8 @@ expect_candidate_rejection_before_fs graph tls-overflow
 mv "$shared_binary.valid" "$shared_binary"
 
 rela_info_offset="$(rela_info_offset_for_type "$shared_binary" 16)" || fail 'fixture has no DTPMOD64 relocation to mutate'
-# NONE and TPOFF64 are now admitted by the general relocation owner. Keep
-# this GD fixture's rejection checks on genuinely unsupported dynamic forms.
+# NONE and TPOFF64 are admitted by the general relocation owner, so this GD
+# fixture's rejection checks use genuinely unsupported dynamic forms.
 for mutation in unsupported:65535 tpoff32:23 tlsdesc:36; do
     label="${mutation%%:*}"
     kind="${mutation##*:}"

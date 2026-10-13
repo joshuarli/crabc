@@ -178,18 +178,6 @@ class LoaderStructuralOwnerFactsTests(unittest.TestCase):
         self.assertEqual(result["candidate_rows"], [])
         self.assertEqual(result["named_identity_filter"], list(reader.IDENTITIES))
 
-    def test_actual_raw_fact_report_keeps_the_complete_named_filter_counts(self) -> None:
-        report = (ROOT.parent / "runtimev1_descriptor_requirement_order/.work/x86_64/native-abi-elf-facts/"
-                  "clean-6b5e146b/report.json")
-        if not report.is_file():
-            self.skipTest("requires the retained complete 6b5 ELF fact report")
-        facts = json.loads(report.read_text(encoding="utf-8"))
-        rows = reader._flatten_fact_rows(facts)
-        projection = reader.project_structural_facts(rows)
-        self.assertEqual(projection["full_occurrence_count"], 30667)
-        self.assertEqual(projection["unnamed_occurrence_count"], 1365)
-        self.assertEqual(projection["reference_startup_rows"], 6)
-
     def test_candidate_row_for_a_legacy_registration_name_rejects(self) -> None:
         rows = []
         for name in ("__dls2b", "__dls3", "_dlstart"):

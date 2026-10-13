@@ -1,8 +1,8 @@
 """The pinned native x86 core-evidence image identity.
 
 Receipt readers and launchers admit only evidence produced in this image.
-Rebuilding the image changes this one value; receipts retained from an
-earlier image are then historical, not current evidence.
+Rebuilding the image changes this one value; receipts produced in a
+different image are not admitted.
 Executing this module prints the immutable Docker ID used for native launches.
 """
 

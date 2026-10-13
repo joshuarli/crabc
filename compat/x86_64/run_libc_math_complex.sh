@@ -58,8 +58,8 @@ for symbol in __fpclassify __fpclassifyf __fpclassifyl __signbit __signbitf \
 	cproj cprojf cprojl; do
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" || fail "archive does not define $symbol"
 done
-# The adjacent complete math.complex slice now owns the wider complex surface.
-# The shared archive ratchet now selects `sin` and `sinf` independently. The
+# The adjacent complete math.complex slice owns the wider complex surface.
+# The shared archive ratchet selects `sin` and `sinf` independently. The
 # candidate closure checks below remain the private boundary for this fixture.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_COMPLEX_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_math_complex_probe.c compat/x86_64/libc_math_complex_start.S "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"; readelf --program-headers --wide "$candidate" >"$headers"; readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wide "$candidate" >"$relocs"; objdump -d "$candidate" >"$disassembly"

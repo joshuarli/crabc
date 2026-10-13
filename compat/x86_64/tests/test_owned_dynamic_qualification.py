@@ -528,9 +528,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         """A leaf's "<label> evidence: <reason>" diagnostic is not a retained root.
 
         The fork leaf fails with "dynamic-fork evidence: <reason>". Evidence
-        discovery used to reject that line first, so the qualification
-        reported "leaf evidence escapes its source mount" instead of naming
-        the failed case and its log.
+        discovery must not reject that line as an escaped root: the
+        qualification has to name the failed case and its log rather than
+        report "leaf evidence escapes its source mount".
         """
 
         leaf = self.work / "leaf-artifacts/installed-fork"

@@ -125,29 +125,6 @@ public_support = false
 runtime_qualification = false
 selector_admission = false
 
-# This is a development anchor, not a receipt that a future collection may
-# reuse.  A fresh receipt must bind its own current clean source and products.
-[development_anchor]
-revision = "7dcafabe18a8ccea5bd73c6af49ae51be718c249"
-source_content_sha256 = "685265a025c9b7b15a350ad21dafb8c3170a123c75b3d222bba84dead980b1ac"
-selection_report = ".work/x86_64/native-abi-selection/clean-7dcafabe/report.json"
-selection_report_sha256 = "96f92b954e65cf52927529e38992f199c4499db0e2f7543e3b8b5df0f2647dc5"
-full_facts_report = ".work/x86_64/native-abi-elf-facts/clean-7dcafabe/report.json"
-full_facts_report_sha256 = "e92e2308250e6697c7e3796f540b0c43f399ea78b95fca3b5685abf19a4f5224"
-base_inventory_report = ".work/x86_64/native-abi-inventory/clean-7dcafabe/report.json"
-base_inventory_report_sha256 = "5392b1e55d8950708d85b83ac9cfc07d85e553c1de55799ace4bd7cc1b3ad0cd"
-static_preparation = ".work/x86_64/public-data-products/static-7dcafabe/preparation.json"
-static_preparation_sha256 = "a88ed97517f16331c94105359434dbc042e0e12176e4c31289eae8e3d998b0c5"
-dynamic_manifest = ".work/x86_64/loader-debug-abi/clean-7dcafabe/component/dynamic-product/share/crabc/manifest.json"
-dynamic_manifest_sha256 = "69a6992558ebf0d5c999ed8453bf39f62b796c2ebd6578025795f5b492500f56"
-runtime_registry_report = ".work/x86_64/loader-runtime-registry/clean-7dcafabe/report.json"
-runtime_registry_report_sha256 = "e0721b93aeec0c4e761357b22a04274a971ea385a97f6815fa9325342990b609"
-loader_debug_report = ".work/x86_64/loader-debug-abi/clean-7dcafabe/component/report.json"
-loader_debug_report_sha256 = "a4611ca7237f4fff45651a550e2f5650746b80d69101c0916390e18817961f92"
-full_occurrence_count = 30667
-unnamed_occurrence_count = 1365
-blockers = 339
-
 # Name filtering precedes strict identity construction.  The implemented reader
 # retains all raw rows, including unnamed physical observations; it only maps
 # the eight non-null spellings below to this component's finite coverage.
@@ -165,11 +142,10 @@ identity_names = [
 reference_artifact = "reference-shared"
 reference_tables = [".dynsym", ".symtab"]
 reference_startup_names = ["__dls2b", "__dls3", "_dlstart"]
-# There are exactly two retained reference rows for each startup identity at
-# the 7dc design anchor: one .dynsym and one .symtab row.  The five private
-# registration spellings have structural-contract origins, not invented raw
-# occurrences.  Future source-matched facts are validated as supplied facts;
-# this anchor is not a fixed fresh-product row-index requirement.
+# There are exactly two reference rows for each startup identity: one .dynsym
+# and one .symtab row.  The five private registration spellings have
+# structural-contract origins, not invented raw occurrences.  Supplied facts
+# are validated as supplied; no fixed row index is required.
 reference_rows_per_startup_name = 2
 registration_names_have_no_raw_origin = true
 

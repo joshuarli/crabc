@@ -6,7 +6,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-# The default archive now carries the binary32/binary64 exp10 siblings selected
+# The default archive carries the binary32/binary64 exp10 siblings selected
 # by the aggregate. Only these feature-gated binary80 names must remain absent
 # from this unfeatured leaf archive; the final leaf candidate still excludes
 # every sibling math provider below.

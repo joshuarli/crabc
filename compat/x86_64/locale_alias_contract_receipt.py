@@ -1627,9 +1627,8 @@ def _public_replay_exit_recheck(
 ) -> None:
     """Repeat the public reader's finite reconstruction without starting a process.
 
-    ``selected_sources`` is the roster the initial reconstruction chose from
-    the receipt schema; the v3 and v4 rosters differ, so the exit recheck must
-    not fall back to the historical default.
+    ``selected_sources`` is the roster the initial reconstruction used; the
+    exit recheck must compare against that same roster.
     """
 
     if _identity(receipt_root, report_path) != report_identity:

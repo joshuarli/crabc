@@ -79,7 +79,7 @@ for symbol in "${SELECTED_SYMBOLS[@]}"; do
 	grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
 		fail "archive does not define ${symbol}"
 done
-# The formerly neighboring binary80 roots are now selected by the shared
+# The neighboring binary80 roots are selected by the shared
 # complete long-double capability. Their archive materialization does not
 # expand this x87 artifact's own evidence contract.
 

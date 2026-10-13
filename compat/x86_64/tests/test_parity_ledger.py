@@ -9279,7 +9279,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertNotIn("include/sys/types.h", owners, artifact_id)
 
         # These runtime fixtures retain an explicit sys/types.h import even
-        # though their direct header gates now follow musl's unistd.h closure.
+        # though their direct header gates follow musl's unistd.h closure.
         direct_types = (
             "static-c-sendfile",
             "static-c-copy-file-range",

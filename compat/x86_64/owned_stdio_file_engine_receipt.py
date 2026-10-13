@@ -3,7 +3,7 @@
 
 This reader deliberately validates ten FILE-engine probes as separate
 installed-header objects.  It does not add a stdio API, infer symbols from a
-report, or treat an earlier static-only run as six-mode product evidence.
+report, or treat a static-only run as six-mode product evidence.
 The retained objects' undefined-symbol tables must jointly reference the whole
 frozen surface of the four FILE capabilities this component credits.
 """

@@ -326,7 +326,7 @@ action symbol-observation python3 -B "$SYMBOL_READER" "$CONTRACT" \
 
 # The supplied owned-static archive contains the default providers and its
 # selected runtime features. Retain that feature surplus separately from the
-# default-static roster, which now includes tgkill. This subset check rejects
+# default-static roster, which includes tgkill. This subset check rejects
 # a missing default provider and requires exactly one strong tgkill definition;
 # complete profile-specific archive selection remains a separate contract.
 cat >"$work/local-default-static-delta.sh" <<'SH'

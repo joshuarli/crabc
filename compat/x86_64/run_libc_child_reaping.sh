@@ -101,7 +101,7 @@ readelf --dynamic --wide "$candidate" >"$dynamic" || true; readelf --relocs --wi
 for symbol in __errno_location wait waitpid waitid; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
-# The archive now owns the separately evidenced GNU/BSD wait extensions, but
+# The archive owns the separately evidenced GNU/BSD wait extensions, but
 # this POSIX child-reaping candidate must remain closed over its original three
 # symbols. Candidate-level rejection catches an accidental relocation or
 # section-retention edge without denying the archive's independent artifact.

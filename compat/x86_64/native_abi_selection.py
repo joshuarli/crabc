@@ -2921,7 +2921,7 @@ def attach_provider_links(accounting: Mapping[str, Any], proof: Mapping[str, Any
                           rule: Mapping[str, Any], rust_members: Sequence[str]) -> list[dict[str, Any]]:
     """Join complete owned function links without inferring ownership from names.
 
-    DEFAULT archive visibility permits normal static linking. A previously
+    DEFAULT archive visibility permits normal static linking. An
     unowned cross-module function acquires private ownership only after the
     physical reader has bound all its imports to its unique final provider in
     both static modes, all source rows belong to authenticated Rust members,
@@ -7764,7 +7764,7 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
     measurement_reports = _measurement_report_bindings(measurement, 'syscall alias')
     report = exact(report, {
         'schema', 'status', 'image', 'musl_source_commit', 'collector_source', 'selected_product_source',
-        'image_inputs', 'inputs', 'products', 'link_input_modes', 'source', 'tools', 'runner', 'historical_epochs',
+        'image_inputs', 'inputs', 'products', 'link_input_modes', 'source', 'tools', 'runner',
         'selection_projection',
     }, 'syscall alias reader report')
     projection = _syscall_alias_projection(reader)

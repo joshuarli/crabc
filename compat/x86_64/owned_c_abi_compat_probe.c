@@ -1,5 +1,5 @@
 // Installed-product behavior for the selected libc.c-abi-compat capabilities
-// that previously had only private selected-archive evidence: callback-tree,
+// that have only private selected-archive evidence: callback-tree,
 // hash-table and intrusive-queue search, the qsort context helper, bounded
 // gettext state, diagnostic strings and legacy observations, and the C
 // malloc-family policy boundary. One object runs through pinned musl 1.2.6

@@ -3343,7 +3343,7 @@ def validate_header_layout_foundation_manifest(
     inline-port-I/O, epoll-header, timeval-transitive, direct sys/time, and
     access-header ABI matrices, and
     verifies a seven-profile empty-TU closure diagnostic with two explicit
-    pinned-musl aio.h strict-profile applicability results. It now records an
+    pinned-musl aio.h strict-profile applicability results. It records an
     explicit default/feature/unprovided callable provider partition while
     keeps complete archive extraction and general declaration/layout closure
     planned while the checked derived declaration/macro identity matrix makes

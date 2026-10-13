@@ -143,7 +143,7 @@ for symbol in __errno_location socket socketpair bind listen accept accept4 \
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
-# The archive ratchets the aggregate selected static C surface, which now
+# The archive ratchets the aggregate selected static C surface, which
 # includes the separately evidenced interface-discovery exports. Keep the
 # socket artifact's negative boundary on its final candidate below instead.
 for unselected in gethostbyname gethostbyaddr _Fork vfork clone execve \

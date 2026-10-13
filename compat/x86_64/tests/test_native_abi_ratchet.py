@@ -62,24 +62,6 @@ def baseline(
         reference,
         candidate,
         origin={
-            "inventory_report": {
-                "path": "/historical/native-abi-inventory/report.json",
-                "sha256": "a" * 64,
-                "size": 1,
-                "schema": ratchet.INVENTORY_SCHEMA,
-                "target": ratchet.TARGET,
-                "image": "crabc-core-evidence@sha256:" + "0" * 64,
-                "collector_execution_source": {
-                    "revision": "b" * 40,
-                    "content_sha256": "c" * 64,
-                    "clean": True,
-                },
-            },
-            "review": {
-                "path": "/historical/native-abi-inventory/verification.json",
-                "sha256": "9" * 64,
-                "size": 1,
-            },
             "oracle": {
                 "repository_pin": {
                     "version": "1.2.6",
@@ -400,7 +382,7 @@ class NativeAbiRatchetTests(unittest.TestCase):
 
     def test_baseline_origin_and_status_are_exact(self) -> None:
         policy = baseline([symbol("expected")], [symbol("expected")])
-        policy["origin"]["inventory_report"]["sha256"] = "not-a-digest"
+        policy["origin"]["unread"] = {}
         with self.assertRaisesRegex(ratchet.RatchetError, "origin"):
             ratchet.validate_baseline(policy)
 
@@ -414,17 +396,8 @@ class NativeAbiRatchetTests(unittest.TestCase):
         with self.assertRaisesRegex(ratchet.RatchetError, "boolean"):
             ratchet.validate_baseline(policy)
 
-    def test_checked_baseline_retains_the_reviewed_inventory_origin(self) -> None:
-        policy, identity_record = ratchet._baseline()
-        self.assertEqual(identity_record["sha256"], "5dd9f4de0ef543072fa8cca7bb4026e3881c5a61eb5482aaaace47885d3e74c1")
-        self.assertEqual(
-            policy["origin"]["inventory_report"]["sha256"],
-            "aece2d1129f97e99ae2c3822f5f4adb7a00df168ecb372790286b2dfbf2a33ab",
-        )
-        self.assertEqual(
-            policy["origin"]["review"]["sha256"],
-            "8f163679d27c3e715e58a9f0fe92c6feb66165f533087a98bd1ea63cae3924df",
-        )
+    def test_checked_baseline_retains_the_frozen_floor(self) -> None:
+        policy, _ = ratchet._baseline()
         self.assertEqual(
             {key: len(value) for key, value in policy["baseline_state"].items()},
             {"missing": 72, "unexpected": 475, "matched": 1477, "mismatched": 101},
@@ -475,8 +448,8 @@ class NativeAbiRatchetTests(unittest.TestCase):
         report = {
             "schema": ratchet.INVENTORY_SCHEMA,
             "target": ratchet.TARGET,
-            "image": origin["inventory_report"]["image"],
-            "collector_execution_source": origin["inventory_report"]["collector_execution_source"],
+            "image": "crabc-core-evidence@sha256:" + "0" * 64,
+            "collector_execution_source": {"revision": "b" * 40, "content_sha256": "c" * 64, "clean": True},
             "inputs": {
                 "pinned_musl": {"repository_pin": origin["oracle"]["repository_pin"]},
             },

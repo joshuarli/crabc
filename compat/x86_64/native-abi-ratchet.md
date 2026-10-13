@@ -14,16 +14,8 @@ The checked policy has two tracked inputs:
   a separate exact reviewed-extension policy. It does not revise the floor or
   turn an observed historical extra into a musl identity.
 
-The frozen floor's origin is the parent-replayed inventory report from collector revision
-`4b1e653698c3a95945df6ecab71536a85ccb6b5d`:
-
-- report SHA-256
-  `aece2d1129f97e99ae2c3822f5f4adb7a00df168ecb372790286b2dfbf2a33ab`;
-- parent validation SHA-256
-  `8f163679d27c3e715e58a9f0fe92c6feb66165f533087a98bd1ea63cae3924df`;
-- pinned musl 1.2.6 shared object and pin identity; and
-- the separate materialized-unqualified candidate build identity at
-  `640c093918692cbec384ed9ae8fb4f5ef425d19c`.
+The frozen floor's origin records the pinned musl 1.2.6 shared object and pin
+identity, and the separate materialized-unqualified candidate build identity.
 
 The baseline's musl and candidate identity rosters and its initial missing,
 unexpected and mismatched identities are the `oracle_symbols`,

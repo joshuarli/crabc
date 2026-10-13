@@ -38,11 +38,8 @@ STATUS = {"component_complete": True, "family_completion": False,
           "runtime_qualification": False, "promotion_ready": False, "public_support": False}
 IMAGE = core_image.CORE_IMAGE_REFERENCE
 MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
-# The current runner expands to 47 parametrized ``run`` envelopes. The two
-# historical counts remain provenance, never a substitute for this exact
-# current roster.
+# The runner expands to 47 parametrized ``run`` envelopes.
 EXPECTED_COMMANDS = 47
-HISTORICAL_CORRECTED_COMMANDS = 47
 ROOT = Path(__file__).resolve().parents[2]
 
 # The source policy is separate from the final shared-link binding: archives
@@ -776,7 +773,7 @@ def collect_report(*, root: Path, output: Path, static_preparation: Path, static
     require(same(authority.image_input_manifest(), image_manifest), "pinned image inputs changed during execution")
     source_after = static_products.source_identity(root); require(same(source_before, source_after), "collector source changed during native execution")
     authority.capture_git_objects(root, output, {source_before["revision"], selected_source["revision"]})
-    report = {"schema": SCHEMA, "status": STATUS, "image": image, "musl_source_commit": MUSL_SOURCE_COMMIT, "collector_source": {"before": source_before, "after": source_after}, "selected_product_source": selected_source, "image_inputs": image_inputs, "inputs": inputs, "products": products, "link_input_modes": LINK_INPUT_MODES, "source": source, "tools": tools, "runner": validate_runner_work(output, runner, inputs, source, runner), "historical_epochs": {"source_recompiling_harness": {"revision": "1494e97c", "command_count": 45}, "corrected_harness": {"revision": "3bf0a0cb", "command_count": HISTORICAL_CORRECTED_COMMANDS}}, "selection_projection": component_projection()}
+    report = {"schema": SCHEMA, "status": STATUS, "image": image, "musl_source_commit": MUSL_SOURCE_COMMIT, "collector_source": {"before": source_before, "after": source_after}, "selected_product_source": selected_source, "image_inputs": image_inputs, "inputs": inputs, "products": products, "link_input_modes": LINK_INPUT_MODES, "source": source, "tools": tools, "runner": validate_runner_work(output, runner, inputs, source, runner), "selection_projection": component_projection()}
     (output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return validate_report(output / "report.json")
 
@@ -784,7 +781,7 @@ def _validate_report(report_path: Path) -> dict[str, object]:
     """Replay retained bytes only; never invoke compiler, linker, or ELF tools."""
     report_path = physical(report_path, "receipt report"); output = physical(report_path.parent, "receipt root", True); report = read_json(report_path, "receipt report")
     require(isinstance(report, dict) and report.get("schema") == SCHEMA and same(report.get("status"), STATUS) and report.get("image") == IMAGE and report.get("musl_source_commit") == MUSL_SOURCE_COMMIT, "schema/status/image differs")
-    require(set(report) == {"schema", "status", "image", "musl_source_commit", "collector_source", "selected_product_source", "inputs", "image_inputs", "products", "link_input_modes", "source", "tools", "runner", "historical_epochs", "selection_projection"}, "report fields differ")
+    require(set(report) == {"schema", "status", "image", "musl_source_commit", "collector_source", "selected_product_source", "inputs", "image_inputs", "products", "link_input_modes", "source", "tools", "runner", "selection_projection"}, "report fields differ")
     require(same(report.get("link_input_modes"), LINK_INPUT_MODES), "source-bound link-input mode policy differs")
     require(set(report.get("source", {})) == {"collector", "selected_runtime"}, "source category roster differs")
     require(same(report.get("selection_projection"), component_projection()), "selection projection differs")
@@ -857,7 +854,6 @@ def _validate_report(report_path: Path) -> dict[str, object]:
     _validate_retained_cohort(output, inputs, products)
     retained_preparation = read_json(output / inputs["static_preparation"]["retained"]["path"], "retained static preparation")
     require(retained_preparation.get("source") == selected_product_source, "retained preparation/selected source differs")
-    require(same(report.get("historical_epochs"), {"source_recompiling_harness": {"revision": "1494e97c", "command_count": 45}, "corrected_harness": {"revision": "3bf0a0cb", "command_count": HISTORICAL_CORRECTED_COMMANDS}}), "historical epochs differ")
     runner = report.get("runner", {}); require(runner.get("command_count") == EXPECTED_COMMANDS and runner.get("commands") == sorted(runner.get("commands", [])) and isinstance(runner.get("original"), str), "runner roster differs")
     derived_runner = validate_runner_work(output, output / runner["path"], inputs, report["source"], Path(runner["original"]))
     require(same(runner, derived_runner), "runner projection differs from retained observations")

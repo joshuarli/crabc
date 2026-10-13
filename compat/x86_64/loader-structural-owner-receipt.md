@@ -8,13 +8,8 @@ The separate `native_loader_structural_owner_adapter` and
 that reason after validating the component. They add no symbol placement or
 family qualification.
 
-The design anchor is clean
-`7dcafabe18a8ccea5bd73c6af49ae51be718c249`. Its selector report contains
-2,531 identities, 30,667 raw occurrences, 1,365 unnamed raw occurrences, and
-339 blockers after the declaration-companion removal. The anchor is only for
-source and record-shape inspection. A later receipt must use products newly
-collected from its own committed clean source; it cannot relabel this cohort as
-current evidence.
+A receipt must use products collected from its own committed clean source; it
+cannot reuse another source cohort's evidence.
 
 ## Exact boundary and raw facts
 
@@ -28,7 +23,7 @@ None has an expected placement. The component must not invent a
 candidate archive, shared-library, loader `dynsym`, private provider, or
 current-occurrence rule for these structural dispositions.
 
-At the anchor, `__dls2b`, `__dls3`, and `_dlstart` each have one
+In the pinned reference, `__dls2b`, `__dls3`, and `_dlstart` each have one
 `reference-shared` `FUNC GLOBAL DEFAULT` definition in `.dynsym` and one in
 `.symtab`: six reference rows total. The five registration spellings have
 `frozen-project-dynamic` and native-structural-contract origins, with no
@@ -210,27 +205,8 @@ publish ordering, or owned-CRT tail; and missing/substituted/unpaired matrix
 cells. Source fixtures retain expected public references before link. Every
 candidate dynamic mode and its paired pinned comparator remains required.
 
-Bounded native evidence is accepted at clean revision
-`60f18674e7ea831bbf17a14d3c0f1d7c508e8298`, retained in
-`.work/worktrees/loader_structural_owner_contract`. Its
-`.work/x86_64/loader-structural-owner/clean-60f18674/report.json` is
-`component-verified` (SHA-256
-`f0ab5260f278509d4315dd5bacee38bfbafd7a0df92a8b5d60a583f690f075f4`),
-with 37 successful commands and all 16 paired consumer executions. The
-separately recorded replay recovery preserves the original failed attempt.
-
-The selector audit at that revision passed; its closure replay returned the
-expected incomplete status. The retained
-`.work/x86_64/native-abi-selection/clean-60f18674/report.json` (SHA-256
-`3db65b7b49b9d9829d2d3c68f7951b8e551337fe47a49601764ce3dc7232447b`)
-has 331 blockers. Compared with the design anchor, only the eight named
-requirements were removed. All 2,531 identities, 30,667 occurrences, and
-1,365 unnamed occurrences remain; no placement was added.
-
 The component receipt itself retains `selector_admission=false` and
 `runtime_qualification=false`: the separate selector proves its bounded attachment.
 Neither result closes a family or campaign, promotes the runtime, or changes
 public support. The evidence contains no AArch64 execution, ELF or binary
 mutation control, or dynamic-ELF authority review.
-The stopped private pthread dynamic-ELF authority review with final-only
-mutation controls remains stopped and is not reframed here.

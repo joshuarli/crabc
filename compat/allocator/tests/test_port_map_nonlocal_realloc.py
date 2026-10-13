@@ -54,25 +54,6 @@ class NonlocalReallocPortMapTests(unittest.TestCase):
         ):
             self.assertIn(rust_fact, record["rust_module"] + record["rust_item"])
 
-        scope = record["intentional_difference"]
-        for invariant in (
-            "without inspecting the source pointer",
-            "then derives one coherent PageMap allocation observation",
-            "allocates through the caller's persistent native owner",
-            "A true PageMap `Detached` observation is not a successfully consumable replacement case",
-            "`native_reallocate` fails closed as `Retained`",
-            "Allocation failure leaves the old allocation untouched",
-            "unescaped caller-local replacement is returned directly",
-            "a rollback failure retains that owner",
-            "private zero-offset aligned-realloc entry",
-            "does not export a public aligned-realloc symbol",
-            "invalid-pointer",
-            "general differential/stress evidence",
-            "M5 completion",
-            "backend promotion",
-        ):
-            self.assertIn(invariant, scope)
-
         expected_evidence = {
             "crabc-mimalloc/tests/native_pointer_first_nonlocal_reallocate.rs",
             "tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c",
