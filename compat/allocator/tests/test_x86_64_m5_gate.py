@@ -4,10 +4,15 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import importlib.util
+import os
+import select
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -39,16 +44,6 @@ class M5GateContractTests(unittest.TestCase):
     def gate_record(self, contract, gate_id):
         return next(entry for entry in contract["gates"] if entry["id"] == gate_id)
 
-    def run_native_evidence(self, command, record):
-        scratch = ROOT / ".work/x86_64/tmp"
-        scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-            artifacts = Path(temporary) / "artifacts"
-            artifacts.mkdir()
-            with mock.patch.object(gate.harness, "command_record", return_value=record):
-                result = gate.run_evidence({"native:fixture": command}, artifacts)["native:fixture"]
-            return result["status"], (artifacts / "native-fixture.log").read_text()
-
     def test_checked_in_contract_claims_every_native_target_and_blocks_missing_evidence(self) -> None:
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
@@ -59,41 +54,411 @@ class M5GateContractTests(unittest.TestCase):
             if missing & set(entry["evidence"]):
                 self.assertIn(entry["id"], summary["blocked_gate_ids"])
 
-    def test_native_evidence_runs_its_targets_with_the_audit_and_fault_seams(self) -> None:
-        command = gate.native_test_command(["native_pointer_first_free", "native_live_remote_free"])
-        self.assertEqual(command[:2], ["cargo", "test"])
-        self.assertIn(gate.NATIVE_FEATURES, command)
+    def test_native_evidence_uses_the_internal_executor_for_a_checked_roster(self) -> None:
+        targets = ["native_pointer_first_free", "native_live_remote_free"]
+        command = gate.native_test_group_command(targets)
+        self.assertEqual(command[:3], ["python3", "compat/allocator/x86_64_m5_gate.py", "--internal-native-tests"])
+        self.assertEqual(command[3:], targets)
+        for target in targets:
+            target_command = gate.native_test_command(
+                target, gate.native_test_feature_profiles(target)[0],
+            )
+            self.assertEqual(target_command[target_command.index("--test") + 1], target)
+            self.assertEqual(
+                target_command[target_command.index("--features") + 1], gate.NATIVE_FEATURES,
+            )
+            self.assertIn("--no-fail-fast", target_command)
+
+    def test_native_evidence_helper_authority_contains_each_full_contract_roster(self) -> None:
+        summary = self.validate()
+        expected_rosters = {
+            tuple(record["native_tests"])
+            for record in self.contract["evidence"].values()
+            if "native_tests" in record
+        }
         self.assertEqual(
-            [command[index + 1] for index, argument in enumerate(command) if argument == "--test"],
-            ["native_pointer_first_free", "native_live_remote_free"],
+            {tuple(roster) for roster in gate.native_test_group_targets(summary["runnable_evidence"])},
+            expected_rosters,
         )
+        for evidence_id, record in self.contract["evidence"].items():
+            if "native_tests" not in record:
+                continue
+            with self.subTest(evidence=evidence_id):
+                command = summary["runnable_evidence"][evidence_id]
+                self.assertEqual(command, gate.native_test_group_command(record["native_tests"]))
+                self.assertEqual(command[3:], record["native_tests"])
 
-    def test_native_evidence_rejects_zero_successful_tests_per_target(self) -> None:
-        command = gate.native_test_command(["native_populated", "native_ignored_only"])
-        output = (
+    def test_native_evidence_helper_rejects_invalid_missing_extra_duplicate_and_wrong_targets(self) -> None:
+        expected = ["native_first", "native_second"]
+        rosters = [expected]
+        self.assertIsNone(gate.native_test_roster_issue(expected, rosters))
+
+        cases = (
+            ([], "empty"),
+            ([None], "invalid"),
+            (["native_first"], "missing"),
+            (["native_first", "native_second", "native_extra"], "extra"),
+            (["native_first", "native_first"], "duplicate"),
+            (["native_first", "native_wrong"], "roster"),
+        )
+        for targets, reason in cases:
+            with self.subTest(targets=targets):
+                self.assertIn(reason, gate.native_test_roster_issue(targets, rosters))
+
+    def test_native_evidence_uses_live_helper_log_and_keeps_authoritative_argv(self) -> None:
+        summary = self.validate()
+        evidence_id = next(
+            name for name, record in self.contract["evidence"].items() if "native_tests" in record
+        )
+        command = summary["runnable_evidence"][evidence_id]
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="m5-native-log-", dir=scratch) as temporary:
+            artifacts = Path(temporary)
+
+            def run_helper(observed_command, log):
+                self.assertEqual(observed_command, command)
+                log.write_text("completed target record\n")
+                return 0
+
+            with mock.patch.object(gate, "run_native_helper_process", side_effect=run_helper) as run:
+                with mock.patch.object(gate.harness, "command_record") as command_record:
+                    result = gate.run_evidence({evidence_id: command}, artifacts)[evidence_id]
+                    log_text = (artifacts / f"{evidence_id.replace(':', '-')}.log").read_text()
+
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["command"], command)
+        self.assertIn("completed target record", log_text)
+        run.assert_called_once()
+        command_record.assert_not_called()
+
+    def test_native_target_validation_uses_the_final_parent_summary(self) -> None:
+        child_summary = (
             "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
-            "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
         )
-        status, log = self.run_native_evidence(command, {"status": 0, "stdout": output, "stderr": ""})
-        self.assertEqual(status, "failed")
-        self.assertIn("native target native_ignored_only ran no successful tests", log)
+        parent_pass = (
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n"
+        )
+        passing = {"status": 0, "stdout": child_summary * 4 + parent_pass, "stderr": "native warning\n"}
+        self.assertIsNone(gate.native_test_run_issue("native_parent", passing))
 
-    def test_native_evidence_accepts_populated_targets_and_preserves_command_failures(self) -> None:
-        command = gate.native_test_command(["native_first", "native_second"])
-        output = (
-            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
-            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        parent_zero = (
+            "test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
         )
-        status, log = self.run_native_evidence(command, {"status": 0, "stdout": output, "stderr": ""})
-        self.assertEqual(status, "passed")
-        self.assertEqual(log, output)
+        self.assertIn("no successful tests", gate.native_test_run_issue(
+            "native_parent", {"status": 0, "stdout": child_summary + parent_zero, "stderr": ""}
+        ))
 
-        failed_output = "error: test binary failed\n"
-        status, log = self.run_native_evidence(
-            command, {"status": 101, "stdout": "", "stderr": failed_output}
+        parent_failed = (
+            "test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
         )
-        self.assertEqual(status, "failed")
-        self.assertEqual(log, failed_output)
+        self.assertIn("did not finish", gate.native_test_run_issue(
+            "native_parent", {"status": 0, "stdout": child_summary + parent_failed, "stderr": "child failed\n"}
+        ))
+        self.assertIn("no parent test summary", gate.native_test_run_issue(
+            "native_parent", {"status": 0, "stdout": "", "stderr": ""}
+        ))
+        self.assertIn("exited with status 101", gate.native_test_run_issue(
+            "native_parent", {"status": 101, "stdout": parent_pass, "stderr": "late Cargo failure\n"}
+        ))
+        self.assertIn("runtime limit", gate.native_test_run_issue(
+            "native_parent", {"status": 124, "stdout": "", "stderr": "", "timed_out": True}
+        ))
+
+    def test_native_target_runs_preserve_streams_and_continue_after_a_failed_target(self) -> None:
+        passed = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        failed = "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        targets = ["native_first", "native_second"]
+        owner = mock.Mock()
+
+        def run(command, *, timeout_seconds):
+            target = command[command.index("--test") + 1]
+            if "--no-run" in command:
+                return {"status": 0, "stdout": f"{target} build output\n", "stderr": "build stderr\n"}
+            if target == targets[0]:
+                return {"status": 101, "stdout": passed + failed, "stderr": "first stderr\n"}
+            return {"status": 0, "stdout": passed, "stderr": "second stderr\n"}
+
+        owner.run.side_effect = run
+        status, log = gate.execute_native_test_group(targets, process_helper=owner)
+        self.assertEqual(status, 1)
+        self.assertEqual(owner.run.call_count, 4)
+        self.assertEqual(
+            [call.kwargs["timeout_seconds"] for call in owner.run.call_args_list],
+            [None, gate.EVIDENCE_TIMEOUT_SECONDS, None, gate.EVIDENCE_TIMEOUT_SECONDS],
+        )
+        self.assertIn("first stderr\n", log)
+        self.assertIn("second stderr\n", log)
+        self.assertIn("test result: FAILED", log)
+        self.assertIn("build output", log)
+        self.assertIn("exit status: 101", log)
+        self.assertIn("exit status: 0", log)
+
+    def test_secure_native_targets_run_with_features_that_activate_their_tests(self) -> None:
+        secure_growth = gate.native_test_feature_profiles("native_secure_public_growth")
+        self.assertEqual(
+            secure_growth,
+            (
+                (*gate.NATIVE_FEATURES.split(","), "mi-secure-3"),
+                (*gate.NATIVE_FEATURES.split(","), "mi-guarded"),
+            ),
+        )
+        secure_release = gate.native_test_feature_profiles("native_secure_os_release_lifecycle")
+        self.assertEqual(
+            secure_release,
+            ((*gate.NATIVE_FEATURES.split(","), "mi-secure-5"),),
+        )
+        self.assertEqual(
+            gate.native_test_feature_profiles("native_pointer_first_free"),
+            (tuple(gate.NATIVE_FEATURES.split(",")),),
+        )
+
+    def test_secure_native_targets_each_run_in_their_own_feature_profile(self) -> None:
+        targets = ["native_secure_public_growth", "native_secure_os_release_lifecycle"]
+        passed = "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        owner = mock.Mock()
+
+        def run(command, *, timeout_seconds):
+            if "--no-run" in command:
+                return {"status": 0, "stdout": "", "stderr": ""}
+            return {"status": 0, "stdout": passed, "stderr": "target stderr\n"}
+
+        owner.run.side_effect = run
+        status, log = gate.execute_native_test_group(targets, process_helper=owner)
+        self.assertEqual(status, 0)
+        self.assertEqual(owner.run.call_count, 6)
+        commands = [call.args[0] for call in owner.run.call_args_list if "--no-run" not in call.args[0]]
+        self.assertEqual(
+            [(command[command.index("--test") + 1], command[command.index("--features") + 1])
+             for command in commands],
+            [
+                (targets[0], ",".join(gate.native_test_feature_profiles(targets[0])[0])),
+                (targets[0], ",".join(gate.native_test_feature_profiles(targets[0])[1])),
+                (targets[1], ",".join(gate.native_test_feature_profiles(targets[1])[0])),
+            ],
+        )
+        self.assertTrue(all(call.kwargs["timeout_seconds"] is None for call in owner.run.call_args_list[::2]))
+        self.assertTrue(all(
+            call.kwargs["timeout_seconds"] == gate.EVIDENCE_TIMEOUT_SECONDS
+            for call in owner.run.call_args_list[1::2]
+        ))
+        self.assertEqual(log.count("target stderr\n"), 3)
+
+    def _native_ready_child(self, temporary_path: Path) -> tuple[list[str], int, Path, Path]:
+        ready_fifo = temporary_path / "ready"
+        marker = temporary_path / "terminated"
+        mask = temporary_path / "sigterm-mask"
+        os.mkfifo(ready_fifo)
+        ready_fd = os.open(ready_fifo, os.O_RDWR | os.O_NONBLOCK)
+        script = f"""
+import os, signal
+from pathlib import Path
+blocked = signal.SIGTERM in signal.pthread_sigmask(signal.SIG_BLOCK, set())
+Path({str(mask)!r}).write_text("blocked" if blocked else "unblocked")
+def stop(_signum, _frame):
+    Path({str(marker)!r}).write_text("handled")
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+fd = os.open({str(ready_fifo)!r}, os.O_WRONLY)
+os.write(fd, b"ready")
+os.close(fd)
+signal.pause()
+"""
+        return [sys.executable, "-c", script], ready_fd, marker, mask
+
+    def _signal_at_popen_return(self, ready_fd: int, processes: list[subprocess.Popen]):
+        real_popen = subprocess.Popen
+
+        def spawn(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            readable, _, _ = select.select([ready_fd], [], [], 10)
+            if not readable:
+                raise AssertionError("native child did not reach the Popen publication barrier")
+            if os.read(ready_fd, 64) != b"ready":
+                raise AssertionError("native child sent an invalid readiness marker")
+            os.kill(os.getpid(), signal.SIGTERM)
+            return process
+
+        return spawn
+
+    def _kill_unreaped_processes(self, processes: list[subprocess.Popen], ready_fd: int) -> None:
+        os.close(ready_fd)
+        for process in processes:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "native process cleanup uses Linux process groups")
+    def test_native_process_helper_owns_child_before_delivering_cancellation(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="m5-popen-owner-", dir=scratch) as temporary:
+            command, ready_fd, marker, mask = self._native_ready_child(Path(temporary))
+            processes = []
+            reaped_by_owner = False
+            cancellation = gate._install_cancellation_handlers()
+            owner = gate.NativeProcessHelper(cancellation)
+            try:
+                with mock.patch.object(
+                    gate.subprocess, "Popen",
+                    side_effect=self._signal_at_popen_return(ready_fd, processes),
+                ):
+                    with self.assertRaises(gate.NativeProcessCancelled) as cancelled:
+                        owner.run(command, timeout_seconds=None)
+            finally:
+                reaped_by_owner = len(processes) == 1 and processes[0].poll() is not None
+                self._kill_unreaped_processes(processes, ready_fd)
+                gate._restore_signal_handlers(cancellation.previous)
+
+            self.assertEqual(cancelled.exception.signum, signal.SIGTERM)
+            self.assertEqual(len(processes), 1)
+            self.assertTrue(reaped_by_owner)
+            self.assertIsNotNone(processes[0].returncode)
+            self.assertEqual(mask.read_text(), "unblocked")
+            self.assertEqual(marker.read_text(), "handled")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "native process cleanup uses Linux process groups")
+    def test_live_helper_owns_child_before_delivering_cancellation(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="m5-popen-helper-", dir=scratch) as temporary:
+            temporary_path = Path(temporary)
+            command, ready_fd, marker, mask = self._native_ready_child(temporary_path)
+            log = temporary_path / "native-helper.log"
+            processes = []
+            reaped_by_owner = False
+            try:
+                with mock.patch.object(
+                    gate.subprocess, "Popen",
+                    side_effect=self._signal_at_popen_return(ready_fd, processes),
+                ):
+                    with self.assertRaises(gate.NativeProcessCancelled) as cancelled:
+                        gate.run_native_helper_process(command, log)
+            finally:
+                reaped_by_owner = len(processes) == 1 and processes[0].poll() is not None
+                self._kill_unreaped_processes(processes, ready_fd)
+
+            self.assertEqual(cancelled.exception.signum, signal.SIGTERM)
+            self.assertEqual(len(processes), 1)
+            self.assertTrue(reaped_by_owner)
+            self.assertIsNotNone(processes[0].returncode)
+            self.assertEqual(mask.read_text(), "unblocked")
+            self.assertEqual(marker.read_text(), "handled")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "native process cleanup uses Linux subreaping")
+    def test_native_helper_signal_reaps_active_descendants_and_keeps_completed_records(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous_subreaper = ctypes.c_int()
+        self.assertEqual(libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0), 0)
+        self.assertEqual(libc.prctl(gate.PR_SET_CHILD_SUBREAPER, ctypes.c_ulong(1), 0, 0, 0), 0)
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="m5-native-process-", dir=scratch) as temporary:
+                temporary_path = Path(temporary)
+                ready_fifo = temporary_path / "ready"
+                terminated_prefix = temporary_path / "terminated"
+                log = temporary_path / "native-evidence.log"
+                os.mkfifo(ready_fifo)
+                ready_fd = os.open(ready_fifo, os.O_RDWR | os.O_NONBLOCK)
+                second_target = f"""
+import os, signal
+fifo = {str(ready_fifo)!r}
+log = {str(log)!r}
+marker = {str(terminated_prefix)!r}
+with open(log) as output:
+    assert "=== native target native_waiting" in output.read()
+def stop(_signum, _frame):
+    with open(marker + "." + str(os.getpid()), "w") as output:
+        output.write("terminated")
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+child = os.fork()
+if child == 0:
+    signal.pause()
+fd = os.open(fifo, os.O_WRONLY)
+os.write(fd, (str(os.getpid()) + " " + str(child) + "\\n").encode())
+os.close(fd)
+signal.pause()
+"""
+                first_target = (
+                    "print('test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+                    "0 filtered out; finished in 0.00s')"
+                )
+                driver = f"""
+import sys
+sys.path.insert(0, {str(ROOT / "compat/allocator")!r})
+import x86_64_m5_gate as gate
+gate.native_test_feature_profiles = lambda _target: (("test",),)
+gate.native_test_command = lambda target, _features: [
+    sys.executable, "-c", {first_target!r} if target == "native_first" else {second_target!r}
+]
+raise SystemExit(gate.run_native_test_helper(
+    ["native_first", "native_waiting"], sys.stdout,
+))
+"""
+                controller_result = {}
+
+                def interrupt_after_target_starts() -> None:
+                    try:
+                        readable, _, _ = select.select([ready_fd], [], [], 10)
+                        if not readable:
+                            raise AssertionError("native child did not reach the cancellation barrier")
+                        controller_result["pids"] = [int(pid) for pid in os.read(ready_fd, 128).split()]
+                        if len(controller_result["pids"]) != 2:
+                            raise AssertionError("native child did not report both process ids")
+                        controller_result["pgid"] = os.getpgid(controller_result["pids"][1])
+                        controller_result["log_before_signal"] = log.read_text()
+                    except BaseException as error:
+                        controller_result["error"] = str(error)
+                    finally:
+                        os.kill(os.getpid(), signal.SIGTERM)
+
+                controller = threading.Thread(target=interrupt_after_target_starts, daemon=True)
+                controller.start()
+                try:
+                    with self.assertRaises(gate.NativeProcessCancelled) as cancelled:
+                        gate.run_native_helper_process([sys.executable, "-c", driver], log)
+                finally:
+                    controller.join(timeout=10)
+                    os.close(ready_fd)
+                    pgid = controller_result.get("pgid")
+                    if pgid is not None:
+                        try:
+                            os.killpg(pgid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        while True:
+                            try:
+                                os.waitpid(-pgid, 0)
+                            except InterruptedError:
+                                continue
+                            except ChildProcessError:
+                                break
+
+                self.assertFalse(controller.is_alive())
+                self.assertNotIn("error", controller_result)
+                self.assertEqual(cancelled.exception.signum, signal.SIGTERM)
+                log_text = controller_result["log_before_signal"]
+                self.assertIn("=== native target native_first", log_text)
+                self.assertIn("--- validation ---\npassed", log_text)
+                self.assertIn("=== native target native_waiting", log_text)
+                for pid in controller_result["pids"]:
+                    self.assertTrue((temporary_path / f"terminated.{pid}").is_file())
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(pid, 0)
+        finally:
+            self.assertEqual(
+                libc.prctl(
+                    gate.PR_SET_CHILD_SUBREAPER, ctypes.c_ulong(previous_subreaper.value), 0, 0, 0,
+                ),
+                0,
+            )
 
     def test_a_new_native_target_outside_every_evidence_entry_breaks_closure(self) -> None:
         with self.assertRaisesRegex(harness.HarnessError, "native_future_witness"):

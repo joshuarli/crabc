@@ -9,9 +9,9 @@ qualify performance.
 
 Evidence is one of four shapes:
 
-* `native_tests`: `crabc-mimalloc/tests/native_*` integration targets, run
-  together with their default-off audit and fault features. Every such
-  target belongs to exactly one native evidence entry, so a new direct
+* `native_tests`: `crabc-mimalloc/tests/native_*` integration targets, each
+  built and run independently with its default-off audit and fault features.
+  Every such target belongs to exactly one native evidence entry, so a new direct
   runtime witness cannot silently escape the evidence closure.
 * `command`: an allocator-container command (`python3 <script> ...`). The
   one `{scratch}` placeholder names this run's fresh per-evidence directory.
@@ -31,11 +31,17 @@ executed; its pass never removes a blocker by itself.
 from __future__ import annotations
 
 import argparse
+import ctypes
+from contextlib import contextmanager, nullcontext
+import os
 import re
+import shlex
 import shutil
+import signal
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterator, Mapping, Sequence, TextIO
 
 import run as harness
 import perf_engine_x86_64 as engine
@@ -62,19 +68,251 @@ GATE_IDS = (
 NATIVE_TESTS = harness.ROOT / "crabc-mimalloc/tests"
 NATIVE_TEST_PREFIX = "native_"
 NATIVE_FEATURES = "native-runtime-test-audit,native-runtime-test-fault"
+# These two test targets compile their behavior only when the owning allocator
+# mode is enabled. Public growth has separate secure and guarded profiles.
+NATIVE_TEST_EXTRA_FEATURE_PROFILES = {
+    "native_secure_public_growth": (("mi-secure-3",), ("mi-guarded",)),
+    "native_secure_os_release_lifecycle": (("mi-secure-5",),),
+}
 RUST_TARGET = "x86_64-unknown-linux-musl"
 EVIDENCE_TIMEOUT_SECONDS = 3600
 SCRATCH_PLACEHOLDER = "{scratch}"
+INTERNAL_NATIVE_TEST_MODE = "--internal-native-tests"
 RUST_TEST_SUMMARY = re.compile(
     r"^test result: (?P<status>ok|FAILED)\. (?P<passed>[0-9]+) passed; "
     r"(?P<failed>[0-9]+) failed; (?P<ignored>[0-9]+) ignored; "
     r"(?P<measured>[0-9]+) measured; (?P<filtered>[0-9]+) filtered out;",
     flags=re.MULTILINE,
 )
+NATIVE_PROCESS_TERMINATION_GRACE_SECONDS = 5
+PR_SET_CHILD_SUBREAPER = 36
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m5-gate"
 QUALIFICATION_PROFILES = ("full", "correctness")
 CORRECTNESS_DEFERRED_GATE = "m5.codegen-performance"
 CORRECTNESS_DEFERRED_EVIDENCE = ["codegen:hot-path-audit", "perf:engine-early-proof"]
+
+
+class NativeProcessCancelled(Exception):
+    """The M5 evidence owner received a termination signal."""
+
+    def __init__(self, signum: int) -> None:
+        super().__init__(f"received signal {signum}")
+        self.signum = signum
+
+
+class NativeCancellation:
+    """Record cancellation until a newly spawned process has an explicit owner."""
+
+    def __init__(self, previous: Mapping[int, Any]) -> None:
+        self.previous = dict(previous)
+        self._deferred = 0
+        self._pending_signum: int | None = None
+
+    def handle(self, signum: int, _frame: Any) -> None:
+        if self._deferred:
+            if self._pending_signum is None:
+                self._pending_signum = signum
+            return
+        raise NativeProcessCancelled(signum)
+
+    @contextmanager
+    def defer_until_owned(self) -> Iterator[None]:
+        """Queue signals across Popen and handle publication without masking the child."""
+
+        self._deferred += 1
+        try:
+            yield
+        except BaseException as error:
+            self._deferred -= 1
+            if self._deferred == 0 and self._pending_signum is not None:
+                signum = self._pending_signum
+                self._pending_signum = None
+                raise NativeProcessCancelled(signum) from error
+            raise
+        else:
+            self._deferred -= 1
+            if self._deferred == 0 and self._pending_signum is not None:
+                signum = self._pending_signum
+                self._pending_signum = None
+                raise NativeProcessCancelled(signum)
+
+
+def _install_cancellation_handlers() -> NativeCancellation:
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    cancellation = NativeCancellation(previous)
+    for signum in previous:
+        signal.signal(signum, cancellation.handle)
+    return cancellation
+
+
+def _restore_signal_handlers(previous: Mapping[int, Any]) -> None:
+    for signum, handler in previous.items():
+        signal.signal(signum, handler)
+
+
+def _ignore_cancellation_signals() -> dict[int, Any]:
+    previous = {signum: signal.getsignal(signum) for signum in (signal.SIGINT, signal.SIGTERM)}
+    for signum in previous:
+        signal.signal(signum, signal.SIG_IGN)
+    return previous
+
+
+def _enable_child_subreaper() -> None:
+    """Adopt orphaned Cargo descendants so this helper can reap them after group teardown."""
+
+    if not sys.platform.startswith("linux"):
+        raise harness.HarnessError("M5 native process ownership requires Linux child subreaping")
+    libc = ctypes.CDLL(None, use_errno=True)
+    prctl = libc.prctl
+    prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]
+    prctl.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    if prctl(
+        PR_SET_CHILD_SUBREAPER,
+        ctypes.c_ulong(1),
+        ctypes.c_ulong(0),
+        ctypes.c_ulong(0),
+        ctypes.c_ulong(0),
+    ) != 0:
+        error = ctypes.get_errno()
+        raise harness.HarnessError(f"cannot own native Cargo descendants: {os.strerror(error)}")
+
+
+class NativeProcessHelper:
+    """Own each Cargo process group, including descendants after timeout or cancellation."""
+
+    def __init__(self, cancellation: NativeCancellation | None = None) -> None:
+        self._active: subprocess.Popen[str] | None = None
+        self._cancellation = cancellation
+
+    @staticmethod
+    def _signal_group(pgid: int, signum: int) -> None:
+        try:
+            os.killpg(pgid, signum)
+        except ProcessLookupError:
+            pass
+
+    @staticmethod
+    def _group_exists(pgid: int) -> bool:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        return True
+
+    @staticmethod
+    def _reap_group_children(pgid: int) -> None:
+        while True:
+            try:
+                os.waitpid(-pgid, 0)
+            except InterruptedError:
+                continue
+            except ChildProcessError:
+                return
+
+    def _stop_active(self) -> tuple[str, str]:
+        process = self._active
+        if process is None:
+            return "", ""
+        previous = _ignore_cancellation_signals()
+        try:
+            self._signal_group(process.pid, signal.SIGTERM)
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=NATIVE_PROCESS_TERMINATION_GRACE_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                self._signal_group(process.pid, signal.SIGKILL)
+                stdout, stderr = process.communicate()
+            self._signal_group(process.pid, signal.SIGKILL)
+            self._reap_group_children(process.pid)
+            return stdout or "", stderr or ""
+        finally:
+            self._active = None
+            _restore_signal_handlers(previous)
+
+    def run(self, command: Sequence[str], *, timeout_seconds: int | None) -> dict[str, Any]:
+        if timeout_seconds is not None and (
+            not isinstance(timeout_seconds, int)
+            or isinstance(timeout_seconds, bool)
+            or timeout_seconds <= 0
+        ):
+            raise harness.HarnessError("native target timeout must be a positive number of seconds")
+        process: subprocess.Popen[str] | None = None
+        try:
+            cancellation_scope = (
+                self._cancellation.defer_until_owned()
+                if self._cancellation is not None else nullcontext()
+            )
+            try:
+                with cancellation_scope:
+                    process = subprocess.Popen(
+                        list(command), cwd=harness.ROOT, text=True, stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE, start_new_session=True,
+                    )
+                    self._active = process
+            except OSError as error:
+                return {
+                    "command": list(command), "status": 127, "stdout": "", "stderr": str(error),
+                }
+            try:
+                stdout, stderr = process.communicate(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = self._stop_active()
+                return {
+                    "command": list(command), "status": 124, "stdout": stdout, "stderr": stderr,
+                    "timed_out": True,
+                }
+            if process.returncode is None:
+                raise harness.HarnessError("native Cargo process returned without an exit status")
+            if self._group_exists(process.pid):
+                self._stop_active()
+                return {
+                    "command": list(command), "status": 1, "stdout": stdout or "",
+                    "stderr": (stderr or "") + "native command left child processes running\n",
+                }
+            return {
+                "command": list(command), "status": process.returncode,
+                "stdout": stdout or "", "stderr": stderr or "",
+            }
+        except BaseException:
+            try:
+                self._stop_active()
+            except BaseException as cleanup_error:
+                print(f"M5 native process cleanup failed: {cleanup_error}", file=sys.stderr, flush=True)
+            raise
+        finally:
+            if process is not None and self._active is process and process.returncode is not None:
+                self._active = None
+
+
+def run_native_helper_process(command: Sequence[str], log: Path) -> int:
+    """Run the native-target helper without a cumulative timeout and retain output live."""
+
+    cancellation = _install_cancellation_handlers()
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        with log.open("wb") as output:
+            with cancellation.defer_until_owned():
+                process = subprocess.Popen(
+                    list(command), cwd=harness.ROOT, stdout=output, stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            return process.wait()
+    except BaseException:
+        if process is not None and process.poll() is None:
+            cleanup_handlers = _ignore_cancellation_signals()
+            try:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            finally:
+                _restore_signal_handlers(cleanup_handlers)
+        raise
+    finally:
+        _restore_signal_handlers(cancellation.previous)
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -94,37 +332,179 @@ def native_test_targets(tests_root: Path = NATIVE_TESTS) -> set[str]:
     return {path.stem for path in tests_root.glob(f"{NATIVE_TEST_PREFIX}*.rs")}
 
 
-def native_test_command(targets: Sequence[str]) -> list[str]:
-    """One Cargo run over the named native targets with their audit seams."""
+def native_test_group_command(targets: Sequence[str]) -> list[str]:
+    """Run the gate's internal per-target executor for one checked roster."""
+
+    return [
+        "python3", harness.relative(Path(__file__)), INTERNAL_NATIVE_TEST_MODE, *targets,
+    ]
+
+
+def native_test_feature_profiles(target: str) -> tuple[tuple[str, ...], ...]:
+    """Return every required audit-feature profile for one native target."""
+
+    base = tuple(NATIVE_FEATURES.split(","))
+    extras = NATIVE_TEST_EXTRA_FEATURE_PROFILES.get(target, ((),))
+    return tuple((*base, *profile) for profile in extras)
+
+
+def native_test_command(target: str, features: Sequence[str]) -> list[str]:
+    """Run exactly one native integration target with one feature profile."""
 
     command = [
         "cargo", "test", "--locked", "--target", RUST_TARGET, "-p", "crabc-mimalloc",
-        "--no-default-features", "--features", NATIVE_FEATURES, "--no-fail-fast",
+        "--no-default-features", "--features", ",".join(features), "--no-fail-fast",
+        "--test", target,
     ]
-    for target in targets:
-        command += ["--test", target]
     return command
 
 
-def native_test_run_issue(command: Sequence[str], output: str) -> str | None:
-    """Require one successful libtest summary with a passing test per target."""
+def native_test_group_targets(runnable_evidence: Mapping[str, Any]) -> list[list[str]]:
+    """Return the checked target rosters carried by internal helper commands."""
 
-    if command[:2] != ["cargo", "test"] or "--no-fail-fast" not in command:
-        return None
-    targets = [command[index + 1] for index, argument in enumerate(command[:-1]) if argument == "--test"]
+    prefix = native_test_group_command([])
+    return [
+        list(command[len(prefix):])
+        for command in runnable_evidence.values()
+        if isinstance(command, list) and command[:len(prefix)] == prefix
+    ]
+
+
+def is_native_test_group_command(command: Any) -> bool:
+    prefix = native_test_group_command([])
+    return isinstance(command, list) and command[:len(prefix)] == prefix and len(command) > len(prefix)
+
+
+def native_test_roster_issue(targets: Sequence[str], expected_rosters: Sequence[Sequence[str]]) -> str | None:
+    """Require an internal helper invocation to name one exact evidence roster."""
+
+    if not isinstance(targets, Sequence) or isinstance(targets, (str, bytes)):
+        return "native target roster is invalid"
     if not targets:
-        return None
-    summaries = list(RUST_TEST_SUMMARY.finditer(output))
-    if len(summaries) != len(targets):
-        return f"expected {len(targets)} native test summaries, observed {len(summaries)}"
-    for target, summary in zip(targets, summaries):
-        passed = int(summary.group("passed"))
-        failed = int(summary.group("failed"))
-        if summary.group("status") != "ok" or failed != 0:
-            return f"native target {target} did not finish with a passing test summary"
-        if passed == 0:
-            return f"native target {target} ran no successful tests"
+        return "native target roster is empty"
+    if any(not isinstance(target, str) or not target for target in targets):
+        return "native target roster contains an invalid target"
+    if len(set(targets)) != len(targets):
+        return "native target roster contains a duplicate target"
+    target_set = set(targets)
+    expected = [list(roster) for roster in expected_rosters]
+    if list(targets) not in expected:
+        if any(target_set < set(roster) for roster in expected):
+            return "native target roster is missing checked targets"
+        if any(set(roster) < target_set for roster in expected):
+            return "native target roster includes extra targets"
+        return "native target roster does not match a checked evidence group"
     return None
+
+
+def native_test_run_issue(target: str, record: Mapping[str, Any]) -> str | None:
+    """Require a passing parent libtest summary after all child output."""
+
+    status = record.get("status")
+    if not isinstance(status, int) or isinstance(status, bool):
+        return f"native target {target} Cargo command returned an invalid status"
+    if record.get("timed_out") is True:
+        return f"native target {target} exceeded its {EVIDENCE_TIMEOUT_SECONDS}-second runtime limit"
+    output = record.get("stdout")
+    if not isinstance(output, str):
+        return f"native target {target} produced no parent test summary"
+    summaries = list(RUST_TEST_SUMMARY.finditer(output))
+    if not summaries:
+        if status != 0:
+            return f"native target {target} Cargo command exited with status {status}"
+        return f"native target {target} produced no parent test summary"
+    parent = summaries[-1]
+    passed = int(parent.group("passed"))
+    failed = int(parent.group("failed"))
+    if parent.group("status") != "ok" or failed != 0:
+        return f"native target {target} did not finish with a passing parent summary"
+    if passed == 0:
+        return f"native target {target} ran no successful tests"
+    if status != 0:
+        return f"native target {target} Cargo command exited with status {status}"
+    return None
+
+
+def _write_native_log(output: TextIO | None, records: list[str], text: str) -> None:
+    if output is None:
+        records.append(text)
+    else:
+        output.write(text)
+        output.flush()
+
+
+def _format_native_command_record(label: str, record: Mapping[str, Any]) -> str:
+    return "\n".join((
+        f"--- {label} ---",
+        f"exit status: {record.get('status')}",
+        "stdout:",
+        str(record.get("stdout", "")),
+        "stderr:",
+        str(record.get("stderr", "")),
+        "",
+    ))
+
+
+def execute_native_test_group(
+    targets: Sequence[str], *, output: TextIO | None = None,
+    process_helper: NativeProcessHelper | None = None,
+) -> tuple[int, str]:
+    """Run each checked target/profile and flush its completed output to the gate log."""
+
+    overall_status = 0
+    records: list[str] = []
+    owner = NativeProcessHelper() if process_helper is None else process_helper
+    for target in targets:
+        for features in native_test_feature_profiles(target):
+            command = native_test_command(target, features)
+            build_command = harness.cargo_test_build_command(command)
+            prelude = [
+                f"=== native target {target} ({','.join(features)}) ===",
+                f"test command: {shlex.join(command)}",
+            ]
+            if build_command is not None:
+                prelude.append(f"build command: {shlex.join(build_command)}")
+            _write_native_log(output, records, "\n".join(prelude) + "\n")
+
+            build_record = None
+            issue = None
+            if build_command is not None:
+                build_record = owner.run(build_command, timeout_seconds=None)
+                _write_native_log(
+                    output, records, _format_native_command_record("build", build_record),
+                )
+                if build_record["status"] != 0:
+                    issue = f"native target {target} Cargo build exited with status {build_record['status']}"
+            if issue is None:
+                record = owner.run(command, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+                issue = native_test_run_issue(target, record)
+                _write_native_log(output, records, _format_native_command_record("test", record))
+            if issue is not None:
+                overall_status = 1
+            _write_native_log(
+                output, records,
+                f"--- validation ---\n{f'failed: {issue}' if issue is not None else 'passed'}\n\n",
+            )
+    return overall_status, "" if output is not None else "".join(records)
+
+
+def run_native_test_helper(targets: Sequence[str], output: TextIO) -> int:
+    """Own cancellation and descendant cleanup while running one checked roster."""
+
+    _enable_child_subreaper()
+    cancellation = _install_cancellation_handlers()
+    owner = NativeProcessHelper(cancellation)
+    try:
+        status, _ = execute_native_test_group(targets, output=output, process_helper=owner)
+        return status
+    except NativeProcessCancelled as error:
+        print(f"M5 native target evidence interrupted: {error}", file=sys.stderr, flush=True)
+        return 128 + error.signum
+    finally:
+        try:
+            owner._stop_active()
+        finally:
+            _restore_signal_handlers(cancellation.previous)
 
 
 def validate_contract(
@@ -164,7 +544,7 @@ def validate_contract(
                         f"M5 native target {target} is claimed by both {claimed[target]} and {evidence_id}"
                     )
                 claimed[target] = evidence_id
-            runnable[evidence_id] = native_test_command(targets)
+            runnable[evidence_id] = native_test_group_command(targets)
         elif shape == {"command"}:
             command = record["command"]
             if command is None:
@@ -397,14 +777,17 @@ def run_evidence(runnable: Mapping[str, Any], artifacts: Path) -> dict[str, dict
         shutil.rmtree(scratch, ignore_errors=True)
         scratch.mkdir(parents=True)
         command = [argument.replace(SCRATCH_PLACEHOLDER, str(scratch)) for argument in command]
+        if is_native_test_group_command(command):
+            status = run_native_helper_process(command, log)
+            results[evidence_id] = {
+                "command": list(command),
+                "log": harness.relative(log),
+                "status": "passed" if status == 0 else "failed",
+            }
+            continue
         record = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
         output = str(record["stdout"]) + str(record["stderr"])
         status = "passed" if record["status"] == 0 else "failed"
-        if status == "passed":
-            issue = native_test_run_issue(command, output)
-            if issue is not None:
-                output += f"\nM5 native test validation failed: {issue}\n"
-                status = "failed"
         log.write_text(output)
         results[evidence_id] = {
             "command": list(command),
@@ -421,6 +804,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="validate the contract and native-target closure without executing evidence")
     mode.add_argument("--gate", choices=GATE_IDS,
         help="execute and classify only the evidence of one gate")
+    mode.add_argument(INTERNAL_NATIVE_TEST_MODE, nargs="+", metavar="TARGET", help=argparse.SUPPRESS)
     parser.add_argument("--qualification-profile", choices=QUALIFICATION_PROFILES, default="full",
         help="correctness requires functional evidence and defers codegen optimization and throughput")
     arguments = parser.parse_args(argv)
@@ -434,6 +818,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
     harness.require_native_x86_64()
+    if arguments.internal_native_tests is not None:
+        issue = native_test_roster_issue(
+            arguments.internal_native_tests,
+            native_test_group_targets(summary["runnable_evidence"]),
+        )
+        if issue is not None:
+            raise harness.HarnessError(f"M5 internal native test invocation is invalid: {issue}")
+        status = run_native_test_helper(arguments.internal_native_tests, sys.stdout)
+        if status != 0:
+            print("M5 native target evidence failed", file=sys.stderr)
+        return status
     artifacts = ARTIFACTS if arguments.qualification_profile == "full" else ARTIFACTS.with_name("m5-correctness-gate")
     artifacts.mkdir(parents=True, exist_ok=True)
     selected = contract
@@ -464,6 +859,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except NativeProcessCancelled as error:
+        print(f"ERROR: M5 gate interrupted: {error}", file=sys.stderr)
+        sys.exit(128 + error.signum)
     except harness.HarnessError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         sys.exit(2)
