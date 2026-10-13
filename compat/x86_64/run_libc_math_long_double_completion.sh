@@ -15,7 +15,8 @@ readonly CANDIDATE_FUNCTIONS=(
 	__fesetround __fpclassifyl __signbitl _start
 	crabc_x86_64_math_long_double_completion_probe
 	exp10l exp2l fabsl fdiml
-	feclearexcept fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept
+	feholdexcept feclearexcept fegetenv fegetround feraiseexcept fesetenv fesetround
+	feupdateenv fetestexcept
 	floorl frexpl modfl pow10l powl scalbnl
 )
 readonly AGGREGATE_SELECTED_FUNCTIONS=(
