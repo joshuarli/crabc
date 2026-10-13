@@ -3627,6 +3627,29 @@ unsafe fn native_child_destroy_tracking(
     ) })
 }
 
+/// Returns the arena-release retry storage after child destruction completed.
+///
+/// # Safety
+/// The caller holds the record lock or has exclusive terminal ownership of
+/// this record. No arena-release retry remains pending.
+#[cfg(target_arch = "x86_64")]
+unsafe fn free_native_child_destroy_tracking(
+    record: core::ptr::NonNull<NativeChildSubprocess>,
+) -> Result<(), NativeSubprocessError> {
+    // SAFETY: the caller serializes this exact record's destruction state.
+    let scratch = unsafe { &mut *(*record.as_ptr()).destroy_state.get() };
+    let Some(allocation) = scratch.as_mut() else { return Ok(()) };
+    if !allocation.is_live() { return Err(NativeSubprocessError::Retained); }
+    let state = allocation.pointer().cast::<NativeChildArenaDestroyState>();
+    // SAFETY: the live scratch capability holds this initialized header.
+    if unsafe { (*state.as_ptr()).pending.is_some() } { return Err(NativeSubprocessError::Retained); }
+    // SAFETY: the retained record keeps its original parent metadata route.
+    let parent = unsafe { (*record.as_ptr()).parent_metadata };
+    parent.free(allocation).map_err(|_| NativeSubprocessError::Retained)?;
+    scratch.take();
+    Ok(())
+}
+
 /// Pinned `mi_subproc_unsafe_destroy` for one production record, then the
 /// record itself. `terminal` selects permanent terminal admission; otherwise
 /// native admission retains orphan TLS members until their own finish. The
@@ -3668,9 +3691,16 @@ unsafe fn destroy_record(
                 Some(child) => child,
                 None if unsafe { (*record.storage.get()).is_some() } => {
                     // Source teardown finished, but an exact metadata return
-                    // refused. Retry only final record storage return when no
-                    // actual TLS member still retains this same record.
-                    return Ok(unsafe { *record.members.get() });
+                    // refused. Retry its scratch return while any actual TLS
+                    // member still retains this same record.
+                    let members = unsafe { *record.members.get() };
+                    #[cfg(target_arch = "x86_64")]
+                    if members != 0 {
+                        // SAFETY: source teardown completed before the record
+                        // retained only actual TLS members and its context.
+                        unsafe { free_native_child_destroy_tracking(id.0) }?;
+                    }
+                    return Ok(members);
                 }
                 None => return Err(NativeSubprocessError::Gone),
             };
@@ -3728,6 +3758,12 @@ unsafe fn destroy_record(
                 Ok(()) => {
                     // Destruction consumes no actual TLS token; each member
                     // later completes its own terminal finish against this record.
+                    #[cfg(target_arch = "x86_64")]
+                    if members != 0 && !terminal {
+                        // SAFETY: successful arena teardown leaves no retry
+                        // owner, and the record lock excludes final TLS finish.
+                        unsafe { free_native_child_destroy_tracking(id.0) }?;
+                    }
                     Ok(members)
                 }
                 Err(ChildSubprocessDestroyFailure::Retained { owner: child, error }) => {
@@ -3790,17 +3826,8 @@ unsafe fn free_record(record: core::ptr::NonNull<NativeChildSubprocess>) -> Resu
     // No reference to the record spans its enclosing allocation's return.
     #[cfg(target_arch = "x86_64")]
     {
-        let scratch = unsafe { &mut *(*record.as_ptr()).destroy_state.get() };
-        if let Some(allocation) = scratch.as_mut() {
-            // General metadata release rejects admitted failures terminally;
-            // no stale header or failure-bit projection may follow that edge.
-            if !allocation.is_live() { return Err(NativeSubprocessError::Retained); }
-            let state = allocation.pointer().cast::<NativeChildArenaDestroyState>();
-            if unsafe { (*state.as_ptr()).pending.is_some() } { return Err(NativeSubprocessError::Retained); }
-            let parent = unsafe { (*record.as_ptr()).parent_metadata };
-            parent.free(allocation).map_err(|_| NativeSubprocessError::Retained)?;
-            scratch.take();
-        }
+        // SAFETY: record destruction has exclusive terminal ownership.
+        unsafe { free_native_child_destroy_tracking(record) }?;
     }
     let mut storage = unsafe { (*(*record.as_ptr()).storage.get()).take() }
         .ok_or(NativeSubprocessError::Retained)?;
