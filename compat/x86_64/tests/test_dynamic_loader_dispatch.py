@@ -14,6 +14,64 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class DynamicLoaderDispatchTests(unittest.TestCase):
+    def test_pthread_lifecycle_dispatches_inspect_the_pinned_image_first(self):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            inspected = work / "inspected"
+            captured = work / "captured"
+            docker = work / "docker"
+            docker.write_text(
+                f"#!{sys.executable}\n"
+                "import os, sys\n"
+                "if sys.argv[1:3] == ['image', 'inspect']:\n"
+                "    if '--format' not in sys.argv:\n"
+                "        open(os.environ['DISPATCH_INSPECTED'], 'a').close()\n"
+                "    if '--format' in sys.argv:\n"
+                "        field = sys.argv[sys.argv.index('--format') + 1]\n"
+                "        print({'{{.Os}}/{{.Architecture}}': 'linux/amd64', '{{.Id}}': 'sha256:fixture'}[field])\n"
+                "elif sys.argv[1] == 'run':\n"
+                "    if not os.path.exists(os.environ['DISPATCH_INSPECTED']):\n"
+                "        raise SystemExit('container launched before image inspection')\n"
+                "    with open(os.environ['DISPATCH_CAPTURE'], 'a') as output:\n"
+                "        output.write('\\n'.join(sys.argv[1:]) + '\\n')\n"
+                "else:\n"
+                "    raise SystemExit('unexpected Docker operation')\n"
+            )
+            docker.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update(
+                PATH=f"{work}{os.pathsep}{os.environ['PATH']}",
+                DISPATCH_INSPECTED=str(inspected),
+                DISPATCH_CAPTURE=str(captured),
+                CRABC_X86_64_CORE_IMAGE="fixture",
+            )
+            static = work / "static"
+            dynamic = work / "dynamic"
+            static.mkdir()
+            dynamic.mkdir()
+            commands = {
+                "owned-pthread-lifecycle": ["--static-sysroot", str(static), "--retain"],
+                "owned-pthread-join-cancel": ["--static-sysroot", str(static), str(dynamic)],
+                "owned-pthread-cond-cancel": ["--static-sysroot", str(static), str(dynamic)],
+                "owned-pthread-cond-timed": ["--static-sysroot", str(static), str(dynamic)],
+                "owned-pthread-mutex": ["--static-sysroot", str(static), str(dynamic)],
+            }
+            for command, arguments in commands.items():
+                inspected.unlink(missing_ok=True)
+                captured.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ["bash", str(ROOT / "scripts/dev-x86_64.sh"), command, *arguments],
+                    cwd=ROOT, env=environment, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, f"{command}: {result.stderr}")
+                self.assertTrue(inspected.exists(), command)
+                invocation = captured.read_text().splitlines()
+                self.assertIn(f"/workspace/{static.relative_to(ROOT).as_posix()}", invocation)
+                if command != "owned-pthread-lifecycle":
+                    self.assertIn(f"/workspace/{dynamic.relative_to(ROOT).as_posix()}", invocation)
+
     def test_mount_authority_is_confined_to_dynamic_product_and_pty_gates(self):
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)

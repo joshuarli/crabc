@@ -667,11 +667,11 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
   owned-posix-signals [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
   owned-signal-helpers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
-  owned-pthread-join-cancel  test installed ordinary/try/timed join ownership and cancellation
-  owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
-  owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
+  owned-pthread-join-cancel [DYNAMIC_SYSROOT | --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test installed ordinary/try/timed join ownership and cancellation
+  owned-pthread-cond-cancel [DYNAMIC_SYSROOT | --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test condition cancellation and mutex reacquisition
+  owned-pthread-cond-timed [DYNAMIC_SYSROOT | --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test timed/shared condition transactions and mutex handoffs
   owned-pthread-mutex [DYNAMIC_SYSROOT | --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]  test owned recursive, error-checking, and timed mutex behavior
-  owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
+  owned-pthread-lifecycle [--static-sysroot STATIC_SYSROOT] [--retain]  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the declared owned static product suite; write its receipt
   lua-static-source-build [--allocator-backend native-shadow]  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   lua-dynamic-source-build [--allocator-backend native-shadow]  qualify pinned Lua through installed/extracted x86 dynamic sysroots
@@ -3605,6 +3605,9 @@ prepare_owned_posix_replay_arguments() {
     if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ] || [ "$selected_command" = owned-math-fenv-all-entry ] || [ "$selected_command" = owned-aio ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
+    if { [ "$selected_command" = owned-pthread-join-cancel ] || [ "$selected_command" = owned-pthread-cond-cancel ] || [ "$selected_command" = owned-pthread-cond-timed ] || [ "$selected_command" = owned-pthread-mutex ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
+        fail "$expected"
+    fi
     POSIX_REPLAY_ARGUMENTS=()
     if [ -n "$static_product" ]; then
         static_product="$(translate_owned_posix_product "$static_product")" || exit 2
@@ -3614,6 +3617,32 @@ prepare_owned_posix_replay_arguments() {
         dynamic_product="$(translate_owned_posix_product "$dynamic_product")" || exit 2
         POSIX_REPLAY_ARGUMENTS+=("$dynamic_product")
     fi
+}
+
+prepare_owned_pthread_lifecycle_arguments() {
+    local expected='usage: ./scripts/dev-x86_64.sh owned-pthread-lifecycle [--static-sysroot STATIC_SYSROOT] [--retain]'
+    local static_product='' retain=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --static-sysroot)
+                [ "$#" -ge 2 ] && [ -z "$static_product" ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+                static_product="$2"
+                shift 2
+                ;;
+            --retain)
+                [ "$retain" -eq 0 ] || fail "$expected"
+                retain=1
+                shift
+                ;;
+            *) fail "$expected" ;;
+        esac
+    done
+    PTHREAD_LIFECYCLE_ARGUMENTS=()
+    if [ -n "$static_product" ]; then
+        static_product="$(translate_owned_posix_product "$static_product")" || exit 2
+        PTHREAD_LIFECYCLE_ARGUMENTS+=(--static-sysroot "$static_product")
+    fi
+    [ "$retain" -eq 0 ] || PTHREAD_LIFECYCLE_ARGUMENTS+=(--retain)
 }
 
 prepare_owned_bsd_random_arguments() {
@@ -10255,16 +10284,24 @@ PY
         run_in_container bash /workspace/compat/x86_64/run_owned_io_cancellation.sh "$@"
         ;;
     owned-pthread-join-cancel)
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_join_cancel.sh "$@"
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_join_cancel.sh "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-pthread-cond-cancel)
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_cancel.sh "$@"
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_cancel.sh "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-pthread-cond-timed)
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_timed.sh "$@"
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_timed.sh "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-pthread-mutex)
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh "$@"
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-posix-timers)
         run_in_container bash /workspace/compat/x86_64/run_owned_posix_timers.sh "$@"
@@ -10293,8 +10330,9 @@ PY
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_getattr.sh
         ;;
     owned-pthread-lifecycle)
-        [ "$#" -eq 0 ] || fail "owned-pthread-lifecycle takes no arguments"
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh
+        prepare_owned_pthread_lifecycle_arguments "$@"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh "${PTHREAD_LIFECYCLE_ARGUMENTS[@]}"
         ;;
     promotion-closure)
         [ "$#" -eq 2 ] && [ "$1" = --qualification-receipt ] || fail "promotion-closure requires --qualification-receipt PATH"
