@@ -51,16 +51,16 @@ performance_qualified = false
 
 [[unit]]
 upstream = "include/mimalloc/types.h"
-source_region = "internal types, constants, layout, and invariants"
-rust_module = "crabc_mimalloc::types"
-rust_item = "partial: memory/page/queue/arena layouts, Heap/Theap bootstrap prefixes through mi_theap_t.memid, complete source-ordered ThreadLocalData fields with a private-futex lock boundary, and disjoint raw page projections for live-owner and abandoned-page atomic protocols"
-intentional_difference = "The represented theap prefix ends exactly where C stats begins. ThreadLocalData preserves field order and meaning but is not a C sizeof claim because PrivateLock replaces the upstream pthread mutex; subprocess/list/attachment lifecycle remains unclaimed. Omitted Heap/Theap tails, subprocess, and statistics layouts remain absent."
+source_region = "selected default-profile constants and types plus Heap, Theap, ThreadLocalData, and subprocess owner fields"
+rust_module = "crabc_mimalloc::config, crabc_mimalloc::types, crabc_mimalloc::tld, crabc_mimalloc::subproc, crabc_mimalloc::statistics, and crabc_mimalloc::arena"
+rust_item = "partial: default-profile Page, PageQueue, MemoryId, and Arena layouts; all selected Heap fields through statistics; Theap fields through statistics, including feature-gated guarded fields; ThreadLocalData fields; selected subprocess identity and components; and disjoint raw Page projections"
+intentional_difference = "The selected source fields and owner behavior are represented, but this is not a blanket C size/offset contract. Heap and ThreadLocalData use PrivateLock instead of the source pthread mutex; Theap carries private x86 lifecycle state in the source padding gap; subprocess identity and owners are composed typed images rather than a byte-for-byte mi_subproc_t. Statistics remain private Rust state, not a complete public mi_stats_t layout or rendering claim. The selected Page, PageQueue, MemoryId, and Arena layout records remain separately compared against C."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/remote_free.rs", "crabc-mimalloc/src/abandoned.rs", "compat/allocator/run.py"]
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/source_heap_api.rs", "crabc-mimalloc/src/heap_lifecycle.rs", "crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/subproc.rs", "crabc-mimalloc/src/subproc_lifecycle.rs", "crabc-mimalloc/src/process_init.rs", "crabc-mimalloc/src/remote_free.rs", "crabc-mimalloc/src/abandoned.rs", "crabc-mimalloc/src/statistics.rs", "compat/allocator/run.py", "compat/allocator/x86_64_m4_operations_driver.c", "compat/allocator/x86_64_m4_gate.py", "compat/allocator/heap_lifecycle.py", "compat/allocator/x86_64_m6_adapter.py", "compat/allocator/x86_64_m7_debug_padding_page.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -126,15 +126,15 @@ performance_qualified = false
 
 [[unit]]
 upstream = "include/mimalloc/internal.h"
-source_region = "internal cross-module API and invariants"
-rust_module = "crabc_mimalloc::invariants, page, free_list, bootstrap, aligned, alloc, os_page, and single_thread"
-rust_item = "partial: arithmetic/page geometry, block links, theap predicates, direct/generic page selection, ordinary page-kind lifecycle, checked counted allocation, live ordinary/aligned reallocation, aligned-pointer arithmetic, and OS-aligned singleton ownership"
-intentional_difference = "Only contracts reached by completed vertical slices are represented; the remaining cross-module API is absent rather than stubbed."
+source_region = "selected internal cross-module inline helpers for arithmetic, geometry, page/block ownership, memory IDs, page-map indexing, and byte operations"
+rust_module = "crabc_mimalloc::invariants, crabc_mimalloc::provenance, crabc_mimalloc::page_map, crabc_mimalloc::types, crabc_mimalloc::page, crabc_mimalloc::free_list, crabc_mimalloc::support, crabc_mimalloc::bootstrap, crabc_mimalloc::aligned, crabc_mimalloc::alloc, crabc_mimalloc::os_page, and crabc_mimalloc::single_thread"
+rust_item = "partial: arithmetic/page geometry, memory-ID constructors, page-map indexing, block links, page/Theap predicates and selection, ordinary page-kind lifecycle, checked counted allocation, live ordinary/aligned reallocation, aligned-pointer arithmetic, OS-aligned singleton ownership, and scalar byte copy/fill/zero helpers"
+intentional_difference = "The scalar `_mi_memcpy`, `_mi_memset`, `_mi_memzero`, and aligned helpers use Rust raw-pointer intrinsics with the source caller obligations; CPU-feature-specific copy/fill strategy selection is outside this helper mapping and remains a separate codegen/performance profile. Other declarations are accounted for by their source-owning units, so this row does not claim a monolithic `internal.h` API port."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/invariants.rs", "crabc-mimalloc/src/page.rs", "crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/single_thread.rs"]
+tests = ["crabc-mimalloc/src/invariants.rs", "crabc-mimalloc/src/provenance.rs", "crabc-mimalloc/src/page_map.rs", "crabc-mimalloc/src/page.rs", "crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/support.rs", "crabc-mimalloc/src/bootstrap.rs", "crabc-mimalloc/src/aligned.rs", "crabc-mimalloc/src/alloc.rs", "crabc-mimalloc/src/os_page.rs", "crabc-mimalloc/src/single_thread.rs"]
 exported = false
-implemented = false
-unit_verified = false
+implemented = true
+unit_verified = true
 differential_verified = false
 stress_verified = false
 performance_qualified = false
@@ -2370,16 +2370,16 @@ performance_qualified = false
 [[item]]
 upstream = "include/mimalloc/internal.h"
 name = "nonallocating-byte-memory-support-kernels"
-source_region = "_mi_memcpy, _mi_memset, _mi_memzero, and aligned forms"
+source_region = "mimalloc v3.5.0 include/mimalloc/internal.h:1408-1499 CPU copy/fill thresholds, `_mi_memcpy`, `_mi_memset`, `_mi_memzero`, and aligned forms"
 rust_module = "crabc_mimalloc::support"
-rust_item = "copy_bytes/fill_bytes/zero_bytes and aligned forms"
-intentional_difference = "Rust raw-pointer intrinsics replace compiler builtins while preserving nonoverlap, byte conversion, zero-length, and caller alignment contracts; the scalar baseline adds no SIMD policy."
+rust_item = "copy_bytes/fill_bytes/zero_bytes and aligned forms, selected by source allocation/reallocation callers"
+intentional_difference = "Rust raw-pointer intrinsics preserve nonoverlap, byte conversion, zero-length, and caller alignment semantics; the M4 C/Rust operations transcript covers preserved reallocation bytes and zero-filled growth. The source x86 CPU-feature thresholds and REP/SIMD copy/fill strategy remain in the separate codegen/performance profile, so this row makes no instruction-selection or performance claim."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/support.rs"]
+tests = ["crabc-mimalloc/src/support.rs", "crabc-mimalloc/src/source_api.rs", "compat/allocator/x86_64_m4_operations_driver.c", "compat/allocator/x86_64_m4_gate.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
