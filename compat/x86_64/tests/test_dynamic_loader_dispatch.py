@@ -68,9 +68,19 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, f"{command}: {result.stderr}")
                 self.assertTrue(inspected.exists(), command)
                 invocation = captured.read_text().splitlines()
-                self.assertIn(f"/workspace/{static.relative_to(ROOT).as_posix()}", invocation)
+                static_argument = (
+                    str(static)
+                    if command == "owned-pthread-mutex"
+                    else f"/workspace/{static.relative_to(ROOT).as_posix()}"
+                )
+                self.assertIn(static_argument, invocation)
                 if command != "owned-pthread-lifecycle":
-                    self.assertIn(f"/workspace/{dynamic.relative_to(ROOT).as_posix()}", invocation)
+                    dynamic_argument = (
+                        str(dynamic)
+                        if command == "owned-pthread-mutex"
+                        else f"/workspace/{dynamic.relative_to(ROOT).as_posix()}"
+                    )
+                    self.assertIn(dynamic_argument, invocation)
 
     def test_mount_authority_is_confined_to_dynamic_product_and_pty_gates(self):
         scratch = ROOT / ".work/x86_64/tmp"

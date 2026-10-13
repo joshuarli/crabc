@@ -10299,9 +10299,8 @@ PY
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_timed.sh "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
     owned-pthread-mutex)
-        prepare_owned_posix_replay_arguments "$command" "$@"
         ensure_image
-        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh "${POSIX_REPLAY_ARGUMENTS[@]}"
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh "$@"
         ;;
     owned-posix-timers)
         run_in_container bash /workspace/compat/x86_64/run_owned_posix_timers.sh "$@"
