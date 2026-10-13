@@ -25,12 +25,11 @@ The frozen floor's origin is the parent-replayed inventory report from collector
 - the separate materialized-unqualified candidate build identity at
   `640c093918692cbec384ed9ae8fb4f5ef425d19c`.
 
-The baseline has 1,650 musl identities and 2,053 candidate identities.  Its
-initial observation retains 72 missing identities, 475 unexpected identities,
-99 binding differences, two visibility differences, and no type,
-selected-version, or OBJECT/TLS-data-size differences.  Those are visible
-measurements, not approved exceptions or a classification of the candidate
-exports.
+The baseline's musl and candidate identity rosters and its initial missing,
+unexpected and mismatched identities are the `oracle_symbols`,
+`baseline_candidate_symbols` and `baseline_state` fields of
+`compat/ratchet/x86_64-dynamic.json`. They are visible measurements, not
+approved exceptions or a classification of the candidate exports.
 
 ## Policy
 

@@ -96,8 +96,8 @@ scoped import join.
 
 The current reader accounts for physical placements and source-selected
 metadata. After the single public declaration replay, it applies
-[`native_data_declarations.py`](native-data-declarations.md) to the 19 installed
-variables, `h_errno` accessor macro and 13 ABI-only spellings. The nested account
+[`native_data_declarations.py`](native-data-declarations.md) to its installed
+variables, `h_errno` accessor macro and ABI-only spellings. The nested account
 retains its adapter and policy identities, qualified types, direct and transitive
 observations, and current-source comparison. This selected data agreement leaves
 callable declarations, object layout and accessor-to-storage behavior open.
@@ -173,7 +173,7 @@ conventional, default, or oracle images. The owned probe checks 72-byte/8-byte
 geometry, magic/version/mode/owner, acquire-READY, and FS TP/DTV coordinates.
 Those measured transport and geometry requirements discharge only through the
 current CRT receipt. The worker v2 source account additionally retains the
-post-fork third-generation/adopted-main ordering, 55 lifecycle cells, and
+post-fork third-generation/adopted-main ordering, its lifecycle cells, and
 seven source-test observations. Neither independently removes the remaining
 descriptor requirements: the selector requires both current readers before it
 records their paired RuntimeV1 lifecycle join. The owner records its supplied preparation,
@@ -658,7 +658,7 @@ normal and empty modes. Without that current receipt, the archive import's
 ownership and weak/null resolution reasons remain open.
 
 The v4 receipt retains the earlier kernel/direct relocation admission controls
-and adds `descriptor_runtime_admission`: 21 malformed-value cases, three
+and adds `descriptor_runtime_admission`: its malformed-value cases, three
 selected-object cells (normal, absent, and unaligned), exact raw streams,
 five map-bound attachment/consumer functions, and the finite lexical
 Release-READY/Acquire-READY/CRT-before-libc-start order. The selector projects
@@ -686,7 +686,7 @@ The current selector also records the
 non-promoting `text_family_semantic_companion` and multi-family
 `family_semantic_receipts` projection; it does not alter the planned text
 family's ledger status. It admits the locale reader only after
-its complete 98-name source contract, all 35 normal consumer commands, and
+its complete source contract, every normal consumer command, and
 the receipt-local static/dynamic product trees match the selector's supplied
 cohort by relative bytes, modes, and links. Its retained top-level and dynamic
 product source snapshots must also match the reader projection as complete
@@ -828,8 +828,8 @@ without replaying the header declaration envelope.
   it neither widens private provider scope nor treats the receipt as resolver
   family evidence.
 - `locale_alias_contract_receipt.py` owns source-bound replay for the complete
-  existing 98-name locale/time surface and 35 normal installed-header consumer
-  commands. The optional `--locale-alias-contract-report` does not select that
+  existing locale/time surface and every normal installed-header consumer
+  command. The optional `--locale-alias-contract-report` does not select that
   whole surface. It joins only `__asctime_r`, `__gmtime_r`, `__localtime_r`,
   `__strftime_l`, and the existing feature requirements for `asctime_r`,
   `localtime_r`, and `strftime_l`. The `tzset`/`__tzset` relation remains
@@ -853,7 +853,7 @@ are unchanged.
 
 ## Source-owned callable and CRT placements
 
-The policy also selects a finite source-backed set of 108 frozen-project
+The policy also selects a finite source-backed set of frozen-project
 callable identities. The exact names, artifacts, and metadata live in
 `native-abi-selection.toml` under `source-owned-*`; this section records the
 owner boundary that makes those finite lists meaningful. Selection comes
@@ -861,12 +861,12 @@ from the named current source roots. It does not promote another spelling with a
 
 | Source-owner groups | Native root and selected placement |
 | --- | --- |
-| `source-owned-stdio-io-aliases`, `source-owned-stdio-aliases`, `source-owned-stdio-protected-boundaries`, `source-owned-wide-stdio-same-definition-aliases` (12) | `owned_stdio_extensions.rs`, `owned_static_stdio.rs`, and `owned_wide_stdio.rs` select static/shared providers. The existing `owned-stdio-alias-contract.md` remains the alias, override, and internal-call judge. `__uflow` and `__overflow` are direct `GLOBAL PROTECTED` bodies in both placements, so internal FILE operations do not preempt to an application definition. |
-| `source-owned-locale-*`, `source-owned-ctype-locator-bodies`, `source-owned-float-locale-same-definition-aliases` (52) | The named locale leaves select static/shared providers. `owned-locale-alias-contract.md` remains the same-definition alias contract; source selects each listed alias before static oracle metadata is consulted. |
-| `source-owned-integer-parse-*`, `source-owned-isoc99-scan-*`, `source-owned-stat-version-wrappers`, `source-owned-setjmp-*`, `source-owned-qsort-context-body`, `source-owned-long-double-*`, `source-owned-sysv-*`, `source-owned-xpg-*`, `source-owned-getopt-*` (30) | Their named parser, stdio, callback, math, signal, error, basename, and getopt roots select static/shared callable providers. `__qsort_r` is the direct context body; `qsort_r` is its distinct weak same-definition alias. The static helper is hidden while the owned dynamic feature retains the selected shared exposure. Their C signatures and behavioral receipts remain component requirements. |
-| `source-owned-exit-and-atfork-runtime`, `source-owned-auxv-observation-alias`, `source-owned-stack-check-fail`, `source-owned-pivot-root-syscall` (7) | Process lifecycle, auxv, compiler-failure, and kernel-admin roots select static/shared providers. `pivot_root` stays in its existing kernel-admin feature and capability/error contract. |
-| `source-owned-crypt-private-helper-bodies` (5) | `crypt.rs` selects five direct private static/shared bodies. They are not aliases merely because some values coincide. `crypt_r` is a distinct weak wrapper of `__crypt_r`, outside this five-member group. |
-| `source-owned-crt-libc-startup-boundary`, `source-owned-loader-libc-tls-boundary` (2) | `__libc_start_main` has distinct static and shared libc bodies; the five CRT undefined edges retain their independent startup proof. `__tls_get_addr` has distinct shared-libc and loader bodies and deliberately has no static-libc placement. |
+| `source-owned-stdio-io-aliases`, `source-owned-stdio-aliases`, `source-owned-stdio-protected-boundaries`, `source-owned-wide-stdio-same-definition-aliases` | `owned_stdio_extensions.rs`, `owned_static_stdio.rs`, and `owned_wide_stdio.rs` select static/shared providers. The existing `owned-stdio-alias-contract.md` remains the alias, override, and internal-call judge. `__uflow` and `__overflow` are direct `GLOBAL PROTECTED` bodies in both placements, so internal FILE operations do not preempt to an application definition. |
+| `source-owned-locale-*`, `source-owned-ctype-locator-bodies`, `source-owned-float-locale-same-definition-aliases` | The named locale leaves select static/shared providers. `owned-locale-alias-contract.md` remains the same-definition alias contract; source selects each listed alias before static oracle metadata is consulted. |
+| `source-owned-integer-parse-*`, `source-owned-isoc99-scan-*`, `source-owned-stat-version-wrappers`, `source-owned-setjmp-*`, `source-owned-qsort-context-body`, `source-owned-long-double-*`, `source-owned-sysv-*`, `source-owned-xpg-*`, `source-owned-getopt-*` | Their named parser, stdio, callback, math, signal, error, basename, and getopt roots select static/shared callable providers. `__qsort_r` is the direct context body; `qsort_r` is its distinct weak same-definition alias. The static helper is hidden while the owned dynamic feature retains the selected shared exposure. Their C signatures and behavioral receipts remain component requirements. |
+| `source-owned-exit-and-atfork-runtime`, `source-owned-auxv-observation-alias`, `source-owned-stack-check-fail`, `source-owned-pivot-root-syscall` | Process lifecycle, auxv, compiler-failure, and kernel-admin roots select static/shared providers. `pivot_root` stays in its existing kernel-admin feature and capability/error contract. |
+| `source-owned-crypt-private-helper-bodies` | `crypt.rs` selects five direct private static/shared bodies. They are not aliases merely because some values coincide. `crypt_r` is a distinct weak wrapper of `__crypt_r`, outside this five-member group. |
+| `source-owned-crt-libc-startup-boundary`, `source-owned-loader-libc-tls-boundary` | `__libc_start_main` has distinct static and shared libc bodies; the five CRT undefined edges retain their independent startup proof. `__tls_get_addr` has distinct shared-libc and loader bodies and deliberately has no static-libc placement. |
 
 For public source-selected functions with a static placement, the policy may use
 `selected-native-oracle-function` only to obtain the static `FUNC` binding and

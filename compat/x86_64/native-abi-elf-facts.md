@@ -48,7 +48,7 @@ and reconstructs the facts without running an ELF tool. The original v1 report
 bundle must remain available alongside its products and preparation receipt.
 Neither operation builds or qualifies a runtime product.
 
-The explicit `ARTIFACTS` roster has 17 placements. Its candidate membership must
+The explicit `ARTIFACTS` roster lists every placement. Its candidate membership must
 agree with both the imported static/dynamic product contracts and the relevant
 manifest payloads. Equal bytes never merge two placements.
 
@@ -72,14 +72,14 @@ arbitrary ELF filename, driver, metadata file or header placement rejects until
 classified. An ELF addition also needs an explicit observation and correlation
 decision; adding it to a product manifest does not extend the v1 public view.
 
-| Owner | Artifact placements | Count |
-| --- | --- | ---: |
-| Pinned musl reference | `lib/libc.a`, `lib/libc.so` | 2 |
-| Candidate static product | `usr/lib/libc.a`; `crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, `crtn.o` and `libcrabc-builtins.a` under `usr/lib/` | 7 |
-| Candidate dynamic product | `usr/lib/libc.so`, `lib/ld-crabc-x86_64.so.1`; `crt1.o`, `Scrt1.o`, `crti.o`, `crtn.o`, `crabc-dynamic-attach.o` and `libcrabc-builtins.a` under `usr/lib/` | 8 |
+| Owner | Artifact placements |
+| --- | --- |
+| Pinned musl reference | `lib/libc.a`, `lib/libc.so` |
+| Candidate static product | `usr/lib/libc.a`; `crt1.o`, `Scrt1.o`, `rcrt1.o`, `crti.o`, `crtn.o` and `libcrabc-builtins.a` under `usr/lib/` |
+| Candidate dynamic product | `usr/lib/libc.so`, `lib/ld-crabc-x86_64.so.1`; `crt1.o`, `Scrt1.o`, `crti.o`, `crtn.o`, `crabc-dynamic-attach.o` and `libcrabc-builtins.a` under `usr/lib/` |
 
-The four archives each receive `ar t` and `readelf -hW`, `-SW`, `-sW`. The other
-13 ELF artifacts each receive those three readelf commands: exactly 55 commands.
+Each archive receives `ar t` and `readelf -hW`, `-SW`, `-sW`. Every other ELF
+artifact receives those three readelf commands (`_command_specs`).
 The loader's compatibility symlink is already bound by v1 and is not a second
 ELF definition. The dynamic attach object is a manifest-owned runtime input;
 its observation is not a public-header or ABI selection decision.
@@ -94,7 +94,7 @@ its observation is not a public-header or ABI selection decision.
 | `base_inventory` | Retained original v1 report bytes, its same-current collector identity and unchanged candidate build provenance |
 | `artifacts` | Exact placement roster, ELF/archive kind, expected ELF type, physical byte identity and manifest/reference ownership |
 | `tools` | Exact `ar`/`readelf` byte snapshots, equal to the tools bound by v1 |
-| `commands` | Exact 55-command roster, argv, execution root, C locale, collector source, input artifact before/after, tool identity, exit status, stdout and stderr |
+| `commands` | Exact `_command_specs` command roster, argv, execution root, C locale, collector source, input artifact before/after, tool identity, exit status, stdout and stderr |
 | `facts` | Complete projections reconstructed from every raw observation |
 
 Report values distinguish JSON booleans from numbers. Extra/missing keys or

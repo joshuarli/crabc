@@ -140,7 +140,7 @@ or public-target qualification.
 `./scripts/dev-x86_64.sh math-scalar-corrections` retains its evidence directory.
 The six isolated regressions run first: a corrected candidate returns zero;
 the independent pinned musl executable returns failure bitmask 63. The stream
-then checks 25,632 deterministic exact-dyadic vectors across all four rounding
+then checks the deterministic exact-dyadic vector stream across all four rounding
 modes and both clean and pre-existing divide-by-zero/inexact flags. It covers
 signed zeros, quiet/signalling NaNs, infinities, subnormals, normal boundaries,
 and positive/negative FMA and `nextafterl` transitions. Native result bits,
@@ -152,9 +152,8 @@ The pure ABI proof compiles the actual production math/fenv modules through
 `math_scalar_corrections_boundary.rs` into one `no_std` Rust object. Its native
 freestanding executables have strong public providers, no unresolved symbols,
 TLS, dynamic interpreter/library, AVX/FMA, or packed arithmetic instructions.
-It also reruns the existing 9,064 family records: scalar completion (304),
-binary80 completion (196), pow (256), elementary-long-double (2,764), and
-special functions (5,544). The pow comparator requires exact finite identities
+It also reruns the existing family record streams: scalar completion,
+binary80 completion, pow, elementary-long-double, and special functions. The pow comparator requires exact finite identities
 and preserves every other pinned record. The other four streams compare byte
 for byte. This proof is separate from installed runtime integration: the whole
 owned archive groups unrelated startup/regex/TLS state in some codegen units.

@@ -37,7 +37,7 @@ The three fixed C sources each produce one retained ordinary object. The same
 object feeds every relevant musl/candidate link: two probes through musl static
 and candidate static/static-PIE plus dynamic PIE/non-PIE; the protected probe
 through musl PIE and candidate PIE/non-PIE. Dynamic programs run at both kernel
-and direct-interpreter entry. This gives 13 links and 20 executions. The ordinary
+and direct-interpreter entry. This gives one link per pairing above and one execution per entry mode. The ordinary
 contract probe also calls default `fdopen`, `fseeko`, and `ftello`; the separate
 override probe defines those public functions itself.
 

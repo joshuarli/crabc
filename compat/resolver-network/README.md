@@ -73,12 +73,12 @@ contain the validated owned dynamic sysroot. The fixture server remains on the
 same loopback-only namespace. No runner path reads, writes, snapshots, or
 restores the container's `/etc` files.
 
-The reference plus all twelve product executions must produce the same raw
+The reference plus every product execution must produce the same raw
 exit status, stdout, and stderr: static ET_EXEC, static PIE, dynamic PIE
 ordinary entry, dynamic PIE direct interpreter entry, dynamic non-PIE ordinary
 entry, and dynamic non-PIE direct interpreter entry through both the installed
-and extracted trees. The DNS event evidence requires every transition from all
-thirteen processes. The report is published under
+and extracted trees. The DNS event evidence requires every transition from every
+execution process. The report is published under
 `compat/reports/resolver-network/x86_64/` only on a complete pass. This is an
 evidence gate for the named products and resolver/network workload; it does
 not complete or promote the `compat.resolver-network` family.
@@ -95,9 +95,9 @@ The native runner publishes `schema_version: 3` only after it has retained a
 physical receipt below that run's `state_root`. The receipt keeps the exact
 source and tool identities before and after collection; each supplied static
 and dynamic product's manifest and complete tree identity; the one workload
-object; reference and all eight product link outputs and link sidecars; every
-command envelope; and raw argv, status, stdout, and stderr files for all
-thirteen executions. `run_x86_64.py` starts a separate loopback DNS fixture for
+object; the reference and each product link output (one per linkage mode: static ET_EXEC, static PIE, dynamic PIE, dynamic non-PIE) and link sidecars; every
+command envelope; and raw argv, status, stdout, and stderr files for every
+execution (the reference and each product arm and mode). `run_x86_64.py` starts a separate loopback DNS fixture for
 each execution and retains that mode's raw readiness and versioned event
 document. It also retains their ordered aggregate for inspection. The public
 JSON must byte-match the producer's

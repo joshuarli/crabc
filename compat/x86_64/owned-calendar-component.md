@@ -47,12 +47,8 @@ IANA release key. The reader checks URLs, hashes, version, retained signature
 identities, `make zic` and fixed `zic` argv, compiler/make/zic identities, and
 the exact selected fixture roster before it reads component evidence.
 
-The fixed derivation pins are New York (1744 bytes,
-`d7f2206b3a45989fc9ad63d558922532fa7352280d5f87176bf1db79cb1d1fa9`),
-Berlin (705 bytes,
-`a7fd9932d785d4d690900b834c3563c1810c1cf2e01711bcc0926af6c0767cb7`),
-and Lord Howe (692 bytes,
-`f368bd25659c0293d02bb79ec7dac7d5b73a92dffafce14b4dd2ffb8ba11aada`).
+The fixed derivation pins are the size and SHA-256 of the derived New York,
+Berlin and Lord Howe zones in `TZIF_EXPECTED_FIXTURES` (`owned_calendar_component_receipt.py`).
 The preparation command passes the recorded canonical compiler explicitly as
 `CC=` to `make`; a rehashed manifest cannot admit a changed derived file.
 

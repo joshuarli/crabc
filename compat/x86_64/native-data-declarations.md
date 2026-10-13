@@ -1,8 +1,8 @@
 # Native public-data declaration contract
 
 `native_data_declarations.py` accounts for the selected native x86 public-data
-header surface.  It is a narrow declaration adapter for the 33 selected object
-contracts: 19 installed variables, the `h_errno` accessor macro, and 13
+header surface.  It is a narrow declaration adapter for the selected object
+contracts: installed variables, the `h_errno` accessor macro, and
 ABI-only spellings.  The reviewed rules live in
 `compat/x86_64/native_data_declarations.toml`.
 

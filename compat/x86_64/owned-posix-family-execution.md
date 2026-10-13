@@ -27,8 +27,8 @@ and credential-namespace workloads. It does not invoke AArch64 commands.
 
 The coordinator pairs `primary` static with `installed` dynamic,
 `reproduction` static with `second` dynamic, and the two `extracted` products.
-For each pair it runs all eighteen workloads in
-`owned_posix_family_workloads.WORKLOADS`: sixteen use supplied static and dynamic
+For each pair it runs every workload in
+`owned_posix_family_workloads.WORKLOADS`: all but the two named below use supplied static and dynamic
 products, the strong `fork` workload uses its dynamic product, and `static-fork`
 uses its static product. A normal paired replay covers static ET_EXEC and static
 PIE plus dynamic PIE/non-PIE through kernel and direct interpreter entry.
@@ -71,7 +71,7 @@ The final `execution.json` has schema
 `workload-matrix-verified`. It binds current clean revision/content, both
 validated input receipts and the observed musl identity, all workload receipts,
 the six product payload seals in `product_payloads`,
-and each of the 149 frozen spellings to all six static and twelve dynamic
+and each frozen catalog spelling to every static and dynamic
 cells. The explicit `fork → static-fork` static binding prevents a dynamic-only
 result or the composition workload from standing in for static fork evidence.
 

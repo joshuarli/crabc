@@ -239,7 +239,7 @@ dynamic stream at ordinary exit. The final image must select the strong
 `__stdio_exit` hook. Scratch files are private to each consumer run.
 Reopen preserves the FILE/buffer identity and tests descriptor replacement and
 failure retirement; allocated line input covers growth, embedded NULs, EOF,
-and errors. Each stdio job also links `owned_stdio_backends_probe.c`: 29 binary
+and errors. Each stdio job also links `owned_stdio_backends_probe.c`: its binary
 records compare fixed/growing memory streams, cookie callbacks, short/error
 writes, descriptor buffering, and formatter error state with pinned musl.
 The separately receipted binary must flush its unclosed cookie stream at
@@ -263,15 +263,15 @@ remains unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
-caller-buffer destinations. Its 71-record binary matrix must match pinned
+caller-buffer destinations. Its binary record matrix must match pinned
 musl in both modes and extracted copies; defined invalid-format checks remain
 candidate-specific. Each formatting job also links a separately receipted
-`owned_static_printf_float_probe.c` binary: 1,920 records compare decimal and
+`owned_static_printf_float_probe.c` binary: its fixed records compare decimal and
 hex binary64/binary80 output, errno, floating exceptions, and all four rounding
 modes with pinned musl. It covers spilled/positional arguments and FILE,
 descriptor, allocated, and caller-buffer destinations with private scratch.
 Each formatting job also runs a separately receipted
-`owned_static_scanf_probe.c` binary: 1,708 fixed records compare byte grammar,
+`owned_static_scanf_probe.c` binary: its fixed records compare byte grammar,
 scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. The decimal
 records identify their input, conversion format, and rounding mode in their
@@ -284,7 +284,7 @@ standard streams, forwarded va_lists, long strings, and allocated results.
 The digest-checked wide parser source and owned FILE callbacks are mapped in
 `owned_wide_format.rs`; there is no foreign FILE representation. Both wide
 probes run unchanged against pinned musl and all four installed product arms.
-The 24 bounded jobs include separately receipted syscall-cancellation consumers.
+The bounded jobs (`consumer_specs` in `run_owned_static_sysroot.sh`) include separately receipted syscall-cancellation consumers.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
@@ -478,7 +478,7 @@ does not establish syscall cancellation behavior.
 Each POSIX job also links the calendar and TZif probes described in
 [`owned_calendar.md`](owned_calendar.md). Local conversion, normalization,
 formatting, cache changes, and concurrent caller-buffer conversions compare
-427,712 bytes with pinned musl. Six separate RFC/POSIX valid-file invariants
+their full output bytes with pinned musl. Six separate RFC/POSIX valid-file invariants
 cover documented oracle defects; the musl diagnostic is retained separately,
 never accepted as parity. Both binaries own their synthetic timezone pathname
 and receive the same installed-link, ELF, and extracted-package checks.
@@ -511,7 +511,7 @@ loopback DNS address and uses a private chroot configuration; the concurrent
 isolation check also occupies the former shared endpoint and verifies early
 failure reaps the server. This proves no external DNS behavior or full resolver
 family closure. Both modes and extracted copies run in the same bounded
-24-job consumer matrix. Cold producer reproducibility remains a separate
+consumer-job matrix. Cold producer reproducibility remains a separate
 mandatory check; serial-versus-parallel timing is opt-in, not extra default work.
 
 ## Deliberately unselected

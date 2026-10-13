@@ -1,7 +1,7 @@
 # Owned POSIX signal evidence
 
 The `signal-full` dynamic case supplies the residual installed-product signal
-workload for the frozen 34-name `process.signal` capability. It combines with
+workload for the frozen `process.signal` capability. It combines with
 the existing cases named in `owned-posix-signals.toml`; it does not replace
 their fixtures or claim that one residual probe proves all signal behavior.
 This is core Unix runtime and bounded C ABI evidence. It leaves AArch64,
@@ -9,7 +9,7 @@ private static profiles, family promotion, and public platform support unchanged
 
 ## Exact evidence owners
 
-`owned-posix-signals.toml` partitions all 34 frozen spellings into these primary
+`owned-posix-signals.toml` partitions every frozen spelling into these primary
 owners. Its validator rejects omissions, duplicate spellings, and unregistered
 reused cases. The family coordinator must run each reused case for each required
 product; naming it here does not manufacture an execution receipt.
@@ -82,7 +82,7 @@ Three owned corrections are pinned by dedicated subcases: `sigpause` must not
 return to user code before pending/blocked cancellation; a `siginterrupt`
 change must not leave a forced futex EINTR turning into ETIMEDOUT; and a
 2048-byte alternate stack must return ENOMEM as musl does, with SS_ONSTACK also
-exposing size-validation order. All eleven scenarios, including `waits`, match
+exposing size-validation order. Every scenario, including `waits`, matches
 musl in all six installed entry cells. The three corrected entries are
 owned-static replacement callables; their frozen default providers and public
 spelling roster remain unchanged.
@@ -95,7 +95,7 @@ builds both products. A positional dynamic product alone retains the four
 existing dynamic cells. Supplying only `--static-sysroot` builds the dynamic
 product used for compilation; supplying both products invokes neither producer.
 Either static form runs ordinary static and static PIE alongside dynamic PIE
-and non-PIE through kernel and direct interpreter entry: all eleven scenarios
+and non-PIE through kernel and direct interpreter entry: every scenario
 in six candidate cells. The public dispatcher retains its existing positional
 `./scripts/dev-x86_64.sh owned-posix-signals [DYNAMIC_SYSROOT]` interface.
 

@@ -104,8 +104,8 @@ consumer that can turn the already validated matrix plus native aggregate into
 family evidence. It reruns neither producer nor target program. Instead it
 physically reconstructs `native-execution.json`, follows and reconstructs its
 exact `execution.json`, requires their current source seals to agree, and
-checks the catalog's complete nine-capability/149-spelling roster. Every
-spelling must retain its exact six static and twelve dynamic matrix receipt
+checks the catalog's complete capability and spelling roster. Every
+spelling must retain its exact static and dynamic product-matrix receipt
 cells; the zero-spelling composition workload and all named closure workloads
 remain independently required. The five native components and the eighteen
 I/O replacement cells must also remain complete.

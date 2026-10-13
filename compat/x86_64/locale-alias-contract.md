@@ -157,7 +157,7 @@ their copied bytes and modes remain under `inputs/source`; the reader compares
 those paths in the source namespace without losing the retained-file check.
 
 The host-side `validate-report` path only reads the receipt. It reconstructs
-the fixed 35-command runner roster and its paths, authenticates the retained
+the fixed command runner roster and its paths, authenticates the retained
 complete Git source tree, rechecks the trusted checkout's recorded HEAD and
 every tracked source byte/mode, replays the retained static preparation against
 that sealed Git tree, checks image inputs and both product producer-tool

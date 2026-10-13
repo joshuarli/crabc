@@ -7,7 +7,7 @@ public-support flags false.
 
 `build.py` compiles the pinned `unwinding` configuration into
 `libcrabc-unwind.a`, an ordinary archive with one localized C-ABI member,
-`crabc-unwind.o`, providing the 17 `_Unwind_*` functions in `UNWIND_ABI`.
+`crabc-unwind.o`, providing the `_Unwind_*` functions in `UNWIND_ABI`.
 The source-built cleanup path instead stages the same patched provider graph
 below its consumer evidence directory and makes `crabc-unwinder` a normal
 Cargo dependency.
@@ -67,7 +67,7 @@ scripts/lanes/rust-check.sh env CARGO_PROFILE_DEV_OPT_LEVEL=0 CARGO_PROFILE_TEST
 
 `--profile debug` selects Cargo's `dev` profile and enforces opt level zero,
 abort-only standalone panic handling and one codegen unit. After localization
-the pinned relocatable linker discards unreachable sections with the 17 exports
+the pinned relocatable linker discards unreachable sections with the `UNWIND_ABI` exports
 as roots. The debug partial link uses the image's GNU `ld.bfd`: it prunes each
 unneeded FDE while keeping unwind records for the provider's live capture
 frames, whereas LLD's relocatable section GC discards the whole `.eh_frame` and
@@ -181,7 +181,7 @@ Source-built link constraints, enforced by the wrapper and its receipt reader:
   Cargo input).
 - A `cdylib` link gets rustc's confined export version script, with its
   `--no-undefined-version` flag admitted only alongside that script. The
-  receipt binds the script and records the three cleanup exports plus the 17
+  receipt binds the script and records the cleanup exports plus the
   `_Unwind_*` exports.
 - Cargo may pass the toolchain target libdir with `-L`; it is recorded as an
   unused search path and no search path reaches the owned LLD command. Cargo

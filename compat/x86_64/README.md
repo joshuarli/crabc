@@ -30,9 +30,9 @@ result does not replace.
 
 ## Authority
 
-The frozen comparison target is the AArch64 snapshot at commit
-3e100d45c5a0798c2d3862d5e2eef584c610ccf9: 223 capabilities, 26 required
-families, and the three digests recorded in [aarch64_frozen_baseline.json](aarch64_frozen_baseline.json).
+The frozen comparison target is the AArch64 snapshot recorded in
+[aarch64_frozen_baseline.json](aarch64_frozen_baseline.json): its source commit,
+capability and required-family counts, and digests.
 The validator rejects drift and has no refresh mode; do not rebaseline.
 
 [parity.toml](parity.toml) is the authoritative finite capability/family
@@ -347,7 +347,7 @@ intentional exclusions in the nearest contract or evidence document.
 ## Completion boundary
 
 Native x86-64 becomes publicly supported only after the full predicate in
-plan.md passes: frozen accounting, all 26 families, reproducible owned
+plan.md passes: frozen accounting, every required family, reproducible owned
 static and dynamic products, complete ordered qualification, native
 performance, promotion validation, public-document update, and a final clean
 aggregate rerun. Until then, describe results as private foundation evidence.
@@ -366,7 +366,7 @@ roster. The resulting receipt remains non-promoting: it does not complete
 
 [`owned-resolver-family.md`](owned-resolver-family.md) maps the three frozen
 resolver capabilities to their exact behavior readers. Its cancellation reader
-replays one source-bound static/dynamic 847-run raw receipt, while its protocol
+replays one source-bound static/dynamic raw receipt, while its protocol
 reader replays pinned-musl fixed-table behavior through three product pairs and
 all eighteen C-runtime entries.
 [`owned_resolver_family.py`](owned_resolver_family.py) only replays explicitly

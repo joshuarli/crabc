@@ -22,7 +22,7 @@ in the candidate. Its reference arm evaluates ordinary unsigned C `/` and `%`
 with the pinned musl x86 toolchain and its `libgcc.a`. Both arms use the same
 freestanding `_start` and Linux write syscall to emit four 128-bit results per
 case: division quotient, modulus remainder, divmod quotient, and divmod slot.
-The runner requires byte-for-byte equality over 950 cases: combinations of
+The runner requires byte-for-byte equality over every case in the probe: combinations of
 zero, limb-edge, high-limb, maximum, and near-maximum numerators and divisors;
 all 128 power-of-two divisors at four quotient boundaries; and deterministic
 mixed limbs. Each case also checks a null-slot quotient-only call against

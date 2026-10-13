@@ -62,7 +62,7 @@ system's loader. A non-AArch64 invocation is an explicit setup error.
 ## Native x86_64 consumer corpus
 
 `manifest-x86_64.toml` is a separate, finite Alpine v3.24 x86_64 APK snapshot
-for the existing 34 workloads. It seals the unchanged `manifest.toml` workload
+for the existing manifest workloads. It seals the unchanged `manifest.toml` workload
 bytes, so all case IDs, argv, setup, stateful cases, and DT_RELR obligations
 remain exactly those frozen workloads. It does not transfer an AArch64 result
 or claim package-source equivalence. Five unavailable historical x86_64 URLs
@@ -176,7 +176,7 @@ container receipt deliberately. Omitting `--tier` selects all frozen tiers; an
 explicit `--tier B` selects only B, and a tier/case intersection with no
 workloads is a setup error.
 
-The dynamic-product catalog's `package-corpus` entry always selects all 34
+The dynamic-product catalog's `package-corpus` entry always selects all
 workloads for each supplied product. Its reader in
 `compat/x86_64/owned_loader_corpus_evidence.py` rejects missing or duplicate
 cases, changed inputs, mismatched products and incomplete native outcomes
@@ -184,7 +184,7 @@ during collection and retained qualification validation. The catalog leaf
 has a fresh network namespace with no active interfaces; prepare the pinned
 APK cache before running it.
 
-All 34 workloads remain required for completion; a pass on one product or
+All manifest workloads remain required for completion; a pass on one product or
 revision is not evidence for another.
 
 ### Ordered qualification case
@@ -194,8 +194,8 @@ revision is not evidence for another.
 `compat.loader-corpus` gate. It consumes, and never rebuilds, the reviewed
 three-product dynamic cohort that `materialized-dynamic-sysroot` produced and
 `owned_dynamic_qualification.py publish` selected for the same clean revision.
-That cohort's receipt already ran the 21 frozen synthetic loader workloads and
-these 34 package workloads on both clean builds and the package-extracted
+That cohort's receipt already ran the frozen synthetic loader workloads and
+these package workloads on both clean builds and the package-extracted
 product. The case collects a fresh loader inventory for each of the three
 products, runs the loader-family collector over the cohort and inventories, and
 replays its receipt.
@@ -208,5 +208,5 @@ choices, or a `manifest.toml` whose Git blob differs from the frozen baseline
 commit's. It rechecks the clean source before printing its non-promoting
 marker. Retained case state is under `.work/x86_64/loader-corpus-qualification/`.
 
-This is one consumer component for the frozen 34 workloads. It does not close
+This is one consumer component for the frozen manifest workloads. It does not close
 the wider software-corpus, loader-family, performance, or source-build scope.

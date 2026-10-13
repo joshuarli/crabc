@@ -180,9 +180,7 @@ roster, so its current inspector bytes cannot change independently of the
 selected source seal.
 
 The same source roster admits the exact
-`compat/x86_64/owned_posix_product_evidence.py` mode boundary from commit
-`aa8345d3a4f1352284aad11ab1b3b1341b522056` (SHA-256
-`b43a58a70bbcb71d33b20c28be9b32fbd5e8b51e6cac7f7cab2ec97b8a9f2c41).
+`compat/x86_64/owned_posix_product_evidence.py` mode boundary.
 Before any retained link receipt is read, its product validator requires the
 raw physical modes for every link input: static `crt1.o`, `rcrt1.o`, `crti.o`,
 `crtn.o`, `libc.a`, and `libcrabc-builtins.a` are `0644`; dynamic `crt1.o`,

@@ -62,10 +62,10 @@ static-PIE, dynamic PIE and dynamic non-PIE products. Static and oracle scenario
 retain their ordinary execution; dynamic forms run through kernel and direct
 interpreter entry in a disposable root. Each link passes the shared
 `owned_posix_product_evidence.validate_link` audit for its exact product,
-receipt, runtime inputs, trace and ELF contract. All eleven scenarios retain and
+receipt, runtime inputs, trace and ELF contract. Every scenario in the runner's `cases` array retains and
 compare raw status, stdout and stderr. The `signal-helpers.json` receipt records
-the link identities, object identity, oracle hashes and all 66 comparisons when
-static cells are selected (44 in dynamic-only mode). Input identities are
+the link identities, object identity, oracle hashes and every comparison (static cells
+included only when a static product is supplied). Input identities are
 checked again after replay. Existing ELF weak-alias address/size checks remain.
 
 `owned_dynamic_qualification.py` registers `signal-helpers` for each dynamic

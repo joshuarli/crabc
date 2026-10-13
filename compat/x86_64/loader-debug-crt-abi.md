@@ -107,7 +107,7 @@ current source, static/dynamic manifests, dynamic state, libc, and loader
 identities, and never invokes either product builder. Supplying only one root
 is rejected. It remains the same component measurement boundary.
 
-The fixed matrix includes 68 execution cells. Each workload is compiled once
+The fixed matrix is the workload-by-mode cell roster of `loader_debug_abi_evidence.py`. Each workload is compiled once
 by the pinned musl compiler and reused unchanged between oracle and candidate
 links. The ordinary lifecycle and isolated default/strong-override archive
 probes cover static ET_EXEC and static PIE. Debugger, COPY, strong-hook-interposition, weak-default and

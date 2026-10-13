@@ -216,7 +216,7 @@ overlap. Alias and provider rows must also name a positive ELF section index;
 `UND`, `ABS`, `COM`, and section zero cannot establish a function body or a
 same-definition alias.
 
-The receipt covers only the 17 aliases in the table above, their listed source
+The receipt covers only the aliases in the table above, their listed source
 providers, the `mq_notify` public `pthread_detach` relocation, and the one
 strong-override/internal-`pthread_join` behavior.  It does not turn historical
 products into current evidence, establish unlisted pthread symbols, complete a

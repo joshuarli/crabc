@@ -2,8 +2,8 @@
 
 This document defines the remaining evidence needed to promote
 `libc.posix-runtime` in `compat/x86_64/parity.toml`. It covers the **entire**
-selected family: nine frozen AArch64 semantic capabilities and 149 exact C
-spellings. The machine-readable roster is
+selected family: every frozen AArch64 semantic capability and exact C
+spelling in the catalog. The machine-readable roster is
 [`owned-posix-runtime-catalog.toml`](owned-posix-runtime-catalog.toml).
 
 Run `python3 -B compat/x86_64/owned_posix_runtime_catalog.py --check` to
@@ -44,17 +44,17 @@ list from `compat/crabc-rs/coverage.toml`. The following table describes the
 installed workload bindings. The remaining native aggregate and declared family prerequisites apply to
 every row. Later source changes require fresh qualification.
 
-| Frozen capability | Names | Current installed binding |
-| --- | ---: | --- |
-| `filesystem.lchmod-unsupported` | 1 | `owned-posix-filesystem` runs `lchmod` with the other filesystem spellings from one installed-header object through static/static-PIE and dynamic PIE/non-PIE kernel/direct entries. `filesystem-mechanisms` remains its earlier focused case, and `posix-filesystem` registers the dynamic replay for installed, second, and extracted products. |
-| `filesystem.stat-compat` | 4 | `owned-posix-filesystem` supplies the source-verified local `extern` declarations over installed `sys/stat.h` types and runs all four version-insensitive aliases, including dirfd-relative and `AT_SYMLINK_NOFOLLOW` paths, through its installed linkage matrix and registered dynamic replay. |
-| `filesystem.directory` | 7 | `owned-posix-filesystem` runs every name, including `readdir_r` end storage, `telldir`/`seekdir`, both comparators, `scandir`, and `ftw`/`nftw` callback/cancellation transcripts, through its same-object installed matrix and registered dynamic replay. The older extracted static consumer remains supporting evidence. |
-| `filesystem.extensions` | 5 | `owned-posix-filesystem` selects and exercises `mktemp`, both temporary-name functions, and both file-handle entries. Its matched transcript retains raw handle return/`errno` values so filesystem support or authority cannot hide a difference. |
-| `process.control` | 44 | `owned-process-control` covers all 44 names from one installed-header object; `process-trio` and `spawn` keep their deeper creation and rollback matrices. The case records its stated direct-`execveat` `fexecve` difference rather than calling it generic musl parity. |
-| `process.credentials` | 9 | `owned-credentials-profile` runs all nine setters in isolated mapped user-namespace children with raw status/`errno` and real/effective/saved-ID transcripts, then proves musl's all-thread `__synccall` contract with live workers as container root; `credentials-profile` registers its dynamic replay. |
-| `process.environment-mutation` | 3 | `owned-environment-lifecycle` covers replacement, removal, clear, allocation failure, direct-`environ`/borrowed-value boundaries, and fork/exec/spawn observations from one object. `owned-posix-composition` additionally covers caller-serialized environment state with signals, `FILE`, syslog, fork, exec, spawn, and cancellation cleanup. |
-| `process.signal` | 34 | `signal-full` supplies the 23 residual primary spellings through static/static-PIE and dynamic PIE/non-PIE kernel/direct entries, while `owned-posix-signals.toml` names the helper/reporting, wait-cancellation, pthread, and timer cases it reuses. `owned-posix-composition` adds one bounded multi-threaded signal/`FILE`/syslog/fork/exec/spawn scenario. |
-| `system.kernel-admin` | 42 | `linux-control` covers 18 names, `syslog` covers five, `system-cancellation` covers `system`, and `kernel-residual` runs the remaining 18 spellings from one installed-driver object. `owned-posix-composition` supplies a bounded logger/`FILE`/signal/fork state scenario. `gethostid.rs` retains its private constant-zero artifact matching musl. |
+| Frozen capability | Current installed binding |
+| --- | --- |
+| `filesystem.lchmod-unsupported` | `owned-posix-filesystem` runs `lchmod` with the other filesystem spellings from one installed-header object through static/static-PIE and dynamic PIE/non-PIE kernel/direct entries. `filesystem-mechanisms` remains its earlier focused case, and `posix-filesystem` registers the dynamic replay for installed, second, and extracted products. |
+| `filesystem.stat-compat` | `owned-posix-filesystem` supplies the source-verified local `extern` declarations over installed `sys/stat.h` types and runs all four version-insensitive aliases, including dirfd-relative and `AT_SYMLINK_NOFOLLOW` paths, through its installed linkage matrix and registered dynamic replay. |
+| `filesystem.directory` | `owned-posix-filesystem` runs every name, including `readdir_r` end storage, `telldir`/`seekdir`, both comparators, `scandir`, and `ftw`/`nftw` callback/cancellation transcripts, through its same-object installed matrix and registered dynamic replay. The older extracted static consumer remains supporting evidence. |
+| `filesystem.extensions` | `owned-posix-filesystem` selects and exercises `mktemp`, both temporary-name functions, and both file-handle entries. Its matched transcript retains raw handle return/`errno` values so filesystem support or authority cannot hide a difference. |
+| `process.control` | `owned-process-control` covers every name from one installed-header object; `process-trio` and `spawn` keep their deeper creation and rollback matrices. The case records its stated direct-`execveat` `fexecve` difference rather than calling it generic musl parity. |
+| `process.credentials` | `owned-credentials-profile` runs all nine setters in isolated mapped user-namespace children with raw status/`errno` and real/effective/saved-ID transcripts, then proves musl's all-thread `__synccall` contract with live workers as container root; `credentials-profile` registers its dynamic replay. |
+| `process.environment-mutation` | `owned-environment-lifecycle` covers replacement, removal, clear, allocation failure, direct-`environ`/borrowed-value boundaries, and fork/exec/spawn observations from one object. `owned-posix-composition` additionally covers caller-serialized environment state with signals, `FILE`, syslog, fork, exec, spawn, and cancellation cleanup. |
+| `process.signal` | `signal-full` supplies the residual primary spellings through static/static-PIE and dynamic PIE/non-PIE kernel/direct entries, while `owned-posix-signals.toml` names the helper/reporting, wait-cancellation, pthread, and timer cases it reuses. `owned-posix-composition` adds one bounded multi-threaded signal/`FILE`/syslog/fork/exec/spawn scenario. |
+| `system.kernel-admin` | `linux-control`, `syslog` and `system-cancellation` (`system`) cover their names, and `kernel-residual` runs the remaining spellings from one installed-driver object. `owned-posix-composition` supplies a bounded logger/`FILE`/signal/fork state scenario. `gethostid.rs` retains its private constant-zero artifact matching musl. |
 
 All seven catalog workload identifiers have source-bound focused runners:
 `posix-filesystem` for `legacy-filesystem`, `process-control` for
@@ -71,7 +71,7 @@ The full dynamic gate must execute and retain its complete current roster for
 the required products. No individual dynamic case, including a three-product replay, is that aggregate.
 
 `owned_posix_family_workloads.py` makes the coordinator input executable:
-it partitions all 149 spellings among named workload records, retains each
+it partitions every catalog spelling among named workload records, retains each
 source-to-object role, and requires the zero-spelling composition,
 pthread-signal, timer, and static-fork workloads independently. The dynamic
 `fork` DSO workload remains its own dynamic primary owner; `static-fork` uses
@@ -158,10 +158,10 @@ behavior remains the acceptance contract for a family receipt.
 | Workload | Current focused runner | Required behavior |
 | --- | --- | --- |
 | `legacy-filesystem` | `owned-posix-filesystem` | Invoke `lchmod`; all four versioned stat aliases; all directory names; and all extension names. Cover ignored version words, pathname/descriptor forms, callback ordering, allocation/cancellation where source requires it, errno, and authority-bearing file-handle negative paths. |
-| `control-residual` | `owned-process-control`; `process-trio`, `fork`, and `spawn` retain the other 13 composite names | Use child processes for every exec alias; cover `nice`, group/session setters, every wait variant, and all spawn-attribute getters/setters, initialization/destruction, invalid values, and rollback. Existing `process-trio` and `spawn` cases remain the implementations for their already covered subcases. |
+| `control-residual` | `owned-process-control`; `process-trio`, `fork`, and `spawn` retain the other composite names | Use child processes for every exec alias; cover `nice`, group/session setters, every wait variant, and all spawn-attribute getters/setters, initialization/destruction, invalid values, and rollback. Existing `process-trio` and `spawn` cases remain the implementations for their already covered subcases. |
 | `credentials-profile` | `owned-credentials-profile` | In a disposable user namespace, exercise all nine setters with current-ID, no-change, and rejected inputs, isolating each call in a child process. As container root, compare real single-threaded transitions and then the all-thread contract with musl: every thread observes each setter's change from initial-thread, worker, and post-`pthread_exit` callers; a first-thread `EPERM` changes no thread; and transitions stay complete while threads are created, exit, fork, and are targeted by `pthread_kill`. Fork and `_Fork` from a live worker inherit synchronized IDs and groups; child mutations and failed privilege regain leave both parent threads unchanged. |
 | `environment-lifecycle` | `owned-environment-lifecycle` | Cover replacement, removal, clear, allocation failure, direct `environ` ownership boundaries, and parent/child observations through fork, exec, and spawn. Live workers must obey the source's caller synchronization and borrowed-pointer lifetime obligations; concurrent environment mutation outside that contract is not a valid differential. |
-| `signal-full` | `owned-posix-signals` plus named reused cases | Cover all 34 spellings through disposition, masks, pending signals, queueing, waits, alt stack, realtime limits, reporting, and signalfd. Preserve the error ordering and errno checks already modeled by the static consumer and existing helper case. |
+| `signal-full` | `owned-posix-signals` plus named reused cases | Cover every spelling through disposition, masks, pending signals, queueing, waits, alt stack, realtime limits, reporting, and signalfd. Preserve the error ordering and errno checks already modeled by the static consumer and existing helper case. |
 | `kernel-residual` | `owned-kernel-residual` alongside `linux-control`, `syslog`, and `system-cancellation` | Cover every selected kernel-admin spelling outside the present `linux-control`, `syslog`, and `system-cancellation` cases. Privileged calls may use a contained negative-path differential where that is musl's observable contract; the test still has to invoke the exact public entry with valid pointer/lifetime conditions. `gethostid` must retain its existing fixed-zero musl mapping and header-visibility contract when it joins the installed workload. |
 | `global-state-composition` | `owned-posix-composition` | In a multi-threaded process, establish environment mutation, signal disposition and per-thread masks, a live `FILE` stream, and syslog state; then fork, exec, and spawn. Compare parent, worker, and child results with musl, including state after the child exits and cancellation/lock-sensitive paths. This is the proof that these separate leaves compose under the runtime rather than merely exporting together. |
 
@@ -252,8 +252,8 @@ this aggregate would create a dependency cycle with `libc.posix-runtime`.
 
 The native aggregate and family matrix can be sealed with
 `owned_posix_native_execution.py admit --native-execution FILE --output NEW_DIR`.
-That receipt reconstructs the two owners, the catalog's nine capabilities and
-149 spellings, every six-static/twelve-dynamic spelling cell, each named
+That receipt reconstructs the two owners, the catalog's capabilities and
+spellings, every static/dynamic product-matrix spelling cell, each named
 closure workload, and the native aggregate's five components/eighteen I/O
 cells. It sets family completion only inside the receipt; campaign, promotion,
 and public-support predicates remain false.

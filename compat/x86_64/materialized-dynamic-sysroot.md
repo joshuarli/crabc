@@ -554,9 +554,11 @@ preprocessing does not produce a second application object.
 
 Every execution retains `.command.json`, `.stdout`, `.stderr`, and `.status`
 files, including failure or timeout status before the runner exits. Supplied
-static plus dynamic products yield ten objects, forty checked link identities,
-and seventy raw execution cells, including the ten musl references. Dynamic-only
-replay yields the same ten objects, twenty link identities, and fifty cells.
+static plus dynamic products yield, per fixture, one object, two dynamic and
+two static checked link identities, and one raw execution cell for the musl
+reference and each candidate entry mode (static ET_EXEC and static PIE; dynamic
+PIE and non-PIE through kernel and direct entry). Dynamic-only replay yields the
+same objects with only the dynamic links and cells.
 These are workload results, not a POSIX-family completion receipt.
 
 `run_owned_system_cancellation.sh INSTALLED_SYSROOT` separately qualifies

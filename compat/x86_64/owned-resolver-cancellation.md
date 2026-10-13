@@ -283,11 +283,11 @@ musl does, rather than return EMFILE immediately. Both regressions are kept in
 Run `./scripts/dev-x86_64.sh owned-resolver-cancellation [DYNAMIC_SYSROOT]`.
 Without an argument it constructs static and dynamic products before entering
 a network-none container. With a product argument it compiles against that
-supplied tree and does not build a replacement. The standalone matrix is 120
-regular API/scenario pairs plus the dedicated post-TCP pair across seven
-musl/owned entry arms (847 runs): static ET_EXEC/static-PIE, and dynamic
+supplied tree and does not build a replacement. The standalone matrix is every
+regular API/scenario pair of the probe plus the dedicated post-TCP pair across
+the musl/owned entry arms: static ET_EXEC/static-PIE, and dynamic
 PIE/non-PIE through both kernel and direct interpreter entry. The supplied
-dynamic matrix has five arms (605 runs).
+dynamic matrix omits the static arms.
 
 Scenarios cover pending enabled/disabled/MASKED entry; witnessed blocked UDP
 and TCP cancellation in all states; MASKED UDP-to-TCP restoration and failed
