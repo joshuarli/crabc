@@ -192,6 +192,30 @@ else:
     finally:
         staging.unlink(missing_ok=True)
 
+# The dispatcher admits only physical `.work` seed files; keep the verified
+# source cache intact and pass a worktree-local copy to both Lua consumers.
+lua_seed_relative = ".work/x86_64/lua-source-build-seed/" + lua_archive.name
+lua_seed_directory = root / ".work/x86_64/lua-source-build-seed"
+if not lua_seed_directory.exists() and not lua_seed_directory.is_symlink():
+    lua_seed_directory.mkdir(parents=True)
+physical_directory(lua_seed_directory, "worktree Lua source seed directory")
+lua_seed = root / lua_seed_relative
+require(not lua_seed.is_symlink() and (not lua_seed.exists() or lua_seed.is_file()),
+        f"worktree Lua source seed is not a regular file: {lua_seed}")
+staging = None
+try:
+    with tempfile.NamedTemporaryFile("wb", dir=lua_seed_directory, prefix=f".{lua_seed.name}.",
+                                     delete=False) as output:
+        staging = Path(output.name)
+        with lua_archive.open("rb") as source:
+            shutil.copyfileobj(source, output)
+    require(digest(staging) == lua_manifest["sha256"],
+            "staged Lua archive differs from its pin")
+    os.replace(staging, lua_seed)
+finally:
+    if staging is not None:
+        staging.unlink(missing_ok=True)
+
 vendor_paths = {
     "provider_vendor": ".work/x86_64/rust-std-lto/provider-vendor",
     "dependency_vendor": ".work/x86_64/rust-std-lto/dependency-vendor",
@@ -214,7 +238,7 @@ require(set(inputs) <= set(qualification_candidate.INPUT_KEYS), "candidate input
 for group, fields in inputs.items():
     require(isinstance(fields, dict) and set(fields) == set(qualification_candidate.INPUT_KEYS[group]),
             f"candidate input {group} fields differ")
-inputs["lua_source_build"] = {"archive_seed": "compat/lua/.cache/" + lua_archive.name}
+inputs["lua_source_build"] = {"archive_seed": lua_seed_relative}
 inputs["rust_std_lto"] = vendor_paths
 with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=inputs_path.parent,
                                  prefix=".inputs.json.", delete=False) as output:
