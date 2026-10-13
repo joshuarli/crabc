@@ -2455,6 +2455,19 @@ impl ThreadLocalData {
         unsafe { core::ptr::addr_of!((*tld.as_ptr()).is_in_threadpool).read() }
     }
 
+    /// Marks the retained source TLD as owned by a thread pool.
+    ///
+    /// # Safety
+    /// The caller retains this initialized TLD and excludes another
+    /// thread-pool policy write, image replacement, and teardown. Other TLD
+    /// fields are not borrowed or modified.
+    #[inline]
+    pub(crate) unsafe fn mark_in_threadpool_at(tld: NonNull<Self>) {
+        // SAFETY: the caller has exclusive authority over this policy bit;
+        // only this field is written through the retained TLD image.
+        unsafe { core::ptr::addr_of_mut!((*tld.as_ptr()).is_in_threadpool).write(true) }
+    }
+
     /// Returns the metadata provenance of this exact TLD allocation.
     #[inline]
     pub(crate) const fn memory_id(&self) -> MemoryId {
@@ -2660,19 +2673,20 @@ impl ThreadLocalData {
     /// Source list mutation remains independent of these scalar fields. The
     /// recurse marker suppresses deferred callbacks, not ordinary allocation
     /// or queries of this same retained owner from a selected callback.
+    /// The thread-pool flag is mutable source policy, not attachment identity.
     ///
     /// # Safety
     /// `pointer` retains initialized TLD metadata through the call. Its
-    /// subprocess, threadpool, identity and NUMA fields remain unchanged.
+    /// subprocess, identity and NUMA fields remain unchanged.
     pub(crate) unsafe fn attached_thread_identity_at(
         pointer: NonNull<Self>,
         subprocess: &SubprocessIdentity,
     ) -> Option<(LiveThreadId, ThreadSequence, i32)> {
         // SAFETY: these short projections do not borrow mutable list links.
         unsafe {
-            if core::ptr::addr_of!((*pointer.as_ptr()).subprocess).read() != subprocess.as_ptr()
-                || core::ptr::addr_of!((*pointer.as_ptr()).is_in_threadpool).read()
-            { return None; }
+            if core::ptr::addr_of!((*pointer.as_ptr()).subprocess).read() != subprocess.as_ptr() {
+                return None;
+            }
             Some((
                 LiveThreadId::new(core::ptr::addr_of!((*pointer.as_ptr()).thread_id).read())?,
                 ThreadSequence::from_previous_total_count(core::ptr::addr_of!((*pointer.as_ptr()).thread_seq).read()),
@@ -2686,7 +2700,7 @@ impl ThreadLocalData {
     ///
     /// # Safety
     /// `pointer` is retained initialized TLD metadata. Its thread, sequence,
-    /// subprocess, threadpool, and memory identity remain unchanged through
+    /// subprocess, and memory identity remain unchanged through
     /// this read; the calling thread exclusively controls its recurse field.
     /// The source list may change under its own lock.
     pub(crate) unsafe fn attached_owner_memory_at(
@@ -2702,7 +2716,6 @@ impl ThreadLocalData {
             if core::ptr::addr_of!((*pointer.as_ptr()).thread_id).read() != thread.get()
                 || core::ptr::addr_of!((*pointer.as_ptr()).thread_seq).read() != sequence.get()
                 || core::ptr::addr_of!((*pointer.as_ptr()).subprocess).read() != subprocess.as_ptr()
-                || core::ptr::addr_of!((*pointer.as_ptr()).is_in_threadpool).read()
                 || core::ptr::addr_of!((*pointer.as_ptr()).recurse).read() != callback_reentry
             { return None; }
             Some(core::ptr::addr_of!((*pointer.as_ptr()).memid).read())
@@ -3214,8 +3227,6 @@ impl ThreadLocalData {
             && self.thread_seq == thread_sequence.get()
             && !self.subprocess.is_null()
             && self.is_attached_to_main_subprocess(subprocess)
-            // This is the pinned Unix primitive result, not a guessed policy.
-            && !self.is_in_threadpool
     }
 
     /// Checks the exact attached-TLD image during one selected deferred-free
@@ -7467,10 +7478,9 @@ impl Theap {
             heap_source.subprocess, heap_source.exclusive_arena,
             heap_source.theap_slot, heap_source.memory_id.kind(),
         );
-        let (tld_subprocess, tld_thread_id, tld_in_threadpool) = unsafe {
+        let (tld_subprocess, tld_thread_id) = unsafe {
             (core::ptr::addr_of!((*tld.as_ptr()).subprocess).read(),
-                core::ptr::addr_of!((*tld.as_ptr()).thread_id).read(),
-                core::ptr::addr_of!((*tld.as_ptr()).is_in_threadpool).read())
+                core::ptr::addr_of!((*tld.as_ptr()).thread_id).read())
         };
         // Only the list mutex is borrowed. Other owners may inspect this
         // source head, so even prefix validation uses their synchronization.
@@ -7518,11 +7528,11 @@ impl Theap {
                     }
             },
         };
+        // The pool bit is mutable policy; a new Theap captures its retention
+        // adjustment below instead of rejecting an attached TLD.
         if image.is_initialized() || !storage_valid || !subprocess_valid
             || tld_thread_id != owner.thread_id()
             || (!existing_members && (tld_subprocess.is_null() || !tld_head.is_null()))
-            || (matches!(kind, TheapInitializationKind::Dynamic { .. } | TheapInitializationKind::RequestedArena { .. })
-                && tld_in_threadpool)
             || (matches!(kind, TheapInitializationKind::SharedMain { .. })
                 && (heap_slot != 1 || heap_kind != MemoryKind::Static)) {
             return Err(TheapMainStaticInitError::InvalidInput);
@@ -7905,7 +7915,6 @@ impl Theap {
             || !tld.matches_owner(TheapOwner::Live(
                 LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
             ))
-            || tld.is_in_threadpool()
             || heap.subprocess.is_null()
             || !core::ptr::eq(heap.subprocess, tld.subprocess)
         {
@@ -8054,7 +8063,6 @@ impl Theap {
             || !tld.matches_owner(TheapOwner::Live(
                 LiveThreadId::new(tld.thread_id()).ok_or(TheapDynamicInitError::InvalidInput)?,
             ))
-            || tld.is_in_threadpool()
             || heap.subprocess.is_null()
             || !core::ptr::eq(heap.subprocess, tld.subprocess)
         {
@@ -9566,6 +9574,18 @@ impl Theap {
     #[inline]
     pub(crate) const fn page_full_retain(&self) -> isize {
         self.page_full_retain
+    }
+
+    /// Copies the selected page-retention policy from one retained Theap.
+    ///
+    /// # Safety
+    /// The initialized Theap stays live and its retention policy does not
+    /// change during this field-only read.
+    #[inline]
+    pub(crate) unsafe fn page_full_retain_at(theap: NonNull<Self>) -> isize {
+        // SAFETY: the caller retains this exact field and excludes policy
+        // mutation; no reference to the complete Theap is formed.
+        unsafe { core::ptr::addr_of!((*theap.as_ptr()).page_full_retain).read() }
     }
 
     /// Total reserved block bytes in this Theap's full queue.

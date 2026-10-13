@@ -53,6 +53,78 @@ typedef struct theap_visit_s {
   bool stop;
 } theap_visit_t;
 
+#ifndef CRABC_M6_SOURCE_INTERNAL
+extern bool crabc_test_threadpool_theap_policy(mi_theap_t* base, mi_theap_t* added,
+                                                bool* in_threadpool,
+                                                long* base_retain, long* added_retain);
+#endif
+
+/* The source setter is thread-local policy for future Theaps. The existing
+   default keeps its original option image when the flag is changed. */
+static bool threadpool_policy(void) {
+  long previous_option = mi_option_get(mi_option_page_full_retain);
+  mi_option_set(mi_option_page_full_retain, 8);
+  mi_theap_t* base = mi_theap_get_default();
+  if (base == NULL) return false;
+  long original_retain = 0;
+  bool initial_threadpool = false;
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  original_retain = base->page_full_retain;
+  initial_threadpool = base->tld != NULL && base->tld->is_in_threadpool;
+#else
+  long initial_ignored_retain = 0;
+  if (!crabc_test_threadpool_theap_policy(base, base, &initial_threadpool,
+                                          &original_retain, &initial_ignored_retain)) return false;
+#endif
+  mi_thread_set_in_threadpool();
+  bool in_threadpool = false;
+  long base_retain = 0;
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  bool base_observed = base->tld != NULL;
+  if (base_observed) {
+    in_threadpool = base->tld->is_in_threadpool;
+    base_retain = base->page_full_retain;
+  }
+#else
+  long ignored_retain = 0;
+  bool base_observed = crabc_test_threadpool_theap_policy(
+      base, base, &in_threadpool, &base_retain, &ignored_retain);
+#endif
+  mi_heap_t* heap = mi_heap_new();
+  mi_theap_t* added = heap == NULL ? NULL : mi_heap_theap(heap);
+  long added_retain = 0;
+  bool added_observed = false;
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  added_observed = added != NULL && added->tld == base->tld;
+  if (added_observed) {
+    added_retain = added->page_full_retain;
+  }
+#else
+  if (added != NULL) {
+    bool added_threadpool = false;
+    long ignored_base_retain = 0;
+    added_observed = crabc_test_threadpool_theap_policy(
+        base, added, &added_threadpool, &ignored_base_retain, &added_retain)
+        && added_threadpool == in_threadpool;
+  }
+#endif
+  bool result = base_observed && original_retain == 8 && !initial_threadpool &&
+                in_threadpool && base_retain == original_retain && heap != NULL &&
+                added_observed && added_retain == 2;
+  printf("worker.threadpool=%d,%d,%d,%d,%d,%d,%d\n", original_retain == 8,
+         !initial_threadpool, in_threadpool, base_observed && base_retain == original_retain,
+         heap != NULL, added_observed, added_retain == 2);
+  if (heap != NULL) mi_heap_delete(heap);
+  mi_option_set(mi_option_page_full_retain, previous_option);
+  return result;
+}
+
+static void* threadpool_policy_worker(void* argument) {
+  bool* complete = (bool*)argument;
+  *complete = threadpool_policy();
+  return NULL;
+}
+
 static bool theap_visitor(const mi_heap_t* heap, const mi_heap_area_t* area,
                           void* block, size_t size, void* argument) {
   theap_visit_t* trace = argument;
@@ -488,6 +560,11 @@ static void* worker(void* argument) {
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   puts("CRABC_MI_M6_PUBLIC_THEAP_TRACE_BEGIN");
+  bool threadpool_complete = false;
+  pthread_t threadpool_thread;
+  if (pthread_create(&threadpool_thread, NULL, threadpool_policy_worker,
+                     &threadpool_complete) != 0) return 2;
+  if (pthread_join(threadpool_thread, NULL) != 0 || !threadpool_complete) return 3;
   if (!run_case("main", NULL)) return 4;
   mi_theap_t* main_default = mi_theap_get_default();
   bool small_stack_complete = false;

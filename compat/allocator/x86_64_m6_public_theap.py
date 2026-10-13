@@ -53,6 +53,7 @@ SOURCE_TRACE = {
     **{f"{context}.{stage}": value
        for context in ("main", "worker", "child", "fork")
        for stage, value in SOURCE_STAGES.items()},
+    "worker.threadpool": "1,1,1,1,1,1,1",
     "worker.small_stack": "1,1,1,1",
     "main.after_worker": "1",
     "main.after_child": "1",
@@ -62,7 +63,7 @@ SOURCE_TRACE = {
 
 
 def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False, profile: str = "release") -> None:
-    selected_stages = {"base", "other", "reject", "direct_before", "switch", "guarded", "restore", "done"}
+    selected_stages = {"base", "other", "reject", "direct_before", "switch", "threadpool", "guarded", "restore", "done"}
     expected = ({key: value for key, value in SOURCE_TRACE.items()
                  if key.rsplit(".", 1)[-1] in selected_stages or key.startswith("main.after_")}
                 if guarded_only else SOURCE_TRACE)

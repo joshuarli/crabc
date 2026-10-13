@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0
+// - `src/init.c:976-979` (`mi_thread_set_in_threadpool`);
 // - `src/theap.c:190-205` (the public guarded sampler controls);
 // - `src/alloc.c:868-947` (guarded request geometry and placement) and
 //   `src/alloc-aligned.c:30-49` (guarded alignment adjustment);
@@ -44,7 +45,7 @@ use crate::source_api::{Block, SourceErrno, Sourced};
 use crate::subproc::main_heaps;
 use crate::subproc::MainSubprocess;
 use crate::types::heap_registry::lifecycle::HeapReleaseOutcome;
-use crate::types::{Heap, Page, Theap};
+use crate::types::{Heap, Page, Theap, ThreadLocalData};
 
 /// Callback ABI retained by a caller-managed arena. A true commit result
 /// means the requested span is accessible; a true purge result means it must
@@ -557,6 +558,55 @@ pub unsafe fn theap_set_default(theap: *mut c_void) -> *mut c_void {
     if !initialized || !same_tld { return previous; }
     crate::compiler_tls::set_default_theap(candidate);
     previous
+}
+
+/// `mi_thread_set_in_threadpool`: initialize the current default Theap if
+/// needed, then mark its retained TLD so later Theaps use the pool policy.
+pub fn thread_set_in_threadpool() -> bool {
+    let Some(theap) = NonNull::new(theap_get_default().cast::<Theap>()) else { return false };
+    // SAFETY: the current-thread getter retains the initialized default; its
+    // TLD is the calling thread's policy owner for this synchronous write.
+    let Some(tld) = NonNull::new(unsafe { Theap::tld_at(theap) }) else { return false };
+    // SAFETY: this caller owns the current thread's TLD and excludes teardown
+    // or another policy change for the duration of the field write.
+    unsafe { ThreadLocalData::mark_in_threadpool_at(tld) };
+    true
+}
+
+/// Reads the thread-pool flag and retention values for two initialized
+/// Theaps that share the calling thread's TLD.
+///
+/// This narrow observation lets the native adapter compare source policy
+/// fields without interpreting the Rust Theap or TLD image as a C struct.
+///
+/// # Safety
+/// `base` and `added` are live initialized Theaps owned by the calling
+/// thread, remain attached to the same live TLD through the call, and are not
+/// destroyed or reconfigured concurrently.
+pub unsafe fn threadpool_theap_policy(
+    base: *mut c_void,
+    added: *mut c_void,
+) -> Option<(bool, isize, isize)> {
+    let base = NonNull::new(base.cast::<Theap>())?;
+    let added = NonNull::new(added.cast::<Theap>())?;
+    // SAFETY: forwarded caller liveness; only initialized state and retained
+    // TLD identities are read.
+    if unsafe { Theap::heap_at(base) }.is_null() || unsafe { Theap::heap_at(added) }.is_null() {
+        return None;
+    }
+    let base_tld = NonNull::new(unsafe { Theap::tld_at(base) })?;
+    if unsafe { Theap::tld_at(added) } != base_tld.as_ptr() {
+        return None;
+    }
+    // SAFETY: the caller excludes concurrent writes, attachment changes and
+    // teardown for these exact current-thread owner fields.
+    Some(unsafe {
+        (
+            ThreadLocalData::is_in_threadpool_at(base_tld),
+            Theap::page_full_retain_at(base),
+            Theap::page_full_retain_at(added),
+        )
+    })
 }
 
 /// `mi_theap_guarded_set_sample_rate`: initializes the selected source sampler.

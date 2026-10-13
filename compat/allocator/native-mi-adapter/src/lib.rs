@@ -1351,6 +1351,47 @@ pub extern "C" fn mi_theap_get_default() -> TheapPointer {
 }
 
 #[no_mangle]
+pub extern "C" fn mi_thread_set_in_threadpool() {
+    bind_thread();
+    if !heaps::thread_set_in_threadpool() {
+        // The source API has no result channel. A failed lazy owner setup
+        // cannot be represented as a successful no-op in this adapter.
+        unsafe { abort() }
+    }
+}
+
+#[no_mangle]
+/// # Safety
+/// `base` and `added` are live Theaps attached to the current thread's TLD;
+/// output pointers are writable for the duration of this call.
+pub unsafe extern "C" fn crabc_test_threadpool_theap_policy(
+    base: TheapPointer,
+    added: TheapPointer,
+    in_threadpool: *mut bool,
+    base_retain: *mut c_long,
+    added_retain: *mut c_long,
+) -> bool {
+    bind_thread();
+    // SAFETY: the C fixture supplies its current-thread Theaps and writable
+    // outputs; the engine validates the shared TLD before observing them.
+    let Some((threadpool, original, later)) = (unsafe {
+        heaps::threadpool_theap_policy(base, added)
+    }) else {
+        return false;
+    };
+    if in_threadpool.is_null() || base_retain.is_null() || added_retain.is_null() {
+        return false;
+    }
+    // SAFETY: all output pointers were checked and the C fixture retains them.
+    unsafe {
+        in_threadpool.write(threadpool);
+        base_retain.write(original as c_long);
+        added_retain.write(later as c_long);
+    }
+    true
+}
+
+#[no_mangle]
 /// # Safety
 /// A non-null `theap` is a live, initialized Theap of the calling thread's
 /// TLD and Heap. It remains live until the prior default is restored.
