@@ -2,10 +2,11 @@
 
 Paused AArch64 lane; it supplies no x86 evidence.
 
-`run.py` is a deliberately narrow early architecture smoke for the contract in
-[`plan.md`](../../../plan.md): once a thread owns an
-already-initialized page, local allocation and free must not serialize through
-a process-global scheduler or a PageMap mutation lease. It measures only
+`run.py` is a deliberately narrow early architecture smoke for the persistent
+source owners and page-local remote publication requirements in
+[`plan.md`](../../../plan.md) ("Native allocator completion requirements"): once
+a thread owns an already-initialized page, local allocation and free must not
+serialize through a process-global scheduler or a PageMap mutation lease. It measures only
 independent, thread-local `mi_malloc(64)` / touch / `mi_free` work.
 
 The harness is evidence-only. It does not select the Rust allocator as a libc

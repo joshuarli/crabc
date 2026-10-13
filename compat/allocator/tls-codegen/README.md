@@ -61,8 +61,8 @@ and is not claimed to be zero. The `crabc-core` `%fs:0` test is a
 compilation/runtime regression for that source boundary, not independent
 oracle evidence. The object and relocation inspection in this runner is the
 native x86-64 codegen evidence. The report is written separately to
-`.work/reports/allocator/tls-codegen-x86_64.json` by default, or below the
-configured `CRABC_WORK_DIR`.
+`reports/allocator/tls-codegen-x86_64.json` below the work root, which the
+launcher places at `.work/allocator-x86_64/`.
 
 The probe build uses `--locked` but deliberately not `--offline`: its first
 native run may populate the architecture-local Cargo volume from the checked-in

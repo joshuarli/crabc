@@ -7,6 +7,7 @@ AArch64 allocator implementation and qualification are paused; these are the pre
 ./scripts/dev.sh allocator-m1
 ./scripts/dev.sh allocator --full
 ./scripts/dev.sh allocator --churn
+./scripts/dev.sh allocator --soak
 ./scripts/dev.sh allocator-tls
 ./scripts/dev.sh sysroot
 ./scripts/dev.sh static-pthread-tls
@@ -45,10 +46,7 @@ fill/free permutation. Raw addresses are deliberately excluded. The gate also
 records a separate 51-key exact-C baseline for page-kind, calloc, realloc,
 aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
 behavior. The same library run emits an independent 51-key Rust record and
-requires exact equality with that pinned C baseline. The native x86-64 lane
-below extends its own trace to 75 fields with no-padding `mi_expand` and
-checked `mi_recalloc`; native AArch64 revalidation of that extension remains
-pending. This proves the bounded
+requires exact equality with that pinned C baseline. This proves the bounded
 single-thread engine's fundamental operation slice; it is not a production C
 adapter, process lifecycle, or whole-allocator parity claim. A
 default-off `test-adapter` feature now owns one allocation-backed, creating-
@@ -175,8 +173,8 @@ persistent-worker, live-owner remote-free, and owner-exit evidence as passed
 only when their executed checks pass. It records Gate 5D (soak, stability, and
 upstream stress) and Gate 5E (selected native-shadow acceptance) as explicit
 blockers until their documented acceptance criteria are met. Consequently
-`allocator --full` still exits 3 today, but its failure is
-the named reviewed gate state rather than a synthetic post-run placeholder.
+`allocator --full` exits 3 while those gates are blocked, and its failure is the
+named reviewed gate state rather than a synthetic post-run placeholder.
 
 Before rendering that M5 record, `allocator --full` reads only the fixed
 `.work/reports/allocator/upstream-stress/latest.json` canonical report; it does
@@ -295,12 +293,12 @@ owner. This is not a public worker API, a general concurrent allocator, or
 libc allocation routing.
 
 Loom 0.7.2 is an exact, defaults-disabled optional test-model dependency. The
-`loom = ["dep:loom"]` feature selects its allocation-backed `std` scheduler,
-`generator` build script, and tracing support stack only for the
-`cfg(all(test, feature = "loom"))` library model; ordinary selected native
-integration tests do not resolve that graph. The generator's external assembly
-path is not selected on AArch64, and Cargo's production-graph judge excludes
-the entire Loom graph. Both performance modes likewise remain explicitly
-unavailable; these status-3 results are not skips and must not become
-successful placeholders.
+`loom = ["dep:loom"]` feature resolves its allocation-backed `std` scheduler and
+`generator` build script only for the `cfg(all(test, feature = "loom"))` library
+model, so ordinary selected native integration tests do not resolve that graph,
+and Cargo's production-graph judge excludes the entire Loom graph.
 
+Both performance modes (`allocator-perf --smoke` and `--full`) remain explicitly
+unavailable (`run.py --perf-smoke`/`--perf-full` exit 3 with an
+"allocator performance is unavailable" message); these status-3 results are not
+skips and must not become successful placeholders.

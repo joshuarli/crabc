@@ -9,7 +9,7 @@ recorded host contention before a measurement can be used.
 
 `architecture-gate-v3.5.0.json` registers the schema-3
 `perf_engine_x86_64.py` producer and its `validate_qualified_full_report` reader.
-Registration enables consumption of genuine samples; it does not qualify a run.
+Registration only lets the architecture reader consume such reports; it does not qualify a run.
 Smoke, architecture-only, failed, incomplete, changed-source, changed-artifact,
 and contended-host reports fail the qualified reader.
 

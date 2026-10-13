@@ -33,12 +33,16 @@ artifact hashes, host affinity, worker oversubscription facts, and the
 Rust/C throughput ratio for every workload/worker-scale pair. A ratio is never
 published without those raw samples and provenance.
 
-This is an early architecture smoke. Its `0.25` ratio is the local ratchet in
-`plan.md` (Allocator verification and performance), not a final band. The
-report always records `final_promotion_qualified: false`. Apple-Silicon Docker is useful for this
+This is an early architecture smoke. Its `0.25` ratio
+(`minimum_rust_over_pinned_c_throughput_ratio` in
+[`perf-local-aarch64-v3.5.0.json`](perf-local-aarch64-v3.5.0.json)) is a local
+ratchet, not a final band. The report always records
+`final_promotion_qualified: false`. Apple-Silicon Docker is useful for this
 development smoke but is explicitly unqualified for promotion. Final allocator
-performance bands (`plan.md`, Allocator verification and performance) require a
-qualified native host; this AArch64 lane is paused and supplies no x86 evidence.
+performance requires a qualified native host (the x86 measurements are
+`allocator-perf-engine` and `allocator-perf-integrated` in
+[`../README.md`](../README.md)); this AArch64 lane is paused and supplies no x86
+evidence.
 
 The harness requires an existing owned sysroot and its staged loader because
 the selected Rust C-ABI fixture must run through crabc's real pthread/runtime
@@ -46,12 +50,12 @@ boundary. Run it in the pinned AArch64 image after the ordinary sysroot has
 been built, using a unique worktree target directory for the loader:
 
 ```sh
-CARGO_TARGET_DIR=/workspace/target/wave-07-w09-local-performance-smoke \
+CARGO_TARGET_DIR=/workspace/target/local-perf-smoke \
   cargo build --locked --package crabc-ldso
 
 python3 scripts/run_owned_test_suite.py \
   --sysroot target/crabc-sysroot \
-  --loader target/wave-07-w09-local-performance-smoke/debug/libldso.so \
+  --loader target/local-perf-smoke/debug/libldso.so \
   -- python3 compat/allocator/perf-local-aarch64/run.py --smoke --label local
 ```
 
