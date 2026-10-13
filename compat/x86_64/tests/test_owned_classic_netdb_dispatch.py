@@ -33,7 +33,8 @@ run_owned_classic_netdb_probe "$@"
     def test_network_dispatch_executes_the_observed_immutable_image_and_forwards_its_identity(self) -> None:
         source = DISPATCHER.read_text()
         for name, prefix in (("run_in_resolver_network_container", ""),
-                             ("run_in_resolver_family_image_container", "CRABC_RESOLVER_ALIAS_IMAGE_ID ")):
+                             ("run_in_resolver_family_image_container", "CRABC_RESOLVER_ALIAS_IMAGE_ID "),
+                             ("run_in_dynamic_loader_mount_container", "")):
             with self.subTest(dispatch=name):
                 self.check_image_dispatch(source, name, prefix)
 
@@ -57,6 +58,7 @@ TMP_DIR=/checkout/.work/tmp
 WORK_DIR=/checkout/.work/x86_64
 TARGET_VOLUME=/checkout/.work/target
 CARGO_VOLUME=/checkout/.work/cargo
+command=materialized-dynamic-sysroot
 """ + name + " " + prefix + "python3 collector.py\n"
         result = subprocess.run(["bash", "-c", script], capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr.decode())

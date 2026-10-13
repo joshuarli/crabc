@@ -4158,6 +4158,7 @@ run_in_resolver_network_container() {
 # roots with trap-owned unmount cleanup. Their mount authority and disabled
 # AppArmor profile remain confined to the Docker mount/PID namespaces.
 run_in_dynamic_loader_mount_container() {
+    local image_id
     # The family includes credentials-profile's disposable user namespace.
     # Preserve every other mount caller's existing seccomp policy.
     local -a family_namespace_authority=()
@@ -4171,6 +4172,8 @@ run_in_dynamic_loader_mount_container() {
     if [ "$command" = owned-posix-native ] || [ "$command" = owned-c-abi-compat-family ]; then
         family_namespace_authority+=(--security-opt=seccomp=unconfined --network=none)
     fi
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")" || fail "cannot resolve dynamic loader mount image identity"
+    [ -n "$image_id" ] || fail "cannot resolve dynamic loader mount image identity"
     prepare_work_dir
     docker run --rm --init \
         "${GIT_METADATA_MOUNT[@]}" \
@@ -4184,6 +4187,7 @@ run_in_dynamic_loader_mount_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env "CRABC_CLASSIC_NETDB_IMAGE_ID=crabc-core-evidence@$image_id" \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
@@ -4192,7 +4196,7 @@ run_in_dynamic_loader_mount_container() {
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
-        "$IMAGE" "$@"
+        "$image_id" "$@"
 }
 
 # Native C-performance collection uses a private diagnostic cgroup namespace.
