@@ -5015,13 +5015,12 @@ mod tests {
         .expect("the initial OS-singleton regression remains current-thread local");
     }
 
-    /// A failed terminal OS unmap follows PageMap unregistration and metadata
-    /// retirement, then preserves its sole mapping owner. The borrowed initial
-    /// session must retain that incomplete transition instead of reopening its
-    /// ticket-zero teardown path.
+    /// Source Page free consumes a refused terminal unmap after unregistering
+    /// the PageMap span. The range stays mapped, but no allocator owner may
+    /// retry it during collection or ticket-zero teardown.
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn x86_64_initial_os_singleton_direct_free_retains_failed_unmap_owner() {
+    fn x86_64_initial_os_singleton_direct_free_consumes_failed_unmap() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -5041,28 +5040,50 @@ mod tests {
             let block = allocator
                 .allocate_aligned(crate::config::SMALL_MAX_OBJ_SIZE + 1, 128 * 1024)
                 .expect("the initial owner allocates its full OS singleton");
+            let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                .expect("the OS singleton remains published before source free");
+            let span = unsafe { page.as_ref() }
+                .memid()
+                .os_memory()
+                .expect("the source singleton retains its exact mapping span");
+            let mapping_present = || {
+                (0..span.size).step_by(config.page_size().bytes()).all(|offset| {
+                    let mut residency = 0;
+                    // SAFETY: query the captured mapping after Page metadata
+                    // retirement without dereferencing the consumed client.
+                    unsafe {
+                        crabc_core::mm::mincore_raw(
+                            span.base.wrapping_add(offset),
+                            config.page_size().bytes(),
+                            &mut residency,
+                        )
+                    }
+                    .is_ok()
+                })
+            };
             fault.set(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
             unsafe { allocator.free(block) }
                 .expect("a failed terminal unmap still consumes the exact initial client");
             assert_eq!(fault.observed(), 1, "the initial terminal path attempts one source unmap");
-            fault.set(fault::Plan::disabled());
             assert!(
                 unsafe { page_map.page_map().unwrap().checked_lookup(block.as_ptr()) }.is_null(),
-                "the failed initial unmap retains only its mapping owner after PageMap release",
+                "the consumed initial free clears its PageMap publication",
             );
-            let retained = match allocator.finish() {
-                Err(MainStaticProcessPageAllocatorFinishError::Retained(retained)) => retained,
-                Ok(()) => panic!("the failed initial unmap must retain its mapping owner"),
-                Err(MainStaticProcessPageAllocatorFinishError::PageMap(error)) => {
-                    panic!("the source mapping failure must not become a PageMap wake error: {error:?}")
-                }
-            };
-            core::mem::forget(retained);
-            assert_eq!(
-                owner.teardown(),
-                Err(crate::main_theap::MainStaticTheapError::Poisoned),
-                "the retained initial mapping owner closes normal ticket-zero teardown",
-            );
+            assert!(mapping_present(), "a refused source unmap leaves the range mapped");
+            assert!(allocator.collect_retired(true));
+            assert_eq!(fault.observed(), 1, "collection does not retry a consumed source free");
+            assert!(mapping_present());
+            assert!(matches!(allocator.finish(), Ok(())));
+            assert_eq!(fault.observed(), 1, "allocator finish does not retry the refused unmap");
+            owner
+                .teardown()
+                .expect("the consumed source free leaves ticket-zero teardown available");
+            assert_eq!(fault.observed(), 1, "ticket-zero teardown does not retry the refused unmap");
+            assert!(mapping_present());
+            fault.set(fault::Plan::disabled());
+            // SAFETY: the source Page was consumed and no release capability
+            // survives; clean up this fixture's intentionally leaked range.
+            unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
         })
         .join()
         .expect("the initial failed-unmap regression remains current-thread local");

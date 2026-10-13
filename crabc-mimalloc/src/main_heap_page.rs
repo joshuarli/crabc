@@ -9986,7 +9986,7 @@ pub(crate) mod tests {
             assert_eq!(thread_live_after, 0);
 
             let fault = crate::os::fault::install(crate::os::fault::Plan::disabled());
-            let os_block_address = core::cell::Cell::new(None);
+            let os_memory = core::cell::Cell::new(None::<crate::types::OsMemory>);
             let os_retirement = child.with_metadata_page_engine(binding, |_child_image, engine| {
                 // Use the source-aligned singleton route that bypasses arena
                 // admission and owns a distinct OS mapping.
@@ -9996,7 +9996,25 @@ pub(crate) mod tests {
                 assert!(!page.is_null(), "large child allocation has a live page image");
                 assert!(unsafe { (*page).memid().kind().is_os() },
                     "aligned child metadata page uses the source OS singleton route");
-                os_block_address.set(Some(block.as_ptr() as usize));
+                let span = unsafe { (*page).memid() }
+                    .os_memory()
+                    .expect("the source child singleton retains its exact mapping span");
+                os_memory.set(Some(span));
+                let mapping_present = || {
+                    (0..span.size).step_by(config.page_size().bytes()).all(|offset| {
+                        let mut residency = 0;
+                        // SAFETY: query the captured mapping after Page metadata
+                        // retirement without dereferencing the consumed client.
+                        unsafe {
+                            crabc_core::mm::mincore_raw(
+                                span.base.wrapping_add(offset),
+                                config.page_size().bytes(),
+                                &mut residency,
+                            )
+                        }
+                        .is_ok()
+                    })
+                };
                 // The aligned allocation may trim its initial reservation;
                 // inject only after it is fully published so this fault hits
                 // the terminal release of the exact child mapping.
@@ -10004,74 +10022,74 @@ pub(crate) mod tests {
                     crate::os::fault::Point::Unmap, 1, crabc_core::Errno::NOMEM,
                 ));
                 unsafe { engine.free(block) }
-                    .expect("client free succeeds while its failed unmap owner is retained");
+                    .expect("the source client free consumes a refused terminal unmap");
                 assert_eq!(fault.observed(), 1,
                     "the exact child mapping's release consumes the injected unmap failure");
                 let map = unsafe { binding.page_map().page_map_for_owned_ranges() }
                     .expect("parent PageMap remains available during child release");
-                // SAFETY: this session owns the exact range and the OS free
-                // just unregistered it before its injected unmap failure.
+                // SAFETY: the source free just unregistered the exact range
+                // before consuming its refused unmap.
                 assert!(unsafe { map.checked_lookup(block.as_ptr()) }.is_null());
+                assert!(mapping_present(), "a refused source unmap leaves the range mapped");
             });
-            assert!(matches!(
-                os_retirement,
-                Err(crate::meta::ChildMetadataPageEngineError::EngineRetained),
-            ), "failed OS release transfers its exact owner into the child context");
-            let os_block_address = os_block_address
-                .get()
-                .expect("the child OS mapping address was captured before free");
+            os_retirement.expect("the consumed child source free finishes its page operation");
+            let span = os_memory.get().expect("the child OS mapping span was captured before free");
             assert_eq!(fault.observed(), 1, "one child unmap attempt failed");
-            fault.set(crate::os::fault::Plan::disabled());
-            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryPending);
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::Active);
+            assert!(!child.test_has_pending_os_release(),
+                "the consumed source free leaves no raw mapping retry owner");
             let map = unsafe { binding.page_map().page_map_for_owned_ranges() }
                 .expect("the canonical PageMap remains live during child teardown");
             // SAFETY: this single-thread fixture owns the child address and
             // no lookup overlaps terminal teardown; null proves unregister
             // completed before the injected unmap failure.
-            assert!(unsafe { map.checked_lookup(os_block_address as *const u8) }.is_null());
-            let stats_before_retry = child
-                .test_child_vm_statistics()
-                .expect("the child context remains retained across raw retry");
-            assert!(unsafe { child.retry_pending_os_release() }
-                .expect("the retained raw mapping unmaps without a process projection"));
-            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryComplete);
-            let stats_after_retry = child
-                .test_child_vm_statistics()
-                .expect("the child context remains live after the raw retry");
-            assert_eq!(stats_after_retry, stats_before_retry,
-                "retry does not repeat process accounting already applied before unmap");
+            assert!(unsafe { map.checked_lookup(span.base) }.is_null());
+            assert!(!unsafe { child.retry_pending_os_release() }
+                .expect("a consumed source free has no raw retry to perform"));
+            assert_eq!(fault.observed(), 1, "child retry admission does not repeat the source unmap");
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::Active);
+            assert!(!child.test_has_pending_os_release());
+            fault.set(crate::os::fault::Plan::disabled());
+            let mapping_present = || {
+                (0..span.size).step_by(config.page_size().bytes()).all(|offset| {
+                    let mut residency = 0;
+                    // SAFETY: the consumed Page has no remaining release
+                    // capability; inspect only the captured raw address range.
+                    unsafe {
+                        crabc_core::mm::mincore_raw(
+                            span.base.wrapping_add(offset),
+                            config.page_size().bytes(),
+                            &mut residency,
+                        )
+                    }
+                    .is_ok()
+                })
+            };
+            assert!(mapping_present(), "the consumed source mapping remains mapped");
             assert!(child.test_is_heap_ready());
             assert!(binding.is_active());
             assert!(binding.is_allocation_ready());
-            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryComplete);
-            assert!(!child.test_has_pending_os_release());
             assert_eq!(binding.page_map().memory_config().ok(), Some(config));
 
             // Source destruction starts by unlinking this now-empty child;
             // its metadata-Theap pages were already retired through the
-            // registered child backing, with any failed OS unmap retried while
-            // the context remained retained. It then detaches the TLD and
+            // registered child backing. It then detaches the TLD and
             // Heap list edges. The exact metadata
             // cap is freed before child Heap-list removal and parent user-Heap
             // storage release, with child context last.
             // SAFETY: all child users are quiescent, all metadata-Theap pages
-            // and pending raw mapping owners are gone, and `registry` is the
-            // exact source registry that admitted this child.
-            // Registry unlink follows the earlier all-page retirement and raw
-            // retry; the fast path validates that no detached-Theap page or
-            // OS retry remains before unlinking this now-empty child.
-            fault.set(crate::os::fault::Plan::disabled());
-            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::RetryComplete);
+            // are gone, and `registry` is the exact source registry that
+            // admitted this child. The active path validates that no
+            // detached-Theap page remains before unlinking this now-empty child.
+            assert_eq!(child.test_page_engine_state(), crate::meta::ChildPageEngineState::Active);
             assert!(!child.test_has_pending_os_release());
-            // The source registry edge is removed only after the pending OS
-            // release completes and the metadata Theap has no remaining
-            // pages. The RetryComplete fast path performs this terminal
-            // unlink without reopening a page engine.
+            // The source registry edge is removed after the metadata Theap
+            // has no remaining pages; no raw retry state is involved.
             // SAFETY: all child users are quiescent, all metadata-Theap pages
-            // and raw mapping retries are gone, and this is the exact source
+            // are gone, and this is the exact source
             // registry that admitted the child.
             unsafe { child.unlink_registry_and_finish_metadata_pages(registry, binding) }
-                .expect("the now-empty child unlinks after raw page retry");
+                .expect("the now-empty child unlinks after source page free");
             assert!(child.test_is_registry_unlinked());
             // SAFETY: registry unlink makes the exact child Heap/TLD pair
             // quiescent; the parent metadata engine owns the detached TLD.
@@ -10097,6 +10115,10 @@ pub(crate) mod tests {
                     .release_after_empty_heap_teardown(&mut [], &mut heap_owner, attachment)
                     .unwrap_or_else(|_| panic!("the parent Heap token and context release last"));
             }
+            assert!(mapping_present(), "child teardown leaves the consumed source mapping mapped");
+            // SAFETY: the source Page was consumed and no release capability
+            // survives; clean up this fixture's intentionally leaked range.
+            unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
             assert_eq!(
                 parent_metadata.test_allocation_audit().live_capability_count,
                 audit_before.live_capability_count,
@@ -10768,7 +10790,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn persistent_owner_local_os_singleton_direct_free_retains_failed_unmap_owner() {
+    fn persistent_owner_local_os_singleton_direct_free_consumes_failed_unmap() {
         with_owner_local_fixture(false, |attachment, mut owner, pair| {
             let fault = fault::install(fault::Plan::disabled());
             let block = owner
@@ -10778,33 +10800,64 @@ pub(crate) mod tests {
                         .expect("the ordinary later owner allocates its full OS singleton")
                 })
                 .expect("the OS singleton allocation stays in one current owner operation");
+            let span = owner
+                .with_local_allocator(attachment, |allocator| {
+                    let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
+                        .expect("the owner-local OS singleton remains published before free");
+                    unsafe { page.as_ref() }
+                        .memid()
+                        .os_memory()
+                        .expect("the source singleton retains its exact mapping span")
+                })
+                .expect("the mapping span remains observable through the same owner");
+            let mapping_present = || {
+                (0..span.size).step_by(4096).all(|offset| {
+                    let mut residency = 0;
+                    // SAFETY: query the captured mapping after Page metadata
+                    // retirement without dereferencing the consumed client.
+                    unsafe {
+                        crabc_core::mm::mincore_raw(
+                            span.base.wrapping_add(offset),
+                            4096,
+                            &mut residency,
+                        )
+                    }
+                    .is_ok()
+                })
+            };
             fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-            let audit = owner
+            let (audit, collected) = owner
                 .with_local_allocator(attachment, |allocator| {
                     // SAFETY: `block` is the exact once-live OS singleton
                     // client from the preceding owner-local operation.
                     unsafe { allocator.free(block) }
                         .expect("a failed terminal unmap still accepts the source client free");
-                    allocator.engine.test_finish_audit()
+                    let collected = allocator.engine.collect_retired(true);
+                    (allocator.engine.test_finish_audit(), collected)
                 })
                 .expect("the failed-release observation remains one current owner operation");
             assert_eq!(fault.observed(), 1, "the terminal path attempts one source unmap");
-            fault.set(fault::Plan::disabled());
-            assert!(audit.pending_os_release);
+            assert!(collected, "source collection completes after consuming the refused free");
+            assert!(!audit.pending_os_release);
             assert_eq!(audit.page_count, 0);
             assert!(!audit.collection_poisoned);
             let page_map = unsafe { pair.page_map_for_owned_ranges() }
                 .expect("the process map remains observable after the terminal release boundary");
             assert!(
                 unsafe { page_map.checked_lookup(block.as_ptr()) }.is_null(),
-                "the retained mapping owner begins only after PageMap unregistration"
+                "the consumed source free clears its PageMap publication"
             );
-            drop(owner);
-            assert_eq!(
-                attachment.finish_after_user_destructors(),
-                Err(MainHeapThreadAttachmentError::OwnerLocalPageEngineTerminal),
-                "a failed unmap retains the unique published mapping owner instead of normalizing teardown"
-            );
+            assert!(mapping_present(), "a refused source unmap leaves the range mapped");
+            assert_eq!(fault.observed(), 1, "collection does not retry the consumed source free");
+            owner
+                .finish_after_collect_abandon(attachment)
+                .expect("the consumed source free leaves owner collection available");
+            assert_eq!(fault.observed(), 1, "owner finish does not retry the refused unmap");
+            assert!(mapping_present());
+            fault.set(fault::Plan::disabled());
+            // SAFETY: the source Page was consumed and no release capability
+            // survives; clean up this fixture's intentionally leaked range.
+            unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
         });
     }
 
@@ -14268,7 +14321,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn later_thread_exit_os_aligned_singleton_handoff_retains_failed_unmap_terminally() {
+    fn later_thread_exit_os_aligned_singleton_handoff_consumes_failed_unmap() {
         thread::spawn(|| {
             let config = memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -14305,6 +14358,25 @@ pub(crate) mod tests {
                         .expect("the later owner creates one source OS-aligned singleton");
                     let page = NonNull::new(unsafe { allocator.test_page_for_block(block) })
                         .expect("the OS singleton remains PageMap-published before thread exit");
+                    let span = unsafe { page.as_ref() }
+                        .memid()
+                        .os_memory()
+                        .expect("the source singleton retains its exact mapping span");
+                    let mapping_present = || {
+                        (0..span.size).step_by(config.page_size().bytes()).all(|offset| {
+                            let mut residency = 0;
+                            // SAFETY: query the captured mapping after Page
+                            // metadata retirement without using the client.
+                            unsafe {
+                                crabc_core::mm::mincore_raw(
+                                    span.base.wrapping_add(offset),
+                                    config.page_size().bytes(),
+                                    &mut residency,
+                                )
+                            }
+                            .is_ok()
+                        })
+                    };
                     let published = unsafe { PublishedOsAlignedPage::from_page(config, page) }
                         .expect("the source OS singleton retains its complete terminal-release token");
                     let drain = match allocator.begin_thread_exit_drain() {
@@ -14341,20 +14413,9 @@ pub(crate) mod tests {
 
                     fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
                     // SAFETY: this remains the handoff's exact once-live
-                    // client block. The source fast-root proof still makes
-                    // the one reclaim attempt fail before terminal release.
-                    let handoff = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
-                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
-                            handoff,
-                            error: ThreadExitSingletonRemoteFreeError::Release,
-                        }) => handoff,
-                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
-                            handoff,
-                            error,
-                        }) => {
-                            core::mem::forget(handoff);
-                            panic!("failed OS unmap retains the exact release terminal: {error:?}");
-                        }
+                    // client block through the source final-free operation.
+                    let drain = match unsafe { handoff.remote_free_after_failed_reclaim(block) } {
+                        Ok(drain) => drain,
                         Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Rejected {
                             handoff,
                             error,
@@ -14362,9 +14423,12 @@ pub(crate) mod tests {
                             core::mem::forget(handoff);
                             panic!("the exact OS singleton final free is not rejected: {error:?}");
                         }
-                        Ok(drain) => {
-                            core::mem::forget(drain);
-                            panic!("the configured OS unmap failure must retain its handoff");
+                        Err(MainHeapThreadProcessPageExitSingletonRemoteFreeFailure::Terminal {
+                            handoff,
+                            error,
+                        }) => {
+                            core::mem::forget(handoff);
+                            panic!("the source consumes a refused terminal unmap: {error:?}");
                         }
                     };
                     assert_eq!(
@@ -14372,10 +14436,9 @@ pub(crate) mod tests {
                         1,
                         "the terminal OS release attempts exactly one source unmap"
                     );
-                    fault.set(fault::Plan::disabled());
                     assert!(
-                        handoff.test_has_pending_os_release(),
-                        "failed unmap retains the unique published mapping owner in the handoff engine"
+                        !drain.test_has_pending_os_release(),
+                        "source free consumes the refused mapping release without a retry owner"
                     );
                     let abandoned_head = {
                         let mut heap = main_heap
@@ -14388,7 +14451,7 @@ pub(crate) mod tests {
                     };
                     assert!(
                         abandoned_head.is_null(),
-                        "the source list removal precedes the failed terminal unmap"
+                        "the source list removal precedes the terminal mapping release"
                     );
                     for offset in (0..published.layout().page_map_size())
                         .step_by(crate::config::ARENA_SLICE_SIZE)
@@ -14401,18 +14464,18 @@ pub(crate) mod tests {
                         }
                         .is_null());
                     }
-
-                    // Dropping the terminal handoff moves the raw published
-                    // mapping owner into the later attachment and latches it.
-                    // This slice has no public retry lifecycle for that owner,
-                    // so retain this isolated fixture rather than destroying
-                    // a still-mapped source object in Drop.
-                    drop(handoff);
-                    assert!(matches!(
-                        owner.finish_after_page_drain(),
-                        Err(MainHeapThreadAttachmentError::Poisoned)
-                    ));
-                    core::mem::forget(owner);
+                    assert!(mapping_present(), "the refused source unmap leaves the range mapped");
+                    assert!(matches!(drain.finish(), Ok(())));
+                    assert_eq!(fault.observed(), 1, "drain finish cannot retry the consumed source free");
+                    owner
+                        .finish_after_page_drain()
+                        .expect("the consumed source free leaves owner teardown available");
+                    assert_eq!(fault.observed(), 1, "owner finish cannot retry the refused unmap");
+                    assert!(mapping_present());
+                    fault.set(fault::Plan::disabled());
+                    // SAFETY: the source Page was consumed and no release
+                    // capability survives; clean up this fixture's leak.
+                    unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
                 });
                 worker
                     .join()
@@ -30002,7 +30065,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn later_thread_exit_mapped_regular_pages_route_retains_a_force_empty_os_singleton_unmap_failure(
+    fn later_thread_exit_mapped_regular_pages_force_empty_free_consumes_failed_unmap(
     ) {
         thread::spawn(|| {
             let config = memory_config();
@@ -30026,10 +30089,10 @@ pub(crate) mod tests {
                     } {
                         Ok(owner) => owner,
                         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
-                            panic!("later failed-unmap aggregate attachment rejected: {error:?}")
+                            panic!("later source-exit aggregate attachment rejected: {error:?}")
                         }
                         Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
-                            panic!("later failed-unmap aggregate attachment retained: {error:?}")
+                            panic!("later source-exit aggregate attachment retained: {error:?}")
                         }
                     };
                     let mut allocator = MainHeapThreadProcessPageAllocator::begin(&mut owner, pair)
@@ -30046,10 +30109,28 @@ pub(crate) mod tests {
                     assert_eq!(page_ref.used(), 1);
                     let published = unsafe { PublishedOsAlignedPage::from_page(config, page) }
                         .expect("the OS singleton retains its clipped terminal-release proof");
+                    let span = published
+                        .memory_id()
+                        .os_memory()
+                        .expect("the source singleton retains its exact mapping span");
+                    let mapping_present = || {
+                        (0..span.size).step_by(config.page_size().bytes()).all(|offset| {
+                            let mut residency = 0;
+                            // SAFETY: query the captured mapping after Page
+                            // metadata retirement without using the client.
+                            unsafe {
+                                crabc_core::mm::mincore_raw(
+                                    span.base.wrapping_add(offset),
+                                    config.page_size().bytes(),
+                                    &mut residency,
+                                )
+                            }
+                            .is_ok()
+                        })
+                    };
                     // Keep one separate live regular member behind the full
-                    // singleton. A parked OS release owner must stop this
-                    // source traversal before it collects or detaches that
-                    // later member.
+                    // singleton. Route entry consumes the published source
+                    // free after a refused unmap, then continues to this member.
                     let later = allocator
                         .allocate(SMALL_MAX_OBJ_SIZE + 1, false)
                         .expect("the fixture creates one later live medium member");
@@ -30078,20 +30159,23 @@ pub(crate) mod tests {
                     let drain = allocator.begin_thread_exit_drain().unwrap_or_else(|failure| {
                         let MainHeapThreadProcessPageExitDrainFailure::Retained { allocator, error } = failure;
                         core::mem::forget(allocator);
-                        panic!("thread exit enters its post-fast-slot failed-unmap drain: {error:?}");
+                        panic!("thread exit enters its post-fast-slot mapped-page drain: {error:?}");
                     });
                     fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
-                    let drain = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
+                    let route = match unsafe { drain.abandon_mapped_regular_pages_to_process_route() } {
                         Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::RetainedDrain {
                             drain,
                             error: ThreadExitMappedRegularPagesPostExitAbandonError::PostDetachState,
-                        }) => drain,
+                        }) => {
+                            core::mem::forget(drain);
+                            panic!("source free consumes the refused unmap during route entry");
+                        }
                         Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::RetainedDrain {
                             drain,
                             error,
                         }) => {
                             core::mem::forget(drain);
-                            panic!("failed OS unmap retains the expected aggregate terminal state: {error:?}");
+                            panic!("unexpected route-entry terminal state: {error:?}");
                         }
                         Err(MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::Rejected {
                             drain,
@@ -30105,7 +30189,7 @@ pub(crate) mod tests {
                             ..
                         }) => {
                             core::mem::forget(terminal);
-                            panic!("failed OS unmap retains before old-owner teardown")
+                            panic!("route entry retains before old-owner teardown")
                         }
                         Err(
                             MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumTeardown {
@@ -30121,7 +30205,7 @@ pub(crate) mod tests {
                             ..
                         }) => {
                             core::mem::forget(parts);
-                            panic!("failed OS unmap retains before PageMap route conversion")
+                            panic!("route entry fails before PageMap conversion")
                         }
                         Err(
                             MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure::SoleImmediateMediumPageMap {
@@ -30132,33 +30216,17 @@ pub(crate) mod tests {
                             core::mem::forget(parts);
                             panic!("an OS singleton cannot become a sole-medium PageMap path")
                         }
-                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => {
-                            core::mem::forget(route);
-                            panic!("failed OS unmap cannot expose a post-exit aggregate route")
-                        }
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Route(route)) => route,
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::SoleImmediateMedium(route)) => {
                             core::mem::forget(route);
-                            panic!("failed OS unmap cannot expose a sole-medium route")
+                            panic!("the remaining regular member keeps the aggregate route")
                         }
                         Ok(MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin::Drained(drain)) => {
                             core::mem::forget(drain);
-                            panic!("failed OS unmap cannot report an empty completed drain")
+                            panic!("the live OS and medium clients preserve the aggregate route")
                         }
                     };
-                    assert_eq!(
-                        fault.observed(),
-                        1,
-                        "the force-empty aggregate attempts exactly one source unmap"
-                    );
-                    fault.set(fault::Plan::disabled());
-                    assert!(
-                        drain.test_has_pending_os_release(),
-                        "the completed source release retains its unique failed OS mapping owner"
-                    );
-                    assert!(
-                        drain.engine.thread_exit_route_is_terminal(),
-                        "the parked owner cannot expose the ordinary all-free finalizer"
-                    );
+                    assert_eq!(fault.observed(), 1, "force collection attempts the OS source free once");
                     for offset in (0..published.layout().page_map_size())
                         .step_by(crate::config::ARENA_SLICE_SIZE)
                     {
@@ -30169,26 +30237,37 @@ pub(crate) mod tests {
                                 )
                             }
                             .is_null(),
-                            "the retained OS terminal has already removed every clipped PageMap entry"
+                            "the force-empty source free clears every clipped PageMap entry"
                         );
                     }
+                    assert!(mapping_present(), "the refused source unmap leaves the range mapped");
                     assert_eq!(unsafe { later_page.as_ref() }.used(), 1);
                     assert_eq!(
                         unsafe { page_map.page_map().unwrap().checked_lookup(later.as_ptr()) },
                         later_page.as_ptr(),
-                        "the pending OS owner stops before the later regular member is detached"
+                        "the failed OS release does not detach the later regular member"
                     );
                     assert_eq!(
-                        drain.test_page_count(),
+                        route.test_remaining_pages(),
                         1,
-                        "only the failed OS singleton leaves the source queue before terminal retention"
+                        "the force-empty OS page is consumed before the later page is routed"
                     );
-
-                    // The drain alone retains the private pending mapping
-                    // owner. It cannot retry source collection, teardown, or
-                    // expose a normal post-exit route after this failure.
-                    core::mem::forget(drain);
-                    core::mem::forget(owner);
+                    match unsafe { route.remote_free_after_thread_exit(later) } {
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedAll) => {}
+                        Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::StillLive(route))
+                        | Ok(MainHeapThreadProcessPageExitMappedRegularPagesFreeResult::ReleasedPage(route)) => {
+                            core::mem::forget(route);
+                            panic!("the final regular member completes the process route")
+                        }
+                        Err(_) => panic!("the final regular member releases the remaining route page"),
+                    }
+                    assert_eq!(fault.observed(), 1, "route completion does not retry the consumed unmap");
+                    assert!(mapping_present());
+                    assert_eq!(page_map.begin_page_lifecycle().unwrap().finish(), Ok(()));
+                    fault.set(fault::Plan::disabled());
+                    // SAFETY: the source Page was consumed and no release
+                    // capability survives; clean up this fixture's leak.
+                    unsafe { crabc_core::mm::munmap_raw(span.base, span.size) }.unwrap();
                 });
                 worker
                     .join()
