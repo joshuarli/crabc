@@ -23908,10 +23908,7 @@ mod tests {
                     continue_receiver
                         .recv()
                         .expect("the survivor completes pointer-first realloc");
-                    assert_eq!(
-                        finish_current_thread_native_after_user_destructors(),
-                        ThreadFinishResult::Finished,
-                    );
+                    finish_current_thread_native_after_user_destructors()
                 });
 
                 let client_address = client_receiver
@@ -23922,7 +23919,7 @@ mod tests {
                 // SAFETY: the source owner is paused and has transferred sole
                 // client access to this surviving thread.
                 let result = unsafe { native_reallocate(Some(client), 4096) };
-                let (replacement_address, preserved, freed) = match result {
+                let (replacement_address, preserved, freed, retained) = match result {
                     NativePageAllocationResult::Allocated(replacement) => {
                         // SAFETY: the successful realloc owns a readable
                         // prefix copied from the transferred client.
@@ -23931,25 +23928,36 @@ mod tests {
                         }
                         .iter()
                         .all(|byte| *byte == 0x6d);
+                        let address = replacement.as_ptr().addr();
                         let freed = unsafe { native_free(replacement) };
-                        (Some(replacement.as_ptr().addr()), preserved, freed)
+                        (Some(address), preserved, Some(freed), false)
                     }
-                    _ => (
+                    NativePageAllocationResult::AllocationFailed
+                    | NativePageAllocationResult::Unavailable => (
                         None,
                         false,
-                        // SAFETY: a refused realloc leaves the original client live.
-                        unsafe { native_free(client) },
+                        // SAFETY: allocation failure or an unavailable
+                        // source leaves the old client with its caller.
+                        Some(unsafe { native_free(client) }),
+                        false,
                     ),
+                    // Retained transfers the old client to fail-closed runtime
+                    // ownership, so only the isolated process may reclaim it.
+                    NativePageAllocationResult::Retained => (None, false, None, true),
                 };
                 continue_sender
                     .send(())
                     .expect("the source owner may finish after the realloc");
-                owner.join().expect("the live source owner completes its exit");
+                let owner_exit = owner.join().expect("the live source owner completes its exit");
 
                 assert!(replacement_address.is_some(), "foreign live realloc succeeds");
                 assert_ne!(replacement_address, Some(client_address));
                 assert!(preserved, "realloc copies the foreign client's contents");
-                assert_eq!(freed, NativePageFreeResult::Freed);
+                assert_eq!(freed, Some(NativePageFreeResult::Freed));
+                if !retained {
+                    assert_eq!(owner_exit, ThreadFinishResult::Finished);
+                }
+                assert!(!retained, "a successful realloc keeps the source owner releasable");
             },
         );
     }
@@ -24025,20 +24033,26 @@ mod tests {
                         }
                         .iter()
                         .all(|byte| *byte == 0x73);
+                        let address = replacement.as_ptr().addr();
                         let freed = unsafe { native_free(replacement) };
-                        (Some(replacement.as_ptr().addr()), preserved, freed)
+                        (Some(address), preserved, Some(freed))
                     }
-                    _ => (
+                    NativePageAllocationResult::AllocationFailed
+                    | NativePageAllocationResult::Unavailable => (
                         None,
                         false,
-                        // SAFETY: a refused realloc leaves the original client live.
-                        unsafe { native_free(client) },
+                        // SAFETY: allocation failure or an unavailable
+                        // source leaves the old client with its caller.
+                        Some(unsafe { native_free(client) }),
                     ),
+                    // Retained transfers the old client to fail-closed runtime
+                    // ownership, so only the isolated process may reclaim it.
+                    NativePageAllocationResult::Retained => (None, false, None),
                 };
                 assert!(replacement_address.is_some(), "abandoned-page realloc succeeds");
                 assert_ne!(replacement_address, Some(client_address));
                 assert!(preserved, "realloc copies the abandoned client's contents");
-                assert_eq!(freed, NativePageFreeResult::Freed);
+                assert_eq!(freed, Some(NativePageFreeResult::Freed));
             },
         );
     }
