@@ -248,6 +248,38 @@ def _canonicalize_debug_subproc_diagnostics(trace, side):
     return canonical
 
 
+def _canonicalize_debug_subproc_stdout(stdout, side):
+    trace = m7.parse_options_trace(stdout, f"debug-1 {side}", TRACE_BEGIN, TRACE_END)
+    if set(trace) != EXPECTED_KEYS:
+        raise harness.HarnessError(f"debug-1 {side} replay fields differ: "
+            f"missing={sorted(EXPECTED_KEYS-set(trace))} extra={sorted(set(trace)-EXPECTED_KEYS)}")
+    canonical_trace = _canonicalize_debug_subproc_diagnostics(trace, side)
+    canonical_stdout = stdout
+    for key in _DEBUG_SUBPROC_DIAGNOSTICS:
+        pattern = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
+        canonical_stdout, count = pattern.subn(f"{key}={canonical_trace[key]}", canonical_stdout)
+        if count != 1:
+            raise harness.HarnessError(f"debug-1 {side} {key} stdout row is not unique")
+    return canonical_stdout
+
+
+def compare_recorded_replay(recorded_stdout, recorded_stderr, replayed_stdout, replayed_stderr,
+                            profile, side):
+    """Compare raw retained and replayed streams, allowing only validated map addresses to vary."""
+
+    if profile == "debug-1":
+        recorded_stdout = _canonicalize_debug_subproc_stdout(
+            recorded_stdout.decode("utf-8"), side).encode("utf-8")
+        replayed_stdout = _canonicalize_debug_subproc_stdout(
+            replayed_stdout.decode("utf-8"), side).encode("utf-8")
+    for stream, retained, replayed in (
+        ("stdout", recorded_stdout, replayed_stdout),
+        ("stderr", recorded_stderr, replayed_stderr),
+    ):
+        if retained != replayed:
+            raise harness.HarnessError(f"retained {side} {stream} differs on replay")
+
+
 def compare_runs(c_run, native_run, profile):
     traces = {side: m7.parse_options_trace(result["stdout"], side, TRACE_BEGIN, TRACE_END)
               for side, result in (("c", c_run), ("native", native_run))}
@@ -255,23 +287,19 @@ def compare_runs(c_run, native_run, profile):
         if set(trace) != EXPECTED_KEYS:
             raise harness.HarnessError(f"{profile} {side} original public workload fields differ: "
                 f"missing={sorted(EXPECTED_KEYS-set(trace))} extra={sorted(set(trace)-EXPECTED_KEYS)}")
+    stdout = {"c": c_run["stdout"], "native": native_run["stdout"]}
     if profile == "debug-1":
-        traces = {side: _canonicalize_debug_subproc_diagnostics(trace, side)
-                  for side, trace in traces.items()}
+        stdout = {side: _canonicalize_debug_subproc_stdout(stdout[side], side)
+                  for side in ("c", "native")}
+        traces = {side: m7.parse_options_trace(stdout[side], side, TRACE_BEGIN, TRACE_END)
+                  for side in ("c", "native")}
     m7.compare_options_traces(traces["c"], traces["native"])
     for key in ("unabandon.pages_abandoned", "unabandon.os.pages_abandoned"):
         if traces["c"][key] != "1,0":
             raise harness.HarnessError(f"{profile} {key} did not return to its pre-allocation count: "
                 f"{traces['c'][key]}")
-    stdout = {"c": c_run["stdout"], "native": native_run["stdout"]}
     stderr = {"c": c_run["stderr"], "native": native_run["stderr"]}
     if profile == "debug-1":
-        for side in ("c", "native"):
-            for key in _DEBUG_SUBPROC_DIAGNOSTICS:
-                pattern = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
-                stdout[side], count = pattern.subn(f"{key}={traces[side][key]}", stdout[side])
-                if count != 1:
-                    raise harness.HarnessError(f"debug-1 {side} {key} stdout row is not unique")
         expected = {
             "c": "m6-valid-domain profile=debug-1 backend=c guarded_precise=1",
             "native": "m6-valid-domain profile=debug-1 backend=native guarded_precise=0",
@@ -622,10 +650,15 @@ def read_and_replay(profiles, replay=False):
                 results[backend] = decoded(result)
                 recorded = next(case for case in receipt.cases if case["id"] == name + "-run")
                 if backend != "native-contract":
-                    for stream in ("stdout", "stderr"):
-                        previous = next(log for log in recorded["logs"] if log.endswith(f".{stream}"))
-                        if stress.byte_record_payload(result[stream], name) != (receipt.path.parent / "logs" / previous).read_bytes():
-                            raise harness.HarnessError(f"retained {name} {stream} differs; see {scratch}")
+                    recorded_stdout = next(log for log in recorded["logs"] if log.endswith(".stdout"))
+                    recorded_stderr = next(log for log in recorded["logs"] if log.endswith(".stderr"))
+                    compare_recorded_replay(
+                        (receipt.path.parent / "logs" / recorded_stdout).read_bytes(),
+                        (receipt.path.parent / "logs" / recorded_stderr).read_bytes(),
+                        stress.byte_record_payload(result["stdout"], name),
+                        stress.byte_record_payload(result["stderr"], name),
+                        profile, backend,
+                    )
             count = compare_runs(results["c"], results["native"], profile)
             if profile == "debug-1":
                 controls = {}

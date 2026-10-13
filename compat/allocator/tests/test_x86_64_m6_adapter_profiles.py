@@ -135,6 +135,38 @@ class PublicAdapterObservationTests(unittest.TestCase):
                 changed = mutate_debug_message(native, "subproc.messages", mutate)
                 adapter.compare_runs(c, changed, "debug-1")
 
+    def test_reader_replay_masks_only_validated_aslr_candidates(self):
+        retained = self.valid_domain_result("c")
+        replayed = self.valid_domain_result("c", trace_stdout(debug_subproc_messages("native")))
+        retained_stdout = retained["stdout"].encode()
+        retained_stderr = retained["stderr"].encode()
+        adapter.compare_recorded_replay(retained_stdout, retained_stderr,
+            replayed["stdout"].encode(), replayed["stderr"].encode(), "debug-1", "c")
+        self.assertEqual(retained["stdout"].encode(), retained_stdout)
+
+        mutations = (
+            ("missing", lambda chunks: chunks[:4] + chunks[6:]),
+            ("extra", lambda chunks: chunks[:4] + chunks[2:4] + chunks[4:]),
+            ("reordered", lambda chunks: chunks[2:4] + chunks[:2] + chunks[4:]),
+            ("size", lambda chunks: mutate_first_warning_field(chunks, "size", "0x40001000")),
+            ("alignment", lambda chunks: mutate_first_warning_field(chunks, "alignment", "0x20000000")),
+            ("commit", lambda chunks: mutate_first_warning_field(chunks, "commit", "0")),
+            ("unknown diagnostic", lambda chunks: [*chunks[:-1], "unexpected warning\n"]),
+        )
+        for name, mutate in mutations:
+            with self.subTest(name=name), self.assertRaises(adapter.harness.HarnessError):
+                changed = mutate_debug_message(replayed, "subproc.messages", mutate)
+                adapter.compare_recorded_replay(retained_stdout, retained_stderr,
+                    changed["stdout"].encode(), changed["stderr"].encode(), "debug-1", "c")
+
+        changed_row = replayed["stdout"].replace("collect.pages=1\n", "collect.pages=2\n", 1)
+        with self.assertRaises(adapter.harness.HarnessError):
+            adapter.compare_recorded_replay(retained_stdout, retained_stderr,
+                changed_row.encode(), replayed["stderr"].encode(), "debug-1", "c")
+        with self.assertRaises(adapter.harness.HarnessError):
+            adapter.compare_recorded_replay(retained_stdout, retained_stderr,
+                replayed["stdout"].encode(), (replayed["stderr"] + "unexpected\n").encode(), "debug-1", "c")
+
     def test_aligned_offset_control_retains_source_diagnostic_and_page(self):
         marker_c = "m6-alignment-control profile=debug-1 backend=c guarded_precise=0\n"
         marker_native = "m6-alignment-control profile=debug-1 backend=native guarded_precise=0\n"
