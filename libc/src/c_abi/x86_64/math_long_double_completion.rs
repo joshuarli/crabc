@@ -36,10 +36,10 @@
 //! this representation/calling boundary separately from its musl behavioral
 //! record differential, including all four x87/MXCSR rounding modes.
 //!
-//! This opt-in leaf alone does not change the default selected-static export root or select a
-//! family. Its aggregate native-evidence slice selects only
-//! `math.elementary-fenv-sensitive`; it does not select a general libm/libc,
-//! CRT/TLS lifecycle, loader, sysroot, promotion, or public x86 support.
+//! This opt-in leaf alone does not change the default selected-static export
+//! root or select a family. Its aggregate native feature selects only
+//! the fenv-sensitive math entries; it does not select a general libm/libc,
+//! CRT/TLS lifecycle, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 binary80 math closure requires little-endian Linux/x86-64");

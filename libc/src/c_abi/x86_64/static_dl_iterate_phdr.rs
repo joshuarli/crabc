@@ -6,7 +6,7 @@
 //! /proc/self/exe name, zero generation counters, module-one caller TLS, and
 //! direct callback result. The parent supplies musl's weak public entry.
 //! Owned CRT's published auxv replaces `libc.auxv`; the immutable static TLS
-//! plan replaces musl's DTV lookup. No loader record or dynamic graph is used.
+//! layout replaces musl's DTV lookup. No loader record or dynamic graph is used.
 
 use core::ffi::{c_int, c_void};
 use core::{mem, ptr};

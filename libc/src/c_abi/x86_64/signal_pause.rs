@@ -15,11 +15,10 @@
 //! numbers, including musl-reserved 32 through 34, fail before the wait with
 //! `EINVAL` exactly as musl's `sigdelset` helper does.
 //!
-//! This is neither general signal policy nor a cancellation point. It does
-//! not select process control, handlers, masks as a public interface, queues,
-//! descriptor events, readiness, timers, pthread behavior, dynamic runtime,
-//! loader/CRT/sysroot state, family completion, promotion, or public x86
-//! support.
+//! This is neither general signal policy nor a cancellation point. It does not
+//! select process control, handlers, masks as a public interface, queues,
+//! descriptor events, readiness, timers, pthread behavior, dynamic runtime, or
+//! loader/CRT/sysroot state.
 
 use core::ffi::c_int;
 

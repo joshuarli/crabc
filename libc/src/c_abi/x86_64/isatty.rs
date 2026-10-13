@@ -11,9 +11,9 @@
 //! This leaf only classifies an already-owned descriptor. It neither opens nor
 //! names a terminal, changes terminal state, selects a terminal-path or
 //! session-discovery policy, nor delegates to the separate termios-control
-//! block. PTY/session policy, C terminal naming, password input, generic
-//! ioctl, dynamic runtime, CRT, loader, sysroot, family completion, promotion,
-//! and public x86 support remain outside this selected-private artifact.
+//! block. PTY/session policy, C terminal naming, password input, generic ioctl,
+//! dynamic runtime, CRT, loader, and sysroot remain outside this
+//! selected-private artifact.
 
 use core::ffi::c_int;
 use core::mem::{align_of, size_of, MaybeUninit};

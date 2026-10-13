@@ -15,7 +15,7 @@
 //! writes are the specified NUL replacement in the caller-owned input string
 //! and the caller-owned `char **` state slot. It is a private selected static
 //! artifact, not general string/tokenization support, libc.so, a CRT, loader,
-//! sysroot, or public x86 support claim.
+//! or sysroot.
 
 use core::ffi::c_char;
 use core::ptr::null_mut;

@@ -18,7 +18,7 @@
 //! private-condition artifact continues to reject every non-null initialization
 //! attribute, so no selected condition initializer consumes a clock record. A
 //! clock record is not condition initialization, timed waiting, or a clock
-//! operation. It is not general pthread support or public x86 support.
+//! operation. It is not general pthread support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread condition-attribute clock leaf requires little-endian Linux/x86-64");

@@ -16,8 +16,7 @@
 //!
 //! System V AMD64 passes and returns binary64/binary32 in `xmm0`. This leaf
 //! deliberately excludes binary80 `truncl`, `round*`, `rint*`/`nearbyint*`,
-//! `fdim*`, special and complex math, general libm, family completion,
-//! promotion, and public x86 support.
+//! `fdim*`, special and complex math, and general libm.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math trunc leaf requires little-endian Linux/x86-64");

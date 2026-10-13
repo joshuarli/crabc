@@ -1,19 +1,18 @@
 // C allocation entry points backed by the nondefault Rust native-mimalloc
-// shadow lane.
+// shadow backend.
 //
-// This file is selected only by crabc-libc's
-// `native-mimalloc-shadow` compile-time feature. It deliberately has no
-// runtime selector and no C-backend fallback: a successful allocation must
-// remain owned by the same native runtime that later receives its free or
-// reallocation. Persistent PageMap/page state, rather than a parked-owner
-// handoff, names an exact live native allocation. An attached worker may
-// source-push that exact client through the page's atomic remote head; the
-// client pins its registered page, so the operation transfers no page engine,
-// scheduler claim, or stored client capability. `native_usable_size` derives
-// the exact live extent from immutable PageMap facts, and generic pointer-first
-// free/reallocation continue to own post-exit dispatch. Other cross-thread
-// routing remains outside this early M5 shadow slice rather than silently
-// handing a native pointer to libmimalloc.
+// This file is selected only by crabc-libc's `native-mimalloc-shadow`
+// compile-time feature. It deliberately has no runtime selector and no
+// C-backend fallback: a successful allocation must remain owned by the same
+// native runtime that later receives its free or reallocation. Persistent
+// PageMap/page state, rather than a parked-owner handoff, names an exact live
+// native allocation. An attached worker may source-push that exact client
+// through the page's atomic remote head; the client pins its registered page,
+// so the operation transfers no page engine, scheduler claim, or stored client
+// capability. `native_usable_size` derives the exact live extent from immutable
+// PageMap facts and generic pointer-first free/reallocation continue to own
+// post-exit dispatch. Other cross-thread routing is not supported by this
+// shadow backend rather than silently handing a native pointer to libmimalloc.
 
 use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, native_allocate_aligned, native_free,

@@ -21,8 +21,8 @@
 //! in `edi` and `esi`, respectively, and returns the signed C status in eax.
 //! This leaf selects no generic descriptor I/O, `close` API, descriptor
 //! lifetime/ownership policy, cancellation or AIO coordination, filesystem
-//! policy, allocator, locale, signal, process, libc.so, CRT, loader, sysroot,
-//! family completion, promotion, or public x86 support.
+//! policy, allocator, locale, signal, process, libc.so, CRT, loader, or
+//! sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license.

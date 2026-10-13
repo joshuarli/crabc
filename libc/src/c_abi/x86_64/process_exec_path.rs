@@ -4,8 +4,7 @@
 //! `execvpe`. It composes selected `getenv`/`__environ` and raw execve, but
 //! does not inspect C varargs or map argv storage. The owned runtime also
 //! consumes its private raw PATH adapter from the suspended-parent spawn
-//! child, without accessing shared TLS errno. Private fixture selection and
-//! public architecture-support claims remain unchanged.
+//! child, without accessing shared TLS errno. Private fixture selection is unchanged.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

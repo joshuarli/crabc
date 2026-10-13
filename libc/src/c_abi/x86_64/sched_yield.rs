@@ -10,8 +10,7 @@
 //! Linux 5.10 x86-64 `sched_yield=24` has no arguments. This leaf does not
 //! select scheduler policy or parameter APIs, affinity, a scheduler handoff,
 //! fairness, peer progress, C11 lifecycle or synchronization, general thread
-//! state, process lifecycle, dynamic or loader TLS, CRT, sysroot, x86-64
-//! parity, promotion, or public x86 support.
+//! state, process lifecycle, dynamic or loader TLS, CRT, or sysroot.
 
 use core::ffi::c_int;
 

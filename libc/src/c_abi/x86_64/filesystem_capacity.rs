@@ -27,7 +27,7 @@ use super::{c_status, raw_syscall};
 ///
 /// Public spelling and visibility remain owned by `include/sys/statfs.h`; the
 /// selected static leaf keeps the Rust representation private so it cannot
-/// widen the staged C ABI beyond these four admitted entry points.
+/// widen the C ABI beyond these four admitted entry points.
 #[repr(C)]
 pub(super) struct StatFs {
     filesystem_type: c_ulong,

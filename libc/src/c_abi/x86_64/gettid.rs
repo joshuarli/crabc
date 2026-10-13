@@ -17,9 +17,9 @@
 //! The public GNU declaration is `pid_t gettid(void)`, whose four-byte signed
 //! result is returned in `eax` under the System V AMD64 ABI.
 //!
-//! This leaf selects no process identity aggregate, scheduler behavior,
-//! pthread API, TCB/TLS state, errno, allocation, cancellation, signal,
-//! loader, CRT, sysroot, family completion, promotion, or public x86 support.
+//! This leaf selects no process identity aggregate, scheduler behavior, pthread
+//! API, TCB/TLS state, errno, allocation, cancellation, signal, loader, CRT, or
+//! sysroot.
 
 use core::ffi::c_int;
 

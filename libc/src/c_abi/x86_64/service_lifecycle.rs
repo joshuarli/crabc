@@ -9,8 +9,8 @@
 //!
 //! The functions do not inspect their input, allocate, write errno or h_errno,
 //! access TLS/global state, make syscalls, or touch `/etc/services`. They are
-//! not service-database, resolver, NSS, socket, libc.so, CRT, loader, sysroot,
-//! family-completion, promotion, or public-x86 support work.
+//! not service-database, resolver, NSS, socket, libc.so, CRT, loader, or
+//! sysroot work.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

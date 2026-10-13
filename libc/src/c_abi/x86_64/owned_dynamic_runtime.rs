@@ -3,7 +3,7 @@
 //! This module selects lifecycle ownership, not a second libc implementation.
 //! The same errno, allocator, environment, pthread and FILE registries remain
 //! siblings in the target root. Loader initial TLS is retained for all workers;
-//! runtime module growth and unloading remain separate loader work.
+//! runtime module growth and unloading are outside this module.
 
 use super::{auxv_observation, environment, errno, immediate_termination, startup_security};
 #[path = "process_exit.rs"]

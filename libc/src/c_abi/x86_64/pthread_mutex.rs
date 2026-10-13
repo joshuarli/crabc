@@ -60,11 +60,11 @@
 //! mutex-attribute priority-ceiling entry, so this owner does not invent a
 //! provider for them.
 //!
-//! This artifact remains outside general pthread synchronization, loader/CRT
-//! integration, and public x86 support. The separately admitted condition
-//! sibling uses a private Rust seam into this state machine, including PI's
-//! wake-instead-of-requeue handoff. C11 never constructs a PI object.
-//! Unsupported type words return `ENOTSUP` without being interpreted.
+//! This artifact remains outside general pthread synchronization and loader/CRT
+//! integration. The separately admitted condition sibling uses a private Rust
+//! seam into this state machine, including PI's wake-instead-of-requeue
+//! handoff. C11 never constructs a PI object. Unsupported type words return
+//! `ENOTSUP` without being interpreted.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 normal pthread-mutex leaf requires little-endian Linux/x86-64");
@@ -547,7 +547,7 @@ fn is_linux_error(result: i64) -> bool {
 ///
 /// The type word is initialized before publication and is immutable during a
 /// valid mutex lifetime. It is therefore deliberately not an atomic state
-/// word; callers changing it concurrently are outside POSIX and this slice.
+/// word; callers changing it concurrently are outside POSIX and this implementation.
 #[inline(always)]
 unsafe fn is_selected_normal_mutex(mutex: *mut PublicPthreadMutex) -> bool {
     // SAFETY: the caller supplies a complete mutex whose immutable type word
@@ -2065,7 +2065,7 @@ static_archive_member! { pthread_mutex_init_source {
             0
         } else {
             // SAFETY: pthread_mutex_init requires a readable initialized record
-            // whenever `attr` is non-null; this selected slice consumes only its
+            // whenever `attr` is non-null; this selected code consumes only its
             // musl public attribute word.
             unsafe { core::ptr::read(attr.cast::<PublicPthreadMutexAttr>()) }.attr as c_int
         };

@@ -33,10 +33,10 @@
 //! The leaf selects only `pthread_getcpuclockid` for the bootstrapped main
 //! thread, a held process-main target, and a live selected worker. It does not
 //! select `clock_getcpuclockid`, general C clock APIs, a public TCB/thread
-//! list, lifecycle ownership,
-//! affinity or scheduling attributes, cancellation, synchronization, TSS,
-//! dynamic/loader TLS, CRT, sysroot, general pthread/TLS behavior, or public x86 support.
-//! Pthread errors are positive return values: this entry does not write C `errno`.
+//! list, lifecycle ownership, affinity or scheduling attributes, cancellation,
+//! synchronization, TSS, dynamic/loader TLS, CRT, sysroot, or general
+//! pthread/TLS behavior. Pthread errors are positive return values: this entry
+//! does not write C `errno`.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread CPU-clock leaf requires little-endian Linux/x86-64");

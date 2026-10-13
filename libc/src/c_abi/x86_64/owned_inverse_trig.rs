@@ -36,8 +36,8 @@
 //! registers. This component intentionally excludes `asinl`, `acosl`,
 //! `atanl`, and `atan2l`, whose binary80 ABI remains an independent owner.
 //! It is only selected by `x86-owned-static-runtime`: it does not alter the
-//! frozen default archive, make a capability or family complete, establish a
-//! full sysroot audit, promote x86, or change public support.
+//! frozen default archive, complete a capability or family, or establish a
+//! full sysroot audit.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the owned inverse-trigonometry leaf requires little-endian Linux/x86-64");

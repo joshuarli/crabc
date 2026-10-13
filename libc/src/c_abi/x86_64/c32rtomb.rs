@@ -11,9 +11,9 @@
 //!
 //! This leaf owns no UTF-16 surrogate state, decoding, locale selection or
 //! objects, environment lookup, encoding database, allocation, errno/TLS
-//! storage, syscall, CRT, loader, or public x86 support. Its one direct
-//! dependency is the already selected fixed-profile `wcrtomb` core; error and
-//! locale semantics remain owned there rather than copied here.
+//! storage, syscall, CRT, or loader. Its one direct dependency is the already
+//! selected fixed-profile `wcrtomb` core; error and locale semantics remain
+//! owned there rather than copied here.
 
 #[cfg(not(all(
     target_os = "linux",

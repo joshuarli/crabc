@@ -28,10 +28,10 @@
 //! musl's weak-alias relationship to its internal target.
 //! The pinned AArch64 static ABI inventory records `membarrier.lo` as the weak
 //! public owner. The existing project `<sys/membarrier.h>` declaration and
-//! Linux command constants are header oracle evidence; their meanings remain
+//! Linux command constants are the header oracle; their meanings remain
 //! Linux-owned. Musl's header lacks C++ linkage guards while the existing
 //! project header deliberately supplies an unmangled C++ bridge; that
-//! header-only difference is separately evidenced and is not a runtime-source
+//! header-only difference is not a runtime-source
 //! translation claim.
 //!
 //! This is not a broad barrier API, command registry, global expedited

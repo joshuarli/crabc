@@ -1,14 +1,13 @@
 //! Selected static Linux/x86-64 C `fcntl` record-lock boundary.
 //!
-//! This leaf owns the pointer-bearing nonblocking record-lock forms
-//! `fcntl(fd, F_GETLK, struct flock *)` and
-//! `fcntl(fd, F_SETLK, struct flock *)`. The owned runtime also admits
-//! `F_SETLKW` through its syscall cancellation window. It composes Linux `fcntl=72`
-//! and the selected initial-TLS C `errno` publisher. It is not generic C
-//! `fcntl`, OFD locks, `lockf`, `flock`,
-//! lock ownership/signalling, leases, seals, descriptor or pathname policy,
-//! a filesystem capability, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS,
-//! loader, sysroot, allocator, or public x86 support.
+//! This leaf owns the pointer-bearing nonblocking record-lock forms `fcntl(fd,
+//! F_GETLK, struct flock *)` and `fcntl(fd, F_SETLK, struct flock *)`. The
+//! owned runtime also admits `F_SETLKW` through its syscall cancellation
+//! window. It composes Linux `fcntl=72` and the selected initial-TLS C `errno`
+//! publisher. It is not generic C `fcntl`, OFD locks, `lockf`, `flock`, lock
+//! ownership/signalling, leases, seals, descriptor or pathname policy, a
+//! filesystem capability, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS,
+//! loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

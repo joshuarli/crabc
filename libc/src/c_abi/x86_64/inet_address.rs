@@ -4,10 +4,9 @@
 //! same-address `inet_aton` alias, and `inet_addr`. It is an allocation-free,
 //! syscall-free numeric IPv4/IPv6 conversion boundary. It composes only the
 //! selected integer scanner for `inet_aton`'s historical base-zero grammar and
-//! the initial-TLS C `errno` slot. It is not name resolution, socket
-//! transport, protocol-database parsing, locale-aware text conversion, stdio,
-//! a general C runtime, libc.so, a CRT, dynamic TLS, a loader, a sysroot, or
-//! public x86 support.
+//! the initial-TLS C `errno` slot. It is not name resolution, socket transport,
+//! protocol-database parsing, locale-aware text conversion, stdio, a general C
+//! runtime, libc.so, a CRT, dynamic TLS, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

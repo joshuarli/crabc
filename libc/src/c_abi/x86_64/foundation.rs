@@ -5,8 +5,7 @@
 //! `errno`, and the fixed-musl x86 memory and floating-environment leaves so
 //! their ELF linkage can be tested together without selecting `crabc-libc`.
 //! In particular, it does **not** relax `libc/src/lib.rs`'s AArch64 target
-//! gate, export a complete C runtime artifact, or make any public x86 support
-//! claim.
+//! gate, or export a complete C runtime artifact.
 //!
 //! The private fixed-six-word bridge below is the target-specific extraction
 //! of `libc/src/syscall.rs`'s raw-result-to-errno translation. It deliberately
@@ -19,7 +18,7 @@
 //! retain their own fixed musl 1.2.6 source mappings and complete focused
 //! differential probes. Pthread/clone/TLS lifecycle, public signal behavior,
 //! C layouts beyond the named headers, atomics, and every broad C/POSIX family
-//! remain separate promotion obligations.
+//! are outside this composition.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C-runtime foundation requires little-endian Linux/x86-64");
@@ -41,7 +40,7 @@ use core::ffi::{c_int, c_long};
 /// Issue one private fixed-six-word Linux/x86-64 syscall bridge and translate
 /// a kernel error through the calling thread's C `errno` slot.
 ///
-/// The uniquely prefixed export exists only for the isolated native evidence
+/// The uniquely prefixed export exists only for the isolated native test
 /// fixture. It deliberately makes no pointer-validity, cancellation, restart,
 /// signal, public `syscall(long, ...)`, or C/POSIX wrapper claim; those
 /// contracts belong to the later selected runtime families. All six `c_long`

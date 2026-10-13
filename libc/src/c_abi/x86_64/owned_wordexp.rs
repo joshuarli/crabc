@@ -8,7 +8,7 @@
 //!
 //! Musl 1.2.6 remains the fixed compatibility oracle. This implementation is
 //! an owned POSIX evaluator, not a translation of musl's whole-input shell
-//! protocol; its precise source differences belong in the wordexp evidence.
+//! protocol.
 
 use core::{ffi::{c_char, c_int}, ptr};
 

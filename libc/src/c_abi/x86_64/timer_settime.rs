@@ -24,8 +24,7 @@
 //! rejected-handle error translation and input/output preservation, not timer
 //! ownership, valid timer state, timer-control values, signal delivery,
 //! calendar/time-zone behavior, cancellation, libc.so, CRT, dynamic TLS,
-//! loader, sysroot, family completion, promotion, or public x86 support. This
-//! is not public x86 support.
+//! loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

@@ -24,8 +24,7 @@
 //!
 //! This capability-free leaf is not `lfind`/`lsearch`, bsearch, qsort,
 //! search-tree/hash state, a queue container, allocator, filesystem/process
-//! behavior, libc.so, CRT, loader, sysroot, family completion, promotion, or
-//! public x86 support.
+//! behavior, libc.so, CRT, loader, or sysroot.
 
 use core::{
     ffi::c_void,

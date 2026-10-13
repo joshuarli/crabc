@@ -24,8 +24,7 @@
 //! System V AMD64 passes and returns binary64/binary32 through `xmm0`. This
 //! leaf deliberately owns only `round` and `roundf`; it excludes binary80
 //! `roundl`, fenv API/policy, `rint*`/`nearbyint*`, truncation, directed
-//! ceiling/floor, fma, fmod, cbrt, special and complex math, general libm,
-//! family completion, promotion, and public x86 support.
+//! ceiling/floor, fma, fmod, cbrt, special and complex math, and general libm.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math round leaf requires little-endian Linux/x86-64");

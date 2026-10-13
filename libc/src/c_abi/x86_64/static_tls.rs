@@ -17,7 +17,7 @@
 //! self pointer at `%fs:0` and compiler stack guard at `%fs:40`. It has no module registry, dynamic image growth,
 //! loader handoff, or general TCB contract. The hidden CRT static-link
 //! handoff is a private static-startup composition boundary, not general CRT,
-//! loader, sysroot, or public x86 runtime support.
+//! loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 Static Initial TLS v1 requires little-endian Linux/x86-64");

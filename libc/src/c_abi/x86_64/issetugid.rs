@@ -18,8 +18,7 @@
 //!
 //! This leaf selects no credential mutation or policy, descriptor hygiene,
 //! environment lookup, `secure_getenv`, auxv lookup, loader policy, process
-//! lifecycle, pthread/TLS lifecycle, allocator, process.globals, family
-//! completion, promotion, or public x86 support.
+//! lifecycle, pthread/TLS lifecycle, allocator, or process.globals.
 
 use core::ffi::c_int;
 

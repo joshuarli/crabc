@@ -2,15 +2,14 @@
 //!
 //! This module owns the shared public `fcntl` assembly dispatch for two
 //! separate selected static artifacts: descriptor/status flags (`F_GETFD`,
-//! `F_SETFD`, `F_GETFL`, and `F_SETFL`) and the sibling nonblocking
-//! record-lock forms (`F_GETLK` and `F_SETLK`). The owned runtime additionally
-//! admits the pointer-bearing blocking `F_SETLKW` cancellation point.
-//! It composes the Linux syscall register boundary with the selected C `errno`
-//! publisher. It is not generic C `fcntl`, duplication, OFD locks,
-//! ownership/signalling control, leases, seals,
-//! `lockf`, descriptor pathname policy, vector I/O, a filesystem capability,
-//! stdio, a general C/POSIX runtime, libc.so, CRT, thread lifecycle, dynamic
-//! TLS, loader, sysroot, allocator, or public x86 support.
+//! `F_SETFD`, `F_GETFL`, and `F_SETFL`) and the sibling nonblocking record-lock
+//! forms (`F_GETLK` and `F_SETLK`). The owned runtime additionally admits the
+//! pointer-bearing blocking `F_SETLKW` cancellation point. It composes the
+//! Linux syscall register boundary with the selected C `errno` publisher. It is
+//! not generic C `fcntl`, duplication, OFD locks, ownership/signalling control,
+//! leases, seals, `lockf`, descriptor pathname policy, vector I/O, a filesystem
+//! capability, stdio, a general C/POSIX runtime, libc.so, CRT, thread
+//! lifecycle, dynamic TLS, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

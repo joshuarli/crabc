@@ -25,7 +25,7 @@
 //! System V AMD64 passes and returns binary64/binary32 through `xmm0`. This
 //! leaf deliberately owns only `floor` and `floorf`; it excludes binary80
 //! `floorl`, ceiling, fma, fmod, cbrt, special and complex math, fenv
-//! API/policy, general libm, family completion, promotion, and public x86 support.
+//! API/policy, and general libm.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math floor leaf requires little-endian Linux/x86-64");

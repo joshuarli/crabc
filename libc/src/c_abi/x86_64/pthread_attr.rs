@@ -220,7 +220,7 @@ impl PublicPthreadAttr {
         self.words[STACK_SIZE_WORD_INDEX] = size;
         // Musl stores `address + size` as size_t. Preserve that defined
         // unsigned wraparound representation even though this metadata-only
-        // slice never creates a worker from the record.
+        // code never creates a worker from the record.
         self.words[STACK_TOP_WORD_INDEX] = address.wrapping_add(size);
     }
 
@@ -565,7 +565,7 @@ static_archive_member! { pthread_attr_setstack_source {
     ///
     /// `attributes` must designate writable, initialized, properly aligned
     /// `pthread_attr_t` storage. `address` and `size` are retained only as record
-    /// metadata in this slice; no worker is created from them here.
+    /// metadata here; no worker is created from them here.
     #[no_mangle]
     pub unsafe extern "C" fn pthread_attr_setstack(
         attributes: *mut c_void,

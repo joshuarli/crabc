@@ -12,12 +12,11 @@
 //! require its private `pthread_impl` TCB/timer-ID representation; this static
 //! leaf deliberately does not decode or dereference them. The private fixture
 //! passes only nonnegative invalid opaque values and observes `EINVAL`, never
-//! creating, arming, querying, deleting, or observing a valid POSIX timer.
-//! The artifact therefore establishes only the direct rejected-handle C error
-//! ABI, not timer ownership, overrun values, POSIX timer state, tagged pthread
-//! timer IDs, signal delivery, calendar/time-zone behavior, cancellation,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion,
-//! or public x86 support.
+//! creating, arming, querying, deleting, or observing a valid POSIX timer. The
+//! artifact therefore establishes only the direct rejected-handle C error ABI,
+//! not timer ownership, overrun values, POSIX timer state, tagged pthread timer
+//! IDs, signal delivery, calendar/time-zone behavior, cancellation, libc.so,
+//! CRT, dynamic TLS, loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

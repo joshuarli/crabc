@@ -11,7 +11,7 @@
 //! The feature composes only the existing x86 fixed-description `strsignal`,
 //! permanent `stderr` output, and initial-TLS `errno` owner.  It performs no
 //! locale/catalog lookup, formatting parser, allocation, process signal
-//! delivery/disposition operation, or general diagnostics promotion.
+//! delivery/disposition operation, or general diagnostics.
 //!
 //! Musl locks its full `FILE` around `fprintf` and restores that full FILE's
 //! locale/orientation fields after the call.  The selected x86 permanent-stream
@@ -24,7 +24,7 @@
 //! intentionally does not claim musl's private 80-byte `vfprintf` buffering
 //! or its nonblocking short-write prefix behavior: adding that would expand
 //! the selected permanent-stream core into a general formatted-stdio owner.
-//! The focused evidence therefore covers complete output plus first-write
+//! The focused test therefore covers complete output plus first-write
 //! `EAGAIN`/`EBADF` failures, not partial-output equivalence.
 //! It is not async-signal-safe: a signal handler must not reenter this selected
 //! permanent-stream state.

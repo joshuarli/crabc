@@ -15,7 +15,6 @@
 //! `__syscall_cp` as a pthread cancellation point. The selected direct leaf
 //! enters Linux `nanosleep=35`. The owned runtime supplies that cancellation
 //! point; standalone archive selections retain the two-register raw syscall.
-//! This does not establish public x86 support.
 
 use core::ffi::{c_int, c_void};
 

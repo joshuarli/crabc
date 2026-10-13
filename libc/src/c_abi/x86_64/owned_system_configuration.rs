@@ -24,12 +24,12 @@
 //! - `src/conf/fpathconf.c` maps to [`fpathconf`]'s deliberate
 //!   fd-independent selector table. The selected positive selector boundary is
 //!   0 through 20 plus the defined nonnegative out-of-range `EINVAL` result;
-//!   musl's unchecked negative C-array index remains outside differential admission.
+//!   musl's unchecked negative C-array index is not reproduced.
 //! - `src/conf/pathconf.c` maps to [`pathconf`], which delegates to that
 //!   `fpathconf(-1, name)` table without dereferencing its pathname. Its
 //!   selected positive-selector boundary is therefore also 0 through 20 plus
 //!   the defined nonnegative out-of-range `EINVAL` result; the delegated
-//!   unchecked negative C-array index remains outside differential admission.
+//!   unchecked negative C-array index is not reproduced.
 //! - `src/legacy/getpagesize.c` maps to [`getpagesize`].
 //! - `src/legacy/getdtablesize.c` maps to [`getdtablesize`].
 //!

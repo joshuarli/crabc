@@ -18,15 +18,14 @@
 //! directly to [`posix_spawnattr_getflags`] below. Its complete body is
 //! `*flags = attr->__flags; return 0;`.
 //!
-//! The System V AMD64 ABI passes the attribute and output pointers in `rdi`
-//! and `rsi`, then returns the signed `int` result in `eax`. Musl's installed
+//! The System V AMD64 ABI passes the attribute and output pointers in `rdi` and
+//! `rsi`, then returns the signed `int` result in `eax`. Musl's installed
 //! `posix_spawnattr_t` declares `int __flags` as its offset-zero first member;
-//! the private C representation below models only that read prefix rather
-//! than importing the rest of the caller-owned attribute layout. This does
-//! not select attribute initialization or mutation, `posix_spawn`,
-//! `posix_spawnp`, file actions, child lifecycle, signal or scheduler policy,
-//! libc.so, a CRT, a loader, a sysroot, spawn-family completion, promotion,
-//! or public x86 support.
+//! the private C representation below models only that read prefix rather than
+//! importing the rest of the caller-owned attribute layout. This does not
+//! select attribute initialization or mutation, `posix_spawn`, `posix_spawnp`,
+//! file actions, child lifecycle, signal or scheduler policy, libc.so, a CRT, a
+//! loader, or a sysroot.
 
 use core::ffi::{c_int, c_short, c_void};
 

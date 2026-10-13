@@ -13,7 +13,7 @@
 //! `memcpy` owner. It is stateless and allocation-free, with no errno, TLS,
 //! syscall, locale, mutable-runtime, allocator, CRT, loader, or sysroot path.
 //! It is a private selected static artifact, not `memory.bytes-basic`, general
-//! bulk memory, libc.so, a public x86 support claim, or family promotion.
+//! bulk memory, or libc.so.
 
 #[cfg(not(all(
     target_os = "linux",

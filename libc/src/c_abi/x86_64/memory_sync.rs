@@ -1,10 +1,9 @@
 //! Selected static Linux/x86-64 C mapping-synchronization boundary.
 //!
 //! This leaf owns exactly C `msync`. It composes the Linux syscall register
-//! boundary, C `errno`, and the owned runtime's cancellation window. It is
-//! not a complete `<sys/mman.h>` implementation, a general VM runtime,
-//! mapping policy, allocator, libc.so, CRT, loader, sysroot, or public x86
-//! support.
+//! boundary, C `errno`, and the owned runtime's cancellation window. It is not
+//! a complete `<sys/mman.h>` implementation, a general VM runtime, mapping
+//! policy, allocator, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

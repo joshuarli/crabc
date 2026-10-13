@@ -9,17 +9,16 @@
 //! writable `struct timex` pointer in rsi. A raw Linux `-errno` becomes C
 //! `-1` after publication through the selected initial-TLS errno slot.
 //!
-//! The private static fixture invokes only rejected `-1` and
-//! `CLOCK_MONOTONIC` IDs with a writable zero `struct timex`, so its
-//! differential never asks Linux to adjust `CLOCK_REALTIME`. Linux may report
-//! those rejected IDs as `EINVAL`, capability-first `EPERM`, or the direct
-//! `EOPNOTSUPP` device result. This exact wrapper does not install an authority
-//! guard: a valid caller can still reach Linux and remains outside the selected
-//! evidence. The artifact therefore establishes only the direct rejected-ID C error
-//! ABI, not clock adjustment authority, successful discipline/state semantics,
-//! time observation, calendar/time-zone behavior, POSIX timers,
-//! cancellation, libc.so, CRT, dynamic TLS, loader, sysroot, family completion,
-//! promotion, or public x86 support.
+//! The private static fixture invokes only rejected `-1` and `CLOCK_MONOTONIC`
+//! IDs with a writable zero `struct timex`, so its differential never asks
+//! Linux to adjust `CLOCK_REALTIME`. Linux may report those rejected IDs as
+//! `EINVAL`, capability-first `EPERM`, or the direct `EOPNOTSUPP` device
+//! result. This exact wrapper does not install an authority guard: a valid
+//! caller can still reach Linux and remains outside what the fixture exercises. The
+//! artifact therefore establishes only the direct rejected-ID C error ABI, not
+//! clock adjustment authority, successful discipline/state semantics, time
+//! observation, calendar/time-zone behavior, POSIX timers, cancellation,
+//! libc.so, CRT, dynamic TLS, loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

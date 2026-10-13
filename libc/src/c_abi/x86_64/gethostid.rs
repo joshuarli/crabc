@@ -5,7 +5,7 @@
 //! state, syscall, errno, TLS, allocation, configuration-file, namespace, or
 //! authority boundary. It is not hostname/domain-name observation or mutation,
 //! a host-identity policy, a system-information framework, secure-execution
-//! policy, libc.so, a CRT, a loader, a sysroot, or public x86 support.
+//! policy, libc.so, a CRT, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license.

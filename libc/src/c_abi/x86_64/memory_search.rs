@@ -1,11 +1,10 @@
 //! Selected static Linux/x86-64 C bounded memory-search boundary.
 //!
-//! This leaf owns exactly three stateless, allocation-free byte-range
-//! searches: `memchr`, GNU `memrchr`, and POSIX/GNU `memmem`. It has no
-//! syscall, `errno`, TLS, allocator, locale, or mutable global-state boundary.
-//! It is not copying or comparison, general string processing, locale-aware
-//! text, stdio, libc.so, a CRT, pthread/TLS lifecycle, dynamic TLS, a loader,
-//! a sysroot, or public x86 support.
+//! This leaf owns exactly three stateless, allocation-free byte-range searches:
+//! `memchr`, GNU `memrchr`, and POSIX/GNU `memmem`. It has no syscall, `errno`,
+//! TLS, allocator, locale, or mutable global-state boundary. It is not copying
+//! or comparison, general string processing, locale-aware text, stdio, libc.so,
+//! a CRT, pthread/TLS lifecycle, dynamic TLS, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

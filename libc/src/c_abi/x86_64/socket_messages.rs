@@ -1,6 +1,6 @@
 //! Selected static Linux/x86-64 C socket-message and socket-option boundary.
 //!
-//! This leaf extends the separately evidenced basic socket-transport block
+//! This leaf extends the basic socket-transport block
 //! with the closed message/option surface `setsockopt`, `getsockopt`,
 //! `sendmsg`, `recvmsg`, `sendmmsg`, `recvmmsg`, and `sockatmark`. It uses
 //! the already selected x86 `iovec` and socket descriptor ABIs, but owns no

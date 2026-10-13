@@ -45,8 +45,7 @@
 //! name no message catalog, so musl's own lookup would also reach its
 //! identity fallback. In the allocator-free archive the fixed four-binding
 //! capacity reports `ENOMEM` before state changes. This is not general
-//! gettext/catalog parity, family completion, promotion, or public x86
-//! support.
+//! gettext catalog support.
 
 #[cfg(not(all(
     target_os = "linux",

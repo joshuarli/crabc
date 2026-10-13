@@ -16,8 +16,7 @@
 //! This private static artifact selects only valid caller-record process-group
 //! readback. It has no null/alias validation, allocation, errno, TLS, syscall,
 //! spawn execution, attribute initialization or mutation, file action, fork,
-//! exec, child lifecycle, signal, scheduler, libc.so, CRT, loader, sysroot,
-//! family-completion, promotion, or public x86 support claim.
+//! exec, child lifecycle, signal, scheduler, libc.so, CRT, loader, or sysroot.
 
 use core::{
     ffi::{c_int, c_void},

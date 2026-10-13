@@ -9,8 +9,8 @@
 //! PIC assembly. Rust's build never invokes a C compiler or links host libm.
 //!
 //! Native conformance corrections are explicit in
-//! `compat/x86_64/math_scalar_corrections.py` and justified in
-//! `compat/x86_64/math-scalar-corrections.md`. These corrected bodies are not
+//! `compat/x86_64/math_scalar_corrections.py`.
+//! These corrected bodies are not
 //! byte-identical upstream translations; the fixed musl oracle stays unchanged.
 //!
 //! ## Exact source map and closure
@@ -41,8 +41,8 @@
 //! binary80 `fmal`, `hypotl`, and `log1pl` ABI is intentionally separate.
 //!
 //! This leaf is selected only by `x86-owned-static-runtime`, so it leaves the
-//! frozen default archive untouched. It does not complete a math capability or
-//! family, establish a general libm/libc, or promote x86 support.
+//! frozen default archive untouched. It does not complete the math family or
+//! establish a general libm/libc.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the owned scalar-math leaf requires little-endian Linux/x86-64");

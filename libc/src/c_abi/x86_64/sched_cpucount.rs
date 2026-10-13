@@ -2,11 +2,11 @@
 //!
 //! This leaf counts set bits in exactly `size` readable caller-owned bytes
 //! beginning at a `cpu_set_t` pointer. The size and pointer use the System V
-//! AMD64 integer registers and the bounded result returns in `eax`. It does
-//! not observe or mutate CPU affinity, scheduler policy, CPU topology, thread
+//! AMD64 integer registers and the bounded result returns in `eax`. It does not
+//! observe or mutate CPU affinity, scheduler policy, CPU topology, thread
 //! state, clocks/timers, calendar/timezone/environment state, errno, TLS, or
-//! any kernel/runtime path. It is not scheduler support, libc.so, CRT,
-//! loader, sysroot, promotion, or public x86 support.
+//! any kernel/runtime path. It is not scheduler support, libc.so, CRT, loader,
+//! or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

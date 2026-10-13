@@ -6,7 +6,7 @@
 //!
 //! The selected static `libc.a` does not include this root or its weak loader
 //! record import. Static Initial TLS v1 remains the no-PT_INTERP owner. This
-//! source is compiled only by the focused loader/libc handoff evidence, where
+//! source is compiled only by the focused loader/libc handoff test, where
 //! a PT_INTERP-selected x86 loader has already materialized its one bounded
 //! initial TLS graph.
 
@@ -30,7 +30,7 @@ pub extern "C" fn rust_eh_personality() {}
 // byte primitives even though this source itself uses no allocator or libc
 // runtime. Keep the one handoff consumer self-contained, as the adjacent
 // fixed-graph bridge does, rather than pulling an ambient implementation into
-// the evidence executable.
+// the test executable.
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(
     destination: *mut core::ffi::c_void,

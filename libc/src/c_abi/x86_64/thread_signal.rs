@@ -5,7 +5,7 @@
 //! `int tgkill(int, int, int)`.  Native musl 1.2.6 deliberately has no public
 //! `tgkill` export, so this is an explicit crabc extension with the frozen C
 //! signature, not a claim that musl provides an ABI counterpart.  The focused
-//! evidence compares the same installed-header application object with a
+//! test compares the same installed-header application object with a
 //! separate musl `syscall(SYS_tgkill, ...)` adapter for Linux errno behavior.
 //!
 //! Linux validates the scalar thread-group id, task id, signal number, and

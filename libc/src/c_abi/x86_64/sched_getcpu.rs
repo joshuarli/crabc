@@ -22,8 +22,8 @@
 //! not select a vDSO resolver, NUMA-node observation, cache state, CPU-set or
 //! scheduler-affinity APIs, scheduler policy/parameters, priority bounds,
 //! scheduler yielding, thread or pthread state, clock/timer/calendar/timezone
-//! policy, process migration, CPU topology, libc.so, CRT, dynamic TLS,
-//! loader, sysroot, allocator, family completion, promotion, or public x86 support.
+//! policy, process migration, CPU topology, libc.so, CRT, dynamic TLS, loader,
+//! sysroot, or allocator.
 
 use core::ffi::{c_int, c_uint};
 

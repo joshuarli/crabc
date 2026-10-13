@@ -17,7 +17,7 @@
 //!
 //! This leaf is not a POSIX process-timer, signal, callback, timer registry,
 //! event-loop, or readiness policy. It adds no pthread cancellation point,
-//! dynamic runtime, loader/CRT/sysroot state, or public x86 support.
+//! dynamic runtime, or loader/CRT/sysroot state.
 
 use core::ffi::{c_int, c_void};
 use core::mem::{align_of, offset_of, size_of};

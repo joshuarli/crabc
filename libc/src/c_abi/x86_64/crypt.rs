@@ -1,7 +1,8 @@
 //! Bounded Linux/x86-64 C `crypt(3)` compatibility leaf.
 //!
-//! This is the target-local composition of the existing AArch64 profile, not
-//! a new password-hash design. RustCrypto's `sha-crypt` owns SHA-256-crypt and
+//! This is the target-local composition of the same profile the AArch64
+//! runtime uses, not a new password-hash design. RustCrypto's `sha-crypt` owns
+//! SHA-256-crypt and
 //! SHA-512-crypt computation and MCF serialization; `base64ct` validates the
 //! caller setting. This module only performs bounded C ABI translation and
 //! copies a dependency-owned result into C-owned output storage.
@@ -9,17 +10,14 @@
 //! The enabled `alloc` MCF serializer reaches only the final link's C
 //! `malloc`/`aligned_alloc`/`free` boundary through a local global allocator
 //! bridge. `x86-crypt` does not enable `x86-allocator-runtime` or select an
-//! allocator backend; its static evidence deliberately supplies those three
-//! symbols from pinned musl. The named
-//! `x86-crypt-allocator-composition` feature is the separately evidenced
-//! exception: it resolves the same bridge through the selected crabc wrapper
-//! and backend. Neither private topology selects allocator lifecycle
-//! integration, dynamic runtime support, or public x86 support.
+//! allocator backend; its static test deliberately supplies those three
+//! symbols from pinned musl. The named `x86-crypt-allocator-composition`
+//! feature is the exception: it resolves the same bridge
+//! through the selected crabc wrapper and backend. Neither private topology
+//! selects allocator lifecycle integration or dynamic runtime support.
 //!
-//! Source/provenance mapping is recorded in
-//! `compat/x86_64/crypt-profile.md`. The behavior intentionally matches the
-//! existing `libc/src/crypt_impl.rs` bounded profile, including its explicit
-//! unsupported legacy `*` marker.
+//! The behavior intentionally matches the existing `libc/src/crypt_impl.rs`
+//! bounded profile, including its explicit unsupported legacy `*` marker.
 
 extern crate alloc;
 

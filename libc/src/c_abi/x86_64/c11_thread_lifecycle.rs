@@ -42,10 +42,10 @@
 //! errors use only `thrd_*` statuses.
 //!
 //! The separate direct `thrd_yield` leaf owns only its raw scheduler syscall.
-//! This lifecycle leaf intentionally excludes `thrd_yield`, `call_once`, mutexes,
-//! conditions, TSS keys/destructors, cancellation, attributes and
+//! This lifecycle leaf intentionally excludes `thrd_yield`, `call_once`,
+//! mutexes, conditions, TSS keys/destructors, cancellation, attributes and
 //! detached-at-create lifecycle, dynamic/loader TLS, a full TCB, CRT/sysroot
-//! integration, a crabc-rs surface, C11-family completion, and public x86 support.
+//! integration, and a crabc-rs surface.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C11 lifecycle leaf requires little-endian Linux/x86-64");

@@ -6,7 +6,7 @@
 //! and translates only Linux raw errors through the selected initial-TLS
 //! `errno` boundary.  It does not select a request vocabulary, device policy,
 //! terminal/session behavior, socket options, cancellation, a general C/POSIX
-//! runtime, libc.so, CRT, loader, sysroot, or public x86 support.
+//! runtime, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

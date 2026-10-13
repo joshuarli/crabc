@@ -1,20 +1,19 @@
 //! Selected static Linux/x86-64 GNU `renameat2` C ABI leaf.
 //!
-//! This leaf owns exactly
-//! `renameat2(int, const char *, int, const char *, unsigned)`. It preserves
-//! Pinned musl 1.2.6's two direct syscall branches from
-//! `src/linux/renameat2.c`: zero flags issue `SYS_renameat`, while nonzero
-//! flags issue `SYS_renameat2`. In musl's source that distinction is:
-//! `if (!flags) return syscall(SYS_renameat, oldfd, old, newfd, new);` followed
-//! by `return syscall(SYS_renameat2, oldfd, old, newfd, new, flags);`.
+//! This leaf owns exactly `renameat2(int, const char *, int, const char *,
+//! unsigned)`. It preserves Pinned musl 1.2.6's two direct syscall branches
+//! from `src/linux/renameat2.c`: zero flags issue `SYS_renameat`, while nonzero
+//! flags issue `SYS_renameat2`. In musl's source that distinction is: `if
+//! (!flags) return syscall(SYS_renameat, oldfd, old, newfd, new);` followed by
+//! `return syscall(SYS_renameat2, oldfd, old, newfd, new, flags);`.
 //! Caller-supplied directory descriptors, pathnames, and flag bits therefore
 //! reach Linux 5.10 unchanged. It does not choose `AT_FDCWD`, resolve either
-//! pathname, interpret flag combinations, copy bytes, allocate, retry, or add
-//! a fallback. It shares only the raw Linux/x86-64 register boundary and the
+//! pathname, interpret flag combinations, copy bytes, allocate, retry, or add a
+//! fallback. It shares only the raw Linux/x86-64 register boundary and the
 //! selected initial-TLS `errno` translator. It is not ordinary `rename`,
 //! `renameat`, another `*at` entry, a pathname lifecycle family, CWD or
 //! namespace policy, directory streams, cancellation, a Rust facade, libc.so,
-//! CRT, loader, sysroot, or public x86 support.
+//! CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

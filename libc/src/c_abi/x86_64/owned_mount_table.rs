@@ -5,7 +5,7 @@
 //! (MIT; upstream `COPYRIGHT`, pin in `compat/upstreams.toml`). The five
 //! functions below retain that source's FILE operations, scanf grammar,
 //! in-place unescape algorithm, and shared getline storage. `hasmntopt`
-//! remains in its independently qualified leaf. This reads caller-selected
+//! remains in its own leaf. This reads caller-selected
 //! conventional text files; it introduces no mount cache or namespace policy.
 //!
 //! In particular, missing fields are accepted, zero octal escapes remain

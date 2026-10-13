@@ -21,9 +21,9 @@
 //! declare them themselves, not a new project C API or a replacement for the
 //! ordinary selected ctype entries.  The tables are immutable fixed-C-locale
 //! data, so `C`, `POSIX`, and `C.UTF-8` observe the same bytes.  There is no
-//! locale selection, locale database, environment lookup, UTF-8
-//! classification, TLS, errno, allocation, syscall, cancellation, mutable
-//! runtime state, loader, CRT, sysroot, or public x86 support here.
+//! locale selection, locale database, environment lookup, UTF-8 classification,
+//! TLS, errno, allocation, syscall, cancellation, mutable runtime state,
+//! loader, CRT, or sysroot here.
 
 #[cfg(not(all(
     target_os = "linux",

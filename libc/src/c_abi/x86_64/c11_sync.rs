@@ -35,8 +35,8 @@
 //! API admission rather than mutex storage. Owned products also admit
 //! `cnd_timedwait` through the same condition transaction. Static C11 object
 //! initialization, cancellation, TSS, once, process-shared synchronization,
-//! dynamic/loader TLS, CRT/sysroot integration, general C11 or pthread parity,
-//! promotion, and public x86 support remain excluded.
+//! dynamic/loader TLS, CRT/sysroot integration, and general C11 or pthread
+//! parity remain excluded.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C11 plain-synchronization leaf requires little-endian Linux/x86-64");

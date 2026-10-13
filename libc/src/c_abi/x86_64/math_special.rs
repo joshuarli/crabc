@@ -1,16 +1,16 @@
 //! Complete static Linux/x86-64 `math.special` C ABI leaf.
 //!
 //! This module owns the 80 entries still missing from the 90-symbol
-//! `math.special` capability in `compat/crabc-rs/coverage.toml`. The remaining
+//! `math.special` capability. The remaining
 //! ten classifiers, sign predicates, binary80 conversions, and long-double
-//! remainder entries are composed from the independently evidenced
+//! remainder entries are composed from the
 //! `math_complex` and `math_x87_extended` leaves. It additionally owns musl's
 //! observable `__signgam`/weak-`signgam` state required by `lgamma*`; that data
 //! does not select the broader process-environment capability.
 //!
 //! The native `nextafterl` exponent-sign correction is explicit in
-//! `compat/x86_64/math_scalar_corrections.py` and justified by
-//! `compat/x86_64/math-scalar-corrections.md`. Its binary80 body deliberately
+//! `compat/x86_64/math_scalar_corrections.py`.
+//! Its binary80 body deliberately
 //! differs from pinned musl; the independent source oracle remains unchanged.
 //!
 //! ## Fixed source and license provenance
@@ -65,8 +65,7 @@
 //!
 //! This closes only the named private static `math.special` capability. It is
 //! not general scalar/complex math, a dynamic `libc.so`, CRT/TLS lifecycle,
-//! allocator, loader, sysroot, family completion, x86 promotion, full parity,
-//! or public x86 support.
+//! allocator, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the math.special leaf requires little-endian Linux/x86-64");

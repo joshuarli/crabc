@@ -8,8 +8,7 @@
 //! Linux/x86-64 register boundary and selected initial-TLS `errno` translator.
 //! It is not `mkfifo`, `mknod`, `mknodat`, device-node policy, pathname
 //! resolution/canonicalization, CWD or umask policy, allocation, locale,
-//! terminal/environment/process state, libc.so, CRT, loader, sysroot, or
-//! public x86 support.
+//! terminal/environment/process state, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

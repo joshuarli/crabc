@@ -21,9 +21,8 @@
 //! the project's admitted C/POSIX/C.UTF-8 fixed descriptions and deliberately
 //! selects no locale/message-catalog translation. It is not `strerror`,
 //! `strerror_l`, `psignal`, perror/err/warn printing, signal delivery or
-//! disposition state, process termination, libc.so, a CRT, a loader, a
-//! sysroot, general diagnostics, family completion, promotion, or public x86
-//! support.
+//! disposition state, process termination, libc.so, a CRT, a loader, a sysroot,
+//! or general diagnostics.
 
 #[cfg(not(all(
     target_os = "linux",

@@ -1,6 +1,6 @@
 // program and utility interfaces.
 //
-// This slice follows musl's implementations for path/environment helpers,
+// These functions follow musl's implementations for path/environment helpers,
 // temporary files, and word/byte I/O.
 // The functions use the existing libc allocator and raw Linux syscall layer;
 // no success path is manufactured when the kernel or allocator reports an

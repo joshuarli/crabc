@@ -15,7 +15,7 @@
 //! uniqueness, descriptor, or ownership guarantee for the pathname itself.
 //! tmpnam(NULL) retains musl's process-global static 20-byte result buffer;
 //! callers must externally serialize access to that buffer. tempnam returns a
-//! separately allocator-owned string through the already evidenced strdup
+//! separately allocator-owned string through the strdup
 //! client boundary, and callers release a non-null result through the matching
 //! C free ABI.
 //!
@@ -45,7 +45,7 @@ static mut TMPNAM_INTERNAL: [c_char; L_TMPNAM] = [0; L_TMPNAM];
 
 // Do not make a Rust-level dependency on the private allocation-client
 // module. The selected feature archive records this as the public strdup
-// dependency, so evidence can prove that the existing allocator baseline,
+// dependency, so tests can prove that the existing allocator baseline,
 // rather than pinned musl, owns returned storage.
 unsafe extern "C" {
     #[link_name = "strdup"]
@@ -271,7 +271,7 @@ static_archive_member! { tempnam_source {
 
 /// Link-time witness for the opt-in legacy temporary-name object.
 ///
-/// This private evidence glue lets the native runner prove that both public
+/// This private test glue lets the native runner prove that both public
 /// names share exactly one crate-owned object without exposing another public
 /// header callable.
 #[no_mangle]

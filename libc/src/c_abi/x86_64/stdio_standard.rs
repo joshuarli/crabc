@@ -11,10 +11,10 @@
 //! `fgets`, `fputs`, and `puts`; it deliberately does not admit the fixed
 //! pathname/tmpfile slot. The only valid non-null `FILE *` arguments for that
 //! permanent-standard-stream block are those three exported pointers.
-//! The focused permanent-byte-I/O evidence leaf rechecks the byte aliases and
+//! The focused permanent-byte-I/O test rechecks the byte aliases and
 //! one `ungetc` transition only through those permanent pointers; it neither
 //! changes nor claims the pathname sibling's independently selected byte routes.
-//! The focused permanent-status evidence leaf likewise observes only `stdin`:
+//! The focused permanent-status test likewise observes only `stdin`:
 //! its `fgetc` calls create EOF and descriptor-error markers solely as setup
 //! for `feof`/`ferror`/`clearerr` zero-versus-nonzero transitions, without
 //! selecting byte I/O, pathname state, musl locks, or a general `FILE` model.
@@ -22,7 +22,7 @@
 //! weak, same-address aliases of `feof` and `ferror` for permanent `stdin`
 //! observation only. The aliases are not a lock-free claim and do not select
 //! the remaining status aliases or `FILE` state.
-//! The focused permanent-fileno evidence leaf reads only the three permanent
+//! The focused permanent-fileno test reads only the three permanent
 //! descriptor adapters and their fixed `0`/`1`/`2` numbers; it neither opens,
 //! mutates, nor claims a pathname stream or arbitrary `FILE` behavior.
 //! Its separate GNU/BSD `fileno_unlocked` sibling preserves musl's weak,
@@ -83,11 +83,11 @@
 //! | `src/stdio/{stdin,stdout,stderr}.c` | permanent stream data symbols and static buffers |
 //! | `src/stdio/{__stdio_read,__uflow,__toread}.c` | read lookahead/refill, EOF/error, and byte/block input state |
 //! | `src/stdio/{__stdio_write,__overflow,__towrite}.c` | buffered/direct output and musl-shaped error/discard state |
-//! | `src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected permanent-byte entries; focused evidence calls only the three permanent objects |
+//! | `src/stdio/{fgetc,getc,getchar,fputc,putc,putchar,ungetc}.c` | selected permanent-byte entries; focused test calls only the three permanent objects |
 //! | `src/stdio/{fread,fwrite}.c` | selected public block entries |
 //! | `src/stdio/{fgets,fputs,puts}.c` | selected permanent-standard-stream line I/O |
-//! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused evidence observes only stdin; `feof_unlocked` and `ferror_unlocked` are musl's weak same-address aliases of `feof` and `ferror` |
-//! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused evidence observes only permanent stdin/stdout/stderr |
+//! | `src/stdio/{feof,ferror,clearerr}.c` | selected permanent-status predicates and marker reset; focused test observes only stdin; `feof_unlocked` and `ferror_unlocked` are musl's weak same-address aliases of `feof` and `ferror` |
+//! | `src/stdio/fileno.c` | selected descriptor adapter plus musl-shaped weak `fileno_unlocked` alias; focused test observes only permanent stdin/stdout/stderr |
 //! | `src/stdio/ext.c` | private `__freading(stdin)` direction, `__fsetlocking(stdin, request)` no-op, `__freadable(stdin)` access, `__fwritable(stderr)` access, `__fbufsize(stderr)` fixed-capacity, and `__flbf(stderr)` fixed-line-buffer observations; no general FILE, lock, input, output, or buffering contract |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
@@ -113,7 +113,7 @@
 //! `puts` newline-publication transition; terminal-sensitive automatic newline
 //! flushing is not selected. The existing static `exit` lifecycle
 //! deliberately does not call this module, so ordinary-exit flushing is also
-//! outside this artifact and must be added as a separately evidenced lifecycle
+//! outside this artifact and must be added as a lifecycle
 //! transition after the relevant `atexit` ordering is specified.
 
 #[cfg(not(all(
@@ -403,7 +403,7 @@ impl PathOpenMode {
 ///
 /// The bounded vertical intentionally does not accept append, exclusive,
 /// close-on-exec, binary-extension, or broad mode-parser behavior. Those need
-/// their own source-mapped lifecycle evidence before they can join this slot.
+/// their own source-mapped lifecycle before they can join this slot.
 unsafe fn parse_path_open_mode(mode: *const core::ffi::c_char) -> Option<PathOpenMode> {
     if mode.is_null() {
         return None;
@@ -1859,7 +1859,7 @@ pub unsafe extern "C" fn setvbuf(
 /// # Safety
 ///
 /// `stream` must be the active selected pathname stream and callers must
-/// serialize access. The path slot is intended for the evidenced regular-file
+/// serialize access. The path slot is intended for regular-file
 /// routes; nonseekable descriptors expose their direct Linux error.
 #[no_mangle]
 pub(super) unsafe extern "C" fn __fseeko(

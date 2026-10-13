@@ -9,14 +9,14 @@
 //! already selected [`super::inet_address::inet_addr`] parser. The local
 //! scalar `swap_bytes` is the exact little-endian x86 equivalent of that
 //! source-level `ntohl` operation; it deliberately does not select the
-//! separately evidenced `ntohl` helper.
+//! `ntohl` helper.
 //!
-//! The existing numeric parser retains its own historical base-zero grammar
-//! and initial-TLS `errno` effects. This wrapper introduces no mutable state,
+//! The existing numeric parser retains its own historical base-zero grammar and
+//! initial-TLS `errno` effects. This wrapper introduces no mutable state,
 //! allocation, syscall, resolver configuration, DNS, `/etc/hosts`,
 //! `/etc/resolv.conf`, netdb, interface, socket, `h_errno`, byte-order helper,
-//! `inet_ntoa` scratch storage, classful arithmetic/extraction, or public x86
-//! support. It is a private C ABI evidence leaf, not resolver progress.
+//! `inet_ntoa` scratch storage, or classful arithmetic/extraction. It is a
+//! private C ABI leaf, not a resolver.
 
 use core::ffi::{c_char, c_uint};
 

@@ -84,7 +84,7 @@ pub extern "C" fn asinhf(x: f32) -> f32 {
     if sign != 0 { -ax } else { ax }
 }
 
-// musl's log1p reduction, kept private because this slice only needs the
+// musl's log1p reduction, kept private because these functions only need the
 // accuracy of log1p around the reduced arguments produced above.
 #[inline]
 fn invhyper_log1p(x: f64) -> f64 {

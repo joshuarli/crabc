@@ -7,11 +7,10 @@
 //! whole-second portion of that same remaining record after interruption.
 //!
 //! The selected x86 `nanosleep` dependency is the existing direct Linux
-//! `nanosleep=35` boundary, canceling in the owned runtime. It preserves musl's ordinary
-//! single-call result and initial-TLS `errno` publication on EINTR, but does
-//! not independently select `usleep`, clocks or timer control, signal
-//! policy, libc.so, CRT, loader, sysroot, family completion, promotion, or
-//! public x86 support.
+//! `nanosleep=35` boundary, canceling in the owned runtime. It preserves musl's
+//! ordinary single-call result and initial-TLS `errno` publication on EINTR,
+//! but does not independently select `usleep`, clocks or timer control, signal
+//! policy, libc.so, CRT, loader, or sysroot.
 
 use core::ffi::{c_long, c_uint, c_void};
 

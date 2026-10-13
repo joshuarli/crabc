@@ -6,8 +6,8 @@
 //! `rdi/rsi/rdx/r10/r8/r9`, translating the raw byte-count result through the
 //! selected initial-TLS C `errno` boundary. It does not select pathname
 //! opening, descriptor ownership, copy fallback or cross-filesystem policy,
-//! `sendfile`/`splice`, durability, cancellation, libc.so, CRT, loader,
-//! sysroot, or public x86 support.
+//! `sendfile`/`splice`, durability, cancellation, libc.so, CRT, loader, or
+//! sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

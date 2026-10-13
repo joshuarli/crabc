@@ -734,7 +734,7 @@ pub unsafe extern "C" fn __crabc_x86_native_mimalloc_process_done_retained_page_
     })
 }
 
-// Phase-only development evidence; absent from ordinary allocator products.
+// Phase-only test instrumentation; absent from ordinary allocator products.
 #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
 static ALLOCATOR_LIFECYCLE_PHASE: AtomicU8 = AtomicU8::new(0);
 

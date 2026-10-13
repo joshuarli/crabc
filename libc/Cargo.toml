@@ -17,12 +17,12 @@ bench = false
 default = []
 # Permanent stdin/stdout/stderr formatted-I/O forwarding is a distinct opt-in
 # archive: the frozen byte-string format/scan default surface remains unchanged
-# until its stream-specific evidence and export registration are integrated.
+# until its stream-specific export registration is added.
 x86-stdio-permanent-format-scan = []
-# Private Linux/x86-64 parity evidence for the same C allocator backend used
-# by the active AArch64 runtime. Keeping this opt-in prevents the existing
-# dependency-free selected-static artifacts from silently acquiring bundled C
-# allocator objects before the wider x86 runtime composition is ready.
+# Private Linux/x86-64 selection of the same C allocator backend used by the
+# AArch64 runtime. Keeping this opt-in prevents the existing dependency-free
+# selected-static artifacts from silently acquiring bundled C allocator
+# objects.
 x86-allocator-runtime = ["dep:libmimalloc-sys"]
 # A separate opt-in allocation-client leaf keeps strdup/strndup out of the
 # completed allocator-wrapper object's exact public surface. It reuses only
@@ -30,7 +30,7 @@ x86-allocator-runtime = ["dep:libmimalloc-sys"]
 # string or allocator runtime.
 x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # The owned-static runtime composition is intentionally a new aggregate, not
-# a widening of either existing allocator evidence feature.  It combines the
+# a widening of either existing allocator feature.  It combines the
 # accepted C backend and its independently audited observation/string clients
 # with the environment-mutation/direct-exec composition, selected directory
 # clients, caller-owned Linux file handles, and legacy temporary-name clients
@@ -42,7 +42,7 @@ x86-owned-static-runtime = [
     "x86-crypt-allocator-composition",
 ]
 # Owned C runtime source closure used by non-crypt private composition gates.
-# The installed aggregate above adds the separately evidenced, alloc-backed
+# The installed aggregate above adds the alloc-backed
 # crypt boundary to these shared leaves.
 x86-owned-static-runtime-core = [
     "x86-kernel-admin",
@@ -114,9 +114,9 @@ x86-filesystem-traversal = []
 # setenv/putenv vector and string bookkeeping. Keep it opt-in so existing
 # dependency-free selected-static artifacts do not silently acquire it.
 x86-environment-runtime = ["x86-allocator-runtime"]
-# Private Linux/x86-64 POSIX spawn file-actions lifecycle evidence.  The
+# Private Linux/x86-64 POSIX spawn file-actions lifecycle.  The
 # operation records own real pathname copies and therefore compose with the
-# already evidenced x86 C allocator wrapper; keeping this opt-in leaves the
+# x86 C allocator wrapper; keeping this opt-in leaves the
 # dependency-free selected-static archive unchanged.
 x86-posix-spawn-file-actions = ["x86-allocator-runtime"]
 # Private Linux/x86-64 direct process-image replacement. This reuses the
@@ -124,33 +124,31 @@ x86-posix-spawn-file-actions = ["x86-allocator-runtime"]
 # for variadic argv vectors, but does not select fork, vfork, spawn, or an
 # allocator/runtime composition.
 x86-process-exec = []
-# Complete the distinct strong AArch64 allocator-observation entry only for
-# its closed capability gate. This implies the private allocation backend but
+# Provide the distinct strong allocator-observation entry that AArch64 also
+# exports, only when selected. This implies the private allocation backend but
 # does not widen the earlier basic-wrapper artifact's exact object surface.
 x86-allocator-observability = ["x86-allocator-runtime"]
-# Private Linux/x86-64 h_errno accessor/object evidence. This retains only
+# Private Linux/x86-64 h_errno accessor and object. This retains only
 # the selected bootstrapped-main and selected-pthread-worker status slots;
 # it does not select resolver configuration, DNS, netdb, or a general TCB.
 x86-h-errno = []
-# Pinned musl's historical microsecond ITIMER_REAL adapter is independently
-# evidenced. Keep it opt-in so the frozen default archive does not silently
-# acquire process-global timer mutation or imply signal/timer-family closure.
+# Pinned musl's historical microsecond ITIMER_REAL adapter. Keep it
+# opt-in so the frozen default archive does not silently acquire process-global timer mutation.
 x86-ualarm = []
-# Pinned musl's public getitimer/setitimer pair is an independently evidenced
-# process-global interval-timer control boundary. Keep it opt-in so the frozen
-# dependency-free selected-static archive remains unchanged until the
-# provider's feature archive and ledger artifact are integrated.
+# Pinned musl's public getitimer/setitimer pair is a process-global
+# interval-timer control boundary. Keep it opt-in so the frozen
+# dependency-free selected-static archive remains unchanged.
 x86-interval-timers = []
-# Private Linux/x86-64 file-handle syscall evidence.  The pair remains
+# Private Linux/x86-64 file-handle syscalls.  The pair remains
 # opt-in so the frozen dependency-free selected-static archive does not gain
-# filesystem-handle authority before the wider filesystem family closes.
+# filesystem-handle authority.
 x86-file-handles = []
-# Private Linux/x86-64 resolver-runtime evidence. The C ABI state owner uses
-# the separately evidenced h_errno state owner plus the existing stateless
-# no_std DNS transport. It remains opt-in after its bounded evidence closes so
+# Private Linux/x86-64 resolver runtime. The C ABI state owner uses
+# the h_errno state owner plus the existing stateless
+# no_std DNS transport. It remains opt-in so
 # the frozen default archive does not silently acquire resolver state or I/O.
 x86-resolver-runtime = ["dep:crabc-core", "x86-h-errno"]
-# Private Linux/x86-64 evidence for the existing bounded SHA-crypt C ABI.
+# Private Linux/x86-64 build of the existing bounded SHA-crypt C ABI.
 # `sha-crypt` owns the MCF result temporarily. The target-local adapter bridges
 # only to the final link's C malloc/aligned_alloc/free symbols; this does not
 # enable x86-allocator-runtime or select an allocator backend, lifecycle, or
@@ -161,21 +159,21 @@ x86-crypt = ["dep:base64ct", "dep:sha-crypt"]
 # x86 allocator wrapper/backend. This adds no callable or capability: it names
 # the allocation-provider contract and keeps a manual pair selection rejected.
 x86-crypt-allocator-composition = ["x86-crypt", "x86-allocator-runtime"]
-# The frozen legacy.misc aggregate has five separately evidenced default-root
-# prerequisites. The independently evidenced inert-DES spelling pair is a
+# The frozen legacy.misc aggregate has five default-root
+# prerequisites. The inert-DES spelling pair is a
 # narrow prerequisite so owned products can select it without `fmtmsg`; the
 # aggregate retains only its bounded formatting addition.
 x86-legacy-des-compat = []
 x86-legacy-misc = ["x86-legacy-des-compat"]
-# Private x86 binary80 evidence for the exact musl `fdiml` and GNU
-# `exp10l`/weak-`pow10l` closure.  It intentionally has no default-root or
-# dependency effect: the focused runner is the only current consumer.
+# Private x86 binary80 closure for the exact musl `fdiml` and GNU
+# `exp10l`/weak-`pow10l` entries.  It intentionally has no default-root or
+# dependency effect.
 x86-math-long-double-completion = []
 # Pinned musl's `signal.c` exports two historical weak spellings at the exact
 # `signal` address. Keep this ABI-only compatibility leaf opt-in so the frozen
 # selected-static archive does not silently gain legacy signal names.
 x86-signal-legacy-aliases = []
-# The four historical System V signal helpers are an independently evidenced
+# The four historical System V signal helpers are a
 # private closure over the existing x86 signal foundation. Keep it opt-in so
 # the frozen selected-static archive does not imply a wider signal runtime.
 x86-signal-sysv-helpers = []
@@ -186,10 +184,10 @@ x86-signal-sysv-helpers = []
 x86-signal-reporting = []
 # Pinned musl's iopl/ioperm pair is a direct privileged-kernel permission
 # boundary. Keep it opt-in so the default archive does not silently gain I/O
-# privilege mutation entry points before its negative-path evidence closes.
+# privilege mutation entry points.
 x86-io-permissions = []
 # The owned kernel-administration component combines musl's public x86
-# arch_prctl veneer with the separately retained iopl/ioperm leaf. It is
+# arch_prctl veneer with the separately retained iopl/ioperm module. It is
 # selected only by the owned products; the focused I/O-only feature remains
 # available so the frozen default archive keeps its exact export surface.
 x86-kernel-admin = ["x86-io-permissions"]
@@ -211,13 +209,13 @@ x86-a64l = []
 # legacy netdb setter symbols and no resolver/database state is implied.
 x86-netdb-setent = []
 # Pinned musl's three spin-object operations share one exact atomic state
-# machine with the separately evidenced init/destroy leaves. Keep the
+# machine with the init/destroy modules. Keep the
 # acquisition/release extension opt-in so the frozen selected-static archive
 # does not silently acquire synchronization entry points.
 x86-pthread-spin-operations = []
-# Selects the bounded Rust ticket-zero allocator for explicit M5 shadow
-# evidence. The C mimalloc backend remains the default; this feature has no
-# runtime selection or fallback and is not promotion evidence. On x86 this
+# Selects the bounded Rust ticket-zero allocator as a nondefault shadow
+# backend. The C mimalloc backend remains the default; this feature has no
+# runtime selection or fallback. On x86 this
 # additionally selects the private engine dependency; the target-local source
 # root rejects use without the owned static runtime and rejects the dynamic
 # product unless its explicit dynamic native-owner feature is selected.
@@ -228,7 +226,7 @@ native-mimalloc-shadow-test-audit = [
     "native-mimalloc-shadow",
     "crabc-mimalloc/native-runtime-test-audit",
 ]
-# Private normal-main process-finalization order receipt. This is limited to
+# Private normal-main process-finalization order check. This is limited to
 # the selected owned-static fixture and stays absent from ordinary native
 # shadow archives.
 native-mimalloc-shadow-process-done-exit-test-audit = [
@@ -250,17 +248,16 @@ sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "p
 crabc-core = { path = "../crabc-core", optional = true }
 crabc-mimalloc = { path = "../crabc-mimalloc", optional = true }
 libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"], optional = true }
-# These are the same approved RustCrypto packages used by the active AArch64
-# crypt profile. Keeping them optional confines their alloc-enabled MCF path
-# to the separately evidenced x86 `x86-crypt` leaf.
+# These are the same RustCrypto packages used by the AArch64 crypt profile.
+# Keeping them optional confines their alloc-enabled MCF path to the x86
+# `x86-crypt` feature.
 base64ct = { version = "1.8", default-features = false, optional = true }
 sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"], optional = true }
 rand_pcg = { version = "=0.10.2", default-features = false, optional = true }
 
-# The repository-level C and loader fixtures remain in ../tests so their
-# evidence paths are stable. Explicit targets make crabc-libc their owner
-# after the workspace root becomes virtual, while preserving one process per
-# test target and Cargo's existing parallel execution topology.
+# The repository-level C and loader fixtures live in ../tests. Explicit
+# targets make crabc-libc their owner while preserving one process per test
+# target and Cargo's parallel execution topology.
 
 [[test]]
 name = "aarch64_abi_layout"

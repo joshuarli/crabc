@@ -17,13 +17,13 @@
 //! it then invokes `chdir` on exactly `/proc/self/fd/<fd>`. The fixed local
 //! byte buffer keeps that no-allocation fallback in this one archive member.
 //!
-//! The SysV AMD64 ABI passes the signed four-byte descriptor in edi and
-//! returns the signed `int` result in eax. Raw Linux errors in `-4095..=-1`
-//! alone publish the selected initial-TLS `errno`. Calling-process CWD is
+//! The SysV AMD64 ABI passes the signed four-byte descriptor in edi and returns
+//! the signed `int` result in eax. Raw Linux errors in `-4095..=-1` alone
+//! publish the selected initial-TLS `errno`. Calling-process CWD is
 //! process-global, so callers retain all external serialization and restore
 //! obligations. This leaf selects no `chdir`, `getcwd`, `fcntl`, `open`,
 //! `readlink`, mount, namespace, directory-stream, allocator, cancellation,
-//! loader, CRT, or public x86 support boundary.
+//! loader, or CRT.
 
 use core::ffi::c_int;
 use core::mem::size_of;

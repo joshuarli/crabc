@@ -25,8 +25,8 @@
 //! This artifact owns no storage, allocator, lock, file or database parsing,
 //! terminal/session lookup, credential policy, secure-execution decision,
 //! process creation, exec/spawn inheritance, or supervision. It is not a
-//! general login/session identity service, dynamic libc, CRT, loader, sysroot,
-//! promotion, or public x86 support.
+//! general login/session identity service, dynamic libc, CRT, loader, or
+//! sysroot.
 
 use core::ffi::{c_char, c_int};
 use core::ptr;

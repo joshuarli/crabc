@@ -4,7 +4,7 @@
 
 //! Isolated private x86 dynamic-main-thread RuntimeV1 libc root.
 //!
-//! This root is linked only into the focused native evidence DSO. It provides
+//! This root is linked only into the focused native test DSO. It provides
 //! the smallest real `__libc_start_main` and dynamic TLS `errno` boundary
 //! needed after the Rust-produced Scrt1.o validates the main-resident loader
 //! descriptor. It is never selected by `libc.a`, an installed sysroot, or a

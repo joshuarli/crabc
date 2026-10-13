@@ -1,13 +1,13 @@
 //! Installed owned Linux/x86-64 filesystem C mechanisms.
 //!
 //! This feature-gated block owns exactly `fchmodat`, `lchmod`, `fchown`,
-//! `fchownat`, `mknod`, `mknodat`, `__xmknod`, `__xmknodat`, `renameat`, `symlinkat`, `statx`,
-//! `fallocate`, `lockf`, `preadv2`, and `pwritev2`. It composes the existing
-//! raw Linux register boundary, selected initial-TLS `errno`, private x86
-//! `struct stat` owner, procfd spelling, vector-I/O ABI, and owned-runtime
-//! cancellation window. It adds no Rust facade, pathname normalization,
-//! filesystem authority policy, general `fcntl` surface, allocation, loader,
-//! CRT, sysroot, family-completion, or public x86 support claim.
+//! `fchownat`, `mknod`, `mknodat`, `__xmknod`, `__xmknodat`, `renameat`,
+//! `symlinkat`, `statx`, `fallocate`, `lockf`, `preadv2`, and `pwritev2`. It
+//! composes the existing raw Linux register boundary, selected initial-TLS
+//! `errno`, private x86 `struct stat` owner, procfd spelling, vector-I/O ABI,
+//! and owned-runtime cancellation window. It adds no Rust facade, pathname
+//! normalization, filesystem authority policy, general `fcntl` surface,
+//! allocation, loader, CRT, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

@@ -10,7 +10,7 @@
 //! PRNG state, errno, TLS, syscall, allocator, entropy, locale, mutable
 //! runtime, or other random entry point. It is a private selected static
 //! artifact, not `rand`/`srand` or BSD random-family support, libc.so, a CRT,
-//! loader, sysroot, or public x86 support claim.
+//! loader, or sysroot.
 
 use core::ffi::{c_int, c_uint};
 

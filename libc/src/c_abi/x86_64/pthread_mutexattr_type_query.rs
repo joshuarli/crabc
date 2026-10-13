@@ -16,7 +16,7 @@
 //! type record. The adjacent selected normal-mutex artifact continues to reject
 //! every non-null attribute rather than consume a record queried here. A raw
 //! type value is not recursive or error-checking mutex operation, a mutex state
-//! machine, general pthread support, or public x86 support.
+//! machine, or general pthread support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute type-query leaf requires little-endian Linux/x86-64");

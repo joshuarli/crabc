@@ -16,8 +16,8 @@
 //! scan locally rather than selecting a byte-string archive helper. It owns no
 //! pathname lookup, filesystem syscall, locale, errno, TLS, allocator, process
 //! state, or mutable static path buffer. It is a private selected static
-//! artifact, not `dirname`, general path normalization, libc.so, a CRT,
-//! loader, sysroot, or public x86 support.
+//! artifact, not `dirname`, general path normalization, libc.so, a CRT, loader,
+//! or sysroot.
 
 use core::ffi::c_char;
 

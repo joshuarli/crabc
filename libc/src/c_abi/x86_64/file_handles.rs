@@ -1,14 +1,13 @@
 //! Private Linux/x86-64 file-handle C ABI pair.
 //!
-//! This module preserves pinned musl 1.2.6 `src/linux/name_to_handle_at.c`
-//! and `src/linux/open_by_handle_at.c`: each entry forwards its caller-owned
-//! arguments directly to Linux 5.10 syscall 303 or 304.  The C
-//! `struct file_handle` is deliberately represented as opaque storage here;
-//! its variable-sized `f_handle[]` tail, capacity, type, and mount-id output
-//! remain owned and validated by the caller/kernel contract.  This is a
-//! private opt-in filesystem extension, not handle allocation, pathname
-//! policy, mount authority, allocator support, a Rust facade, or public x86
-//! support.
+//! This module preserves pinned musl 1.2.6 `src/linux/name_to_handle_at.c` and
+//! `src/linux/open_by_handle_at.c`: each entry forwards its caller-owned
+//! arguments directly to Linux 5.10 syscall 303 or 304.  The C `struct
+//! file_handle` is deliberately represented as opaque storage here; its
+//! variable-sized `f_handle[]` tail, capacity, type, and mount-id output remain
+//! owned and validated by the caller/kernel contract.  This is a private opt-in
+//! filesystem extension, not handle allocation, pathname policy, mount
+//! authority, allocator support, or a Rust facade.
 //!
 //! The x86-64 syscall ABI differs from the SysV C ABI for argument four: the
 //! raw boundary moves it from C `rcx` to `r10`; the fifth word remains in

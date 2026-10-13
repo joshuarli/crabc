@@ -19,14 +19,13 @@
 //!
 //! The System V AMD64 ABI passes the caller-owned attribute pointer in `rdi`,
 //! the signed `pid_t` value in `esi`, and returns the signed `int` result in
-//! `eax`. Musl's installed `posix_spawnattr_t` begins with its signed
-//! `__flags` member followed by the signed `__pgrp` member at byte offset four.
-//! The private C representation below models only that written prefix rather
-//! than importing the unused attribute tail. This does not select
-//! `posix_spawn`, `posix_spawnp`, attribute initialization, flags, process-
-//! group readback, signal/scheduler accessors or mutators, file actions, child
-//! lifecycle, libc.so, a CRT, a loader, a sysroot, spawn-family completion,
-//! promotion, or public x86 support.
+//! `eax`. Musl's installed `posix_spawnattr_t` begins with its signed `__flags`
+//! member followed by the signed `__pgrp` member at byte offset four. The
+//! private C representation below models only that written prefix rather than
+//! importing the unused attribute tail. This does not select `posix_spawn`,
+//! `posix_spawnp`, attribute initialization, flags, process- group readback,
+//! signal/scheduler accessors or mutators, file actions, child lifecycle,
+//! libc.so, a CRT, a loader, or a sysroot.
 
 use core::ffi::{c_int, c_void};
 

@@ -18,9 +18,9 @@
 //! `tolower` is the fixed ASCII C-locale fold, so no locale state is selected.
 //!
 //! The closure owns no static mutable cursor, errno, TLS, locale database,
-//! allocator, syscall, pathname lookup, filesystem policy, or runtime state.
-//! It is not general string/path/tokenizer support, `strtok`'s historical
-//! shared cursor, libc.so, a CRT, loader, sysroot, or public x86 support.
+//! allocator, syscall, pathname lookup, filesystem policy, or runtime state. It
+//! is not general string/path/tokenizer support, `strtok`'s historical shared
+//! cursor, libc.so, a CRT, loader, or sysroot.
 
 use core::{ffi::c_char, ptr::null_mut};
 

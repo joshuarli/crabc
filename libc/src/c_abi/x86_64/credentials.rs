@@ -19,7 +19,7 @@
 //! The leaf has no allocator, pthread, process registry, dynamic TLS, or
 //! ambient C-runtime dependency. Its native fixture uses only all-ones
 //! no-change `setres*` requests and rejected `setuid`/`setgid`/`setgroups`
-//! inputs, so it never changes the evidence process's credentials.
+//! inputs, so it never changes the test process's credentials.
 
 use core::ffi::{c_int, c_uint};
 

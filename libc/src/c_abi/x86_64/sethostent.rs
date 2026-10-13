@@ -15,11 +15,10 @@
 //! allocation, syscall, locale, or runtime state.
 //!
 //! The System V AMD64 ABI passes the signed `int` in `edi`; ignoring it is
-//! musl's complete behavior. The weak alias is emitted in assembler rather
-//! than as a Rust forwarding function, preserving same-address identity and
-//! ordinary strong caller override semantics. This is a private C ABI
-//! artifact, not netdb/resolver completion, libc.so, CRT, loader, sysroot,
-//! promotion, or public x86 support.
+//! musl's complete behavior. The weak alias is emitted in assembler rather than
+//! as a Rust forwarding function, preserving same-address identity and ordinary
+//! strong caller override semantics. This is a private C ABI artifact, not
+//! netdb/resolver completion, libc.so, CRT, loader, or sysroot.
 
 use core::ffi::c_int;
 

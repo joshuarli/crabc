@@ -222,8 +222,8 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_static_sysroot)");
     // Only installed-product builders select the paired C/Rust lifecycle.
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_mimalloc_lifecycle)");
-    // Focused real-owner evidence admits this fixture bridge only in a
-    // disposable private static archive, never an installed product.
+    // This fixture bridge is enabled only in a disposable private static
+    // archive built for tests, never an installed product.
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_pattern_private_test)");
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_wordexp_paths_private_test)");
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_wordexp_process_private_test)");

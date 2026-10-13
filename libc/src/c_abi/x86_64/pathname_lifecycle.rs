@@ -1,14 +1,14 @@
 //! Selected static Linux/x86-64 pathname-mutation C boundary.
 //!
-//! This leaf owns one coherent, bounded C pathname-lifecycle block:
-//! `chdir`, `getcwd`, `mkdir`, `unlink`, `rmdir`, `remove`, `rename`,
-//! `link`, `symlink`, `readlink`, `chmod`, `fchmod`, and `truncate`.
-//! The owned runtime additionally exposes `chroot` over the same raw boundary.
-//! It composes only the raw Linux/x86-64 syscall-register boundary and the
-//! selected initial-TLS C `errno` writer. It is not general pathname parsing,
-//! canonicalization, directory streams, CWD virtualization, recursive
-//! deletion, xattr/ACL policy, mount or namespace management, a C allocator,
-//! libc.so, CRT, loader, sysroot, allocator, or public x86 support.
+//! This leaf owns one coherent, bounded C pathname-lifecycle block: `chdir`,
+//! `getcwd`, `mkdir`, `unlink`, `rmdir`, `remove`, `rename`, `link`, `symlink`,
+//! `readlink`, `chmod`, `fchmod`, and `truncate`. The owned runtime
+//! additionally exposes `chroot` over the same raw boundary. It composes only
+//! the raw Linux/x86-64 syscall-register boundary and the selected initial-TLS
+//! C `errno` writer. It is not general pathname parsing, canonicalization,
+//! directory streams, CWD virtualization, recursive deletion, xattr/ACL policy,
+//! mount or namespace management, a C allocator, libc.so, CRT, loader, sysroot,
+//! or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

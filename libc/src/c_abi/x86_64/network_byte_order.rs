@@ -1,14 +1,14 @@
 //! Selected static Linux/x86-64 network byte-order C ABI.
 //!
 //! This leaf owns exactly `htonl`, `htons`, `ntohl`, and `ntohs`. On the
-//! selected little-endian x86-64 target each is a scalar byte reversal: the
-//! two host-to-network and two network-to-host entry points intentionally
-//! remain distinct exported C symbols even though their concrete operation is
-//! the same. It has no pointer, errno, TLS, syscall, allocation, locale,
-//! resolver, configuration-file, DNS, netdb, socket-transport, interface, or
-//! mutable-state boundary. It is not general networking, a protocol parser,
-//! an address codec, `inet_ntoa`, a C runtime, libc.so, a CRT, a loader, a
-//! sysroot, or public x86 support.
+//! selected little-endian x86-64 target each is a scalar byte reversal: the two
+//! host-to-network and two network-to-host entry points intentionally remain
+//! distinct exported C symbols even though their concrete operation is the
+//! same. It has no pointer, errno, TLS, syscall, allocation, locale, resolver,
+//! configuration-file, DNS, netdb, socket-transport, interface, or
+//! mutable-state boundary. It is not general networking, a protocol parser, an
+//! address codec, `inet_ntoa`, a C runtime, libc.so, a CRT, a loader, or a
+//! sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

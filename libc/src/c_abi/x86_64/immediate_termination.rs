@@ -2,11 +2,10 @@
 //!
 //! This leaf owns exactly C11 [`_Exit`]: immediate whole-process termination
 //! through Linux `exit_group`. It has no return value, writable caller state,
-//! errno result, allocator, callback registry, or runtime lock. It does not establish
-//! POSIX `_exit`, `exit`, `abort`, `atexit`, `at_quick_exit`,
-//! `quick_exit`, stdio flushing, fini/destructor processing, fork
-//! coordination, pthread lifecycle, a dynamic libc, CRT, loader, sysroot,
-//! allocator, or public x86 support.
+//! errno result, allocator, callback registry, or runtime lock. It does not
+//! establish POSIX `_exit`, `exit`, `abort`, `atexit`, `at_quick_exit`,
+//! `quick_exit`, stdio flushing, fini/destructor processing, fork coordination,
+//! pthread lifecycle, a dynamic libc, CRT, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

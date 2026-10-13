@@ -1,12 +1,12 @@
 //! Selected static Linux/x86-64 C mapping-core boundary.
 //!
 //! This leaf owns one coherent caller-owned virtual-mapping lifecycle: C
-//! `mmap`, `munmap`, `mprotect`, GNU `madvise`, POSIX `posix_madvise`, and
-//! GNU `mincore`. It composes only the raw Linux syscall-register boundary and
-//! the selected initial-TLS C `errno` publisher. It is not the whole
-//! `<sys/mman.h>` declaration family, a general VM runtime, an allocator,
-//! shared-memory service, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS,
-//! loader, sysroot, or public x86 support.
+//! `mmap`, `munmap`, `mprotect`, GNU `madvise`, POSIX `posix_madvise`, and GNU
+//! `mincore`. It composes only the raw Linux syscall-register boundary and the
+//! selected initial-TLS C `errno` publisher. It is not the whole `<sys/mman.h>`
+//! declaration family, a general VM runtime, an allocator, shared-memory
+//! service, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, or
+//! sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

@@ -1,14 +1,13 @@
 //! Selected static Linux/x86-64 fixed-C-locale character classification.
 //!
-//! This leaf owns exactly the stateless, allocation-free ASCII C `ctype`
-//! block: `isalnum`, `isalpha`, `isblank`, `iscntrl`, `isdigit`, `isgraph`,
-//! `islower`, `isprint`, `ispunct`, `isspace`, `isupper`, `isxdigit`,
-//! `tolower`, `toupper`, `isascii`, and `toascii`. It has no syscall, errno,
-//! TLS, allocator, locale table, cancellation, or mutable global-state
-//! boundary. It is not locale selection, `_l` ctype, wide or multibyte text,
-//! collation, case-insensitive string comparison, stdio, libc.so, a CRT,
-//! pthread/TLS lifecycle, dynamic TLS, a loader, a sysroot, or public x86
-//! support.
+//! This leaf owns exactly the stateless, allocation-free ASCII C `ctype` block:
+//! `isalnum`, `isalpha`, `isblank`, `iscntrl`, `isdigit`, `isgraph`, `islower`,
+//! `isprint`, `ispunct`, `isspace`, `isupper`, `isxdigit`, `tolower`,
+//! `toupper`, `isascii`, and `toascii`. It has no syscall, errno, TLS,
+//! allocator, locale table, cancellation, or mutable global-state boundary. It
+//! is not locale selection, `_l` ctype, wide or multibyte text, collation,
+//! case-insensitive string comparison, stdio, libc.so, a CRT, pthread/TLS
+//! lifecycle, dynamic TLS, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

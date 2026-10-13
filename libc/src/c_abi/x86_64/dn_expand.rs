@@ -12,8 +12,8 @@
 //!
 //! This target-local codec has no resolver state, `/etc/resolv.conf`, DNS
 //! packet I/O, socket, netdb, errno/TLS, allocation, syscall, mutable state,
-//! address-codec, interface, or Ethernet dependency. It is private static C
-//! ABI evidence, not DNS resolver completion or public x86 support.
+//! address-codec, interface, or Ethernet dependency. It is a private static C
+//! ABI leaf, not a DNS resolver.
 
 use core::ffi::{c_char, c_int};
 

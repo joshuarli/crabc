@@ -17,7 +17,7 @@
 //! thread-safe tokenizer or a Rust-facing text API.
 //!
 //! This is a private selected static artifact, not general string/tokenizer
-//! support, libc.so, a CRT, loader, sysroot, or public x86 support claim.
+//! support, libc.so, a CRT, loader, or sysroot.
 
 use core::{ffi::c_char, ptr::null_mut};
 

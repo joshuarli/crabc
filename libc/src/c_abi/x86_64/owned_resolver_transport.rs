@@ -4,8 +4,7 @@
 //! disabled acquisition/cleanup transaction and TCP fast-open ordering;
 //! `sendto.c`, `sendmsg.c`, `recvmsg.c`, and `src/select/poll.c` supply actual
 //! syscall cancellation boundaries. `src/thread/pthread_cancel.c::__cancel`
-//! supplies MASKED -> DISABLE with ECANCELED. See
-//! `compat/x86_64/owned-resolver-cancellation.md` for the source/license map.
+//! supplies MASKED -> DISABLE with ECANCELED.
 //!
 //! The shared core still owns DNS framing, parsing, deadlines and retries.
 //! Its one-live-socket invariant replaces musl's parallel descriptor array.

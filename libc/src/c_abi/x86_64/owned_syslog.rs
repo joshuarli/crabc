@@ -26,7 +26,7 @@
 //! `syslog` is bounded C logging compatibility.  It owns no daemon discovery,
 //! logger configuration framework, persistent queue, host `/dev/log` fixture,
 //! or console policy beyond musl's one `/dev/log` datagram and optional
-//! `/dev/console` fallback.  The installed evidence creates both paths only
+//! `/dev/console` fallback.  The installed test creates both paths only
 //! below a disposable private chroot.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_void, VaList};

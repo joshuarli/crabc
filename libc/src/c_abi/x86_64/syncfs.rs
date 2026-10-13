@@ -11,14 +11,15 @@
 //!
 //! - `src/linux/syncfs.c` maps directly to [`syncfs`].
 //!
-//! Musl's selected source is one `syscall(SYS_syncfs, fd)` wrapper. It has no fallback, initialization, weak alias, or ancillary object closure to translate. Linux retains ownership of which open descriptor types it
-//! accepts and of every synchronization effect; the paired artifact proves
-//! only accepted regular-file requests, stale-errno success, and closed-FD
-//! `EBADF`. It intentionally does not measure storage-cache or power-loss
-//! durability. This private compatibility artifact is not `sync`, `fsync`,
-//! `fdatasync`, `sync_file_range`, a broad descriptor/filesystem interface,
-//! libc.so, CRT, loader, sysroot, allocator/runtime support, family
-//! completion, promotion, or public x86 support.
+//! Musl's selected source is one `syscall(SYS_syncfs, fd)` wrapper. It has no
+//! fallback, initialization, weak alias, or ancillary object closure to
+//! translate. Linux retains ownership of which open descriptor types it accepts
+//! and of every synchronization effect; the paired artifact proves only
+//! accepted regular-file requests, stale-errno success, and closed-FD `EBADF`.
+//! It intentionally does not measure storage-cache or power-loss durability.
+//! This private compatibility artifact is not `sync`, `fsync`, `fdatasync`,
+//! `sync_file_range`, a broad descriptor/filesystem interface, libc.so, CRT,
+//! loader, sysroot, or allocator/runtime support.
 
 use core::ffi::c_int;
 

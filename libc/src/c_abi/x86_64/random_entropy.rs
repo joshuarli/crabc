@@ -5,7 +5,7 @@
 //! syscall register ABI and the selected initial-TLS C `errno` writer. It is
 //! not a PRNG or cryptographic algorithm, random state, an allocator,
 //! filesystem-randomness helper, libc.so, CRT, pthread/TLS lifecycle, dynamic
-//! TLS, loader, sysroot, or public x86 support.
+//! TLS, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

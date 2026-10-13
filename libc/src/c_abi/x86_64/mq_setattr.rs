@@ -1,14 +1,14 @@
 //! Selected static Linux/x86-64 C `mq_setattr(3)` boundary.
 //!
 //! This leaf owns only the direct three-word POSIX message-queue attribute
-//! update entry point. It forwards one queue descriptor plus optional input
-//! and output LP64 `struct mq_attr` pointers to Linux
-//! `mq_getsetattr=245` in `rdi`/`rsi`/`rdx`, then maps the raw status through
-//! the selected initial-TLS C `errno` boundary. It does not select queue
-//! opening, closing, unlinking, send/receive, notification, timed operations,
-//! descriptor policy, general IPC, libc.so, CRT, loader, sysroot, or public
-//! x86 support. The owned runtime composes this unchanged attribute owner
-//! with transfer, lifetime, and notification in `owned_message_queues`.
+//! update entry point. It forwards one queue descriptor plus optional input and
+//! output LP64 `struct mq_attr` pointers to Linux `mq_getsetattr=245` in
+//! `rdi`/`rsi`/`rdx`, then maps the raw status through the selected initial-TLS
+//! C `errno` boundary. It does not select queue opening, closing, unlinking,
+//! send/receive, notification, timed operations, descriptor policy, general
+//! IPC, libc.so, CRT, loader, or sysroot. The owned runtime composes this
+//! unchanged attribute owner with transfer, lifetime, and notification in
+//! `owned_message_queues`.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

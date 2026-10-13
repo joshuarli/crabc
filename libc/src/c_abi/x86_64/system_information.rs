@@ -6,7 +6,7 @@
 //! select `getloadavg`, `/proc` or system-file parsing, general `sysconf`,
 //! CPU-affinity control, scheduler policy, NUMA/topology discovery, a system
 //! information framework, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS,
-//! loader, sysroot, allocator, or public x86 support.
+//! loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

@@ -39,8 +39,8 @@
 //! lock this metadata before it snapshots the calling task's table, but it is
 //! not general all-thread key/TSD or dynamic-fork repair. Invalid/deleted keys
 //! and non-selected callers fail closed instead of relying on musl's unchecked
-//! internal fast paths. This does not establish pthread/C11 family completion
-//! or public x86 support.
+//! internal fast paths. This does not provide the rest of the
+//! pthread/C11 key and TSD surface.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread/C11 TSD leaf requires little-endian Linux/x86-64");
@@ -352,7 +352,7 @@ static_archive_member! { pthread_key_create_source {
     ///
     /// `key` must name an active key created through this selected artifact. The
     /// caller must not race a worker destructor that observes, deletes, or rearms
-    /// this key; that broader musl interaction is deliberately outside the slice.
+    /// this key; that broader musl interaction is deliberately outside this module.
     #[export_name = "__pthread_key_delete"]
     pub unsafe extern "C" fn pthread_key_delete(key: c_uint) -> c_int {
         let Some(index) = key_index(key) else {

@@ -12,7 +12,7 @@
 //! select the POSIX `sched_yield` C API, scheduler policy or parameter APIs,
 //! affinity, pthread scheduling attributes, a scheduling guarantee, C11
 //! lifecycle/synchronization/TSS/cancellation, dynamic or loader TLS, CRT,
-//! sysroot, general pthread/C11 behavior, x86-64 parity, promotion, and public x86 support.
+//! sysroot, or general pthread/C11 behavior.
 
 use super::raw_syscall;
 

@@ -17,10 +17,10 @@
 //!
 //! The System V AMD64 ABI passes the opaque attribute pointer in `rdi`, the
 //! signed policy `int` in `esi`, and returns the signed error number in `eax`.
-//! This does not select `posix_spawn`, `posix_spawnp`, attribute initialization,
-//! flags/process-group/signal/scheduler storage access, file actions, child
-//! lifecycle, real scheduler policy behavior, libc.so, a CRT, a loader, a
-//! sysroot, spawn-family completion, promotion, or public x86 support.
+//! This does not select `posix_spawn`, `posix_spawnp`, attribute
+//! initialization, flags/process-group/signal/scheduler storage access, file
+//! actions, child lifecycle, real scheduler policy behavior, libc.so, a CRT, a
+//! loader, or a sysroot.
 
 use core::ffi::{c_int, c_void};
 

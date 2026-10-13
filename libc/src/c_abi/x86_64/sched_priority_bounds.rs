@@ -14,8 +14,7 @@
 //! invalid-policy cases. It does not select scheduler policy selection or
 //! mutation, current-policy or parameter queries, affinity, scheduler
 //! progress/fairness, threads, clocks/timers, calendar or timezone behavior,
-//! environment state, allocation, loader/CRT/sysroot work, family completion,
-//! promotion, or public x86 support.
+//! environment state, allocation, or loader/CRT/sysroot work.
 
 use core::ffi::c_int;
 

@@ -1,13 +1,13 @@
 //! Selected static Linux/x86-64 C process-resource boundary.
 //!
-//! This leaf owns one coherent, bounded native C resource block:
-//! `getrlimit`, `setrlimit`, GNU `prlimit` (whose public header aliases
-//! `prlimit64` to it), `getrusage`, `getpriority`, `setpriority`, and `nice`.
-//! It composes only the raw Linux syscall register boundary and the selected
-//! initial-TLS C `errno` slot. It is not process accounting through `times`,
-//! scheduler policy or cgroups, C fork/wait/exec, a process supervisor, a
-//! general C/POSIX runtime, libc.so, CRT, pthread/TLS lifecycle, dynamic TLS,
-//! loader, sysroot, allocator, or public x86 support.
+//! This leaf owns one coherent, bounded native C resource block: `getrlimit`,
+//! `setrlimit`, GNU `prlimit` (whose public header aliases `prlimit64` to it),
+//! `getrusage`, `getpriority`, `setpriority`, and `nice`. It composes only the
+//! raw Linux syscall register boundary and the selected initial-TLS C `errno`
+//! slot. It is not process accounting through `times`, scheduler policy or
+//! cgroups, C fork/wait/exec, a process supervisor, a general C/POSIX runtime,
+//! libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot, or
+//! allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

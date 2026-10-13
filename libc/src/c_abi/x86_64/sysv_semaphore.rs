@@ -1,12 +1,12 @@
 //! Selected static Linux/x86-64 SysV semaphore C boundary.
 //!
 //! This leaf owns one complete, deliberately bounded SysV semaphore family:
-//! `semget`, `semop`, `semtimedop`, and variadic `semctl`. It composes only
-//! the raw Linux/x86-64 syscall register boundary and the selected initial-TLS
-//! C `errno` writer. It is not SysV message queues or shared memory, named or
+//! `semget`, `semop`, `semtimedop`, and variadic `semctl`. It composes only the
+//! raw Linux/x86-64 syscall register boundary and the selected initial-TLS C
+//! `errno` writer. It is not SysV message queues or shared memory, named or
 //! timed POSIX semaphores, a process-exit `SEM_UNDO` lifecycle policy, pthread
-//! cancellation, a general C/POSIX runtime, libc.so, CRT, dynamic TLS,
-//! loader, sysroot, allocator, or public x86 support.
+//! cancellation, a general C/POSIX runtime, libc.so, CRT, dynamic TLS, loader,
+//! sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

@@ -16,8 +16,8 @@
 
 // Linux/AArch64 remains the complete public C runtime. The x86 branch below
 // selects the established C ABI leaf owners. The explicit owned-dynamic feature
-// replaces only startup/TLS ownership for the staged installed shared product;
-// neither linkage mode promotes x86 to public-platform support.
+// replaces only startup/TLS ownership for the installed shared product;
+// x86 is not yet a public platform in either linkage mode.
 #[cfg(not(any(
     all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
     all(target_os = "linux", target_arch = "x86_64", target_endian = "little"),
@@ -31,8 +31,8 @@ mod c_abi;
 
 // Keep this target root deliberately separate from `c_abi`: that module owns
 // the active AArch64 runtime composition and its target-specific assembly,
-// records, allocator, and runtime state. The x86 root selects its separately
-// evidenced C ABI leaves. The historical root filename is retained for
+// records, allocator, and runtime state. The x86 root selects its own
+// C ABI leaf modules. The historical root filename is retained for
 // existing source contracts; cfg-disjoint owned_dynamic_runtime/dynamic_tls
 // select shared startup and loader-owned TLS without duplicating leaf state.
 #[cfg(all(target_os = "linux", target_arch = "x86_64", target_endian = "little"))]

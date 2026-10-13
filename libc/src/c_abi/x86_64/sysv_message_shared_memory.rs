@@ -4,10 +4,10 @@
 //! resource families: `ftok`, `msgget`, `msgsnd`, `msgrcv`, `msgctl`, `shmget`,
 //! `shmat`, `shmdt`, and `shmctl`. It composes the existing x86 stat-layout
 //! owner, raw Linux/x86-64 syscall register boundary, and selected initial-TLS
-//! C `errno` writer. It is not the remaining SysV semaphore leaf, POSIX
-//! message queues/shared memory or named/timed semaphores, an IPC namespace or permission
-//! policy, a general C/POSIX runtime, libc.so, CRT, dynamic TLS, loader,
-//! sysroot, allocator, or public x86 support.
+//! C `errno` writer. It is not the remaining SysV semaphore leaf, POSIX message
+//! queues/shared memory or named/timed semaphores, an IPC namespace or
+//! permission policy, a general C/POSIX runtime, libc.so, CRT, dynamic TLS,
+//! loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

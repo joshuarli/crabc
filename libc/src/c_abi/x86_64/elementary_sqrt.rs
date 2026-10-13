@@ -18,8 +18,7 @@
 //! infinities, NaNs, negative-domain `FE_INVALID`, and inexact results against
 //! pinned musl. This remains one selected static artifact inside the planned
 //! math family: it does not select any other elementary operation, general
-//! libm, complex math, errno policy, libc.so, CRT, loader, sysroot, family
-//! completion, promotion, or public x86 support.
+//! libm, complex math, errno policy, libc.so, CRT, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 square-root leaf requires little-endian Linux/x86-64");

@@ -503,7 +503,7 @@ static_archive_member! { getaddrinfo_source {
     /// The feature-gated C resolver runtime replaces this public spelling with
     /// hosts-first and DNS behavior. Keeping the default archive on this direct
     /// wrapper preserves every pre-existing private leaf's no-resolver state
-    /// contract while the wider package qualifies independently.
+    /// contract.
     #[cfg(not(feature = "x86-resolver-runtime"))]
     #[no_mangle]
     pub unsafe extern "C" fn getaddrinfo(

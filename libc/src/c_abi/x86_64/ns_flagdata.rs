@@ -13,8 +13,7 @@
 //! This target-local read-only object has no code, mutable state, resolver
 //! state, `/etc/resolv.conf`, DNS packet I/O, socket, netdb, errno/TLS,
 //! allocation, syscall, interface, or Ethernet dependency. It is private
-//! static C ABI evidence, not parser or resolver completion or public x86
-//! support.
+//! static C ABI leaf, not a parser or resolver.
 
 use core::ffi::c_int;
 

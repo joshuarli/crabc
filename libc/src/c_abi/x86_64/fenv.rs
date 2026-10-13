@@ -16,8 +16,7 @@
 //! assembly is carried by Rust's `global_asm!` and the tiny generic wrappers
 //! live in this one `no_std` source file. The selected x86 static archive
 //! exposes exactly this fenv surface through its freestanding artifact gate;
-//! it must not be mistaken for a complete C runtime or public x86 support
-//! claim.
+//! it is not a complete C runtime.
 
 use core::ffi::c_int;
 

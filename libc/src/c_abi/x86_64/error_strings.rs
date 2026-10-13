@@ -1,13 +1,13 @@
 //! Selected static Linux/x86-64 C error-string boundary.
 //!
 //! This leaf owns exactly `strerror`, `strerror_r`, and musl's weak
-//! same-address `__xpg_strerror_r` alias. It is immutable, allocation-free,
-//! and fixed to the project's admitted C/POSIX/C.UTF-8 message set. It does
-//! not read or write `errno`, TLS, locale objects, message catalogs, locks, or
+//! same-address `__xpg_strerror_r` alias. It is immutable, allocation-free, and
+//! fixed to the project's admitted C/POSIX/C.UTF-8 message set. It does not
+//! read or write `errno`, TLS, locale objects, message catalogs, locks, or
 //! process state. The adjacent `locale_error_strings` leaf owns only the
 //! fixed-profile `__strerror_l`/`strerror_l` spelling over this same immutable
 //! lookup. This leaf itself is not `strsignal`, `perror`, the err/warn family,
-//! `abort`, libc.so, a CRT, a loader, a sysroot, or public x86 support.
+//! `abort`, libc.so, a CRT, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

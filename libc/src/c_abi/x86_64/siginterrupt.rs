@@ -32,8 +32,8 @@
 //!
 //! This does not select handler installation or lifetime, generic signal
 //! actions, masks or signal-set helpers, delivery, waits, queues, descriptors,
-//! timers, pthread policy, process control, dynamic runtime/loader/CRT/sysroot
-//! state, signal-family completion, promotion, or public x86 support.
+//! timers, pthread policy, process control, or dynamic
+//! runtime/loader/CRT/sysroot state.
 
 use core::ffi::c_int;
 use core::mem::MaybeUninit;

@@ -7,18 +7,17 @@
 //! - `src/thread/pthread_attr_get.c::pthread_mutexattr_getpshared` assigns
 //!   `*pshared = a->__attr / 128U % 2` and returns zero.
 //!
-//! The admitted surface is deliberately only this raw process-sharing-bit
-//! query over the installed four-byte `pthread_mutexattr_t` word. It has no allocation,
-//! syscall, C-`errno`, TLS, TCB, attribute lifecycle, mutex
-//! state-machine, synchronization, cancellation, or thread lifecycle
-//! behavior. In particular, it does not select `pthread_mutexattr_setpshared`:
-//! the getter is evidence for a caller-owned record word only, not a record
-//! construction or validation contract. The adjacent selected robust-mutex
-//! artifact separately consumes its explicitly admitted normal/robust
-//! attribute records; this query does not widen that state-machine boundary.
-//! A raw process-sharing bit is not process-shared mutex operation, a
-//! cross-process capability claim, general pthread support, or public x86
-//! support.
+//! The admitted surface is deliberately only this raw process-sharing-bit query
+//! over the installed four-byte `pthread_mutexattr_t` word. It has no
+//! allocation, syscall, C-`errno`, TLS, TCB, attribute lifecycle, mutex
+//! state-machine, synchronization, cancellation, or thread lifecycle behavior.
+//! In particular, it does not select `pthread_mutexattr_setpshared`: the getter
+//! covers a caller-owned record word only, not a record construction
+//! or validation contract. The adjacent selected robust-mutex artifact
+//! separately consumes its explicitly admitted normal/robust attribute records;
+//! this query does not widen that state-machine boundary. A raw process-sharing
+//! bit is not process-shared mutex operation, a cross-process capability claim,
+//! or general pthread support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute pshared-query leaf requires little-endian Linux/x86-64");

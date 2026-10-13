@@ -1,7 +1,7 @@
 //! Selected static Linux/x86-64 C ABI composition.
 //!
 //! This target root owns one dependency-free `libc.a` artifact containing the
-//! independently evidenced metadata and credential verticals alongside the x86
+//! metadata and credential verticals alongside the x86
 //! bulk-memory, floating-environment, continuation, binary32/binary64/x87
 //! classification/sign, complex accessor/conjugation, the complete private
 //! `math.complex` magnitude/phase/projection/power/root/transcendental block,
@@ -185,7 +185,7 @@
 //! ordinary-exit registry while its fixed lock is held.
 //!
 //! Each child leaf owns its named C surface and must retain its own native
-//! artifact evidence. The shared result translator is intentionally smaller
+//! artifact test. The shared result translator is intentionally smaller
 //! than C's variadic `syscall(long, ...)`: a complete variadic wrapper needs a
 //! separately specified argument-count and cancellation contract.
 
@@ -393,7 +393,7 @@ mod math_special;
 #[path = "fdim.rs"]
 mod fdim;
 // This binary80 closure is opt-in and becomes a selected component only
-// through the aggregate math.elementary-fenv-sensitive evidence slice. In
+// through the aggregate fenv-sensitive math feature. In
 // particular, do not silently widen the frozen dependency-free
 // selected-static archive with fdiml/exp10l/pow10l.
 #[cfg(feature = "x86-math-long-double-completion")]
@@ -449,7 +449,7 @@ mod interval_timers;
 #[path = "file_handles.rs"]
 mod file_handles;
 // This historical microsecond interval-timer adapter mutates process-global
-// ITIMER_REAL state. Keep its one-symbol C ABI evidence opt-in so the frozen
+// ITIMER_REAL state. Keep its one-symbol C ABI opt-in so the frozen
 // default archive remains distinct from this private timer leaf.
 #[cfg(feature = "x86-ualarm")]
 #[path = "signal_ualarm.rs"]
@@ -578,7 +578,7 @@ mod process_context;
 // The legacy dependency-free archive keeps its bounded fixed-storage owner so
 // unrelated selected-static artifacts remain self-contained. The dedicated
 // opt-in environment gate instead composes musl-shaped ownership with the
-// already evidenced x86 allocator wrapper. `x86-owned-static-runtime` selects
+// x86 allocator wrapper. `x86-owned-static-runtime` selects
 // that gate as one aggregate prerequisite, without widening either default or
 // standalone environment fixture.
 #[cfg(not(crabc_x86_environment_runtime))]
@@ -589,7 +589,7 @@ mod environment;
 mod environment;
 // The direct exec forms, selected-environment forwarding, PATH search, and
 // C-variadic argv constructors are separate source leaves. The feature
-// evidence build pins multi-CGU, LTO-off topology and audits separate archive
+// test build pins multi-CGU, LTO-off topology and audits separate archive
 // members: there, ordinary static `execve`/`fexecve` consumers avoid
 // environment/PATH/mmap closure, `execv` adds only its environment forwarding,
 // `execvp` adds its intended PATH/environment closure but not mmap, and only
@@ -628,8 +628,8 @@ mod startup_security;
 #[path = "issetugid.rs"]
 mod issetugid;
 // The frozen legacy.misc aggregate keeps its five observation prerequisites
-// in the selected default archive. Its historical formatting addition is a
-// separately evidenced opt-in owner so the default export surface cannot
+// in the selected default archive. Its historical formatting addition is an
+// opt-in owner so the default export surface cannot
 // silently grow into a legacy runtime.
 #[cfg(feature = "x86-legacy-des-compat")]
 #[path = "legacy_des_compat.rs"]
@@ -952,7 +952,7 @@ mod directory_streams;
 // Pinned-musl C filename matching and pathname expansion compose the selected
 // locale, directory, stat, allocator, environment, and passwd owners only in
 // the owned runtime aggregate. The frozen private archive keeps its current
-// public provider boundary until this dedicated product evidence is selected.
+// public provider boundary until this dedicated product selects it.
 #[cfg(crabc_x86_owned_runtime)]
 #[path = "owned_pattern.rs"]
 mod owned_pattern;
@@ -1217,7 +1217,7 @@ mod allocator {
 
     /// Link-time witness for the opt-in x86 allocator wrapper object.
     ///
-    /// This is private evidence glue, not an installed libc interface. The
+    /// This is private test glue, not an installed libc interface. The
     /// mixed-runtime differential calls it solely to force this archive
     /// member into the candidate before pinned musl supplies the still-missing
     /// process/runtime prerequisites of the bundled allocator backend.
@@ -1238,7 +1238,7 @@ mod allocator;
 // POSIX string duplication is an allocation client, not another allocator
 // entry point. Keep its object and feature separate so the completed wrapper
 // artifact retains its exact nine-entry public surface and this mixed-runtime
-// evidence cannot imply allocator lifecycle closure.
+// test cannot imply allocator lifecycle integration.
 #[cfg(crabc_x86_allocator_string_duplication)]
 #[path = "allocator_string_duplication.rs"]
 mod allocator_string_duplication;
@@ -1456,7 +1456,7 @@ mod allocator_observability {
 // The crypt leaf deliberately resolves its temporary RustCrypto allocation
 // through the terminal C link. A manual crypt/allocator feature pair has no
 // named provider contract, so it remains rejected. The one explicit
-// composition feature is separately evidenced to resolve malloc,
+// composition feature resolves malloc,
 // aligned_alloc, and free through the selected crabc wrapper/backend.
 #[cfg(all(
     feature = "x86-crypt",

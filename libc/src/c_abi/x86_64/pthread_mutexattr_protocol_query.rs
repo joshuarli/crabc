@@ -17,8 +17,7 @@
 //! selects that setter separately. The adjacent frozen normal-mutex artifact
 //! continues to reject every non-null attribute rather than consume a record
 //! queried here. A raw protocol bit is not priority-inheritance mutex
-//! operation, a futex-PI capability claim, general pthread support, or public
-//! x86 support.
+//! operation, a futex-PI capability claim, or general pthread support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute protocol-query leaf requires little-endian Linux/x86-64");

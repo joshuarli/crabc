@@ -1,7 +1,7 @@
 //! Complete private static Linux/x86-64 `math.complex` C ABI leaf.
 //!
 //! This leaf owns the 57 entries missing from the 66-symbol `math.complex`
-//! capability in `compat/crabc-rs/coverage.toml`. The nine `creal*`, `cimag*`,
+//! capability. The nine `creal*`, `cimag*`,
 //! and `conj*` foundation entries remain in `math_complex.rs`; together these
 //! two leaves are the exact capability surface. No scalar elementary function
 //! becomes public merely because a complex algorithm uses it internally.
@@ -46,8 +46,8 @@
 //! 22.1.3 `lib/builtins/{mulsc3,muldc3,mulxc3}.c`, under Apache-2.0 WITH
 //! LLVM-exception. Their four-product and NaN/infinity recovery sequence is
 //! unchanged; the three symbols are localized implementation details. This
-//! extends the already-pinned `__muldc3` source oracle recorded in
-//! `builtins/UPSTREAM.md`; it does not add a linked compiler runtime or a new
+//! extends the already-pinned `__muldc3` source oracle of the owned compiler
+//! builtins; it does not add a linked compiler runtime or a new
 //! production dependency.
 //!
 //! The translation preserves the System V AMD64 ABI: float/double complex
@@ -63,8 +63,7 @@
 //!
 //! This closes only the named private static `math.complex` capability. It is
 //! not general scalar math, a dynamic `libc.so`, CRT/TLS lifecycle, allocator,
-//! loader, sysroot, family completion, x86 promotion, full parity, or public
-//! x86 support.
+//! loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the complete math.complex leaf requires little-endian Linux/x86-64");

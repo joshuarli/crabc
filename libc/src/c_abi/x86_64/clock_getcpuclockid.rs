@@ -17,8 +17,8 @@
 //!
 //! This does not select `clock`, `clock_gettime`, C `clock_getres`, clock
 //! mutation, timer or sleep APIs, scheduler policy, `pthread_getcpuclockid`,
-//! signal actions/masks/delivery, process lifecycle, libc.so, CRT, loader,
-//! sysroot, promotion, or public x86 support.
+//! signal actions/masks/delivery, process lifecycle, libc.so, CRT, loader, or
+//! sysroot.
 
 use core::ffi::{c_int, c_long};
 use core::mem::{align_of, size_of, MaybeUninit};

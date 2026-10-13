@@ -8,12 +8,12 @@
 //!   returns `EINVAL` unless `(unsigned)type <= 2`, then replaces only raw
 //!   bits zero and one with `type`.
 //!
-//! The admitted surface is deliberately only that caller-owned four-byte
-//! record update and its input-first `EINVAL` branch. It owns no attribute
-//! lifecycle, mutex state, scheduler state, allocation, syscall, C errno/TLS,
-//! TCB, synchronization, cancellation, or thread-lifecycle behavior. It is a
-//! private selected static artifact, not a mutex-type operation, a mutex
-//! capability claim, pthread-family completion, or public x86 support.
+//! The admitted surface is deliberately only that caller-owned four-byte record
+//! update and its input-first `EINVAL` branch. It owns no attribute lifecycle,
+//! mutex state, scheduler state, allocation, syscall, C errno/TLS, TCB,
+//! synchronization, cancellation, or thread-lifecycle behavior. It is a private
+//! selected static artifact, not a mutex-type operation, or a mutex capability
+//! claim.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute type setter requires little-endian Linux/x86-64");

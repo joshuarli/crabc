@@ -5,8 +5,7 @@
 //! wider `inttypes.h` conversion surface. It is stateless and allocation-free,
 //! with no syscall, errno, TLS, locale, cancellation, mutable-global-state, or
 //! callback boundary. It is not `strtoimax`/`strtoumax`, sorting/searching,
-//! floating-point math, libc.so, a CRT, a loader, a sysroot, or public x86
-//! support.
+//! floating-point math, libc.so, a CRT, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

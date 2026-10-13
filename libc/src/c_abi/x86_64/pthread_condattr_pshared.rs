@@ -18,8 +18,7 @@
 //! private-condition artifact continues to reject every non-null initialization
 //! attribute, so no selected condition initializer consumes a record here. A
 //! shared record bit is not condition initialization, condition waiting,
-//! process-shared condition operation, general pthread support, or public x86
-//! support.
+//! process-shared condition operation, or general pthread support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread condition-attribute pshared leaf requires little-endian Linux/x86-64");

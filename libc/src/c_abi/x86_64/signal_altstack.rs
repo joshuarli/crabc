@@ -31,8 +31,7 @@
 //! This is neither a generic signal-disposition framework nor pthread signal
 //! policy. It excludes `signalfd`, queued/wait APIs beyond their separately
 //! selected artifact, legacy signal helpers, alternate-stack allocation or
-//! ownership, cancellation, dynamic runtime/loader TLS, and public x86
-//! support.
+//! ownership, cancellation, and dynamic runtime/loader TLS.
 
 use core::ffi::{c_int, c_void};
 

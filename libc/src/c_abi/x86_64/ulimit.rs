@@ -21,12 +21,11 @@
 //! supplies it, the promoted `long` vararg in rsi; the `long` result returns in
 //! rax. Linux instead receives pid/resource/new-limit/old-limit in
 //! rdi/rsi/rdx/r10. Only raw Linux `-4095..=-1` results publish the selected
-//! initial-TLS `errno`. A successful query or set preserves stale `errno`.
-//! The limit mutation is process-wide and callers retain authority,
+//! initial-TLS `errno`. A successful query or set preserves stale `errno`. The
+//! limit mutation is process-wide and callers retain authority,
 //! synchronization, and restoration obligations. This leaf selects no public
 //! `getrlimit`/`setrlimit`/`prlimit`, `getrusage`, priority, scheduler,
-//! accounting, descriptor, filesystem, pthread, CRT, loader, or public x86
-//! support boundary.
+//! accounting, descriptor, filesystem, pthread, CRT, or loader.
 
 use core::ffi::{c_int, c_long};
 use core::mem::{align_of, offset_of, size_of};

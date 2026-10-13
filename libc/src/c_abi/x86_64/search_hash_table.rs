@@ -4,10 +4,9 @@
 //! table and GNU caller-record `_r` siblings. It is an open-addressed,
 //! power-of-two table with an unsigned-byte hash and quadratic probing,
 //! caller-owned key/data pointers, musl's duplicate-preserves-first-entry
-//! behavior, and resize rollback after `ENOMEM`. The global and each
-//! reentrant record own independent state. This is not callback tree search,
-//! iteration, key/value ownership, a public C allocator, libc.so, CRT, loader,
-//! sysroot, family completion, promotion, or public x86 support.
+//! behavior, and resize rollback after `ENOMEM`. The global and each reentrant
+//! record own independent state. This is not callback tree search, iteration,
+//! key/value ownership, a public C allocator, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

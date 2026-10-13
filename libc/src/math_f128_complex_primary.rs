@@ -8,7 +8,7 @@
 //   ctanl(z) = -i * ctanhl(i*z)
 //
 // The legacy long-complex aliases convert their pair of f128 values to
-// f64 before evaluating those identities.  Keep this slice independent of
+// f64 before evaluating those identities.  Keep this code independent of
 // that compatibility boundary.  The reduction and kernels below are the
 // binary128 branches of musl's sinl/cosl/tanl and __sinl/__cosl/__tanl; the
 // complex exceptional-value branches follow musl's csinh.c/ccosh.c/ctanh.c.

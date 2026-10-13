@@ -2,14 +2,13 @@
 //!
 //! This leaf owns one bounded native C descriptor block: `close`, scalar
 //! transfer (`read` and `write`), positioned transfer (`pread` and `pwrite`),
-//! position/truncation/synchronization requests (`lseek`, `ftruncate`,
-//! `fsync`, and `fdatasync`), duplication (`dup`, `dup2`, and `dup3`), and
-//! pipe creation (`pipe` and `pipe2`). It composes only the raw Linux syscall
-//! register boundary and the selected initial-TLS C `errno` writer. It is not
-//! C pathname/open or generic fcntl command support, or vector-I/O support,
-//! a filesystem policy layer,
-//! stdio, a general C/POSIX runtime, libc.so, CRT, pthread/TLS lifecycle,
-//! dynamic TLS, loader, sysroot, allocator, or public x86 support.
+//! position/truncation/synchronization requests (`lseek`, `ftruncate`, `fsync`,
+//! and `fdatasync`), duplication (`dup`, `dup2`, and `dup3`), and pipe creation
+//! (`pipe` and `pipe2`). It composes only the raw Linux syscall register
+//! boundary and the selected initial-TLS C `errno` writer. It is not C
+//! pathname/open or generic fcntl command support, or vector-I/O support, a
+//! filesystem policy layer, stdio, a general C/POSIX runtime, libc.so, CRT,
+//! pthread/TLS lifecycle, dynamic TLS, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

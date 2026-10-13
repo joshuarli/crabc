@@ -4,8 +4,8 @@
 //! Linux two-word `iovec` ABI. It deliberately passes the caller's iovec
 //! pointer and count directly to Linux: the kernel owns pointer accessibility,
 //! aggregate-length, and iovec-count validation. It is not scalar descriptor
-//! I/O, stdio, a general cancellation implementation, libc.so, CRT, loader,
-//! sysroot, or public x86 support.
+//! I/O, stdio, a general cancellation implementation, libc.so, CRT, loader, or
+//! sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

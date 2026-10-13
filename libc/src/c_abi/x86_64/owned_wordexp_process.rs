@@ -3,9 +3,7 @@
 //!
 //! This binds the core's narrow `WordexpContext` and `WordexpCommandAdapter`
 //! seams to existing runtime owners. `owned_wordexp.rs` selects this adapter
-//! and decides the public `wordexp_t` status/ownership contract. Its durable
-//! boundary is recorded in
-//! `compat/x86_64/owned-wordexp-process.md`.
+//! and decides the public `wordexp_t` status/ownership contract.
 //!
 //! The environment snapshot is taken under the ordinary C caller obligation
 //! that `__environ`, its terminating vector, and every pointed-to C string

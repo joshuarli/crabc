@@ -1,19 +1,18 @@
 //! Selected static Linux/x86-64 `chown` C ABI leaf.
 //!
 //! This leaf owns exactly `chown(const char *, uid_t, gid_t)`. It preserves
-//! pinned musl 1.2.6's x86 direct `SYS_chown` branch from
-//! `src/unistd/chown.c`: the caller-supplied pathname, unsigned owner, and
-//! unsigned group words reach Linux 5.10 unchanged through `chown=92`.
-//! Linux follows a final symbolic link for this direct request. Musl's
-//! non-x86 `fchownat(AT_FDCWD, ..., 0)` fallback is deliberately not selected
-//! because Linux/x86-64 has the direct request. The leaf does not resolve its
-//! pathname, choose a CWD, synthesize flags, copy bytes, allocate, retry, or
-//! add a permission-policy layer. It shares only the raw Linux/x86-64 register
-//! boundary and selected initial-TLS `errno` translator. It is not `lchown`,
-//! `fchown`, `fchownat`, another ownership or credential entry, a pathname
-//! lifecycle family, CWD or namespace policy, directory streams, allocation,
-//! cancellation, a Rust facade, libc.so, CRT, loader, sysroot, or public x86
-//! support.
+//! pinned musl 1.2.6's x86 direct `SYS_chown` branch from `src/unistd/chown.c`:
+//! the caller-supplied pathname, unsigned owner, and unsigned group words reach
+//! Linux 5.10 unchanged through `chown=92`. Linux follows a final symbolic link
+//! for this direct request. Musl's non-x86 `fchownat(AT_FDCWD, ..., 0)`
+//! fallback is deliberately not selected because Linux/x86-64 has the direct
+//! request. The leaf does not resolve its pathname, choose a CWD, synthesize
+//! flags, copy bytes, allocate, retry, or add a permission-policy layer. It
+//! shares only the raw Linux/x86-64 register boundary and selected initial-TLS
+//! `errno` translator. It is not `lchown`, `fchown`, `fchownat`, another
+//! ownership or credential entry, a pathname lifecycle family, CWD or namespace
+//! policy, directory streams, allocation, cancellation, a Rust facade, libc.so,
+//! CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

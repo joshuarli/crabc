@@ -4,11 +4,10 @@
 //! `timespec_get`, `clock_getres`, and `gettimeofday`. Clock reads use the
 //! shared `clock_gettime` route (the kernel vDSO in owned runtimes, else the
 //! raw syscall); `clock_getres` stays a direct syscall. It writes only the
-//! selected initial-TLS `errno`. The separate scalar `difftime` artifact has
-//! no syscall or clock-state dependency. This leaf is not calendar or
-//! timezone state, clock mutation, POSIX timers, pthread cancellation,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86
-//! support.
+//! selected initial-TLS `errno`. The separate scalar `difftime` artifact has no
+//! syscall or clock-state dependency. This leaf is not calendar or timezone
+//! state, clock mutation, POSIX timers, pthread cancellation, libc.so, CRT,
+//! dynamic TLS, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

@@ -22,7 +22,7 @@
 //! retains allocation failure rollback, node identity, key ownership, and
 //! lifetime semantics; the native differential proves it with RLIMIT_AS and
 //! mincore. Neither route selects general containers, process/environment
-//! state, stdio/locale, family promotion, or public x86 support.
+//! state, or stdio/locale.
 
 use core::arch::global_asm;
 use core::ffi::{c_int, c_void};

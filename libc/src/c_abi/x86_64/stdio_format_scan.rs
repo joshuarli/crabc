@@ -82,15 +82,15 @@
 //! propagation through its complete `FILE` machinery. None of those owners is
 //! imported here. The stream entries also do not claim wide, floating,
 //! pointer-valued `%p`, positional, general scanset, locale, locking,
-//! cancellation, pathname, or arbitrary-stream behavior. This leaf is evidence
-//! for the named static byte-string and permanent-stream contract only, never a
-//! general stdio or x86 runtime claim.
+//! cancellation, pathname, or arbitrary-stream behavior. This leaf covers
+//! the named static byte-string and permanent-stream contract only, not
+//! general stdio.
 //!
 //! The active Linux/AArch64 implementation remains the broader compatibility
 //! owner in `libc/src/c_abi.rs`, including stream, floating, wide, pointer, and
 //! other formatting/scanning paths.  This target-local leaf neither reuses that
-//! target root nor treats its selected byte-string subset as architecture
-//! parity.
+//! target root nor treats its selected byte-string subset as equivalent to the
+//! AArch64 behavior.
 
 #[cfg(not(all(
     target_os = "linux",

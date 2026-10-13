@@ -14,9 +14,9 @@
 //! caller's MXCSR rounding mode and reports its normal hardware exceptions.
 //!
 //! This leaf intentionally owns only binary64/binary32 positive-part
-//! subtraction. `fdiml`, `exp10*`/`pow10*`, current-rounding and
-//! integer-result conversions, special functions, binary80 math, errno
-//! policy, general libm, category/family completion, promotion, and public x86 support remain outside this artifact.
+//! subtraction. `fdiml`, `exp10*`/`pow10*`, current-rounding and integer-result
+//! conversions, special functions, binary80 math, errno policy, and general libm
+//! remain outside this artifact.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 fdim leaf requires little-endian Linux/x86-64");

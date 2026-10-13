@@ -11,14 +11,13 @@
 //! The zero-capacity `readlink` dummy-byte path intentionally retains musl's
 //! result-zero conversion before `ttyname_r` returns `ERANGE`.
 //!
-//! This leaf names an already-owned terminal only into caller-owned storage.
-//! It neither exports `ttyname`'s static buffer, opens a pathname, creates a
-//! PTY or session, changes terminal state, exposes generic `readlink`/`stat`/
+//! This leaf names an already-owned terminal only into caller-owned storage. It
+//! neither exports `ttyname`'s static buffer, opens a pathname, creates a PTY
+//! or session, changes terminal state, exposes generic `readlink`/`stat`/
 //! `fstat`, or establishes a filesystem/path policy. Terminal control,
 //! discovery beyond this descriptor-to-name check, session policy, PTY helpers,
-//! generic ioctl, dynamic runtime, CRT, loader, sysroot, family completion,
-//! promotion, and public x86 support remain outside this selected-private
-//! artifact.
+//! generic ioctl, dynamic runtime, CRT, loader, and sysroot remain outside this
+//! selected-private artifact.
 
 use core::ffi::{c_char, c_int};
 use core::mem::{align_of, size_of, MaybeUninit};

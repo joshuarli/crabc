@@ -10,8 +10,8 @@
 //! This target-local data leaf has no code, mutable state, errno/TLS,
 //! allocation, syscall, address conversion, IPv6 socket transport, resolver
 //! configuration, DNS, `/etc/hosts`, `/etc/resolv.conf`, netdb, interface, or
-//! Ethernet dependency. It is private static C ABI evidence, not resolver or
-//! network-runtime completion and not public x86 support.
+//! Ethernet dependency. It is a private static C ABI leaf, not a resolver or
+//! network runtime.
 
 /// C-compatible public `struct in6_addr` storage for this one immutable object.
 #[repr(C)]

@@ -6,7 +6,7 @@
 //! `inet_network`, `inet_makeaddr`, `inet_lnaof`, and `inet_netof`. This
 //! target-local leaf selects exactly the self-contained raw-word
 //! [`inet_netof`] function. It deliberately leaves `inet_network` (and its `inet_addr` call),
-//! plus the separately evidenced `inet_makeaddr` and `inet_lnaof` arithmetic
+//! plus the `inet_makeaddr` and `inet_lnaof` arithmetic
 //! leaf, unselected by this artifact.
 //!
 //! `inet_netof` reads the raw `struct in_addr::s_addr` word, uses its high
@@ -14,7 +14,7 @@
 //! 16, or 8 bits. This is a legacy raw-word operation: this leaf does not
 //! select byte-order conversion, `inet_ntoa` scratch storage, errno, h_errno,
 //! TLS, allocation, syscalls, resolver configuration, DNS, `/etc/hosts`,
-//! `/etc/resolv.conf`, netdb, interfaces, sockets, or public support.
+//! `/etc/resolv.conf`, netdb, interfaces, or sockets.
 
 use core::ffi::c_uint;
 
@@ -22,7 +22,7 @@ use core::ffi::c_uint;
 ///
 /// System V AMD64 carries this one-word record in `edi` and returns the
 /// `in_addr_t` result in `eax`; keeping the record local prevents this private
-/// evidence leaf from establishing a Rust-facing address API.
+/// leaf from establishing a Rust-facing address API.
 #[repr(C)]
 pub struct InAddr {
     s_addr: c_uint,

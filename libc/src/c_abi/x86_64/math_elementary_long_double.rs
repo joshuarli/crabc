@@ -2,8 +2,7 @@
 //!
 //! This module owns the eighteen binary80 entries that were not already
 //! supplied by `math_x87_extended`. Together the two leaves own the exact
-//! 35-symbol `math.elementary-long-double` capability recorded in
-//! `compat/crabc-rs/coverage.toml`: `acoshl`, `acosl`, `asinhl`, `asinl`,
+//! 35-symbol `math.elementary-long-double` capability: `acoshl`, `acosl`, `asinhl`, `asinl`,
 //! `atan2l`, `atanhl`, `atanl`, `cbrtl`, `ceill`, `copysignl`, `coshl`,
 //! `cosl`, `exp2l`, `expl`, `expm1l`, `fabsl`, `floorl`, `fmal`, `fmaxl`,
 //! `fminl`, `fmodl`, `hypotl`, `log10l`, `log1pl`, `log2l`, `logl`, `powl`,
@@ -40,7 +39,7 @@
 //! this leaf does not accidentally expose or select another elementary
 //! capability.
 //!
-//! The public sources deliberately compose the already evidenced exact x87
+//! The public sources deliberately compose the exact x87
 //! leaves (`log1pl`, `logl`, `sqrtl`, `expl`, `expm1l`, `fabsl`, `floorl`, and
 //! other members listed above), the `math.special` decomposition/stepping
 //! leaves (`__fpclassifyl`, `__signbitl`, `frexpl`, `ilogbl`, `nextafterl`, and
@@ -58,12 +57,11 @@
 //! This closes only the named private static `math.elementary-long-double`
 //! capability. It is not `math.elementary-fenv-sensitive`, numeric parsing,
 //! complex math, a general `libm`/`libc.so`, CRT/TLS lifecycle, allocator,
-//! loader, sysroot, family completion, x86 promotion, full parity, or public
-//! x86 support.
+//! loader, or sysroot.
 
 //! Native conformance corrections are explicit in
-//! `compat/x86_64/math_scalar_corrections.py` and justified in
-//! `compat/x86_64/math-scalar-corrections.md`. These corrected bodies are not
+//! `compat/x86_64/math_scalar_corrections.py`.
+//! These corrected bodies are not
 //! byte-identical upstream translations; the fixed musl oracle stays unchanged.
 //!
 

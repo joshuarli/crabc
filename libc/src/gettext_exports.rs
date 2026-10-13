@@ -4,7 +4,7 @@
 // message catalog is available: the non-plural forms return their msgid, and
 // the plural forms select msgid1 only for n == 1.  Keep the domain and
 // directory state real so callers can configure and query it; catalog parsing
-// remains outside this bounded slice because crabc currently exposes only its
+// remains outside this file because crabc currently exposes only its
 // built-in C/POSIX locale data.
 
 const CABI_GETTEXT_NAME_MAX: usize = 255;

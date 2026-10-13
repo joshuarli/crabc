@@ -19,7 +19,7 @@
 //! low-to-high packing behavior while avoiding an otherwise broad byte-string
 //! archive member. The scan is not a new conversion policy or fallback.
 //! This is a private selected-static artifact, not a libc.so, CRT, loader,
-//! sysroot, family-completion, promotion, or public x86 support claim.
+//! or sysroot.
 
 use core::ffi::{c_char, c_long};
 

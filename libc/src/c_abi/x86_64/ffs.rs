@@ -1,12 +1,11 @@
 //! Selected static Linux/x86-64 find-first-set C ABI.
 //!
-//! This leaf owns exactly `ffs`, `ffsl`, and `ffsll`: each returns one plus
-//! the index of its least-significant set bit, or zero for a zero input. It is
-//! scalar, stateless, allocation-free, and has no syscall, errno, TLS,
-//! locale, cancellation, mutable-global-state, pointer, or callback boundary.
-//! It is not general bit operations, `fls`, C string manipulation, integer
-//! parsing, atomics, floating-point math, stdio, libc.so, a CRT, a loader, a
-//! sysroot, or public x86 support.
+//! This leaf owns exactly `ffs`, `ffsl`, and `ffsll`: each returns one plus the
+//! index of its least-significant set bit, or zero for a zero input. It is
+//! scalar, stateless, allocation-free, and has no syscall, errno, TLS, locale,
+//! cancellation, mutable-global-state, pointer, or callback boundary. It is not
+//! general bit operations, `fls`, C string manipulation, integer parsing,
+//! atomics, floating-point math, stdio, libc.so, a CRT, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

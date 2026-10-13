@@ -4,13 +4,13 @@
 //! preserves musl 1.2.6's direct `SYS_readlinkat` body from
 //! `src/unistd/readlinkat.c`: the caller's directory descriptor, pathname,
 //! caller-owned output pointer, and capacity reach Linux 5.10 unchanged when
-//! capacity is nonzero. For a zero capacity, musl supplies one stack dummy
-//! byte to Linux and converts a positive byte count back to zero; the caller's
+//! capacity is nonzero. For a zero capacity, musl supplies one stack dummy byte
+//! to Linux and converts a positive byte count back to zero; the caller's
 //! buffer remains untouched. It shares only the raw Linux/x86-64 syscall
 //! boundary and selected initial-TLS `errno` translator. It is not ordinary
 //! `readlink`, `linkat`/`symlinkat`/`unlinkat`, pathname parsing or
-//! canonicalization, CWD state, directory streams, allocation, cancellation,
-//! a Rust facade, libc.so, CRT, loader, sysroot, or public x86 support.
+//! canonicalization, CWD state, directory streams, allocation, cancellation, a
+//! Rust facade, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

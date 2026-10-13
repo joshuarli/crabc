@@ -22,16 +22,16 @@
 //! exhaustion likewise returns `ENOMEM` without a partial mutation.
 //!
 //! The local spin lock serializes only calls through these five selected
-//! functions. It does not stabilize a returned `getenv` pointer after the
-//! call, synchronize direct foreign writes to `environ`, protect mutation or
-//! lifetime of caller-owned `putenv` strings, provide fork recovery when a
-//! different thread held the lock, or make any operation async-signal-safe.
-//! Callers must coordinate all such access themselves. The private opt-in
-//! `x86-process-exec` leaf consumes only `getenv` and `__environ` for direct
-//! exec-family PATH/environment forwarding. That reuse does not establish
-//! `posix_spawn`, fork, or general runtime integration. This artifact also has
-//! no allocator, `secure_getenv`, auxv secure-execution decision, general
-//! startup, dynamic libc, loader, or public x86 support.
+//! functions. It does not stabilize a returned `getenv` pointer after the call,
+//! synchronize direct foreign writes to `environ`, protect mutation or lifetime
+//! of caller-owned `putenv` strings, provide fork recovery when a different
+//! thread held the lock, or make any operation async-signal-safe. Callers must
+//! coordinate all such access themselves. The private opt-in `x86-process-exec`
+//! leaf consumes only `getenv` and `__environ` for direct exec-family
+//! PATH/environment forwarding. That reuse does not establish `posix_spawn`,
+//! fork, or general runtime integration. This artifact also has no allocator,
+//! `secure_getenv`, auxv secure-execution decision, general startup, dynamic
+//! libc, or loader.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -331,7 +331,7 @@ unsafe fn environment_failure(error: c_int) -> c_int {
 ///
 /// This is not an exported application-startup ABI.  The bounded static CRT
 /// calls it once after vector validation and before `init`/`main`; direct
-/// freestanding evidence writes the same global from its untouched entry
+/// freestanding tests write the same global from its untouched entry
 /// stack.  Resetting the private mutation arena is sound at that one startup
 /// transition because no prior environment value has been published.
 pub(crate) unsafe fn install_initial(environment: *const *const c_char) {

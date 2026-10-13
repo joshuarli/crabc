@@ -1,6 +1,6 @@
 // system-information exports.
 //
-// The values in this slice come from Linux rather than a process-local
+// The values here come from Linux rather than a process-local
 // approximation: sysinfo(2) supplies memory/load data, sched_getaffinity(2)
 // supplies the processor count, and AT_PAGESZ supplies the page size used to
 // convert memory bytes to pages.  The public sysinfo layout intentionally

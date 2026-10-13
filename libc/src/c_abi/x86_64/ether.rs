@@ -4,7 +4,7 @@
 //! 1.2.6 `src/network/ether.c`: `ether_aton_r`, `ether_aton`, `ether_ntoa_r`,
 //! `ether_ntoa`, `ether_ntohost`, and `ether_hostton`. The source's remaining
 //! exact `return -1` `ether_line` body remains in the neighboring
-//! `ether_line.rs` archive boundary so its existing demand-extraction evidence
+//! `ether_line.rs` archive boundary so its existing demand-extraction test
 //! keeps proving that the new provider block is not pulled in by that leaf.
 //!
 //! The parser deliberately calls the selected musl-shaped `strtoul` C ABI

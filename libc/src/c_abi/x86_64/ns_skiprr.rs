@@ -12,7 +12,7 @@
 //! configuration, `/etc/resolv.conf`, DNS packet I/O, socket, netdb, hosts,
 //! allocation, or mutable parser state. `ns_initparse`, `ns_parserr`,
 //! `ns_name_uncompress`, `dn_expand`, DNS name compression, resolver state,
-//! and all resolver/network capability promotion remain separate work.
+//! and the rest of the resolver/network surface are not provided here.
 
 use core::ffi::c_int;
 
@@ -22,7 +22,7 @@ const RESOURCE_FIXED_BYTES: usize = 4 + 2;
 const EMSGSIZE: c_int = 90;
 
 // Keep musl's two selected wire helpers as object-level C ABI dependencies.
-// This leaves their separate source mappings and direct static evidence intact
+// This leaves their separate source mappings and direct static tests intact
 // instead of copying their byte-range behavior into the RR-span loop.
 unsafe extern "C" {
     #[link_name = "dn_skipname"]

@@ -17,9 +17,9 @@
 //! `CLOCK_THREAD_CPUTIME_ID` with `EINVAL` before the syscall. This bounded
 //! Linux-5.10 leaf retains the latter validation before cancellation. The owned
 //! runtime also preserves the relative realtime `nanosleep` route; standalone
-//! archive selections retain their previously qualified `clock_nanosleep=230`
+//! archive selections retain the direct `clock_nanosleep=230`
 //! syscall for every accepted clock request. Both forms return positive errors
-//! without changing errno and do not establish public x86 support.
+//! without changing errno.
 
 use core::ffi::{c_int, c_void};
 

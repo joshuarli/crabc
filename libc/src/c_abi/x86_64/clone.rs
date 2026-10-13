@@ -5,7 +5,7 @@
 //! name. Its assembly is a lexical private-symbol rename of that source:
 //! it preserves the seven-argument SysV entry layout, the Linux five-word
 //! `clone(2)` register shuffle, the aligned child stack, and the child
-//! callback/exit tail. It is source-only evidence: no public
+//! callback/exit tail. It is source-only: no public
 //! `clone`/`__clone` ABI, pthread state, or TLS setup is provided here.
 //! Callers must use process-clone flags only; in particular `CLONE_THREAD`,
 //! `CLONE_VM`, and `CLONE_SETTLS` are outside this leaf.

@@ -15,9 +15,8 @@
 //! membership, establishes a controlling terminal, names or opens a terminal,
 //! nor delegates to the distinct termios-control block. Terminal discovery,
 //! `tcgetpgrp`, `tcgetsid`, termios mutation/control, PTY/session policy,
-//! generic ioctl, dynamic runtime, CRT, loader, sysroot, family completion,
-//! promotion, and public x86 support remain outside this selected-private
-//! artifact.
+//! generic ioctl, dynamic runtime, CRT, loader, and sysroot remain outside this
+//! selected-private artifact.
 
 use core::ffi::c_int;
 use core::mem::{align_of, size_of};

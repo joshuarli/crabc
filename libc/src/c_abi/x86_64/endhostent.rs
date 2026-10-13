@@ -10,12 +10,11 @@
 //! `/etc/hosts`, `/etc/networks`, filesystem, process, or network-policy
 //! claim.
 //!
-//! The System V AMD64 ABI gives both no-argument `void` entries no incoming
-//! C argument words. The alias is emitted in assembler rather than through a
-//! Rust forwarding wrapper so it preserves musl's same-address weak override
+//! The System V AMD64 ABI gives both no-argument `void` entries no incoming C
+//! argument words. The alias is emitted in assembler rather than through a Rust
+//! forwarding wrapper so it preserves musl's same-address weak override
 //! contract. This leaf has no mutable state, errno, TLS, allocation, syscall,
-//! libc.so, CRT, loader, sysroot, family-completion, promotion, or public x86
-//! support boundary.
+//! libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license.

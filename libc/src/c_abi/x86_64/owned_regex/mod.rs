@@ -25,8 +25,7 @@
 //! `regcomp.c` and `regexec.c` retain this same source and license provenance.
 //! `regerror.c` is musl MIT; its fixed C-locale table is in `error.rs`. This
 //! private module is selected by `x86-owned-static-runtime` in
-//! `static_c_abi.rs`. The frozen default archive keeps its bounded provider;
-//! full owned runtime and public support qualification remain outstanding.
+//! `static_c_abi.rs`. The frozen default archive keeps its bounded provider.
 
 use core::ffi::c_void;
 

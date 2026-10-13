@@ -14,8 +14,7 @@
 //! `SCHED_OTHER`, `SCHED_FIFO`, `SCHED_RR`, and a rejected invalid policy. It
 //! is not scheduler policy selection or mutation, a priority-maximum query,
 //! parameter/affinity API, scheduler handoff/fairness guarantee, C11/pthread
-//! lifecycle, process lifecycle, libc.so, CRT, loader, sysroot, family
-//! completion, promotion, or public x86 support.
+//! lifecycle, process lifecycle, libc.so, CRT, loader, or sysroot.
 
 use core::ffi::c_int;
 

@@ -33,10 +33,9 @@
 //! `exp2l` is representation-distinct and remains outside this leaf; neither
 //! it nor long-double/general math is selected.
 //!
-//! This is a private non-capability artifact inside still-planned
-//! `libc.text-math-locale-stdio`. It does not complete `math.elementary`,
-//! select `math.elementary-fenv-sensitive`, general libm/libc.so, CRT/TLS
-//! lifecycle, loader, sysroot, x86 promotion, or public x86 support.
+//! This is a private leaf, not a complete math library. It does not select
+//! the fenv-sensitive functions, special or complex math, general libm/libc.so,
+//! CRT/TLS lifecycle, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 static exp2 leaf requires little-endian Linux/x86-64");

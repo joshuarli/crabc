@@ -2,11 +2,11 @@
 //!
 //! This leaf owns exactly the caller-buffered POSIX UTC conversion from one
 //! LP64 `time_t` to one 56-byte Linux `struct tm`. It normalizes the supplied
-//! record as UTC and returns the caller's output pointer. It has no kernel
-//! call and reads no process environment, timezone global, or zoneinfo. It is
-//! not non-reentrant conversion, local civil conversion, formatting/parsing,
-//! a calendar API family, clocks, timers, libc.so, CRT, dynamic TLS, loader,
-//! sysroot, allocator, or public x86 support.
+//! record as UTC and returns the caller's output pointer. It has no kernel call
+//! and reads no process environment, timezone global, or zoneinfo. It is not
+//! non-reentrant conversion, local civil conversion, formatting/parsing, a
+//! calendar API family, clocks, timers, libc.so, CRT, dynamic TLS, loader,
+//! sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

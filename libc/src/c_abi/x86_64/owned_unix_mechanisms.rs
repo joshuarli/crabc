@@ -18,12 +18,12 @@
 //! observable `PATH_MAX`, `errno`, `PWD` validation, and allocation ownership
 //! without changing the established x86 `getcwd` null-buffer boundary.
 //!
-//! Linux 5.10 provides every direct syscall used here. `tcdrain` alone uses musl's
-//! `syscall_cp(SYS_ioctl, fd, TCSBRK, 1)` cancellation point; the remaining
-//! direct wrappers intentionally do not acquire cancellation, retry, mount
-//! policy, STREAMS emulation, namespace management, or descriptor ownership.
-//! This is a selected C ABI compatibility block, not a general filesystem or
-//! terminal policy framework, loader, CRT, or public x86 support claim.
+//! Linux 5.10 provides every direct syscall used here. `tcdrain` alone uses
+//! musl's `syscall_cp(SYS_ioctl, fd, TCSBRK, 1)` cancellation point; the
+//! remaining direct wrappers intentionally do not acquire cancellation, retry,
+//! mount policy, STREAMS emulation, namespace management, or descriptor
+//! ownership. This is a selected C ABI compatibility block, not a general
+//! filesystem or terminal policy framework, loader, or CRT.
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 

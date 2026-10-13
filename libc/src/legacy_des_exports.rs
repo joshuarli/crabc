@@ -1,8 +1,8 @@
 // The historical `setkey`/`encrypt` ABI remains link-compatible, but its DES
-// algorithm is deliberately unavailable. AGENTS.md forbids a local cipher
-// implementation, and this legacy interface has no useful modern Rust
-// contract. Keep the void symbols as inert compatibility machinery until a
-// focused RustCrypto-backed design is justified.
+// algorithm is deliberately unavailable. The project does not implement ciphers
+// locally and this legacy interface has no useful modern Rust contract. Keep
+// the void symbols as inert compatibility machinery until a focused
+// RustCrypto-backed design is justified.
 
 use super::{c_char, c_int};
 

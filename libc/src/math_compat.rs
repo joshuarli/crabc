@@ -92,7 +92,7 @@ compat_unary!(cbrt, cbrtf, libm::cbrt, libm::cbrtf);
 compat_unary!(erf, erff, libm::erf, libm::erff);
 compat_unary!(erfc, erfcf, libm::erfc, libm::erfcf);
 compat_unary!(exp2, exp2f, libm::exp2, libm::exp2f);
-// expm1/expm1f are implemented by the musl-derived hyperbolic slice.  The
+// expm1/expm1f are implemented by the musl-derived hyperbolic module.  The
 // libm adapters that originally lived here lose the required underflow and
 // directed-rounding status behavior at the small and negative-large edges.
 #[no_mangle]

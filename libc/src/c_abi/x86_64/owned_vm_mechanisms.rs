@@ -10,7 +10,7 @@
 //! - `src/linux/sbrk.c` maps to [`sbrk`]; and
 //! - `src/linux/remap_file_pages.c` maps to [`remap_file_pages`].
 //!
-//! The owned runtime selects this small Linux mechanism slice because its
+//! The owned runtime selects this small Linux mechanism set because its
 //! application CRT and worker retirement rules own the relevant runtime
 //! lifetime boundary. Worker retirement waits for `CLONE_CHILD_CLEARTID`,
 //! withdraws the worker registry record, and drains selected signal and

@@ -4,9 +4,8 @@
 //! project `<sys/wait.h>` record surface: [`wait`], [`waitpid`], and
 //! [`waitid`]. It adapts only Linux's `wait4`/`waitid` syscall ABI to C's
 //! initial-TLS `errno` convention. It does not select `fork`, `vfork`,
-//! `execve`, process supervision, signal delivery, pthread-atfork hooks,
-//! a dynamic libc, CRT, loader, sysroot, allocator,
-//! or public x86 support.
+//! `execve`, process supervision, signal delivery, pthread-atfork hooks, a
+//! dynamic libc, CRT, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

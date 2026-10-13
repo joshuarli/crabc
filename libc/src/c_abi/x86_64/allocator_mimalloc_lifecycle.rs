@@ -60,7 +60,7 @@ static AUTOMATIC_PROCESS_INITIALIZER: unsafe extern "C" fn() = initialize;
 #[link_section = ".fini_array"]
 static AUTOMATIC_PROCESS_FINALIZER: unsafe extern "C" fn() = finalize;
 
-// Phase-only development evidence; absent from ordinary allocator products.
+// Phase-only test instrumentation; absent from ordinary allocator products.
 #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
 static ALLOCATOR_LIFECYCLE_PHASE: AtomicU8 = AtomicU8::new(0);
 

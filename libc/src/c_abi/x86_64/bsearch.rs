@@ -1,11 +1,10 @@
 //! Selected static Linux/x86-64 C `bsearch` ABI boundary.
 //!
-//! This leaf owns exactly `bsearch`: a stateless, allocation-free binary
-//! lookup over caller-owned contiguous byte records through one caller-owned
-//! comparison callback. It is not a sorting implementation, `search.h`
-//! trees or hashes, locale-aware ordering, callback registration, C++
-//! exception or C longjmp transport across Rust, libc.so, a CRT, a loader, a
-//! sysroot, or public x86 support.
+//! This leaf owns exactly `bsearch`: a stateless, allocation-free binary lookup
+//! over caller-owned contiguous byte records through one caller-owned
+//! comparison callback. It is not a sorting implementation, `search.h` trees or
+//! hashes, locale-aware ordering, callback registration, C++ exception or C
+//! longjmp transport across Rust, libc.so, a CRT, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417, under musl's MIT license:

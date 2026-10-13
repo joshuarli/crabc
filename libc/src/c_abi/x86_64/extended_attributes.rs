@@ -1,14 +1,14 @@
 //! Selected static Linux/x86-64 C extended-attribute boundary.
 //!
-//! This leaf owns the complete Linux path, no-follow-path, and descriptor
-//! xattr syscall surface: `setxattr`, `lsetxattr`, `fsetxattr`, `getxattr`,
+//! This leaf owns the complete Linux path, no-follow-path, and descriptor xattr
+//! syscall surface: `setxattr`, `lsetxattr`, `fsetxattr`, `getxattr`,
 //! `lgetxattr`, `fgetxattr`, `listxattr`, `llistxattr`, `flistxattr`,
 //! `removexattr`, `lremovexattr`, and `fremovexattr`. It passes every pathname,
 //! attribute name, value/list buffer, size, descriptor, and flag word directly
 //! to Linux; the kernel remains authoritative for filesystem support, xattr
 //! namespaces, name and value limits, flags, and resolution races. This leaf
 //! owns no path policy, allocation, retry, cancellation point, libc.so, CRT,
-//! loader, sysroot, or public x86 support.
+//! loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

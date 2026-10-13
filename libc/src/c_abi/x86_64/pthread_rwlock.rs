@@ -27,7 +27,7 @@
 //! clock interposition, dynamic TLS, loader/CRT integration, cancellation
 //! state, or general pthread-runtime claim.  The raw timed wait mirrors
 //! musl's non-cancellation status behavior; broader cancellation ownership
-//! remains part of the still-planned pthread/TLS runtime.  It is not public x86 support.
+//! remains part of the pthread/TLS runtime, which this module does not provide.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread-rwlock leaf requires little-endian Linux/x86-64");

@@ -3,9 +3,8 @@
 //! This opt-in leaf owns exactly POSIX `strdup` and `strndup`. It reaches the
 //! separately audited weak `malloc` C ABI entry through an external symbol,
 //! so its returned storage is released by the same selected `free` boundary.
-//! It is not an allocator implementation, allocation-family completion,
-//! allocator lifecycle, string/token/locale subsystem, dynamic runtime, CRT,
-//! loader, sysroot, or public x86 support.
+//! It is not an allocator implementation, allocator lifecycle,
+//! string/token/locale subsystem, dynamic runtime, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -123,7 +122,7 @@ static_archive_member! { strndup_source {
 
 /// Link-time witness for the opt-in x86 string-duplication object.
 ///
-/// This private evidence glue forces the client object into its mixed-runtime
+/// This private test glue forces the client object into its mixed-runtime
 /// candidate before the link map verifies that musl supplies neither duplicate
 /// entry nor an allocator implementation.
 #[no_mangle]

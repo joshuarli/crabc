@@ -22,9 +22,7 @@
 //!
 //! This private compatibility artifact reaches the separately selected public
 //! `sysinfo` alias; it does not select `uname`, processor/page-count helpers,
-//! `/proc`, `sysconf`, allocation,
-//! locale, loader, libc.so, CRT, sysroot, family completion, promotion, or
-//! public x86 support.
+//! `/proc`, `sysconf`, allocation, locale, loader, libc.so, CRT, or sysroot.
 
 use core::{ffi::c_int, mem::MaybeUninit};
 

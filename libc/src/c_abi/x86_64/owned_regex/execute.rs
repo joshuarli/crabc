@@ -540,8 +540,7 @@ unsafe fn run_backtrack(
                     // Both are failed backreferences here, which backtrack as
                     // the source does for any other mismatch.  The installed
                     // probe's `--bounded-backreference` mode exercises the
-                    // second against a guarded subject; see
-                    // docs/evidence/x86-owned-regex.md.
+                    // second against a guarded subject.
                     let equal = match length {
                         0 => true,
                         1.. => {

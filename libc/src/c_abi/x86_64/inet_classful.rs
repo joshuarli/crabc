@@ -15,14 +15,14 @@
 //! or 8 low bits. These are legacy raw-word operations: this leaf does not
 //! select byte-order conversion, `inet_ntoa` scratch storage, errno, h_errno,
 //! TLS, allocation, syscalls, resolver configuration, DNS, `/etc/hosts`,
-//! `/etc/resolv.conf`, netdb, interfaces, sockets, or public support.
+//! `/etc/resolv.conf`, netdb, interfaces, or sockets.
 
 use core::ffi::c_uint;
 
 /// The x86 C ABI layout of the by-value `<arpa/inet.h>` IPv4 record.
 ///
 /// System V AMD64 carries this one-word record in `edi` and returns it in
-/// `eax`; keeping the record local prevents this private evidence leaf from
+/// `eax`; keeping the record local prevents this private leaf from
 /// establishing a Rust-facing address API.
 #[repr(C)]
 pub struct InAddr {

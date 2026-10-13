@@ -17,16 +17,15 @@
 //! maps directly to [`posix_spawn_file_actions_init`] below. Its complete body
 //! is `fa->__actions = 0; return 0;`.
 //!
-//! The System V AMD64 ABI passes the caller-owned file-actions pointer in
-//! `rdi` and returns the signed `int` result in `eax`. Musl's installed
-//! `posix_spawn_file_actions_t` begins with two `int` padding words followed
-//! by its pointer-sized `__actions` member at byte offset eight. The private
-//! C representation below models only that written prefix rather than
-//! importing the unused padding tail. This does not select `posix_spawn`,
-//! `posix_spawnp`, action addition or destruction, attribute initialization
-//! or mutation/query, child lifecycle, signal or scheduler policy, libc.so,
-//! a CRT, a loader, a sysroot, spawn-family completion, promotion, or public
-//! x86 support.
+//! The System V AMD64 ABI passes the caller-owned file-actions pointer in `rdi`
+//! and returns the signed `int` result in `eax`. Musl's installed
+//! `posix_spawn_file_actions_t` begins with two `int` padding words followed by
+//! its pointer-sized `__actions` member at byte offset eight. The private C
+//! representation below models only that written prefix rather than importing
+//! the unused padding tail. This does not select `posix_spawn`, `posix_spawnp`,
+//! action addition or destruction, attribute initialization or mutation/query,
+//! child lifecycle, signal or scheduler policy, libc.so, a CRT, a loader, or a
+//! sysroot.
 
 use core::ffi::{c_int, c_void};
 

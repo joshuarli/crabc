@@ -19,8 +19,7 @@
 //! This private static artifact selects only this one compatibility return. It
 //! has no caller-memory access, allocation, errno, TLS, syscall, spawn
 //! execution, file action, fork, exec, child lifecycle, signal delivery,
-//! scheduler policy or parameter behavior, libc.so, CRT, loader, sysroot,
-//! family-completion, promotion, or public x86 support claim.
+//! scheduler policy or parameter behavior, libc.so, CRT, loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

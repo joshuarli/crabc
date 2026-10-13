@@ -11,7 +11,7 @@
 //! The timer is process-global kernel state. This module does not install
 //! signal handlers, alter masks, wait for delivery, or select a signal or
 //! POSIX-timer policy. The separate `alarm` and `ualarm` adapters retain
-//! their own source and evidence boundaries.
+//! their own source boundaries.
 
 use core::ffi::{c_int, c_long};
 use core::mem::{align_of, offset_of, size_of};

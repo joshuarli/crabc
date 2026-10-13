@@ -6,7 +6,7 @@
 //! serves the owned-static runtime without selecting this module's bounded
 //! formatting path. The frozen aggregate's other five names—
 //! `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, and
-//! `issetugid`—remain independently evidenced default selected-static
+//! `issetugid`—remain default selected-static
 //! prerequisites in [`super::system_information`] and [`super::issetugid`].
 //! Keeping this module behind `x86-legacy-misc` makes that boundary explicit:
 //! the default x86 `libc.a` export contract does not silently widen into a
@@ -35,14 +35,13 @@
 //! observable output and retry-on-short-write behavior without selecting those
 //! wider subsystems.
 //!
-//! The shared DES names intentionally diverge from musl. They retain the
-//! frozen project inert-DES observable contract also owned by
+//! The shared DES names intentionally diverge from musl. They retain the frozen
+//! project inert-DES observable contract also owned by
 //! `libc/src/legacy_des_exports.rs`: neither function reads, stores, mutates,
 //! encrypts, decrypts, nor otherwise interprets its caller buffer. This
-//! intentional divergence preserves link compatibility while complying with
-//! the no-hand-rolled-cryptography boundary; it is not a cipher, PRNG,
-//! allocator, dynamic libc, CRT, sysroot, loader, public-support, capability,
-//! or family-promotion claim.
+//! intentional divergence preserves link compatibility while complying with the
+//! no-hand-rolled-cryptography boundary; it is not a cipher, PRNG, allocator,
+//! dynamic libc, CRT, sysroot, or loader capability.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 legacy.misc requires little-endian Linux/x86-64");

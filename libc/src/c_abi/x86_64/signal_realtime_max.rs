@@ -9,7 +9,7 @@
 //! This one-symbol macro bridge has no storage, syscall, signal delivery,
 //! action, mask, wait, descriptor, timer, pthread, or runtime-policy path.
 //! It deliberately does not establish a general realtime-signal family or
-//! promote any x86 runtime capability.
+//! provide any broader runtime capability.
 
 use core::ffi::c_int;
 

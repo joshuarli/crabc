@@ -36,7 +36,7 @@
 //! probe proves that at guard pages for every size, alignment and overlap
 //! class. The selected x86 static archive exposes this exact small
 //! bulk-memory surface only after its freestanding artifact fixture proves
-//! it. It is not a general x86 C runtime or public-support claim.
+//! it. It is not a general C runtime.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C memory leaf requires little-endian Linux/x86-64");

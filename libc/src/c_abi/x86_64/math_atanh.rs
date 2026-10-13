@@ -36,11 +36,9 @@
 //! `atan`/`atanf`, `tanh`/`tanhf`, sine/cosine, complex, special, and the
 //! other inverse-hyperbolic entry points are not selected.
 //!
-//! This is a private non-capability artifact inside still-planned
-//! `libc.text-math-locale-stdio`. It does not complete `math.elementary`,
-//! select `math.elementary-fenv-sensitive`, `math.special`, `math.complex`,
-//! general libm/libc.so, CRT/TLS lifecycle, loader, sysroot, x86 promotion, or
-//! public x86 support.
+//! This is a private leaf, not a complete math library. It does not select
+//! the fenv-sensitive functions, special or complex math, general libm/libc.so,
+//! CRT/TLS lifecycle, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 static atanh leaf requires little-endian Linux/x86-64");

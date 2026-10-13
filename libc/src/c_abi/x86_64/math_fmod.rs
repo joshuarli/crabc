@@ -17,8 +17,7 @@
 //! System V AMD64 passes binary64/binary32 `x` in `xmm0`, `y` in `xmm1`, and
 //! returns through `xmm0`.  This leaf deliberately owns only `fmod` and
 //! `fmodf`; it excludes binary80 `fmodl`, `remainder*`, `remquo*`, `modf*`,
-//! fenv rounding/truncation, special and complex math, general libm, family
-//! completion, promotion, and public x86 support.
+//! fenv rounding/truncation, special and complex math, and general libm.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math fmod leaf requires little-endian Linux/x86-64");

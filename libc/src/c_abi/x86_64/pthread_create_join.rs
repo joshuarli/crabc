@@ -1,6 +1,6 @@
 //! Bounded Linux/x86-64 static `pthread_create`/`pthread_join` worker leaf.
 //!
-//! This is a deliberately private first lifecycle slice, not an x86 pthread
+//! This is a deliberately private lifecycle leaf, not an x86 pthread
 //! runtime. Its allocation, clone flag selection, child-stack handoff, and
 //! join-after-`CLONE_CHILD_CLEARTID` ordering are source-mapped to pinned musl
 //! 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under
@@ -72,12 +72,12 @@
 //! TLS/control mappings only after `CLONE_CHILD_CLEARTID` has cleared the
 //! child TID. This follows the existing AArch64 runtime's safe external
 //! reaping shape; it is not a claim of general detached-thread reclamation or
-//! full pthread parity. It provides selected initial-thread `pthread_exit`
+//! full pthread behavior. It provides selected initial-thread `pthread_exit`
 //! in both owned products and static fork child-list/TLS/TSD repair. Owned
 //! builds additionally provide scheduler application, GNU default attributes
 //! and live-thread inspection through their corresponding leaves. Dynamic
 //! fork composes through its separate loader transaction; affinity attributes
-//! and full pthread parity are not established by this component.
+//! and full pthread behavior are not provided by this component.
 //! Dynamic workers retain the loader's opaque allocation/release token through
 //! the same create/join seam and logical initial/last-task accounting. The
 //! dynamic startup owner runs executable/loader finalization for the final
@@ -3361,7 +3361,7 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 ///
 /// The opaque handle must name one selected live worker. The caller must not
 /// concurrently join the same handle; broader pthread/C11 joining semantics
-/// remain deliberately outside this slice.
+/// remain deliberately outside this module.
 #[inline(always)]
 pub(super) unsafe fn join_selected_worker(
     thread: *mut c_void,
@@ -3871,7 +3871,7 @@ pub unsafe extern "C" fn pthread_detach(thread: *mut c_void) -> c_int {
 ///
 /// The opaque handle and optional result storage must meet those lifetime and
 /// alignment requirements. The caller must not concurrently join the same
-/// handle; such broader pthread behavior is deliberately outside this slice.
+/// handle; such broader pthread behavior is deliberately outside this module.
 #[export_name = "__pthread_join"]
 pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_void) -> c_int {
     let worker_result = match unsafe { join_selected_worker(thread) } {

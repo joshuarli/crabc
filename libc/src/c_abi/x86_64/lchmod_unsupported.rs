@@ -19,8 +19,7 @@
 //! cancellation point, or C allocator is selected.
 //!
 //! This is not `fchmodat`, general permission policy, `chmod` target following,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, filesystem-family completion,
-//! promotion, or public x86 support.
+//! libc.so, CRT, dynamic TLS, loader, or sysroot.
 
 use core::ffi::{c_char, c_int, c_uint};
 

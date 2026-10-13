@@ -6,8 +6,8 @@
 //! owned by `error_strings`, so the bridge deliberately does not inspect the
 //! opaque locale token, mutate selected-thread locale state, allocate, access
 //! message catalogs, or touch `errno`, TLS, locks, or process state. It is not
-//! `strerror`, `strerror_r`, `strsignal`, `strfmon`, gettext, a general locale database,
-//! libc.so, a CRT, a loader, a sysroot, or public x86 support.
+//! `strerror`, `strerror_r`, `strsignal`, `strfmon`, gettext, a general locale
+//! database, libc.so, a CRT, a loader, or a sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

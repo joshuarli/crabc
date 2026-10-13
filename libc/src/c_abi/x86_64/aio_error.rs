@@ -10,11 +10,11 @@
 //! preserve that source-shaped boundary without creating runtime state.
 //!
 //! This target-local leaf owns no AIO request submission, `aio_return`, wait,
-//! cancellation, fsync, list-I/O, completion, synchronization protocol,
-//! thread, errno/TLS, allocation, syscall, descriptor I/O, resolver, socket,
-//! loader, CRT, or public x86 support. It does not make an `aiocb` safe to
-//! inspect concurrently: caller-provided AIO/external synchronization remains
-//! the caller's responsibility.
+//! cancellation, fsync, list-I/O, completion, synchronization protocol, thread,
+//! errno/TLS, allocation, syscall, descriptor I/O, resolver, socket, loader, or
+//! CRT. It does not make an `aiocb` safe to inspect concurrently:
+//! caller-provided AIO/external synchronization remains the caller's
+//! responsibility.
 
 #[cfg(not(crabc_x86_owned_runtime))]
 use core::{

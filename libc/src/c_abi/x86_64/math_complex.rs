@@ -1,13 +1,13 @@
 //! Selected static Linux/x86-64 long-double classification and complex ABI foundation.
 //!
 //! This is a deliberately small x87 ABI foundation, not a scalar or complex
-//! math implementation. It owns only `__fpclassify*`, `__signbit*`, and the
-//! C99 `creal*`, `cimag*`, and `conj*` function symbols. The adjacent
-//! `math_complex_complete.rs` leaf supplies the remaining 57 symbols,
-//! including `cproj*`, to close the private 66-symbol `math.complex`
-//! capability without blurring this source map. Scalar elementary exports,
-//! errno, fenv behavior beyond classification, libm, libc.so, CRT, loader,
-//! sysroot, and public x86 support remain outside this foundation's contract.
+//! math implementation. It owns only `__fpclassify*`, `__signbit*`, and the C99
+//! `creal*`, `cimag*`, and `conj*` function symbols. The adjacent
+//! `math_complex_complete.rs` leaf supplies the remaining 57 symbols, including
+//! `cproj*`, to close the private 66-symbol `math.complex` capability without
+//! blurring this source map. Scalar elementary exports, errno, fenv behavior
+//! beyond classification, libm, libc.so, CRT, loader, and sysroot remain
+//! outside this foundation's contract.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

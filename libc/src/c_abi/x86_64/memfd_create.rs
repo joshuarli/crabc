@@ -4,7 +4,7 @@
 //! Linux's two-word `memfd_create=319` syscall register ABI with the selected
 //! initial-TLS C `errno` publisher. It is not a seal or `fcntl` ABI,
 //! `memfd_secret`, a descriptor-lifecycle framework, a filesystem policy,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, or public x86 support.
+//! libc.so, CRT, dynamic TLS, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

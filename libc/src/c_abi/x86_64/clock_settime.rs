@@ -8,15 +8,14 @@
 //! timespec pointer in rsi. A raw Linux `-errno` becomes C `-1` after
 //! publication through the selected initial-TLS errno slot.
 //!
-//! The private static fixture invokes only rejected `-1` and
-//! `CLOCK_MONOTONIC` requests, so its differential never asks Linux to alter
-//! realtime. This exact wrapper does not add a policy guard: a valid caller
-//! still reaches the kernel and remains outside the selected evidence. The
-//! artifact therefore establishes only the direct rejected-request C error
-//! ABI, not clock-setting authority, successful mutation/state semantics,
-//! time observation, calendar/time-zone behavior, POSIX timers, cancellation,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion,
-//! or public x86 support.
+//! The private static fixture invokes only rejected `-1` and `CLOCK_MONOTONIC`
+//! requests, so its differential never asks Linux to alter realtime. This exact
+//! wrapper does not add a policy guard: a valid caller still reaches the kernel
+//! and remains outside what the fixture exercises. The artifact therefore
+//! establishes only the direct rejected-request C error ABI, not clock-setting
+//! authority, successful mutation/state semantics, time observation,
+//! calendar/time-zone behavior, POSIX timers, cancellation, libc.so, CRT,
+//! dynamic TLS, loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

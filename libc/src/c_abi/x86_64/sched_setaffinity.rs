@@ -14,10 +14,10 @@
 //! CPU-mask construction, affinity observation, scheduler policy or parameter
 //! behavior, pthread handle/lifecycle state, or mutation coordination.
 //!
-//! This leaf selects only GNU `sched_setaffinity(pid_t, size_t, const
-//! cpu_set_t *)`. It selects neither `sched_getaffinity`, CPU allocation/count/
-//! macro helpers, pthread affinity or lifecycle, dynamic or loader TLS, CRT,
-//! sysroot, promotion, scheduler-family completion, nor public x86 support.
+//! This leaf selects only GNU `sched_setaffinity(pid_t, size_t, const cpu_set_t
+//! *)`. It selects neither `sched_getaffinity`, CPU allocation/count/ macro
+//! helpers, pthread affinity or lifecycle, dynamic or loader TLS, CRT, nor
+//! sysroot.
 
 use core::ffi::{c_int, c_void};
 

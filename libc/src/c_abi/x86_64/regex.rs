@@ -14,9 +14,9 @@
 //! rejected at compile time rather than receiving approximate semantics. A
 //! compiled expression has at most 128 atoms and a searched C string has at
 //! most 4096 bytes; exceeding either fixed bound returns `REG_ESPACE`. This is
-//! one private static C compatibility slice, not complete `pattern.regex`, a
+//! one private static C compatibility leaf, not a complete regex library, a
 //! Rust regex API, locale-aware/multibyte regex, C allocation, libc.so, CRT,
-//! loader, sysroot, family completion, or public x86 support.
+//! loader, or sysroot.
 //!
 //! Pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` is the behavior and ABI oracle:

@@ -1,13 +1,13 @@
 //! Selected static Linux/x86-64 GNU C `splice(2)` boundary.
 //!
 //! This leaf owns only one direct descriptor-range transfer request. It
-//! forwards input/output descriptors, optional caller-owned signed LP64
-//! `off_t` pointers, length, and flags to Linux `splice=275` in
+//! forwards input/output descriptors, optional caller-owned signed LP64 `off_t`
+//! pointers, length, and flags to Linux `splice=275` in
 //! `rdi/rsi/rdx/r10/r8/r9`, translating the raw byte-count result through the
 //! selected initial-TLS C `errno` boundary. It does not select pathname
 //! opening, descriptor or pipe ownership, transfer fallback or general pipe
 //! policy, `tee`/`vmsplice`/`sendfile`/`copy_file_range`, durability,
-//! cancellation, libc.so, CRT, loader, sysroot, or public x86 support.
+//! cancellation, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

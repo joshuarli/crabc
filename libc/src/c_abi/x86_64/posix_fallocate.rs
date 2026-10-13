@@ -6,7 +6,7 @@
 //! POSIX `posix_fallocate` returns a positive error number directly and must
 //! not write `errno`, including on success. It does not select Linux fallocate
 //! flags, pathname allocation, fallback policy, durability, libc.so, CRT,
-//! loader, sysroot, or public x86 support.
+//! loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

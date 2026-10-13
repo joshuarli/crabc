@@ -10,17 +10,16 @@
 //! normalization.
 //!
 //! Musl's negative `timer_t` bit patterns are tagged thread-owned timers. Its
-//! other branch reconstructs private `pthread_impl` state, atomically marks
-//! the timer ID, and sends `SIGTIMER`; this static leaf excludes that branch.
-//! It does not decode or dereference any timer handle. The private fixture runs in a fresh
-//! process that creates no POSIX timers and passes only nonnegative `0` and
-//! `INT_MAX` words, observing raw `-EINVAL` while its caller errno sentinel
+//! other branch reconstructs private `pthread_impl` state, atomically marks the
+//! timer ID, and sends `SIGTIMER`; this static leaf excludes that branch. It
+//! does not decode or dereference any timer handle. The private fixture runs in
+//! a fresh process that creates no POSIX timers and passes only nonnegative `0`
+//! and `INT_MAX` words, observing raw `-EINVAL` while its caller errno sentinel
 //! remains unchanged. The artifact never creates, arms, queries, observes, or
 //! deletes a valid POSIX timer. It establishes only the direct rejected-word
 //! raw-error ABI, not timer ownership, deletion semantics, valid timer state,
 //! signal delivery, calendar/time-zone behavior, cancellation, libc.so, CRT,
-//! dynamic TLS, loader, sysroot, family completion, promotion, or public x86
-//! support. This is not public x86 support.
+//! dynamic TLS, loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

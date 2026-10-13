@@ -18,7 +18,7 @@
 //!
 //! This leaf is not signal-mask or disposition policy, signal lifecycle,
 //! timer/readiness policy, an event loop, a cancellation point, dynamic
-//! runtime, loader/CRT/sysroot state, or public x86 support.
+//! runtime, or loader/CRT/sysroot state.
 
 use core::ffi::{c_int, c_void};
 

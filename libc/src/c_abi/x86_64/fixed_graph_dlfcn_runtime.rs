@@ -4,7 +4,7 @@
 //! Isolated PIC build root for the fixed-graph public C dlfcn bridge.
 //!
 //! The canonical staged `libc.a` also composes this exact leaf and owns its
-//! export ratchet. Dynamic evidence uses this root so the no-TLS loader graph
+//! export ratchet. Dynamic tests use this root so the no-TLS loader graph
 //! does not accidentally pull the canonical archive's independently selected
 //! static-initial-TLS `errno` object through a shared Rust codegen unit.
 //! It enables the same target-scoped weak-linkage support as `libc/src/lib.rs`

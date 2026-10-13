@@ -8,15 +8,13 @@
 //! artifact and is not linked by this leaf's static fixture.
 //!
 //! Linux 5.10 x86-64 `sched_get_priority_max=146` receives the signed C `int`
-//! policy in `rdi`.
-//! A raw Linux `-4095..=-1` result becomes C `-1` after publication through
-//! the selected initial-TLS `errno` slot; successful priority values preserve
-//! stale `errno`. The fixture observes only `SCHED_OTHER`, `SCHED_FIFO`,
-//! `SCHED_RR`, and a rejected invalid policy. It is not scheduler policy
-//! selection or mutation, a priority-minimum query, parameter/affinity API,
-//! scheduler handoff/fairness guarantee, C11/pthread lifecycle, process lifecycle,
-//! libc.so, CRT, loader, sysroot, family completion, promotion, or
-//! public x86 support.
+//! policy in `rdi`. A raw Linux `-4095..=-1` result becomes C `-1` after
+//! publication through the selected initial-TLS `errno` slot; successful
+//! priority values preserve stale `errno`. The fixture observes only
+//! `SCHED_OTHER`, `SCHED_FIFO`, `SCHED_RR`, and a rejected invalid policy. It
+//! is not scheduler policy selection or mutation, a priority-minimum query,
+//! parameter/affinity API, scheduler handoff/fairness guarantee, C11/pthread
+//! lifecycle, process lifecycle, libc.so, CRT, loader, or sysroot.
 
 use core::ffi::c_int;
 

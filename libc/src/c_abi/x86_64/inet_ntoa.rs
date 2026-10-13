@@ -8,7 +8,7 @@
 //! that one shared non-reentrant scratch-buffer contract, while deliberately
 //! keeping it separate from `inet_ntop`, `h_errno`, numeric `netdb.h`,
 //! resolver configuration, DNS, `/etc/hosts`, `/etc/resolv.conf`, conventional
-//! network databases, interfaces, sockets, and public support.
+//! network databases, interfaces, and sockets.
 //!
 //! The source's `snprintf` call is intentionally inlined only for four
 //! unsigned IPv4 octets. The maximum dotted-decimal result is fifteen bytes

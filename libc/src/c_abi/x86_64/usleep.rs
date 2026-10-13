@@ -16,7 +16,7 @@
 //!
 //! This does not select `sleep`, `alarm`, `ualarm`, interval or POSIX timers,
 //! handlers/actions, masks, signal delivery, a C sleep policy, pthread
-//! behavior, libc.so, CRT, loader, sysroot, promotion, or public x86 support.
+//! behavior, libc.so, CRT, loader, or sysroot.
 
 use core::ffi::{c_int, c_long, c_uint, c_void};
 use core::mem::{align_of, offset_of, size_of};

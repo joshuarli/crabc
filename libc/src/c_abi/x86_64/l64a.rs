@@ -13,8 +13,7 @@
 //! byte-string helper, errno/TLS, locale, allocation, syscall, or runtime
 //! state. The one shared buffer is musl's non-reentrant C contract, not an
 //! allocation substitute or a general numeric-conversion facility. This is a
-//! private selected static artifact, not a libc.so, CRT, loader, sysroot,
-//! family-completion, promotion, or public x86 support claim.
+//! private selected static artifact, not a libc.so, CRT, loader, or sysroot.
 
 use core::ffi::{c_char, c_long};
 

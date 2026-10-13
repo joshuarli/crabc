@@ -13,7 +13,7 @@
 //! (`R_X86_64_TPOFF*`), not a dynamic TLS resolver. The separately selected
 //! bounded create/explicit-exit/join artifact can materialize only this datum
 //! for its child; general pthread lifecycle, loader-installed dynamic TLS, and
-//! a general x86 C runtime remain separate work.
+//! a general x86 C runtime are not provided here.
 
 use core::ffi::c_int;
 
@@ -26,8 +26,8 @@ static mut ERRNO: c_int = 0;
 
 /// Return the calling thread's C `errno` storage.
 ///
-/// C's `errno` macro dereferences this pointer. The source-only x86 evidence
-/// links a static C program and proves that its main and pthread instances are
+/// C's `errno` macro dereferences this pointer. The source-only x86 test
+/// links a static C program and checks that its main and pthread instances are
 /// distinct, zero-initialized TLS slots.
 #[no_mangle]
 pub unsafe extern "C" fn __errno_location() -> *mut c_int {

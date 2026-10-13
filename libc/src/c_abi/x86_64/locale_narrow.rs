@@ -24,7 +24,7 @@
 //! the locale-object leaf where POSIX requires one; like musl, these wrappers
 //! do not dereference it. There is no locale database, environment lookup,
 //! allocation, errno, syscall, new TLS datum, normalization, legacy encoding,
-//! numeric parsing, stdio, dynamic loader, or public x86 support here.
+//! numeric parsing, stdio, or dynamic loader here.
 
 #[cfg(not(all(
     target_os = "linux",

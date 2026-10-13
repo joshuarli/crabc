@@ -3,10 +3,9 @@
 //! This leaf owns exactly the GNU/BSD UTC broken-down-time inverse: it
 //! normalizes one caller-owned LP64 `struct tm`, returns signed `time_t`, and
 //! writes a fixed `UTC` offset/name result. It has no kernel call and does not
-//! read process environment, zone rules, or mutable process-global state. It
-//! is not local civil conversion, formatting/parsing, a calendar API family,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86
-//! support.
+//! read process environment, zone rules, or mutable process-global state. It is
+//! not local civil conversion, formatting/parsing, a calendar API family,
+//! libc.so, CRT, dynamic TLS, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

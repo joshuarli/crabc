@@ -3,7 +3,7 @@
 // These functions follow musl's src/legacy/err.c contract: warnings are
 // prefixed by __progname, include the current errno only for the non-x forms,
 // and the err forms terminate with the supplied status.  The local perror
-// implementation predates this slice and prints a numeric errno, so the
+// implementation predates these functions and prints a numeric errno, so the
 // shared warning path emits strerror(errno) directly to preserve musl's
 // observable text.
 
@@ -88,7 +88,7 @@ pub unsafe extern "C" fn psiginfo(si: *const siginfo_t, msg: *const c_char) {
     psignal((*si).si_signo, msg);
 }
 
-// syslog slice.
+// syslog.
 //
 // The wire format and connection policy here follow musl's src/misc/syslog.c:
 // messages are bounded to one 1024-byte datagram, use the UTC `%b %e %T`

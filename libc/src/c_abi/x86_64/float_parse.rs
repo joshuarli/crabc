@@ -54,9 +54,9 @@
  //! binary80 operation order, current-rounding behavior, fenv flags, signed
  //! zero, and `errno` outcomes near underflow. This translation keeps those
 //! The native artifact verifies that fidelity for its named grammar, range,
-//! binary80 ABI, and directed-rounding corpus. It is evidence for that
-//! selected fixed-locale string/wide boundary, not a claim that every C text,
-//! locale, stdio, or floating-math behavior is complete.
+//! binary80 ABI, and directed-rounding corpus. It covers that
+//! selected fixed-locale string/wide boundary, not every C text,
+//! locale, stdio, or floating-math behavior.
  //!
  //! `float_parse_musl_x86_64.S` and its support/entry siblings contain no
  //! public helper symbol. The existing target-local `__errno_location` is the

@@ -13,10 +13,10 @@
 //! musl's zero or `-1` plus errno convention.
 //!
 //! The focused static fixture runs in a disposable process and proves two
-//! idempotent successful releases preserve stale errno. This module does not select `mlockall`,
-//! per-range `mlock`/`munlock`/`mlock2`, mapping or allocator
-//! policy, process lifecycle, pthread cancellation, signals, libc.so, CRT,
-//! loader, sysroot, promotion, or public x86 support.
+//! idempotent successful releases preserve stale errno. This module does not
+//! select `mlockall`, per-range `mlock`/`munlock`/`mlock2`, mapping or
+//! allocator policy, process lifecycle, pthread cancellation, signals, libc.so,
+//! CRT, loader, or sysroot.
 
 use core::ffi::c_int;
 

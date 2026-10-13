@@ -21,8 +21,8 @@
 //! a Rust type. The paired native fixture proves ordinary, signed-zero,
 //! infinity, and NaN projection behavior against pinned musl.
 //!
-//! This leaf selects no `cabs*`, `carg*`, complex power/transcendental,
-//! general libm, family completion, promotion, or public x86 support.
+//! This leaf selects no `cabs*`, `carg*`, complex power/transcendental, or
+//! general libm.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 complex-projection leaf requires little-endian Linux/x86-64");

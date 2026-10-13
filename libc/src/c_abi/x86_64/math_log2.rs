@@ -32,9 +32,9 @@
 //! System V AMD64 passes and returns binary64/binary32 in `xmm0`.  This leaf
 //! deliberately owns only `log2` and `log2f`; it excludes binary80 `log2l`,
 //! log/log1p/log10 and exp/expm1/exp2 families, inverse trigonometry,
-//! fma/hypot/fmod/remainder, rounding/truncation/ceiling/floor, square-root
-//! and cube-root families, special and complex math, general libm, errno
-//! policy, family completion, promotion, and public x86 support.
+//! fma/hypot/fmod/remainder, rounding/truncation/ceiling/floor, square-root and
+//! cube-root families, special and complex math, general libm, and errno
+//! policy.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math log2 leaf requires little-endian Linux/x86-64");

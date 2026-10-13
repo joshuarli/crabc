@@ -21,11 +21,11 @@
 //! selecting an allocator or general memory primitive. It preserves musl's
 //! `restrict` non-overlap precondition for the four signal-set assignments.
 //!
-//! This private artifact selects record-field mutation/readback only. It has
-//! no errno or TLS mutation, allocation, syscall, signal delivery, spawn or
+//! This private artifact selects record-field mutation/readback only. It has no
+//! errno or TLS mutation, allocation, syscall, signal delivery, spawn or
 //! file-action execution, fork, exec, child lifecycle, scheduler behavior,
-//! libc.so, CRT, loader, sysroot, family-completion, promotion, or public x86
-//! support claim. The generic AArch64 exports and behavior remain unchanged.
+//! libc.so, CRT, loader, or sysroot. The generic AArch64 exports and behavior
+//! remain unchanged.
 
 use core::ffi::{c_int, c_short, c_ulong, c_void};
 

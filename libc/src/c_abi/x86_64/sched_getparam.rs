@@ -16,8 +16,8 @@
 //!
 //! This one-symbol leaf selects neither scheduler mutation, parameter records
 //! or policy, priority bounds, `sched_yield`, affinity, pthread scheduling
-//! attributes, thread/process lifecycle, dynamic or loader TLS, CRT, sysroot,
-//! promotion, nor public x86 support.
+//! attributes, thread/process lifecycle, dynamic or loader TLS, CRT, nor
+//! sysroot.
 
 use core::ffi::{c_int, c_void};
 

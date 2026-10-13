@@ -3,10 +3,10 @@
 //! This module owns one closed, allocation-free C configuration block:
 //! `sysconf`, `confstr`, `pathconf`, `fpathconf`, `getpagesize`, and
 //! `getdtablesize`. It deliberately composes only the raw Linux register
-//! boundary for `getdtablesize` and the selected initial-TLS C `errno` slot.
-//! It is not general system information, filesystem capacity observation,
-//! `/proc` parsing, a C startup/auxv owner, a dynamic libc, CRT, pthread/TLS
-//! lifecycle, loader, sysroot, allocator, or public x86 support.
+//! boundary for `getdtablesize` and the selected initial-TLS C `errno` slot. It
+//! is not general system information, filesystem capacity observation, `/proc`
+//! parsing, a C startup/auxv owner, a dynamic libc, CRT, pthread/TLS lifecycle,
+//! loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -14,19 +14,19 @@
 //! - `src/conf/sysconf.c` maps to the explicitly selected two direct-table
 //!   [`sysconf`] entries: `_SC_CLK_TCK=2` and `_SC_PAGE_SIZE=30`. The source's
 //!   wider table reaches rlimit, scheduler, system-information, and auxv
-//!   closures for other names, so those selectors remain outside admission.
+//!   closures for other names, so those selectors remain unsupported.
 //!   Its defined far nonnegative-invalid route is `EINVAL`; the source's
-//!   unchecked negative signed table index remains outside differential admission.
+//!   unchecked negative signed table index is not reproduced.
 //! - `src/conf/confstr.c` maps to [`confstr`].
 //! - `src/conf/fpathconf.c` maps to [`fpathconf`]'s deliberate
 //!   fd-independent selector table. The selected positive selector boundary is
 //!   0 through 20 plus the defined nonnegative out-of-range `EINVAL` result;
-//!   musl's unchecked negative C-array index remains outside differential admission.
+//!   musl's unchecked negative C-array index is not reproduced.
 //! - `src/conf/pathconf.c` maps to [`pathconf`], which delegates to that
 //!   `fpathconf(-1, name)` table without dereferencing its pathname. Its
 //!   selected positive-selector boundary is therefore also 0 through 20 plus
 //!   the defined nonnegative out-of-range `EINVAL` result; the delegated
-//!   unchecked negative C-array index remains outside differential admission.
+//!   unchecked negative C-array index is not reproduced.
 //! - `src/legacy/getpagesize.c` maps to [`getpagesize`].
 //! - `src/legacy/getdtablesize.c` maps to [`getdtablesize`].
 //!
@@ -34,7 +34,7 @@
 //! `tests/path_configuration_exports.rs` dynamically compares it to pinned
 //! musl without filesystem access. That focused agreement does not make this a
 //! complete musl `sysconf` table: selectors which would need scheduler,
-//! `sysinfo`, or startup-owned auxv state remain outside the admitted boundary.
+//! `sysinfo`, or startup-owned auxv state remain unsupported.
 //! Linux/x86-64's base page size is architecturally 4096 bytes, so unlike the
 //! variable-page-size AArch64 implementation this selected `getpagesize`
 //! surface does not need a future auxv owner.

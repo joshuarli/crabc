@@ -18,8 +18,7 @@
 //! condition initialization/operation, allocation, syscall, C-`errno`, TLS,
 //! TCB, synchronization, cancellation, thread lifecycle, or pthread runtime
 //! behavior. Initializing a record does not make any selected mutex or
-//! condition initializer consume it; this is not pthread-family completion or
-//! public x86 support.
+//! condition initializer consume it; this is not a complete pthread runtime.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread attribute lifecycle leaf requires little-endian Linux/x86-64");

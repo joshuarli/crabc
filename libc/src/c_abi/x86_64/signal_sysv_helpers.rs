@@ -9,16 +9,15 @@
 //! one application-signal validation, and direct Linux `rt_sigaction=13` /
 //! `rt_sigprocmask=14` requests on x86-64.
 //!
-//! Keeping those calls private is intentional. The four-symbol feature must
-//! not pull the separately selected public action, mask, or signal-set entry
-//! points into its freestanding candidate merely because musl composes those
-//! source helpers in the full libc. It uses the existing private x86 action
-//! packing leaf only to retain musl's public/kernel record conversion and
-//! hidden `rt_sigreturn` restorer. It has no handler bookkeeping, internal
-//! signal unmasking, EINTR-validity state, SIGABRT lock, pthread policy, or
-//! cancellation behavior. This artifact does not select `process.signal`, a
-//! general signal-control interface, family completion, promotion, or public
-//! x86 support.
+//! Keeping those calls private is intentional. The four-symbol feature must not
+//! pull the separately selected public action, mask, or signal-set entry points
+//! into its freestanding candidate merely because musl composes those source
+//! helpers in the full libc. It uses the existing private x86 action packing
+//! leaf only to retain musl's public/kernel record conversion and hidden
+//! `rt_sigreturn` restorer. It has no handler bookkeeping, internal signal
+//! unmasking, EINTR-validity state, SIGABRT lock, pthread policy, or
+//! cancellation behavior. This artifact does not select `process.signal`, or a
+//! general signal-control interface.
 
 use core::ffi::c_int;
 use core::mem::MaybeUninit;

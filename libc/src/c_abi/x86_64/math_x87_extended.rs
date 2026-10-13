@@ -22,15 +22,14 @@
 //!   single `rintl.c` and `sqrtl.c` owners; the focused differential composes
 //!   both sibling symbols.
 //!
-//! The implementation difference is lexical only: Rust has no stable native
-//! C `long double`, so the fixed System V AMD64 stack argument and x87 return
-//! ABI is carried in one `global_asm!` leaf. No operation promotes or narrows
-//! through binary64, and the focused native differential compares the defined
+//! The implementation difference is lexical only: Rust has no stable native C
+//! `long double`, so the fixed System V AMD64 stack argument and x87 return ABI
+//! is carried in one `global_asm!` leaf. No operation promotes or narrows
+//! through binary64 and the focused native differential compares the defined
 //! ten binary80 bytes and exception flags in all four rounding modes. This
 //! artifact does not select long-double trigonometric, power, hyperbolic,
 //! gamma/Bessel/error, or complex transcendental families; it is not scalar
-//! math completion, `libc.so`, a CRT, loader, sysroot, promotion gate, or
-//! public x86 support.
+//! math completion, `libc.so`, a CRT, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x87 extended-math leaf requires little-endian Linux/x86-64");

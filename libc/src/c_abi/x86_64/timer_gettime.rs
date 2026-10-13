@@ -19,11 +19,11 @@
 //! and `INT_MAX` words with initialized writable output records, observes
 //! `-1`/`EINVAL`, and requires the record to remain unchanged. The artifact
 //! never creates, arms, queries, observes, or deletes a valid POSIX timer. It
-//! establishes only direct rejected-handle error translation and rejected-output
-//! preservation, not timer ownership, valid timer state, timer query values,
-//! signal delivery, calendar/time-zone behavior, cancellation, libc.so, CRT,
-//! dynamic TLS, loader, sysroot, family completion, promotion, or public x86
-//! support. This is not public x86 support.
+//! establishes only direct rejected-handle error translation and
+//! rejected-output preservation, not timer ownership, valid timer state, timer
+//! query values, signal delivery, calendar/time-zone behavior, cancellation,
+//! libc.so, CRT, dynamic TLS, loader, or sysroot. This is not public x86
+//! support.
 
 use core::ffi::{c_int, c_void};
 

@@ -21,8 +21,7 @@
 //! behavior, and preexisting-exception preservation against pinned musl.
 //!
 //! This leaf selects no `exp10*`/`pow10*`, `fdim*`, integer-result rounding,
-//! general elementary math, libc.so, loader, sysroot, family completion,
-//! promotion, or public x86 support.
+//! general elementary math, libc.so, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 fenv-sensitive rounding leaf requires little-endian Linux/x86-64");

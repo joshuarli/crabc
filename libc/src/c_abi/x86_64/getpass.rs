@@ -16,10 +16,10 @@
 //! create a Rust secret type or password API; it does not read account data,
 //! environment state, utmp, or NSS; and it does not expose a PTY allocator,
 //! generic ioctl interface, process/session helper, cancellation protocol,
-//! terminal policy framework, dynamic runtime, CRT, loader, sysroot, or a
-//! public x86 support claim.  Its static buffer has the ordinary musl C
-//! lifetime and race semantics.  The direct no-controlling-terminal error is
-//! left to Linux's `/dev/tty` open (`ENXIO` in the native evidence).
+//! terminal policy framework, dynamic runtime, CRT, loader, or sysroot.  Its
+//! static buffer has the ordinary musl C lifetime and race semantics.  The
+//! direct no-controlling-terminal error is left to Linux's `/dev/tty` open
+//! (`ENXIO` in the native test).
 //!
 //! The Rust port deliberately makes three error-only safety choices explicit:
 //! an initial `tcgetattr` failure returns null rather than continuing with

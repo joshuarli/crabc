@@ -21,13 +21,13 @@
 //! point and checks cancellation before consuming an available token. Its
 //! timed-wait EINTR decision uses `signal_control`'s source-defined sticky
 //! non-restarting-handler flag. The standalone six-function archive retains
-//! its previously qualified un-cancelled, signal-uninterrupted route and no
+//! its un-cancelled, signal-uninterrupted route and no
 //! timed entry. The owned runtime adds named semaphore lifetime and shared-memory
 //! namespace operations in `owned_named_ipc`; this standalone leaf does not.
 //! Semaphore destruction races and general POSIX IPC remain unselected.
 //!
 //! This is not a Rust synchronization API, a pthread runtime, an allocator,
-//! a loader, a CRT, libc.so, or public x86 support.  The public C entries use
+//! a loader, a CRT, or libc.so.  The public C entries use
 //! the selected initial-TLS errno slot only for their named POSIX error
 //! results; successful calls deliberately preserve stale errno.
 

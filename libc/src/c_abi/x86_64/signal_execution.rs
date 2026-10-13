@@ -29,10 +29,10 @@
 //!
 //! This artifact deliberately excludes the separately owned direct `tgkill`
 //! extension in `thread_signal.rs`, sigaltstack, signalfd, legacy System-V
-//! signal helpers, cancellation points, generic process
-//! lifecycle, an allocator, loader/CRT/sysroot integration, and public x86
-//! support. The fixture's raw clone/wait/exit plumbing is containment-only and
-//! must never become a C export.
+//! signal helpers, cancellation points, generic process lifecycle, an
+//! allocator, and loader/CRT/sysroot integration. The fixture's raw
+//! clone/wait/exit plumbing is containment-only and must never become a C
+//! export.
 
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::MaybeUninit;

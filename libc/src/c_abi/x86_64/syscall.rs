@@ -51,7 +51,7 @@
 //! membarrier branch, no-cancellation mapping synchronization, and
 //! anonymous-memory-descriptor leaves use their named direct syscalls here.
 //! All other public C wrappers remain unintegrated until their own ABI
-//! boundaries have evidence.
+//! boundaries are tested.
 //! The separately selected one-symbol POSIX message-queue attribute leaf uses
 //! `mq_getsetattr=245` here; it does not select queue lifecycle, transfer, or
 //! notification behavior.

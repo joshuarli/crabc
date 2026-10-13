@@ -19,7 +19,7 @@
 //! lifecycle-neutral compatibility flag; copied snapshots carry a runtime
 //! count and generation. This diagnostic bound, RTLD_NEXT, general filesystem search/graph mutation,
 //! global promotion, finalization, and unload remain explicit reasons this
-//! staged leaf does not select the public dlfcn capabilities.
+//! leaf does not provide the public dlfcn entry points.
 
 use core::ffi::{c_char, c_int, c_void};
 use core::mem;

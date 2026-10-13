@@ -26,10 +26,10 @@
 //! `mkstemp`/`mkstemps`/`mkostemp`/`mkostemps`, `mkdtemp`, `tmpfile`, generic
 //! temporary-file policy, directory-descriptor or file-descriptor authority,
 //! `name_to_handle_at`/`open_by_handle_at`, allocation, Rust facade APIs,
-//! cancellation, dynamic runtime, CRT, loader, sysroot, and public x86
-//! support. A raw `clock_gettime` or `gettid` failure—including that seccomp
-//! boundary—clears the template and publishes that error rather than deriving
-//! a name from uninitialized time storage.
+//! cancellation, dynamic runtime, CRT, loader, and sysroot. A raw
+//! `clock_gettime` or `gettid` failure—including that seccomp boundary—clears
+//! the template and publishes that error rather than deriving a name from
+//! uninitialized time storage.
 
 use core::ffi::{c_char, c_int};
 use core::mem::{align_of, size_of};

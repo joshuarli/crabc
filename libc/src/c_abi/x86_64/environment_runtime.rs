@@ -8,7 +8,7 @@
 //! owned, and the vector allocated for append remains musl's `oldenv` only
 //! while active; a later append after direct reassignment retires that vector.
 //!
-//! The allocator boundary is the already evidenced x86 C `malloc`/`realloc`/
+//! The allocator boundary is the x86 C `malloc`/`realloc`/
 //! `free` wrapper.  This leaf does not invent an allocator or export a second
 //! allocation API.  It remains deliberately narrower than a completed process
 //! lifecycle: callers retain C's ordinary synchronization, signal-safety,
@@ -536,7 +536,7 @@ static_archive_member! { clearenv_source {
 
 /// Link-time witness for the opt-in allocator-backed environment owner.
 ///
-/// The mixed-runtime evidence uses this private symbol to prove it did not
+/// The mixed-runtime test uses this private symbol to prove it did not
 /// accidentally select the legacy fixed-table environment object instead.
 #[no_mangle]
 pub extern "C" fn __crabc_x86_environment_runtime_v1() -> usize {

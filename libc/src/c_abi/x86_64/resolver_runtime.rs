@@ -797,7 +797,7 @@ static_archive_member! { dn_comp_source {
             return -1;
         };
         let output = unsafe { core::slice::from_raw_parts_mut(destination, capacity as usize) };
-        // `encode_query` owns the independently evidenced name encoder.  Strip
+        // `encode_query` owns the name encoder.  Strip
         // its fixed header/tail so this C spelling remains caller-buffered.
         let mut query = [0u8; 512];
         let written = match resolver::encode_query(&text[..length], TYPE_A, 1, &mut query) {

@@ -6,10 +6,9 @@
 //! only the raw Linux syscall register boundary and the selected initial-TLS C
 //! `errno` writer. It is not epoll/eventfd support, a socket API, C
 //! open/path/fcntl or vector-I/O support, AIO, a general signal-delivery or
-//! signal-wait framework, general pthread cancellation or mask policy, timers, C
-//! process lifecycle APIs, a general C/POSIX runtime, libc.so, CRT,
-//! pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, or public
-//! x86 support.
+//! signal-wait framework, general pthread cancellation or mask policy, timers,
+//! C process lifecycle APIs, a general C/POSIX runtime, libc.so, CRT,
+//! pthread/TLS lifecycle, dynamic TLS, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

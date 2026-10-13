@@ -1,11 +1,11 @@
 //! Selected static Linux/x86-64 C `sendfile(2)` boundary.
 //!
 //! This leaf owns only the direct four-word `sendfile` C entry point. It
-//! forwards the output/input descriptors, optional signed `off_t` pointer,
-//! and byte count to Linux `sendfile=40` in rdi/rsi/rdx/r10, translating the
-//! raw byte-count result through the selected initial-TLS C `errno` boundary. It does not
-//! select pathname opening, socket or splice behavior, descriptor ownership,
-//! libc.so, CRT, loader, sysroot, or public x86 support.
+//! forwards the output/input descriptors, optional signed `off_t` pointer, and
+//! byte count to Linux `sendfile=40` in rdi/rsi/rdx/r10, translating the raw
+//! byte-count result through the selected initial-TLS C `errno` boundary. It
+//! does not select pathname opening, socket or splice behavior, descriptor
+//! ownership, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

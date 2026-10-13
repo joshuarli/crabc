@@ -12,7 +12,7 @@
 //! posix_memalign,memalign}.c`, `src/malloc/mallocng/aligned_alloc.c`, and
 //! `src/legacy/valloc.c`.  Native page ownership remains in the fixed
 //! mimalloc v3.5.0 port; this module does not claim process shutdown,
-//! unselected cross-thread routing, or allocator promotion.
+//! or unselected cross-thread routing.
 
 use core::ffi::{c_int, c_void};
 use core::ptr::null_mut;

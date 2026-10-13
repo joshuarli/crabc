@@ -1,12 +1,11 @@
 //! Opt-in Linux/x86-64 `ftw`/`nftw` filesystem-traversal boundary.
 //!
-//! This allocation-free directory client owns exactly the historical C
-//! callback walk spellings `ftw` and `nftw`. It composes the selected private
-//! x86 `DIR` mappings, private `struct stat` owner, current-directory leaves,
-//! raw descriptor close, and initial-TLS errno slot. It deliberately does not
+//! This allocation-free directory client owns exactly the historical C callback
+//! walk spellings `ftw` and `nftw`. It composes the selected private x86 `DIR`
+//! mappings, private `struct stat` owner, current-directory leaves, raw
+//! descriptor close, and initial-TLS errno slot. It deliberately does not
 //! select `scandir`, malloc, generic filesystem policy, a public Rust facade,
-//! pthread cancellation, libc.so, CRT, loader, sysroot, family completion, or
-//! public x86 support.
+//! pthread cancellation, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -26,8 +25,8 @@
 //! that frozen `FTW_CHDIR` behavior as an explicit selected-profile addition:
 //! every directory invocation saves its entry CWD by descriptor and restores
 //! it along every normal/error/callback exit. Normal traversal behavior is
-//! differentially checked against musl; `FTW_CHDIR` has separate frozen-profile
-//! evidence. The standalone feature does not translate musl's cancellation
+//! differentially checked against musl; `FTW_CHDIR` has a separate frozen-profile
+//! test. The standalone feature does not translate musl's cancellation
 //! guard because it has no general selected pthread cancellation-state owner.
 //! The owned static aggregate restores the pinned `nftw.c` source protocol:
 //! it disables selected-worker deferred cancellation for the whole recursive

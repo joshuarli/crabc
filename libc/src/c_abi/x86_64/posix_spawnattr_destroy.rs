@@ -18,8 +18,7 @@
 //! signed `int` result in `eax`. Modeling the pointer as `c_void` preserves
 //! that boundary without importing the installed `posix_spawnattr_t` layout:
 //! the selected source never dereferences it. This does not select libc.so, a
-//! CRT, a loader, a sysroot, spawn-family completion, promotion, or public x86
-//! support.
+//! CRT, a loader, or a sysroot.
 
 use core::ffi::{c_int, c_void};
 

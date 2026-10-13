@@ -8,15 +8,14 @@
 //! neither imports nor selects the C string-copy API.
 //!
 //! `ctermid` is historical C ABI compatibility machinery only. It writes the
-//! static `/dev/tty` spelling into a caller-owned buffer, or returns a borrowed
+//! static `/dev/tty` spelling into a caller-owned buffer or returns a borrowed
 //! pointer to that immutable static spelling when passed null. It does not open
 //! `/dev/tty`, inspect a descriptor, perform a syscall, allocate, access errno
 //! or TLS, or own terminal/session policy. The `char *` result for the null
 //! form follows musl's historical C type; callers must not write through its
 //! immutable literal pointer. PTY/session helpers, tty discovery, termios,
 //! getpass, temporary-file APIs, generic filesystem behavior, dynamic runtime,
-//! CRT, loader, sysroot, family completion, promotion, and public x86 support
-//! remain outside this selected-private leaf.
+//! CRT, loader, and sysroot remain outside this selected-private leaf.
 
 use core::ffi::c_char;
 

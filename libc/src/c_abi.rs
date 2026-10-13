@@ -13873,7 +13873,7 @@ pub unsafe extern "C" fn rename(old: *const c_char, new_: *const c_char) -> c_in
 
 // Allocator internals are deliberately kept behind one compile-time backend
 // boundary. The default remains the existing C mimalloc wrapper. The
-// nondefault Rust shadow lane has no runtime selection or C fallback, so a
+// nondefault Rust shadow backend has no runtime selection or C fallback, so a
 // native pointer cannot accidentally cross allocator ownership domains.
 #[cfg(not(feature = "native-mimalloc-shadow"))]
 include!("allocator_mimalloc.rs");
@@ -22198,7 +22198,7 @@ pub unsafe extern "C" fn __libc_start_main(
     // here, before constructors or pthread creation can produce an observable
     // C allocation. The helper refuses a live ticket-zero owner and never
     // selects the C backend as a fallback; worker allocation remains bounded
-    // to the current parked native session until the general M5 router lands.
+    // to the current parked native session; there is no general cross-thread router yet.
     #[cfg(feature = "native-mimalloc-shadow")]
     let _native_mimalloc_worker_arena_ready = _mimalloc_lifecycle_active
         && crabc_mimalloc::__crabc_runtime::prepare_native_later_thread_arena();

@@ -20,7 +20,7 @@
 //!
 //! `adjtime(NULL, output)` and a zero-mode `adjtimex` record are observation
 //! requests. A non-null `adjtime` input can discipline `CLOCK_REALTIME`; the
-//! product qualification therefore blocks that syscall with a disposable
+//! product test therefore blocks that syscall with a disposable
 //! seccomp child before exercising its C error boundary. `settimeofday` and
 //! `stime` are likewise only exercised as null, local-validation, or
 //! seccomp-denied calls. `clock_settime` remains the sole owner of Linux's

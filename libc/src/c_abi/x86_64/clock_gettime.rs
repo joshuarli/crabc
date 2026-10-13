@@ -18,7 +18,7 @@
 //!
 //! This does not select `clock_getres`, `clock_settime`, `time`, POSIX timers,
 //! calendar/time-zone state, pthread cancellation, libc.so, CRT, dynamic TLS,
-//! loader, sysroot, or public x86 support.
+//! loader, or sysroot.
 
 use core::ffi::{c_int, c_void};
 

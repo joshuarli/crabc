@@ -17,7 +17,7 @@
 //! storage: the lock word contains no task pointer or process-local state.
 //! `owned_pthread_spin_probe.c` proves publication across both owned workers
 //! and fork children. The private feature retains its narrower isolated
-//! evidence. This module introduces no mutex/condition algorithm, lifecycle,
+//! test. This module introduces no mutex/condition algorithm, lifecycle,
 //! TLS, cancellation, allocation, or errno state.
 
 #![allow(clippy::missing_safety_doc)]

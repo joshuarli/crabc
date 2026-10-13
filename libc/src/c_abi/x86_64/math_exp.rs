@@ -34,8 +34,7 @@
 //! deliberately owns only `exp` and `expf`; it excludes binary80 `expl`,
 //! exp2/expm1 and all log families, inverse/direct trigonometry, fma/hypot/
 //! fmod/remainder, rounding/truncation/ceiling/floor, roots, special and
-//! complex math, general libm, errno policy, family completion, promotion,
-//! and public x86 support.
+//! complex math, general libm, and errno policy.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math exp leaf requires little-endian Linux/x86-64");

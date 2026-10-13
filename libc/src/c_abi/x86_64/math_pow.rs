@@ -9,8 +9,8 @@
 //! assembly. The Rust build never invokes a C compiler.
 //!
 //! Native conformance corrections are explicit in
-//! `compat/x86_64/math_scalar_corrections.py` and justified in
-//! `compat/x86_64/math-scalar-corrections.md`. These corrected bodies are not
+//! `compat/x86_64/math_scalar_corrections.py`.
+//! These corrected bodies are not
 //! byte-identical upstream translations; the fixed musl oracle stays unchanged.
 //!
 //! ## Exact source map and closure
@@ -43,11 +43,9 @@
 //! binary80 argument/return ABI remain outside this leaf; similarly, public
 //! exp/log/exp2, `fma`, and `fabs` entries are not selected.
 //!
-//! This is a private non-capability artifact inside still-planned
-//! `libc.text-math-locale-stdio`. It does not complete `math.elementary`,
-//! select `math.elementary-fenv-sensitive`, `math.special`, `math.complex`,
-//! general libm/libc.so, CRT/TLS lifecycle, loader, sysroot, x86 promotion, or
-//! public x86 support.
+//! This is a private leaf, not a complete math library. It does not select
+//! the fenv-sensitive functions, special or complex math, general libm/libc.so,
+//! CRT/TLS lifecycle, loader, or sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 static pow leaf requires little-endian Linux/x86-64");

@@ -2,14 +2,14 @@
 //!
 //! This leaf owns only `posix_fadvise(3)` and GNU `readahead(2)` over an
 //! already-open descriptor. `posix_fadvise` forwards its descriptor, signed
-//! `off_t` range, and advice word to Linux `fadvise64=221` in
-//! rdi/rsi/rdx/r10, then returns a positive POSIX error number without writing
-//! `errno`. `readahead` forwards its descriptor, signed `off_t` offset, and
-//! `size_t` count to Linux `readahead=187` in rdi/rsi/rdx, using ordinary C
+//! `off_t` range, and advice word to Linux `fadvise64=221` in rdi/rsi/rdx/r10,
+//! then returns a positive POSIX error number without writing `errno`.
+//! `readahead` forwards its descriptor, signed `off_t` offset, and `size_t`
+//! count to Linux `readahead=187` in rdi/rsi/rdx, using ordinary C
 //! `ssize_t`/`errno` translation. Neither operation changes the descriptor's
 //! file position. This leaf does not select allocation, caching policy,
-//! pathname behavior, durability, cancellation, libc.so, CRT, loader,
-//! sysroot, or public x86 support.
+//! pathname behavior, durability, cancellation, libc.so, CRT, loader, or
+//! sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

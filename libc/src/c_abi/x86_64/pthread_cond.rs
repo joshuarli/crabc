@@ -24,7 +24,7 @@
 //!
 //! The frozen archive admits NULL-attribute process-private conditions and
 //! normal/private mutexes, using its mapped worker cancellation barrier. Its
-//! historical boundary and machine-code evidence remain separate from the
+//! historical boundary and machine code remain separate from the
 //! owned product. Owned static/dynamic operations delegate to
 //! `owned_pthread_cond.rs`: initialized clock/sharing attributes, ordinary and
 //! timed waits, automatic private waiters or shared sequence/count storage,
@@ -36,8 +36,7 @@
 //! rather than inventing a full depth-release protocol; PI handoff wakes the
 //! waiter barrier rather than requeuing it onto the kernel-owned lock state.
 //! The frozen artifact still admits only normal/private mutexes. This component
-//! does not change the public profile or claim complete pthread parity or
-//! public x86 support.
+//! does not change the public profile or provide complete pthread behavior.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 private pthread-condition leaf requires little-endian Linux/x86-64");

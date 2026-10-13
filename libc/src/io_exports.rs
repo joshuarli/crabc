@@ -1,7 +1,7 @@
 // direct file-I/O and pipe-vector exports.
 //
 // Linux's vector and pipe syscalls are not present in the base syscall
-// substrate yet, so this slice keeps their architecture syscall numbers and
+// substrate yet, so this file keeps their architecture syscall numbers and
 // raw argument shaping local.  Public functions below are the C ABI boundary:
 // Linux's negative errno convention is converted with syscall_result, while
 // the POSIX advisory/allocation functions return an error number directly and

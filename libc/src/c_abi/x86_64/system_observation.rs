@@ -6,9 +6,8 @@
 //! lookup, `/proc` or system-file parsing, or `sysconf`. The separate
 //! `system_information` sibling owns the selected processor/page-count calls
 //! through this record's private raw syscall seam; neither leaf is a
-//! system-information framework, a general C/POSIX runtime,
-//! libc.so, CRT, pthread/TLS lifecycle, dynamic TLS, loader, sysroot,
-//! allocator, or public x86 support.
+//! system-information framework, a general C/POSIX runtime, libc.so, CRT,
+//! pthread/TLS lifecycle, dynamic TLS, loader, sysroot, or allocator.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

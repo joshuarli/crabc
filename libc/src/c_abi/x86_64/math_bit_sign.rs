@@ -16,8 +16,7 @@
 //! existing exception flags untouched. The System V AMD64 ABI passes and
 //! returns the selected scalar forms in `xmm0` (`copysign*` receives its sign
 //! source in `xmm1`). Binary80 `fabsl`/`copysignl`, fdim, rounding, special,
-//! general math, family completion, promotion, and public x86 support remain
-//! outside this artifact.
+//! and general math remain outside this artifact.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math bit-sign leaf requires little-endian Linux/x86-64");

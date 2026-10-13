@@ -21,11 +21,11 @@
 //! The companion `pthread_barrierattr_pshared` module continues to own the
 //! existing set/get pair. Together these modules select the complete public
 //! barrier API over the installed 32-byte x86 record: reusable private thread
-//! barriers and shared-futex barriers in explicitly shared storage. The slice
-//! has no allocation, C-errno publication, cancellation point, general TCB,
-//! loader/CRT integration, or public-x86 support claim. Its process-shared
-//! route is limited to Linux futexes and musl's local vmlock protocol; it does
-//! not imply a general process lifecycle or shared-memory ownership runtime.
+//! barriers and shared-futex barriers in explicitly shared storage. The module
+//! has no allocation, C-errno publication, cancellation point, general TCB, or
+//! loader/CRT integration. Its process-shared route is limited to Linux futexes
+//! and musl's local vmlock protocol; it does not imply a general process
+//! lifecycle or shared-memory ownership runtime.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread barrier leaf requires little-endian Linux/x86-64");

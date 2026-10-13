@@ -1,12 +1,9 @@
 //! Linux/x86-64 C-ABI atomic helpers.
 //!
-//! The standalone native probe established this exact i32 helper contract
-//! before it was admitted to the selected static archive. It now serves the
-//! private normal-mutex and its private condition-variable handoff artifacts,
-//! plus the separately bounded pthread rwlock state machine, but remains far
-//! smaller than a general C atomic or pthread
-//! synchronization runtime. The complete public C runtime remains
-//! Linux/AArch64-only until every x86 promotion gate passes.
+//! This exact i32 helper contract serves the private normal mutex, its
+//! private condition-variable handoff, and the bounded pthread rwlock state
+//! machine, but remains far smaller than a general C atomic or pthread
+//! synchronization runtime.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 atomic leaf requires little-endian Linux/x86-64");

@@ -17,10 +17,9 @@
 //!
 //! The local closure is stateless and allocation-free. It has no errno, TLS,
 //! locale object, multibyte conversion, Unicode classification, syscall,
-//! cancellation, lock, CRT, loader, sysroot, or mutable-runtime dependency.
-//! It is a selected-private ABI artifact only, not general wide text/search,
-//! `wcsstr`, locale or Unicode support, a C string subsystem, family
-//! completion, promotion, or public x86 support.
+//! cancellation, lock, CRT, loader, sysroot, or mutable-runtime dependency. It
+//! is a selected-private ABI artifact only, not general wide text/search,
+//! `wcsstr`, locale or Unicode support, or a C string subsystem.
 
 #[cfg(not(all(
     target_os = "linux",

@@ -1,11 +1,10 @@
 //! Selected static Linux/x86-64 C per-range memory-locking boundary.
 //!
 //! This leaf owns exactly C `mlock`, `munlock`, and GNU `mlock2`. It composes
-//! only the raw Linux syscall-register boundary and the selected initial-TLS
-//! C `errno` publisher. It is not whole-process `mlockall`/`munlockall`,
-//! mapping synchronization (`msync`), `mremap`, a general virtual-memory
-//! policy API, an allocator, a loader/CRT/TLS lifecycle, or public x86
-//! support.
+//! only the raw Linux syscall-register boundary and the selected initial-TLS C
+//! `errno` publisher. It is not whole-process `mlockall`/`munlockall`, mapping
+//! synchronization (`msync`), `mremap`, a general virtual-memory policy API, an
+//! allocator, or a loader/CRT/TLS lifecycle.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -83,7 +82,7 @@ static_archive_member! { mlock2_source {
     /// # Safety
     ///
     /// `address`, `length`, and `flags` must satisfy Linux's complete `mlock2`
-    /// contract. The selected evidence admits `MLOCK_ONFAULT=1` and Linux's
+    /// contract. The selected build supports `MLOCK_ONFAULT=1` and Linux's
     /// unsupported-flag rejection; any successful lock remains caller-owned and
     /// must later be released with [`munlock`] or mapping teardown.
     #[no_mangle]

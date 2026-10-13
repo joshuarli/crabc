@@ -21,8 +21,7 @@
 //! This target-private leaf owns exactly `fmax`, `fmaxf`, `fmin`, and `fminf`.
 //! It excludes `fmaxl`/`fminl`, `fdim*`, bit-sign functions, current- or
 //! integer-result rounding, binary80/x87 math, special and complex functions,
-//! errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, sysroot,
-//! family completion, promotion, and public x86 support.
+//! errno policy, general libm, libc.so, CRT/TLS lifecycle, loader, and sysroot.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 binary32/binary64 extrema leaf requires little-endian Linux/x86-64");

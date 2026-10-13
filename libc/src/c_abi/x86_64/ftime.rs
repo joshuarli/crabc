@@ -21,7 +21,7 @@
 //! This does not select `time`, `clock`, `gettimeofday`, calendar/timezone
 //! conversion, clock mutation, sleep, alarms, interval/POSIX timers,
 //! handlers/actions, masks, signal delivery, pthread policy, libc.so, CRT,
-//! loader, sysroot, promotion, or public x86 support.
+//! loader, or sysroot.
 
 use core::ffi::{c_int, c_long, c_short, c_ushort, c_void};
 use core::mem::{align_of, offset_of, size_of};

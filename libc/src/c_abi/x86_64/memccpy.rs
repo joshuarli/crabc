@@ -10,7 +10,7 @@
 //! This leaf is stateless and allocation-free. It owns no errno, TLS, syscall,
 //! locale, allocator, mutable runtime, or other C-memory entry point. It is a
 //! private selected static artifact, not `memory.bytes-basic`, general bulk
-//! memory, libc.so, a CRT, loader, sysroot, or public x86 support claim.
+//! memory, libc.so, a CRT, loader, or sysroot.
 
 use core::{
     ffi::{c_int, c_void},

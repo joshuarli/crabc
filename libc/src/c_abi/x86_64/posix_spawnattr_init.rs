@@ -16,9 +16,8 @@
 //!
 //! This private static artifact selects only caller-owned attribute-record
 //! initialization. It has no allocation, errno, TLS, syscall, spawn, fork,
-//! exec, child lifecycle, file-action, signal, scheduler-policy, libc.so,
-//! CRT, loader, sysroot, family-completion, promotion, or public x86 support
-//! claim.
+//! exec, child lifecycle, file-action, signal, scheduler-policy, libc.so, CRT,
+//! loader, or sysroot.
 
 use core::{
     ffi::{c_int, c_ulong, c_void},

@@ -8,12 +8,11 @@
 //! the kernel-side grant before this compatibility spelling is called.
 //!
 //! This leaf preserves that no-op result only. It neither allocates nor opens a
-//! PTY, changes a grant or lock, resolves a slave pathname, observes a terminal,
-//! accesses errno or TLS, performs a syscall, or owns any terminal/session
-//! policy. PTY allocation and naming, descriptor authority, controlling-terminal
-//! setup, generic ioctl, dynamic runtime, CRT, loader, sysroot, family
-//! completion, promotion, and public x86 support remain outside this
-//! selected-private leaf.
+//! PTY, changes a grant or lock, resolves a slave pathname, observes a
+//! terminal, accesses errno or TLS, performs a syscall, or owns any
+//! terminal/session policy. PTY allocation and naming, descriptor authority,
+//! controlling-terminal setup, generic ioctl, dynamic runtime, CRT, loader, and
+//! sysroot remain outside this selected-private leaf.
 
 use core::ffi::c_int;
 

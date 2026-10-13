@@ -1,12 +1,11 @@
 //! Shared Linux/x86-64 legacy DES ABI compatibility boundary.
 //!
-//! Pinned musl 1.2.6 release commit
-//! `9fa28ece75d8a2191de7c5bb53bed224c5947417` places
-//! `src/legacy/encrypt.c::setkey` and `src/legacy/encrypt.c::encrypt` under
-//! musl's MIT license. Musl implements the historical DES key schedule and
-//! block transformation there. Crabc intentionally diverges: `AGENTS.md`
-//! forbids a local cipher implementation, and this interface has no useful
-//! modern Rust contract.
+//! Pinned musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`
+//! places `src/legacy/encrypt.c::setkey` and `src/legacy/encrypt.c::encrypt`
+//! under musl's MIT license. Musl implements the historical DES key schedule
+//! and block transformation there. Crabc intentionally diverges: the project
+//! does not implement ciphers locally and this interface has no useful modern
+//! Rust contract.
 //!
 //! `static_c_abi.rs` selects this owner through `x86-legacy-des-compat`.
 //! `x86-owned-static-runtime` selects that narrow feature for the two

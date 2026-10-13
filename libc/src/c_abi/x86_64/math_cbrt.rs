@@ -23,7 +23,7 @@
 //! System V AMD64 passes and returns binary64/binary32 through `xmm0`. This
 //! leaf deliberately owns only `cbrt` and `cbrtf`; it excludes binary80
 //! `cbrtl`, `fma`/`fmaf`, fmod, special and complex math, fenv APIs/rounding
-//! work, general libm, family completion, promotion, and public x86 support.
+//! work, and general libm.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math cbrt leaf requires little-endian Linux/x86-64");

@@ -15,10 +15,9 @@
 //! pathname, transfers a descriptor, establishes a session or controlling
 //! terminal, changes termios state, nor chooses any terminal/process policy.
 //! PTY allocation and naming, `posix_openpt`, `grantpt`, `ptsname`/
-//! `ptsname_r`, openpty/forkpty/login_tty/vhangup, terminal discovery,
-//! generic ioctl, dynamic runtime, CRT, loader, sysroot, family completion,
-//! promotion, and public x86 support remain outside this selected-private
-//! artifact.
+//! `ptsname_r`, openpty/forkpty/login_tty/vhangup, terminal discovery, generic
+//! ioctl, dynamic runtime, CRT, loader, and sysroot remain outside this
+//! selected-private artifact.
 
 use core::ffi::c_int;
 use core::mem::{align_of, size_of};

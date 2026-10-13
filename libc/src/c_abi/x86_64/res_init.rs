@@ -15,8 +15,7 @@
 //! The System V AMD64 ABI passes no arguments and returns the signed `int` in
 //! `eax`. The literal result therefore needs no C ABI translation, runtime
 //! seam, or unsafe memory access. This does not select libc.so, a CRT, a
-//! loader, a sysroot, resolver-family completion, promotion, or public x86
-//! support.
+//! loader, or a sysroot.
 
 use core::ffi::c_int;
 

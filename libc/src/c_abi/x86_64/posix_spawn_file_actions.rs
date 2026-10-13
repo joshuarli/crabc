@@ -11,9 +11,9 @@
 //! tail and following `prev`.  The list is intentionally opaque to the public
 //! API but its first pointer is visible through the installed `spawn.h`
 //! record, so preserving both links and the flexible-array offset is part of
-//! this slice's ABI evidence.  This module does not execute the records.
+//! this module's ABI.  This module does not execute the records.
 //!
-//! The six allocating functions use the already evidenced x86 C allocator
+//! The six allocating functions use the x86 C allocator
 //! boundary through `malloc` and `free`; they do not introduce an allocator or
 //! broaden the default static archive. The opt-in owned runtime's
 //! `owned_spawn` consumes these same records; execution, cancellation, and
@@ -143,7 +143,7 @@ unsafe fn allocate_operation(
             let destination = (operation.cast::<u8>()).add(FDOP_PATH_OFFSET);
             // Keep the musl byte copy explicit: core's checked bulk-copy
             // wrapper would retain a panic dependency in this C ABI archive's
-            // debug evidence build.
+            // debug test build.
             let mut index = 0usize;
             while index < path_bytes {
                 let byte = ptr::read(path.cast::<u8>().add(index));
@@ -406,7 +406,7 @@ static_archive_member! { posix_spawn_file_actions_destroy_source {
 
 /// Link-time witness for this opt-in provider object.
 ///
-/// This is evidence glue only; it is not an installed libc interface and is
+/// This is test glue only; it is not an installed libc interface and is
 /// excluded from the seven-name POSIX roster by the local archive gate.
 #[no_mangle]
 pub extern "C" fn __crabc_x86_posix_spawn_file_actions_v1() -> usize {

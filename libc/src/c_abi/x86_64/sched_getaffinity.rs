@@ -18,7 +18,7 @@
 //! This leaf selects only GNU `sched_getaffinity(pid_t, size_t, cpu_set_t *)`.
 //! It selects neither `sched_setaffinity`, CPU allocation/count/macro helpers,
 //! scheduler policy or parameters, pthread affinity or lifecycle, dynamic or
-//! loader TLS, CRT, sysroot, promotion, nor public x86 support.
+//! loader TLS, CRT, nor sysroot.
 
 use core::{arch::asm, ffi::{c_int, c_void}};
 

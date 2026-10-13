@@ -9,8 +9,7 @@
 //!
 //! This one-symbol direct bridge has no storage, syscall, signal delivery,
 //! action, mask, wait, descriptor, timer, pthread, or runtime-policy path.
-//! It deliberately does not establish a general realtime-signal family or
-//! promote any x86 runtime capability.
+//! It deliberately does not provide a general realtime-signal family.
 
 use core::ffi::c_int;
 

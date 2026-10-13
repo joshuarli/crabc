@@ -16,8 +16,8 @@
 // underlying allocation engine is deliberately the existing pinned
 // libmimalloc-sys backend, not a port of musl mallocng; this layer owns only
 // the C wrapper's observable argument, overflow, errno, alignment, and
-// lifetime boundary. It does not establish allocator lifecycle, threading,
-// fork, dynamic-runtime, or public x86 support.
+// lifetime boundary. It does not provide allocator lifecycle, threading,
+// fork, or dynamic-runtime integration.
 
 // musl 1.2.6 mallocng's `UNIT` is fixed at 16 for the active LP64 targets.
 // Keep this oracle constant separate from the backend implementation detail:
@@ -318,7 +318,7 @@ static_archive_member! { valloc_source {
     #[no_mangle]
     #[cfg_attr(target_arch = "x86_64", inline(never))]
     pub unsafe extern "C" fn valloc(size: SizeT) -> *mut c_void {
-        // The active Linux/AArch64 runtime and staged Linux/x86-64 runtime both
+        // The Linux/AArch64 and Linux/x86-64 runtimes both
         // select a 4 KiB base page. This legacy adapter changes only allocation
         // alignment; it does not expose page allocation policy.
         memalign(4096, size)

@@ -4,8 +4,7 @@
 //! same-address `eaccess` alias. It uses direct Linux permission checks with
 //! the caller's pathname and directory-descriptor lifetime; it provides no
 //! pathname normalization, filesystem capability, credential management,
-//! `fchmodat`/`lchmod`, cancellation point, libc.so, CRT, loader, sysroot, or
-//! public x86 support.
+//! `fchmodat`/`lchmod`, cancellation point, libc.so, CRT, loader, or sysroot.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:

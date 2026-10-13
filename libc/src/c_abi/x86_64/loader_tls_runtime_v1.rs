@@ -2,7 +2,7 @@
 //!
 //! This source is intentionally excluded from `static_c_abi.rs`: a static
 //! executable has no `PT_INTERP` and Static Initial TLS v1 remains its sole
-//! TLS owner. The isolated dynamic evidence imports one exact weak
+//! TLS owner. The isolated dynamic test imports one exact weak
 //! loader-owned record, validates its complete metadata before touching the
 //! loader-installed TCB/DTV, then observes only the already materialized main
 //! thread. The fixed and arbitrary-initial-graph producers are cfg-disjoint
@@ -33,7 +33,7 @@ const LINUX_ERRNO_MAX: i64 = 4_095;
 ///
 /// Ldso intentionally does not depend on `crabc-core`, so this local mirror
 /// keeps the private interpreter standalone. Its fixed size is checked both
-/// here and by the native linker/ELF evidence; an append-only future runtime
+/// here and by the native linker/ELF test; an append-only future runtime
 /// revision must use a new record rather than silently reinterpret it.
 #[repr(C)]
 struct LoaderLibcTlsRuntimeV1Header {
@@ -80,7 +80,7 @@ global_asm!(
     ".size __crabc_x86_loader_tls_runtime_v1_record, .-__crabc_x86_loader_tls_runtime_v1_record",
 );
 
-// The dynamic evidence keeps exactly one weak GOT import. The x86 loader
+// The dynamic test keeps exactly one weak GOT import. The x86 loader
 // recognizes that record only for the main image and only for weak undefined
 // data; DSOs and strong/defined imports remain fail-closed in ldso before any
 // pointer reaches this consumer.
