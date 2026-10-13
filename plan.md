@@ -1,10 +1,12 @@
 # Qualify and promote crabc's native x86-64 runtime
 
 **Status: running unattended 2026-10-13.** Ground tooling and pinned inputs
-have merged; all runtime lanes have run their independent checks. H0 is
-qualifying the third dynamic product after the installed and second products
-passed. Allocator M1/M2/M5/M6 discovery, source convergence, focused defect
-fixes, cleanup and campaign review continue in separate worktrees. Nothing
+have merged; all runtime lanes have run their independent checks. All three
+H0 dynamic products passed their cases; retained receipt validation continues.
+M1's layout prerequisite is parked after three narrow experiments failed to
+reproduce its aggregate failure. M2 has no failing executed check but remains
+partial. M3/M4/M5/M6, source convergence, focused defect fixes, cleanup and
+campaign review continue in separate worktrees. Nothing
 has been qualified on main: 0 of 8 gates, 9 of 26 families. Earlier receipts
 were deleted with `.work/` on 2026-10-07.
 
@@ -527,6 +529,14 @@ Made so far, each with its commit, for the owner:
 - `78efb9cd5`, `fc736a86b`: wordexp offers a diagnostic single-cell replay
   with full input validation and physical checks before and after hashing;
   it cannot publish a qualification receipt.
+- `19465aa4a`, `68cfffc06`: resolver diagnostic replay accepts the exact
+  private or retained fixture modes and validates all retained inputs before
+  comparing one selected transcript; canonical qualification stays complete.
+- `8c7abf176`, `366bfc8f5`: milestone readers reject selected native targets
+  that execute no passing tests. M6 checks abandoned singleton counts return
+  to baseline for arena and OS backing. Invalid aligned-realloc input is an
+  isolated precondition control: pinned debug C asserts; native Rust returns
+  NULL and reports EINVAL through the registered handler.
 
 - `de3a8e968`: the core image identity in `compat/x86_64/core_image.py` is
   the image rebuilt on 2026-10-13 from the unchanged recipe.
@@ -700,6 +710,42 @@ Append one line per merge batch, per parked item, and per contract change.
   was stopped after the coordinator moved its checkout; it is invalid and
   cannot count as evidence. M7's 34 differential entries pass in discovery,
   but required metadata, arena-commit and bin/owner coverage remains open.
+- 2026-10-13: integration through `be460576b` passes all 23 host-side test
+  directories, ledger/structure/inventory checks and all nine Rust profiles
+  in its frozen verification checkout. C1 deletes eight proven unused Rust
+  leaf groups; unproven standalone scripts remain. C2's child-destroy test
+  now asserts terminal scratch release and Gone after refused orphan finish.
+  M5 Heap-birth checks share the initial process-owner thread, retaining all
+  observations; their native target passes and readers reject zero tests.
+  Canonical M5 stress at `d62e9d910` passes 100 stress and 13 soak/growth rows;
+  this is not a full current-revision M5 pass.
+- 2026-10-13: actual M1 at `8c7abf176` stops in its M0 Rust layout
+  prerequisite before producing an M1 report. The aggregate output was
+  truncated and its first failing test is unknown. The visible failed unmap
+  lifecycle test passes alone, its six-test module passes serially, and its
+  paired fault-injection control passes concurrently. Three hypotheses did
+  not reproduce the failure; prerequisite parked on `lane/allocator-discovery`.
+- 2026-10-13: actual M2 at frozen `0e44d7ccf` executes 109 rows with no failed
+  or zero-pass check, then exits 3 with four partial components: VM primitives,
+  arenas, initialization and fault injection. The legacy processless OS-page
+  difference stays explicit. Remaining direct proofs include huge-reservation
+  progress, cross-owner arena reclaim/purge, installed startup composition,
+  and Unix policy-file failure/descriptor closure. Independent witnesses are
+  routed; no whole-unit or milestone pass is claimed.
+- 2026-10-13: M6 collection mismatch traced to an abandoned singleton Heap
+  counter missing its terminal decrement. `47d186d3b` fixes arena and OS
+  release edges; `366bfc8f5` adds their public C/R witnesses and corrects the
+  stale native contract selector and invalid debug-input trace. Release
+  matches all 143 keys; the debug assertion control and nine Rust profiles
+  pass. A fresh official four-profile adapter matrix and merged-tree checks
+  run in frozen `4ca0812a2`. The default-child OOM callback differential is
+  independently red and its existing phase-driver fix is in progress.
+- 2026-10-13: H0 finishes all three dynamic product case rosters and its
+  inner receipt collector passes. Outer validation replays the same retained
+  evidence before recording the step. The largest wordexp integrity check
+  has a 32-second narrow route; its snapshot spends substantial CPU forming
+  relative paths. Tooling owns a snapshot-equivalence cleanup, preserving
+  every file, mode, symlink, device and content check. No validation is skipped.
 
 ## For the owner afterwards
 
