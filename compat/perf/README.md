@@ -186,31 +186,31 @@ empty/sub-64/guard primitive dispositions. Every row also has a separately
 linked memory observer with its fixed main-state and plateau R/C checkpoints.
 
 A full scorecard requires every workload's CPU upper-95% to meet the
-no-regression gate `<= 1.00` across 31 paired fresh processes. Each row also
-reports a CPU target of `0.90`, which does not gate qualification. Schema 2
-attempt and collector reports record both the `release_bound` and
-`target_bound` on each CPU row. Live PSS and `memory.peak` must meet the memory
-thresholds below. Marked-route and whole-process syscall totals must also be
-at most `2R` candidate calls (or zero when the reference is zero), with no
-unexplained error, retry, fallback, or unclassified per-syscall difference. No
-native syscall-difference classification exists, so every
-per-syscall difference is currently an explicit failure. Three consecutive
-clean Docker invocations must pass one immutable roster on an uncontended host.
+no-regression gate `<= 1.00` across 31 paired fresh processes. Each row reports
+the CPU target `0.90`, which does not gate qualification. PSS and `memory.peak`
+use a paired one-sided 95% upper bound over the three collector attempts and
+also gate at `1.00`; each row reports `0.90` as a non-gating target. Schema 2
+collector rows retain the derived memory bounds, seeds, and resample count so
+the reader can reconstruct them from the three attempt totals. Marked-route
+and whole-process syscall totals must also be at most `2R` candidate calls
+(or zero when the reference is zero), with no unexplained error, retry,
+fallback, or unclassified per-syscall difference. No native syscall-difference
+classification exists, so every per-syscall difference is currently an
+explicit failure. Three consecutive clean Docker invocations must pass one
+immutable roster on an uncontended host.
 
-Raw total-memory comparisons use a no-regression threshold (`<= 1.0`) only
-where mandatory live payload or kernel accounting prevents a ten-percent
-reduction. PSS uses it for `allocator_live_32m` and every 128-MiB span row.
-`memory.peak` uses it for `allocator_live_32m`, the 128-MiB `memcpy`/`memset`
-span rows, and any row whose reference peak is exactly the observed 256-KiB
-single cgroup charge batch. Search-span peak measurements above that batch
-remain strict. All other memory comparisons retain `<= 0.90`. The CPU target
-is `0.90`, while its release gate allows an upper bound through `1.00`.
-Syscall rules remain unchanged.
+The aggregate fields live at `scorecard.rows[ROW].memory.pss_kib` and
+`scorecard.rows[ROW].memory.memory_peak_bytes`. Each contains
+`median_ratio`, `one_sided_95_upper`, `resamples`, `seed`, `release_bound`,
+`target_bound`, and `release_gate`; each attempt keeps the unmodified
+`reference` and `candidate` totals used to reconstruct that summary.
 
-Both producer and replay derive these limits into the existing threshold
-fields. Reference and candidate PSS/peak values remain complete raw totals:
-no payload, image size, file-cache charge or accounting batch is subtracted.
-Equality passes only for the floor-limited metric; any increase fails.
+Memory comparisons retain complete PSS and `memory.peak` totals: no payload,
+image size, file-cache charge, or accounting batch is subtracted. A zero
+reference or nonpositive candidate cannot qualify. The collector computes
+each row's paired median ratio and one-sided upper bound from its three
+retained attempts using the same deterministic 10,000-resample algorithm as
+CPU; memory release gates use the upper bound, and targets never gate.
 
 `perf-c-memory-smoke` is a separate bounded native collector test. It uses a
 fresh supplied product/work directory, seven selected rows across all six

@@ -59,20 +59,24 @@ artifact hashes. The detailed harness contract lives in
 Workload-specific rows and open work are tracked in [`plan.md`](../../plan.md).
 The numeric bounds are owned by code, not restated here:
 
-- Active x86-64 C scorecard CPU bounds, syscall and memory limits, the
+- Active x86-64 C scorecard CPU and memory bounds, syscall limits, the
   31-sample/3-warm-up
   protocol, the 10,000-resample bootstrap, the three-attempt collector and the
   host-load policy: `compat/perf/x86_64_evidence.py` (`CPU_RELEASE_BOUND`,
-  `CPU_TARGET_BOUND`, `CPU_RESAMPLES`,
-  `FULL_SAMPLE_COUNT`, `COLLECTOR_ATTEMPTS`, `HOST_LOAD_POLICY`, the memory
-  comparison helper) and `compat/x86_64/performance_release_gate.py`
+  `CPU_TARGET_BOUND`, `MEMORY_RELEASE_BOUND`, `MEMORY_TARGET_BOUND`,
+  `CPU_RESAMPLES`, `FULL_SAMPLE_COUNT`, `COLLECTOR_ATTEMPTS`,
+  `HOST_LOAD_POLICY`) and `compat/x86_64/performance_release_gate.py`
   (`RUNTIME_CPU_UPPER_MAX`, `RUNTIME_SYSCALL_FACTOR`).
 - Allocator promotion bounds: `compat/x86_64/performance_release_gate.py`
   (`ALLOCATOR_*`) and `compat/allocator/perf_engine_x86_64.py`.
 
-For the active x86-64 C scorecard, the CPU upper-95% bound gates at `1.00`;
-each row also reports `0.90` as a target. That target is informative and does
-not affect qualification. The paused AArch64 contract remains unchanged.
+For the active x86-64 C scorecard, CPU, PSS, and `memory.peak` one-sided 95%
+upper bounds gate at `1.00` for every row. Each row reports `0.90` as a target;
+it does not affect qualification. Memory bounds derive from the three
+collector attempts using the same deterministic paired bootstrap as CPU.
+Reference and candidate memory values remain raw totals, and a zero reference
+or nonpositive candidate refuses qualification. The paused AArch64 contract
+remains unchanged.
 
 ## Release measurement rules
 

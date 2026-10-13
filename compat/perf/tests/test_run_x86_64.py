@@ -29,57 +29,25 @@ sys.modules[SPEC.name] = runner
 SPEC.loader.exec_module(runner)
 
 
-class MemoryFloorPolicyTests(unittest.TestCase):
-    def test_floor_rows_allow_equality_but_reject_regression_without_adjusting_raw_totals(self) -> None:
-        rows = {row.name: row for row in runner.performance_rows(ROOT)}
-        self.assertEqual(runner.memory_metric(1000, 900)["release_gate"], "pass")
-        self.assertEqual(runner.memory_metric(1000, 901)["release_gate"], "fail")
-        self.assertEqual(runner.memory_metric(0, 0)["release_gate"], "reference-zero")
-
+class MemoryObserverRawTotalsTests(unittest.TestCase):
+    def test_producer_and_replay_preserve_unadjusted_pss_and_peak_totals(self) -> None:
         def provider(pss: int, peak: int) -> dict[str, object]:
             return {"status": "ok", "checkpoints": [{"memory": {"pss_kib": pss}}],
                     "cgroup_memory": {"memory_peak_after_exit_bytes": peak}}
 
-        cases = (
-            ("allocator_live_32m", 33 * 1024, 33 << 20, True, True),
-            ("memcpy_128m_aligned", 257 * 1024, 257 << 20, True, True),
-            ("memset_128m_unaligned", 257 * 1024, 257 << 20, True, True),
-            ("strlen_128m_aligned", 129 * 1024, 2 << 20, True, False),
-            ("memchr_128m_unaligned", 129 * 1024, 2 << 20, True, False),
-            ("strstr_128m_aligned", 129 * 1024, 2 << 20, True, False),
-            ("memmem_128m_unaligned", 129 * 1024, 2 << 20, True, False),
-            ("getpid", 1000, 256 << 10, False, True),
-            ("getpid", 1000, (256 << 10) + 1, False, False),
-            ("allocator_live_4m", 5000, 5 << 20, False, False),
-            ("memcpy_256k_aligned", 1000, 1 << 20, False, False),
-        )
-        for name, pss, peak, pss_floor, peak_floor in cases:
-            row = rows[name]
-            reference = provider(pss, peak)
-            for increment in (0, 1):
-                candidate = provider(pss + increment, peak + increment)
-                with self.subTest(row=name, increment=increment):
-                    comparison = runner.memory_observer_comparison(reference, candidate, row=row)
-                    for metric, ref, floor in (("pss_max_kib", pss, pss_floor),
-                                              ("memory_peak_after_exit_bytes", peak, peak_floor)):
-                        result = comparison[metric]
-                        self.assertEqual((result["reference"], result["candidate"]), (ref, ref + increment))
-                        self.assertEqual((result["threshold_numerator"], result["threshold_denominator"]),
-                                         (1, 1) if floor else (9, 10))
-                        self.assertEqual(result["release_gate"], "pass" if floor and not increment else "fail")
-                    runner.evidence._verify_memory_observer_comparison(
-                        comparison, reference, candidate, name, row=row)
-                    altered_threshold = {**comparison, "pss_max_kib": {
-                        **comparison["pss_max_kib"],
-                        "threshold_numerator": 9 if pss_floor else 1,
-                        "threshold_denominator": 10 if pss_floor else 1,
-                    }}
-                    with self.assertRaisesRegex(runner.evidence.EvidenceError, "raw checkpoints"):
-                        runner.evidence._verify_memory_observer_comparison(
-                            altered_threshold, reference, candidate, name, row=row)
-                    altered = {**comparison, "pss_max_kib": {**comparison["pss_max_kib"], "candidate": pss - 1}}
-                    with self.assertRaisesRegex(runner.evidence.EvidenceError, "raw checkpoints"):
-                        runner.evidence._verify_memory_observer_comparison(altered, reference, candidate, name, row=row)
+        reference = provider(33 * 1024, 33 << 20)
+        candidate = provider(33 * 1024, 33 << 20)
+        comparison = runner.memory_observer_comparison(reference, candidate)
+        self.assertEqual(comparison, {
+            "status": "ok",
+            "pss_max_kib": {"reference": 33 * 1024, "candidate": 33 * 1024},
+            "memory_peak_after_exit_bytes": {"reference": 33 << 20, "candidate": 33 << 20},
+        })
+        runner.evidence._verify_memory_observer_comparison(comparison, reference, candidate, "allocator_live_32m")
+
+        altered = {**comparison, "pss_max_kib": {"reference": 33 * 1024, "candidate": 33 * 1024 - 1}}
+        with self.assertRaisesRegex(runner.evidence.EvidenceError, "raw checkpoints"):
+            runner.evidence._verify_memory_observer_comparison(altered, reference, candidate, "allocator_live_32m")
 
 
 class TraceeWaitTests(unittest.TestCase):

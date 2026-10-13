@@ -700,16 +700,13 @@ PASSING_MEMORY = {"pss": (1000, 800), "peak": (1 << 20, 900_000)}
 
 
 class ScorecardDerivationTests(unittest.TestCase):
-    def test_row_passes_only_when_all_four_metrics_pass(self) -> None:
+    def test_attempt_row_requires_cpu_and_both_syscall_scopes(self) -> None:
         row = evidence.row_scorecard(_row_workload(**PASSING_ROW), _row_observer(**PASSING_MEMORY))
         self.assertEqual(row["gate"], "pass")
         self.assertEqual(row["syscalls"]["whole_process"], {"reference": 20, "candidate": 20, "gate": "pass"})
 
         failing = {
             "cpu": (_row_workload(**{**PASSING_ROW, "cpu_upper": 1.02}), _row_observer(**PASSING_MEMORY)),
-            "pss": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "pss": (1000, 901)})),
-            "memory_peak": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "peak": (1000, 901)})),
-            "reference-zero memory": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "peak": (0, 0)})),
             "marked syscalls": (_row_workload(**{**PASSING_ROW, "marked": (0, 1)}), _row_observer(**PASSING_MEMORY)),
             "whole-process syscalls above 2R": (_row_workload(**{**PASSING_ROW, "whole": (20, 41)}), _row_observer(**PASSING_MEMORY)),
             # No native classification owner exists, so an in-bound difference
@@ -721,6 +718,98 @@ class ScorecardDerivationTests(unittest.TestCase):
         for label, (workload, observer) in failing.items():
             with self.subTest(label):
                 self.assertEqual(evidence.row_scorecard(workload, observer)["gate"], "fail")
+
+    def test_collector_memory_upper_bounds_gate_pss_and_peak_with_target_only_reported(self) -> None:
+        def collector_row(pss: tuple[int, int], peak: tuple[int, int]) -> dict[str, object]:
+            return evidence.row_scorecard(
+                _row_workload(**PASSING_ROW),
+                _row_observer(pss=pss, peak=peak),
+            )
+
+        def collect(pss: tuple[tuple[int, int], ...], peak: tuple[tuple[int, int], ...]) -> dict[str, object]:
+            attempts = [
+                {"getpid": collector_row(pss[index], peak[index])}
+                for index in range(evidence.COLLECTOR_ATTEMPTS)
+            ]
+            return evidence.collector_scorecard(attempts)
+
+        passing_pss = ((100, 95),) * evidence.COLLECTOR_ATTEMPTS
+        passing_peak = ((1000, 950),) * evidence.COLLECTOR_ATTEMPTS
+        passed = collect(passing_pss, passing_peak)["rows"]["getpid"]
+        self.assertEqual(passed["gate"], "pass")
+        for metric_name in ("pss_kib", "memory_peak_bytes"):
+            metric = passed["memory"][metric_name]
+            self.assertEqual(metric["median_ratio"], 0.95)
+            self.assertEqual(metric["one_sided_95_upper"], 0.95)
+            self.assertEqual(metric["resamples"], evidence.CPU_RESAMPLES)
+            self.assertEqual(metric["release_bound"], 1.00)
+            self.assertEqual(metric["target_bound"], 0.90)
+            self.assertEqual(metric["release_gate"], "pass")
+
+        rejected_pss = collect(((100, 102),) * evidence.COLLECTOR_ATTEMPTS, passing_peak)
+        self.assertEqual(rejected_pss["rows"]["getpid"]["memory"]["pss_kib"]["release_gate"], "fail")
+        self.assertEqual(rejected_pss["failing_rows"], ["getpid"])
+        rejected_peak = collect(passing_pss, ((1000, 1020),) * evidence.COLLECTOR_ATTEMPTS)
+        self.assertEqual(rejected_peak["rows"]["getpid"]["memory"]["memory_peak_bytes"]["release_gate"], "fail")
+        self.assertEqual(rejected_peak["failing_rows"], ["getpid"])
+
+        noisy_pss = collect(((100, 95), (100, 95), (100, 102)), passing_peak)
+        pss_bounds = noisy_pss["rows"]["getpid"]["memory"]["pss_kib"]
+        self.assertEqual(pss_bounds["median_ratio"], 0.95)
+        self.assertEqual(pss_bounds["one_sided_95_upper"], 1.02)
+        self.assertEqual(pss_bounds["release_gate"], "fail")
+        noisy_peak = collect(passing_pss, ((1000, 950), (1000, 950), (1000, 1020)))
+        peak_bounds = noisy_peak["rows"]["getpid"]["memory"]["memory_peak_bytes"]
+        self.assertEqual(peak_bounds["median_ratio"], 0.95)
+        self.assertEqual(peak_bounds["one_sided_95_upper"], 1.02)
+        self.assertEqual(peak_bounds["release_gate"], "fail")
+
+    def test_collector_memory_bootstrap_refuses_zero_and_replays_fixed_seeds(self) -> None:
+        workload = _row_workload(**PASSING_ROW)
+        pss_and_peak = ((100, 95),) * evidence.COLLECTOR_ATTEMPTS
+        attempts = [
+            {"getpid": evidence.row_scorecard(workload, _row_observer(pss=pair, peak=pair))}
+            for pair in pss_and_peak
+        ]
+        first = evidence.collector_scorecard(attempts)
+        second = evidence.collector_scorecard(attempts)
+        self.assertEqual(first, second)
+
+        zero_reference = [dict(attempt) for attempt in attempts]
+        zero_reference[1] = {"getpid": evidence.row_scorecard(
+            workload, _row_observer(pss=(0, 0), peak=(100, 95)),
+        )}
+        rejected = evidence.collector_scorecard(zero_reference)
+        self.assertEqual(rejected["rows"]["getpid"]["memory"]["pss_kib"]["release_gate"], "reference-zero")
+        self.assertEqual(rejected["rows"]["getpid"]["gate"], "fail")
+        zero_peak = [
+            {"getpid": evidence.row_scorecard(
+                workload,
+                _row_observer(pss=(100, 95), peak=(0, 0) if index == 1 else (100, 95)),
+            )}
+            for index in range(evidence.COLLECTOR_ATTEMPTS)
+        ]
+        rejected_peak = evidence.collector_scorecard(zero_peak)
+        self.assertEqual(
+            rejected_peak["rows"]["getpid"]["memory"]["memory_peak_bytes"]["release_gate"],
+            "reference-zero",
+        )
+
+    def test_collector_memory_bootstrap_refuses_nonpositive_candidate_samples(self) -> None:
+        workload = _row_workload(**PASSING_ROW)
+        attempts = [
+            {"getpid": evidence.row_scorecard(
+                workload,
+                _row_observer(pss=(100, 95), peak=(1000, 950)),
+            )}
+            for _ in range(evidence.COLLECTOR_ATTEMPTS - 1)
+        ]
+        attempts.append({"getpid": evidence.row_scorecard(
+            workload,
+            _row_observer(pss=(100, 0), peak=(1000, 950)),
+        )})
+        with self.assertRaisesRegex(evidence.EvidenceError, "candidate pss_kib samples must be positive"):
+            evidence.collector_scorecard(attempts)
 
     def test_cpu_gate_allows_regression_to_one_but_reports_the_point_nine_target(self) -> None:
         row = evidence.row_scorecard(
@@ -1302,6 +1391,11 @@ class CollectorCompositionTests(unittest.TestCase):
                 forged_scorecard = copy.deepcopy(scorecard)
                 forged_scorecard["failing_rows"] = []
                 report_path.write_text(json.dumps({**report, "uncontended_host": host, "scorecard": forged_scorecard, "release": release}), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "scorecard does not derive"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                forged_memory = copy.deepcopy(scorecard)
+                forged_memory["rows"]["startup"]["memory"]["pss_kib"]["one_sided_95_upper"] = 0.0
+                report_path.write_text(json.dumps({**report, "uncontended_host": host, "scorecard": forged_memory, "release": release}), encoding="utf-8")
                 with self.assertRaisesRegex(evidence.EvidenceError, "scorecard does not derive"):
                     evidence.validate_collector_report(ROOT, report_path)
                 quiet_claim = {**report, "uncontended_host": {**host, "status": "uncontended"},

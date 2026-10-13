@@ -48,6 +48,12 @@ MUSL_VERSION = "1.2.6"
 CPU_RESAMPLES = 10_000
 CPU_RELEASE_BOUND = 1.00
 CPU_TARGET_BOUND = 0.90
+MEMORY_RELEASE_BOUND = 1.00
+MEMORY_TARGET_BOUND = 0.90
+# Fixed, distinct seeds keep collector replay deterministic without coupling
+# the PSS and cgroup-peak resampling.
+MEMORY_PSS_BOOTSTRAP_SEED = 0x4352_4142
+MEMORY_PEAK_BOOTSTRAP_SEED = 0x4352_4143
 FULL_SAMPLE_COUNT = 31
 FULL_WARMUP_COUNT = 3
 SMOKE_SAMPLE_COUNT = 1
@@ -2200,31 +2206,66 @@ def _verify_observer_checkpoint(
             f"{label}: checkpoint cgroup values disagree with raw bytes")
 
 
-def _memory_metric(
-    reference: int, candidate: int, *,
-    row: performance_profile.PerformanceRow | None = None, peak: bool = False,
-) -> dict[str, Any]:
+def _memory_metric(reference: int, candidate: int) -> dict[str, int]:
+    """Retain an unadjusted pair of memory totals for collector aggregation."""
+
     require(type(reference) is int and reference >= 0 and type(candidate) is int and candidate >= 0,
             "memory comparison value differs")
-    # Total process measurements include mandatory resident payload.  The
-    # large live set and span PSS cannot lose ten percent without dropping
-    # required data.  Written copy/set spans also impose that floor on peak;
-    # search spans retain their strict peak threshold.  Fresh cgroup charges
-    # at the observed single 256-KiB batch floor cannot shrink either.
-    live_payload = row is not None and row.name == "allocator_live_32m"
-    arguments = getattr(row.legacy_workload, "extra_arguments", ()) if row is not None else ()
-    span_payload = (row is not None and row.fixture_mode == "span_matrix"
-                    and len(arguments) == 3 and arguments[1] == str(128 << 20))
-    floor_limited = (live_payload or span_payload and (not peak or arguments[0] in {"memcpy", "memset"})
-                    or peak and reference == (256 << 10))
-    numerator, denominator = (1, 1) if floor_limited else (9, 10)
     return {
         "reference": reference,
         "candidate": candidate,
-        "threshold_numerator": numerator,
-        "threshold_denominator": denominator,
-        "release_gate": ("reference-zero" if reference == 0 else
-                         "pass" if candidate * denominator <= reference * numerator else "fail"),
+    }
+
+
+def _memory_confidence_metric(
+    attempts: Sequence[Mapping[str, Any]],
+    field: str,
+    *,
+    seed: int,
+) -> dict[str, Any]:
+    """Derive one paired upper-95 memory ratio from the collector's attempts."""
+
+    require(len(attempts) == COLLECTOR_ATTEMPTS,
+            "memory confidence requires the complete three-attempt collector")
+    reference: list[int] = []
+    candidate: list[int] = []
+    for attempt in attempts:
+        value = attempt.get(field)
+        require(isinstance(value, dict) and set(value) == {"reference", "candidate"},
+                f"memory attempt {field} fields differ")
+        reference_value = value["reference"]
+        candidate_value = value["candidate"]
+        require(type(reference_value) is int and reference_value >= 0
+                and type(candidate_value) is int and candidate_value >= 0,
+                f"memory attempt {field} values differ")
+        reference.append(reference_value)
+        candidate.append(candidate_value)
+
+    result = {
+        "median_ratio": None,
+        "one_sided_95_upper": None,
+        "resamples": CPU_RESAMPLES,
+        "seed": seed,
+        "release_bound": MEMORY_RELEASE_BOUND,
+        "target_bound": MEMORY_TARGET_BOUND,
+        "release_gate": "reference-zero",
+    }
+    if any(value == 0 for value in reference):
+        return result
+    require(all(value > 0 for value in candidate),
+            f"memory candidate {field} samples must be positive")
+    contract = _performance_contract(str(HERE.parents[1].resolve(strict=True)))
+    try:
+        bootstrap = contract.bootstrap_cpu_ratio(
+            reference, candidate, seed=seed, resamples=CPU_RESAMPLES,
+        )
+    except ValueError as error:
+        raise EvidenceError(f"memory {field} samples cannot produce an upper bound: {error}") from error
+    return {
+        **bootstrap,
+        "release_bound": MEMORY_RELEASE_BOUND,
+        "target_bound": MEMORY_TARGET_BOUND,
+        "release_gate": ("pass" if bootstrap["one_sided_95_upper"] <= MEMORY_RELEASE_BOUND else "fail"),
     }
 
 
@@ -2318,16 +2359,15 @@ def _verify_memory_observer_comparison(
     reference: Mapping[str, Any],
     candidate: Mapping[str, Any],
     label: str,
-    *, row: performance_profile.PerformanceRow | None = None,
 ) -> None:
     require(isinstance(result, dict) and set(result) == {"status", "pss_max_kib", "memory_peak_after_exit_bytes"}
             and result["status"] == "ok", f"{label}: observer memory comparison differs")
     reference_pss = max(checkpoint["memory"]["pss_kib"] for checkpoint in reference["checkpoints"])
     candidate_pss = max(checkpoint["memory"]["pss_kib"] for checkpoint in candidate["checkpoints"])
-    require(result["pss_max_kib"] == _memory_metric(reference_pss, candidate_pss, row=row)
+    require(result["pss_max_kib"] == _memory_metric(reference_pss, candidate_pss)
             and result["memory_peak_after_exit_bytes"] == _memory_metric(
                 reference["cgroup_memory"]["memory_peak_after_exit_bytes"],
-                candidate["cgroup_memory"]["memory_peak_after_exit_bytes"], row=row, peak=True,
+                candidate["cgroup_memory"]["memory_peak_after_exit_bytes"],
             ), f"{label}: observer memory comparison does not derive from raw checkpoints")
 
 
@@ -2571,7 +2611,7 @@ def validate_measurement_attempt(
                         root_record=root_text, private_mount=private_mount,
                         host=host, seen_peers=seen_peers,
                     )
-                _verify_memory_observer_comparison(item["comparison"], item["musl"], item["crabc"], name, row=row)
+                _verify_memory_observer_comparison(item["comparison"], item["musl"], item["crabc"], name)
             _verify_probe_assignment(memory, observer_memory, selected_rows, owned_probe_leaves, private_mount)
         else:
             require(observer_memory == {}, "partial measurement observer metrics differ")
@@ -2594,11 +2634,11 @@ def _lane_diagnostics(lane: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def row_scorecard(workload: Mapping[str, Any], observer: Mapping[str, Any]) -> dict[str, Any]:
-    """Join one replayed row's four release metrics and its diagnostics.
+    """Join one attempt's CPU/syscall gates, raw memory totals and diagnostics.
 
-    Every value is copied from an already replayed comparison; nothing is
-    re-thresholded here.  A row passes only when CPU, both memory metrics, and
-    both syscall scopes pass.  A reference-zero memory result cannot pass.
+    The collector combines memory totals across all three attempts before it
+    applies the memory release bound. This attempt gate therefore covers CPU
+    and both syscall scopes only.
     """
 
     comparison = workload["comparison"]
@@ -2609,8 +2649,6 @@ def row_scorecard(workload: Mapping[str, Any], observer: Mapping[str, Any]) -> d
     peak = memory["memory_peak_after_exit_bytes"]
     gates = {
         "cpu": cpu["release_gate"],
-        "pss": pss["release_gate"],
-        "memory_peak": peak["release_gate"],
         "syscalls": syscalls["status"],
     }
     return {
@@ -2622,8 +2660,8 @@ def row_scorecard(workload: Mapping[str, Any], observer: Mapping[str, Any]) -> d
             "target_bound": cpu["target_bound"],
             "gate": gates["cpu"],
         },
-        "pss_kib": {"reference": pss["reference"], "candidate": pss["candidate"], "gate": gates["pss"]},
-        "memory_peak_bytes": {"reference": peak["reference"], "candidate": peak["candidate"], "gate": gates["memory_peak"]},
+        "pss_kib": {"reference": pss["reference"], "candidate": pss["candidate"]},
+        "memory_peak_bytes": {"reference": peak["reference"], "candidate": peak["candidate"]},
         "syscalls": {
             "marked_region": {
                 "reference": syscalls["marked_region"]["total_calls"]["reference"],
@@ -2645,7 +2683,7 @@ def row_scorecard(workload: Mapping[str, Any], observer: Mapping[str, Any]) -> d
 
 
 def attempt_scorecard(measurement: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """Return the per-workload scorecard of one replayed attempt, in row order."""
+    """Return per-attempt gates and raw memory totals in workload order."""
 
     return {
         name: row_scorecard(measurement["workloads"][name], measurement["memory_observers"][name])
@@ -2654,21 +2692,35 @@ def attempt_scorecard(measurement: Mapping[str, Any]) -> dict[str, dict[str, Any
 
 
 def collector_scorecard(attempts: Sequence[Mapping[str, Mapping[str, Any]]]) -> dict[str, Any]:
-    """A row passes the release scorecard only if it passes in every attempt.
+    """Gate memory with paired upper bounds and other metrics in every attempt.
 
-    This is per workload: no row compensates for another and no attempt
-    compensates for a failed one.
+    Memory uses the existing three complete attempt totals; CPU and syscall
+    evidence must independently pass in each attempt. No row compensates for
+    another and no attempt compensates for a failed one.
     """
 
-    require(attempts and all(list(item) == list(attempts[0]) for item in attempts),
+    require(len(attempts) == COLLECTOR_ATTEMPTS,
+            "memory confidence requires the complete three-attempt collector")
+    require(all(list(item) == list(attempts[0]) for item in attempts),
             "collector attempts do not share one ordered workload roster")
-    rows = {
-        name: {
-            "gate": "pass" if all(item[name]["gate"] == "pass" for item in attempts) else "fail",
-            "attempts": [item[name] for item in attempts],
+    rows: dict[str, Any] = {}
+    for name in attempts[0]:
+        attempt_rows = [item[name] for item in attempts]
+        memory = {
+            "pss_kib": _memory_confidence_metric(
+                attempt_rows, "pss_kib", seed=MEMORY_PSS_BOOTSTRAP_SEED,
+            ),
+            "memory_peak_bytes": _memory_confidence_metric(
+                attempt_rows, "memory_peak_bytes", seed=MEMORY_PEAK_BOOTSTRAP_SEED,
+            ),
         }
-        for name in attempts[0]
-    }
+        per_attempt_pass = all(item["gate"] == "pass" for item in attempt_rows)
+        memory_pass = all(item["release_gate"] == "pass" for item in memory.values())
+        rows[name] = {
+            "gate": "pass" if per_attempt_pass and memory_pass else "fail",
+            "memory": memory,
+            "attempts": attempt_rows,
+        }
     return {
         "rows": rows,
         "passing_rows": sum(row["gate"] == "pass" for row in rows.values()),

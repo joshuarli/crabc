@@ -2688,20 +2688,14 @@ def memory_observer_probe(
     return result
 
 
-def memory_metric(
-    reference: int, candidate: int, *,
-    row: performance_profile.PerformanceRow | None = None, peak: bool = False,
-) -> dict[str, Any]:
-    """Record unchanged totals through the same exact policy used by replay."""
+def memory_metric(reference: int, candidate: int) -> dict[str, int]:
+    """Retain unchanged totals for the collector's paired memory analysis."""
 
-    require(type(reference) is int and reference >= 0 and type(candidate) is int and candidate >= 0,
-            "memory metric values are invalid")
-    return evidence._memory_metric(reference, candidate, row=row, peak=peak)
+    return evidence._memory_metric(reference, candidate)
 
 
 def memory_observer_comparison(
-    reference: Mapping[str, Any], candidate: Mapping[str, Any], *,
-    row: performance_profile.PerformanceRow | None = None,
+    reference: Mapping[str, Any], candidate: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Derive PSS plateau and full-process peak comparisons from raw records."""
 
@@ -2719,8 +2713,8 @@ def memory_observer_comparison(
         candidate_peak = candidate["cgroup_memory"]["memory_peak_after_exit_bytes"]
         return {
             "status": "ok",
-            "pss_max_kib": memory_metric(reference_pss, candidate_pss, row=row),
-            "memory_peak_after_exit_bytes": memory_metric(reference_peak, candidate_peak, row=row, peak=True),
+            "pss_max_kib": memory_metric(reference_pss, candidate_pss),
+            "memory_peak_after_exit_bytes": memory_metric(reference_peak, candidate_peak),
         }
     except (AdapterError, KeyError, TypeError, ValueError) as error:
         return {"status": "incomplete", "reason": str(error)}
@@ -2766,7 +2760,7 @@ def collect_memory_observers(
             "invocation": invocation,
             "musl": provider["musl"],
             "crabc": provider["crabc"],
-            "comparison": memory_observer_comparison(provider["musl"], provider["crabc"], row=row),
+            "comparison": memory_observer_comparison(provider["musl"], provider["crabc"]),
         }
     return result
 
