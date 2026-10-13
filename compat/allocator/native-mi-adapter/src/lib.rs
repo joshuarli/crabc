@@ -1362,8 +1362,12 @@ pub extern "C" fn mi_thread_set_in_threadpool() {
 
 #[no_mangle]
 /// # Safety
-/// `base` and `added` are live Theaps attached to the current thread's TLD;
-/// output pointers are writable for the duration of this call.
+/// `base` and `added` may be null; otherwise they point to live, correctly
+/// aligned, initialized Theaps attached to the calling thread's same TLD.
+/// Each output pointer may be null; otherwise it points to a writable,
+/// correctly aligned object of its type (`bool` or `c_long`) that remains live
+/// through the call. Non-null output objects are distinct and do not overlap
+/// either Theap or the shared TLD image.
 pub unsafe extern "C" fn crabc_test_threadpool_theap_policy(
     base: TheapPointer,
     added: TheapPointer,
@@ -1372,8 +1376,8 @@ pub unsafe extern "C" fn crabc_test_threadpool_theap_policy(
     added_retain: *mut c_long,
 ) -> bool {
     bind_thread();
-    // SAFETY: the C fixture supplies its current-thread Theaps and writable
-    // outputs; the engine validates the shared TLD before observing them.
+    // SAFETY: caller retains the two current-thread Theaps; the engine checks
+    // that they share a TLD before observing their policy fields.
     let Some((threadpool, original, later)) = (unsafe {
         heaps::threadpool_theap_policy(base, added)
     }) else {
@@ -1382,7 +1386,7 @@ pub unsafe extern "C" fn crabc_test_threadpool_theap_policy(
     if in_threadpool.is_null() || base_retain.is_null() || added_retain.is_null() {
         return false;
     }
-    // SAFETY: all output pointers were checked and the C fixture retains them.
+    // SAFETY: non-null outputs are valid typed objects per the caller contract.
     unsafe {
         in_threadpool.write(threadpool);
         base_retain.write(original as c_long);

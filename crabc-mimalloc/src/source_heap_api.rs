@@ -5,7 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0
-// - `src/init.c:976-979` (`mi_thread_set_in_threadpool`);
+// - `src/init.c:483-486` (`mi_thread_set_in_threadpool`);
 // - `src/theap.c:190-205` (the public guarded sampler controls);
 // - `src/alloc.c:868-947` (guarded request geometry and placement) and
 //   `src/alloc-aligned.c:30-49` (guarded alignment adjustment);
