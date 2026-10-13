@@ -8,7 +8,7 @@
 // (`mi_options_print_out`, the `mi_option_*` accessors and mutators,
 // `mi_register_output`, `mi_register_error`), `src/page.c:999-1003`
 // (`mi_register_deferred_free`), `src/stats.c:640-653` (`mi_stats_get`),
-// and `src/init.c:17-19` (`mi_version`).
+// and `src/options.c:20-22` (`mi_version`).
 
 //! Pinned mimalloc option, callback, and statistics public entries over the
 //! native runtime's process option table and output owner.
