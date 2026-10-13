@@ -11,6 +11,7 @@ set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly TLS_TMP_DIR="$ROOT_DIR/.work/tmp"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly ELF64_E_IDENT_VERSION_OFFSET=6
@@ -23,6 +24,9 @@ fail() {
     printf 'ERROR: x86 Static Initial TLS v1: %s\n' "$*" >&2
     exit 1
 }
+
+mkdir -p "$TLS_TMP_DIR"
+export TMPDIR="$TLS_TMP_DIR"
 
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -118,7 +122,7 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-static-tls-v1.XXXXXX)"
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-static-tls-v1.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
