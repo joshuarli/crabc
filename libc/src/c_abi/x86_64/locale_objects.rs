@@ -82,6 +82,7 @@ core::arch::global_asm!(
 const ENOENT: c_int = 2;
 const LC_CTYPE: c_int = 0;
 const LC_ALL: c_int = 6;
+#[cfg(not(crabc_x86_owned_runtime))]
 const LC_CTYPE_MASK: c_int = 1 << LC_CTYPE;
 
 const THREAD_GLOBAL: u8 = 0;

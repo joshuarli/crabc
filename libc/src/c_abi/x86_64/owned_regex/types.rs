@@ -12,7 +12,6 @@ use core::ffi::{c_char, c_int, c_long, c_void};
 
 // `include/bits/alltypes.h` fixes these installed x86-64 representations.
 pub(crate) type regoff_t = c_long;
-pub(crate) type tre_char_t = c_int;
 pub(crate) type tre_cint_t = u32;
 pub(crate) type tre_ctype_t = usize;
 
@@ -65,7 +64,6 @@ pub(crate) const ASSERT_AT_EOW: c_int = 32;
 pub(crate) const ASSERT_AT_WB: c_int = 64;
 pub(crate) const ASSERT_AT_WB_NEG: c_int = 128;
 pub(crate) const ASSERT_BACKREF: c_int = 256;
-pub(crate) const ASSERT_LAST: c_int = ASSERT_BACKREF;
 
 /// `tre_tag_direction_t` in `tre.h`.
 ///
