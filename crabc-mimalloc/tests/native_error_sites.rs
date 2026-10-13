@@ -1,6 +1,5 @@
-// Rust half of the M7 `_mi_error_message` site differential driven by
-// `compat/allocator/x86_64_m7_gate.py --error-sites-differential`. The pinned
-// C probe `x86_64_m7_error_sites_oracle.c` runs the matching `mi_malloc`,
+// Rust half of the `_mi_error_message` site differential driven by the native
+// allocator differential runner. The pinned C probe runs the matching `mi_malloc`,
 // `mi_malloc_aligned`, and `mi_malloc_aligned_at` requests under the same
 // `mimalloc_show_errors=1` environment and prints the same keys: the
 // TID-normalized output fragments, whether the request failed, and the errno

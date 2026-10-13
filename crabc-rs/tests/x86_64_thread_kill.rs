@@ -59,7 +59,7 @@ fn unmask_usr1_for_worker_inheritance() -> RestoreSignalMask {
     RestoreSignalMask(saved)
 }
 
-/// Proves the staged facade selects an exact live thread in the calling
+/// Proves the facade selects an exact live thread in the calling
 /// process, and keeps its process-wide signal disposition inside a disposable
 /// test child.
 #[test]

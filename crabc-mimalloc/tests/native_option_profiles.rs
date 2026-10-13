@@ -1,6 +1,5 @@
-// Rust half of the M7 option-profile differential driven by
-// `compat/allocator/x86_64_m7_gate.py --option-profiles-differential`. The
-// pinned C probe `x86_64_m7_option_profiles_oracle.c` runs the same
+// Rust half of the option-profile differential driven by the native
+// allocator differential runner. The pinned C probe runs the same
 // allocations under the same `mimalloc_*` environment image and prints the
 // same keys: the process PageMap's reserved size and full commitment, the
 // arena count after startup, the process THP state, then whether each

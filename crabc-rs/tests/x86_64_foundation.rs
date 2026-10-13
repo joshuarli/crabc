@@ -211,8 +211,8 @@ fn x86_64_direct_signal_and_ioctl_foundation_uses_only_admitted_capabilities() {
         flags: crabc_core::signal::SA_RESTORER,
         restorer: crabc_rs_x86_foundation_restorer as *const () as usize,
         // Signals 32, 33, and 34 are musl-reserved but must survive an action
-        // query/reinstall verbatim; public x86 masking APIs are intentionally
-        // not admitted yet.
+        // query/reinstall verbatim; the x86 facade deliberately has no
+        // masking API.
         mask: MUSL_RESERVED_MASK,
     };
     install_kernel_action(&raw_action);

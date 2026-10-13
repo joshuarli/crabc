@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// Rust half of the M3 persistent-owner local-path differential
-// (`compat/allocator/m3-local-engine-x86_64-v3.5.0.json`, component
-// `persistent-owner-local-path`).
+// Rust half of the persistent-owner local-path differential against the
+// pinned C allocator.
 //
 // One process runs one workload through the production
 // `native_allocate_aligned(size, 16)`/`native_free` boundary on one persistent
@@ -18,7 +17,7 @@
 // `crabc-mimalloc/src/single_thread/local_trace.rs`.
 //
 // The workloads never fill a page, so the default abandoning Theap never
-// reaches the M5 abandonment transition; every allocation is freed before the
+// reaches the abandonment transition; every allocation is freed before the
 // owner's ordinary source teardown.
 #![cfg(feature = "native-runtime-test-audit")]
 

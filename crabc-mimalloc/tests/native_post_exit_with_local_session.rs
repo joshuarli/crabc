@@ -54,7 +54,7 @@ fn allocate_owner_exit_aggregate() -> [usize; OWNER_EXIT_CLIENT_COUNT] {
         _ => panic!("the owner receives its OS-singleton native client"),
     };
 
-    // W01's B-side replacement must copy this exact bounded source prefix
+    // The B-side replacement must copy this exact bounded source prefix
     // before generic pointer-first nonlocal free consumes the aggregate
     // member. The old source address is stale after that successful return.
     unsafe {
@@ -147,7 +147,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
         }
 
         // SAFETY: A supplied this exact still-live aggregate address before
-        // its owner exited. W01 reads its PageMap facts, allocates B's
+        // its owner exited. The reallocation reads its PageMap facts, allocates B's
         // replacement, copies the bounded prefix, then consumes A's source
         // through generic pointer-first free without borrowing A's owner.
         let medium = unsafe { core::ptr::NonNull::new_unchecked(post_exit_clients[2] as *mut u8) };
@@ -176,7 +176,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
                 .is_some_and(|usable_size| usable_size >= 4096),
             "B's replacement covers its requested extent"
         );
-        // SAFETY: successful W01 reallocation copied the bounded 4 KiB
+        // SAFETY: successful nonlocal reallocation copied the bounded 4 KiB
         // prefix before it consumed the old `medium` source. The old address
         // must not be read or freed again after this point.
         assert_eq!(unsafe { replacement.as_ptr().read() }, 0x61);
@@ -193,7 +193,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
             .enumerate()
         {
             if index == 2 {
-                // W01 already consumed A's medium source while it created and
+                // The reallocation already consumed A's medium source while it created and
                 // copied B's replacement above, so it must not be offered to
                 // generic pointer-first free a second time.
                 continue;

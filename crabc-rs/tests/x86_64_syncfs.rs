@@ -48,7 +48,7 @@ fn x86_64_syncfs_requests_descriptor_associated_filesystem_writeback_for_a_live_
     );
 
     // `std::fs::File` remains the live descriptor owner for this safe facade
-    // call. The staged x86 facade intentionally has no pathname-opening API.
+    // call. The x86 facade intentionally has no pathname-opening API.
     fs::syncfs(borrow_file(&file)).expect("request the fixture's filesystem sync");
     assert_eq!(
         fs::tell(borrow_file(&file)).expect("observe position after syncfs"),

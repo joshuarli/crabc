@@ -174,7 +174,7 @@ struct ReplacementObservation {
 /// Pinned `src/alloc.c:379-451` allocates a replacement through the current
 /// owner, copies the old usable prefix, then sends the old pointer through the
 /// general pointer-first free path. A's owner has already exited here, so B
-/// can never reuse A's page in place. With W01 integrated, that PageMap-derived
+/// can never reuse A's page in place. The PageMap-derived
 /// nonlocal branch allocates B's distinct replacement, copies the bounded old
 /// usable prefix, and consumes exactly one A client through pointer-first free
 /// dispatch.

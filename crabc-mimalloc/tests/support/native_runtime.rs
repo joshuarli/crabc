@@ -1,9 +1,9 @@
 //! Musl-hosted native runtime test input.
 //!
 //! This support module is compiled only by integration tests. It is not a
-//! production allocator transport and does not claim crabc's selected x86 FILE
-//! integration. The pinned native harness provides musl's `fputs(message,
-//! stderr)` boundary for the explicit private M7 capability.
+//! production allocator transport and is not crabc's x86 FILE integration.
+//! The pinned native harness provides musl's `fputs(message, stderr)`
+//! boundary for the explicit private diagnostic-output capability.
 
 #[cfg(target_arch = "x86_64")]
 use core::ffi::{c_char, c_int, c_void};

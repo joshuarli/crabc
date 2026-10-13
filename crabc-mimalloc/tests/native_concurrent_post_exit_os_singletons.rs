@@ -222,7 +222,7 @@ fn assert_os_singleton_observation(observation: OsSingletonObservation) {
 ///
 /// One exited A leaves sixteen distinct 32-/64-MiB-aligned OS singletons; all
 /// sixteen fresh B threads synchronously query and free one distinct raw
-/// pointer. Before the W03 exact post-owner-exit PageMap mutation boundary,
+/// pointer. Before the exact post-owner-exit PageMap mutation boundary existed,
 /// this contention shape could return `Retained` (or lose usable-size
 /// visibility) for a valid source. No source owner, route, client ledger,
 /// release capability, retry, or test turn schedule is available to B.
