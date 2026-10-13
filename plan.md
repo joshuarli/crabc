@@ -395,7 +395,7 @@ owns, it reports the change and the owning lane makes it.
 | R6 | L | `ldso.dynamic-runtime` (4 capabilities) and `crt.dynamic-startup`: steps `loader-*`, `crt-dynamic-startup` | `ldso/`, `crt/`, `compat/x86_64/*loader*`, `general_*` | G1b | Those steps pass |
 | R7 | L | Products and ABI: steps `static-products`, `dynamic-products`, `static-sysroot`, `combined-sysroot`, then `abi-*`, plus the static-TLS oracle execution | `scripts/build_x86_64_owned_sysroot.py`, `scripts/build_x86_64_owned_dynamic_sysroot.py`, `libc/src/c_abi/x86_64/static_tls.rs`, sysroot contracts, `native_abi_*`, `header_*` | Static products: nothing. Dynamic products: G1b. Its `abi-*` half: R5 and R6 merged | Those steps pass on all four link modes |
 | R8 | M | Consumers: steps `rust-std-lto`, `lua-static`, `lua-dynamic`, `lua-admission` | `unwinder/`, `compat/lto/`, `compat/rust-std/`, `compat/lua/` | G1a, G1b; R7 merged | Those steps pass |
-| A0 | S | Allocator discovery, fixing nothing: run `allocator-m1` to `allocator-m7` and `source_convergence.py --summary --verbose`, each gate in its own worktree, and record every failing condition with the module it points at. | Worktrees only | A table in the campaign log of failing conditions by gate and by `crabc-mimalloc/src` module |
+| A0 | S | Allocator discovery, fixing nothing: run `allocator-m1` to `allocator-m7` and `source_convergence.py --summary` (without `--summary` for the full condition list), each gate in its own worktree, and record every failing condition with the module it points at. | Worktrees only | A table in the campaign log of failing conditions by gate and by `crabc-mimalloc/src` module |
 | A1 | L | Fix the two failures from G2 at their origin | `crabc-mimalloc/src` | G2 | Both G2 tests pass in release; opt0 passes or is parked per the prescribed decision |
 | A2 | S | Prove pointer-first realloc by behavior. Reading the code says `native_reallocate` routes by the page; no test realloc's a block owned by another live thread or a block on an abandoned page. Add both; fix the product if either refuses. | `crabc-mimalloc/src` | A1 | Two named unit tests pass; `python3 -B compat/allocator/architecture_ratchet.py --check` still exits 0 |
 | A3 | L | Allocator milestones M1 to M7. `--check` only validates a gate's contract and passes today; the gate itself must run. | `crabc-mimalloc/src`, `compat/allocator/` gates and fixtures | A0; a module group starts when its files are free | `./compat/allocator/run-x86_64.sh allocator-mN` exits 0 for N in 1..7 with `overall_status: passed` in its report (`--qualification-profile full` for M5, which M9 and M10 read; `baseline` for M6 and M7) |
@@ -501,6 +501,20 @@ Forbidden:
 
 Made so far, each with its commit, for the owner:
 
+- `ee4a6b41c` (T0): ledger checks structure by default; qualification and
+  promotion explicitly require current physical receipts.
+- `486960326` (T5): correctness/full cohort profiles, reviewed product
+  publication and input sealing when each group is first consumed.
+- `7fb666ca8` (T1): accepted-C runtime promotion closure; runtime/facade
+  release evidence separated from unchanged native allocator thresholds in M9.
+- `d946ccdff`, `8ccb393ed` (T3/T2): current correctness-chain admission;
+  runtime CPU and paired memory upper-95 release bounds at 1.00, with 0.90
+  retained as a reporting target. Memory uses the three retained attempts.
+- `78c303340` (G1b): 59 archives re-pinned to one authenticated v3.24 index
+  after the original bytes could not be recovered from the canonical source
+  or two mirrors; package and scenario rosters unchanged.
+- `db004cc5e` (M2): bitmap evidence checks the complete producer-listed
+  roster and each exact outcome instead of a stale expected test count.
 - `d7ec2008f` (T4): M10 accepts `--qualification-receipt` and requires a
   passing full-profile chain bound to the current revision for its rerun
   condition; native and native-shadow both receive the ELF ownership audit.
@@ -601,6 +615,47 @@ Append one line per merge batch, per parked item, and per contract change.
   Static-TLS oracle, installed pthread lifecycle and primary POSIX components
   pass in their lanes; merged batch verification is running in a detached
   checkout. No qualification or promotion claim has changed.
+
+- 2026-10-13: second integration batch through `d62e9d910`: T0, T1,
+  T2, T3 and T5, complete corpus inputs, Lua seed confinement, pthread
+  dispatcher argument preservation, source-faithful child Heap teardown,
+  process-global statistics observation, stale R7 driver/fenv expectations,
+  allocator public-Theap and pointer-first realloc regressions, bitmap
+  roster validation, exact startup-recursion filters, and source-map
+  reconciliation. Focused lane checks pass. Merged-tree structural checks
+  and all nine Rust profiles pass; every host-side test directory is running
+  in the frozen verification worktree. No qualification claim changed.
+- 2026-10-13: H0 started at throwaway `21e9a89cf` in
+  `.work/wt/cohort-rehearsal`: 25 functional families declared, five
+  family receipts named, derived inventory regenerated. Fresh preparation
+  authenticates all 59 APKs; correctness dry-run has no preflight blocker.
+  This branch is never merged and is not a qualification of main.
+- 2026-10-13: G2 release public-Theap fixture passes all 112 C/Rust keys:
+  `./compat/allocator/run-x86_64.sh allocator-public-theap`.
+  Its `--debug` 16-KiB worker attaches, then SIGSEGVs allocating 64 bytes;
+  three real hypotheses localized opt0 stack exhaustion. Opt0 parked on
+  `lane/allocator-failures`; its later child/fork legs remain untested.
+  The release child and fork regressions pass; no release failure reproduced.
+- 2026-10-13: R6 direct-staticlib private source-root fixtures parked after
+  three linker hypotheses: prebuilt core retains `rust_eh_personality`.
+  Cargo target-root graph/TLS equivalents and relocation/CRT/lifecycle
+  checks pass. Evidence and exact commands are in
+  `docs/evidence/native-static-source-runtime-closure.md`; parked branch
+  `lane/r6-loader`. Installed-product family acceptance remains independent.
+- 2026-10-13: A0 discovery: M1 found child Heap teardown/statistics defects
+  now fixed; M2 found stale bitmap count and three zero-test startup filters
+  now fixed. M3 trace pairs match 458,179 ordered observations, M4 valid
+  operation/page/alignment clients match, Heap/subprocess lifecycle matches,
+  and M7 options matches 660 keys. These are lane discovery, not current
+  full milestone passes. Source convergence still reports 180 unmet rows,
+  29 transitional, five intentional-difference and two register conditions.
+  Complete source-unit audits continue across all four allocator groups.
+- 2026-10-13: long discovery aggregates have narrow iteration routes:
+  exact `allocator-unit --filter NAME`, individual M2/M7 producers, and
+  M3 `--queue-reorder-only`. Do not repeat cold aggregates to iterate on
+  a named assertion. M7's first statistics discovery remains running;
+  host memory stays above the 12-GiB reserve. Performance reconnaissance
+  under load remains diagnostic and has made no product changes.
 
 ## For the owner afterwards
 
