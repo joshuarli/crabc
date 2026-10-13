@@ -477,6 +477,24 @@ TRACE_KEYS = (
     "m2.vm.external.page_extension.retry_commits_without_callback",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
+    "m2.vm.numa.controlled.multi.count",
+    "m2.vm.numa.controlled.multi.cached_count",
+    "m2.vm.numa.controlled.multi.current",
+    "m2.vm.numa.controlled.multi.raw_count_calls",
+    "m2.vm.numa.controlled.multi.raw_current_calls",
+    "m2.vm.numa.controlled.single.count",
+    "m2.vm.numa.controlled.single.current",
+    "m2.vm.numa.controlled.single.raw_count_calls",
+    "m2.vm.numa.controlled.single.raw_current_calls",
+    "m2.vm.numa.controlled.int_max.count",
+    "m2.vm.numa.controlled.oversized.count",
+    "m2.vm.numa.controlled.zero.count",
+    "m2.vm.numa.controlled.count_edges.raw_count_calls",
+    "m2.vm.numa.controlled.current_below_int_max",
+    "m2.vm.numa.controlled.current_at_int_max",
+    "m2.vm.numa.controlled.current_above_int_max",
+    "m2.vm.numa.controlled.current_edges.raw_count_calls",
+    "m2.vm.numa.controlled.current_edges.raw_current_calls",
     "m2.vm.aligned_hint.cold_missing_default_advances_cursor",
     "m2.vm.aligned_hint.eligibility_and_geometry",
     "m2.vm.aligned_hint.initialized_first_randomized_start",
@@ -502,6 +520,28 @@ TRACE_KEYS = (
     "m2.vm.large_only.all_raw_maps_are_huge_and_no_regular_owner",
     "m2.vm.large_only.terminal_failures_leave_statistics_and_owners_unpublished",
 )
+NUMA_INT_MAX = 2**31 - 1
+CONTROLLED_NUMA_EXPECTED_VALUES = {
+    "m2.vm.numa.controlled.multi.count": 3,
+    "m2.vm.numa.controlled.multi.cached_count": 3,
+    "m2.vm.numa.controlled.multi.current": 2,
+    "m2.vm.numa.controlled.multi.raw_count_calls": 1,
+    "m2.vm.numa.controlled.multi.raw_current_calls": 1,
+    "m2.vm.numa.controlled.single.count": 1,
+    "m2.vm.numa.controlled.single.current": 0,
+    "m2.vm.numa.controlled.single.raw_count_calls": 1,
+    "m2.vm.numa.controlled.single.raw_current_calls": 0,
+    "m2.vm.numa.controlled.int_max.count": NUMA_INT_MAX,
+    "m2.vm.numa.controlled.oversized.count": 1,
+    "m2.vm.numa.controlled.zero.count": 1,
+    "m2.vm.numa.controlled.count_edges.raw_count_calls": 3,
+    "m2.vm.numa.controlled.current_below_int_max": (NUMA_INT_MAX - 1) % 5,
+    "m2.vm.numa.controlled.current_at_int_max": 0,
+    "m2.vm.numa.controlled.current_above_int_max": 0,
+    "m2.vm.numa.controlled.current_edges.raw_count_calls": 0,
+    "m2.vm.numa.controlled.current_edges.raw_current_calls": 3,
+}
+
 TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     {
         "m2.vm.config.page_size",
@@ -519,7 +559,7 @@ TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
         "m2.vm.offset.good_size",
         "m2.vm.policy.first_arena_size",
     }
-)
+).difference(CONTROLLED_NUMA_EXPECTED_VALUES)
 TRACE_FALSE_KEYS = frozenset(
     {
         "m2.vm.config.has_transparent_huge_pages",
@@ -1226,6 +1266,11 @@ def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
             raise ValueError(f"{source} M2 VM trace has invalid allocation extent: {key}")
     if trace["m2.vm.policy.first_arena_size"] != 128 * 1024 * 1024:
         raise ValueError(f"{source} M2 VM trace has an invalid bounded first-arena extent")
+    for key, expected in CONTROLLED_NUMA_EXPECTED_VALUES.items():
+        if trace[key] != expected:
+            raise ValueError(
+                f"{source} M2 VM controlled NUMA relation changed: {key}={trace[key]}, expected {expected}"
+            )
 
 
 def _compare(c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness: Any) -> dict[str, Any]:

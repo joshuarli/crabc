@@ -469,6 +469,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "m2.vm.aligned.good_size": 4096,
                 "m2.vm.offset.good_size": 17 * 4096,
                 "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
+                **producer.CONTROLLED_NUMA_EXPECTED_VALUES,
             }
         )
         trace = "\n".join(
@@ -481,6 +482,32 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             producer.parse_trace(missing_retry, source="test")
+
+    def test_controlled_numa_trace_requires_cache_call_order_and_boundaries(self):
+        producer = RUNNER._m2_x86_64_vm_producer()
+        expected = producer.CONTROLLED_NUMA_EXPECTED_VALUES
+        self.assertTrue(set(expected).issubset(producer.TRACE_KEYS))
+        values = {key: 1 for key in producer.TRACE_KEYS}
+        values.update(
+            {
+                "m2.vm.config.page_size": 4096,
+                "m2.vm.config.large_page_size": 2 * 1024 * 1024,
+                "m2.vm.config.alloc_granularity": 4096,
+                "m2.vm.config.has_transparent_huge_pages": 0,
+                "m2.vm.reserved.initially_committed": 0,
+                "m2.vm.normal.good_size": 4096,
+                "m2.vm.aligned.alignment": 64 * 1024,
+                "m2.vm.aligned.good_size": 4096,
+                "m2.vm.offset.good_size": 17 * 4096,
+                "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
+                **expected,
+            }
+        )
+        producer._validate_trace_values(values, source="test")
+
+        values["m2.vm.numa.controlled.multi.raw_count_calls"] = 2
+        with self.assertRaises(ValueError):
+            producer._validate_trace_values(values, source="test")
 
     def test_policy_trace_schema_requires_the_bounded_option_hint_large_and_thp_relations(self):
         """Keep the coherent policy slice explicit in the C/Rust record."""

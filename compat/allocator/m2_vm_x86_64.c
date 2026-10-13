@@ -78,12 +78,33 @@ static uintptr_t m2_aligned_hint_fetch_add(
 static bool m2_aligned_hint_compare_exchange(
     _Atomic(uintptr_t)* cursor, uintptr_t* expected, uintptr_t desired);
 
+typedef struct m2_numa_raw_answers_s {
+  bool active;
+  size_t count_answer;
+  size_t current_answers[3];
+  size_t current_answer_count;
+  size_t current_answer_index;
+  size_t count_calls;
+  size_t current_calls;
+} m2_numa_raw_answers_t;
+
+static m2_numa_raw_answers_t m2_numa_raw_answers = {0};
+static size_t m2_os_numa_node_count_primitive(void);
+static size_t m2_os_numa_node_primitive(void);
+static long m2_os_numa_option_get(mi_option_t option);
+
 #undef mi_atomic_add_acq_rel
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_add_acq_rel(p, x) m2_aligned_hint_fetch_add((p), (x))
 #define mi_atomic_cas_strong_acq_rel(p, expected, desired) \
   m2_aligned_hint_compare_exchange((p), (expected), (desired))
+#define _mi_prim_numa_node_count m2_os_numa_node_count_primitive
+#define _mi_prim_numa_node m2_os_numa_node_primitive
+#define mi_option_get m2_os_numa_option_get
 #include "os.c"
+#undef mi_option_get
+#undef _mi_prim_numa_node
+#undef _mi_prim_numa_node_count
 #undef mi_atomic_add_acq_rel
 #undef mi_atomic_cas_strong_acq_rel
 /* Restore the pinned atomic spellings before directly including the other
@@ -196,6 +217,116 @@ static int m2_detection_sysinfo(struct sysinfo* info);
 #else
 #include "prim/prim.c"
 #endif
+
+/* The fixed no-option NUMA witness exercises the literal `os.c` wrappers with
+ * controlled raw primitive answers. These aliases apply to `os.c` only; every
+ * inactive call delegates to the ordinary pinned primitive and option code. */
+static size_t m2_os_numa_node_count_primitive(void) {
+  if (!m2_numa_raw_answers.active) return _mi_prim_numa_node_count();
+  m2_numa_raw_answers.count_calls++;
+  return m2_numa_raw_answers.count_answer;
+}
+
+static size_t m2_os_numa_node_primitive(void) {
+  if (!m2_numa_raw_answers.active) return _mi_prim_numa_node();
+  m2_numa_raw_answers.current_calls++;
+  const size_t index = m2_numa_raw_answers.current_answer_index++;
+  if (index >= m2_numa_raw_answers.current_answer_count) return 0;
+  return m2_numa_raw_answers.current_answers[index];
+}
+
+static long m2_os_numa_option_get(mi_option_t option) {
+  if (m2_numa_raw_answers.active && option == mi_option_use_numa_nodes) return -1;
+  return mi_option_get(option);
+}
+
+typedef struct m2_numa_controlled_trace_s {
+  size_t multi_count;
+  size_t multi_cached_count;
+  size_t multi_current;
+  size_t multi_raw_count_calls;
+  size_t multi_raw_current_calls;
+  size_t single_count;
+  size_t single_current;
+  size_t single_raw_count_calls;
+  size_t single_raw_current_calls;
+  size_t int_max_count;
+  size_t oversized_count;
+  size_t zero_count;
+  size_t count_edges_raw_count_calls;
+  size_t current_below_int_max;
+  size_t current_at_int_max;
+  size_t current_above_int_max;
+  size_t current_edges_raw_count_calls;
+  size_t current_edges_raw_current_calls;
+} m2_numa_controlled_trace_t;
+
+/* Exercise the actual source cache with controlled raw answers, then restore
+ * the host observation so this witness cannot change later allocator work. */
+static m2_numa_controlled_trace_t m2_capture_controlled_numa_trace(void) {
+  const size_t saved_count = mi_atomic_load_acquire(&mi_numa_node_count);
+  m2_numa_controlled_trace_t trace = {0};
+  memset(&m2_numa_raw_answers, 0, sizeof(m2_numa_raw_answers));
+  m2_numa_raw_answers.active = true;
+
+  mi_atomic_store_release(&mi_numa_node_count, 0);
+  m2_numa_raw_answers.count_answer = 3;
+  m2_numa_raw_answers.current_answers[0] = 8;
+  m2_numa_raw_answers.current_answer_count = 1;
+  trace.multi_count = (size_t)_mi_os_numa_node_count();
+  trace.multi_cached_count = (size_t)_mi_os_numa_node_count();
+  trace.multi_current = (size_t)_mi_os_numa_node();
+  trace.multi_raw_count_calls = m2_numa_raw_answers.count_calls;
+  trace.multi_raw_current_calls = m2_numa_raw_answers.current_calls;
+
+  mi_atomic_store_release(&mi_numa_node_count, 0);
+  m2_numa_raw_answers.count_calls = 0;
+  m2_numa_raw_answers.current_calls = 0;
+  m2_numa_raw_answers.current_answer_index = 0;
+  m2_numa_raw_answers.count_answer = 0;
+  m2_numa_raw_answers.current_answers[0] = 23;
+  trace.single_count = (size_t)_mi_os_numa_node_count();
+  trace.single_current = (size_t)_mi_os_numa_node();
+  trace.single_raw_count_calls = m2_numa_raw_answers.count_calls;
+  trace.single_raw_current_calls = m2_numa_raw_answers.current_calls;
+
+  mi_atomic_store_release(&mi_numa_node_count, 0);
+  m2_numa_raw_answers.count_calls = 0;
+  m2_numa_raw_answers.count_answer = INT_MAX;
+  trace.int_max_count = (size_t)_mi_os_numa_node_count();
+  trace.count_edges_raw_count_calls += m2_numa_raw_answers.count_calls;
+
+  mi_atomic_store_release(&mi_numa_node_count, 0);
+  m2_numa_raw_answers.count_calls = 0;
+  m2_numa_raw_answers.count_answer = (size_t)INT_MAX + 1;
+  trace.oversized_count = (size_t)_mi_os_numa_node_count();
+  trace.count_edges_raw_count_calls += m2_numa_raw_answers.count_calls;
+
+  mi_atomic_store_release(&mi_numa_node_count, 0);
+  m2_numa_raw_answers.count_calls = 0;
+  m2_numa_raw_answers.count_answer = 0;
+  trace.zero_count = (size_t)_mi_os_numa_node_count();
+  trace.count_edges_raw_count_calls += m2_numa_raw_answers.count_calls;
+
+  mi_atomic_store_release(&mi_numa_node_count, 5);
+  m2_numa_raw_answers.count_calls = 0;
+  m2_numa_raw_answers.current_calls = 0;
+  m2_numa_raw_answers.current_answer_index = 0;
+  m2_numa_raw_answers.current_answer_count = 3;
+  m2_numa_raw_answers.current_answers[0] = (size_t)INT_MAX - 1;
+  m2_numa_raw_answers.current_answers[1] = (size_t)INT_MAX;
+  m2_numa_raw_answers.current_answers[2] = (size_t)INT_MAX + 1;
+  trace.current_below_int_max = (size_t)_mi_os_numa_node();
+  trace.current_at_int_max = (size_t)_mi_os_numa_node();
+  trace.current_above_int_max = (size_t)_mi_os_numa_node();
+  trace.current_edges_raw_count_calls = m2_numa_raw_answers.count_calls;
+  trace.current_edges_raw_current_calls = m2_numa_raw_answers.current_calls;
+
+  m2_numa_raw_answers.active = false;
+  mi_atomic_store_release(&mi_numa_node_count, saved_count);
+  return trace;
+}
+
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, exp, des) \
   mi_atomic_cas_strong((p), (exp), (des), mi_memory_order(acq_rel), mi_memory_order(acquire))
@@ -5920,6 +6051,7 @@ int main(void) {
   const int numa_count = _mi_os_numa_node_count();
   const int numa_current = _mi_os_numa_node();
   if (numa_count < 1 || numa_current < 0 || numa_current >= numa_count) return 30;
+  const m2_numa_controlled_trace_t numa_controlled = m2_capture_controlled_numa_trace();
 
   puts("CRABC_MI_M2_VM_TRACE_BEGIN");
   U("m2.vm.config.page_size", page);
@@ -6058,6 +6190,27 @@ int main(void) {
       external_callback.page_extension_retry_commits_without_callback);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
+  U("m2.vm.numa.controlled.multi.count", numa_controlled.multi_count);
+  U("m2.vm.numa.controlled.multi.cached_count", numa_controlled.multi_cached_count);
+  U("m2.vm.numa.controlled.multi.current", numa_controlled.multi_current);
+  U("m2.vm.numa.controlled.multi.raw_count_calls", numa_controlled.multi_raw_count_calls);
+  U("m2.vm.numa.controlled.multi.raw_current_calls", numa_controlled.multi_raw_current_calls);
+  U("m2.vm.numa.controlled.single.count", numa_controlled.single_count);
+  U("m2.vm.numa.controlled.single.current", numa_controlled.single_current);
+  U("m2.vm.numa.controlled.single.raw_count_calls", numa_controlled.single_raw_count_calls);
+  U("m2.vm.numa.controlled.single.raw_current_calls", numa_controlled.single_raw_current_calls);
+  U("m2.vm.numa.controlled.int_max.count", numa_controlled.int_max_count);
+  U("m2.vm.numa.controlled.oversized.count", numa_controlled.oversized_count);
+  U("m2.vm.numa.controlled.zero.count", numa_controlled.zero_count);
+  U("m2.vm.numa.controlled.count_edges.raw_count_calls",
+      numa_controlled.count_edges_raw_count_calls);
+  U("m2.vm.numa.controlled.current_below_int_max", numa_controlled.current_below_int_max);
+  U("m2.vm.numa.controlled.current_at_int_max", numa_controlled.current_at_int_max);
+  U("m2.vm.numa.controlled.current_above_int_max", numa_controlled.current_above_int_max);
+  U("m2.vm.numa.controlled.current_edges.raw_count_calls",
+      numa_controlled.current_edges_raw_count_calls);
+  U("m2.vm.numa.controlled.current_edges.raw_current_calls",
+      numa_controlled.current_edges_raw_current_calls);
   U("m2.vm.aligned_hint.cold_missing_default_advances_cursor",
       aligned_hint_cold_missing_default_advances);
   U("m2.vm.aligned_hint.eligibility_and_geometry",

@@ -5915,6 +5915,151 @@ pub(crate) fn test_os_numa_node_with_raw(
     os_numa_node_with_raw(cache, raw_count, raw_current)
 }
 
+#[cfg(test)]
+struct ControlledOsNumaWrapperTrace {
+    multi_count: usize,
+    multi_cached_count: usize,
+    multi_current: usize,
+    multi_raw_count_calls: usize,
+    multi_raw_current_calls: usize,
+    single_count: usize,
+    single_current: usize,
+    single_raw_count_calls: usize,
+    single_raw_current_calls: usize,
+    int_max_count: usize,
+    oversized_count: usize,
+    zero_count: usize,
+    count_edges_raw_count_calls: usize,
+    current_below_int_max: usize,
+    current_at_int_max: usize,
+    current_above_int_max: usize,
+    current_edges_raw_count_calls: usize,
+    current_edges_raw_current_calls: usize,
+}
+
+// Reuse the production cache and normalization helpers while keeping the
+// process-wide topology cache isolated from this controlled trace.
+#[cfg(test)]
+fn controlled_os_numa_wrapper_trace() -> ControlledOsNumaWrapperTrace {
+    let mut multi_raw_count_calls = 0;
+    let mut multi_raw_current_calls = 0;
+    let multi_cache = AtomicUsize::new(0);
+    let multi_count = os_numa_node_count_with_raw(&multi_cache, || {
+        multi_raw_count_calls += 1;
+        3
+    });
+    let multi_cached_count = os_numa_node_count_with_raw(&multi_cache, || {
+        multi_raw_count_calls += 1;
+        7
+    });
+    let multi_current = os_numa_node_with_raw(
+        &multi_cache,
+        || {
+            multi_raw_count_calls += 1;
+            9
+        },
+        || {
+            multi_raw_current_calls += 1;
+            8
+        },
+    );
+
+    let mut single_raw_count_calls = 0;
+    let mut single_raw_current_calls = 0;
+    let single_cache = AtomicUsize::new(0);
+    let single_count = os_numa_node_count_with_raw(&single_cache, || {
+        single_raw_count_calls += 1;
+        0
+    });
+    let single_current = os_numa_node_with_raw(
+        &single_cache,
+        || {
+            single_raw_count_calls += 1;
+            4
+        },
+        || {
+            single_raw_current_calls += 1;
+            23
+        },
+    );
+
+    let int_max = NUMA_NODE_INT_MAX;
+    let mut count_edges_raw_count_calls = 0;
+    let int_max_cache = AtomicUsize::new(0);
+    let int_max_count = os_numa_node_count_with_raw(&int_max_cache, || {
+        count_edges_raw_count_calls += 1;
+        int_max
+    });
+    let oversized_cache = AtomicUsize::new(0);
+    let oversized_count = os_numa_node_count_with_raw(&oversized_cache, || {
+        count_edges_raw_count_calls += 1;
+        int_max + 1
+    });
+    let zero_cache = AtomicUsize::new(0);
+    let zero_count = os_numa_node_count_with_raw(&zero_cache, || {
+        count_edges_raw_count_calls += 1;
+        0
+    });
+
+    let boundary_cache = AtomicUsize::new(5);
+    let mut current_edges_raw_count_calls = 0;
+    let mut current_edges_raw_current_calls = 0;
+    let current_below_int_max = os_numa_node_with_raw(
+        &boundary_cache,
+        || {
+            current_edges_raw_count_calls += 1;
+            5
+        },
+        || {
+            current_edges_raw_current_calls += 1;
+            int_max - 1
+        },
+    );
+    let current_at_int_max = os_numa_node_with_raw(
+        &boundary_cache,
+        || {
+            current_edges_raw_count_calls += 1;
+            5
+        },
+        || {
+            current_edges_raw_current_calls += 1;
+            int_max
+        },
+    );
+    let current_above_int_max = os_numa_node_with_raw(
+        &boundary_cache,
+        || {
+            current_edges_raw_count_calls += 1;
+            5
+        },
+        || {
+            current_edges_raw_current_calls += 1;
+            int_max + 1
+        },
+    );
+
+    ControlledOsNumaWrapperTrace {
+        multi_count,
+        multi_cached_count,
+        multi_current,
+        multi_raw_count_calls,
+        multi_raw_current_calls,
+        single_count,
+        single_current,
+        single_raw_count_calls,
+        single_raw_current_calls,
+        int_max_count,
+        oversized_count,
+        zero_count,
+        count_edges_raw_count_calls,
+        current_below_int_max,
+        current_at_int_max,
+        current_above_int_max,
+        current_edges_raw_count_calls,
+        current_edges_raw_current_calls,
+    }
+}
+
 /// Performs the Unix source's `_mi_prim_thread_yield`, which is `sleep(0)`.
 ///
 /// Pinned musl implements `sleep(0)` as one `nanosleep` of a zero interval,
@@ -15765,6 +15910,7 @@ mod tests {
 
         let numa_count = os_numa_node_count();
         let numa_current = os_numa_node();
+        let numa_controlled = controlled_os_numa_wrapper_trace();
         assert!(numa_count >= 1, "the allocator-facing NUMA cache normalizes to one");
         assert!(numa_current < numa_count, "the source current-node route normalizes modulo count");
 
@@ -16000,6 +16146,24 @@ mod tests {
         );
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
+        emit!("m2.vm.numa.controlled.multi.count", numa_controlled.multi_count);
+        emit!("m2.vm.numa.controlled.multi.cached_count", numa_controlled.multi_cached_count);
+        emit!("m2.vm.numa.controlled.multi.current", numa_controlled.multi_current);
+        emit!("m2.vm.numa.controlled.multi.raw_count_calls", numa_controlled.multi_raw_count_calls);
+        emit!("m2.vm.numa.controlled.multi.raw_current_calls", numa_controlled.multi_raw_current_calls);
+        emit!("m2.vm.numa.controlled.single.count", numa_controlled.single_count);
+        emit!("m2.vm.numa.controlled.single.current", numa_controlled.single_current);
+        emit!("m2.vm.numa.controlled.single.raw_count_calls", numa_controlled.single_raw_count_calls);
+        emit!("m2.vm.numa.controlled.single.raw_current_calls", numa_controlled.single_raw_current_calls);
+        emit!("m2.vm.numa.controlled.int_max.count", numa_controlled.int_max_count);
+        emit!("m2.vm.numa.controlled.oversized.count", numa_controlled.oversized_count);
+        emit!("m2.vm.numa.controlled.zero.count", numa_controlled.zero_count);
+        emit!("m2.vm.numa.controlled.count_edges.raw_count_calls", numa_controlled.count_edges_raw_count_calls);
+        emit!("m2.vm.numa.controlled.current_below_int_max", numa_controlled.current_below_int_max);
+        emit!("m2.vm.numa.controlled.current_at_int_max", numa_controlled.current_at_int_max);
+        emit!("m2.vm.numa.controlled.current_above_int_max", numa_controlled.current_above_int_max);
+        emit!("m2.vm.numa.controlled.current_edges.raw_count_calls", numa_controlled.current_edges_raw_count_calls);
+        emit!("m2.vm.numa.controlled.current_edges.raw_current_calls", numa_controlled.current_edges_raw_current_calls);
         emit!(
             "m2.vm.aligned_hint.cold_missing_default_advances_cursor",
             u8::from(aligned_hint_cold_missing_default_advances)
