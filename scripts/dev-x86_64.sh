@@ -188,7 +188,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-static  run the owned-static product gate when its prerequisites close
   campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
   campaign-qualification  run the ordered qualification gate when it is ready
-  qualification-manifest [--profile correctness|full] [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
+  qualification-manifest [--profile correctness|full] [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH [--json]|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
   promotion-closure --qualification-receipt PATH  reread current complete qualification and native-default products
   campaign-promotion-check [--qualification-receipt PATH]  run the final promotion gate when it is ready
   campaign-all [--qualification-receipt PATH]  run the complete native x86 campaign gate sequence
@@ -10374,6 +10374,9 @@ PY
         elif [ "$#" -eq 2 ] && [ "$1" = --validate-receipt ]; then
             qualification_receipt="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
             set -- --validate-receipt "$qualification_receipt"
+        elif [ "$#" -eq 3 ] && [ "$1" = --validate-receipt ] && [ "$3" = --json ]; then
+            qualification_receipt="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
+            set -- --validate-receipt "$qualification_receipt" --json
         elif [ "$#" -eq 2 ] && [ "$1" = --through ]; then
             qualification_gate_known "$2" || fail "qualification-manifest has an unknown prefix endpoint"
         elif [ "$#" -eq 4 ] && [ "$1" = --publish ]; then
@@ -10382,7 +10385,7 @@ PY
             qualification_receipt="$(translate_owned_posix_product "$4" receipt-file)" || exit 2
             set -- --publish "$2" "$3" "$qualification_receipt"
         else
-            fail "qualification-manifest accepts no arguments, --through GATE, --status, --publish GATE PUBLICATION RECEIPT, --private-admission, or --validate-receipt PATH"
+            fail "qualification-manifest accepts no arguments, --through GATE, --status, --publish GATE PUBLICATION RECEIPT, --private-admission, or --validate-receipt PATH [--json]"
         fi
         ensure_image
         run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py "$@" "${qualification_profile_arguments[@]}"

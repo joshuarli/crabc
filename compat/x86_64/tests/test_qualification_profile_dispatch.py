@@ -73,6 +73,16 @@ class QualificationProfileDispatchTests(unittest.TestCase):
                 with self.subTest(arguments=arguments):
                     self.assert_rejected(*arguments)
 
+    def test_json_receipt_validation_translates_the_receipt_and_preserves_the_flag(self) -> None:
+        receipt = self.work / "receipt.json"
+        receipt.write_text("{}")
+        arguments = self.runner_arguments("--validate-receipt", str(receipt), "--json")
+        self.assertEqual(arguments, [
+            "--validate-receipt",
+            "/workspace/.work/x86_64/" + receipt.relative_to(self.work).as_posix(),
+            "--json",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()
