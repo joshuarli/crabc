@@ -1852,8 +1852,7 @@ int main(int argc, char** argv) {
             guarded_rate, guarded_seed);
   }
   const char* scenario = argv[1];
-  if (valid_domain && (strncmp(scenario, "source-client:", 14) == 0
-      || strncmp(scenario, "precondition:", 13) == 0
+  if (valid_domain && (strncmp(scenario, "precondition:", 13) == 0
       || strncmp(scenario, "abort:", 6) == 0)) { return 2; }
   if (strncmp(scenario, "source-client:", 14) == 0) { return run_source_client_control(scenario + 14); }
   if (strncmp(scenario, "precondition:", 13) == 0) { return run_precondition_control(scenario + 13); }
