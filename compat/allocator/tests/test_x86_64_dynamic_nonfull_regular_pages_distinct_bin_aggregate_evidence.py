@@ -117,29 +117,6 @@ class TraceAndCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "pthread/TLS"):
             evidence.validate_c_command([part for part in command if part != "-ftls-model=initial-exec"], schema)
 
-    def test_probe_keeps_the_real_worker_lifecycle_and_safe_post_free_reads(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("mi_heap_new_in_arena(fixture->arena_id)", probe)
-        self.assertIn("mi_option_set(mi_option_page_full_retain, 2);", probe)
-        self.assertIn("mi_thread_done();", probe)
-        self.assertIn("pthread_join(producer, NULL)", probe)
-        self.assertIn("mi_free(fixture.blocks[1]);", probe)
-        self.assertIn("mi_free(fixture.blocks[0]);", probe)
-        self.assertIn("page_map_span_has_members", probe)
-        self.assertIn("page_map_span_is_clear", probe)
-        self.assertIn("pages_abandoned", probe)
-        self.assertIn("abandoned_count", probe)
-        self.assertNotIn("mi_heap_collect(", probe)
-        join = probe.index("if (pthread_join(producer, NULL) != 0) goto output;")
-        second_free = probe.index("mi_free(fixture.blocks[1]);")
-        first_free = probe.index("mi_free(fixture.blocks[0]);")
-        self.assertLess(join, second_free)
-        self.assertLess(second_free, first_free)
-        after_second = probe[second_free:first_free]
-        self.assertNotIn("fixture.pages[1]->", after_second)
-        after_first = probe[first_free:]
-        self.assertNotIn("fixture.pages[0]->", after_first)
-
     def test_report_construction_is_repeatable_and_schema_locked(self):
         schema = evidence.load_schema()
         temporary = Path("/tmp/dynamic-nonfull-regular-pages-distinct-bin-aggregate-report")

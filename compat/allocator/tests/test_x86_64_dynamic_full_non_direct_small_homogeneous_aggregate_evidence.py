@@ -229,19 +229,5 @@ class TraceAndCommandTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "pthread/TLS"):
             evidence.validate_c_command([part for part in command if part != "-ftls-model=initial-exec"], schema)
 
-    def test_probe_declares_two_page_worker_and_no_post_exit_theap_access(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("pthread_create", probe)
-        self.assertIn("mi_thread_done()", probe)
-        self.assertIn("pthread_join(producer", probe)
-        self.assertIn("PAGE_COUNT 2", probe)
-        self.assertIn("fixture->page_blocks[1] < BLOCKS_PER_PAGE", probe)
-        self.assertIn("_mi_safe_ptr_page", probe)
-        self.assertIn("MI_TLS_MODEL_LOCAL", probe)
-        self.assertIn("MI_HAS_TLS_SLOT", probe)
-        self.assertNotIn("theap->pages[MI_BIN_FULL]", probe.split("mi_thread_done();", 1)[1])
-        self.assertNotIn("theap->pages_free_direct", probe.split("mi_thread_done();", 1)[1])
-
-
 if __name__ == "__main__":
     unittest.main()

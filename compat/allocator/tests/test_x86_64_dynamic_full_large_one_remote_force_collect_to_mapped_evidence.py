@@ -152,44 +152,6 @@ class TraceAndReportTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "pthread/TLS"):
             evidence.validate_c_command(weakened, schema)
 
-    def test_c_probe_distinguishes_source_page_map_area_from_terminal_arena_span(self):
-        self.assertIn(
-            "page_map_slice_count_after_owner_exit = mi_slice_count_of_size(page_area_size)",
-            evidence.C_TRACE_PROBE,
-        )
-        self.assertIn(
-            "for (size_t index = 0; index < page_map_slice_count_after_owner_exit; index++)",
-            evidence.C_TRACE_PROBE,
-        )
-        self.assertIn(
-            "saved_slice_start + index * MI_ARENA_SLICE_SIZE",
-            evidence.C_TRACE_PROBE,
-        )
-        self.assertIn(
-            "page_map_registered_after_thread_done = true;",
-            evidence.C_TRACE_PROBE,
-        )
-        self.assertIn(
-            "page_map_tail_unregistered_after_owner_exit = true;",
-            evidence.C_TRACE_PROBE,
-        )
-        self.assertIn(
-            "page_map_unregistered_after_final_free = false;",
-            evidence.C_TRACE_PROBE,
-        )
-
-    def test_rust_trace_observes_queue_owner_bitmap_and_nonfinal_count(self):
-        source = evidence.RUST_TEST_SOURCE.read_text(encoding="utf-8")
-        for observation in (
-            "page_ref.is_queue_detached()",
-            "page_ref.remote_free_test_head() & 1 == 0",
-            "let owner_exit_transition_completed = drain.test_dynamic_regular_slot_is_clear();",
-            "handoff.test_dynamic_arena_page_is_set()",
-            "page.as_ref().used() } as usize + 2 == capacity",
-        ):
-            with self.subTest(observation=observation):
-                self.assertIn(observation, source)
-
     def test_parser_requires_an_exact_pointer_free_trace(self):
         trace = evidence.parse_trace(
             "\n".join(

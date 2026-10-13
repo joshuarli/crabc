@@ -834,7 +834,9 @@ int main(void) {
   return 0;
 }
 """, encoding="utf-8")
-        compiler = engine.require_tool("musl-gcc")
+        compiler = next((name for name in ("musl-gcc", "cc", "gcc") if engine.shutil.which(name)), None)
+        if compiler is None:
+            self.skipTest("no C compiler")
         built = engine.subprocess.run(
             [compiler, "-std=gnu11", "-O3", "-pthread", "-I", str(engine.FIXTURE_ROOT),
              str(source), str(root / "stub.c"), "-o", str(binary)],

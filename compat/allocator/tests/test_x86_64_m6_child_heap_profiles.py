@@ -181,6 +181,39 @@ class VisitationProfileSelectionTests(unittest.TestCase):
                     self.assertEqual(stopped.exception.code, 2)
                     run.assert_not_called()
 
+    def heap_visit_products(self, root, profiles):
+        """Write the compiler inputs and per-profile logs the Heap visitation reader authenticates."""
+        runner = heap_visit
+        pin = runner.harness.load_pin()
+        patcher = mock.patch.object(runner.harness, 'sha256_file', return_value=pin['sha256'])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        (root / 'products/upstream-archive').write_bytes(b'stand-in for the pinned source archive')
+        (root / 'products' / runner.DRIVER.name).write_bytes(runner.DRIVER.read_bytes())
+        (root / 'products/inputs.json').write_text(json.dumps({
+            'profiles': list(profiles), 'upstream': pin,
+            'profile_flags': {profile: list(runner.m4.api_profile_flags(profile)) for profile in profiles},
+            'profile_features': {profile: list(runner.m4.api_profile_features(profile)) for profile in profiles},
+        }))
+        (root / 'logs').mkdir(exist_ok=True)
+        cases = []
+        for profile in profiles:
+            c_flags = ['-DMI_LIBC_MUSL=1', *[flag for flag in runner.m4.api_profile_flags(profile)
+                                              if flag.startswith(('-DMI_', '-UMI_'))]]
+            features = runner.m4.api_profile_features(profile)
+            native = ['cargo', 'build', *(['--features', ','.join(f'crabc-mimalloc/{feature}' for feature in features)]
+                                          if features else [])]
+            for label, argv in (('oracle-build', c_flags), ('caller-build', c_flags), ('native-build', native)):
+                stem = f'{profile}-{label}'
+                (root / 'logs' / (stem + '.json')).write_text(json.dumps({'command': argv}))
+                cases.append({'id': stem, 'logs': [stem + '.json']})
+            for backend in ('c', 'native'):
+                stem = f'{profile}-{backend}-run'
+                guarded = 'populated.heap.guarded=1\n' if profile in runner.GUARDED_PROFILES else ''
+                (root / 'logs' / (stem + '.stdout')).write_text(guarded)
+                cases.append({'id': stem, 'logs': [stem + '.stdout']})
+        return cases
+
     def receipt(self, root, profiles, parameters=None, cases=None, runner=None):
         (root / 'products').mkdir()
         (root / 'products/inputs.json').write_text(json.dumps({'profiles': list(profiles)}))
@@ -197,6 +230,8 @@ class VisitationProfileSelectionTests(unittest.TestCase):
                     stderr += ('source.child_main=1,1,1,1\n' if runner is child_visit else 'source.transfer=1,1,1,1,1\n')
                 (root / 'logs' / (stem + '.stderr')).write_text(stderr)
                 physical_cases.append({'id':stem,'logs':[stem+'.stdout',stem+'.stderr']})
+        if runner is heap_visit:
+            physical_cases.extend(self.heap_visit_products(root, profiles))
         return SimpleNamespace(path=root / 'receipt.json', cases=physical_cases,
             parameters={'profiles': ','.join(profiles) if parameters is None else parameters},
             case_ids=lambda: case_ids if cases is None else cases)
@@ -229,7 +264,8 @@ class VisitationProfileSelectionTests(unittest.TestCase):
                 root = Path(name)
                 receipt = self.receipt(root, ('secure-1', 'secure-2'), runner=runner)
                 prior = {'execution_mode': 'native', 'host_architecture': 'x86_64', 'image_id': 'sha256:' + '0' * 64}
-                (root / 'products/inputs.json').write_text(json.dumps({'profiles': ['secure-1', 'secure-2'], 'execution': prior}))
+                inputs = json.loads((root / 'products/inputs.json').read_text())
+                (root / 'products/inputs.json').write_text(json.dumps({**inputs, 'execution': prior}))
                 current = dict(prior, image_id='sha256:' + '1' * 64)
                 with mock.patch.object(runner.receipts, 'read_receipt', return_value=receipt), \
                      mock.patch.object(runner.harness, 'require_native_x86_64', return_value=current), \

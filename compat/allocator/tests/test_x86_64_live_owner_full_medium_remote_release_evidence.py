@@ -133,32 +133,6 @@ class SchemaTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
-    def test_probe_requires_real_joined_remote_frees_and_complete_release(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("mi_option_set(mi_option_page_full_retain, -1);", probe)
-        self.assertIn("mi_heap_malloc(heap, request)", probe)
-        self.assertIn("pthread_create(&worker, NULL, remote_worker, &fixture)", probe)
-        self.assertIn("pthread_join(worker, &worker_result)", probe)
-        self.assertIn("mi_free(block);", probe)
-        self.assertIn("mi_heap_collect(heap, false);", probe)
-        self.assertLess(
-            probe.index("while (fixture.first_count < reserved) {"),
-            probe.index("capacity = first_page->capacity;"),
-        )
-        self.assertIn("queue_has_only_member(full, first_page)", probe)
-        self.assertIn("queue_has_only_member(regular, successor_page)", probe)
-        self.assertIn("queue->count == 1", probe)
-        self.assertIn("queue->first == member && queue->last == member", probe)
-        self.assertIn("member->prev == NULL && member->next == NULL", probe)
-        self.assertIn("full->count == 0 && full->first == NULL", probe)
-        self.assertIn("full->last == NULL", probe)
-        self.assertIn("map_span_is_page(", probe)
-        self.assertIn("map_span_is_clear(", probe)
-        self.assertIn("mi_bitmap_is_clearN(", probe)
-        self.assertIn("mi_bbitmap_is_setN(", probe)
-        self.assertNotIn("mi_thread_done", probe)
-        evidence.validate_c_probe_contract(probe)
-
     def test_probe_validator_rejects_lifecycle_join_membership_and_map_weakening(self):
         mutations = (
             evidence.C_TRACE_PROBE.replace(

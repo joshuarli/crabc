@@ -655,7 +655,9 @@ def run(arguments: argparse.Namespace) -> Path:
     pin = load_pin()
     archive = fetch_archive(pin, offline=arguments.offline)
     report["inputs"].update({"compiler": compiler, "mimalloc_archive": file_record(archive), "mimalloc_revision": pin["revision"]})
-    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-multithread-aarch64-", dir="/tmp") as temporary_name:
+    scratch_root = ROOT / ".work" / "tmp"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-multithread-aarch64-", dir=scratch_root) as temporary_name:
         temporary = Path(temporary_name)
         source = safe_extract(archive, temporary / "source", pin["archive_root"])
         c_fixture = temporary / "pinned-c-local-scaling"

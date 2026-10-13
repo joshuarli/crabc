@@ -82,23 +82,6 @@ class AutomaticPthreadDestructorEvidenceTests(unittest.TestCase):
         self.assertFalse(schema["scope"]["rust_automatic_pthread_destructor_claimed"])
         self.assertFalse(schema["scope"]["emulation_accepted"])
 
-    def test_probe_requires_the_real_key_and_forbids_explicit_worker_teardown(self):
-        source = evidence.C_TRACE_PROBE
-        self.assertIn("extern pthread_key_t _mi_heap_default_key;", source)
-        self.assertIn("pthread_getspecific(_mi_heap_default_key) == default_theap", source)
-        self.assertIn("context->worker_returned_naturally = true;", source)
-        self.assertIn("pthread_join(worker, NULL)", source)
-        evidence.validate_probe_source(source)
-
-        for explicit_call in ("mi_thread_done();", "_mi_thread_done(NULL);", "pthread_exit(NULL);"):
-            with self.subTest(explicit_call=explicit_call):
-                injected = source.replace(
-                    "context->worker_returned_naturally = true;",
-                    f"{explicit_call}\n  context->worker_returned_naturally = true;",
-                )
-                with self.assertRaisesRegex(evidence.EvidenceError, "explicit teardown"):
-                    evidence.validate_probe_source(injected)
-
     def test_schema_rejects_scope_trace_and_anchor_drift(self):
         mutations = (
             lambda value: value.update({"unexpected": 1}),

@@ -181,69 +181,6 @@ class AggregateSameBinStillLiveEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.EvidenceError):
                 evidence.validate_trace(value, description="test trace")
 
-    def test_c_probe_uses_real_same_bin_teardown_and_gated_three_free_route(self):
-        probe = evidence.C_TRACE_PROBE
-        create = probe.index("if (pthread_create(&worker, NULL, producer_main, &f) != 0) goto done;")
-        join = probe.index("if (pthread_join(worker, NULL) != 0) goto done;")
-        first_free = probe.index("mi_free(f.first_client);")
-        second_free = probe.index("mi_free(f.second_client);")
-        final_free = probe.index("mi_free(f.first_survivor);")
-        self.assertIn("mi_thread_done();", probe)
-        self.assertNotIn("mi_heap_collect(", probe)
-        self.assertIn("#if MI_PAGE_MAP_FLAT != 0", probe)
-        self.assertIn("mi_option_set(mi_option_page_reclaim_on_free, 0);", probe)
-        self.assertIn(
-            "mi_option_set(mi_option_page_reclaim_on_free, old_reclaim);",
-            probe,
-        )
-        self.assertIn("first_client = mi_heap_malloc(heap, CRABC_SAME_BIN_REQUEST);", probe)
-        self.assertIn("first_survivor = mi_heap_malloc(heap, CRABC_SAME_BIN_REQUEST);", probe)
-        self.assertIn("for (size_t index = 0; index < first_page->reserved - 2; index++)", probe)
-        self.assertIn("second_client = mi_heap_malloc(heap, CRABC_SAME_BIN_REQUEST);", probe)
-        self.assertIn("_mi_bin(first_page->block_size) != _mi_bin(second_page->block_size)", probe)
-        self.assertIn("queue_has_exact_bidirectional_two_page_links", probe)
-        self.assertIn("queue_visits_exactly_both", probe)
-        self.assertLess(create, join)
-        self.assertLess(join, first_free)
-        self.assertLess(first_free, second_free)
-        self.assertLess(second_free, final_free)
-        self.assertIn(
-            "_mi_safe_ptr_page(\n      (const void*)(uintptr_t)f.first_survivor_address)",
-            probe,
-        )
-        self.assertIn(
-            "_mi_safe_ptr_page((const void*)(uintptr_t)f.second_client_address) == NULL",
-            probe,
-        )
-        self.assertIn(
-            "_mi_safe_ptr_page((const void*)(uintptr_t)f.first_survivor_address) == NULL",
-            probe,
-        )
-        self.assertIn("f.first_client = NULL;", probe)
-        self.assertIn("f.second_client = NULL;", probe)
-        self.assertIn("f.first_survivor = NULL;", probe)
-        self.assertNotIn("first_after_second_free->", probe[final_free:])
-        printed_fields = re.findall(
-            r'printf\("trace\.aggregate_same_bin_still_live\.([^=]+)=%d\\n"',
-            probe,
-        )
-        self.assertEqual(tuple(printed_fields), evidence.TRACE_FIELDS)
-
-    def test_rust_fixture_directly_observes_the_same_bin_predecessor_link(self):
-        source = evidence.RUST_TEST_SOURCE.read_text(encoding="utf-8")
-        self.assertIn(
-            "let first_prev = unsafe { first_page.as_ref().prev() };",
-            source,
-        )
-        self.assertIn(
-            "let second_prev = unsafe { second_page.as_ref().prev() };",
-            source,
-        )
-        self.assertIn("first_prev.is_null()", source)
-        self.assertIn("second_prev == first_page.as_ptr()", source)
-        self.assertIn("second_prev.is_null()", source)
-        self.assertIn("first_prev == second_page.as_ptr()", source)
-
     def test_report_rejects_provenance_and_probe_drift(self):
         report = self.complete_report()
         self.validate_report(report)

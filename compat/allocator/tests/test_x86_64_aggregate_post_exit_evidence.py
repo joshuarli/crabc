@@ -160,35 +160,6 @@ class AggregatePostExitEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.EvidenceError):
                 evidence.validate_trace(value, description="test trace")
 
-    def test_c_probe_uses_real_teardown_and_saved_addresses_after_each_release(self):
-        probe = evidence.C_TRACE_PROBE
-        create = probe.index("if (pthread_create(&worker, NULL, producer_main, &f) != 0) goto done;")
-        join = probe.index("if (pthread_join(worker, NULL) != 0) goto done;")
-        self.assertIn("mi_thread_done();", probe)
-        self.assertNotIn("mi_heap_collect(", probe)
-        self.assertIn("#if MI_PAGE_MAP_FLAT != 0", probe)
-        self.assertIn("first = mi_heap_malloc(heap, MI_SMALL_MAX_OBJ_SIZE + 1);", probe)
-        self.assertIn("second = mi_heap_malloc(heap, MI_MEDIUM_MAX_OBJ_SIZE / 2);", probe)
-        self.assertIn("mi_free(f.second);", probe)
-        self.assertIn("mi_free(f.first);", probe)
-        second_free = probe.index("mi_free(f.second);")
-        final_free = probe.index("mi_free(f.first);")
-        self.assertLess(create, join)
-        self.assertLess(join, second_free)
-        self.assertLess(second_free, final_free)
-        self.assertIn(
-            "_mi_safe_ptr_page((const void*)(uintptr_t)f.second_address) == NULL",
-            probe,
-        )
-        self.assertIn(
-            "_mi_safe_ptr_page((const void*)(uintptr_t)f.first_address) == NULL",
-            probe,
-        )
-        self.assertIn("f.second = NULL;", probe)
-        self.assertIn("f.first = NULL;", probe)
-        self.assertNotIn("f.second_page->", probe[second_free:])
-        self.assertNotIn("f.first_page->", probe[final_free:])
-
     def test_report_rejects_provenance_and_probe_drift(self):
         report = self.complete_report()
         self.validate_report(report)

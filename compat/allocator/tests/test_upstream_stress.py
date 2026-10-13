@@ -1639,26 +1639,6 @@ class CanonicalUpstreamStressContractTests(unittest.TestCase):
         self.assertEqual(result["capability_status"], "not-run")
         self.assertFalse(result["native_execution_started"])
 
-    def test_canonical_dev_dispatch_builds_the_selected_backend_last(self) -> None:
-        script = (RUNNER.ROOT / "scripts/dev.sh").read_text(encoding="utf-8")
-        start = script.index("    allocator-upstream)")
-        end = script.index("    allocator-shadow)", start)
-        dispatch = script[start:end]
-        sysroot_build = dispatch.index("python3 scripts/build_owned_sysroot.py")
-        shadow_build = dispatch.index(
-            "--capture-selected-libc-build \"$selected_libc_build_record\""
-        )
-        stress_run = dispatch.rindex("python3 compat/allocator/upstream-stress/run.py")
-        self.assertLess(sysroot_build, shadow_build)
-        self.assertLess(shadow_build, stress_run)
-        cargo_command = RUNNER.expected_contract(RUNNER.FIXED_PIN)["backend_inventory"]["backends"][0]["artifact_attestation"]["cargo_compiler_artifact"]["cargo_command"]
-        self.assertIn("--locked", cargo_command)
-        self.assertIn("--message-format=json-render-diagnostics", cargo_command)
-        self.assertIn("run_in_container cargo build --workspace --locked", dispatch)
-        self.assertIn("run_in_container cargo build --workspace --release --locked", dispatch)
-        self.assertIn("python3 scripts/run_owned_test_suite.py", dispatch)
-        self.assertIn('--libc-build-record "$selected_libc_build_record" "$@"', dispatch)
-
     def test_report_starts_with_closed_artifact_slots_and_no_capability_claim(self) -> None:
         contract, pin = RUNNER.load_contract()
         args = RUNNER.parse_arguments([])

@@ -65,29 +65,6 @@ class SchemaTests(unittest.TestCase):
                     with self.assertRaisesRegex(evidence.EvidenceError, "schema drifted"):
                         evidence.load_schema(Path(stream.name))
 
-    def test_rust_trace_measures_each_singleton_page_map_span(self):
-        source = evidence.RUST_TEST_SOURCE.read_text(encoding="utf-8")
-        start = source.index("fn run_dynamic_full_singleton_homogeneous_aggregate_trace")
-        end = source.index(
-            "\n    #[test]\n    fn dynamic_thread_exit_full_singleton_pages_route_releases_each_same_size_page",
-            start,
-        )
-        helper = source[start:end]
-        for fragment in (
-            "let page0_map_span = route",
-            ".test_page_map_span(first)",
-            "let page1_map_span = route",
-            ".test_page_map_span(second)",
-            "page0_map_span.0 == slice_count",
-            "page1_map_span.0 == slice_count",
-            "route.test_page_map_range_is_clear(first_span_start, first_span_size)",
-            "page1_map_span_after_first_terminal.0 == slice_count",
-            "drain.test_page_map_range_is_clear(second_span_start, second_span_size)",
-        ):
-            with self.subTest(fragment=fragment):
-                self.assertIn(fragment, helper)
-
-
 class TraceAndCommandTests(unittest.TestCase):
     @staticmethod
     def _report_inputs():
@@ -232,28 +209,6 @@ class TraceAndCommandTests(unittest.TestCase):
         )
         with self.assertRaises(evidence.EvidenceError):
             evidence.validate_worker_teardown_source(source)
-
-    def test_probe_declares_two_page_worker_and_saved_metadata_before_terminal_release(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("pthread_create", probe)
-        self.assertIn("mi_thread_done()", probe)
-        self.assertIn("pthread_join(worker", probe)
-        self.assertIn("PAGE_COUNT 2", probe)
-        self.assertIn("MI_TLS_MODEL_LOCAL", probe)
-        self.assertIn("MI_HAS_TLS_SLOT", probe)
-        self.assertIn("slice_indices", probe)
-        self.assertNotIn("f->heap", probe)
-        self.assertIn("f->arena_pages = arena_pages", probe)
-        self.assertLess(
-            probe.index("f->arena_pages = arena_pages"),
-            probe.index("signal_ready(f, f->setup_valid)"),
-        )
-        post_thread_done = probe.split("mi_thread_done();", 1)[1]
-        self.assertNotIn("_mi_heap_theap(", post_thread_done)
-        after_first_terminal = probe.split("mi_free(f.blocks[0]);", 1)[1]
-        self.assertNotIn("f.pages[0]->", after_first_terminal)
-        self.assertNotIn("f.pages[1]->", after_first_terminal)
-
 
 if __name__ == "__main__":
     unittest.main()

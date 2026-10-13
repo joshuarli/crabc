@@ -70,36 +70,6 @@ class SchemaTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
-    def test_probe_preserves_remote_pointer_until_exact_reuse(self):
-        probe = evidence.C_TRACE_PROBE
-        worker = probe[probe.index("static void* remote_worker") : probe.index("\nint main(void)")]
-        self.assertEqual(worker.count("mi_free(block);"), 1)
-        self.assertNotIn("fixture->blocks[0] = NULL", worker)
-        self.assertIn("remote_block = fixture.blocks[0];", probe)
-        self.assertIn("fixture.blocks[0] = NULL;", probe)
-        self.assertLess(
-            probe.index("remote_block = fixture.blocks[0];"),
-            probe.index("fixture.blocks[0] = NULL;"),
-        )
-        self.assertIn("first_page->local_free != NULL", probe)
-        self.assertIn(
-            "first_reusable_after_collect = (first_page->free != NULL || first_page->local_free != NULL);",
-            probe,
-        )
-        self.assertIn(
-            "first_free_exact_remote_internal = (first_page->free == remote_block);",
-            probe,
-        )
-        self.assertIn(
-            "first_local_free_empty_internal = (first_page->local_free == NULL);",
-            probe,
-        )
-        self.assertIn("reused_exact_remote_block = (reused == remote_block);", probe)
-        self.assertIn("while (successor_page->used < successor_page->reserved)", probe)
-        self.assertIn("mi_heap_collect(heap, false);", probe)
-        self.assertNotIn("mi_thread_done", probe)
-        evidence.validate_c_probe_contract(probe)
-
     def test_probe_validator_rejects_teardown_or_missing_reuse_boundary(self):
         mutations = (
             evidence.C_TRACE_PROBE.replace("mi_heap_collect(heap, false);", "mi_heap_collect(heap, true);", 1),

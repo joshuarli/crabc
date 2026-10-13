@@ -25,6 +25,14 @@ sys.modules[SPEC.name] = INVENTORY
 SPEC.loader.exec_module(INVENTORY)
 
 
+def scratch_root() -> Path:
+    """Scratch inside the runner's work root, which retained-profile paths must live under."""
+
+    root = Path(INVENTORY._load_runner().WORK_ROOT) / "tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _trace(begin: str, end: str, keys: tuple[str, ...]) -> str:
     return "\n".join((begin, *(f"{key}=1" for key in keys), end, ""))
 
@@ -573,7 +581,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
     def test_mbind_profile_render_keeps_unrelated_raw_syscalls(self) -> None:
         """Only the fixed `mi_prim_mbind` expression is rewritten in its body."""
 
-        with tempfile.TemporaryDirectory(dir=ROOT / ".work/allocator-x86_64") as temporary:
+        with tempfile.TemporaryDirectory(dir=scratch_root()) as temporary:
             source = Path(temporary) / "source"
             primitive = source / "src/prim"
             unix = primitive / "unix"
@@ -600,7 +608,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
         """A preserved partial overlay cannot block the next same-mode receipt."""
 
         runner = INVENTORY._load_runner()
-        with tempfile.TemporaryDirectory(dir=ROOT / ".work/allocator-x86_64") as temporary:
+        with tempfile.TemporaryDirectory(dir=scratch_root()) as temporary:
             artifacts = Path(temporary) / "artifacts"
 
             def write_profile(_source: Path, profile: Path) -> Path:
@@ -632,7 +640,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
     def test_mbind_profile_rejects_a_body_with_the_right_stub_but_wrong_bytes(self) -> None:
         """Expected mbind tokens cannot substitute for the pinned primitive source bytes."""
 
-        with tempfile.TemporaryDirectory(dir=ROOT / ".work/allocator-x86_64") as temporary:
+        with tempfile.TemporaryDirectory(dir=scratch_root()) as temporary:
             source = Path(temporary) / "source"
             primitive = source / "src/prim"
             unix = primitive / "unix"
@@ -778,7 +786,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
         original = json.loads(INVENTORY.FRAGMENT_PATH.read_text(encoding="utf-8"))
         with tempfile.TemporaryDirectory(
             prefix="fault-seam-inventory-host-fragment-",
-            dir=INVENTORY.ROOT / ".work/allocator-x86_64",
+            dir=scratch_root(),
         ) as temporary:
             scratch = Path(temporary)
             for mutation in ("anchor", "definition", "scope", "unqualified"):

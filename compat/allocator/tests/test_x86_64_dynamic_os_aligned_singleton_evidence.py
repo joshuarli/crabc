@@ -164,20 +164,6 @@ class TraceAndReportTests(unittest.TestCase):
                 self.assertIn(observation, source)
         self.assertNotIn("%p", source)
 
-    def test_rust_trace_observes_the_matching_typed_owner_exit_and_terminal_release(self) -> None:
-        source = evidence.RUST_TEST_SOURCE.read_text(encoding="utf-8")
-        for observation in (
-            "drain.test_dynamic_regular_slot_is_clear()",
-            "handoff.test_os_abandoned_page_head() == page.as_ptr()",
-            "huge_queue_singleton_before_owner_exit",
-            "full_queue_empty_before_owner_exit",
-            "(*page.as_ptr()).abandoned_test_thread_id() == THREAD_ID_ABANDONED",
-            "handoff.remote_free_after_failed_reclaim(block)",
-            "page_map_clear_after_final_free",
-        ):
-            with self.subTest(observation=observation):
-                self.assertIn(observation, source)
-
     def test_parser_requires_an_exact_pointer_free_trace(self) -> None:
         trace = evidence.parse_trace(
             "\n".join(

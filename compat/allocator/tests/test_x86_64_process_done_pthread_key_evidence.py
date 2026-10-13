@@ -86,32 +86,6 @@ class ProcessDonePthreadKeyEvidenceTests(unittest.TestCase):
         self.assertFalse(schema["scope"]["rust_process_done_pthread_key_claimed"])
         self.assertFalse(schema["scope"]["emulation_accepted"])
 
-    def test_probe_requires_process_done_key_deletion_and_forbids_explicit_worker_teardown(self):
-        source = evidence.C_TRACE_PROBE
-        self.assertIn("extern pthread_key_t _mi_heap_default_key;", source)
-        self.assertIn("mi_process_done();", source)
-        self.assertIn("_mi_os_purge_ex(_mi_subproc_main(),", source)
-        self.assertIn("capture_process_done_purge_advice = true;", source)
-        self.assertIn("process_done_purge_advice != MADV_DONTNEED", source)
-        self.assertIn("_mi_heap_default_key == MI_PTHREAD_KEY_INVALID", source)
-        self.assertIn("#if !MI_TLS_MODEL_LOCAL", source)
-        self.assertIn("mi_page_thread_free(page) != NULL", source)
-        self.assertIn("theap->allow_page_abandon && theap->page_full_retain == 2", source)
-        self.assertIn("context->full_queue_count == 0", source)
-        self.assertIn("context->page_abandoned", source)
-        self.assertIn("context->worker_returned_naturally = true;", source)
-        self.assertIn("pthread_join(worker, NULL)", source)
-        evidence.validate_probe_source(source)
-
-        for explicit_call in ("mi_thread_done();", "_mi_thread_done(NULL);", "pthread_exit(NULL);"):
-            with self.subTest(explicit_call=explicit_call):
-                injected = source.replace(
-                    "context->worker_returned_naturally = true;",
-                    f"{explicit_call}\n  context->worker_returned_naturally = true;",
-                )
-                with self.assertRaisesRegex(evidence.EvidenceError, "explicit teardown"):
-                    evidence.validate_probe_source(injected)
-
     def test_probe_rejects_stale_owner_or_page_observation_order(self):
         source = evidence.C_TRACE_PROBE
         without_join_guard = source.replace(

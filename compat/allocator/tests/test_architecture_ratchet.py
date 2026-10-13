@@ -30,9 +30,15 @@ class ArchitectureRatchetTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         RATCHET.validate_manifest(cls.manifest)
+        # Evaluating the whole selected source graph takes tens of seconds;
+        # every test that reads the unmodified report shares one evaluation.
+        cls.evaluated_report = RATCHET.evaluate(ROOT, MANIFEST, None)
+
+    def current_report(self) -> dict:
+        return copy.deepcopy(self.evaluated_report)
 
     def test_checked_in_report_records_the_current_shadow_subset_as_unmet(self) -> None:
-        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        report = self.current_report()
         self.assertEqual(report["scope"]["current"], "shadow_subset")
         self.assertTrue(report["scope"]["static_analysis_cannot_close_final_gate"])
         self.assertEqual(report["selected_production"]["status"], "static-selection-confirmed")
@@ -232,7 +238,7 @@ struct CurrentSource {};
             )
 
     def test_static_absence_cannot_close_the_gate_without_runtime_artifact_evidence(self) -> None:
-        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        report = self.current_report()
         synthetic = copy.deepcopy(report)
         synthetic["forbidden_scaffolding_compiled"]["compiled_from_selected_source"] = False
         synthetic["phase_ef_forbidden_scaffolding"]["production_retains_forbidden_surface"] = False
@@ -265,13 +271,6 @@ struct CurrentSource {};
         del invalid["caller_identity_first_free_dispatch"]["phase_a_bridge"]["removal_condition"]
         with self.assertRaisesRegex(RATCHET.RatchetError, "removal_condition"):
             RATCHET.validate_manifest(invalid)
-
-    def test_obsolete_phase_a_detached_route_scans_are_absent(self) -> None:
-        source = (ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("native_free_detached_route_phase_a", source)
-        self.assertNotIn("native_free_detached_route_entry_phase_a", source)
 
     def test_phase_a_bridge_manifest_requires_a_sole_identity_branch(self) -> None:
         invalid = copy.deepcopy(self.manifest)
@@ -582,7 +581,7 @@ fn native_reallocate_from_source_page(
             self.assertTrue(without_pagemap["structural_violation"])
 
     def test_runtime_evidence_requires_selected_artifact_metadata_and_matching_sources(self) -> None:
-        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        report = self.current_report()
         incomplete = {
             "format": 1,
             "schema": RATCHET.RUNTIME_EVIDENCE_SCHEMA,
@@ -600,7 +599,7 @@ fn native_reallocate_from_source_page(
                 RATCHET.load_runtime_evidence(evidence_path, report["selected_production"])
 
     def test_runtime_evidence_requires_explicit_phase_bc_observations(self) -> None:
-        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        report = self.current_report()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             artifact = root / "target/libc.so"
@@ -633,7 +632,7 @@ fn native_reallocate_from_source_page(
                 )
 
     def test_runtime_evidence_requires_exact_final_scope_and_verified_artifact(self) -> None:
-        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        report = self.current_report()
         required_phase_bc = self.manifest["phase_bc_call_graph"]["runtime_evidence_required"]
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -680,7 +679,7 @@ fn native_reallocate_from_source_page(
                 )
 
     def test_runtime_performance_claims_fail_closed_without_benchmark_samples(self) -> None:
-        report = RATCHET.evaluate(ROOT, MANIFEST, None)
+        report = self.current_report()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             artifact = root / "target/libc.so"

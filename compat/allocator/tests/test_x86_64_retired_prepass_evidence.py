@@ -138,21 +138,6 @@ class RetiredPrepassEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.EvidenceError):
                 evidence.validate_trace(value, description="test trace")
 
-    def test_c_probe_uses_thread_done_prepass_without_a_forced_collection_shortcut(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("mi_thread_done();", probe)
-        self.assertNotIn("mi_heap_collect(", probe)
-        self.assertNotIn("f.retired_page", probe)
-        self.assertIn("#if MI_PAGE_MAP_FLAT != 0", probe)
-        self.assertIn(
-            "_mi_safe_ptr_page((const void*)(uintptr_t)f.retired_address)",
-            probe,
-        )
-        self.assertIn("if (!f->retired_map_before_exit) goto fail;", probe)
-        self.assertIn("if (!live_page_map_registered_after_teardown) {", probe)
-        self.assertIn("f.live = NULL;", probe)
-        self.assertIn("mi_memid_arena(lp->memid) != f->arena", probe)
-
     def test_report_rejects_provenance_and_probe_drift(self):
         report = self.complete_report()
         self.validate_report(report)

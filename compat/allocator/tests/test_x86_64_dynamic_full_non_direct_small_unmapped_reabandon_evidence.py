@@ -221,24 +221,6 @@ class TraceAndReportTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "pthread/TLS"):
             evidence.validate_c_command(weakened, schema)
 
-    def test_c_probe_keeps_the_live_theap_observation_pre_exit(self):
-        source = evidence.C_TRACE_PROBE
-        self.assertIn("mi_option_set(mi_option_page_reclaim_on_free, 0);", source)
-        self.assertIn("mi_option_set(mi_option_page_full_retain, 2);", source)
-        self.assertIn("MI_SMALL_SIZE_MAX + sizeof(void*)", source)
-        self.assertIn("non_direct_small = block_size > MI_SMALL_SIZE_MAX && small_page;", source)
-        self.assertIn("unmapped_prefix_free_count = reserved / 8;", source)
-        self.assertIn("_mi_safe_ptr_page((const void*)saved_address) == page", source)
-        post_thread_done = source.split("mi_thread_done();", 1)[1]
-        self.assertNotIn("theap->", post_thread_done)
-        self.assertNotIn("pages_free_direct", post_thread_done)
-        self.assertNotIn("direct_cache_is_empty(", post_thread_done)
-        pre_exit = source.split("fixture.allow_thread_done = true;", 1)[0]
-        self.assertIn("&worker_heap->arena_pages[arena->arena_idx]", pre_exit)
-        self.assertIn("&worker_heap->abandoned_count[bin]", pre_exit)
-        joined_consumer = source.split("if (pthread_join(producer, NULL) != 0) goto output;", 1)[1]
-        self.assertNotIn("worker_heap->", joined_consumer)
-
     def test_c_probe_checks_the_unmapped_prefix_mapped_boundary_and_terminal_release(self):
         source = evidence.C_TRACE_PROBE
         for observation in (

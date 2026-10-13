@@ -207,7 +207,7 @@
           }
         ],
         "patterns": {
-          "live_page_lookup": "\\.lookup_live_allocation\\s*\\(",
+          "live_page_lookup": "\\.lookup_(?:native_)?live_allocation(?:_with_captured_page)?\\s*\\(",
           "canonical_block_recovery": "\\brecover_block_start\\s*\\(",
           "allow_collect_publication": "\\bcontinue_post_owner_exit_live_allocation_with_process_page_facts\\s*\\("
         },

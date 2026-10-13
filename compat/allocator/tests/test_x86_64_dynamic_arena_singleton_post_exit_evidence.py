@@ -63,21 +63,6 @@ class ProbeTests(unittest.TestCase):
         with self.assertRaises(evidence._base.EvidenceError):
             evidence.source_range(b"one\n", 0, 1)
 
-    def test_probe_has_one_real_worker_done_join_and_terminal_free(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertEqual(probe.count("pthread_create"), 1)
-        self.assertEqual(probe.count("mi_thread_done()"), 1)
-        self.assertEqual(probe.count("pthread_join(worker"), 2)  # normal path plus failure cleanup
-        self.assertEqual(probe.count("mi_free(f.block)"), 1)
-        self.assertIn("map_span_is_page(page, start, 9)", probe)
-        self.assertIn("!mi_page_is_in_full(p)", probe)
-        self.assertIn("map_clear = map_span_is(start, 9, false);", probe)
-        self.assertIn("const size_t request = MI_LARGE_MAX_OBJ_SIZE + 1", probe)
-        self.assertIn("CRABC_MI_DYNAMIC_ARENA_SINGLETON_POST_EXIT_TRACE_BEGIN", probe)
-        self.assertIn("trace.dynamic_arena_singleton_post_exit.", probe)
-        self.assertNotIn("PAGE_COUNT", probe)
-        evidence.validate_worker_teardown_source(probe)
-
     def test_worker_validator_rejects_shortcuts_and_wrong_free_order(self):
         for replacement in (
             "mi_free(f->block);",

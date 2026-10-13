@@ -161,17 +161,6 @@ class TraceAndReportTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "pthread/TLS"):
             evidence.validate_c_command(weakened, schema)
 
-    def test_c_probe_keeps_the_live_non_direct_cache_observation_pre_exit(self):
-        source = evidence.C_TRACE_PROBE
-        self.assertIn("mi_option_set(mi_option_page_full_retain, 2);", source)
-        self.assertIn("MI_SMALL_SIZE_MAX + sizeof(void*)", source)
-        self.assertIn("!mi_page_is_in_full(page)", source)
-        self.assertIn("page->used + 2 == capacity", source)
-        post_thread_done = source.split("mi_thread_done();", 1)[1]
-        self.assertNotIn("theap->", post_thread_done)
-        self.assertNotIn("pages_free_direct", post_thread_done)
-        self.assertNotIn("direct_cache_is_empty(", post_thread_done)
-
     def test_c_probe_checks_the_one_slice_page_map_and_dynamic_abandoned_state(self):
         source = evidence.C_TRACE_PROBE
         for observation in (

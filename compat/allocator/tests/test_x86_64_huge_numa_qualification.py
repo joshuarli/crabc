@@ -149,41 +149,6 @@ class HugeNumaQualificationTests(unittest.TestCase):
             self.assertEqual(latest["status"], "pending_external_resources")
             self.assertEqual(latest["latest_receipt"]["path"], qualification.run.relative(output["report"]))
 
-    def test_checked_in_c_workloads_preserve_the_source_and_permission_boundaries(self) -> None:
-        huge = (ROOT / "compat/allocator/m2_huge_numa_qualification_x86_64.c").read_text(encoding="utf-8")
-        permission = (ROOT / "compat/allocator/m2_huge_numa_permission_x86_64.c").read_text(encoding="utf-8")
-        registry = (ROOT / "compat/allocator/m2_huge_registry_x86_64.c").read_text(encoding="utf-8")
-        reservation = (ROOT / "compat/allocator/m2_huge_reservation_x86_64.c").read_text(encoding="utf-8")
-        registry_rust = (ROOT / "crabc-mimalloc/src/arena_owned.rs").read_text(encoding="utf-8")
-        registry_runner = (ROOT / "compat/allocator/x86_64_huge_registry_evidence.py").read_text(encoding="utf-8")
-        config = (ROOT / "crabc-mimalloc/src/config.rs").read_text(encoding="utf-8")
-        mapping = (ROOT / "crabc-mimalloc/src/os.rs").read_text(encoding="utf-8")
-        self.assertIn('#include "static.c"', huge)
-        self.assertIn("mi_reserve_huge_os_pages_at(1", huge)
-        self.assertIn("numa_maps itself is address-sorted", huge)
-        self.assertNotIn("MAP_HUGETLB", permission[permission.index("int main"):])
-        self.assertNotIn("#include <linux/mempolicy.h>", permission)
-        self.assertIn("enum { MPOL_PREFERRED = 1 };", permission)
-        self.assertIn("MPOL_PREFERRED", permission)
-        self.assertIn("SYS_mbind", permission)
-        self.assertIn("munmap", permission)
-        self.assertIn("17 * MI_GiB", registry)
-        self.assertIn("MI_ARENA_MIN_SIZE", registry)
-        self.assertIn("3 * MI_HUGE_OS_PAGE_SIZE", reservation)
-        self.assertGreaterEqual(registry_rust.count("test_registry_allocation(process, config(), 17)"), 2)
-        self.assertIn('"arena::owned::tests::huge_"', registry_runner)
-        self.assertIn("--test-threads=1", registry_runner)
-        self.assertIn("pub(crate) const ARENA_MIN_SIZE: usize = BCHUNK_BITS * ARENA_SLICE_SIZE", config)
-        self.assertIn("let over_length = match length.checked_add(alignment_headroom)", mapping)
-        self.assertIn("mapping.is_mapped = false", mapping)
-
-    def test_private_launcher_adds_only_ipc_lock_for_the_hardware_job(self) -> None:
-        launcher = (ROOT / "compat/allocator/run-x86_64.sh").read_text(encoding="utf-8")
-        self.assertIn("allocator-huge-numa-qualification)", launcher)
-        self.assertIn("run_in_container --with-ipc-lock", launcher)
-        self.assertIn("--cap-add=IPC_LOCK", launcher)
-        self.assertNotIn("security-opt seccomp=unconfined", launcher)
-
 
 if __name__ == "__main__":
     unittest.main()

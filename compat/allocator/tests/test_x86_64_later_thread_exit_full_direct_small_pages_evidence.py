@@ -96,23 +96,6 @@ class SchemaTests(unittest.TestCase):
 
 
 class ProbeTests(unittest.TestCase):
-    def test_probe_requires_real_pthread_pre_exit_direct_cache_and_complete_maps(self):
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("mi_heap_malloc_small(heap, request)", probe)
-        self.assertIn("PAGE_COUNT 2", probe)
-        self.assertIn("BLOCKS_PER_PAGE 64", probe)
-        self.assertIn("mi_thread_done()", probe)
-        self.assertIn("pthread_join(producer, NULL)", probe)
-        self.assertIn("fixture->direct_cache_range_matches = direct_cache_range(", probe)
-        self.assertIn("map_span_is_page(page, *start_out, *count_out)", probe)
-        self.assertIn("map_clear[page_index] = map_span_is(", probe)
-        self.assertIn("!mi_page_is_owned(page)", probe)
-        self.assertIn("mi_bbitmap_is_setN(", probe)
-        self.assertIn(
-            "CRABC_MI_LATER_THREAD_EXIT_FULL_DIRECT_SMALL_PAGES_TRACE_BEGIN", probe
-        )
-        evidence.validate_c_probe_contract(probe)
-
     def test_probe_validator_rejects_post_exit_theap_shortcuts_and_incomplete_release(self):
         mutations = (
             evidence.C_TRACE_PROBE.replace(

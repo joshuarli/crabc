@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 MODULE = Path(__file__).resolve().parents[1] / "pinned_c_page_map_soak.py"
@@ -100,7 +101,8 @@ class PageMapSoakReaderTests(unittest.TestCase):
             stderr.write_text("")
             (artifacts / "replay-01.status").write_text("0\n")
             pin = soak.harness.load_pin()
-            archive = soak.harness.fetch_archive(pin, offline=True)
+            archive = artifacts / "mimalloc-archive.tar.gz"
+            archive.write_bytes(b"stand-in for the pinned source archive")
             report = {
                 "product": {
                     "pinned_version": pin["version"],
@@ -114,6 +116,9 @@ class PageMapSoakReaderTests(unittest.TestCase):
                              "stderr_sha256": soak.digest(stderr), **soak.parse_soak(output())}],
             }
             (artifacts / "report.json").write_text(json.dumps(report))
+            patcher = mock.patch.object(soak.harness, "fetch_archive", return_value=archive)
+            patcher.start()
+            self.addCleanup(patcher.stop)
             self.assertEqual(soak.read_report(artifacts), report)
             stdout.write_text(output(second=991))
             with self.assertRaisesRegex(ValueError, "raw replay"):

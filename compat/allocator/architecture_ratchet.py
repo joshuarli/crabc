@@ -13,6 +13,7 @@ evidence record with the manifest's exact promotion-qualified scope.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib.util
 import math
@@ -29,7 +30,7 @@ from typing import Any, Mapping
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = ROOT / "compat/allocator/architecture-gate-v3.5.0.json"
-DEFAULT_REPORT = ROOT / "target/architecture-ratchet/latest.json"
+DEFAULT_REPORT = ROOT / ".work/reports/architecture-ratchet/latest.json"
 RUNTIME_EVIDENCE_SCHEMA = "crabc-mimalloc-architecture-runtime-evidence"
 PROMOTION_BENCHMARK_METRICS = (
     "cross_thread_free_throughput_ratio",
@@ -239,6 +240,10 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+# Masking a large selected source is quadratic-looking in practice (tens of
+# seconds for the runtime file), and every analysis of one source repeats it
+# on identical text, so the pure result is memoized by source text.
+@functools.lru_cache(maxsize=32)
 def strip_rust_comments(source: str, *, mask_literals: bool = True) -> str:
     """Mask comments while preserving line numbers for simple source anchors.
 
@@ -622,6 +627,13 @@ def cfg_attribute_expression(attribute: str) -> str:
 def production_rust_source(
     source: str, cfg_environment: Mapping[str, Any], *, mask_comments: bool = True
 ) -> str:
+    return _production_rust_source(
+        source, json.dumps(cfg_environment, sort_keys=True), mask_comments
+    )
+
+
+@functools.lru_cache(maxsize=64)
+def _production_rust_source(source: str, cfg_key: str, mask_comments: bool) -> str:
     """Mask cfg-excluded Rust while preserving positions and optional comments.
 
     Call-site patterns need comments/literals hidden. The caller-identity bridge
@@ -633,6 +645,7 @@ def production_rust_source(
     boundary_code = strip_rust_comments(source)
     code = boundary_code if mask_comments else source
     excluded_ranges: list[tuple[int, int]] = []
+    cfg_environment = json.loads(cfg_key)
     for start, end, _ in rust_cfg_attribute_spans(boundary_code):
         attribute = strip_rust_comments(source[start:end], mask_literals=False)
         expression = cfg_attribute_expression(attribute)
@@ -1640,7 +1653,7 @@ def phase_bc_call_chain(
     return [functions_by_node[item].identity() for item in reversed(nodes)]
 
 
-PAGE_MAP_LIVE_ALLOCATION_LOOKUP = re.compile(r"\.lookup_live_allocation\s*\(")
+PAGE_MAP_LIVE_ALLOCATION_LOOKUP = re.compile(r"\.lookup_(?:native_)?live_allocation(?:_with_captured_page)?\s*\(")
 SOURCE_ALLOCATION_ASSOCIATION = re.compile(
     r"\b(?P<allocation>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*is_associated_with\s*\(\s*"
     r"(?P<current>[A-Za-z_][A-Za-z0-9_]*)\s*\)"

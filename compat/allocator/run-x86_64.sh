@@ -43,7 +43,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-concurrent-init | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
-  allocator-remote-free | allocator-live-owner-full-medium-remote-release | allocator-live-owner-full-medium-one-remote-unfull-reuse | allocator-direct-remote | allocator-mapped-reclaim | allocator-mapped-adoption | allocator-regular-mapped-reclaim [--offline]
+  allocator-remote-free | allocator-live-owner-full-medium-remote-release | allocator-live-owner-full-medium-one-remote-unfull-reuse | allocator-direct-remote | allocator-mapped-reclaim | allocator-mapped-adoption | allocator-regular-mapped-reclaim
   allocator-direct-small-allocation-adoption
   allocator-unmapped-reabandon | allocator-on-demand | allocator-direct-on-demand
   allocator-aligned-overalloc-realloc
@@ -856,10 +856,7 @@ case "$command" in
         run_in_container python3 compat/allocator/x86_64_mapped_adoption_evidence.py --offline
         ;;
     allocator-regular-mapped-reclaim)
-        if [ "$#" -ne 0 ]; then
-            [ "$#" -eq 1 ] && [ "$1" = "--offline" ] \
-                || fail "allocator-regular-mapped-reclaim accepts only --offline"
-        fi
+        [ "$#" -eq 0 ] || fail "allocator-regular-mapped-reclaim takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_regular_mapped_reclaim_evidence.py --offline
         ;;

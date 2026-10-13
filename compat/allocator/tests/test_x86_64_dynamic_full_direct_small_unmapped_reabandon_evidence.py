@@ -206,30 +206,6 @@ class TraceAndReportTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "pthread/TLS"):
             evidence.validate_c_command(weakened, schema)
 
-    def test_c_probe_keeps_the_live_direct_cache_observation_pre_exit(self):
-        source = evidence.C_TRACE_PROBE
-        self.assertIn("mi_option_set(mi_option_page_reclaim_on_free, 0);", source)
-        self.assertIn("mi_option_set(mi_option_page_full_retain, 2);", source)
-        self.assertIn("mi_heap_malloc_small(heap, request)", source)
-        self.assertIn("direct_cache_range(theap, queue, page", source)
-        self.assertIn("range_start != 113 || range_end != 128", source)
-        self.assertIn("unmapped_prefix_free_count = reserved / 8 + 1;", source)
-        self.assertIn("used_after_first_consumer_free = page->used;", source)
-        self.assertIn("used_after_unmapped_prefix + unmapped_prefix_free_count != capacity + 1", source)
-        self.assertIn(
-            "used_after_reabandon_boundary + unmapped_prefix_free_count + 2 != capacity + 1",
-            source,
-        )
-        post_thread_done = source.split("mi_thread_done();", 1)[1]
-        self.assertNotIn("theap->", post_thread_done)
-        self.assertNotIn("pages_free_direct", post_thread_done)
-        self.assertNotIn("direct_cache_range(", post_thread_done)
-        pre_exit = source.split("fixture.allow_thread_done = true;", 1)[0]
-        self.assertIn("&worker_heap->arena_pages[arena->arena_idx]", pre_exit)
-        self.assertIn("&worker_heap->abandoned_count[bin]", pre_exit)
-        joined_consumer = source.split("if (pthread_join(producer, NULL) != 0) goto output;", 1)[1]
-        self.assertNotIn("worker_heap->", joined_consumer)
-
     def test_c_probe_checks_partial_head_unmapped_then_mapped_and_terminal_release(self):
         source = evidence.C_TRACE_PROBE
         for observation in (

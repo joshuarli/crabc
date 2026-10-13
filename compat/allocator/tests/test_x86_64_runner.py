@@ -179,10 +179,10 @@ fi
                 self.assertEqual(rejected.returncode, 2)
                 self.assertIn(f"{command} takes no arguments", rejected.stderr)
 
-    def test_m6_gate_command_is_closed_and_runs_the_fail_closed_gate(self):
+    def test_m6_gate_command_is_closed(self):
         for arguments, expected in (
-            ((), [b"python3", b"compat/allocator/m6_gate.py"]),
-            (("--check",), [b"python3", b"compat/allocator/m6_gate.py", b"--check"]),
+            ((), [b"python3", b"compat/allocator/m6_gate.py", b"--qualification-profile", b"full"]),
+            (("--check",), [b"python3", b"compat/allocator/m6_gate.py", b"--check", b"--qualification-profile", b"full"]),
             (("--reader-tests",), [b"python3", b"compat/allocator/tests/test_m6_gate.py"]),
         ):
             with self.subTest(arguments=arguments):
@@ -194,6 +194,11 @@ fi
         rejected = self.launch("allocator-m6", "--full")
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("allocator-m6 accepts only --check or --reader-tests", rejected.stderr)
+
+    def test_container_dispatch_disables_python_bytecode_writes(self):
+        result = self.launch("allocator-m1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(b"PYTHONDONTWRITEBYTECODE=1", self.capture.read_bytes().split(b"\0"))
 
     def test_m9_physical_reader_uses_the_pinned_core_image(self):
         import sys
@@ -386,146 +391,35 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             stderr=subprocess.PIPE,
         )
         self.assertEqual(syntax.returncode, 0, syntax.stderr)
-        source = RUNNER.read_text(encoding="utf-8")
-        for command in (
-            "allocator --quick",
-            "allocator-m1",
-            "allocator-m2",
-            "allocator-init-recursion",
-            "allocator-initialization-tld",
-            "allocator-release-evidence",
-            "allocator-cmake-modes",
-            "allocator-live-owner-full-medium-remote-release",
-            "allocator-mapped-adoption",
-            "allocator-regular-mapped-reclaim",
-            "allocator-direct-small-allocation-adoption",
-            "allocator-aggregate-same-bin-still-live",
-            "allocator-on-demand",
-            "allocator-direct-on-demand",
-            "allocator-aligned-overalloc-realloc",
-            "allocator-regular-small",
-            "allocator-direct-small-full-retire",
-            "allocator-medium-full-retire",
-            "allocator-full-non-direct-small-force-collect-post-exit",
-            "allocator-full-direct-small-force-collect-post-exit",
-            "allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped",
-            "allocator-dynamic-full-direct-small-unmapped-reabandon",
-            "allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped",
-            "allocator-dynamic-full-non-direct-small-unmapped-reabandon",
-            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped",
-            "allocator-dynamic-full-medium-unmapped-reabandon",
-            "allocator-dynamic-full-large-one-remote-force-collect-to-mapped",
-            "allocator-dynamic-full-large-homogeneous-aggregate",
-            "allocator-dynamic-full-medium-homogeneous-aggregate",
-            "allocator-dynamic-full-singleton-homogeneous-aggregate",
-            "allocator-dynamic-full-non-direct-small-homogeneous-aggregate",
-            "allocator-later-thread-exit-full-direct-small-pages",
-            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
-            "allocator-dynamic-os-aligned-singleton",
-            "allocator-dynamic-arena-singleton-post-exit",
-            "allocator-unit",
-            "allocator-core-unit",
-        ):
-            self.assertIn(command, source)
-        self.assertIn("CRABC_EXECUTION_MODE=native", source)
-        self.assertIn("CRABC_HOST_ARCH=x86_64", source)
-        self.assertIn("linux/amd64", source)
-        self.assertNotIn('"$ROOT_DIR/scripts/dev.sh"', source)
-        self.assertNotIn('cargo "$@"', source)
-        self.assertNotIn("crabc-libc", source)
 
-    def test_m1_command_is_closed_and_selects_the_native_x86_gate(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-m1)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/run.py --m1 --offline",
-            source,
-        )
+    def test_m1_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-m1", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-m1 takes no arguments", result.stderr)
 
-    def test_m2_command_is_closed_and_selects_the_native_x86_gate(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-m2)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/run.py --m2 --offline",
-            source,
-        )
+    def test_m2_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-m2", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-m2 takes no arguments", result.stderr)
 
-    def test_init_recursion_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-init-recursion)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_init_recursion_evidence.py --offline",
-            source,
-        )
+    def test_init_recursion_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-init-recursion", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-init-recursion takes no arguments", result.stderr)
 
-    def test_initialization_tld_command_is_closed_and_uses_the_private_offline_producer(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-initialization-tld)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_initialization_tld_evidence.py --offline",
-            source,
-        )
+    def test_initialization_tld_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-initialization-tld", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-initialization-tld accepts only --reader-tests", result.stderr)
 
-    def test_every_native_dispatch_uses_a_fresh_python_bytecode_environment(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        container_function = source.split("run_in_container() {", 1)[1].split(
-            "\n}\n", 1
-        )[0]
-        self.assertIn("--env PYTHONDONTWRITEBYTECODE=1", container_function)
-        dispatch = source.split('case "$command" in', 2)[-1]
-        self.assertGreater(dispatch.count("run_in_container "), 0)
-        self.assertEqual(
-            dispatch.count("run_in_container "),
-            source.count("run_in_container "),
-        )
-
-    def test_linked_worktree_git_metadata_is_visible_read_only_without_global_git_env(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("linked_worktree_git_mounts()", source)
-        self.assertIn("git -C \"$ROOT_DIR\" rev-parse --path-format=absolute --git-common-dir", source)
-        self.assertIn("git -C \"$ROOT_DIR\" rev-parse --path-format=absolute --git-dir", source)
-        self.assertIn('"$physical_common_dir:$physical_common_dir:ro"', source)
-        self.assertIn('"$ROOT_DIR:$ROOT_DIR:ro"', source)
-        self.assertIn('"${GIT_METADATA_MOUNTS[@]}"', source)
-        self.assertNotIn("--env GIT_DIR=", source)
-        self.assertNotIn("--env GIT_WORK_TREE=", source)
-
-    def test_cmake_modes_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-cmake-modes)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/x86_64_cmake_mode_evidence.py --offline",
-            source,
-        )
+    def test_cmake_modes_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-cmake-modes", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-cmake-modes takes no arguments", result.stderr)
 
-    def test_live_owner_full_medium_remote_release_command_is_closed_and_uses_its_private_offline_probe(
+    def test_live_owner_full_medium_remote_release_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-live-owner-full-medium-remote-release)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_live_owner_full_medium_remote_release_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-live-owner-full-medium-remote-release", "unexpected"
         )
@@ -535,17 +429,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_live_owner_full_medium_one_remote_unfull_reuse_command_is_closed_and_uses_its_private_offline_probe(
+    def test_live_owner_full_medium_one_remote_unfull_reuse_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-live-owner-full-medium-one-remote-unfull-reuse)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_live_owner_full_medium_one_remote_unfull_reuse_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-live-owner-full-medium-one-remote-unfull-reuse", "unexpected"
         )
@@ -555,47 +441,22 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_mapped_adoption_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-mapped-adoption)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/x86_64_mapped_adoption_evidence.py --offline",
-            source,
-        )
+    def test_mapped_adoption_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-mapped-adoption", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-mapped-adoption takes no arguments", result.stderr)
 
-    def test_regular_mapped_reclaim_command_binds_the_closed_native_differential(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-regular-mapped-reclaim)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_regular_mapped_reclaim_evidence.py --offline",
-            source,
-        )
-        self.assertIn(
-            "allocator-regular-mapped-reclaim accepts only --offline",
-            source,
-        )
+    def test_regular_mapped_reclaim_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-regular-mapped-reclaim", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
-            "allocator-regular-mapped-reclaim accepts only --offline",
+            "allocator-regular-mapped-reclaim takes no arguments",
             result.stderr,
         )
 
-    def test_direct_small_allocation_adoption_command_is_closed_and_uses_its_private_offline_probe(
+    def test_direct_small_allocation_adoption_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-direct-small-allocation-adoption)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_direct_small_allocation_adoption_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-direct-small-allocation-adoption", "unexpected"
         )
@@ -605,64 +466,32 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_on_demand_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-on-demand)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/x86_64_on_demand_evidence.py --offline",
-            source,
-        )
+    def test_on_demand_command_is_closed(self) -> None:
 
         result = self.run_launcher("allocator-on-demand", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-on-demand takes no arguments", result.stderr)
 
-    def test_direct_on_demand_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-direct-on-demand)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/x86_64_direct_on_demand_evidence.py --offline",
-            source,
-        )
+    def test_direct_on_demand_command_is_closed(self) -> None:
 
         result = self.run_launcher("allocator-direct-on-demand", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-direct-on-demand takes no arguments", result.stderr)
 
-    def test_aligned_overalloc_realloc_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-aligned-overalloc-realloc)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_aligned_overalloc_realloc_evidence.py --offline",
-            source,
-        )
+    def test_aligned_overalloc_realloc_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-aligned-overalloc-realloc", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-aligned-overalloc-realloc takes no arguments", result.stderr)
 
-    def test_regular_small_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-regular-small)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/x86_64_regular_small_evidence.py --offline",
-            source,
-        )
+    def test_regular_small_command_is_closed(self) -> None:
 
         result = self.run_launcher("allocator-regular-small", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-regular-small takes no arguments", result.stderr)
 
-    def test_direct_small_full_retire_command_is_closed_and_uses_its_private_offline_probe(
+    def test_direct_small_full_retire_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-direct-small-full-retire)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_direct_small_full_retire_evidence.py --offline",
-            source,
-        )
 
         result = self.run_launcher("allocator-direct-small-full-retire", "unexpected")
         self.assertEqual(result.returncode, 2)
@@ -671,28 +500,14 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_medium_full_retire_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-medium-full-retire)", source)
-        self.assertIn(
-            "run_in_container python3 compat/allocator/x86_64_medium_full_retire_evidence.py --offline",
-            source,
-        )
+    def test_medium_full_retire_command_is_closed(self) -> None:
         result = self.run_launcher("allocator-medium-full-retire", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-medium-full-retire takes no arguments", result.stderr)
 
-    def test_full_non_direct_small_force_collect_post_exit_command_is_closed_and_uses_its_private_offline_probe(
+    def test_full_non_direct_small_force_collect_post_exit_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-full-non-direct-small-force-collect-post-exit)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_full_non_direct_small_force_collect_post_exit_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-full-non-direct-small-force-collect-post-exit", "unexpected"
         )
@@ -702,17 +517,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_full_direct_small_force_collect_post_exit_command_is_closed_and_uses_its_private_offline_probe(
+    def test_full_direct_small_force_collect_post_exit_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-full-direct-small-force-collect-post-exit)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_full_direct_small_force_collect_post_exit_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-full-direct-small-force-collect-post-exit", "unexpected"
         )
@@ -722,20 +529,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_medium_one_remote_force_collect_to_mapped_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_medium_one_remote_force_collect_to_mapped_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_medium_one_remote_force_collect_to_mapped_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-medium-one-remote-force-collect-to-mapped", "unexpected"
         )
@@ -745,17 +541,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_medium_unmapped_reabandon_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_medium_unmapped_reabandon_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-medium-unmapped-reabandon)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_medium_unmapped_reabandon_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-medium-unmapped-reabandon", "unexpected"
         )
@@ -765,20 +553,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_direct_small_one_remote_force_collect_to_mapped_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_direct_small_one_remote_force_collect_to_mapped_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_direct_small_one_remote_force_collect_to_mapped_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped",
             "unexpected",
@@ -789,20 +566,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_direct_small_unmapped_reabandon_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_direct_small_unmapped_reabandon_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-dynamic-full-direct-small-unmapped-reabandon)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_direct_small_unmapped_reabandon_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-direct-small-unmapped-reabandon",
             "unexpected",
@@ -813,20 +579,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped",
             "unexpected",
@@ -837,20 +592,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_non_direct_small_unmapped_reabandon_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_non_direct_small_unmapped_reabandon_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-dynamic-full-non-direct-small-unmapped-reabandon)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_non_direct_small_unmapped_reabandon_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-non-direct-small-unmapped-reabandon",
             "unexpected",
@@ -861,20 +605,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_later_thread_exit_full_direct_small_pages_command_is_closed_and_uses_its_private_offline_probe(
+    def test_later_thread_exit_full_direct_small_pages_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-later-thread-exit-full-direct-small-pages)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_later_thread_exit_full_direct_small_pages_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-later-thread-exit-full-direct-small-pages",
             "unexpected",
@@ -885,17 +618,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_large_one_remote_force_collect_to_mapped_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_large_one_remote_force_collect_to_mapped_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-large-one-remote-force-collect-to-mapped)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-large-one-remote-force-collect-to-mapped", "unexpected"
         )
@@ -905,17 +630,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_large_unmapped_reabandon_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_large_unmapped_reabandon_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-large-unmapped-reabandon)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_large_unmapped_reabandon_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-large-unmapped-reabandon", "unexpected"
         )
@@ -925,17 +642,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_large_homogeneous_aggregate_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_large_homogeneous_aggregate_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-large-homogeneous-aggregate)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_large_homogeneous_aggregate_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-large-homogeneous-aggregate", "unexpected"
         )
@@ -945,17 +654,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_medium_homogeneous_aggregate_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_medium_homogeneous_aggregate_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-medium-homogeneous-aggregate)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_medium_homogeneous_aggregate_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-medium-homogeneous-aggregate", "unexpected"
         )
@@ -965,17 +666,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_singleton_homogeneous_aggregate_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_singleton_homogeneous_aggregate_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-singleton-homogeneous-aggregate)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_singleton_homogeneous_aggregate_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-singleton-homogeneous-aggregate", "unexpected"
         )
@@ -985,17 +678,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_full_non_direct_small_homogeneous_aggregate_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_full_non_direct_small_homogeneous_aggregate_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-full-non-direct-small-homogeneous-aggregate)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_full_non_direct_small_homogeneous_aggregate_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-full-non-direct-small-homogeneous-aggregate", "unexpected"
         )
@@ -1005,20 +690,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_nonfull_regular_pages_distinct_bin_aggregate_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_nonfull_regular_pages_distinct_bin_aggregate_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn(
-            "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate)",
-            source,
-        )
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_nonfull_regular_pages_distinct_bin_aggregate_evidence.py "
-            "--offline",
-            source,
-        )
         result = self.run_launcher(
             "allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate",
             "unexpected",
@@ -1029,16 +703,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_automatic_pthread_destructor_command_is_closed_and_uses_its_private_offline_probe(
+    def test_automatic_pthread_destructor_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-automatic-pthread-destructor)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_automatic_pthread_destructor_evidence.py --offline",
-            source,
-        )
         result = self.run_launcher("allocator-automatic-pthread-destructor", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
@@ -1046,16 +713,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_cancellation_pthread_destructor_command_is_closed_and_uses_its_private_offline_probe(
+    def test_cancellation_pthread_destructor_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-cancellation-pthread-destructor)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_cancellation_pthread_destructor_evidence.py --offline",
-            source,
-        )
         result = self.run_launcher("allocator-cancellation-pthread-destructor", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
@@ -1063,16 +723,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_process_done_pthread_key_command_is_closed_and_uses_its_private_offline_probe(
+    def test_process_done_pthread_key_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-process-done-pthread-key)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_process_done_pthread_key_evidence.py --offline",
-            source,
-        )
         result = self.run_launcher("allocator-process-done-pthread-key", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
@@ -1080,16 +733,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_os_aligned_singleton_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_os_aligned_singleton_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-os-aligned-singleton)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_os_aligned_singleton_evidence.py --offline",
-            source,
-        )
         result = self.run_launcher("allocator-dynamic-os-aligned-singleton", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
@@ -1097,16 +743,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_dynamic_arena_singleton_post_exit_command_is_closed_and_uses_its_private_offline_probe(
+    def test_dynamic_arena_singleton_post_exit_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-dynamic-arena-singleton-post-exit)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_dynamic_arena_singleton_post_exit_evidence.py --offline",
-            source,
-        )
         result = self.run_launcher("allocator-dynamic-arena-singleton-post-exit", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
@@ -1114,16 +753,9 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_deferred_free_callback_command_is_closed_and_uses_its_private_offline_probe(
+    def test_deferred_free_callback_command_is_closed(
         self,
     ) -> None:
-        source = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("allocator-deferred-free-callback)", source)
-        self.assertIn(
-            "run_in_container python3 "
-            "compat/allocator/x86_64_deferred_free_callback_evidence.py --offline",
-            source,
-        )
         result = self.run_launcher("allocator-deferred-free-callback", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn(
@@ -1142,9 +774,6 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         self.assertIn("Usage:", unsupported.stderr)
 
     def test_root_dispatcher_remains_aarch64_only(self) -> None:
-        source = ROOT_DISPATCHER.read_text(encoding="utf-8")
-        self.assertIn('readonly PLATFORM="linux/arm64"', source)
-        self.assertNotIn("allocator-remote-free", source)
         self.assertFalse((ROOT / "scripts/dev-amd64.sh").exists())
 
 

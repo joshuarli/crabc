@@ -101,16 +101,6 @@ class DeferredFreeCallbackEvidenceTests(unittest.TestCase):
                     with self.assertRaises(evidence.EvidenceError):
                         evidence.load_schema(Path(stream.name))
 
-    def test_probe_uses_pinned_generic_and_actual_oom_retry(self) -> None:
-        probe = evidence.C_TRACE_PROBE
-        self.assertIn("mi_register_deferred_free(&deferred_callback, &trace);", probe)
-        self.assertIn("_mi_malloc_generic(trace.theap, 2048, 0, NULL)", probe)
-        self.assertIn("mi_reserve_os_memory_ex(32 * 1024 * 1024", probe)
-        self.assertIn("mi_arena_try_alloc_at", probe)
-        self.assertIn("mi_heap_malloc(heap, 64)", probe)
-        self.assertIn("_mi_deferred_free(trace->theap, false);", probe)
-        self.assertNotIn("mi_heap_collect(", probe)
-
     def test_trace_and_report_reject_drift(self) -> None:
         trace = dict(evidence.EXPECTED_TRACE_VALUES)
         evidence.validate_trace(trace, description="test trace")

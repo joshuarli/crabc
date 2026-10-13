@@ -676,6 +676,15 @@ class CodegenTests(GateFixture):
 
 
 class CorrectnessTests(GateFixture):
+    def setUp(self) -> None:
+        super().setUp()
+        # The seal otherwise reflects this checkout's git state, which is
+        # whatever the developer has uncommitted; the tests need a clean one.
+        patcher = patch.object(gate.integrated, "source_seal", return_value={
+            "objects": {path: "1" * 40 for path in gate.integrated.SEALED_PATHS}, "dirty_paths": []})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_baseline_evaluation_forwards_policy_without_waiving_other_conditions(self) -> None:
         def met(identifier):
             return gate._condition(identifier, [], "validated fixture")

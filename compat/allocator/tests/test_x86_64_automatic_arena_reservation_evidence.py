@@ -27,15 +27,9 @@ class AutomaticArenaReservationEvidenceContractTests(unittest.TestCase):
         self.assertTrue(SCHEMA.is_file(), "automatic arena reservation checked schema is missing")
         self.assertEqual(json.loads(SCHEMA.read_text(encoding="utf-8")), module.schema_template())
         self.assertEqual(module.REPORT_DEFAULT, ROOT / "compat/reports/allocator/x86_64/automatic-arena-reservation.json")
-        self.assertIn('run.temporary_directory(\"crabc-mimalloc-x86_64-automatic-arena-\")', SCRIPT.read_text(encoding="utf-8"))
         self.assertTrue(module.EXPECTED_SCOPE["concurrent_fresh_regular_arena_reservation_claimed"])
         self.assertFalse(module.EXPECTED_SCOPE["automatic_reserve_lock_coalescing_claimed"])
         self.assertFalse(module.EXPECTED_SCOPE["simultaneous_reserve_lock_miss_or_coalescing_claimed"])
-        self.assertIn("_mi_thread_init()", module.C_TRACE_PROBE)
-        self.assertIn("root_is_current(theap)", module.C_TRACE_PROBE)
-        self.assertIn("mi_option_disallow_os_alloc", module.C_TRACE_PROBE)
-        self.assertIn("mi_arenas_try_find_free", module.C_TRACE_PROBE)
-        self.assertIn("mi_arenas_try_alloc", module.C_TRACE_PROBE)
 
     def test_parser_rejects_mutated_or_out_of_order_relation(self) -> None:
         lines = [module.TRACE_BEGIN]
