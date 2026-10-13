@@ -71,6 +71,6 @@ Run the focused parser/account test in the pinned image:
 ```sh
 docker run --rm --network none --user "$(id -u):$(id -g)" \
   -v "$PWD:/workspace" -w /workspace \
-  crabc-core-evidence:x86_64@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
+  "$(python3 -B compat/x86_64/core_image.py)" \
   python3 -B -m unittest compat/x86_64/tests/test_native_callable_declarations.py
 ```

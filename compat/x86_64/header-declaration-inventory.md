@@ -49,9 +49,7 @@ same-source selection closure. The CLI prints a compact validation result with
 the report identity, retained collection status, and current-source comparison;
 it does not repeat the full declaration inventory.
 
-Physical evidence may remain in a preserved sibling worktree under the
-canonical checkout's `.work/`. It is not reassigned to the selecting checkout
-merely because both use `/workspace` inside their containers. The public reader's
+The public reader's
 replay result carries the unchanged report and the recomputed current-source
 comparison; selection consumes both.
 

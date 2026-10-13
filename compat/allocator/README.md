@@ -1,3046 +1,460 @@
-# Allocator-port evidence contract
+# Native x86-64 allocator harness
 
-> **Status: native x86-64 active; AArch64 paused.**
-> [`plan.md`](../../plan.md#native-allocator-completion) owns the x86 milestones
-> and progress status. Existing x86 quick/check evidence is not x86 M1/M2
-> closure. AArch64 milestone records remain tied to their original target and
-> revision; neither target's reports promote the other.
+The allocator harness reproduces and checks the fixed mimalloc v3.5.0 Rust
+port against the pinned C source: it builds the C oracle, runs deterministic
+C/Rust differential lanes, the Rust unit and integration suites, the milestone
+gates, and the allocator performance and codegen measurements. Native
+Linux/x86-64 is the only active target. The paused AArch64 route is in
+[`aarch64.md`](aarch64.md); its reports never qualify x86 and x86 reports never
+qualify AArch64.
 
-The native x86 launcher keeps mutable state under `.work/allocator-x86_64/`:
-Cargo home/targets, source archives, temporary files, and reports. Set
-`CRABC_ALLOCATOR_X86_64_WORK_DIR` only to a physical descendant for an isolated
-run; escaping paths and symlinks are rejected before Docker starts. Legacy
-container `target`, `compat/reports`, allocator-cache, and `/tmp` paths are
-bind-mounted onto that same local state. The pinned `/opt` toolchain is not
-hidden by a Cargo-cache mount. Reviewed source manifests retain their original
-archive-path spelling; execution-path relocation does not change upstream
-identity or archive hash verification.
+Related: the allocator design is in
+[`docs/design/allocator.md`](../../docs/design/allocator.md), the Rust/C
+difference register is [`known-differences.md`](known-differences.md), the
+source pins and licensing are in
+[`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md), and the
+repository plan is [`plan.md`](../../plan.md). Reports are measurements, never
+qualification by themselves; the checked-in contracts below are the review
+inputs.
 
-`allocator-perf-integrated` runs in the pinned core image because its installed
-static and dynamic product builders require the owned Linux UAPI inputs. Its
-startup harness launcher and compiler version probe explicitly use
-`/usr/local/bin/crabc-x86_64-musl-gcc`, the pinned musl oracle in that image.
-`allocator-perf-engine` retains the allocator image and its `musl-gcc` compiler.
-Candidate programs continue to use only their installed product drivers.
+## Narrowest loops
 
-The shared engine fixture keeps its volatile payload and usable-size accumulator
-private to each thread. Independent workers must not race or contend on that
-accumulator. Both allocator backends compile the same fixture bytes; a fixture
-change requires fresh products and measurements in both lanes.
-
-The engine runner retains fixture stdout and stderr under each run's
-`<label>.artifacts/output` directory, including samples that fail before their row
-can produce a comparison. The installed-product runner retains the same output
-under `.work/allocator-x86_64/integrated/<label>/output`.
-
-For one development regression, use
-`./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name`.
-The filter selects one complete Rust test name with `--exact` and preserves its
-raw output. Zero matching tests, an ignored test, or a failed test returns a
-failure. Omit `--filter` for the full library unit suite. These commands do not
-produce M1/M2 qualification receipts.
-
-`./compat/allocator/run-x86_64.sh allocator-native-integration` runs every
-`crabc-mimalloc/tests/native_*` runtime integration target with its default-off
-audit and fault features; each test registers its std worker threads' allocator
-descriptors as libc's x86 pthread start does before attaching.
-
-`./compat/allocator/run-x86_64.sh allocator-arena-destroy` runs the pinned-C
-and Rust development differential for the persistent arena group's quiescent
-retirement. It checks regular/reserved full-map accounting, external retention,
-a failed multi-arena parent release, and simulated huge-page failure continuation;
-Rust additionally checks preflight refusal and exact raw-only retries. Anonymous
-huge backing does not qualify kernel hugetlb or NUMA. Logs live in the existing
-allocator artifacts directory under `x86_64/arena-destroy`. The runtime
-`destroy_on_exit` option/subprocess-heap teardown caller remains outstanding.
-
-`./compat/allocator/run-x86_64.sh allocator-heap-destroy` compares the pinned-C
-main-Heap Theap-list destruction phase after `process_done` has retained worker
-TLS state with the matching Rust source-owner transfer. It records only the
-observed list/TLD/thread-count transition. Detached TLD backing, arena and
-PageMap release, Heap statistics and bookkeeping, and full subprocess
-destruction remain separate work.
-
-`./compat/allocator/run-x86_64.sh allocator-reclaim-on-free` compares pinned
-`mi_abandoned_page_try_reclaim` decisions ([`reclaim_on_free.c`](reclaim_on_free.c))
-with the Rust `native_reclaim_on_free` integration test: a worker freeing into
-its own full, abandoned page; a worker with an empty or a nonempty queue for
-the bin freeing into an exited owner's page; and a large page, which is never
-reclaimed on free. For each case both record whether the freeing thread owns
-the page afterwards, its `used` count, and the thread's queue length for the
-bin. Both halves rerun the cases under seven `mimalloc_*` environment
-profiles (default, cross-thread and disabled `page_reclaim_on_free`, zero
-`page_max_reclaim` and `page_cross_thread_max_reclaim`, and
-`page_full_retain` of 0 and 5), so each process reads them from its own
-option table. Logs live under `x86_64/reclaim-on-free`.
-
-`./compat/allocator/run-x86_64.sh allocator-subprocess-lifecycle` compares
-pinned `mi_subproc_new`, `mi_subproc_add_current_thread`,
-`mi_subproc_visit_heaps`, and `mi_subproc_destroy`
-([`subprocess_lifecycle.c`](subprocess_lifecycle.c)) with the Rust
-`subproc::lifecycle` composition for root children of the process main
-subprocess. The address-free trace covers list order and sequence numbers, the
-child main Heap and its metadata Theap on the parent's detached TLD, the
-child's first metadata arena, `mi_subproc_add_current_thread` refusing a
-thread already in the main subprocess and admitting a fresh thread that
-allocates, frees, and finishes, Heap visitation with an early stop, and the
-destroy-time statistics merge into the main subprocess, which keeps counting
-the child's pages because they are released only with its arenas, including
-a child destroyed with a live metadata block. A last section covers the page
-handoff at thread finish: a child thread that finishes with live blocks
-abandons its pages to the child main Heap (mapped, with the Heap's
-`abandoned_count`), a thread outside the child frees one block (the page stays
-abandoned) and the only block of another page (the page is released), and the
-child is destroyed with a live abandoned block. Destroying a child that still
-has threads or non-main Heaps is not covered yet. Logs live
-under `x86_64/subprocess-lifecycle` in the allocator artifacts directory.
-
-`./compat/allocator/run-x86_64.sh allocator-heap-lifecycle` compares pinned
-`mi_heap_new`, `mi_heap_delete`, and `mi_heap_destroy`
-([`heap_lifecycle.c`](heap_lifecycle.c)) on a thread of a child subprocess
-with the Rust `types::heap_registry::lifecycle` on a child member thread: Heap
-list order and links, sequence numbers, dynamic thread-local keys and their
-index reuse, Heap counts and `heaps` statistics, and main-Heap refusal. A
-last section allocates from a Heap: the per-thread Theap the first
-`mi_heap_malloc` creates (list positions, thread-local slot, the cached-Theap
-reference counts that the nested allocation of the Heap's per-arena page
-record moves to the main-Heap Theap, `theaps` statistics), a local free, and
-`mi_heap_destroy` with live pages, whose cached Theap is released by the next
-main-Heap allocation, `mi_heap_delete` moving live pages to the main Heap as
-abandoned pages, a thread finishing with a live block on a non-main Heap's
-page and with an OS-backed block on another, reclaim of abandoned pages on a
-free and on an allocation by later threads, and `mi_subproc_destroy` of that
-Heap with its abandoned page.
-A second oracle process runs the same Heap operations on an ordinary thread
-of the process main subprocess against the Rust `subproc::main_heaps` route:
-the Theap and list shapes of a first allocation, a huge OS-backed block that
-`mi_heap_delete` moves to the process main Heap's OS-abandoned list and a
-later free releases, one that `mi_heap_destroy` releases with its Heap,
-1000 live Heaps, which grow the thread-local slot array, and a Heap created
-on a key those left behind.
-Logs live under `x86_64/heap-lifecycle` in the allocator artifacts
-directory.
-
-`./compat/allocator/run-x86_64.sh allocator-m6-adapter` links the shared
-driver [`x86_64_m6_adapter_driver.c`](x86_64_m6_adapter_driver.c) once
-against the pinned C sources and once against the native adapter's M6
-exports (`mi_heap_*` allocation, reallocation, string, collection, and lifecycle entries, the `mi_subproc_*` entries, `mi_reserve_os_memory`
-and `mi_reserve_os_memory_ex`) and compares the two address-free traces:
-reservations with their statistics and errno, Heap allocation entries with
-their failures and messages, the Heap reallocation, string, `new`, and
-collection entries, main-Heap refusal warnings, test-api.c's
-heap-os1/heap-os2/heap-many, and a second thread that allocates from a shared
-Heap and finishes. Logs live under `x86_64/m6-adapter`.
-
-`./compat/allocator/run-x86_64.sh allocator-m5` is the fail-closed Milestone 5
-gate. [`m5-gate-x86_64-v3.5.0.json`](m5-gate-x86_64-v3.5.0.json) gives each M5
-condition of `plan.md` one gate and names its evidence: groups of
-`crabc-mimalloc/tests/native_*` targets (every target belongs to exactly one
-group), allocator-container runners, and revision-bound receipts of the
-runtime-launcher native-shadow runners (`libc-native-mimalloc-shadow-pthread-teardown`,
-`owned-native-allocator-stress`), which the gate reads through
-[`native_shadow_receipt.py`](../x86_64/native_shadow_receipt.py) and accepts
-only when they seal the current checkout and every case passed. Run those
-runners on the tree before the gate. It writes
-`x86_64/m5-gate/report.json` under the allocator artifacts directory and exits
-nonzero until every gate passes. `--gate ID` runs one gate's evidence,
-`--check` validates the contract alone, and `--reader-tests` runs its checker
-tests. The frozen AArch64 `m5-gate-v3.5.0.json` remains `run.py`'s contract.
-
-`./compat/allocator/run-x86_64.sh allocator-m6` is the fail-closed Milestone 6
-gate. [`m6-gate-v3.5.0.json`](m6-gate-v3.5.0.json) partitions every applicable
-Heap, Theap, arena, managed-memory, and subprocess item selected from
-[`api-v3.5.0.json`](api-v3.5.0.json) into gates, plus cross-cutting
-destruction/lifetime and upstream-test gates, and names each gate's evidence.
-The command executes every evidence entry that has a runner (currently the
-differentials above), writes `x86_64/m6-gate/report.json` under the
-allocator artifacts directory, and exits nonzero until every gate passes. A
-gate passes only with no reviewed blocker and all of its evidence runnable and
-passing; the contract validator rejects inventory gaps, double ownership, and
-unblocked gates that depend on missing evidence. `--check` validates the
-contract alone; `--reader-tests` runs its checker tests.
-
-`./compat/allocator/run-x86_64.sh allocator-m3` is the fail-closed native
-M3 gate defined by `m3-local-engine-x86_64-v3.5.0.json`. It requires complete
-M1/M2 reports, then runs `m3_x86_64.py`: generated workloads (a sweep of every
-reachable bin past one page, retirement/reuse probes, generic administration,
-and seeded churn) execute in separate pinned-C (`m3_local_trace_x86_64.c`,
-default Theap with `MIMALLOC_PAGE_FULL_RETAIN=-1`) and Rust
-(`single_thread::local_trace`) processes over identical in-place arenas, and
-their normalized traces (logical allocation and page IDs, block indices,
-queue order/counts, direct cache, Theap counters) must match line by line.
-It also derives the bin/page-class transition matrix, runs the M3 Rust unit
-batch, and runs the local engine under strict-provenance Miri. Unit and Miri
-tests are selected by exact module-path prefix from `--list` (libtest filters
-match substrings) and run per module group, so a Miri abort reports every
-test it prevented rather than hiding them. Every unmet
-prerequisite, check, or checked-in remaining condition is printed and the
-command exits 3. `--differential-only` and `--miri-only` are development
-subsets that write separate reports and never close M3. Traces and workloads
-stay under `.work/allocator-x86_64/target/compat/allocator/x86_64/m3-local-engine/`.
-
-`./compat/allocator/run-x86_64.sh allocator-m4` is the fail-closed Milestone 4
-gate in the same shape. [`m4-gate-x86_64-v3.5.0.json`](m4-gate-x86_64-v3.5.0.json)
-selects the standard, extended, and aligned allocation groups plus
-`mi_collect`, minus every item the M6/M7 contracts own; the few remaining
-items another milestone owns are listed under `excluded_items` with their
-owner and reason. Its gates cover allocation, free, reallocation, aligned
-operations, usable/good size, source conveniences, collection, page kinds,
-OOM/failure preservation, the native `mi_*` adapter, and the unmodified
-`test/test-api.c`. Its evidence modes are `x86_64_m4_gate.py --native-tests`
-(the focused native-engine regressions), `--adapter-boundary` (the export and
-header audit of [`native-mi-adapter/`](native-mi-adapter/), an evidence-only
-static library exporting every M4 `mi_*` function, plus the M6 and M7
-functions those gates add, over `crabc_mimalloc::source_api`, and nothing
-the pinned header does not declare), and `--differential SCENARIO`, which links the
-one shared driver [`x86_64_m4_operations_driver.c`](x86_64_m4_operations_driver.c)
-against the pinned C sources and against that adapter and requires the two
-processes' address-free traces to be equal for the `operations`, `page-kinds`,
-`collection`, `oom`, and `threads` scenarios. Both raw traces are kept beside
-the report, `x86_64/m4-gate/report.json` under the allocator artifacts
-directory. `--gate ID` runs one gate's evidence.
-
-`./compat/allocator/run-x86_64.sh allocator-m8` is the fail-closed Milestone 8
-owned-libc integration gate. [`m8-gate-x86_64-v3.5.0.json`](m8-gate-x86_64-v3.5.0.json)
-names, per plan row (startup/constructors, threads/fork, errno/C ABI,
-weak/interposed symbols, static/dynamic products, DSOs/loader, Rust std, Lua,
-corpus), the installed native-shadow `scripts/dev-x86_64.sh` product commands
-it requires. `owned-native-allocator-policy` builds the native-shadow sysroots
-that the product-consuming rows receive through `{static_sysroot}` and
-`{dynamic_sysroot}`. Because each row starts its own container, the gate runs
-on the native host; logs and `report.json` are under
-`.work/allocator-x86_64/reports/allocator/x86_64/m8-gate/`.
-The `owned-native-allocator-worker-transfer` row builds one C fixture against
-musl, the selected C backend, and native shadow. Its physical receipt checks
-the source-built products and the exact worker-exit, `reallocarray`, and free
-transcript after `pthread_join`.
-
-This directory owns the reproducible source, inventory, C-oracle, and later
-Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
-Linux/x86-64 little-endian development is active alongside runtime parity;
-AArch64 implementation and qualification are paused. Existing x86 evidence
-provides a baseline, not public x86 support or qualified backend promotion.
-Those outcomes require the execution plans' full gates. Neither program
-authorizes AArch64 emulation, allocator invention, a cross-platform
-abstraction, or a runtime allocator-selection system. The
-immutable source and licensing record are in
-[`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md); the design
-boundary is in [`docs/design/allocator.md`](../../docs/design/allocator.md).
-
-The workspace crate currently contains source-mapped foundations, immutable
-Linux memory policy, regular/aligned mapping ownership, a live two-level page
-map, one bounded source-order process-main coordinator, one separately owned
-process-static page-map publication root plus one caller-selected
-process-shared arena sidecar, its first lazy default-reservation policy, its
-one ticket-zero first ordinary fresh-page connection, and bounded ticket-zero
-and later-thread page
-engines over their matched pair, including one all-free later-main exit drain
-and its nine sole-page handoffs (a full arena singleton, an OS-aligned
-singleton linked through `Heap::os_abandoned_pages` until its final release, a mapped medium
-one-block page, full medium and full large `BIN_FULL` pages plus full
-non-direct-small and direct-small regular-bin pages that begin unmapped and
-reabandon after the source mostly-used boundary, a nonfull mapped small-or-medium post-exit
-route, and an exact two-block large post-exit route with its complete 64-slice span, with exact full-medium, full-large, full-non-direct-small, and full-direct-small
-one-joined-remote-free force-collection predecessors), eight bounded later-main
-full-page aggregate routes (arena singleton, homogeneous OS singleton, medium,
-large, bounded mixed medium/large, and bounded mixed singleton/regular
-`BIN_FULL` members, plus non-direct-small and direct-small ordinary-bin
-members), and one aggregate regular
-small/medium/large plus live-arena-singleton post-exit registry, ordinary
-and binned caller-owned bitmap views, an in-place external-arena substrate,
-the private futex-lock boundary, bounded nonallocating support
-kernels, the allocation-free recursive once protocol, pure page geometry, and
-the exact `mi_random_ctx_t` image stored in `Theap::random` over RustCrypto's
-original-ChaCha primitive. The random slice includes direct `getrandom`,
-error/short-read weak continuation, source counter/nonce/output clearing, and
-in-place address-identity splitting; its dependency-owned replacement for the
-source-local weak shuffle is recorded in `known-differences.md`. Five private
-compiler-TLS roots now preserve the pinned initial images and selected teardown values,
-while the selected Linux/AArch64 thread identity reads `TPIDR_EL0` directly. A
-process-static private metadata owner now ports selected detached-Malloc paths
-in `src/subproc.c:19-88`: process startup binds its static detached
-Heap/TLD/Theap image, then one-way Release-CAS publishes that exact fully
-formed Theap identity through a comparison-only `MainSubprocess` admission
-slot before global PageMap publication, without mapping private backing or
-touching compiler-TLS roots. For only its bounded same-subprocess,
-empty-head, non-threadpool input, that detached Theap preserves
-`mi_process_theap_meta`'s kind-only `_mi_memid_create(MI_MEM_STATIC)`
-provenance, the frozen normal enabled `page_reclaim_on_free` image, an
-initialized possibly-weak random context, and an odd cookie before Release
-heap publication. A nonempty head, mismatched subprocess, or thread-pool
-input is rejected before mutation rather than claiming C's locked list/split
-or option-adjustment route. This is not a complete `_mi_theap_init` or
-mutable-options claim. A COLD direct `zalloc`, aligned `zalloc`, or
-`rezalloc(None)` refuses before the metadata lock, mapping, or capability
-creation; this is a bounded Rust safety strengthening of C's non-null
-precondition. The admission slot is not the actual `mi_subproc_t::theap_meta`
-field/layout, `theap_meta_lock`, a dereference-capable subprocess API, or
-main-Heap linkage. A first valid prepared metadata request then forms the
-bounded private direct-OS PageMap/external-arena backing and issues its one
-detached session. That private first-demand route is not claimed to match
-pinned C's normal `_mi_meta_zalloc` backing route. The owner uses a
-must-use owner-bound capability for source-ordered replacement and serialized
-cross-thread release; its detached image and its later pre-publication-bound
-registry/published arena name the same deliberately bounded process-main
-identity as the current-thread TLD checkpoint. It does not claim general
-subprocess destruction or public allocation routing.
-
-`process_init.rs` owns a bounded source-order transition: static Heap
-foundation, detached metadata-image binding without private backing, one-way
-detached-Theap identity publication, global PageMap publication, then the
-ticket-zero TLD/Theap roots. Its selector
-prevents generic TLD construction from consuming ticket zero while startup is
-active or retained, and its ready
-lease exposes only immutable map/configuration/subprocess witnesses.
-`process_page_map.rs` owns that distinct process-static map
-initialization/publication boundary. It freezes one `MemoryConfig` and selected
-`MainSubprocess`, initializes the map in its final slot, and Release-publishes
-the root; it is distinct from metadata's private map and all caller-managed
-maps. `process_arena.rs` retains the lower `mi_manage_os_memory_ex2` ownership
-edge for a caller-selected external mapping and adds one explicit regular
-`mi_reserve_os_memory_ex2` entry. The latter accepts only a nonzero request
-that rounds to exactly one complete arena, maps ordinary reserved or committed
-memory, and records `MemoryKind::Os`. `reserve_default_os_arena` separately
-ports the first lazy `mi_arena_reserve` policy: source max-page headroom, the
-frozen 1-GiB Linux/AArch64 default, its overcommit-only eager mapping choice,
-and the 128-MiB retry after an unpublished first attempt returns COLD. It is
-not invoked at process startup; `MainStaticFirstArenaPageAllocator` owns the
-one current private ticket-zero route, deriving an empty-Theap ordinary page
-span and revalidating its zero-page image before the mapping side effect.
-`ProcessMainThread` is its only production-shaped factory and transfers the
-retained attachment plus immutable ready-map witness without mapping at
-startup.
-An unpublished metadata failure unmaps that exact regular mapping before
-returning a cold retry state; a failed unmap retains it terminally. The
-external entry still returns its unpublished rejected mapping to the caller. A
-reserved map first enters the final sidecar slot so a stable arena callback
-commits metadata and later selected/page-metadata ranges through that exact
-owner; default Linux decommit reports no recommit requirement. Later arena
-scaling, option mutation, large-page/exclusive/NUMA policy, and page-on-demand
-routing remain absent. `ProcessPageArenaLease` has one range-checked direct
-page-area commitment operation for an already-selected source extension; the
-lease itself does not maintain `slice_pcommitted` or own the failed-commit
-page-reabandon branch. Under `cfg(test)` only, a matched page engine may bind
-that lease to reproduce one source direct extension; that does not add Rust
-option processing, a public control, or production policy. It then proves the
-exact map/root/configuration/main tuple for private
-`MainStaticProcessPageAllocator`, `MainStaticFirstArenaPageAllocator`, and
-`MainHeapThreadProcessPageAllocator`
-owners. Each holds the process map's exclusive plain-entry lifecycle while its
-engine or joined scoped producer can access source page state, installs only
-the arena's in-place `pages_main` bitmap into the shared static main Heap, and
-completes normal fresh/release ordering through map, bitmap, metadata, and
-slices. A later-main engine may move its complete state plus attachment marker
-into `MainHeapThreadPausedProcessPageAllocator`, which holds only
-`ProcessPageMapSuspendedEngineAccess`: it exposes no PageMap reference or
-client pointer while another complete normal engine operation serializes the
-plain entries. Its only nonterminal transition reclaims the matching long lease
-before reassembling that exact engine; a failed handoff or unfinished drop
-retains state and poisons the root. The owner can reconstruct one already-READY
-immutable map/arena pair for a subsequent bounded owner, but does not search
-the registry, inspect free slices, or map.
-Their normal `realloc` delegates retain source replacement-failure/copy
-semantics; the ticket-zero null case alone may activate the completed
-first-arena policy. It has only that bounded first ticket-zero connection from the completed
-default-reserve policy to a fresh-page miss; it does not model the C
-`mi_page_map_empty` pre-root or an existing-arena search,
-and has no concurrent/general later-thread page routing, general owner exit
-beyond the recorded all-free later-main scan, its nine sole-page handoffs, and
-the bounded aggregate regular-pages traversal, teardown, or public routing.
-The explicit consuming medium and direct-small handoffs (immediate-head,
-exhausted fully committed scalar extension, exact prefix-covered extension, or
-exact on-demand page-area commit) can turn a detached route's short PageMap
-access back into one long later-main lifecycle. A completed aggregate
-traversal may use the existing immediate-medium handoff only when it itself
-leaves exactly one initial nonfull medium survivor with an immediate head,
-before a registry is built. Separately, sequential client frees may reduce an
-existing aggregate to exactly one mapped regular member with no singleton tail;
-only then can its opaque selected client constrain one source bitmap claim and
-move that member into one fresh later-main engine. The bounded runtime ledger
-keeps that client's normal request and immutable process pair private, and
-uses the same edge only after the publisher pair, every sibling, and each
-singleton tail terminally release; B uses, drains, and finishes its target
-before it completes its own attachment and returns A's admission proof. Other
-no-immediate direct-small cases, aggregates with multiple or
-source-unmapped/singleton members, scans, fallbacks, and concurrent reclamation
-remain sequential client-free access.
-The coordinator deliberately does not reserve this shared arena or supply a
-full process lifecycle. An unpublished
-reservation failure or dropped unfinished lifecycle terminally poisons rather
-than exposing a null or fresh root.
-
-A narrow unsafe
-current-thread-only owner now uses that metadata prerequisite for regular
-dynamic TLS backing: it retains the typed Malloc capability, follows the
-source 16/double/+1024/least-index/65535 growth rule, publishes a fully
-initialized flexible header before the dynamic root, validates live header
-provenance, and frees before clearing only that root. It deliberately has no
-TLD/theap attachment, key-to-current-thread registry integration, or actual
-process/pthread lifecycle hook; an internal consumption-ambiguous metadata
-error clears the root and terminally poisons the owner instead of offering an
-unjustified retry capability. A second unsafe current-thread-only owner now
-creates one full source-ordered `mi_tld_t` image with `subproc.rs`'s bounded
-process-main owner. It issues the old relaxed total-thread-count ticket before
-choosing storage; ticket zero uses the real static main-TLD branch without
-touching metadata, while later tickets use an exact fresh direct-zeroed
-metadata capability. Only the fully initialized TLD converts its ticket into a
-live-count lease, so a metadata failure still consumes the sequence but does
-not leak a live count. The selected isolated later-TLD regression proves that
-ticket-zero teardown retains no metadata capability, an injected post-ready
-direct-zeroed metadata failure consumes its later sequence without a capability
-or live lease, and the retry retains one typed Malloc capability through exact-
-owner teardown. It does not equate Rust's private backing with C's normal
-`_mi_meta_zalloc` backing or prove full `mi_tld_init`/`mi_tld_free` list, lock,
-or metadata-free behavior. The separate nonexclusive dynamic-Theap checkpoint
-follows one later TLD through `_mi_theap_alloc`'s nonexclusive
-`_mi_meta_zalloc` branch, together with selected init/threadlocal teardown.
-Its caller-pinned empty Heap proves the selected one-member TLD/Heap list
-shape and four attached metadata capabilities. The implementation tears down
-regular backing, then the Theap, then the TLD; the audit observes those
-attachment-local capabilities gone while the distinct registry bitmap remains
-for test-only quiescent shutdown. It excludes normal metadata-backing parity,
-exclusive-arena allocation, generic metadata-free dispatch, page ownership,
-concurrency, and full process/thread teardown. A separate live-rezalloc
-checkpoint starts only after the existing fresh 16-slot current-thread image.
-For one child thread and selected main-subprocess identity, an injected
-pre-allocation failure preserves its Malloc root, count, old slot, and exact
-capability; one 16-to-32 retry copies slot 15, publishes slot 16, reaches
-live-one/high-water-two metadata ownership, then tears down to zero. It does
-not compare C's initial count-zero `_mi_meta_rezalloc(NULL, ...)` route with
-Rust's separate fresh zalloc image, or claim arbitrary growth, normal C
-metadata backing, generic metadata-free dispatch, complete TLS/TLD/Theap/
-registry lifecycle, concurrency, pthread/process lifecycle, or ABI
-integration. The generic TLD checkpoint records direct `TPIDR_EL0`,
-Linux NUMA, the exact Unix non-threadpool result, the same main-subprocess
-pointer as detached metadata bootstrap state, and a null theap list. Its
-metadata path remains **subprocess-attached, no-theap**. Generic construction
-can own ticket zero only while `MainSubprocess` is open. Production static
-startup instead uses `process_init.rs`; its selector blocks generic ticket
-issue while source static startup is active or retained. A distinct
-process-global `OwnedThreadLocalKeyRegistry` now owns the
-regular-key source bitmap from `src/threadlocal.c:221-315`. It fixes the main
-subprocess identity on first claim, retains exactly one current typed aligned
-`MetaAllocation`, replaced per 1,024-bit growth step, and projects
-`BitmapView` only while its registry lock is held. Its ordinary `tseq = 0`
-claim repairs conservative chunk-map state, expansion preserves a nonzero
-prefix, and only the appended range is then marked free. The
-63-block/64,512-bit ceiling prevents a 64th allocation. A non-Copy
-lease requires explicit release; bounded shutdown rejects live leases and late
-operations. It never installs compiler TLS itself; the private dynamic
-attachment is its sole current-thread consumer. Typed-image invariant and ownership-ambiguous
-post-commit failures poison with retained process-static ownership; allocation
-failure before commit preserves the old image/generation. Every safe typed
-backing/TLD/dynamic-Theap projection also checks that its retained capability
-is still live before forming a byte reference. The static branch
-attaches that exact TLD to cache-aligned,
-address-stable `Heap` and default `Theap` slots within one process-static
-owner. It preflights the immutable empty dynamic root plus empty default/cached
-and null fast roots before consuming the ticket; does not touch metadata or
-mapping; uses kind-only `_mi_memid_create(MI_MEM_STATIC)` provenance for the
-main heap and concrete static image memids for its TLD/Theap; links TLD then
-heap lists; and publishes the default root before the fast root. Cached stays
-empty and dynamic stays the immutable empty image. A busy freshly owned
-TLD/heap-list attach, later attachment error, or post-mutation private unlock
-error terminally retains static TLD storage/live registration and returns no
-teardown owner; the injected pre-publication TLD-list failure leaves roots
-pristine. Those errors require invalid concurrency or a kernel/private-lock
-failure outside the valid one-owner contract; C locks do not return them.
-After exact root ownership validation, bounded teardown requires zero pages as
-a Rust pre-mutation invariant, so a page-count rejection preserves every live
-root/list/image/registration. Once that check passes, `_mi_thread_done`
-(`src/init.c:448-481`) clears fast before `mi_thread_theaps_done` resets
-default/cached and detaches: the valid path is fast, then default/cached, then
-heap/TLD lists (Release-clearing `theap.heap`). It clears terminal Theap state,
-invalidates and quiesces the TLD, then releases its live count and terminally
-retires static TLD storage. A fallible private lock/list boundary after root
-reset is also terminal invalid-owner handling, retaining storage and
-registration rather than claiming teardown; source heap-busy retry remains
-absent. `main_heap_thread.rs` now separately ports the ordinary later-thread
-`_mi_thread_init_with_heap(mi_heap_main())` branch. A live static attachment
-lends only a borrow-tied, lock-serialized shared-main-Heap lease; each later
-owner gets a nonzero metadata TLD and metadata Theap, links it to that Heap,
-then publishes default followed by its fixed fast slot while dynamic remains
-the immutable count-zero image and cached remains empty. After user destructors
-its direct no-page finish clears fast, resets default/cached, detaches the
-shared heap list then its TLD list, releases metadata, and decrements the main
-attachment's teardown gate. A private `libc` bridge now drives exactly this
-no-page path for real pthread workers: process startup retains the ticket-zero
-owner and its main-thread-minted Heap lease before constructors, child attach
-precedes user code and has a parent/child failure handshake, and normal return,
-`pthread_exit`, and cancellation finish after cleanup and TSD destructors. The
-bridge itself has no C ABI, pthread key, allocation routing, or main-thread
-teardown. Its direct public-fork gate preserves only the original ticket-zero
-child after it has excluded later admissions and observed either no page owner
-or an all-free `AwaitingFreshPage`/`DormantExistingArena` permanent owner;
-otherwise it disables the bridge. The selected `pthread_atfork` smoke first
-returns that owner to dormant, then proves child and parent `malloc`/`realloc`/
-`free` after the public callbacks; the callbacks themselves do not allocate.
-This is not inherited-pointer, lock, or general fork repair. The active C
-mimalloc backend retains its existing private key outside the 128-key
-application capacity. `main_heap_page.rs`
-can borrow one current later owner with a matched
-process pair, use the same `pages_main` bitmap, and retain the map lifecycle
-through normal free/release plus one scoped producer before returning to that
-no-page teardown. It can also consume a live engine into a post-fast-slot drain
-that force-collects every queue (including full), releases only all-free pages
-in PageMap -> `pages_main` -> metadata -> slice order, and finishes that pass
-even if an earlier page remains live. It then retains the post-fast-slot owner
-rather than abandoning a general live page. Nine explicit, disjoint handoffs
-require the drain's sole page with every other queue/direct slot empty: a full
-one-block arena singleton, an OS-aligned singleton, a mapped one-block medium
-page, full medium and full large `BIN_FULL` pages, full non-direct-small and
-direct-small regular-bin pages, a nonfull small-or-medium page, and a distinct
-exactly-two-block large page. The full
-arena singleton false-collects, queue-detaches, and unmapped-abandons while
-preserving the PageMap registration/lifecycle lease; its final client free
-takes the raw failed-reclaim empty result and releases PageMap ->
-`pages_main` -> metadata -> slice. The OS form instead links/removes its exact
-`Heap::os_abandoned_pages` member around clipped PageMap -> alias -> primary
-metadata -> mapping release and retains a failed `munmap` owner terminally.
-The mapped one-block medium handoff requires `reserved > 1` and `used == 1`,
-runs source force then false collection, queue-detaches, and publishes the
-exact main `pages_abandoned[bin]` bit plus paired
-`Heap::abandoned_count[bin]`; its final free accepts only the source
-empty-before-reclaim result. The other full and nonfull routes preserve their
-separately recorded source shape/predicate, map/count, and terminal-release
-boundaries; none adds general abandoned-page routing, reclaim, or requeue.
-Every other live-page state rejects before detach. Only an empty drain permits the attachment's separate
-root/list/TLD teardown. A force/release failure remains terminally retained.
-This admits overlapping no-page owners but only one sequential page owner;
-concurrent routing, general page abandonment/owner exit, later free/reclaim
-beyond those handoffs, public source deferred-callback registration/re-entry,
-arena collection, page-bearing libc/pthread hooks, and public allocation
-routing remain absent. The aggregate, direct small-or-medium, and all-free
-runtime owner-exit continuations take the source deferred-free heartbeat phase
-under their live Theap/TLD pairing, with an attachment-local test observer
-proving callback ordering. Any page/root/list mismatch is retained rather than
-treated as complete teardown.
-`dynamic_theap.rs` now takes a nonzero ticket through an atomic
-later-ticket gate, then retains one `!Send` caller-pinned Heap, metadata TLD
-and registration, typed Malloc Theap, regular backing, and regular-key lease.
-It preserves dynamic `_mi_theap_init` through both lists before publishing the
-regular slot, then sets the cached root only from the canonical empty image and
-acquires the paired `1 -> 2` dynamic Theap reference; default/fast stay
-unchanged. Its no-page teardown clears slot/backing, resets that cached root
-with `2 -> 1`, then detaches lists and releases metadata. Pre-publication OOM
-cleans up and rejects, whereas post-list-publication or post-root-reset failure
-returns a retained poisoned owner. A pre-mutation key-release lock failure
-retains only the linear lease in `AwaitingKeyRelease` for retry. Ordinary
-dynamic begin uses the source abandoning `true`/`2` option image and rejects a
-page session. The crate-private unsafe non-abandoning begin stores `false`/`-1`
-before heap publication and alone creates the sealed borrowed
-`DynamicTheapPageSession` for the shared private `PageAllocatorEngine`; its
-consuming finish requires no pages, queues/direct entries, collection poison,
-or pending OS release, while unfinished Drop latches the attachment terminally
-and transfers any pending OS release owner into that retained attachment.
-A `cfg(test)`-only fixture validates the frozen ordinary `true`/`2` source
-image solely to construct one `MI_ABANDON` aggregate queue shape. It leaves the
-production ordinary `page_session` rejection intact and does not add a general
-dynamic allocation API.
-This is bounded private routing, not general dynamic allocation or remote-free
-concurrency. After clearing its regular backing, it has one distinct
-`DrainingPages` owner-exit state: it first force-collects an already-retired
-all-free regular page, while a full one-block arena or OS-aligned singleton may
-be queue-detached and unmapped-abandoned so its exact final client free takes
-the raw failed-reclaim all-free release before cached-root/list/key teardown.
-The OS form is exactly `MemoryKind::Os`, `reserved == used == 1`, and
-`BIN_FULL`; it links the still-owned page through the dynamic Heap's
-`os_abandoned_pages` list before common unown, then removes that exact member
-before clipped PageMap -> alias -> primary-metadata -> mapping release. A
-failed `munmap` retains the unique mapping owner terminally. The arena form
-continues to use the dynamic ordinary-bit/slice release tail. Neither form
-adds OS-list traversal, reclaim, or requeue. Their `reserved == used == 1` and
-no-producer proof excludes invoking the source force-only local-list append;
-`free_list::collect_local` separately ports and tests that raw operation, which
-the separately recorded later-main all-free exit drain uses without broadening
-this dynamic traversal.
-
-`DynamicThreadExitDrain::abandon_full_singleton_pages` is a separate bounded
-dynamic aggregate, not a general full-queue traversal. It admits only two or
-more full `MemoryKind::Arena` `PageKind::Singleton` members in `BIN_FULL`; each
-has its own rounded block size, `reserved == used == 1`, zero retirement
-countdown, empty local free list, exact arena span, and every direct slot and
-other queue empty. Source force -> false collection -> full-queue/page-count
-detach -> unmapped abandonment runs for every member. The route retains the
-dynamic drain rather than a raw member list or a dynamic bitmap/count pair;
-each sequential canonical client free re-resolves and validates its PageMap
-member, must take the raw empty failed-reclaim result, and releases only
-PageMap -> dynamic ordinary bit -> metadata -> arena slices. The last release
-returns the empty drain for its existing teardown. Sole, non-singleton,
-OS-backed, allocation-time, reclaim/adoption/requeue, scan, and concurrent
-cases remain outside this route; a collection failure retains the drain.
-
-`DynamicThreadExitDrain::abandon_full_os_singleton_pages` is a separate bounded
-dynamic aggregate, not a general full-queue or OS-list traversal. It admits
-two or more full `MemoryKind::Os` singleton members in `BIN_FULL`, each with
-its own rounded block size, `reserved == used == 1`, zero retirement countdown, empty
-local free list, a valid clipped PageMap/alias release image, an initially
-empty dynamic `Heap::os_abandoned_pages` list, and every direct slot and other
-queue empty. Source force -> false collection -> full-queue/page-count detach
--> private OS-list insertion -> unmapped unown runs for every member. The route
-retains the dynamic drain and member count rather than a raw
-member list or dynamic bitmap/count pair; each sequential canonical free
-re-resolves PageMap, must take the raw empty failed-reclaim result, removes its
-exact private-list member, and releases only its clipped PageMap -> alias ->
-primary metadata -> mapping image. The last release returns the empty drain for
-existing teardown. Sole, arena-backed, non-singleton,
-preexisting-list, allocation-time, reclaim/adoption/requeue, scan, producer,
-concurrent, huge, and general owner-exit cases remain outside this route; a
-collection, list, or mapping-release failure retains the sole owner terminally.
-
-`DynamicThreadExitDrain::abandon_full_medium_pages` is a third bounded dynamic
-aggregate, not a general full-queue traversal. It admits only two or more full
-`MemoryKind::Arena` `PageKind::Medium` members in `BIN_FULL`, each with its
-own rounded block size and regular bin, `reserved > 1`, `used == reserved`,
-zero retirement countdown, empty local free list, exact arena span, and a
-matching dynamic bitmap/count capability. Every other queue/direct entry is
-empty. Source force -> false collection -> full-queue/page-count detach ->
-unmapped abandonment runs for every member. The route retains the dynamic drain
-rather than raw member pointers or per-member mapped state; each sequential
-canonical free re-resolves PageMap, claims the member low owner bit, then
-selects that member's exact dynamic bitmap/count capability and unmapped or
-mapped full-medium failed-reclaim tail. It releases only that member through
-PageMap -> dynamic ordinary bit -> metadata -> arena slices. The final release
-returns the empty drain for existing teardown. Sole, mixed-class, non-medium,
-OS-backed, allocation-time,
-reclaim/adoption/requeue, scan, producer, and concurrent cases remain outside
-this route; a collection failure retains the drain.
-
-`DynamicThreadExitDrain::abandon_full_large_pages` is a fourth bounded dynamic
-aggregate, not a general full-queue traversal. It admits only two or more full
-`MemoryKind::Arena` `PageKind::Large` members in `BIN_FULL`, each with its own
-rounded block size and regular bin, `reserved > 1`, `used == reserved`, zero
-retirement countdowns, empty local free lists, the matching dynamic bitmap/count
-capability for every member, every other queue/direct entry empty, and every member's exact
-64-slice arena/PageMap span. Source force -> false collection ->
-full-queue/page-count detach -> unmapped abandonment runs for every member. The
-route retains the dynamic drain rather than raw member pointers or per-member
-mapped state; each sequential canonical free re-resolves PageMap, claims the
-member low owner bit, then selects its exact dynamic bitmap/count capability
-and unmapped or mapped full-large failed-reclaim tail, and releases only that
-member through PageMap -> dynamic
-ordinary bit -> metadata -> its complete 64-slice arena span. The final release
-returns the empty drain for existing teardown. Sole, mixed-class,
-non-large, OS-backed, malformed-span, allocation-time, reclaim/adoption/requeue,
-scan, producer, and concurrent cases remain outside this route; a collection
-failure retains the drain.
-
-`DynamicThreadExitDrain::abandon_full_medium_or_large_pages` is a fifth bounded
-dynamic aggregate. It accepts the complete full arena `BIN_FULL` image only
-when it contains two or more regular members with at least one medium and one
-large page. Every direct entry and other queue is empty; every member proves
-its rounded bin, full state, zero retirement countdown, empty local free list,
-matching dynamic bitmap/count capability, and its exact one-slice medium or
-64-slice large span. It preserves force -> false collection -> full-queue/
-page-count detach -> unmapped abandonment. The returned
-`DynamicThreadExitFullMediumOrLargePagesRoute` retains only the dynamic drain
-and count: each sequential free re-resolves PageMap, claims the low owner bit
-before selecting its exact dynamic map and normal collector tail, and releases
-only that member's exact span. Homogeneous queues, small/direct-small,
-singleton, OS, malformed, allocation-time, reclaim/requeue, scan, producer,
-and concurrent cases remain absent.
-
-`DynamicThreadExitDrain::abandon_full_singleton_or_regular_pages` is a sixth
-bounded dynamic aggregate. It admits the complete full arena `BIN_FULL` image
-only when it contains two or more members with at least one singleton and at
-least one medium or large regular page; every direct entry and other queue is
-empty. A singleton independently proves `BIN_HUGE`, `reserved == used == 1`,
-and its rounded arena span. A regular member independently proves its rounded
-bin, `reserved > 1`, `used == reserved`, matching dynamic bitmap/count
-capability, and exact one-slice medium or 64-slice large span. Force -> false
-collection -> full-queue/page-count detach -> unmapped abandonment runs for
-every member. The returned `DynamicThreadExitFullSingletonOrRegularPagesRoute`
-stores only the drain and count: singleton frees take the raw terminal tail,
-while regular frees claim their low owner bit before selecting the normal
-collector tail. Each release is limited to its exact PageMap -> dynamic
-ordinary bit -> metadata -> arena span. Homogeneous queues, regular-only mixed
-medium/large queues, small/direct-small, OS, malformed, allocation-time,
-reclaim/requeue, scan, producer, and concurrent cases remain absent.
-
-`DynamicThreadExitDrain::abandon_full_non_direct_small_pages` is a seventh
-bounded dynamic aggregate, not a general ordinary-bin traversal. It is proven
-only through the exact ordinary `true`/`2` fixture and admits two or more full
-`MemoryKind::Arena` `PageKind::Small` members across ordinary bins, each with
-its own rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`,
-`reserved > 1`, `used == reserved`, zero retirement countdown, empty local
-free list, exact one-slice arena span, and matching dynamic bitmap/count
-capability. Every direct entry and `BIN_FULL` are empty, and no other page
-class may occupy a populated ordinary bin. Source force -> false collection ->
-ordinary-bin/page-count detach -> unmapped abandonment runs for every member;
-the non-direct direct-cache update is a proven no-op. The returned
-`DynamicThreadExitFullNonDirectSmallPagesRoute` retains the dynamic drain rather
-than a raw member list or per-member mapped state. Each canonical free
-re-resolves PageMap, claims its member's abandoned identity, then selects that
-member's normal unmapped or mapped failed-reclaim tail and dynamic bitmap/count
-capability. It releases only that member through PageMap -> dynamic ordinary
-bit -> metadata -> one arena slice. The final free returns the empty drain for
-existing teardown. Sole, mixed-class, direct-small, `BIN_FULL`, OS-backed,
-allocation-time, reclaim/adoption/requeue, scan, producer, and concurrent cases
-remain outside this route; a collection failure retains the drain. Production
-ordinary dynamic allocation remains sealed.
-
-`DynamicThreadExitDrain::abandon_full_direct_small_pages` is an eighth bounded
-dynamic aggregate, not a general ordinary-bin traversal. It is proven only
-through the exact ordinary `true`/`2` fixture and admits two or more full
-`MemoryKind::Arena` `PageKind::Small` members in one ordinary bin, with one
-rounded `block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,
-zero retirement countdowns, empty local free lists, exact one-slice arena
-spans, matching dynamic bitmap/count capabilities, and the complete rounded
-direct-cache range naming the ordinary queue head while every other direct
-entry and queue is empty. Source force -> false collection -> ordinary-bin
-removal -> direct-cache refresh before page-count detach -> unmapped
-abandonment runs for every member. The returned
-`DynamicThreadExitFullDirectSmallPagesRoute` retains the dynamic drain rather
-than a raw member list, cached direct image, or per-member mapped state. Each
-canonical free re-resolves PageMap, selects the partial-collector unmapped or
-mapped failed-reclaim tail from its claimed abandoned identity, preserves the
-just-pushed head through the source accounting lag, and releases only that
-member through PageMap -> dynamic ordinary bit -> metadata -> one arena slice.
-A member remains unmapped through `reserved / 8 + 1` frees; the next may
-publish its exact dynamic bitmap/count pair. The final free returns the empty
-drain for existing teardown. Sole, stale/mixed direct-cache, mixed-bin/class,
-non-direct-small, `BIN_FULL`, OS-backed, allocation-time,
-reclaim/adoption/requeue, scan, producer, concurrent, and joined-remote
-nonfull cases remain outside this route; a collection failure retains the
-drain. Production ordinary dynamic allocation remains sealed.
-
-`DynamicThreadExitDrain::abandon_full_medium` is a separate, source-unmapped
-dynamic endpoint. It admits only the sole full `MemoryKind::Arena` medium page
-in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct-cache
-entry. Source force -> false collection -> full-queue/page-count detach leaves
-ordinary unmapped abandonment. Its linear handoff consumes sequential failed-
-reclaim frees, stays unmapped through the source mostly-used prefix, then
-publishes the exact dynamic `pages_abandoned[bin]` bit plus paired
-`Heap::abandoned_count[bin]` on the first free beyond `reserved / 8`. The
-mapped tail clears that pair before PageMap -> dynamic ordinary bit -> metadata
--> arena-slice release. It is not a full-small/full-large, multi-page,
-reclaim/adoption/requeue, or general owner-exit traversal capability.
-
-`DynamicThreadExitDrain::abandon_full_large` is a fifth, source-unmapped
-dynamic endpoint. It admits only the sole full `MemoryKind::Arena` large page
-in `BIN_FULL`, with `reserved > 1`, `used == reserved`, and no direct-cache
-entry. Source force -> false collection -> full-queue/page-count detach leaves
-ordinary unmapped abandonment. Its `DynamicThreadExitFullLargeHandoff` uses
-the normal failed-reclaim collector: the page stays unmapped through the
-mostly-used prefix, maps exactly on the first free beyond `reserved / 8`, and
-the mapped tail clears the exact dynamic bitmap/count pair before PageMap ->
-dynamic ordinary bit -> metadata -> complete 64-slice arena release. It
-rejects non-large before collection and does not cover full
-medium/non-direct-small/direct-small, multi-page, reclaim/adoption/requeue, or
-general owner-exit traversal.
-
-`DynamicThreadExitDrain::abandon_full_medium_after_force_collect_to_mapped` is
-the distinct dynamic full-medium branch where exactly one remote client has
-already joined before owner exit. Force collection changes the still-linked,
-still-full `BIN_FULL` member to `used == reserved - 1`; false collection keeps
-that geometry; removal clears the full flag; and mapped abandonment publishes
-the exact heap-local bitmap/count pair immediately. Its
-`DynamicThreadExitFullMediumHandoff` starts mapped and accepts only sequential
-failed-reclaim client frees, clearing that pair before the ordinary arena
-release. It does not generalize normal full-medium abandonment to multiple
-frees, another class, reclaim, adoption, requeue, scans, or general owner-exit
-traversal.
-
-`DynamicThreadExitDrain::abandon_full_large_after_force_collect_to_mapped` is
-the corresponding dynamic full-large branch. Its one joined remote free takes
-the same still-linked full member to `used == reserved - 1`, then false
-collection, full-queue removal, and mapped abandonment publish the exact
-heap-local bitmap/count pair immediately. Its
-`DynamicThreadExitFullLargeHandoff` starts mapped and accepts only sequential
-failed-reclaim client frees, clearing that pair before the complete 64-slice
-release. Neither branch generalizes normal full-page abandonment to multiple
-frees, another class, reclaim, adoption, requeue, scans, or general owner-exit
-traversal.
-
-`DynamicThreadExitDrain::abandon_full_non_direct_small` is a sixth,
-source-unmapped dynamic endpoint. It admits only the sole full
-`MemoryKind::Arena` small page in its ordinary regular bin, with
-`SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, `reserved > 1`,
-`used == reserved`, `!page_is_in_full`, and every direct-cache slot empty.
-Source force -> false collection -> regular-bin/page-count detach leaves
-ordinary unmapped abandonment. Its `DynamicThreadExitFullNonDirectSmallHandoff`
-uses the normal failed-reclaim collector: the page stays unmapped through the
-mostly-used prefix, maps exactly on the first free beyond `reserved / 8`, and
-the mapped tail clears the exact dynamic bitmap/count pair before PageMap ->
-dynamic ordinary bit -> metadata -> arena-slice release. It rejects direct
-small before collection and does not cover full medium/direct-small/large,
-multi-page, reclaim/adoption/requeue, or general owner-exit traversal.
-
-`DynamicThreadExitDrain::abandon_full_non_direct_small_after_force_collect_to_mapped`
-is the distinct dynamic full non-direct-small branch where exactly one remote
-client has already joined before owner exit. Force collection changes the
-still-linked ordinary-bin member to `used == reserved - 1`; false collection
-keeps that geometry; regular-bin/page-count removal leaves it nonfull; and
-mapped abandonment publishes the exact heap-local bitmap/count pair
-immediately. Its `DynamicThreadExitFullNonDirectSmallHandoff` starts mapped
-and accepts only sequential failed-reclaim client frees, clearing that pair
-before the ordinary arena release. The source direct-cache update is a no-op
-because the class has an empty direct image and a rounded size above
-`SMALL_SIZE_MAX`. It does not generalize normal full non-direct-small
-abandonment to multiple frees, direct-small or other classes, reclaim,
-adoption, requeue, scans, or general owner-exit traversal.
-
-`DynamicThreadExitDrain::abandon_full_direct_small_after_force_collect_to_mapped`
-is the distinct dynamic full direct-small branch where exactly one remote
-client has already joined before owner exit. Force collection changes the
-still-linked ordinary-bin member to `used == reserved - 1`; false collection
-keeps that geometry; regular-bin removal clears its complete rounded
-direct-cache range before page-count detach; and mapped abandonment publishes
-the exact heap-local bitmap/count pair immediately. Its
-`DynamicThreadExitFullDirectSmallHandoff` starts mapped and accepts only
-sequential failed-reclaim client frees through the source partial collector,
-clearing that pair before the ordinary arena release. It does not generalize
-normal full direct-small abandonment to multiple frees, non-direct-small or
-other classes, reclaim, adoption, requeue, scans, or general owner-exit
-traversal.
-
-`DynamicThreadExitDrain::abandon_full_direct_small` is a seventh,
-source-unmapped dynamic endpoint. It admits only the sole full
-`MemoryKind::Arena` small page in its ordinary regular bin, with
-`block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, `used == reserved`,
-`!page_is_in_full`, and its complete rounded source direct-cache range naming
-the page while every other direct slot is empty. Source force -> false
-collection -> regular-bin removal clears that entire range before page-count
-detach, then ordinary unmapped abandonment. Its
-`DynamicThreadExitFullDirectSmallHandoff` uses the partial failed-reclaim
-collector. The retained just-published head holds the page unmapped for one
-additional client free before it reabandons to the matching dynamic
-bitmap/count pair; the mapped tail clears that pair before PageMap -> dynamic
-ordinary bit -> metadata -> arena-slice release. It rejects stale cache state,
-non-direct small, another page, and a collection failure before or at their
-respective source boundaries, and it does not cover full medium/non-direct
-small/large, multi-page, reclaim/adoption/requeue, or general traversal.
-
-Four separate mapped endpoints accept only a sole nonfull `MemoryKind::Arena`
-page with `reserved > 1`, `used == 1`, and one regular queue member.
-`DynamicThreadExitDrain::abandon_mapped_one_block` admits the medium class;
-`abandon_mapped_one_block_large` admits only a large page and retains its
-complete 64-slice span; `abandon_mapped_one_block_non_direct_small` admits
-only `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`, whose direct-cache
-image is empty; and `abandon_mapped_one_block_direct_small` admits only
-`block_size <= SMALL_SIZE_MAX`, `reserved >= 16`, and its complete rounded
-source direct-cache range. The direct-small preflight rejects a stale range
-before collection or detach, and source queue removal clears the exact range
-before page-count detach. Each endpoint force- then false-collects and
-publishes that exact dynamic `pages_abandoned[bin]` bit plus paired
-`Heap::abandoned_count[bin]`. Its class-carrying handoff admits only the exact
-final free, which reaches empty before any reclaim branch—through the normal
-collector for medium/large/non-direct small or the partial collector for direct
-small—clears that bit/count, and releases PageMap -> dynamic ordinary bit ->
-metadata -> arena slices. The large endpoint validates its 63 PageMap-registered
-source page-area slices; the final PageMap-null arena slice is slack but remains
-part of the terminal 64-slice release. It does not reclaim the departed Theap, adopt,
-requeue, scan, or accept multiple pages or frees.
-General cached-root
-switching/reference ownership, abandonment beyond the mapped-regular,
-post-TLS singleton, full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate, sole
-full-medium/full-large/full-non-direct-small/full-direct-small, and
-mapped-one-block handoffs, pthread/process hooks, complete
-subprocess layout/lifecycle, and C pthread-mutex layout claims remain absent. A
-first dynamic arena page additionally creates a private
-`DynamicArenaPagesOwner`: after proving the registry-published arena's
-non-null subprocess identity equals the attachment's selected main subprocess,
-one exact zeroed BCHUNK-aligned typed metadata image is Release-published into
-its bound Heap's exact arena slot. The shared engine uses this image, rather
-than `pages_main`, for fresh-page registration, rollback, and terminal release.
-A nonempty image rejects
-teardown before roots mutate; pre-publication allocation failure leaves no
-slot, while post-mutation lock/free ambiguity remains terminally retained.
-One consuming `DynamicMappedPageHandoff` now supplies the bounded mapped
-regular dynamic handoff: it removes one exact live regular queue page after
-false-force collection, publishes only the bound heap-local abandoned bit and
-count, and only same-token adoption or one same-origin `allow_collect` remote
-free may clear/reassociate/requeue it. The small-page path preserves the
-source partial-head collection. Its all-free dynamic-arena result now follows
-the queue-detached source release order—full PageMap-span unregister, exact
-heap-local ordinary-bit clear, metadata retirement, then arena-slice
-release—and returns the drained engine; an existing owner remains terminal.
-Separately, the source-shaped initially-unmapped failed-reclaim substrate
-selects terminal-empty, reabandonment, or unownership after its expected-head
-CAS/conflict collection. It has raw page-span release authority only through
-the post-TLS arena/OS-singleton, full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/
-full-non-direct-small/full-direct-small aggregate, sole full-medium, full-large, full-non-direct-small, and
-full-direct-small handoffs above, not as general
-free routing. General
-producer routing, regular/nonempty unmapped lifecycle integration, terminal
-reuse, and general abandonment routing remain absent. The private explicit single-thread slice now binds a pinned default theap to a
-caller-managed arena and page map and exercises ordinary small, medium, large,
-and singleton allocation, exact generic candidate/full retention, local free,
-retirement, full-span unregister-before-release, checked counted allocation,
-ordinary and aligned reallocation, live aligned/offset-aligned allocation,
-separately owned OS-aligned singleton mappings below 256 MiB, and failure
-rollback with allocation-free retry ownership after terminal unmap failure. A
-frozen-default external-arena purge slice schedules unpinned releases for four
-seconds, claims free-bitmap ownership during forced non-owning decommit, skips
-pinned backing, and preserves both external mapping ownership and immediate
-retry state on failure. The other bounded Milestone 5 substrates are also present:
-the AArch64 versioned TLS key, caller-owned slot, caller-storage registry
-substrate, and allocator-owned process-global regular-key registry; the
-private compiler-TLS roots; the source low-bit live/abandoned-page remote-free
-head transitions; one private linear scoped `RemoteFreeProducer` for an exact
-active matching regular non-huge-bin or `BIN_FULL` allocation; and one
-caller-proved joined/quiescent false-force collection path. The token holds an
-exclusive-owner borrow, is `Send` but explicitly `!Sync`, and permits a scoped
-worker only to publish the canonical block or cancel back to the original
-client pointer. The live regular candidate scan, including a direct-cache miss
-that falls through to generic search, detaches remote publication before it
-extends or classifies a page full; the full scan detaches before release or
-unfull, and each non-abandoning move to `BIN_FULL` performs the source's second
-false-force collection after enqueue. The detached metadata branch has no
-remote producer path and performs only local false-force collection. Any
-false-force collection error permanently retains its page/error and any
-already-popped block as private allocator poison, so later allocator entry
-points reject without further state mutation. This slice also includes one
-queue-detached, stable page's mapped/unmapped abandonment/adoption
-protocol, including failed-reader restoration and clear-once-set quiescence.
-A default-off Loom model executes the production `xthread_free`
-publication, detach, claim, unown, and expected-head unown transitions over
-one page whose PageMap entry, metadata, owner-only fields, and block links are
-Loom cells. Its schedules compose live-owner collection and release,
-owner exit with mapped or unmapped abandonment, reabandonment, small-page
-partial collection, and a mapped arena reader with final remote frees; any
-page release not ordered after a legal client's reads fails the model.
-Negative controls require that failure for Relaxed head orderings and for a
-client read after its publication.
-Deterministic native regressions separately cover the bitmap-field
-quiescence, abandonment publication, adoption versus a remote producer,
-ownership-release races, scoped producer cancellation/admission, regular
-generic/direct collection, and the joined full-page release/unfull branches.
-Except for these bounded owner-side collection routes, post-TLS arena/OS-
-singleton, full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/full-non-direct-small/full-direct-small aggregate, sole full-medium,
-full-large, full-non-direct-small, and full-direct-small terminal releases,
-bounded ticket-zero and sequential later
-process-page engines, the shared-main no-page lifecycle, and the later-main
-all-free exit drain plus its full-singleton and full-OS-singleton aggregates,
-mapped-medium-one-block, full medium/full-large/full-non-direct-small/full-direct-small,
-and sole mapped small-or-medium post-exit client-free handoffs and
-aggregate regular-pages
-post-exit registry, these pieces are
-not yet wired into general
-allocation/free routing, integrated allocator TLS/process/thread teardown,
-terminal page release, or metadata reuse. The later page owner proves normal
-map/bitmap/fresh/release/producer ordering plus the all-free scan, one
-preflight-bounded full-singleton failed-reclaim handoff, one sole-medium
-mapped empty-before-reclaim handoff, four full source-unmapped routes (medium,
-large, non-direct small, and direct small), one sole nonfull small-or-medium process
-route, and one exact two-block large process route whose linear client frees begin after actual old Theap/TLD teardown. The large route retains its complete 64-slice span through the second free. Its
-separate full-medium, full-large, full-non-direct-small, and
-full-direct-small predecessors each accept one joined remote free only: force
-collection makes the full source page `reserved - 1` used, then false
-collection removes the retained source member and immediately publishes the
-mapped regular state before old-Theap/TLD teardown. The medium and large pages
-stay linked in `BIN_FULL`; the non-direct-small page stays in its ordinary bin
-with an empty direct-cache image; and the direct-small page clears its exact
-rounded direct-cache range before page-count detach. The large mapped route
-retains its complete 64-slice terminal-release proof.
-A separate later-main full-singleton aggregate route accepts two or more full
-arena `PageKind::Singleton` members in `BIN_FULL` only when every direct slot
-and other queue is empty; every member has its own rounded singleton block
-size, `reserved == used == 1`, zero retirement countdown, an empty local free
-list, and an exact paired-arena span. It force- then false-collects, detaches,
-and ordinary-unmapped-abandons every member before old-Theap/TLD teardown. Its
-linear client-free route keeps no raw list or static-main abandoned bitmap:
-each final canonical singleton free re-resolves and validates its PageMap
-member, takes the raw empty failed-reclaim result, then releases that member in
-PageMap -> `pages_main` first-bit -> metadata -> arena-slice order. Sole
-members, non-singletons, OS members, adoption, reclaim/requeue, scanning, and
-concurrent routing remain absent.
-A separate later-main full-OS-singleton aggregate route accepts two or more
-`MemoryKind::Os` singleton members in `BIN_FULL`, each with its own rounded
-block size, only when `reserved == used == 1`, zero retirement countdowns, empty local free lists,
-valid clipped PageMap/alias release images, every direct slot and other queue
-is empty, and the static-main `Heap::os_abandoned_pages` list is initially
-empty. It force- then false-collects, full-queue/page-count-detaches, links
-each still-associated member into that private list, then unmapped-abandons it
-before old-Theap/TLD teardown. Full-queue removal clears
-`PAGE_IN_FULL_QUEUE`, but the private list deliberately retains the page's raw
-intrusive links until an exact canonical client free removes that member. Each
-such free re-resolves PageMap membership, takes only the raw empty
-failed-reclaim outcome, then releases one member in private-list removal ->
-clipped PageMap -> aliases -> metadata -> mapping order. A sole or non-OS
-member, nonempty initial list, list traversal, retry after
-failed `munmap`, adoption, reclaim/requeue, scanning, allocation-time, and
-concurrent routing remain absent; a failed mapping release retains its exact
-`OsAlignedPageOwner` terminally.
-A separate later-main full-medium aggregate route accepts two or more full
-arena members in `BIN_FULL`, each with its own rounded block size/static-main
-bin, only when every direct slot and other queue is empty. It force- then
-false-collects, detaches, and ordinary-unmapped-abandons every member before
-old-Theap/TLD teardown. Its linear client-free route retains no raw page list:
-each free re-resolves PageMap membership, claims the member low owner bit, then
-selects that member's exact static-main bitmap/count capability and unmapped or
-mapped tail. It releases one member at a time. It does not admit a sole page, a
-mixed class, allocation-time adoption, reclaim/requeue, or concurrent routing.
-A parallel but separate full-large aggregate route accepts only two or more
-full `PageKind::Large` arena members, each with its own rounded bin, under the
-same complete direct/queue and zero-retirement preflight. Each member proves
-its exact 64-slice arena/PageMap span before the route force- then
-false-collects, detaches, and ordinary-unmapped-abandons it. Its sequential
-client frees re-resolve PageMap membership, claim the low owner bit, then
-select that member's exact static-main bitmap/count capability, independently
-cross the source unmapped-to-mapped threshold, and release one complete large
-span at a time. Sole pages and mixed medium/large full queues reject before
-mutation from this homogeneous route; it has no adoption, reclaim, requeue,
-scanning, or concurrent routing.
-A separately typed full medium-or-large aggregate route accepts two or more
-full arena members in `BIN_FULL` only when the queue contains at least one
-medium and one large member, every direct slot and other queue is empty, and
-each member proves its rounded static-main bin, full state, empty local free
-list, and exact span (one slice for medium and 64 slices for large). It
-preserves force -> false collection -> full-queue/page-count detach -> unmapped
-abandonment before old-Theap/TLD teardown. Each sequential free re-resolves its
-PageMap member, claims the low owner bit before selecting its exact static-main
-bitmap/count capability and normal collector tail, and terminally releases only
-that member. Homogeneous queues, small/direct-small, singleton, OS, malformed,
-allocation-time, reclaim/requeue, scan, producer, and concurrent cases remain
-absent.
-A sixth, separately typed full non-direct-small aggregate route accepts two or
-more arena `PageKind::Small` members across ordinary source bins, each with its
-own rounded `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE` and static-main
-bin, full state, zero-retirement countdown, empty local free list, and exact
-one-slice paired-arena span. Every direct slot and `BIN_FULL` must be empty,
-and no other page class may occupy a populated ordinary bin. It force- then
-false-collects, removes each regular-bin member with the proven no-op
-direct-cache update, decrements the page count, and ordinary-unmapped-abandons
-every member before old-Theap/TLD teardown. Its sequential normal-collector
-client frees re-resolve PageMap membership rather than retaining a raw list,
-claim the member low owner bit before selecting that member's static-main
-bitmap/count pair, independently cross each member's mostly-used boundary, and
-release one one-slice member at a time. Sole pages, direct-small geometry/cache
-images, mixed classes, allocation-time adoption, reclaim, requeue, scanning,
-and concurrent routing remain absent.
-A seventh, separately typed full direct-small aggregate route accepts two or
-more arena `PageKind::Small` members across ordinary source bins. Each member
-has its own rounded `block_size <= SMALL_SIZE_MAX`, static-main bin, full
-state, `reserved >= 16`, zero-retirement countdown, empty local free list, and
-exact one-slice paired-arena span. Its preflight requires the complete rounded
-direct-cache image to name every populated ordinary queue head. It force- then
-false-collects, removes members in source bin order, advances each member's
-direct-cache range before decrementing the page count, and ordinary-unmapped-
-abandons every member before old-Theap/TLD teardown. Its sequential partial-
-collector client frees re-resolve PageMap membership, claim the member low
-owner bit before selecting its bitmap/count capability, preserve each just-
-pushed expected head through the source accounting lag, and release one one-
-slice member at a time. Sole pages, stale/mixed cache images, non-direct
-geometry, mixed classes, allocation-time adoption, reclaim, requeue, scanning,
-and concurrent routing remain absent.
-A fresh later-main owner may explicitly consume a sole mapped medium page that
-entered source owner exit already nonfull, or a sole direct-small page whose
-source collection left an immediate local free block, the exhausted fully
-committed scalar-extension shape, the exact exhausted prefix-covered extension
-shape, or the exact exhausted on-demand page-area-commit shape. All
-force-collected full-origin predecessors
-stay client-free-only even though their final geometry is nonfull. The eligible
-route
-proves the same subprocess/configuration/PageMap root, static main Heap,
-arena, span, and page identity; transfers short PageMap access into one long
-lifecycle; claims the bitmap/count member; collects and reassociates it; then
-restores source queue-tail order. A direct-small target restores its exact
-rounded cache range before target page-count increment and allocates from that
-same page; an exhausted fully committed direct-small page extends after that
-tail restoration, the exact prefix-covered direct-small shape retains its
-recorded prefix and extends without a direct mapping operation, while the exact
-on-demand direct-small shape commits its page area before
-prefix-count/free-list/capacity publication. Those three no-immediate
-direct-small outcomes are exhaustive for valid frozen-profile metadata; the
-remaining defensive classifier rejects malformed or out-of-profile state. The medium slice requires an
-immediate head or an exhausted nonfull medium page
-(`capacity < reserved`). A fully committed medium page
-(`slice_pcommitted == 0`) performs the scalar source capacity extension after
-tail insertion. Its bounded test-only
-`commit == false` seam constructs one actual reserved medium or direct-small
-prefix. A commit-requiring plan commits the direct page area before
-free-list/capacity mutation and records its OS-page prefix count only on
-success; the prefix-covered direct-small regression instead arms that commit
-fault and proves adoption skips it. An injected direct-commit failure follows
-the source false-collect -> queue-detach -> mapped identity/bit/count/unown
-tail, preserving the PageMap and ordinary arena membership for a consuming
-same-candidate retry. This is not a production page-on-demand option or a
-fresh allocation fallback. A bitmap miss, malformed state, scalar extension
-error, or other post-transfer failure is retained terminally. Non-direct-small,
-malformed or out-of-profile no-immediate direct-small metadata, and full
-members remain client-free-only for this sole-route handoff. The completed
-aggregate traversal's separate sole initial-medium/immediate-head outcome
-becomes the existing one-page route before that registry exists; its separately
-recorded final mapped regular-member edge remains the only post-free aggregate
-exception. The independent native
-x86-64 `allocator-on-demand` lane instead exercises one ordinary fresh
-reserved medium page: its first allocation exhausts the fixed four-OS-page
-prefix, then its second allocation commits the selected page area before
-free-list extension and reuses that same page. It compares 23
-address-independent success-path values with pinned C. Only the C probe sets
-`mi_option_page_commit_on_demand`; Rust uses a private `cfg(test)` seam. Its
-Rust-only failed-direct-commit assertion leaves the selected page unchanged,
-false-collects, and selects a distinct fresh page at `src/page.c:845-863`'s
-source boundary. It proves no C fault-injection parity, production
-option/API/policy, public x86-runtime, libc-integration, backend, or AArch64
-claim. The
-separate native x86-64 `allocator-direct-on-demand` lane exercises the matching
-small direct-cache success path without widening that seam: a fresh 1024-byte
-page starts at capacity 8 with a four-OS-page prefix, allocation nine falls
-through its exhausted direct head to the generic queue and reaches capacity 16
-without a new mapping, and allocation seventeen reaches capacity 24 after the
-prefix grows from four to eight OS pages. Its 44 address-independent C/Rust
-values also retain the complete direct-cache image, queue, PageMap, arena bit,
-payload, and forced normal release. The trace is a source-anchored poststate
-witness of the direct-commit-before-extension order, not temporal
-instrumentation. Only the C oracle sets the option and Rust remains
-`cfg(test)`-only; this success-path lane makes no C fault-injection, production
-option/API/policy, fresh-fallback, public-runtime, backend, or AArch64 claim.
-The full non-direct-small route detaches from its regular size bin, requires
-`block_size > SMALL_SIZE_MAX`, takes the ordinary collector, and reabandons
-only after the source mostly-used boundary. The sole full direct-small route also
-detaches from its regular bin, but requires `block_size <= SMALL_SIZE_MAX`,
-`reserved >= 16`, `used == reserved`, and its complete rounded direct-cache
-range; queue removal clears that range before page-count detach, and its
-partial collector keeps the just-published head through the source accounting
-lag. The nonfull route's direct-small member
-validates and clears the exact rounded source direct-cache range before that
-teardown; its `used < reserved` guard excludes full small pages. The separate
-regular-pages source-order aggregate traversal validates the complete source
-direct-cache image, refreshes its queue head before page-count detach, and
-returns an ordinary drain when retirement/force collection empties every page.
-It retains nonfull regular pages as mapped abandonment. It also retains full
-`BIN_FULL` medium/large and full ordinary-bin direct/non-direct small pages: a
-joined remote free normalizes that page to mapped abandonment, while an
-unchanged full page remains source-unmapped until a later client free crosses
-the source mostly-used predicate. A live arena singleton remains PageMap-only
-for its raw terminal release; a live OS singleton first links into the static
-main Heap's private list and retains its clipped-mapping terminal tail. It keeps no
-raw client/page list; the linear post-exit route re-resolves the PageMap entry
-and retains only terminal release authority. When the traversal instead leaves exactly one initial nonfull
-medium with an immediate head, it returns that exact existing one-page handoff
-rather than an aggregate registry. A post-free-reduced registry may instead
-make one separate final-mapped-member handoff only after every other member
-terminally releases; it keeps no raw member list, scans no alternative page,
-and retains the target owner on a bitmap miss or post-claim failure. It still
-does not claim a general thread
-lifecycle, abandonment traversal, or page-bearing `pthread` integration. The
-private no-page bridge is separately bounded to the direct process/pthread
-entry and finish order.
-The compiler-TLS codegen probe proves hidden initial-exec AArch64 root access
-and direct thread-pointer identity without a TLS resolver. The actual bridge
-sets that model target-wide in normal and sealed-sysroot builds; the sysroot
-audit requires the post-LTO named `THREAD_LIFECYCLE` static TLSIE root and a
-TPREL-only final `libc.so`, rejecting TLSDESC and `__tls_get_addr`. A
-standalone test-only package exposes 16 `crabc_test_*` C symbols around one
-creating-thread context; it exports neither standard allocation names nor
-`mi_*` names. It is not a public allocator API and makes no
-allocator-readiness or whole-port parity claim. Under `cfg(miri)` the allocator's real `os.rs` runs over
-`crabc-core`'s Miri kernel model; `allocator-m3` reports the Miri component
-only from an actual strict-provenance `cargo miri test` run.
-
-## Recorded AArch64 reproduction commands (paused)
-
-These are preserved AArch64 reproduction commands, not the active work queue.
-For native x86, follow the Commands and evidence and Progress status sections
-of `plan.md` using the contained allocator launcher described above.
-The historical AArch64 harness uses the pinned Linux/AArch64 development image:
+All commands run through `./compat/allocator/run-x86_64.sh`, which starts the
+pinned allocator container image (`image` builds it; every other command builds
+it on first use).
 
 ```sh
-./scripts/dev.sh allocator --quick
-./scripts/dev.sh allocator-m1
-./scripts/dev.sh allocator --full
-./scripts/dev.sh allocator --churn
-./scripts/dev.sh allocator-tls
-./scripts/dev.sh sysroot
-./scripts/dev.sh static-pthread-tls
-./scripts/dev.sh test -p crabc-libc --test pthread_create_join_tls_regression
-./scripts/dev.sh pthread-stress --iterations 1 --timeout 15
-./scripts/dev.sh allocator-perf --smoke
-./scripts/dev.sh allocator-perf --full
-./scripts/dev.sh test -p crabc-mimalloc --lib --features loom remote_free::loom_tests -- --test-threads=1
-```
-
-Runner-owned mutable state stays below `CRABC_WORK_DIR`, or the checkout's
-`.work/` directory when that variable is unset. The pinned archive and tag
-attestation use `.work/allocator-cache/`; compiled C-oracle, adapter, fixture,
-and isolated Cargo outputs use `.work/target/compat/allocator/`; reports use
-`.work/reports/allocator/`; and disposable extracted sources and probe files
-use `.work/tmp/allocator/`. The selected native-shadow runtime remains the
-logical `target/debug` location: the canonical dispatcher maps that repository
-path to the repository-local target volume rather than changing the runtime
-selection contract.
-
-`allocator --quick` is the former ordinary development gate, retained to
-reproduce evidence. It verifies the
-annotated tag and archive identities, regenerates the checked-in contracts in
-memory, checks them and the source-map ratchet, and builds all five exact C
-oracle profiles. Its ignored report is
-`.work/reports/allocator/latest.json`; profile artifacts and layout probes
-are under `.work/target/compat/allocator/oracle/`. The gate runs the complete
-`crabc-mimalloc` library unit suite with a marked Rust machine record and
-rejects any mismatch in the currently ported configuration constants,
-page/memory-ID layout, queue block-size table, or bin-selection boundary
-vectors. The release profile additionally runs independent C and Rust small-
-allocation traces and requires the exact same 378-key logical record: every
-one of 62 good-size transition requests, usable size, pointer-distinctness and
-alignment observation, payload preservation, zeroing, and a 96-block repeated
-fill/free permutation. Raw addresses are deliberately excluded. The gate also
-records a separate 51-key exact-C baseline for page-kind, calloc, realloc,
-aligned/offset-aligned, usable-size, preservation, and invalid-size OOM
-behavior. The same library run emits an independent 51-key Rust record and
-requires exact equality with that pinned C baseline. The native x86-64 lane
-below extends its own trace to 75 fields with no-padding `mi_expand` and
-checked `mi_recalloc`; native AArch64 revalidation of that extension remains
-pending. This proves the bounded
-single-thread engine's fundamental operation slice; it is not a production C
-adapter, process lifecycle, or whole-allocator parity claim. A
-default-off `test-adapter` feature now owns one allocation-backed, creating-
-thread-only context with root-last initialization, exact outstanding-block
-accounting, and explicit retryable page-map/arena teardown. It exists only to
-support the standalone prefixed C evidence adapter and is not a production
-allocator API. The gate also
-traverses Cargo metadata for the
-fixed `aarch64-unknown-linux-musl` target and rejects any selected allocator
-dependency package, version, source, edge, build script, or proc macro outside
-the audited `chacha20`/`zeroize` graph. Target-conditional packages retained
-only in `Cargo.lock` do not satisfy or fail that selected-graph judge. It then
-runs the test-only Loom page-protocol schedules over the shared production
-remote-head publication/detach and abandoned owner-claim/unown loops and
-records their exact pass count separately from the
-ordinary unit suite. That test command explicitly clears
-`CARGO_ENCODED_RUSTFLAGS`: the model does not access a compiler-TLS root, and
-the pinned nightly cannot link its `std`/Loom test binary with the production
-initial-exec TLS setting. The dedicated TLS-codegen judge below remains the
-sole evidence for that production setting.
-
-The quick gate also invokes the dedicated allocator compiler-TLS judge. It
-builds one default-off probe codegen unit with
-`-Ztls-model=initial-exec`, requires all five roots to be hidden `STT_TLS`
-objects in the appropriate initialized/uninitialized TLS sections, and rejects
-resolver-based or dynamic TLS relocation forms. Its negative-control build
-explicitly clears the production target rustflags and must show that the
-pinned compiler default emits TLSDESC, keeping the production model requirement
-explicit. `allocator-tls` runs this judge alone and writes
-`.work/reports/allocator/tls-codegen.json`.
-
-`allocator-m1` writes the current-commit
-`.work/reports/allocator/m1-foundations-latest.json` record from the checked-in
-[`m1-foundations-v3.5.0.json`](m1-foundations-v3.5.0.json) contract. It reruns
-the source/ratchet/C-release-layout producers and only the named focused Rust
-checks, binds the result to an unchanged clean Git commit, and classifies each
-component plus its explicit exclusions. It exits 0 only when the checked
-contract is complete; exit 3 remains the intentional result for a partial M1
-contract. A passing focused check or shared M0/M3/M4 producer does not close a
-whole source unit or promote any allocator backend.
-The complete atomics/locks/once/bootstrap component compares a 148-key, address-independent
-release C/Rust vector for every represented field of the pinned immutable
-`mi_page_empty`, direct-page table, all 75 queues, pre-process-init
-`mi_tld_detached` source image, and `_mi_theap_empty` prefix through `memid`.
-The C reader alone defines `MI_PRIM_HAS_PROCESS_ATTACH=1`, so `prim.c` cannot
-run its automatic constructor and mutate that TLD before the comparison; the
-normal C oracle artifact retains automatic attach. Pointer fields are null/sentinel
-relationships, and the detached lock is try-locked then released rather than
-being treated as a pthread byte-layout match. The contract also records an
-explicit disposition for every 12 pinned direct `mi_atomic_do_once` call
-sites. This remains evidence for those source-initializer images only: it excludes
-stats, guarded/page-tail variants, mutable process storage, publication and
-teardown. Its source-shaped Rust once witnesses also prove the bounded
-identity-capable `ProcessMainInitializationStorage` route: an active foreign
-racer waits through release, same-owner recursion refuses without blocking,
-READY cannot bypass a retained once lock, retained failure wakes its waiter,
-and a pre-body Rust-only cancellation is retryable. This is unit evidence for
-the named bounded envelope, not a C/Rust dynamic differential or a claim to
-complete `mi_process_init_once`, `mi_process_done`, automatic lifecycle, or
-process destruction; those remain M5 work.
-The complete raw-primitive component adds one native, pinned-C/Rust 47-field
-record: the C probe directly includes pinned `src/os.c`, then compares the
-immutable configuration, good-size and large-page predicates, one
-no-hint/non-large map transition sequence, NUMA/current-node relation,
-monotonic-yield observation, successful zero/16-byte entropy calls, and the
-constant-false threadpool observation. It deliberately excludes addresses,
-random bytes, timestamps, error/fallback branches, hints, and huge/THP policy.
-The compiler-TLS component retains one 32-field direct pinned-C/Rust record:
-a constructor-suppressed initial five-root image and TPIDR identity, the
-count-zero image plus positive regular-slot reset, and the local cached-Theap
-`1 -> 2 -> 1` reference pair. A distinct 40-field normal-artifact C/Rust
-record direct-includes pinned `src/init.c` and invokes file-static
-`mi_thread_theaps_done` on one page-free same-TLD static-default `D` plus
-Malloc cached `A` fixture. It records C's A→D collector calls and Rust's A→D
-generic queue-half empty branch with ordered empty-prepass witnesses, then
-default/cached reset, heap detach, TLD final-loop order, and logical final
-release. C bounds
-main-Heap membership as metadata+D then metadata-only while the selected Rust
-image is D then empty, so only common D membership/absence relations compare.
-Together these records close the bounded M1 compiler-TLS component. They do
-not claim outer `_mi_thread_done`, regular-backing/fast teardown, statistics,
-TLD free, process hooks, page-bearing collection, production deferred/retired
-prepasses, public Heap lifecycle, or M5 process/thread integration.
-The complete finite configuration-and-arithmetic component compares
-every frozen `config.*` C/Rust record and a compact representable scalar
-vector, including `_mi_is_power_of_two(0)`, generic non-power-of-two
-`_mi_align_up`/`_mi_align_down`, division, word rounding, and slice conversion.
-Its geometry entries read `MI_ARENA_SLICE_SHIFT` and `MI_BCHUNK_BITS_SHIFT`
-themselves, so a source selector change cannot hide behind duplicated probe
-formulas. It makes no claim about C unsigned-overflow behavior, whole
-`types.h`/`bits.h`/`internal.h` completion, or unselected CMake modes.
-
-`allocator --full` extends that gate by building and auditing the standalone
-static and shared test adapter, including its exact 16-symbol export boundary,
-native link tail, and dynamic dependencies. It applies the reviewed patch to
-the hash-pinned upstream `test/test-api.c` without checking in a source fork,
-then runs both the existing crabc allocator fixture and 33 selected upstream
-API checks. In that full-only lane it also applies the separately reviewed
-creating-thread `test/test-stress.c` patch, compiles it with `NTHREADS=1`, and invokes
-the exact source program as `1 1 2`. That preserves the source allocation
-distribution, zero/cookie checks, reallocating data table, retained objects,
-atomic transfer buffer, and final cleanup across two iterations. The patched
-scheduler instead runs its sole worker on the creating thread, so it creates
-no pthread; heaps, subprocesses, large-object mode, and the libc allocator
-path hard-fail at compile time. It is therefore recorded as preliminary
-source-derived stress evidence, not a cross-thread, remote-free, or
-thread-recreation acceptance claim. `allocator --churn` and `--soak` do not
-silently run that distinct full-lane witness. `allocator --full` also executes
-the reviewed
-[`native-owner-exit-lifecycle-v3.5.0.json`](native-owner-exit-lifecycle-v3.5.0.json)
-suite: fifteen focused direct `crabc-mimalloc` checks spanning the mixed runtime
-route, pointer-first publication before and after exit, source-selected live
-medium abandonment, same-page PageMap-claim lifetime, aggregate final-member
-reclamation, failed OS terminal release, terminal finish ordering, and source
-traversal filters. It records
-Gate 5C as passed only when that complete checked
-record is present; the suite is direct-engine lifecycle evidence, not a
-shadow-ABI or general concurrent-routing claim. It then runs the same 128-cycle,
-30-second, seed
-`0xd1b54a32d192ed03` ticket-zero lifecycle schedule as `allocator --churn`
-and writes a versioned [`m5-gate-v3.5.0.json`](m5-gate-v3.5.0.json) result to
-`.work/reports/allocator/latest.json`. The report records the bounded base,
-persistent-worker, live-owner remote-free, and owner-exit evidence as passed
-only when their executed checks pass. It records Gate 5D (soak, stability, and
-upstream stress) and Gate 5E (selected native-shadow acceptance) as explicit
-blockers until their documented acceptance criteria are met. Consequently
-`allocator --full` still exits 3 today, but its failure is
-the named reviewed gate state rather than a synthetic post-run placeholder.
-
-Before rendering that M5 record, `allocator --full` reads only the fixed
-`.work/reports/allocator/upstream-stress/latest.json` canonical report; it does
-not invoke `upstream-stress/run.py` itself. The consumer accepts a report only
-when its format, pin, ordered 12-case source matrix, failure-closed
-capability, selected native-shadow backend/build record, live named artifacts,
-and current-head companion all still bind to the current clean Git source. The
-sole execution-scoped artifact is the producer-container's staged
-`/lib/ld-crabc-aarch64.so.1` record: its fixed path and bytes bind to the live
-selected loader, but the later consumer does not require that transient file.
-Its Git reads set `GIT_OPTIONAL_LOCKS=0`. The durable
-`canonical_upstream_stress` field is `verified`, `unavailable`, or `rejected`.
-Only a `verified` record is surfaced as observed Gate 5D evidence. Its first
-eight rows retain the 1/2/4/8-worker low-scale schedules; four appended
-1/2/4/8-worker `SCALE=101`, `ITER=1` rows exercise the unmodified source's
-strict `SCALE > 100` CLI branch and exact ` (allow large objects)` stdout
-suffix. The record remains a nondefault `shadow_subset` with
-`large_object_mode: source-cli-enabled`: it attests source-mode activation and
-completed bounded workload execution, not that every probabilistic large
-allocation succeeded. It does not promote Gate 5D or Gate 5E. The separate
-opt-in 1024-cycle soak and metadata high-water acceptance remain required.
-
-`allocator --churn` uses that same prefixed evidence adapter but succeeds only
-when one fresh process completes 128 bounded C cycles within its 30-second
-watchdog. Each cycle runs exactly the two pointer-private workers,
-mixed-local and live-owner remote-free, once in a deterministic
-Fisher-Yates order from recorded unsigned-64-bit seed
-`0xd1b54a32d192ed03`. The fixture accepts no arguments for its three-cycle
-default, or at most one each of `--worker-cycles N` for decimal `N` in
-1..1024 and `--stress-seed SEED` for a base-0 unsigned-64-bit seed, in either
-order; it exports no additional symbol. The separately focused mixed post-exit
-owner-exit and alternating mapped-regular reclamation regressions are not
-additional C fixture schedule routes. They first suspend A's exact page engine
-into the private runtime TLS slot and invoke ordinary post-destructor finish.
-That dispatcher resumes the matching engine, runs the existing aggregate source
-traversal for the mixed and sole-medium cases or the direct-cache-validating
-small-or-medium drain for direct small, and retains A's admission until the
-resulting typed B-side route terminally releases; A cannot fall through the
-no-page finalizer after its Theap/TLD has detached. The mixed opaque owner-exit
-route carries two full medium pages (one mapped by a joined pre-exit remote
-free and one source-unmapped), a distinct one-client large page whose joined
-remote free releases it during source collection, one live arena singleton,
-and one live OS-aligned singleton; B receives no client address and must
-terminally release the arena singleton's PageMap-only tail and the OS
-singleton's private-list/clipped-mapping tail before A becomes fork-quiescent.
-On B's first direct free of either an existing direct-small client or one of
-three remaining clients on the pre-exit-normalized mapped, non-full medium
-page, joined C and D each receive the matching nominal scoped same-page
-producer after B claims the source low owner bit; C and D atomically append
-distinct private clients in separate joined turns and B's ordinary collector
-consumes the resulting two-node remote chain before the route continues. The
-direct runtime regressions pause after this opaque route transfers and prove
-ticket zero remains unavailable until B returns the final PageMap-release
-proof; a missing or mismatched publisher retains the route instead of invoking
-B's ordinary no-page finalizer. The alternating sole-medium
-and direct-small reclamation sides give B no client identity or PageMap handle;
-B attaches, adopts/uses the exact page, drains it, and finishes its attachment
-before returning the only proof that releases A's admission. The direct-small
-side first validates and clears its rounded direct-cache image and immediate
-head; it does not make direct small an aggregate traversal result. This is Gate 5D
-preliminary stability evidence alongside deterministic eight-cycle Rust state
-audits, which also check static-main abandoned counts and the private
-OS-abandoned-list baseline. The runtime integration additionally shuffles
-eight core pointer-private routes, including the all-free parked TLS session
-finish, ordinary parked TLS session owner exit, and the parked session's
-scoped B/C/D post-exit publication group, for eight epochs from seed
-`0x9e3779b97f4a7c15` and proves ticket-zero reactivation after every route.
-It does not close general abandonment/reclamation or promote a libc backend.
-`allocator --soak` runs the same two-worker C fixture schedule for 1,024
-cycles from seed `0x94d049bb133111eb` under a separate 180-second watchdog:
-two routes per cycle, for exactly 2,048 route invocations. On success it
-atomically replaces only
-`.work/reports/allocator/runtime-ticket-zero-soak-1024.json`; it never writes
-the shared `.work/reports/allocator/latest.json` slot. The durable report is
-`crabc-mimalloc-runtime-ticket-zero-soak-report` format 1 and binds the live
-ticket-zero contract digest, pinned archive, adapter archive/shared library,
-fixture binary, C-oracle identity, target, commands, schedule, and all
-13 scalar audit fields. Each artifact is re-attested at its fixed raw
-producer path before recording, rejecting final-component and parent-directory
-symlinks; the fixture's executable and `-o` output must name that fixture,
-and its build record must name the checked-in C fixture and attested adapter
-archive. The pinned annotated-tag attestation must also be live and exactly
-match the loaded pin. Its Git source attestation reads with
-`GIT_OPTIONAL_LOCKS=0` and requires byte-identical clean source states before
-its pin, contract, and header reads and immediately before publication, so a
-failed, dirty, changed, or artifact-drifting run preserves a prior good stable
-record. After its first
-complete two-worker cycle, the original fixture thread records the scalar-only
-quiescent baseline: process and ticket-zero readiness, PageMap
-registration/submap counts, arena registry, live TLDs, metadata
-live/high-water capabilities, shared Theaps, regular abandoned pages, and
-whether the private OS-abandoned list is empty. Every later cycle and the
-final ticket-zero allocation/free must match it; the report records the
-baseline and audit-snapshot count. This direct adapter does not install a
-post-exit registry; its C worker paths start from their supplied pointer or
-their own live engine. It remains opt-in bounded stability evidence:
-`allocator --full` only validates and renders its one fixed report through the
-top-level non-executing `runtime_ticket_zero_soak` consumer. Its result is
-`verified`, `unavailable`, or `rejected`, but it satisfies, advances, and
-unblocks no M5 gate; it does not establish a selected/default libc backend,
-general cross-thread/post-exit acceptance, upstream pthread acceptance, or
-large-object coverage.
-`allocator --churn` remains the 128-cycle, 30-second development gate.
-
-The prefixed mixed-local and live-owner remote-free workers now enter through
-the typed runtime A-side operation and prove their ordinary
-`PAGE_OWNER_READY -> BUSY -> READY` finish without widening the C ABI. A
-separate lower persistent-engine regression represents a counted `PARKED(n)`
-set of independently suspended normal engines. Each normal suspend increments
-that count, each exact token finish decrements it, and ticket zero remains
-unavailable until the count reaches zero; one active mutation still owns the
-serial `BUSY` transition and PageMap lease. A non-parkable interleaving
-operation preserves the observed count. Neither token exposes a client address,
-PageMap handle, or post-exit finalizer; abandoning either retains the process
-owner. This is not a public worker API, a general concurrent allocator, or
-libc allocation routing.
-
-Loom 0.7.2 is an exact, defaults-disabled optional test-model dependency. The
-`loom = ["dep:loom"]` feature selects its allocation-backed `std` scheduler,
-`generator` build script, and tracing support stack only for the
-`cfg(all(test, feature = "loom"))` library model; ordinary selected native
-integration tests do not resolve that graph. The generator's external assembly
-path is not selected on AArch64, and Cargo's production-graph judge excludes
-the entire Loom graph. Both performance modes likewise remain explicitly
-unavailable; these status-3 results are not skips and must not become
-successful placeholders.
-
-The native x86-64 quick lane is separate from the AArch64 allocator gate.
-Run it only through the architecture-aware native dispatcher:
-
-```sh
+# One Rust unit test, exact name; zero matches, an ignored or a failed test fails.
+./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name
+# The whole crabc-mimalloc library unit suite.
+./compat/allocator/run-x86_64.sh allocator-unit
+# Local engine under strict-provenance Miri only (writes a separate report, never closes M3).
+./compat/allocator/run-x86_64.sh allocator-m3 --miri-only
+# Contract/source-map regeneration check plus the five exact C oracle profiles.
 ./compat/allocator/run-x86_64.sh allocator --quick
 ```
 
-The runner rejects emulation by requiring both the native x86-64 guest and
-the dispatcher's native-host provenance. Its report is
-`.work/reports/allocator/x86_64/latest.json` and its profile is
-`x86_64-native-c-oracle`: the lane checks the target-local declaration
-inventory and source-only API/mode/test/symbol coverage ledger; the exact
-unfeatured x86 normal dependency graph (including
-`cpufeatures` and no selected `libc` package); and a fresh, lockfile-verified
-`#![no_std]` release `rlib`. The workspace release profile uses fat LTO, so
-that normal-library artifact's codegen member is recorded as LLVM bitcode,
-not falsely presented as a linked ELF/staticlib ABI. The lane then builds the
-pinned native C oracle, compares direct Rust-engine configuration/layout and
-small/fundamental traces, proves x86-64 TLS codegen, and builds/audits the
-private prefixed adapter. That adapter has exactly 16 `crabc_test_*` exports,
-no `mi_*` exports, and native executions of both the existing allocator
-fixture and 33 selected patched upstream API checks. The x86 musl Rust target
-does not support a `cdylib`; this lane audits its staticlib instead. Rustc's
-recorded C-consumer tail is `-lunwind -lc`, and the private image makes the
-target toolchain's static `libunwind.a` available through its derived
-`rustc --print sysroot` target self-contained search directory. Both fixture
-executables are audited for their x86-64 ELF identity, empty `DT_NEEDED` set,
-and a PT_INTERP loader whose basename is `ld-musl-x86_64.so.1`. Its first
-native run may populate the architecture-local Cargo cache from the checked-in
-lockfile; it never updates that lockfile.
+`allocator-unit --filter` and `allocator-unit` produce no qualification
+receipt. The other `allocator-m3` subsets are `--differential-only`,
+`--owner-only`, `--miri-ownership-only`, `--miri-guarded-ownership-only`,
+`--miri-page-ownership-only`, `--page-ownership-only`, and
+`--queue-reorder-only`.
 
-The direct native C/Rust fundamental trace currently contains 75 exact logical
-fields, including the fixed no-padding `mi_expand` nonzero null-pointer, zero-size,
-below-half, exact-fit, oversize, and state-preservation cases plus checked
-`mi_recalloc` growth/tail-zeroing, zero-product, and overflow-preservation
-outcomes. It remains private engine evidence rather than a public x86 allocator
-API.
-
-The target-local native C release boundary has a dedicated evidence-only
-command:
+Python-only checks need no container (see
+[Host-side Python tests](#host-side-python-tests)):
 
 ```sh
-./compat/allocator/run-x86_64.sh allocator-release-evidence
+python3 scripts/test_python.py --module compat/allocator/tests/test_x86_64_runner.py
 ```
 
-It compiles the pinned mimalloc v3.5.0 release source set with the recorded
-release flags, proves the selected x86-64 preprocessor mode, inventories
-globally defined `mi_*` symbols across the individual release objects, and
-separately inventories default-visible defined `mi_*` dynamic symbols in the
-linked shared object. Its report is
-`compat/reports/allocator/x86_64/release-evidence.json`. This is native x86-64
-evidence only: it does not add public x86 `crabc`, libc, or ldso support and
-does not reuse AArch64 status.
-
-The selected-release source API assessment is a separate native x86-only
-accounting gate:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-api-coverage
-```
-
-It first creates the attested release-mode/object-symbol report, then records
-object and dynamic-symbol presence for 194 distinct source-declared C
-functions and marks 183 C/C++/macro/type/option forms as
-`not-an-object-symbol`. Its report is
-`compat/reports/allocator/x86_64/api-native-coverage.json`. This resolves
-only selected-release mode and symbol presence; it does not establish behavior,
-Rust implementation coverage, a public `mi_*` API, libc/loader integration,
-or public x86 runtime support.
-
-Selected staged public-header C/C++ compile/linkability has a distinct native
-gate:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-header-modes
-```
-
-It builds the pinned C normal-release shared object, stages the exact four
-public header byte streams, then compile-links six selected C/C++ consumer
-forms, including one C11 compile/link-only probe that instantiates the five
-base-header `*_csize` static-inline dispatch helpers, and records x86-64 ELF
-identity for every artifact. The report is
-`compat/reports/allocator/x86_64/header-mode-evidence.json`. This is not a
-CMake configure/install proof and it does not execute consumers or claim their
-behavior, Rust implementation, public x86 runtime support, or AArch64 status.
-
-One fixed CMake normal-release shared-library profile has its own native
-configure/build/install gate:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-cmake-modes
-```
-
-It configures the pinned source with Unix Makefiles and the selected musl
-release cache values, records the resolved cache and `src/alloc.c` compiler
-mode, builds and installs the shared object, and verifies the installed public
-header bytes, lexical install manifest, ELF identity, SONAME, and dynamic
-dependencies. Its report is
-`compat/reports/allocator/x86_64/cmake-mode-evidence.json`. This establishes
-only that one native CMake configure/build/install profile: it does not
-compile/link or execute a consumer, establish allocator behavior or Rust
-implementation parity, cover static/object or unselected CMake modes, create
-public x86 runtime support, or reuse AArch64 status.
-
-Selected static artifact modes have a separate native gate:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-static-modes
-```
-
-It compiles the pinned normal-release source set into one static archive,
-observes its exact members with `ar t`, then separately compiles the upstream
-`src/static.c` amalgamation as the musl static override object and observes its
-`malloc`, `free`, `mi_malloc`, and `mi_free` definitions with `nm`. It
-compile-links one `mi_malloc` static-library consumer and one `malloc`/`free`
-override-object consumer, recording each ELF identity in
-`compat/reports/allocator/x86_64/static-mode-evidence.json`. It does not run
-either consumer, prove behavior or Rust implementation, perform a CMake
-configure/install, or create public x86/AArch64 runtime support.
-
-The dedicated live-owner remote-free differential is likewise native x86-only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-remote-free
-```
-
-It compiles a private `mimalloc/internal.h` C probe against the pinned release
-source set, uses exactly two `mi_free` calls from one quiescent `pthread` to
-select the live-owner cross-thread route, joins that worker, and invokes the
-exact private owner false collector. It compares its 25 address-independent
-protocol values with one isolated Rust test and writes
-`compat/reports/allocator/x86_64/live-owner-remote-free.json`. The probe proves
-only owner-bit preservation, LIFO publication, exact used-count transition,
-and post-join detach/local-free merge. It does not prove general remote-free
-routing or concurrent collection, abandonment, thread teardown, public
-`mi_*` API, libc integration, a backend, or AArch64 behavior. Like the native
-release gate, it runs offline against the verified archive cache populated by
-the x86 `allocator --quick` lane.
-
-The live-owner full-medium remote-release differential is another native
-x86-only private lane:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-live-owner-full-medium-remote-release
-```
-
-It fills one non-abandoning full-medium arena page (10248-byte request,
-12288-byte blocks, capacity/reserved 42, and eight slices) alongside one
-regular successor. A real pinned-C `pthread` worker frees all 42 first-page
-blocks and `pthread_join()` completes before the still-live owner inspects the
-non-atomic remote list or calls `mi_heap_collect(heap, false)`. That normal
-false collector empties the full queue and releases only the empty first page's
-PageMap span, ordinary arena bitmap, and complete slice span; the successor
-remains a regular member with its PageMap publication intact. Rust uses only 42
-joined, staged scoped test workers to compare shared typed private facts. The
-35 address-independent values are written to
-`compat/reports/allocator/x86_64/live-owner-full-medium-remote-release.json`.
-This does not claim pthread/TLS ABI parity, thread teardown, broad remote-free
-routing or collection, public `mi_*` behavior or runtime, public x86 support,
-libc integration, backend promotion, or AArch64 evidence.
-
-The live-owner full-medium one-remote unfull/reuse differential is a separate
-native x86-only private lane:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-live-owner-full-medium-one-remote-unfull-reuse
-```
-
-It fills one non-abandoning full-medium arena page (10248-byte request,
-12288-byte blocks, capacity/reserved 42, eight slices) beside one regular
-successor. A real pinned-C `pthread` publishes exactly one remote `mi_free`
-and joins before the owner observes its non-atomic remote list. The owner
-false-collects the full page into the regular queue behind the successor,
-exhausts the successor's remaining capacity, and reuses the exact remotely
-freed block through ordinary allocation. Rust uses only a joined scoped
-producer for common typed private facts. The 43 address-independent values are
-written to
-`compat/reports/allocator/x86_64/live-owner-full-medium-one-remote-unfull-reuse.json`.
-This does not claim pthread/TLS ABI parity, generic remote routing/collection,
-teardown, abandonment, public `mi_*` behavior or runtime, libc integration,
-backend promotion, public x86 support, or AArch64 evidence.
-
-The real small direct-cache route has its own native private differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-direct-remote
-```
-
-It fills one real small direct-cache page to its current capacity, sends one
-exact live block through `mi_free` from a joined/quiescent `pthread`, and
-requires the owner direct-cache miss to fall through the regular queue search,
-detach that remote block, and reuse it exactly once. The C and Rust probes
-compare 28 address-independent values in
-`compat/reports/allocator/x86_64/small-direct-remote.json`. It is limited to
-this private direct-page route, not general allocation/free routing or
-concurrent collection, abandonment, thread teardown, public `mi_*` behavior,
-libc integration, a backend, or AArch64 evidence.
-
-One mapped-arena same-origin reclaim transition has its own native private
-differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-mapped-reclaim
-```
-
-Its pinned-C fixture queue-detaches one arena-backed mapped page with two
-same-page live blocks, then frees one through `mi_free`; the survivor keeps the
-page nonempty while the same-origin reclaim clears mapped abandonment and
-requeues the page. It compares eight address-independent values with one Rust
-test and writes `compat/reports/allocator/x86_64/mapped-reclaim.json`. It does
-not prove general abandonment/adoption, cross-thread reclaim, public `mi_*`
-behavior, libc integration, a backend, or AArch64 evidence.
-
-One allocation-time mapped-arena adoption transition has a separate native
-private differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-mapped-adoption
-```
-
-Its pinned-C fixture abandons one nonfull arena-backed medium page with two
-live blocks, then requires the next same-heap allocation to claim, reassociate,
-and requeue that exact page. Rust explicitly invokes its test-only linear
-mapped-page handoff's `adopt()` transition immediately before allocating the
-third block; generic Rust allocation does not scan abandoned pages. The 18
-address-independent values record PageMap and ordinary-arena-bitmap
-preservation, the abandoned bitmap/count clear, original-Theap restoration,
-queue-tail/page-count restoration, empty remote state, and same-page third
-allocation in `compat/reports/allocator/x86_64/mapped-adoption.json`. This
-proves only one same-origin, one-thread allocation-time adoption transition;
-it does not prove general or cross-thread abandonment/adoption, public `mi_*`
-behavior, libc integration, a backend, public x86 support, or AArch64
-evidence.
-
-One direct-small allocation-time mapped-arena adoption transition has a
-separate native private differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-direct-small-allocation-adoption
-```
-
-Its pinned-C fixture uses one same-origin, same-thread/same-Theap,
-arena-backed 1024-byte direct-small page with two live blocks. Abandonment
-detaches the regular queue and clears the complete rounded direct-cache range
-while retaining PageMap and ordinary-arena-bitmap registration. The next C
-`mi_heap_malloc_small` claims the exact mapped page, clears its bitmap/count,
-restores its original Theap, requeues it at the regular tail, restores the
-complete direct-cache range, and consumes its third block. Rust explicitly
-consumes its private test-only `adopt()` handoff immediately before the
-matching third allocation; generic Rust allocation does not scan abandoned
-pages. The 32 address-independent values are recorded in
-`compat/reports/allocator/x86_64/direct-small-allocation-adoption.json`. This
-proves only the direct-small allocation-time same-origin adapter mapping; it
-does not prove general or cross-thread abandonment/adoption, remote routing,
-lifecycle, public `mi_*` behavior, libc integration, a backend, public x86
-support, or AArch64 evidence.
-
-One initially-unmapped full-medium reabandon tail has a distinct native
-private differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-unmapped-reabandon
-```
-
-The pinned-C side creates an arena Theap with reclaim-on-free and full-page
-abandon disabled, fills one real medium page into the source full queue, then
-source-abandons it while unmapped. Public `mi_free` calls cross the exact
-eighth threshold and republish its arena bitmap. The 13 logical C values match
-one Rust test's bounded real full-medium post-Theap-teardown route in
-`compat/reports/allocator/x86_64/unmapped-reabandon.json`. The Rust result is
-one linear full-medium routing and owner-exit fixture, and this lane does not claim
-general free routing, abandonment/adoption, public `mi_*` behavior, libc
-integration, a backend, public x86 support, or AArch64 evidence.
-The isolated C probe frees its blocks and heap; its exclusive reserved arena
-remains process-lifetime fixture state and is reclaimed when that short-lived
-probe exits, not a reusable long-lived harness.
-
-One selected mapped post-Theap-teardown route has a separate native private
-differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-mapped-post-exit
-```
-
-Its pinned-C producer uses one worker `pthread` to allocate two same-page
-regular medium arena blocks, calls real `mi_thread_done()` before joining, and
-has the consumer perform two public `mi_free` calls after the real
-`mi_thread_done()` and `pthread_join()` boundary. The 18-field trace records
-the mapped failed-reclaim/unown transition plus terminal checks for
-`page_map_unregistered_after_final_free`,
-`arena_page_bitmap_clear_after_final_free`, and
-`arena_slice_released_after_final_free`. Rust compares only one bounded
-process-owned mapped regular handoff after Theap/TLD teardown and directly
-observes its PageMap, ordinary arena-page bitmap, and free-slice bitmap
-release. This lane does not establish general thread exit, general free
-routing or concurrency, adoption or reclaim, public `mi_*` behavior, libc
-integration, backend promotion, public x86 support, or AArch64 evidence; its
-report is `compat/reports/allocator/x86_64/mapped-post-exit.json`.
-
-A separate retired-page prepass is also available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-retired-prepass
-```
-
-This 21-field private C/Rust differential uses a real worker-local `mi_free`
-to retire one medium page, then real `mi_thread_done()` and `pthread_join()`
-force-release that retired page before a distinct live medium page is mapped-
-abandoned; one consumer `mi_free` then terminally releases the live page. The
-trace records retired/local-retirement state, retired teardown PageMap,
-ordinary arena-page bitmap, and exact slice-span release, followed by live
-mapped-abandoned state and terminal PageMap, ordinary bitmap, exact slice-span,
-and empty-route checks. Rust directly observes the equivalent bounded private
-transitions. This lane does not establish general retirement, teardown,
-routing or concurrency, public `mi_*` behavior, libc integration, backend
-promotion, public x86 support, or AArch64 evidence; its report is
-`compat/reports/allocator/x86_64/retired-prepass.json`.
-
-A separate two-live-page aggregate post-exit route is available on native
-x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-aggregate-post-exit
-```
-
-This private 25-field C/Rust differential has a real worker `pthread` create
-exactly two distinct live nonfull medium arena pages in distinct bins, then run
-real `mi_thread_done()` and return. The consumer calls `pthread_join()` on that worker
-before freeing; both selected pages are mapped-abandoned after teardown. The
-consumer frees the second page first,
-which records only that page's PageMap unregister, ordinary arena-page bitmap
-clear, and exact slice-span release while the first remains PageMap-registered,
-arena-bitmap-set, mapped-abandoned, and `used == 1`; the consumer then frees
-the first page and records an empty route. Rust compares only the equivalent
-bounded private aggregate post-exit traversal. This lane does not establish
-general teardown, routing or concurrency, public `mi_*` behavior or runtime,
-libc integration, backend promotion, public x86 support, or AArch64 evidence;
-its report is `compat/reports/allocator/x86_64/aggregate-post-exit.json`.
-
-A separate aggregate still-live route is available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-aggregate-still-live
-```
-
-This private 46-field C/Rust differential has a real worker `pthread` create
-two distinct clients on one nonfull medium arena page A and a one-client medium
-arena page B in a distinct bin, then run real `mi_thread_done()` and return.
-The consumer calls `pthread_join()` before any free. Both pages are mapped-abandoned after
-teardown. The consumer's first A free returns `StillLive`, preserving A, B, and
-the route; its B free returns `ReleasedPage`, terminally releasing only B; its
-second A free returns `ReleasedAll` and completes the route. Rust compares only
-this equivalent bounded private aggregate still-live traversal. This lane does
-not establish general teardown, routing or concurrency, public `mi_*` behavior
-or runtime, libc integration, backend promotion, public x86 support, or
-AArch64 evidence; its report is
-`compat/reports/allocator/x86_64/aggregate-still-live.json`.
-
-A separate same-bin aggregate still-live route is available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-aggregate-same-bin-still-live
-```
-
-This private 53-field C/Rust differential has a real worker `pthread` fill
-medium arena page A, create distinct medium arena page B in the same bin, and
-locally restore A to two distinct live clients before real `mi_thread_done()`
-and return. The consumer calls `pthread_join()` before every free. It proves
-the selected same-bin queue count/link/saved-successor traversal before exit
-and same-bin mapped-abandoned count/bitmap transitions `2 -> 2 -> 1 -> 0`.
-The first A free returns `StillLive`, preserving both pages and the route; B
-returns `ReleasedPage`, terminally releasing only B; and the second A free
-returns `ReleasedAll`, completing the route. Rust compares only this equivalent
-bounded private aggregate same-bin traversal. This lane does not establish
-general teardown, routing or concurrency, public `mi_*` behavior or runtime,
-libc integration, backend promotion, public x86 support, or AArch64 evidence;
-its report is
-`compat/reports/allocator/x86_64/aggregate-same-bin-still-live.json`.
-
-A separate dynamic full-medium one-remote force-collect-to-mapped route is
-available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-medium-one-remote-force-collect-to-mapped
-```
-
-This private 29-field C/Rust differential fills one sole full `BIN_FULL`
-medium arena page with the 10248-byte request (12288-byte blocks, capacity
-and reserved 42, eight slices), publishes exactly one joined remote `mi_free`
-before real `mi_thread_done()` in the C oracle, and force-collects it to mapped
-abandonment. Rust exercises only the corresponding private typed drain.
-The trace records dynamic abandoned bitmap/count state, `used == 41`, mapped
-retention through sequential consumer frees, and terminal PageMap, ordinary
-arena bitmap, dynamic bitmap/count, and exact slice release. It is private
-native x86-64 engine evidence only; it does not establish general lifecycle,
-routing, concurrent collection, abandonment/adoption, public `mi_*` behavior
-or runtime, public x86 support, libc integration, backend promotion, or
-AArch64 evidence. Its report is
-`compat/reports/allocator/x86_64/dynamic-full-medium-one-remote-force-collect-to-mapped.json`.
-
-A separate dynamic full-medium unmapped-reabandon route is available on native
-x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-medium-unmapped-reabandon
-```
-
-This private 34-field C/Rust differential fills one sole full `BIN_FULL`
-medium arena page (request 10248, 12288-byte blocks, capacity/reserved 42,
-eight slices). No remote `mi_free` is published: the worker runs real
-`mi_thread_done()`, and the consumer joins before sequential frees. Force then
-false collection detaches the full queue but keeps the PageMap and ordinary
-arena bitmap; it is unmapped-abandoned with dynamic bitmap/count clear and
-`used == 42`. Five normal-collector frees retain that state at `used == 37`.
-The sixth free crosses `reserved / 8 == 5`, maps the page at `used == 36`, and
-sets dynamic bitmap/count to one. The mapped tail clears the PageMap, ordinary
-arena bitmap, dynamic bitmap/count, and complete eight-slice arena span. It is
-private native x86-64 engine evidence only; it does not establish general
-lifecycle/routing/concurrent collection, abandonment/adoption, public
-API/runtime, backend promotion, public x86 support, or AArch64 evidence. Its
-report is
-`compat/reports/allocator/x86_64/dynamic-full-medium-unmapped-reabandon.json`.
-
-A separate dynamic full-large one-remote force-collect-to-mapped route is
-available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-large-one-remote-force-collect-to-mapped
-```
-
-This private 31-field C/Rust differential fills one sole full `BIN_FULL`
-large arena page (request 86706, 98304-byte blocks, capacity/reserved 42,
-64 arena slices, 63 PageMap-registered source page-area slices), publishes exactly one joined remote `mi_free` before real
-`mi_thread_done()` in the C oracle, and force-collects it to mapped
-abandonment. Rust exercises only the corresponding private typed drain.
-Sequential consumer frees retain the mapped route until terminal PageMap,
-ordinary arena bitmap, dynamic bitmap/count, and complete 64-slice release;
-the final PageMap-null arena slice is slack but is still terminally released.
-It is private native x86-64 engine evidence only; it does not establish
-general lifecycle/routing/concurrent collection, abandonment/adoption, public
-API/runtime, backend promotion, public x86 support, or AArch64 evidence. Its
-report is
-`compat/reports/allocator/x86_64/dynamic-full-large-one-remote-force-collect-to-mapped.json`.
-
-A separate dynamic full-large unmapped-reabandon route is also covered:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-large-unmapped-reabandon
-```
-
-The private 34-field pinned-C/Rust differential uses request 86706, which
-produces 98304-byte blocks with capacity/reserved 42. The full arena span has
-64 slices, while only 63 source page-area slices are PageMap-registered; the
-final PageMap-null slice is slack but remains part of terminal release. No
-remote `mi_free` is published in the C oracle: its real `mi_thread_done()` and
-`pthread_join()` precede five normal-collector frees that retain unmapped abandonment at
-`used == 37` with dynamic bitmap/count zero, then a sixth free maps the page at
-`used == 36` with dynamic bitmap/count one. The mapped tail clears PageMap,
-the ordinary arena bitmap, and dynamic bitmap/count before releasing the
-complete 64-slice span. Rust independently exercises the bounded typed
-owner-exit route on its owning test thread and does not claim a literal
-worker-thread/join counterpart. It remains private native x86-64 engine evidence only;
-it does not claim general lifecycle/routing/concurrent collection,
-abandonment/adoption, public API/runtime, public x86 support, libc integration,
-backend promotion, or AArch64 evidence. Its report is
-`compat/reports/allocator/x86_64/dynamic-full-large-unmapped-reabandon.json`.
-
-A separate dynamic full direct-small one-remote force-collect-to-mapped route
-is available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped
-```
-
-This private 32-field C/Rust differential fills one sole full direct-small
-ordinary regular-bin arena page (request/block size 1024, capacity/reserved 64,
-one slice), whose pre-remote check requires the exact rounded direct-cache range
-`[113, 128]`. The consumer/main thread publishes exactly one joined remote
-`mi_free`; the worker later runs real `mi_thread_done()`, and the consumer joins
-before sequential frees. Force collection records `used == 63`, mapped
-abandonment, and dynamic bitmap/count
-state; pinned source anchors plus Rust's typed handoff establish direct-cache
-clear-before-page-count-detach. Only the bounded partial collector serves the
-mapped consumer tail, ending with PageMap, ordinary arena bitmap, dynamic
-bitmap/count, and one-slice release. It is private native x86-64 engine
-evidence only; it does not establish general lifecycle/routing/concurrent
-collection, abandonment/adoption, public API/runtime, backend promotion,
-public x86 support, or AArch64 evidence. Its report is
-`compat/reports/allocator/x86_64/dynamic-full-direct-small-one-remote-force-collect-to-mapped.json`.
-
-A separate dynamic full direct-small unmapped-reabandon route is available on
-native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-direct-small-unmapped-reabandon
-```
-
-This private 38-field C/Rust differential fills one sole full direct-small
-ordinary regular-bin arena page (request/block size 1024, capacity/reserved 64,
-one slice) with the exact rounded direct-cache range `[113, 128]`. No remote
-`mi_free` is published: the worker runs real `mi_thread_done()`, and the
-consumer joins before sequential frees. Force then false collection clears that
-range before page-count detach, leaving the page unmapped-abandoned with
-PageMap and ordinary arena bitmap retained, ordinary queue detached, dynamic
-bitmap/count clear, and `used == 64`. The first partial-collector consumer free
-retains `used == 64`; nine partial-collector frees preserve that unmapped route
-at `used == 56`; the tenth partial collector takes `used` to 55, then generic
-unown consumes the retained current head and maps it at `used == 54` with the
-dynamic bitmap/count set to one. The mapped tail clears PageMap, ordinary arena
-bitmap, dynamic bitmap/count, and the one slice. It is private native x86-64
-engine evidence only; it does not establish general lifecycle/routing/concurrent
-collection, abandonment/adoption, public API/runtime, backend promotion,
-public x86 support, or AArch64 evidence. Its report is
-`compat/reports/allocator/x86_64/dynamic-full-direct-small-unmapped-reabandon.json`.
-
-A separate dynamic full non-direct-small unmapped-reabandon route is available
-on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-non-direct-small-unmapped-reabandon
-```
-
-This private 35-field C/Rust differential fills one sole full non-direct-small
-ordinary regular-bin arena page (request 1032, 1280-byte blocks,
-capacity/reserved 51, one slice, and an empty direct-cache image). No remote
-`mi_free` is published: the worker runs real `mi_thread_done()`, and the
-consumer joins before sequential frees. The full page is initially
-unmapped-abandoned with its PageMap and ordinary arena bitmap retained, dynamic
-bitmap/count clear, and `used == 51`. Six normal-collector frees preserve that
-unmapped route at `used == 45`; the seventh maps it at `used == 44` with the
-dynamic bitmap/count set to one. The mapped tail ends by clearing PageMap,
-ordinary arena bitmap, dynamic bitmap/count, and the one slice. It is private
-native x86-64 engine evidence only; it does not establish general
-lifecycle/routing/concurrent collection, abandonment/adoption, public
-API/runtime, backend promotion, public x86 support, or AArch64 evidence. Its
-report is
-`compat/reports/allocator/x86_64/dynamic-full-non-direct-small-unmapped-reabandon.json`.
-
-A separate dynamic full non-direct-small one-remote force-collect-to-mapped
-route is available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped
-```
-
-This private 30-field C/Rust differential fills one sole full non-direct-small
-ordinary regular-bin arena page (request 1032, 1280-byte blocks,
-capacity/reserved 51, one slice, and an empty direct-cache image). The
-consumer/main thread publishes exactly one joined remote `mi_free`; the worker
-later runs real `mi_thread_done()`, and the consumer joins before sequential
-frees. Force collection records `used == 50`, mapped abandonment, and dynamic
-bitmap/count state. The first sequential failed-reclaim free follows the normal
-`used + 2 == reserved` geometry while keeping the mapped route; only the final
-free clears PageMap, ordinary arena bitmap, dynamic bitmap/count, and the one
-slice. It is private native x86-64 engine evidence only; it does not establish
-general lifecycle/routing/concurrent collection, abandonment/adoption, public
-API/runtime, backend promotion, public x86 support, or AArch64 evidence. Its
-report is
-`compat/reports/allocator/x86_64/dynamic-full-non-direct-small-one-remote-force-collect-to-mapped.json`.
-
-A separate pinned-C automatic pthread-destructor lane is available on native
-x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-automatic-pthread-destructor
-```
-
-This private 37-value C-oracle-only probe gives one worker two live 10241-byte
-clients on a private arena medium page, verifies mimalloc's real pthread key
-points at its initialized default Theap, and returns naturally without an
-explicit `mi_thread_done()` or `pthread_exit()` call. After `pthread_join()`,
-the consumer records mapped abandonment, PageMap/arena-bitmap retention,
-detached ownership, and the two-free terminal release. It does not compare
-Rust or establish a crabc pthread/TLS callback, Rust/private-runtime lifecycle
-integration, general destructor ordering, public `mi_*` behavior, public x86
-support, libc integration, backend promotion, or AArch64 evidence. Its report
-is `compat/reports/allocator/x86_64/automatic-pthread-destructor.json`.
-
-A separate cancellation-triggered automatic pthread-destructor lane is also
-available on native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-cancellation-pthread-destructor
-```
-
-This private 46-value C-oracle-only probe disables cancellation during worker
-setup, verifies the same real mimalloc pthread-key association, then enables
-only deferred cancellation before an atomic-ready gate. The consumer issues
-exactly one `pthread_cancel()` and opens that gate; the worker reaches exactly
-one explicit `pthread_testcancel()`, and `pthread_join()` returns
-`PTHREAD_CANCELED` before the same mapped-abandoned, detached, and two-free
-terminal observations. It does not compare Rust or establish crabc pthread
-cancellation/TLS callback parity, Rust/private-runtime lifecycle integration,
-general cancellation or destructor ordering, public `mi_*` behavior, public
-x86 support, libc integration, backend promotion, or AArch64 evidence. Its
-report is
-`compat/reports/allocator/x86_64/cancellation-pthread-destructor.json`.
-
-A separate pinned-C process-done pthread-key lane records the intentionally
-different late-worker boundary:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-process-done-pthread-key
-```
-
-This private 31-value C-oracle-only probe initializes mimalloc, calls public
-`mi_process_done()`, then creates and joins one new worker. Linux selects
-`MI_USE_PTHREADS` even with local compiler TLS, so source deletes the private
-automatic thread-done key during process done. The worker still initializes a
-default Theap and allocates two same-page medium clients, but has no key
-association on natural return. After join, its Theap, TLD identity, and page
-ownership remain live; two later `mi_free` calls publish remote frees without
-collecting or releasing the page. This records the source behavior that a
-native process-shutdown owner must account for. It does not establish a Rust
-process-done implementation, a source-supported general post-shutdown worker
-policy, general lifecycle or routing, public `mi_*` behavior, public x86
-support, libc integration, backend promotion, or AArch64 evidence. Its report
-is `compat/reports/allocator/x86_64/process-done-pthread-key.json`.
-
-The separate feature-gated x86 owned-static integration receipt is:
-
-```sh
-./scripts/dev-x86_64.sh libc-native-mimalloc-shadow-pthread-teardown
-```
-
-It runs a real `__libc_start_main` candidate with
-`x86-owned-static-native-shadow`. A failed process-owner or
-later-arena setup rejects selected startup before constructors, so it cannot
-continue with a partly active native owner. Before startup installs that owner,
-its child attach returns only recoverable `Inactive`; the parent reclaims that
-child and returns `EAGAIN` without running the user callback. After startup,
-normal return, `pthread_exit`, and deferred `pthread_cancel` all run a user TSD
-destructor that allocates and frees through the selected native adapter before
-native after-user-destructor finish. The existing test-only admission audit
-starts at zero after the pre-start rejection and returns to zero after each
-join. A strong application `malloc` replacement also proves that
-`pthread_atfork` uses libc's direct native private-allocation helper. A
-retained or contradictory fresh-TLS attachment fails closed rather than taking
-that recoverable cleanup path. This does not qualify C-free dependency purity
-(the owned-static aggregate retains its incidental C mimalloc dependency),
-default selection, dynamic loader ownership, main/process teardown, promotion,
-public x86 support, or AArch64 behavior.
-
-The same worker contract is checked through installed products:
-
-```sh
-./scripts/dev-x86_64.sh owned-native-worker-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]
-```
-
-It builds (or accepts) native-shadow static and dynamic sysroots with
-`--allocator-lifecycle-test-audit`. That flag adds only scalar audits:
-`__crabc_x86_owned_allocator_worker_owner_test_audit` reports the calling
-worker's owner and page-engine state, attached worker owners, and reclaimed
-worker descriptors; `__crabc_x86_owned_allocator_process_test_audit` reports
-the process-wide PageMap, arena, TLD, metadata, later-Theap and abandoned-page
-counts that `./scripts/dev-x86_64.sh owned-native-allocator-stress` checks at
-each drained soak checkpoint. `compat/x86_64/owned_native_worker_lifecycle_probe.c` runs in
-static, static-PIE and dynamic PIE/non-PIE (kernel and direct loader) modes
-and must reproduce the pinned-musl transcript. The audited checks are:
-
-- A worker owner is attached before its start routine and before any
-  allocation.
-- Cleanup handlers and each TSD destructor iteration see that owner, for
-  return, `pthread_exit` and cancellation.
-- Every joined worker leaves no attached owner and one reclaimed descriptor.
-- A refused `pthread_create` (`EAGAIN` under `RLIMIT_AS`) leaves no owner,
-  and the next creation attaches normally.
-- The final worker's `atexit` callback runs on a fresh owner that has not
-  allocated, not on the finished one.
-
-Allocation, realloc, calloc and `posix_memalign` refusal with later valid
-use, and remote frees of live and exited workers' blocks of every size
-class, run in both builds. Three static products with a deliberate libc
-mutation each fail the matching check: no worker attach, native finish
-before TSD destructors, and no final-worker reinitialization. An attachment
-the allocator itself rejects is not reachable after installed startup, which
-initializes the process owner before any constructor; the pre-start
-rejection above remains its evidence.
-
-Application allocator replacement is checked through installed products by:
-
-```sh
-./scripts/dev-x86_64.sh owned-allocator-override [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]
-```
-
-`compat/x86_64/owned_allocator_override_probe.c` defines its own allocator,
-either the whole malloc family or only `malloc`/`free`/`realloc`. That
-allocator rejects any pointer it did not allocate. The runner links the probe
-in all six native-shadow entry modes and requires the pinned-musl transcript:
-- caller-owned results (`strdup`, `strndup`, `asprintf`, `wcsdup`,
-  `realpath`, `getline` growth, `open_memstream`) come from the application
-  allocator;
-- `calloc` and `reallocarray` reach it;
-- libc-owned storage (stdio, environment, regex, threads) stays coherent.
-Dynamic modes also run the same client with the allocator built alone as an
-initial DSO that preempts libc.so. The contract and its one difference from
-musl are in `known-differences.md`.
-
-The native-shadow runner publishes
-`.work/x86_64/reports/native-shadow/owned-allocator-override/latest/receipt.json`
-through the shared `native_shadow_receipt.py` writer. It retains stdout,
-stderr, and status for each oracle and candidate execution, the selected
-static and dynamic libc inputs and provenance, the executed programs and
-initial DSOs, fixed workload parameters, and a before/after checkout source
-seal. Replay the physical receipt after removing the temporary build directory:
-
-```sh
-python3 -B compat/x86_64/native_shadow_receipt.py check --runner owned-allocator-override --case-prefix kernel-
-```
-
-This component alone does not complete the M8 weak-interposition gate.
-
-Allocation across images is checked through the installed dynamic product by:
-
-```sh
-./scripts/dev-x86_64.sh owned-native-allocator-dso [DYNAMIC_SYSROOT]
-```
-
-`compat/x86_64/owned_native_allocator_dso_probe.c` is an executable with an
-initial DSO and a `dlopen` plugin, both built from
-`owned_native_allocator_dso_library.c`. Every block class is allocated in one
-image, grown in a second and freed in a third, for all 27 orderings,
-including zeroed, aligned and worker-thread blocks. Every image must resolve
-one `malloc`/`free` and keep musl's errno contract. musl's `dlclose` retains
-the plugin, so its blocks and code stay valid afterwards, a second `dlopen`
-returns the same handle without rerunning its constructor, and destructors
-run at exit. The runner also requires libc.so to bind the malloc family
-exactly as musl's libc.so does (weak `malloc`, strong others). PIE and
-non-PIE executables run through kernel and direct-loader entry and must
-reproduce the musl transcript.
-
-The libc malloc-family policy of `memory.allocator-basic` and
-`memory.allocator-observability` is checked through installed products by:
-
-```sh
-./scripts/dev-x86_64.sh owned-native-allocator-policy [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]
-```
-
-It runs three unmodified programs in all six native-shadow entry modes and
-requires musl's status and transcript: the allocator-basic runtime probe
-(`compat/x86_64/libc_allocator_basic_runtime_v1_probe.c`), the observability
-fixture (`tests/fixtures/allocator_observability_test.c`), and
-`compat/x86_64/owned_native_allocator_policy_probe.c`, which applies the
-zero-size, alignment, zeroing, overflow, realloc-failure, `realloc(p, 0)`,
-`posix_memalign` output and errno rules across small through huge blocks and
-across threads. Usable sizes are only checked against the request, since
-mallocng reports the request exactly.
-
-A separate dynamic OS-aligned singleton owner-exit route is available on native
-x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-os-aligned-singleton
-```
-
-This private 21-value C/Rust differential allocates 7 bytes at 128 KiB
-alignment in a real pinned-C worker, runs real `mi_thread_done()`, joins the
-worker, then performs the consumer's sole free. The selected 4096-byte OS
-singleton is semantically full (`reserved == used == 1`) but remains in
-`MI_BIN_HUGE`, not `MI_BIN_FULL`; the trace records its empty full queue,
-OS-abandoned-list handoff, PageMap preservation, and terminal mapping cleanup.
-Rust observes only the matching typed private owner-exit transition, not a
-pthread/TLS callback. This does not establish general lifecycle, routing,
-concurrent collection, abandonment/adoption, public API/runtime, backend
-promotion, public x86 support, or AArch64 evidence. Its report is
-`compat/reports/allocator/x86_64/dynamic-os-aligned-singleton.json`.
-
-A separate dynamic arena-singleton post-exit differential is available on
-native x86-64:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-dynamic-arena-singleton-post-exit
-```
-
-This private 21-value pinned-C/Rust differential's C oracle uses one real
-worker to allocate a full arena singleton from request 524289 (589824-byte
-block size, capacity/reserved 1, nine arena slices), run real
-`mi_thread_done()`, and join before the sole terminal consumer `mi_free`. It
-records source teardown/join,
-unmapped/unowned/detached state, all-nine-slice PageMap registration and
-ordinary arena-page bitmap state, then PageMap/bitmap clear, slice release,
-and terminal cleanup. Rust observes a scoped test worker and join while
-comparing only the matching common typed private owner-exit facts; this is
-distinct from the Rust-only route and does not establish crabc pthread/TLS
-callback parity. It does not establish general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend
-promotion, or AArch64 evidence. Its report is
-`compat/reports/allocator/x86_64/dynamic-arena-singleton-post-exit.json`.
-
-A separate native private-adapter measurement lane is available through the
-same dispatcher:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-perf --smoke --label x86-private-adapter-smoke
-./compat/allocator/run-x86_64.sh allocator-perf --full --label x86-private-adapter-baseline
-```
-
-It compiles one shared, release-optimized C fixture against pinned C mimalloc
-and the private Rust adapter, pins one allowed CPU, interleaves fresh-process
-samples, and records batch timing plus post-initialization touched-live-set
-memory observations under `compat/reports/allocator/x86_64/perf/`. These are
-bounded single-thread measurements with no promotion threshold—not whole-engine
-performance qualification, public `mi_*` behavior, libc integration, or an
-x86 backend decision. The x86 lane does not claim public `mi_*` API, libc
-integration, general lifecycle or stress coverage, full x86 mimalloc parity,
-or public x86 `crabc` support.
-
-The separate bounded lifecycle/concurrency judge is also native x86-only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-lifecycle
-```
-
-It records eleven named private Rust lanes (the named unit tests plus the
-finite Loom page-protocol module and its negative control) in
-`compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
-for only those listed compiler-TLS, private-key, and remote-head transitions;
-it is not general process/thread lifecycle, client routing,
-abandonment/adoption, pthread callback, general fault-injection or misuse
-parity, or whole-allocator stress evidence.
-
-After a change to the process-isolated first-arena witness, its fixed selector
-can record only that witness without turning a partial run into a lifecycle
-campaign claim:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-lifecycle --only runtime-process-policy-first-arena
-```
-
-That writes `lifecycle-runtime-process-policy-first-arena.json` beside the
-full report. It pairs a child-isolated direct pinned-C `src/init.c` probe plus
-the ordinary linked `src/arena.c` first-allocation route with the ordinary Rust
-first-arena child. Both retain `mimalloc_use_numa_nodes=3` and
-`mimalloc_arena_is_numa_local=1`, record configured/resolved count three, and
-check normalized TLD and regular-first-arena node relations. The direct C
-probe frees its one client and verifies the selected regular arena remains
-registered; the Rust child proves the same retained arena relation after its
-exact client free. It does not compare a raw host-node identity, qualify
-hardware multi-node placement or huge pages, or expand the first-arena route
-into general lifecycle parity.
-
-The same focused receipt also runs two fresh, clean source-environment THP
-images. Pinned C directly includes `src/os.c` and `src/init.c` before normal
-`mi_process_init()`, while Rust starts `RuntimeProcessStorage`, makes one
-ticket-zero allocation, and reads its retained READY audit. The fixed
-`mimalloc_allow_thp=0` image must retain raw zero, the existing false boolean
-projection, and a false configuration bit. The fixed `mimalloc_allow_thp=2`
-image must retain raw two and the true projection; its configuration bit is a
-same-run C/Rust observation that may be zero or one. The audit does not run a
-new detector or infer that bit from minimum-purge behavior. These two images
-do not establish ambient THP hardware state, arbitrary source-option handling,
-detector parity beyond the recorded relation, or other production callers.
-
-The separate source-start regular-arena differential is available through:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-startup-regular-arena
-```
-
-It direct-includes pinned release `src/init.c` and links the ordinary
-`src/arena.c` first-allocation route against one ordinary Rust runtime
-dependency. Seven fresh process images compare 49 shared scalar values: a
-published 64-MiB regular parent is reused before any lazy mapping even with
-`disallow_os_alloc=1`; a rejected 1-KiB startup option and an absent option
-use the prior 128-MiB lazy fallback; an absent parent with
-`disallow_os_alloc=1` returns C ENOMEM and Rust's typed retryable refusal
-without a sidecar; and `disallow_arena_alloc=1` retains a published parent
-while taking direct OS allocation or, when combined with
-`disallow_os_alloc=1`, rejects that fallback with ENOMEM. The receipt also
-records the C allocation/errno and Rust typed-result/sidecar assertions, the
-complete C source roster, the full Rust allocator input tree, the exact locked
-integration invocation, and matching before/after candidate snapshots. Its
-reader contract can be checked without running a native oracle:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-startup-regular-arena --reader-tests
-```
-
-This is only one initial, sole, committed regular-parent capability. It does
-not admit a huge or multi-arena source image, metadata backing/publication,
-arena destruction, dynamic/later-TLD routing, general arena search, physical
-NUMA placement, hardware huge-page success, public `mi_*` behavior, or x86
-runtime qualification.
-
-Each newly produced focused receipt seals the candidate source before and
-after the C/Rust run: clean Git revision/root-tree state, the complete
-`crabc-mimalloc` tree object, and SHA-256 plus Git-blob identities for the
-named Rust runtime/test, Cargo/toolchain, launcher, C fixture, and collector
-inputs. Older format-2 receipts remain historical measurements; they do not
-acquire this candidate-source attribution retroactively.
-
-The receipt reader validates the serialized schema and its before/after
-self-consistency only. It does not query Git or recompute live source bytes,
-so a retained format-3 receipt alone does not authenticate some later
-checkout. The producer's clean-source capture and an explicit current-source
-comparison establish that attribution.
-
-One lane is a Rust-only bounded dynamic post-exit route: a source worker
-tears down dynamic TLS, cached-root, Theap/TLD, and key state before returning
-`DynamicThreadExitArenaSingletonPostExitRoute`; after join, its receiver
-consumes one exact arena-singleton free only after proving whole-PageMap
-quiescence, then verifies the PageMap, dynamic image bit, and full arena span
-release. It does not compare a C pthread callback or claim pthread/TLS
-lifecycle parity, general cross-thread routing, public x86 runtime support,
-allocator integration, or AArch64 evidence.
-
-The explicit initialization/recursion recovery witness is a separate native
-x86-64 differential:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-init-recursion
-```
-
-It compiles the pinned release source with its generic process constructor
-suppressed, explicitly calls `mi_process_init`, and gives one worker the fixed
-`mi_thread_init` → repeat-init → `mi_thread_done` → repeat-done → reinit →
-done sequence. The C trace records whether the current default Theap is
-initialized or empty at each boundary. The matching Rust trace uses
-`MainHeapThreadAttachment`: it refuses a direct second mutable owner before
-ticket, metadata, list, or root mutation, then tears down and creates a new
-attachment. The traces normalize C's existing-owner return and Rust's typed
-refusal to the common invariant that recursive entry creates no second current
-owner. The lane also runs a fixed native Rust ownership/failure matrix: the
-allocation-free once recursion; process-once reentry/racer; preflight refusal
-followed by a cold retry; retained post-claim PageMap failure with no
-ticket-zero TLS publication; persistent compiler-TLS reentry and failed-exit
-recovery; and every nonpristine dynamic, fast, default, and cached source-root
-rejection before ticket, metadata, or list mutation. Its report is
-`compat/reports/allocator/x86_64/init-recursion.json`.
-
-The same receipt carries a startup-entry relation. With the constructor
-suppressed, one C process makes its first `mi_malloc` while both startup
-`getrandom` draws fail with EAGAIN at the source `syscall` seam, then calls
-`_mi_auto_process_init`. The Rust half publishes raw startup facts
-(`NativeProcessStartupFacts`), fails the same two draws at the entropy
-primitive around a first native allocation, then calls `initialize_process`.
-Every scalar is compared: preloading after the first allocation and after
-the loader tail, delayed-warning flush timing, weak then reseeded default and
-metadata random images, and exact draw counts. The Rust batch adds the
-missing-fact refusal, concurrent first allocations, reader-only environment
-observation, loader-tail idempotence, PageMap-failure retention without
-restart, and startup-output allocation recursion rows; those remain Rust
-ownership evidence, not C fault equivalence.
-
-This does not cover constructor or pthread callback integration, automatic
-pthread teardown, public `mi_*` behavior, runtime `AlreadyAttached` handling,
-complete process shutdown, metadata completion, public x86 runtime support,
-or AArch64 status.
-
-The initialization TLD admission is a separate native x86-64 receipt:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-initialization-tld
-```
-
-It compiles the pinned-C direct fixtures with the release initial-exec musl
-profile and compares their complete address-independent records with seven
-exact Rust emitters. The fixed rows cover the detached static preimage, a
-caller-owned normal direct `mi_tld_init` image, the first-main static
-`mi_tld_create` arm, selected generic later-TLD metadata success and failure,
-and the ordinary later-main `_mi_thread_init_with_heap(mi_heap_main())` Theap
-success/failure transaction. The success row reaches Malloc TLD and Theap
-backing, both intrusive lists, the default root, the fixed main-Heap TLS root,
-and explicit finish. The same receipt embeds the explicit worker
-init/repeat-init/done/repeat-done/recovery sequence and its seven fixed Rust
-ownership and failure filters. In particular, the retained PageMap filter is
-`process_main_binds_metadata_before_global_page_map_failure`; it is a Rust
-lifecycle guarantee and is not claimed as a selected pinned-C fault
-equivalence. The report is
-`compat/reports/allocator/x86_64/initialization-tld-matrix.json`.
-
-This finite source matrix does not cover non-main Heap and DynamicTheap cache
-routes, exclusive-arena or `OsAligned` publication, automatic pthread teardown,
-process shutdown, fork, allocator-recursion completion, public/runtime
-integration, or AArch64 status. Each C fixture independently checks its
-selected source event order. Rust traces record only independently observed
-state and do not claim event-order instrumentation or infer allocation attempts
-from thread tickets. It admits the initialization component as partial M2
-evidence.
-
-The separate bounded fault-injection judge is also native x86-only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-fault
-```
-
-It records seven named crate-private state-preservation regressions at selected
-Map, Commit, Unmap, and Decommit points in
-`compat/reports/allocator/x86_64/fault-injection.json`. It does not establish
-general fault-injection or misuse parity, syscall interposition, C-oracle
-differentials, lifecycle/stress coverage, public `mi_*` behavior, libc
-integration, or an x86 backend. Each named Rust test runs serially with
-`--locked` against an isolated disposable x86-64 target directory.
-
-The source-indexed OS/page-map fault receiver admission is separate:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --os-publication-receiver
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --retry-helper-regression
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --timeout-clock-helper-regression
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --placement-warning-helper-regression
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --mbind-boundary-regression
-./compat/allocator/run-x86_64.sh allocator-fault-seam-inventory --huge-branch-diagnosis
-```
-
-The canonical receipt requires both the source diagnostic/huge profile and
-an ordinary OS publication profile. Each reconstructs its pinned C and Rust
-streams from raw commands, status, source closure, fixture identity, and an
-unchanged clean revision. The two required M2 checks retain independent exact
-Rust targets; an ordinary-only receipt cannot stand in for the canonical
-aggregate or its hardware requirements.
-
-`--os-publication-receiver` runs only the ordinary receiver. Its seven legal
-cases cover total aligned-allocation failure, metadata and block commitment
-failure, PageMap publication failure, two paired cleanup failures, and release
-after successful publication. The C profile calls the unchanged
-`_mi_arenas_page_alloc` and `_mi_arenas_page_free` bodies and interposes only
-`mmap`, `mprotect`, and `munmap` at the existing native seam. PageMap failure
-rejects one complete hint/null-hint allocation attempt, then allows the real
-rollback allocation. Rust exercises `OsAlignedPageClaim`, primary/alias
-publication, `PageMap`, and `PublishedOsAlignedPage`, retaining the exact typed
-owner when release fails. Sixty-three source relations include unreachable
-failed pages and no repeated statistics during raw retry. C's upper free is
-void: the C fixture's observed failed range enables lower primitive cleanup,
-not an invented C retry token. Corrupted-alias refusal remains the separate
-Rust safety difference in `known-differences.md`.
-
-The ordinary report is retained as
-`compat/reports/allocator/x86_64/fault-seam-inventory/os-publication.json`.
-The canonical inventory admits its named OS rows only with that validated
-receiver from the same revision. Metadata publication, general caller and
-callback coverage, actual hardware huge-page success, ambient NUMA placement,
-and full M2 remain unqualified. The existing private diagnostic receiver does
-not qualify general FILE transport or recursive output.
-
-The focused retry-helper regression compiles and runs only the fixture's
-synthetic three-call predicate. It accepts `1GiB, 1GiB, 2MiB` with the second
-and third calls at one hint, and rejects the former premature two-MiB flag,
-the final wrong flag, and a changed retry hint.
-
-The timeout-clock helper is a pinned C-only regression for the exact
-`stats.c:_mi_clock_start` calibration/start/elapsed sequence. It rejects the
-former `0,2,2,2` fixture readings and accepts the fixed `0,1,1,4` readings,
-which make the source stop after one completed huge page. The placement-warning
-helper follows `_mi_prim_alloc_huge_os_pages` through the one typed `mbind`
-failure, `errno`, and the registered output callback. It retains the
-same-thread prefix and the source formatter's `0x01` error body. These helpers
-are fixture regressions only; neither claims hardware huge-page success,
-ambient placement, or Rust diagnostic-output parity.
-
-`--huge-branch-diagnosis` is a separate C-only failure-analysis control. It
-retains each fixed arm's Boolean conjunction, source map/statistics counts, and
-bounded hex bytes of the two placement callback fragments before interpretation.
-Its raw build/run receipt is persisted before parser admission. A diagnosis
-record is not a passed fault-inventory or M2 receipt.
-
-The focused mbind-boundary regression derives a direct include from the exact
-pinned `src/prim/prim.c` and `src/prim/unix/prim.c` bytes. It records the sole
-`mi_prim_mbind` expression replacement, then retains the derived
-`prim.c`/Unix include under the owned artifact root. The receipt reopens both
-regular, non-symlink `0600` files and their `0700` directory before replaying
-the exact compiler macro argument, pre-build records, and post-build records.
-The boundary then proves that process initialization does not enter the typed
-stub and that one explicit `mi_prim_mbind` call records the fixed six arguments
-and returns `EPERM`. Other pinned Unix `syscall` expressions remain in the
-source body and use their ordinary implementation.
-
-The separate ordinary reserved-medium on-demand differential is also native
-x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-on-demand
-```
-
-It writes `compat/reports/allocator/x86_64/on-demand.json` after comparing 23
-address-independent success-path values. The C oracle alone sets
-`mi_option_page_commit_on_demand`; the Rust side uses only a private
-`cfg(test)` seam. Its Rust fault assertion preserves the selected page while
-the source false-collection path selects a distinct fresh page. This command
-does not claim C fault-injection parity, a production option/API/policy, public
-x86 runtime support, libc integration, backend promotion, or AArch64 evidence.
-
-The separate reserved-small direct-cache on-demand differential is also native
-x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-direct-on-demand
-```
-
-It writes `compat/reports/allocator/x86_64/direct-on-demand.json` after
-comparing 44 address-independent success-path values. The C oracle alone sets
-`mi_option_page_commit_on_demand`; Rust uses the same private `cfg(test)` seam
-without a production option/API/policy. The selected page crosses the fixed
-`8/8/4 -> 16/9/4 -> 24/17/8` capacity/used/OS-page-prefix states while the
-complete direct-cache image, queue, PageMap, arena bit, payload, and normal
-release remain coherent. Its source anchors establish the source commit order;
-the trace itself is poststate evidence only. It does not claim C
-fault-injection parity, fresh fallback, public x86 runtime support, libc
-integration, backend promotion, or AArch64 evidence.
-
-The separate aligned over-allocation/reallocation differential is also native
-x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-aligned-overalloc-realloc
-```
-
-It writes `compat/reports/allocator/x86_64/aligned-overalloc-realloc.json`
-after comparing 29 address-independent values from pinned C and one private
-Rust test. The fixture is limited to one ordinary arena-backed 33-byte
-offset-aligned request (64-byte alignment, offset 7). It observes
-interior-base recovery, adjusted usable size, the aligned ceil-half reuse
-boundary, replacement preservation, zeroed growth, and terminal PageMap,
-arena-page, and slice release. This is private native x86 engine evidence
-only; it does not claim a public `mi_*` API, public x86 libc/ldso/runtime
-support, general aligned allocation/reallocation coverage, or AArch64
-evidence.
-
-The separate ordinary regular-small retirement differential is also native
-x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-regular-small
-```
-
-It writes `compat/reports/allocator/x86_64/regular-small.json` after comparing
-40 address-independent values across pinned C and one private Rust test. It
-fills one 1025-byte ordinary regular-small arena page (1280-byte class, 51
-blocks, one slice), locally retires it with `retire_expire == 16`, lets the
-next generic same-Theap allocation quick-collect and reuse a just-freed block
-on the same page, then force-collects the second retired state through queue,
-PageMap, ordinary arena-page bitmap, and exact slice release. It is only
-same-thread/same-Theap private engine evidence for that route; it does not
-establish general retirement or lifecycle, remote/concurrent collection,
-abandonment, thread teardown, public `mi_*` behavior, libc integration,
-backend promotion, public x86 support, or AArch64 evidence.
-
-The separate full direct-small regular-bin retirement differential is also
-native x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-direct-small-full-retire
-```
-
-It writes `compat/reports/allocator/x86_64/direct-small-full-retire.json`
-after comparing 38 fixed address-independent pinned-C/Rust values. One
-same-thread/same-Theap, arena-backed 1024-byte direct-small page has 1024-byte
-blocks, capacity 64, and one slice. When full (`used == reserved`), it remains
-the sole ordinary regular-bin member with its complete rounded direct-cache
-range; it does not enter `BIN_FULL` or take an unfull transition. Owner-local
-frees retire it at `retire_expire == 16` without queue or cache detachment, and
-forced retired collection restores the source empty-page cache image before
-queue, PageMap, ordinary arena-page bitmap, and slice release. This is only
-that bounded private engine route, not general retirement/lifecycle, remote or
-concurrent collection, thread exit, abandonment/adoption, public API/runtime,
-backend, public x86 support, or AArch64 evidence.
-
-The separate ordinary medium-page full-to-retire differential is also native
-x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-medium-full-retire
-```
-
-It writes `compat/reports/allocator/x86_64/medium-full-retire.json` after
-comparing the fixed address-independent trace from pinned C and one private
-Rust test. The one same-thread/same-Theap arena-backed 10241-byte request has
-a 12288-byte block size, 42-block capacity, and eight slices. With C
-`mi_option_page_full_retain == -1`, it fills `BIN_FULL`, one local free returns
-the page to regular, the remaining local frees retire it with
-`retire_expire == 4`, and forced release checks queue, PageMap, arena-page bit,
-and slice-span teardown. It does not establish general retirement/lifecycle,
-remote or concurrent collection, abandonment, thread teardown, public API or
-runtime support, backend promotion, public x86 support, or AArch64 evidence.
-
-The separate full non-direct-small force-collect post-exit differential is
-also native x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-full-non-direct-small-force-collect-post-exit
-```
-
-It writes
-`compat/reports/allocator/x86_64/full-non-direct-small-force-collect-post-exit.json`
-after comparing 25 address-independent values from pinned C and one private
-Rust test. One worker-owned arena page receives a 1032-byte request in the
-1280-byte, 51-block, one-slice non-direct-small regular bin. The consumer
-publishes exactly one remote `mi_free` before the worker runs real
-`mi_thread_done()`, then `pthread_join()` completes before the consumer's
-sequential frees. Force collection makes the page nonfull, mapped-abandoned,
-PageMap-registered, arena-bitmap-set, and detached from its ordinary queue with
-50 remaining clients. A nonfinal consumer free preserves the mapped route;
-only the final free unregisters its PageMap entry, clears its ordinary
-arena-page bitmap, and releases its exact slice. This is private native x86-64
-engine evidence only: it does not establish general remote-free routing, thread
-exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public
-`mi_*` behavior or runtime, libc integration, backend promotion, public x86
-support, or AArch64 evidence.
-
-The separate full direct-small force-collect post-exit differential is also
-native x86-64 only:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-full-direct-small-force-collect-post-exit
-```
-
-It writes
-`compat/reports/allocator/x86_64/full-direct-small-force-collect-post-exit.json`
-after comparing 28 address-independent values from pinned C and one private
-Rust test. One worker-owned arena page receives a 1024-byte request in the
-1024-byte, 64-block, one-slice full direct-small regular bin. Its pre-remote
-preflight requires the complete rounded direct-cache range, and the pinned
-source anchors establish that range update before queue detachment. The
-consumer publishes exactly one remote `mi_free` before real `mi_thread_done()`;
-`pthread_join()` completes before sequential consumer frees. Force collection
-immediately publishes mapped abandonment while detaching the ordinary queue;
-the mapped route remains PageMap- and arena-bitmap-registered until the final
-free releases the PageMap, ordinary arena bitmap, exact slice, and the
-terminal static-main abandoned-bin bitmap (`arena_abandoned_bin_bitmap_clear_after_final_free`). This is
-private native x86-64 engine evidence only: it does not establish general
-remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption,
-concurrent collection, public `mi_*` behavior or runtime, libc integration,
-backend promotion, public x86 support, or AArch64 evidence.
-
-`owner-exit-publication-v3.5.0.json` is a pinned-source order gate, not
-runtime parity evidence. `validate_owner_exit_publication_contract` in
-`compat/allocator/run.py` checks the source sequence from queue detach through
-the abandoned identity, then either mapped bitmap/count or non-arena private
-OS-list publication, before common unown. It separately records the empty
-terminal-release branches and prohibits reconstructing a stale W07 owner-exit
-claim from a raw page, block, remote-head, or departed-Theap hint; only the
-typed drain, a current PageMap resolution, and the matching publication
-capability can authorize a later route.
-
-## Isolated allocator Python unit tests
-
-The current source-only allocator unit suite has been audited for module-level
-parallel execution: its checked-in tests read contracts and source, use mocks,
-or create temporary fixtures. `test_runner.py` and `test_upstream_stress.py`
-also import runners that select mutable roots from `CRABC_WORK_DIR`, so the
-helper supplies that variable per worker. Run this audited suite through
-`scripts/test_python.py` to keep module globals and runner-owned temporary
-state isolated with a bounded number of processes:
+## Launcher
+
+`run-x86_64.sh` is a closed command set. It requires a native x86-64 host
+(emulation is refused), provides no generic shell or Cargo, and builds no
+crabc libc, loader, sysroot, or `crabc-rs`. `./compat/allocator/run-x86_64.sh
+--help` prints the complete command list; an unknown command exits 2.
+
+- State lives under `.work/allocator-x86_64/`: `cargo/`, `target/`, `tmp/`,
+  `reports/`, and `allocator-cache/` (verified source archive and tag
+  attestation). Inside the container `reports/` is `compat/reports/`, so a
+  lane's default report path `compat/reports/allocator/x86_64/<lane>.json`
+  lands in `.work/allocator-x86_64/reports/allocator/x86_64/<lane>.json` on
+  the host. Gate reports use `x86_64/<gate>/report.json` beneath the same
+  root; the M3 traces and workloads are under
+  `.work/allocator-x86_64/target/compat/allocator/x86_64/m3-local-engine/`.
+- `CRABC_ALLOCATOR_X86_64_WORK_DIR` selects an isolated physical descendant of
+  that directory; escaping paths and symlinks are rejected before Docker
+  starts.
+- `CRABC_ALLOCATOR_X86_64_CPU_LIMIT` (Docker CPU quota) and `CARGO_BUILD_JOBS`
+  are forwarded only when set; each must be a positive integer.
+- The image authenticates its toolchain (the dated nightly in
+  `rust-toolchain.toml`, musl 1.2.6 oracle, Miri) before every run.
+- In a linked git worktree the launcher mounts the worktree's git metadata
+  read-only so revision attestation works; it never invents a clean state.
+- `allocator-huge-numa-qualification` adds `CAP_IPC_LOCK`;
+  `allocator-perf-integrated` runs in the pinned core evidence image because
+  the installed product builders need the owned Linux UAPI inputs (its
+  compiler probe uses `/usr/local/bin/crabc-x86_64-musl-gcc`);
+  `allocator-heap-convenience --read|--replay` and `allocator-m4
+  --operations-matrix --read|--replay` re-read retained inputs with a
+  read-only mount and no network.
+- Reviewed source manifests keep their original archive-path spelling;
+  relocating the execution path does not change upstream identity or archive
+  hash verification.
+
+## Commands
+
+Arguments are as `--help` lists them; the launcher rejects anything else.
+
+### Gates
+
+Gates are fail-closed: they print every unmet prerequisite and exit nonzero
+until all evidence passes. Each has a checked-in contract.
+
+| Command | Contract and behavior |
+| --- | --- |
+| `allocator --quick` | `run.py --quick`: verifies the annotated tag and archive identities, regenerates the checked-in contracts in memory, checks the source-map ratchet, and builds the exact C oracle profiles. |
+| `allocator-m1` | `m1-foundations-x86_64-v3.5.0.json`: finite foundations evidence (`run.py --m1 --offline`). |
+| `allocator-m2` | `m2-memory-substrate-x86_64-v3.5.0.json`: memory-substrate evidence (VM policy, bitmaps, arena, PageMap, metadata, initialization). See [What `allocator-m2` compares](#what-allocator-m2-compares). |
+| `allocator-m3 [subset]` | `m3-local-engine-x86_64-v3.5.0.json`. Requires complete M1/M2 reports, then runs `m3_x86_64.py`: generated workloads (a sweep of every reachable bin past one page, retirement/reuse probes, generic administration, seeded churn) run in separate pinned-C (`m3_local_trace_x86_64.c`, default Theap, `MIMALLOC_PAGE_FULL_RETAIN=-1`) and Rust (`single_thread::local_trace`) processes over identical in-place arenas, and their normalized traces must match line by line; it also derives the bin/page-class transition matrix, runs the M3 Rust unit batch, and runs the local engine under Miri. Unit and Miri tests are selected by exact module-path prefix from `--list` and run per module group, so a Miri abort reports every test it prevented. Exits 3 while any prerequisite or checked-in remaining condition is unmet; the subsets are development shortcuts that never close M3. |
+| `allocator-m4 [--check\|--gate ID\|--reader-tests\|--operations-matrix [--read\|--replay]\|--differential SCENARIO …]` | `m4-gate-x86_64-v3.5.0.json` selects the standard, extended, and aligned allocation groups plus `mi_collect`, minus items the M6/M7 contracts own (`excluded_items` records owner and reason). Evidence modes: `--native-tests` (focused native-engine regressions), `--adapter-boundary` (export and header audit of [`native-mi-adapter/`](native-mi-adapter/)), and `--differential SCENARIO`, which links [`x86_64_m4_operations_driver.c`](x86_64_m4_operations_driver.c) against the pinned C sources and against that adapter and requires equal address-free traces for `operations`, `page-kinds`, `collection`, `oom`, `threads`. Optional `--build-profile debug --valid-clients-only --source-profile PROFILE`. Report: `x86_64/m4-gate/report.json`, raw traces beside it. |
+| `allocator-m5 [--qualification-profile correctness\|full] [--check\|--gate ID\|--reader-tests]` | `m5-gate-x86_64-v3.5.0.json` gives each M5 condition one gate: groups of `crabc-mimalloc/tests/native_*` targets (every target in exactly one group), allocator-container runners, and receipts of the runtime-launcher native-shadow runners (`libc-native-mimalloc-shadow-pthread-teardown`, `owned-native-allocator-stress`) read through [`native_shadow_receipt.py`](../x86_64/native_shadow_receipt.py). Receipts are accepted only when they seal the current checkout and every case passed, so run those runners on the tree first. Report: `x86_64/m5-gate/report.json`. |
+| `allocator-m6 [--qualification-profile baseline\|full] [--check\|--reader-tests]` | `m6-gate-v3.5.0.json` partitions every applicable Heap, Theap, arena, managed-memory, and subprocess item selected from [`api-v3.5.0.json`](api-v3.5.0.json) into gates plus cross-cutting destruction/lifetime and upstream-test gates. A gate passes only with no reviewed blocker and all evidence runnable and passing; the validator rejects inventory gaps, double ownership, and unblocked gates that depend on missing evidence. Report: `x86_64/m6-gate/report.json`. |
+| `allocator-m7 [--qualification-profile baseline\|full] [--check\|--gate ID\|--reader-tests\|--arena-print\|--private-context-arena-print]` | `m7-gate-x86_64-v3.5.0.json` via `x86_64_m7_gate.py`: partitions the interfaces and compile-time modes selected from the pinned API inventory into gates and names each gate's evidence; a gate passes only with no reviewed blocker. |
+| `allocator-m8 [--check\|--gate ID\|--reader-tests]` | `m8-gate-x86_64-v3.5.0.json` names, per plan row (startup/constructors, threads/fork, errno/C ABI, weak/interposed symbols, static/dynamic products, DSOs/loader, Rust std, Lua, corpus), the installed native-shadow `scripts/dev-x86_64.sh` product commands it requires. `owned-native-allocator-policy` builds the sysroots that product-consuming rows receive as `{static_sysroot}` and `{dynamic_sysroot}`. Because each row starts its own container, the gate runs on the native host; logs and `report.json` are under `.work/allocator-x86_64/reports/allocator/x86_64/m8-gate/`. |
+| `allocator-m9 [--profile baseline\|full] [--check\|--reader-tests\|--report PATH…]` | `x86_64_m9_gate.py`: complete performance matrix, three distinct qualified reports with matching source/configuration/host/products, a complete codegen audit, and source convergence. |
+| `allocator-divergence-evidence [--profile correctness\|full] [--check\|--reader-tests]` | `divergence-evidence-v3.5.0.json`: every port-map row with `difference_kind = algorithmic` needs differential and performance evidence; `--check` requires the two sets to match. |
+| `allocator-m10 [--profile correctness\|baseline\|full] [--check [--performance-receipt PATH]\|--build-audit\|--reader-tests]` | `x86_64_m10_gate.py`: default qualification. `baseline` keeps release performance and every ordinary prerequisite but leaves physical NUMA and 2-MiB/1-GiB pages unqualified; `full` requires them. A full-profile reader rejects a baseline report. |
+
+### Unit and integration suites
+
+| Command | Runs |
+| --- | --- |
+| `allocator-unit [--filter NAME]` | `cargo test -p crabc-mimalloc --lib --no-default-features` for `x86_64-unknown-linux-musl`; with `--filter`, `run_unit_x86_64.py` runs one exact test. |
+| `allocator-native-integration` | Every `crabc-mimalloc/tests/native_*` target (one process each, `--no-fail-fast`) with the default-off `native-runtime-test-audit` and `native-runtime-test-fault` features. The tests register their std worker threads' allocator descriptors as libc's x86 pthread start does before attaching. |
+| `allocator-core-unit` | The `crabc-core` thread-pointer identity test (`--exact --test-threads=1`, feature `allocator-x86-evidence`). |
+
+### Pinned-C/Rust differential lanes
+
+Each lane compares one fixed scenario's address-free trace from the pinned C
+source with the Rust port and writes
+`compat/reports/allocator/x86_64/<lane>.json`; a lane takes no arguments
+unless listed. The lane table is [Checked-in contracts](#checked-in-contracts)
+(its `x86_64_*_evidence.py` rows name the dispatched command). Lanes whose
+driver is a `.c` plus `.py` pair in this directory are:
+
+- Heap and arena lifecycle: `allocator-arena-destroy`, `allocator-heap-destroy`,
+  `allocator-reclaim-on-free`, `allocator-subprocess-lifecycle`,
+  `allocator-heap-lifecycle`, `allocator-m2-arena-lifecycle [--profile
+  release|debug-1|stat-1|stat-2|all]`, `allocator-m2-metadata-ownership`.
+  Drivers: `arena_destroy.c`, `heap_destroy.c`, `reclaim_on_free.c`,
+  `subprocess_lifecycle.c`, `heap_lifecycle.c`, `m2_arena_lifecycle_x86_64.c`,
+  `m2_metadata_ownership_x86_64.c`. `allocator-reclaim-on-free` also reruns its
+  cases under seven `mimalloc_*` environment profiles so each process reads
+  them from its own option table.
+- Public API adapter: `allocator-m6-adapter` links
+  [`x86_64_m6_adapter_driver.c`](x86_64_m6_adapter_driver.c) once against the
+  pinned C sources and once against the native adapter's M6 exports and
+  compares the traces; `allocator-public-heap-alignment`,
+  `allocator-heap-convenience [--read|--replay]`,
+  `allocator-upstream-heap-stress`, `allocator-upstream-subprocess-stress`.
+- Local trace: `allocator-native-local-trace [--profile initial|worker]`
+  compares warmed owner-local allocation traces.
+- Process/thread lifecycle and startup: `allocator-tls`, `allocator-lifecycle
+  [--only runtime-process-policy-first-arena]`, `allocator-startup-regular-arena
+  [--reader-tests]`, `allocator-init-recursion`, `allocator-concurrent-init`,
+  `allocator-initialization-tld [--reader-tests]`, `allocator-fault`,
+  `allocator-fault-seam-inventory [OPTION]` (options: `--os-publication-receiver`,
+  `--metadata-publication-receiver`, `--compile-only`,
+  `--canonical-m2-vm-c-compile-regression`, `--retry-helper-regression`,
+  `--timeout-clock-helper-regression`, `--placement-warning-helper-regression`,
+  `--mbind-boundary-regression`, `--huge-branch-diagnosis`, `--reader-tests`).
+  The fault commands cover fixed crate-private selections, not general fault,
+  lifecycle, or stress qualification.
+- Huge pages: `allocator-huge-registry`, `allocator-huge-reservation`,
+  `allocator-huge-numa-qualification [--reader-tests]`.
+- C-oracle artifact evidence: `allocator-release-evidence`,
+  `allocator-api-coverage`, `allocator-header-modes`, `allocator-cmake-modes`,
+  `allocator-static-modes` observe the pinned C build outputs; they do not
+  claim behavior or Rust parity.
+- Abandon/adopt/exit scenarios: the remaining `allocator-*` commands in the
+  contract table (remote free, mapped reclaim/adoption
+  (`allocator-regular-mapped-reclaim` takes an optional, redundant `--offline`), unmapped reabandon,
+  on-demand commit, full-page force-collect and reabandon, aggregate
+  post-exit, pthread-destructor and cancellation, deferred-free callback,
+  automatic arena reservation, and so on). `allocator-automatic-arena-reservation
+  --reader-tests` runs the host reader tests only.
+
+### Performance and codegen
+
+| Command | Measures |
+| --- | --- |
+| `allocator-perf --smoke\|--full [options]` | `perf_x86_64.py`: private-adapter C/Rust timing and post-init live-memory comparison of two disposable fixture executables. Not the public `compat/perf/` matrix. |
+| `allocator-perf-engine [--smoke\|--full] [--set architecture\|matrix] [options]`, `--reader-tests` | `perf_engine_x86_64.py`: one source-shared C workload fixture linked once with the pinned C backend and once with the Rust persistent engine behind one opaque boundary. Retains fixture stdout/stderr under each run's `<label>.artifacts/output`, including samples that fail before producing a comparison. |
+| `allocator-perf-integrated [--smoke\|--full] [options]` | `perf_integrated_x86_64.py`: the same comparison through four installed static and dynamic products. Retains fixture output under `.work/allocator-x86_64/integrated/<label>/output`. |
+| `allocator-codegen-audit [options]`, `--reader-tests` | `codegen_audit_x86_64.py`: optimized machine-code audit of the two static engine fixtures. |
+
+The shared engine fixture keeps its volatile payload and usable-size
+accumulator private to each thread; independent workers must not race or
+contend on it. Both backends compile the same fixture bytes, so a fixture
+change requires fresh products and measurements in both lanes. Time-based
+performance runs are only meaningful on an uncontended host; see
+[`compat/perf/README.md`](../perf/README.md) for the public-runtime matrix.
+
+### What `allocator-m2` compares
+
+Beyond the memory-substrate fragments (`m2-*-x86_64-v3.5.0.fragment.json`),
+`allocator-m2` compares child-isolated direct pinned-C records with private Rust
+captures for these Linux VM-policy boundaries. They are direct VM-policy
+evidence only: none qualifies successful hardware huge pages, ambient
+diagnostics, or an allocator/runtime caller.
+
+- Large-page retry suppression: `_mi_prim_alloc` against
+  `Mapping::map_unix_policy` with forced failed `MAP_HUGETLB` attempts, the
+  eight-call suppression lifetime, and a competing `AcqRel` decrement (the
+  source ignores the strong-CAS failure). `allow_large=false`, ineligible
+  geometry, and a disabled `allow_large_os_pages` do not consume the counter.
+- THP policy matrix: `_mi_prim_mem_init` against a private Rust `VmPolicy`
+  capture for `allow_thp=1` (no PRCTL calls) and `allow_thp=0` with
+  `PR_GET_THP_DISABLE` returning EPERM, EINVAL, nonzero, or zero followed by
+  `PR_SET_THP_DISABLE`. C records only tuple/count control flow and its void
+  continuation; Rust records the typed `DisabledQueryFailed`,
+  `DisabledAlready`, `DisabledSet`, and `DisabledSetFailed` outcomes. The
+  `process-main-thp-policy-owner-traversal` Rust unit check separately walks the
+  `ProcessMainInitializationStorage` owners in raw-fork children.
+- One-GiB large-only terminal failure: `_mi_os_alloc_huge_os_pages` against
+  `HugeOsAllocation::allocate_for_process`. A failed one-GiB map retries as a
+  two-MiB map with the same hint, then the upper request attempts only the
+  sticky two-MiB form; both sides observe unchanged reserve/commit statistics
+  and the warning order. Failure-only evidence for one requested page.
+- Aligned over-map cleanup: `src/os.c` aligned allocation and
+  `src/prim/unix/prim.c` free. A failed direct, prefix, or suffix release is
+  warned, still counted, and leaked live, and the aligned middle is returned;
+  `os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace` emits the
+  twelve row verdicts that must equal C.
+- Huge registry and reservation: `allocator-huge-registry` compares the pinned
+  multi-arena manage path with the same-process Rust registry and checks
+  unpublished rejection and partial-publication ownership over a 17-GiB span;
+  `allocator-huge-reservation` compares pinned interleave/free policy
+  functions and runs focused Rust tests for metadata-backed failed-page
+  ownership and startup reservation order. Both simulate huge primitives with
+  anonymous memory.
+
+### Bitmap component
+
+`m2-bitmaps-x86_64-v3.5.0.fragment.json` is component evidence, not an M2
+report; the aggregate references its semantic inventory digest. It covers
+fixed mimalloc 3.5.0 scalar bitmap behavior for the default Linux/x86-64
+profile (64-bit fields, 512-bit chunks, `MI_OPT_SIMD=0`, release `MI_STAT=0`):
+the field/chunk primitives, ordinary and binned bitmap families, the three
+visitors, inverse/high scans and counts, rollback, and their mandatory
+subprocess statistics calls. SIMD/debug configurations and statistics
+ABI/reset/merge/reporting are separate claims.
+
+`crabc-mimalloc/src/bitmap.rs` preserves source algorithms and atomic orders.
+`AbandonedBitmapClaim::Discarded` is the source callback outcome
+`claim=false, keep_set=false`; arena ownership callers still restore rejected
+pages because a concurrent unabandon writer can be waiting for them. The
+`chunk_bins` transitions and `pages_unabandon_busy_wait` counter live in
+`MainSubprocess::bitmap_statistics` (signed 64-bit current, peak, and positive
+total in source order; the source `NONE` bin has no update); this typed subset
+is not a `mi_stats_t` byte layout. `m2_bitmaps_x86_64.py::run_evidence(harness,
+offline=..., test_program=...)` builds the direct C fixture from the pinned
+`stats.c` and Linux primitives, runs the `bitmap::` Rust module once, and
+compares the ordered unsigned observations; that single Rust execution
+supplies both the differential and the unit-invariant rows. Host tests:
+`test_m2_bitmaps_x86_64.py`, `tests/test_x86_64_m2_bitmaps.py`.
+
+### Architecture runtime evidence
+
+The architecture gate admission rules (qualified engine performance report
+file identity, derived throughput ratios, the 0.90 lower bound) are in
+[`architecture-runtime-evidence.md`](architecture-runtime-evidence.md).
+
+### Hardware huge-page and NUMA qualification
+
+Ordinary x86 qualification uses `--qualification-profile baseline` for M6/M7
+and `--profile baseline` for M9/M10. The pinned `allow_large_os_pages` option
+defaults to zero. The baseline profile keeps every ordinary producer, logical
+NUMA policy, failure/fallback check, convergence condition, performance
+threshold, and artifact audit, and records `physical-numa`, `2mib-pages`, and
+`1gib-pages` as unqualified; it changes neither the selected C backend nor
+public support. The full profile also requires successful physical
+reservation and placement; baseline qualification never rewrites failed
+hardware receipts. THP advice is not proof of a 2-MiB `MAP_HUGETLB` mapping.
+
+`allocator-huge-numa-qualification` is the hardware-only companion. It runs the
+simulated reservation and registry workloads first, then the pinned C
+`mi_reserve_huge_os_pages_at(1, node, 0)` and Rust
+`HugeOsAllocation::allocate_for_process`, each holding two one-GiB mappings
+concurrently and recording the kernel's `/proc/self/numa_maps`. `--reader-tests`
+runs only the parser and source-boundary tests. Requirements:
+
+- Two distinct online nodes (IDs 0 through 62) permitted by both the process
+  `Mems_allowed_list` and `cpuset.mems.effective`, each with at least one free
+  one-GiB huge page.
+- `RLIMIT_AS=unlimited`. The source-shaped virtual-address peak of the
+  prerequisite workloads is **36 GiB + 96 MiB** (`38,755,368,960` bytes) for
+  the registry lane's three `huge_` tests (a 17-GiB replacement beside a
+  32-MiB arena twice, and a one-GiB replacement whose aligned retry can occupy
+  two GiB beside a third arena); the huge-reservation C fixture spans three
+  GiB and each Rust reservation test at most four GiB. The executable, loader,
+  libtest, and compiler address space are excluded, so no finite total floor is
+  claimed.
+- Readable `/proc/self/numa_maps`, the launcher's `CAP_IPC_LOCK`, and an
+  approved `mbind(MPOL_PREFERRED, flags=0)`. A private-page preflight performs
+  that raw `mbind`; a nonzero result is recorded as a pending external gate.
+  Keep the default seccomp profile and approve only that rule; never use an
+  unconfined profile.
+
+Each invocation writes an immutable receipt under
+`allocator/x86_64/huge-numa-hardware-qualification-runs/`; the stable
+`allocator/x86_64/huge-numa-hardware-qualification.json` is only an atomic
+pointer to the latest receipt with its hash, and the collector refuses to
+reuse a run directory or executable path. A missing topology, pool, cgroup
+headroom, capability, observer, or `mbind` gate exits 3 with
+`pending_external_resources`; build, parser, or harness problems are a
+separate failed receipt. The job supplies no M2 completion, runtime-integration,
+or AArch64 evidence.
+
+## Host-side Python tests
+
+The source-only suite under `compat/allocator/tests/` reads contracts and
+source, uses mocks, or creates temporary fixtures, and is audited for
+module-level parallel execution. Run it through the isolating helper:
 
 ```sh
 python3 scripts/test_python.py --directory compat/allocator/tests
 python3 scripts/test_python.py --directory compat/allocator/tests --jobs 1
-python3 scripts/test_python.py --module compat/allocator/tests/test_runner.py
+python3 scripts/test_python.py --module compat/allocator/tests/test_x86_64_runner.py
 ```
 
-The default is the lesser of the available CPUs and four workers; `--jobs`
-accepts at most eight. Each module receives unique `TMPDIR`, scratch, report,
-and captured-log directories beneath a retained
-`.work/python-test-runs/run-*/` root. A module has a 300-second timeout by
-default; `--timeout` changes that per-module bound. Each completed run retains
-`summary.json` with every module's outcome, count, and elapsed time, so tuning
-can use measured costs without rerunning solely to collect timings.
-The runner reports only a
-short ordered failure summary and paths to its logs, rejects traversal and
-symlinked selections before allocating a run root, and fails when discovery or
-a module runs zero tests. Timeout, interruption, and a normal worker exit that
-leaves a live descendant in its original process group all terminate that
-group; the latter is reported as `PROCESS-GROUP-LEAK`. A test that deliberately
-creates a new session can still escape normal Unix process-group containment;
-this unit suite does not do so.
-
-Process and `TMPDIR` separation are not a filesystem sandbox. The helper does
-not make arbitrary suites safe to parallelize, and its private environment
-variables cannot contain a test that explicitly writes shared repository
-paths, `CRABC_WORK_DIR`, Cargo state, or reports. Audit any other suite's
-mutable inputs before using it. This is a unit-test convenience, not a
-replacement for the contained native allocator launcher or a source of runtime
+The helper runs each module in its own process with unique `TMPDIR`, scratch,
+report, and log directories beneath `.work/python-test-runs/run-*/` (default
+workers: the lesser of CPUs and four; `--jobs` accepts at most eight;
+`--timeout` bounds a module, default 300 s), retains a `summary.json`, and fails
+when discovery or a module runs zero tests. A worker that leaves a live
+descendant in its process group is reported as `PROCESS-GROUP-LEAK`. Process and
+`TMPDIR` separation is not a filesystem sandbox: audit any other suite's mutable
+inputs before using the helper, and treat it as a unit-test convenience, not
 qualification evidence.
 
-Maintainer-only contract operations run directly on the host and require a
-review of their diffs:
+Maintainer operations run directly on the host and need a diff review:
 
 ```sh
-python3 compat/allocator/run.py --check --offline
 python3 compat/allocator/run.py --check --architecture x86_64 --offline
 python3 compat/allocator/run.py --generate-contracts --offline
 python3 compat/allocator/run.py --snapshot-ratchet
-python3 -m unittest compat/allocator/tests/test_runner.py
 ```
 
-The verified archive and tag attestation live in the ignored
-`.work/allocator-cache/`. `--offline` performs no network access. The tag
-attestation file records a remote tag observation made by an online run; when
-it is absent, an offline run still accepts a digest-verified archive whose
-`git archive` pax commit equals the pinned peeled revision, admitting the tag
-object from the reviewed pin (`pinned_archive_tag_identity`). That admission is
-not written as an attestation, so consumers that require a remote observation
-still need one online run. Contract or source-map changes require an explicit ratchet
-snapshot after review; the normal gate never updates its own baseline.
+`--offline` performs no network access. The verified archive and tag
+attestation live in `.work/allocator-cache/`. The attestation file records a
+remote tag observation made by an online run; when it is absent, an offline run
+still accepts a digest-verified archive whose `git archive` pax commit equals
+the pinned peeled revision (`pinned_archive_tag_identity`), but that admission
+is not written as an attestation, so consumers that require a remote
+observation need one online run. Contract or source-map changes require an
+explicit ratchet snapshot after review; the normal gate never updates its own
+baseline.
 
 ## Checked-in contracts
 
+Generated reports are measurements and remain ignored. Linking a symbol,
+parsing a declaration, or building a C profile does not make a Rust feature
+implemented or verified.
+
 | Path | Contract |
 | --- | --- |
-| `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header and root-CMake mode inventory. It separates external C declarations, static inlines, types, enum options, macros, override macros, C++ conveniences, and all 52 initial `MI_*` compile-time declarations. Every item and mode records target applicability, source-backed exclusions or platform-limited observable behavior, implementation/evidence status, and an explicit blocker where parity is required but incomplete. Exported EINVAL operations, accepted option values with platform-specific effects, and unconditionally declared modes remain applicable parity obligations; only public declarations absent from the normal Linux release definition are currently inapplicable. Malloc-engine readiness remains owned by the architecture/M5 gates and cannot be inferred from the separate full Linux/AArch64 v3.5.0 parity track. Native x86-64 parity requires a separate architecture-qualified inventory. |
-| `x86_64-api-v3.5.0.json` | Target-local, source-only inventory of the pinned base `mimalloc.h` `mi_decl_export` declarations. It does not claim object exports, adapter coverage, implementation, or public integration. |
-| `x86_64-api-coverage-v3.5.0.json` and `x86_64_api_coverage.py` | Target-local source-only ledger for the pinned installed headers, source-form modes, test inputs, and symbol dispositions. Its separate native assessment records selected-release object/dynamic presence without changing the unassessed behavior, Rust, or public-runtime boundary. |
-| `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation for 34 x86-relevant source units. Its statuses remain explicitly incomplete and never reuse the AArch64 port-map/ratchet. |
-| `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. Its v3 status records the reviewed M4 `test-api.c`/`testhelper.h` inputs, one constrained M5 `test-stress.c` source-derived route, and the remaining M5+-blocked sources separately. |
-| `upstream-stress-v3.5.0.json` and `upstream-stress/run.py` | Canonical source-unmodified `test/test-stress.c` native-shadow contract and runner. The dispatch captures the exact matching Cargo compiler-artifact from its selected `crabc-libc` dev build, and the runner binds its package, target, profile, features, ordered `libc.so`/`libc.a` filenames, and file hashes without assuming fingerprint-cache uniqueness. They inventory the sole Linux/AArch64 little-endian target and selected nondefault backend, attest the fixture's ELF identity, exact selected-loader `PT_INTERP`, `DT_NEEDED`, and hashes, run fresh-process 1/2/4/8-pthread cases at `1 1 1` and `2 2 2`, then append 1/2/4/8-worker `101 1` source-CLI cases. The latter bind pinned `if (SCALE > 100)` activation and the exact ` (allow large objects)` stdout suffix without a compile-time large-mode define; they are bounded source-mode/workload evidence, not proof that every probabilistic large allocation succeeds. The lane records the upstream seed/watchdog/artifact schemas, normalizes the deleted extraction root out of durable evidence, and fails closed unless every case passes natively. `allocator --full` consumes only the fixed report through a separate strict, lock-free-Git reader; it verifies live artifact and current-head-companion binding but treats the result only as blocked Gate 5D observed evidence. Contract-only validation remains `not-run`, not runtime evidence. |
+| `api-v3.5.0.json` | Deterministic, source-audited AArch64 public-header and root-CMake mode inventory. |
+| `x86_64-api-v3.5.0.json` | Target-local, source-only inventory of the pinned base `mimalloc.h` `mi_decl_export` declarations. |
+| `x86_64-api-coverage-v3.5.0.json` and `x86_64_api_coverage.py` | Target-local source-only ledger for the pinned installed headers, source-form modes, test inputs, and symbol dispositions. |
+| `x86_64-source-map-v3.5.0.json` and `x86_64_source_map.py` | Target-local pinned-source mapping and ratchet foundation. |
+| `upstream-tests-v3.5.0.json` | Exact pinned upstream test/support-file inventory and current execution status. |
+| `upstream-stress-v3.5.0.json` and `upstream-stress/run.py` | Canonical source-unmodified `test/test-stress.c` native-shadow contract and runner. |
 | `adapted-tests-v3.5.0.json` | Reviewed selected-API omissions, source hashes, patch identity, prefixed symbol inventory, and native link contract for pinned upstream `test-api.c`. |
-| `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. It hashes only the extracted target-neutral patch/selection facts from the M4 record and separately records the staticlib-only `-lunwind -lc` C-link tail, its derived rustc target self-contained search path, executable ELF, PT_INTERP, and empty `DT_NEEDED` expectations. |
+| `adapted-tests-x86_64-v3.5.0.json` | Target-local private x86-64 adapter contract. |
 | `adapted/test-api-selected.patch` | Minimal source adaptation applied to the exact extracted upstream file; no copied upstream source fork is stored. |
 | `adapted-stress-test-v3.5.0.json` | Reviewed creating-thread stress source/provenance map, exact patch/hash, fixed `NTHREADS=1`/`1 1 2` invocation, unsupported-mode rejections, and native link contract for the constrained upstream `test/test-stress.c` route. |
 | `adapted/test-stress-creating-thread.patch` | Minimal source adaptation of the exact upstream stress fixture; it keeps the source workload but intentionally excludes every unsupported scheduler or allocator mode rather than copying a C fork. |
 | `native-shadow-stress-v3.5.0.json` | Reviewed selected-libc source-stress provenance map, behavior-named patch/hash, fixed four-pthread `4 1 2` execution, fresh-process count, source-transfer cleanup boundary, and unsupported-mode rejections. |
 | `adapted/test-stress-native-shadow-pthreads.patch` | Minimal selected-shadow adaptation of the exact upstream stress fixture; standard C allocation names bind to the native shadow `libc.so`, while unsupported upstream modes fail at compile time. |
-| `shadow-abi-matrix-v1.json` and `shadow-abi-matrix/` | Closed paired-artifact local C ABI contract and runner. It snapshots and attests the ordinary C-backed `libc.so` before native feature selection, then independently attests and compares one normalized `malloc`/`free`/`realloc` trace through both artifacts. It records the two current zero-size `realloc` ordinary/native alignment known reds exactly and keeps lifecycle, cross-owner, DSO/static-linkage, and allocator-layout cases explicitly blocked rather than smuggling them into a local comparison. |
+| `shadow-abi-matrix-v1.json` and `shadow-abi-matrix/` | Closed paired-artifact local C ABI contract and runner. |
 | `test-adapter/` | Standalone default-off Rust staticlib/cdylib, private C header, and checked-in wrapper for the existing allocator fixture. |
 | `runtime-ticket-zero-test-v3.5.0.json` | Reviewed source map, nine-symbol inventory, one-shot caller contract, native link contract, and durable 1,024-cycle soak-report contract for the process-lifetime ticket-zero C witness, including scalar-only lifecycle stability auditing plus the retained narrow, persistent mixed-local, and live-owner remote-free worker round trips. |
 | `native-owner-exit-lifecycle-v3.5.0.json` | Reviewed direct-engine Gate 5C suite: exact Cargo feature set, fifteen focused runtime/source traversal checks, and the required owner-exit scenario coverage. |
-| `owner-exit-publication-v3.5.0.json` | Pinned-source order gate for collection, queue detach, abandoned identity, mapped bitmap/count or non-arena OS-list publication, and common unown. It keeps empty terminal release distinct and prohibits treating a raw page/block snapshot or Loom-only W07 model as a reconstructed owner-exit claim. |
+| `owner-exit-publication-v3.5.0.json` | Pinned-source order gate for collection, queue detach, abandoned identity, mapped bitmap/count or non-arena OS-list publication, and common unown. |
 | `m5-gate-v3.5.0.json` | Versioned full-lane contract for the 128-cycle lifecycle schedule and its current Gate 5A--5E acceptance/blocker classification. |
 | `runtime-ticket-zero-adapter/` | Separate `no_std` staticlib/cdylib and direct C fixture for the hidden ticket-zero runtime owner; it has no libc allocator or `mi_*` export. |
-| `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. Native x86-64 parity must not reuse its AArch64 statuses. |
-| `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. An x86-64 ratchet must remain architecture-qualified. |
-| `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. It records available native evidence without promoting the adapter or engine to a public allocator backend. |
-| `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. It is dispatched by `allocator-release-evidence`; it does not claim public x86 support or reuse AArch64 status. |
-| `x86_64_api_native_coverage.py` and `x86_64-api-native-coverage-v3.5.0.json` | Native x86-64-only selected-release per-source-form object/dynamic-symbol assessment. It is dispatched by `allocator-api-coverage`; it does not claim behavior, Rust implementation, public API, or runtime compatibility. |
-| `x86_64_header_mode_evidence.py` and `x86_64-header-mode-evidence-v3.5.0.json` | Native x86-64-only staged public-header C/C++ compile/link evidence for six selected forms, including one C11 probe that instantiates five base-header `*_csize` static-inline dispatch helpers, plus the linked pinned C shared object. It is dispatched by `allocator-header-modes`; it does not validate CMake installation, execute consumers, or claim behavior/public runtime support. |
-| `x86_64_cmake_mode_evidence.py` and `x86_64-cmake-mode-evidence-v3.5.0.json` | Native x86-64-only CMake normal-release shared configure/build/install evidence. It is dispatched by `allocator-cmake-modes`; it records source-bound cache/compiler selections, installed headers/manifest, and shared-object ELF/SONAME/dependencies, but does not compile/link or execute consumers, claim behavior or Rust implementation parity, cover static/object or unselected CMake modes, or create public x86/AArch64 runtime support. |
-| `x86_64_static_mode_evidence.py` and `x86_64-static-mode-evidence-v3.5.0.json` | Native x86-64-only selected static archive and `src/static.c` override-object artifact evidence. It is dispatched by `allocator-static-modes`; it observes archive members and override symbols, compile-links two consumers, but does not execute them, configure/install CMake, or claim behavior/public runtime support. |
-| `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. It is dispatched by `allocator-remote-free` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
-| `x86_64_live_owner_full_medium_remote_release_evidence.py` and `x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json` | Native x86-64-only private 35-field pinned-C/Rust differential for one live owner with a non-abandoning full-medium arena page (10248-byte request, 12288-byte blocks, capacity/reserved 42, eight slices) and a regular successor. A real C `pthread` worker frees all 42 first-page blocks and joins before the owner observes its non-atomic remote list or false-collects; only the empty first page's PageMap/ordinary-arena-bitmap/eight-slice span releases while the successor remains regular and PageMap-published. Rust uses only 42 joined, staged scoped test workers for shared typed private facts, not pthread/TLS ABI parity or broad routing/collection. It is dispatched by `allocator-live-owner-full-medium-remote-release`; it does not claim thread teardown, public API/runtime, backend, public x86 support, libc integration, or AArch64 evidence. |
-| `x86_64_live_owner_full_medium_one_remote_unfull_reuse_evidence.py` and `x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence-v3.5.0.json` | Native x86-64-only private 43-field pinned-C/Rust differential for one non-abandoning full-medium live owner and one regular successor. A real C `pthread` publishes exactly one remote `mi_free` and joins before owner observation; false collection requeues the full page behind the successor, and ordinary allocation exhausts the successor before reusing the exact remote block. Rust uses only a joined scoped producer for common typed private facts. It is dispatched by `allocator-live-owner-full-medium-one-remote-unfull-reuse`; it does not claim pthread/TLS ABI parity, generic routing/collection, teardown, abandonment, public API/runtime, backend promotion, public x86 support, libc integration, or AArch64 evidence. |
-| `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. It is dispatched by `allocator-direct-remote` and does not claim general routing, lifecycle, public API, or AArch64 evidence. |
-| `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. It is dispatched by `allocator-mapped-reclaim` and does not claim general abandonment/adoption, public API, or AArch64 evidence. |
-| `x86_64_mapped_adoption_evidence.py` and `x86_64-mapped-adoption-evidence-v3.5.0.json` | Native x86-64-only private 18-value pinned-C/Rust differential for one arena-backed, same-origin, one-thread nonfull medium page: the C next same-heap allocation claims, reassociates, and queue-tail requeues that exact PageMap/ordinary-arena-bitmap-preserved page, while Rust explicitly consumes its test-only `adopt()` adapter before its matching third allocation. It is dispatched by `allocator-mapped-adoption`; it does not claim general or cross-thread abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_direct_small_allocation_adoption_evidence.py` and `x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json` | Native x86-64-only private 32-value pinned-C/Rust differential for one same-origin, same-thread/same-Theap, arena-backed 1024-byte direct-small page with two live blocks: abandonment clears its complete rounded direct-cache range while retaining PageMap/ordinary-arena-bitmap state, and the next C `mi_heap_malloc_small` claims, reassociates, queue-tail requeues, restores that range, and allocates the third block while Rust explicitly consumes its test-only `adopt()` handoff before its matching third allocation. It is dispatched by `allocator-direct-small-allocation-adoption`; it does not claim general/cross-thread adoption, generic Rust abandoned-page scanning, remote routing, lifecycle, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon. It is dispatched by `allocator-unmapped-reabandon`; Rust exercises one bounded real post-Theap-teardown full-medium route and it does not claim general routing, lifecycle, public API, or AArch64 evidence. |
-| `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 23-field pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. It is dispatched by `allocator-on-demand`; only C sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and the separate Rust regression proves an injected direct-commit miss leaves its original page unchanged before source-shaped false collection selects a distinct fresh page. Neither test establishes C fault-injection parity, a production option/API/policy, public runtime, backend, or AArch64 support. |
-| `x86_64_direct_on_demand_evidence.py` and `x86_64-direct-on-demand-evidence-v3.5.0.json` | Native x86-64-only private 44-field pinned-C/Rust differential for one reserved 1024-byte small direct-cache page: direct exhaustion at eight objects, generic zero-commit extension at allocation nine, and direct prefix growth before the allocation-seventeen extension. It is dispatched by `allocator-direct-on-demand`; C alone sets `mi_option_page_commit_on_demand`, Rust uses a `cfg(test)` seam, and its source-anchored poststate trace does not claim C fault-injection parity, a production option/API/policy, fresh fallback, public runtime, backend, or AArch64 evidence. |
-| `x86_64_regular_small_evidence.py` and `x86_64-regular-small-evidence-v3.5.0.json` | Native x86-64-only private 40-field pinned-C/Rust differential for one 1025-byte ordinary regular-small arena page: a 1280-byte 51-block one-slice class locally retires at 16, the next same-Theap generic allocation quick-collects/reuses a just-freed same-page block, and forced collection verifies queue/PageMap/ordinary arena bitmap/exact slice release. It is dispatched by `allocator-regular-small`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_direct_small_full_retire_evidence.py` and `x86_64-direct-small-full-retire-evidence-v3.5.0.json` | Native x86-64-only private 38-field pinned-C/Rust differential for one same-thread/same-Theap 1024-byte direct-small arena page (1024-byte blocks, capacity 64, one slice): when full it remains in its ordinary regular bin with its complete rounded direct-cache range, never enters `BIN_FULL` or takes an unfull transition, then owner-local frees retire it at 16 while that range remains populated. Forced retired collection restores the source empty-page cache image and releases queue/PageMap/ordinary arena bitmap/slice. It is dispatched by `allocator-direct-small-full-retire`; it does not claim general retirement/lifecycle, remote or concurrent collection, thread exit, abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_medium_full_retire_evidence.py` and `x86_64-medium-full-retire-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one same-thread/same-Theap, arena-backed ordinary 10241-byte medium page (12288-byte block size, 42 capacity, eight slices) under C full-retain `-1`: `BIN_FULL`, one local-free return to regular, retire expiry `4`, and forced queue/PageMap/arena-bit/slice-span release. It is dispatched by `allocator-medium-full-retire`; it does not claim general retirement/lifecycle, remote or concurrent collection, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_full_non_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-non-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for one worker-owned arena full non-direct-small regular-bin page: a 1032-byte request uses the 1280-byte, 51-block, one-slice class; one remote `mi_free` is published before real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection makes the page nonfull/mapped-abandoned and detaches its ordinary queue, and only the final free releases the PageMap/arena bitmap/slice. It is dispatched by `allocator-full-non-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_full_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 28-field pinned-C/Rust differential for one worker-owned arena full direct-small regular-bin page: a 1024-byte request uses the 1024-byte, 64-block, one-slice class; a pre-remote preflight requires the complete rounded direct-cache range, one remote `mi_free` precedes real `mi_thread_done()`, `pthread_join()` precedes sequential consumer frees, force collection immediately publishes the mapped route while detaching the ordinary queue, and only the final free releases the PageMap/arena bitmap/slice and clears the terminal static-main abandoned-bin bitmap (`arena_abandoned_bin_bitmap_clear_after_final_free`). It is dispatched by `allocator-full-direct-small-force-collect-post-exit`; it does not claim general remote-free routing, thread exit/teardown/lifecycle, abandonment/adoption, concurrent collection, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_automatic_pthread_destructor_evidence.py` and `x86_64-automatic-pthread-destructor-evidence-v3.5.0.json` | Native x86-64-only private 37-value pinned-C automatic pthread-destructor oracle. Its worker verifies mimalloc's real pthread key is associated with the initialized default Theap, returns naturally without an explicit `mi_thread_done()` or `pthread_exit()`, and is joined before the consumer observes its mapped-abandoned detached medium page and performs two terminal frees. It is dispatched by `allocator-automatic-pthread-destructor`; it does not compare Rust or claim a crabc pthread/TLS callback, Rust/private-runtime lifecycle integration, general destructor ordering, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_cancellation_pthread_destructor_evidence.py` and `x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json` | Native x86-64-only private 46-value pinned-C cancellation-triggered automatic pthread-destructor oracle. Its worker disables cancellation during setup, enables only deferred cancellation before its atomic-ready gate, and reaches exactly one `pthread_testcancel()` after the consumer's one `pthread_cancel()`; `pthread_join()` returns `PTHREAD_CANCELED` before the consumer observes its mapped-abandoned detached medium page and performs two terminal frees. It is dispatched by `allocator-cancellation-pthread-destructor`; it does not compare Rust or claim crabc pthread cancellation/TLS callback parity, Rust/private-runtime lifecycle integration, general cancellation/destructor ordering, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_medium_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-medium-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private 29-field pinned-C/Rust differential for one sole full `BIN_FULL` medium arena page: request 10248 yields 12288-byte blocks, capacity/reserved 42, and eight slices; the C oracle's exactly one joined remote `mi_free` precedes real `mi_thread_done()`, while Rust uses only the corresponding private typed drain; force collection publishes mapped abandonment with dynamic bitmap/count and `used == 41`, and sequential consumer frees retain the mapped route until PageMap, ordinary arena bitmap, dynamic bitmap/count, and exact slice release. It is dispatched by `allocator-dynamic-full-medium-one-remote-force-collect-to-mapped`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_medium_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-medium-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private 34-field pinned-C/Rust differential for one sole full `BIN_FULL` medium arena page: request 10248 yields 12288-byte blocks, capacity/reserved 42, and eight slices. No remote `mi_free` precedes real `mi_thread_done()`; the consumer joins before sequential frees. Force then false collection leaves it unmapped-abandoned with its full queue detached, PageMap and ordinary arena bitmap retained, dynamic bitmap/count clear, and `used == 42`. Five normal-collector frees retain that state at `used == 37`; the sixth crosses `reserved / 8 == 5`, maps it at `used == 36`, and sets dynamic bitmap/count one. The mapped tail clears PageMap, ordinary arena bitmap, dynamic bitmap/count, and the complete eight-slice span. It is dispatched by `allocator-dynamic-full-medium-unmapped-reabandon`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-large-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private 31-field pinned-C/Rust differential for one sole full `BIN_FULL` large arena page: request 86706 yields 98304-byte blocks, capacity/reserved 42, and a 64-slice arena span with 63 PageMap-registered source page-area slices; the C oracle's exactly one joined remote `mi_free` precedes real `mi_thread_done()`, while Rust uses only the corresponding private typed drain; force collection publishes mapped abandonment with dynamic bitmap/count and `used == 41`, and sequential consumer frees retain the mapped route until PageMap, ordinary arena bitmap, dynamic bitmap/count, and complete 64-slice release. The final PageMap-null arena slice is slack but remains terminally released. It is dispatched by `allocator-dynamic-full-large-one-remote-force-collect-to-mapped`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_large_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-large-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private 34-field pinned-C/Rust differential for one sole full `BIN_FULL` large arena page: request 86706 yields 98304-byte blocks, capacity/reserved 42, and a 64-slice arena span with only 63 PageMap-registered source page-area slices; the final PageMap-null slice is slack but remains terminally released. In the C oracle, no remote `mi_free` precedes real `mi_thread_done()` and `pthread_join()`; Rust independently exercises its bounded typed owner-exit route on the owning test thread and does not claim a literal worker-thread/join counterpart. Five normal-collector frees retain unmapped abandonment at `used == 37` with dynamic bitmap/count zero; the sixth maps it at `used == 36` with dynamic bitmap/count one, and the mapped tail releases the complete 64-slice span. It is dispatched by `allocator-dynamic-full-large-unmapped-reabandon`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, libc integration, or AArch64 evidence. |
-| `x86_64_dynamic_full_singleton_homogeneous_aggregate_evidence.py` and `x86_64-dynamic-full-singleton-homogeneous-aggregate-evidence-v3.5.0.json` | Native x86-64-only private 51-field pinned-C/Rust differential for exactly two same-size full `BIN_FULL` arena singleton pages: request 524289 yields 589824-byte blocks, capacity/reserved 1, and nine arena slices per member. The C worker performs real `mi_thread_done()` and the joined consumer frees sequentially; both members begin unmapped-abandoned, unowned, PageMap-registered across all nine slices, ordinary-arena-bitmap-set, and full-queue-detached, with no dynamic abandoned bitmap/count. The first terminal free releases only page 0 while page 1 remains registered, unmapped-abandoned, unowned, and used 1; the second releases page 1. Rust uses only the typed current-thread owner-exit model and makes no Rust worker/join claim. It is dispatched by `allocator-dynamic-full-singleton-homogeneous-aggregate`; it does not claim general lifecycle/routing/concurrency, abandonment/adoption, public x86 libc/ldso/crabc support, backend promotion, or AArch64 evidence. |
-| `x86_64_dynamic_full_direct_small_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-direct-small-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private 32-field pinned-C/Rust differential for one sole full direct-small ordinary regular-bin arena page: request/block size 1024, capacity/reserved 64, one slice, and exact rounded direct-cache range `[113, 128]`; the consumer/main thread's exactly one joined remote `mi_free` precedes the worker's real `mi_thread_done()`, while Rust uses only the corresponding private typed drain. Force collection publishes mapped abandonment with dynamic bitmap/count and `used == 63`; pinned source anchors and the typed handoff establish direct-cache clear-before-page-count-detach; sequential consumer frees use only the source partial collector until PageMap, ordinary arena bitmap, dynamic bitmap/count, and one-slice release. It is dispatched by `allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_direct_small_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-direct-small-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private 38-field pinned-C/Rust differential for one sole full direct-small ordinary regular-bin arena page: request/block size 1024, capacity/reserved 64, one slice, and exact rounded direct-cache range `[113, 128]`. No remote `mi_free` precedes the worker's real `mi_thread_done()`; the consumer joins before sequential frees. Exact direct-cache clear-before-page-count-detach leaves the page unmapped-abandoned with PageMap/ordinary-arena-bitmap preserved, ordinary queue detached, dynamic bitmap/count clear, and `used == 64`; the first partial-collector consumer free retains `used == 64`. Nine partial-collector frees retain unmapped state at `used == 56`; the tenth partial collector takes `used` to 55, then generic unown consumes the retained current head and maps it at `used == 54` with dynamic bitmap/count one. The mapped tail clears PageMap, ordinary arena bitmap, dynamic bitmap/count, and the one slice. It is dispatched by `allocator-dynamic-full-direct-small-unmapped-reabandon`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, or AArch64 evidence. |
-| `x86_64_later_thread_exit_full_direct_small_pages_evidence.py` and `x86_64-later-thread-exit-full-direct-small-pages-evidence-v3.5.0.json` | Native x86-64-only private 67-field pinned-C/Rust differential for exactly two same-bin full ordinary regular-bin direct-small arena pages: request/block size 1024, capacity/reserved 64, one slice per member, and complete direct-cache range `[113, 128]`. The real C pthread worker has no remote free, runs `mi_thread_done()`, and the consumer `pthread_join()`s before every sequential free. Both members begin unmapped-abandoned with PageMap and ordinary arena bitmap retained and ordinary queues detached. The C source dynamic and Rust typed later-main static-main abandoned bitmap/count are both clear through the nine-free partial-collector prefix at `used == 56`, then both publish the normalized common `abandoned_*` state at the mapped `used == 54` boundary. Page 0 releases independently before page 1 closes the route. Rust observes a scoped test worker and join only for common typed private facts; it does not claim crabc pthread/TLS callback parity. It is dispatched by `allocator-later-thread-exit-full-direct-small-pages`; it does not claim general lifecycle/routing/concurrency, abandonment/adoption, allocation-time claim/reclaim/requeue, public API/runtime, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_non_direct_small_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-non-direct-small-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private 35-field pinned-C/Rust differential for one sole full non-direct-small ordinary regular-bin arena page: request 1032 yields 1280-byte blocks, capacity/reserved 51, one slice, and an empty direct-cache image. No remote `mi_free` precedes the worker's real `mi_thread_done()`; the consumer joins before sequential frees, so the full page begins unmapped-abandoned with PageMap/ordinary-arena-bitmap preserved, dynamic bitmap/count clear, and `used == 51`. Six normal-collector frees retain unmapped state at `used == 45`; the seventh maps at `used == 44` and publishes dynamic bitmap/count one. The mapped tail clears PageMap, ordinary arena bitmap, dynamic bitmap/count, and the one slice. It is dispatched by `allocator-dynamic-full-non-direct-small-unmapped-reabandon`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private 30-field pinned-C/Rust differential for one sole full non-direct-small ordinary regular-bin arena page: request 1032 yields 1280-byte blocks, capacity/reserved 51, one slice, and an empty direct-cache image; the consumer/main thread's exactly one joined remote `mi_free` precedes the worker's real `mi_thread_done()`, while Rust uses only the corresponding private typed drain. Force collection publishes mapped abandonment with dynamic bitmap/count and `used == 50`; the first sequential failed-reclaim free follows normal `used + 2 == reserved` geometry while preserving the mapped route, and the final free clears PageMap, ordinary arena bitmap, dynamic bitmap/count, and the one slice. It is dispatched by `allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped`; it does not claim general lifecycle/routing/concurrent collection, abandonment/adoption, public API/runtime, backend promotion, public x86 support, or AArch64 evidence. |
-| `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. It is dispatched by `allocator-mapped-post-exit`; Rust covers only one bounded process-owned mapped regular handoff and directly observes PageMap, ordinary arena-page bitmap, and free-slice bitmap release. The lane does not claim general thread exit/routing, public API, backend, public x86 support, or AArch64 evidence. |
-| `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. It is dispatched by `allocator-retired-prepass`; it directly records PageMap, ordinary arena bitmap, exact slice-span, and empty-route checks, and does not claim general retirement/teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_deferred_free_callback_evidence.py` and `x86_64-deferred-free-callback-evidence-v3.5.0.json` | Native x86-64-only private 15-field pinned-C/Rust differential for the doc-hidden `__crabc_runtime` deferred-free registration adapter: release/acquire registration order, callback heartbeat before selection, TLD recursion suppression around a legal nested direct-small allocation, Mini callbacks at generic 1k boundaries, Full at 10k, the pinned C generic OOM forced retry, and one pinned `mi_thread_done()` owner-exit callback. The owner-exit trace proves the forced callback can allocate through the still-live default Theap after only the fast TLS slot clears, then Rust revalidates its exact attachment lease before phase C begins retired/page collection. It is dispatched by `allocator-deferred-free-callback`; it does not claim a public `mi_*` C export/header, legacy typed-drain callback delivery, fork-child callback delivery, a production backend, public runtime support, or AArch64 evidence. |
-| `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 25-field pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins: the real worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before freeing, both pages are mapped-abandoned after teardown, then a second-first selective terminal release is followed by a first-page terminal release and empty route. It is dispatched by `allocator-aggregate-post-exit`; it directly records PageMap, ordinary arena bitmap, exact slice span, and the first page's registered/bit-set/mapped-abandoned/`used == 1` state after the second-page free. It does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_aggregate_still_live_evidence.py` and `x86_64-aggregate-still-live-evidence-v3.5.0.json` | Native x86-64-only private 46-field pinned-C/Rust differential for two distinct clients on one nonfull medium page A and a one-client distinct-bin medium page B: the worker runs `mi_thread_done()` and returns, the consumer calls `pthread_join()` before every free, A's first free is `StillLive` and preserves A/B/the route, B's free is `ReleasedPage` and terminally releases only B, and A's second free is `ReleasedAll` and completes the route. It is dispatched by `allocator-aggregate-still-live`; it does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_aggregate_same_bin_still_live_evidence.py` and `x86_64-aggregate-same-bin-still-live-evidence-v3.5.0.json` | Native x86-64-only private 53-field pinned-C/Rust differential for two distinct clients on one nonfull medium page A plus a one-client medium page B in the same bin: the worker fills A, creates B, locally restores A to two clients, runs `mi_thread_done()`, and returns; the consumer calls `pthread_join()` before every free. It records selected same-bin queue count/link/saved-successor traversal and mapped-abandoned count/bitmap transitions `2 -> 2 -> 1 -> 0`; A's first free is `StillLive`, B's is `ReleasedPage`, and A's second free is `ReleasedAll`. It is dispatched by `allocator-aggregate-same-bin-still-live`; it does not claim general teardown/routing/concurrency, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_os_aligned_singleton_evidence.py` and `x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for a 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and `pthread_join()` precede the sole consumer free; the selected 4096-byte page is semantically full but is an unflagged `MI_BIN_HUGE` member with an empty `MI_BIN_FULL` queue. It records the bounded OS-list/PageMap/mapping terminal tail while Rust uses only a typed private owner-exit handoff. It is dispatched by `allocator-dynamic-os-aligned-singleton`; it does not claim general lifecycle/routing/concurrency, abandonment/adoption, public API/runtime/backend, public x86 support, or AArch64 evidence. |
-| `x86_64_dynamic_arena_singleton_post_exit_evidence.py` and `x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 22-value pinned-C/Rust differential for one full arena singleton (request 524289, 589824-byte block size, capacity/reserved 1, nine arena slices): a real C worker runs `mi_thread_done()` and joins before the sole terminal consumer `mi_free`; the trace records teardown/join, unmapped/unowned/detached state, all-nine-slice PageMap/arena-bitmap preconditions, and terminal PageMap/bitmap/slice cleanup. Rust observes a scoped test worker and join while comparing only common typed private owner-exit facts, distinct from its Rust-only route. It is dispatched by `allocator-dynamic-arena-singleton-post-exit`; it does not claim pthread/TLS callback parity, general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend promotion, or AArch64 evidence. |
-| `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its ten lanes are deliberately narrower than general allocator lifecycle or stress qualification; the separately selectable first-arena witness pairs one direct pinned-C initial-TLD NUMA policy observation with one ordinary Rust child. |
-| `x86_64_automatic_arena_reservation_evidence.py` and `x86_64-automatic-arena-reservation-evidence-v3.5.0.json` | Native x86-64-only private 22-value pinned-C/Rust differential for automatic regular-arena reservation. It observes an OS-disallow clean miss, four retained 256-slice claims that create a second regular arena, then a separate source-valid concurrent C setup: initialized worker Heap/TLD/Theap roots exhaust their metadata-owned baseline while disallowing OS allocation, each worker observes no existing free range, and eight actual `mi_arenas_try_alloc` calls claim distinct retained ranges in fresh arenas. The source's unchanged-count check under `arena_reserve_lock` serializes reservation without making it unique, so both sides record only interleaving-independent relations: one to eight fresh arenas, a high-water delta equal to the registry delta, and every claim in a fresh arena. Rust uses private `ArenaSearch` inputs and an explicitly exhausted regular owner, without claiming C root identity or equal metadata occupancy. The receipt records range release and high-water deltas. It is dispatched by `allocator-automatic-arena-reservation`; it does not claim simultaneous reserve-lock misses/coalescing, bootstrap/READY behavior, general reservation policy, public runtime support, backend promotion, or AArch64 evidence. |
-| `x86_64_init_recursion_evidence.py` and `x86_64-init-recursion-evidence-v3.5.0.json` | Native x86-64-only private seven-value pinned-C/Rust differential for the explicit process-init, worker init/repeat-init, explicit teardown/repeat-teardown, and recovery-init route. C returns its existing default Theap while Rust refuses a second mutable `MainHeapThreadAttachment`; both traces require one current owner, empty roots after teardown, and successful recovery. Its fixed native Rust batch also records once/process reentry and racer behavior, preflight retry, post-claim PageMap failure retention, persistent TLS recovery, rejection of every nonpristine later-worker root before ticket/metadata/list mutation, later-TLD metadata-allocation rejection before Theap construction, and the first-allocation/runtime-startup rows. Those are source-anchored Rust ownership evidence, not C fault-injection equivalence. A separate startup-entry relation compares the first allocation's failed entropy draws, preloading, delayed output, and `_mi_auto_process_init` tail with pinned C. It is dispatched by `allocator-init-recursion` and does not claim callback/runtime integration, metadata completion, public API/runtime, public x86 support, or AArch64 evidence. |
-| `x86_64_initialization_tld_evidence.py` and `m2-initialization-x86_64-v3.5.0.fragment.json` | Native x86-64-only five-row direct pinned-C/Rust initialization matrix for detached static preimage, direct normal TLD init, first-main static TLD create, and selected generic later-main metadata-allocation success and failure. The success row starts after ticket zero is live, receives one metadata-backed `Malloc` TLD image, and compares normal `mi_tld_init` post-state and live registration. The failure row compares NULL/ENOMEM pre-registration state with no live registration. Each C fixture separately checks the selected source event order; the Rust traces record only independently observed state and do not infer allocation attempts from tickets. It excludes later Theap/list/TLS/root publication, automatic teardown, allocator-recursion completion, public/runtime integration, and AArch64 evidence. The receipt freezes fixture bytes, direct include and translation-unit closure, release initial-exec command, complete trace schemas, and the source-current embedded init-recursion receipt with its Rust lifecycle batch. It is dispatched by `allocator-initialization-tld` and admits only partial M2 initialization evidence. |
-| `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its seven lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
-| `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
+| `port-map.toml` | AArch64 source-unit and meaningful-item translation/verification ledger with separate monotonic status fields. |
+| `ratchet-v3.5.0.json` | Reviewed AArch64 inventory hashes, counts, and non-regression baseline. |
+| `x86_64-parity-v3.5.0.json` | Target-local x86-64 parity/evidence ledger. |
+| `x86_64_release_evidence.py` and `x86_64-release-evidence-v3.5.0.json` | Native x86-64-only C release-mode, ELF identity, object-symbol, and dynamic-symbol evidence. Command: `allocator-release-evidence`. |
+| `x86_64_api_native_coverage.py` and `x86_64-api-native-coverage-v3.5.0.json` | Native x86-64-only selected-release per-source-form object/dynamic-symbol assessment. Command: `allocator-api-coverage`. |
+| `x86_64_header_mode_evidence.py` and `x86_64-header-mode-evidence-v3.5.0.json` | Native x86-64-only staged public-header C/C++ compile/link evidence for six selected forms, including one C11 probe that instantiates five base-header `*_csize` static-inline dispatch helpers, plus the linked pinned C shared object. Command: `allocator-header-modes`. |
+| `x86_64_cmake_mode_evidence.py` and `x86_64-cmake-mode-evidence-v3.5.0.json` | Native x86-64-only CMake normal-release shared configure/build/install evidence. Command: `allocator-cmake-modes`. |
+| `x86_64_static_mode_evidence.py` and `x86_64-static-mode-evidence-v3.5.0.json` | Native x86-64-only selected static archive and `src/static.c` override-object artifact evidence. Command: `allocator-static-modes`. |
+| `x86_64_remote_free_evidence.py` and `x86_64-remote-free-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one quiescent live-owner remote-free publication/owner-collection protocol. Command: `allocator-remote-free`. |
+| `x86_64_live_owner_full_medium_remote_release_evidence.py` and `x86_64-live-owner-full-medium-remote-release-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one live owner with a non-abandoning full-medium arena page (10248-byte request, 12288-byte blocks, capacity/reserved 42, eight slices) and a regular successor. Command: `allocator-live-owner-full-medium-remote-release`. |
+| `x86_64_live_owner_full_medium_one_remote_unfull_reuse_evidence.py` and `x86_64-live-owner-full-medium-one-remote-unfull-reuse-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one non-abandoning full-medium live owner and one regular successor. Command: `allocator-live-owner-full-medium-one-remote-unfull-reuse`. |
+| `x86_64_direct_remote_evidence.py` and `x86_64-direct-remote-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one small direct-cache remote-free/reuse route. Command: `allocator-direct-remote`. |
+| `x86_64_mapped_reclaim_evidence.py` and `x86_64-mapped-reclaim-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one mapped arena page’s nonempty same-origin reclaim and requeue. Command: `allocator-mapped-reclaim`. |
+| `x86_64_mapped_adoption_evidence.py` and `x86_64-mapped-adoption-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one arena-backed, same-origin, one-thread nonfull medium page. Command: `allocator-mapped-adoption`. |
+| `x86_64_direct_small_allocation_adoption_evidence.py` and `x86_64-direct-small-allocation-adoption-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one same-origin, same-thread/same-Theap, arena-backed 1024-byte direct-small page with two live blocks. Command: `allocator-direct-small-allocation-adoption`. |
+| `x86_64_unmapped_reabandon_evidence.py` and `x86_64-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full medium arena page's unmapped-abandonment to threshold-triggered mapped reabandon. Command: `allocator-unmapped-reabandon`. |
+| `x86_64_on_demand_evidence.py` and `x86_64-on-demand-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one ordinary reserved medium page whose first allocation exhausts the fixed four-OS-page prefix and whose second allocation directly commits before free-list extension and same-page reuse. Command: `allocator-on-demand`. |
+| `x86_64_direct_on_demand_evidence.py` and `x86_64-direct-on-demand-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one reserved 1024-byte small direct-cache page: direct exhaustion at eight objects, generic zero-commit extension at allocation nine, and direct prefix growth before the allocation-seventeen extension. Command: `allocator-direct-on-demand`. |
+| `x86_64_regular_small_evidence.py` and `x86_64-regular-small-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one 1025-byte ordinary regular-small arena page. Command: `allocator-regular-small`. |
+| `x86_64_direct_small_full_retire_evidence.py` and `x86_64-direct-small-full-retire-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one same-thread/same-Theap 1024-byte direct-small arena page (1024-byte blocks, capacity 64, one slice). Command: `allocator-direct-small-full-retire`. |
+| `x86_64_medium_full_retire_evidence.py` and `x86_64-medium-full-retire-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one same-thread/same-Theap, arena-backed ordinary 10241-byte medium page (12288-byte block size, 42 capacity, eight slices) under C full-retain `-1`. Command: `allocator-medium-full-retire`. |
+| `x86_64_full_non_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-non-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker-owned arena full non-direct-small regular-bin page. Command: `allocator-full-non-direct-small-force-collect-post-exit`. |
+| `x86_64_full_direct_small_force_collect_post_exit_evidence.py` and `x86_64-full-direct-small-force-collect-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker-owned arena full direct-small regular-bin page. Command: `allocator-full-direct-small-force-collect-post-exit`. |
+| `x86_64_automatic_pthread_destructor_evidence.py` and `x86_64-automatic-pthread-destructor-evidence-v3.5.0.json` | Native x86-64-only private pinned-C automatic pthread-destructor oracle. Command: `allocator-automatic-pthread-destructor`. |
+| `x86_64_cancellation_pthread_destructor_evidence.py` and `x86_64-cancellation-pthread-destructor-evidence-v3.5.0.json` | Native x86-64-only private pinned-C cancellation-triggered automatic pthread-destructor oracle. Command: `allocator-cancellation-pthread-destructor`. |
+| `x86_64_dynamic_full_medium_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-medium-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full `BIN_FULL` medium arena page. Command: `allocator-dynamic-full-medium-one-remote-force-collect-to-mapped`. |
+| `x86_64_dynamic_full_medium_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-medium-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full `BIN_FULL` medium arena page: request 10248 yields 12288-byte blocks, capacity/reserved 42, and eight slices. Command: `allocator-dynamic-full-medium-unmapped-reabandon`. |
+| `x86_64_dynamic_full_large_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-large-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full `BIN_FULL` large arena page. Command: `allocator-dynamic-full-large-one-remote-force-collect-to-mapped`. |
+| `x86_64_dynamic_full_large_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-large-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full `BIN_FULL` large arena page. Command: `allocator-dynamic-full-large-unmapped-reabandon`. |
+| `x86_64_dynamic_full_singleton_homogeneous_aggregate_evidence.py` and `x86_64-dynamic-full-singleton-homogeneous-aggregate-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for exactly two same-size full `BIN_FULL` arena singleton pages: request 524289 yields 589824-byte blocks, capacity/reserved 1, and nine arena slices per member. Command: `allocator-dynamic-full-singleton-homogeneous-aggregate`. |
+| `x86_64_dynamic_full_direct_small_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-direct-small-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full direct-small ordinary regular-bin arena page. Command: `allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped`. |
+| `x86_64_dynamic_full_direct_small_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-direct-small-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full direct-small ordinary regular-bin arena page: request/block size 1024, capacity/reserved 64, one slice, and exact rounded direct-cache range `[113, 128]`. Command: `allocator-dynamic-full-direct-small-unmapped-reabandon`. |
+| `x86_64_later_thread_exit_full_direct_small_pages_evidence.py` and `x86_64-later-thread-exit-full-direct-small-pages-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for exactly two same-bin full ordinary regular-bin direct-small arena pages: request/block size 1024, capacity/reserved 64, one slice per member, and complete direct-cache range `[113, 128]`. Command: `allocator-later-thread-exit-full-direct-small-pages`. |
+| `x86_64_dynamic_full_non_direct_small_unmapped_reabandon_evidence.py` and `x86_64-dynamic-full-non-direct-small-unmapped-reabandon-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full non-direct-small ordinary regular-bin arena page: request 1032 yields 1280-byte blocks, capacity/reserved 51, one slice, and an empty direct-cache image. Command: `allocator-dynamic-full-non-direct-small-unmapped-reabandon`. |
+| `x86_64_dynamic_full_non_direct_small_one_remote_force_collect_to_mapped_evidence.py` and `x86_64-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one sole full non-direct-small ordinary regular-bin arena page. Command: `allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped`. |
+| `x86_64_mapped_post_exit_evidence.py` and `x86_64-mapped-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker `mi_thread_done()` followed by `pthread_join()` before consumer frees, selected mapped failed-reclaim/unown, and three observed terminal cleanup checks. Command: `allocator-mapped-post-exit`. |
+| `x86_64_retired_prepass_evidence.py` and `x86_64-retired-prepass-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one worker-local retirement, real `mi_thread_done()`/`pthread_join()` retired-page force-release, one distinct live mapped-abandoned page, and one consumer terminal free. Command: `allocator-retired-prepass`. |
+| `x86_64_deferred_free_callback_evidence.py` and `x86_64-deferred-free-callback-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for the doc-hidden `__crabc_runtime` deferred-free registration adapter. Command: `allocator-deferred-free-callback`. |
+| `x86_64_aggregate_post_exit_evidence.py` and `x86_64-aggregate-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for exactly two distinct live nonfull medium arena pages in distinct bins. Command: `allocator-aggregate-post-exit`. |
+| `x86_64_aggregate_still_live_evidence.py` and `x86_64-aggregate-still-live-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for two distinct clients on one nonfull medium page A and a one-client distinct-bin medium page B. Command: `allocator-aggregate-still-live`. |
+| `x86_64_aggregate_same_bin_still_live_evidence.py` and `x86_64-aggregate-same-bin-still-live-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for two distinct clients on one nonfull medium page A plus a one-client medium page B in the same bin. Command: `allocator-aggregate-same-bin-still-live`. |
+| `x86_64_dynamic_os_aligned_singleton_evidence.py` and `x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for a 7-byte, 128 KiB-aligned OS singleton. Command: `allocator-dynamic-os-aligned-singleton`. |
+| `x86_64_dynamic_arena_singleton_post_exit_evidence.py` and `x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for one full arena singleton (request 524289, 589824-byte block size, capacity/reserved 1, nine arena slices). Command: `allocator-dynamic-arena-singleton-post-exit`. |
+| `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. |
+| `x86_64_automatic_arena_reservation_evidence.py` and `x86_64-automatic-arena-reservation-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for automatic regular-arena reservation. Command: `allocator-automatic-arena-reservation`. |
+| `x86_64_init_recursion_evidence.py` and `x86_64-init-recursion-evidence-v3.5.0.json` | Native x86-64-only private pinned-C/Rust differential for the explicit process-init, worker init/repeat-init, explicit teardown/repeat-teardown, and recovery-init route. Command: `allocator-init-recursion`. |
+| `x86_64_initialization_tld_evidence.py` and `m2-initialization-x86_64-v3.5.0.fragment.json` | Native x86-64-only five-row direct pinned-C/Rust initialization matrix for detached static preimage, direct normal TLD init, first-main static TLD create, and selected generic later-main metadata-allocation success and failure. Command: `allocator-initialization-tld`. |
+| `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. |
+| `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
 
-Generated reports are measurements and remain ignored. The checked-in
-contracts are review inputs; linking a symbol, parsing a declaration, or
-building a C profile does not make a Rust feature implemented or verified.
-
-The v3.5.0 API contract currently records 194 external C declarations, seven
-header-only static-inline helpers, 16 typedefs, and 52 exact
-`mi_option_e` enumerators. The normal pinned release profile defines 190
-`mi_*` symbols: `mi_collect_reduce` and `mi_stats_merge` are stale
-header-only declarations, while `mi_malloc_size` and `mi_malloc_usable_size`
-are provided only by the opt-in upstream override translation unit. The
-oracle gate fails on any other header/symbol discrepancy. `mi_wdupenv_s` is
-present in the C oracle symbol set but deliberately unsupported by crabc's
-Linux/AArch64 ABI; no inventory item permits a crabc-libc `mi_*` export.
-The C++-only `mi_decl_new` and `mi_decl_new_nothrow` macros remain explicitly
-source-only C++ conveniences. The five legacy `mi_option_*` aliases remain
-separate deprecated inventory entries (rather than duplicate engine options),
-distinct from the explicit `mi_option_deprecated_*` enumerators.
+The v3.5.0 API contract records 194 external C declarations, seven header-only
+static-inline helpers, 16 typedefs, and 52 exact `mi_option_e` enumerators. The
+normal pinned release profile defines 190 `mi_*` symbols: `mi_collect_reduce`
+and `mi_stats_merge` are stale header-only declarations, while
+`mi_malloc_size` and `mi_malloc_usable_size` come only from the opt-in upstream
+override translation unit. The oracle gate fails on any other header/symbol
+discrepancy. `mi_wdupenv_s` is in the C oracle symbol set but deliberately
+unsupported by crabc's Linux ABI; no inventory item permits a crabc-libc `mi_*`
+export. The five legacy `mi_option_*` aliases are separate deprecated inventory
+entries, distinct from the explicit `mi_option_deprecated_*` enumerators.
 
 ## Baselines and oracles
 
 The exact pinned C v3.5.0 source archive is the mandatory differential oracle
 for engine behavior, layout/configuration probes, upstream tests, and
-performance. It is a separately built oracle: the current production
-`libmimalloc-sys` 0.1.49 backend bundles mimalloc v3.3.2, so it cannot stand in
-for the v3.5.0 comparison. That current backend remains the default until a
-promotion gate passes. Musl remains the C/POSIX ABI oracle at the
-`crabc-libc` boundary; glibc is never an oracle or fallback. Keep those roles
-distinct.
+performance. It is built separately: the production `libmimalloc-sys` 0.1.49
+backend bundles mimalloc v3.3.2, so it cannot stand in for the v3.5.0
+comparison. That backend stays the default until a promotion gate passes, and
+production never chooses its allocator at runtime. Musl is the C/POSIX ABI
+oracle at the `crabc-libc` boundary; glibc is never an oracle or fallback.
 
-The C backend may be selected by a build or test configuration as a shadow
-backend until promotion. Production must not choose its allocator at runtime.
+The native-shadow `crabc-libc` build (`native-mimalloc-shadow`) is exercised by
+`allocator-native-integration`, the M5/M8 gates, and the stress lanes. The
+selected boundary has no C fallback: a wrong-owner pointer fails stop. Pinned
+musl permits live cross-thread `realloc`, so the shadow witness for it is a
+differential, not a native-contract divergence. The paired ordinary/shadow
+`libc.so` matrix is the paused AArch64 harness in
+[`shadow-abi-matrix/README.md`](shadow-abi-matrix/README.md).
 
-`./scripts/dev.sh allocator-shadow` is the explicit early Rust-shadow lane.
-It first builds the default owned sysroot and then rebuilds only
-`crabc-libc` with `native-mimalloc-shadow`, so the C ABI fixtures execute the
-selected `libc.so` rather than a default artifact left by sysroot assembly.
-Immediately before that feature rebuild, its paired shadow-ABI matrix snapshots
-and attests the ordinary C-backed `libc.so`; immediately afterward, it links
-and runs one normalized local public C allocation trace once against each
-explicit artifact. The matrix is the sole deliberate ordinary-artifact run in
-this command, uses an isolated `LD_LIBRARY_PATH` for each process, and records
-its two zero-size `realloc` alignment known-red backend differences plus
-intentionally blocked cross-owner/lifecycle/DSO/layout rows rather than
-treating either as a default-backend fallback. The remaining C ABI fixtures
-stay selected-native only.
-It covers the allocator fixture's local malloc/calloc/realloc/free/alignment/
-usable-size contract, the pthread TSD-destructor fixture's worker-local
-allocation/free plus all-free finish, bounded one- and two-owner owner-exit
-fixtures, and one bounded live-owner remote-free fixture. The selected
-`native_mimalloc_initial_remote_free` fixture additionally proves that an
-attached worker can return exact still-live initial-thread normal and aligned
-clients through the source atomic remote head. The client itself pins its page;
-the worker takes no page engine, scheduler claim, or stored pointer capability,
-and ticket zero collects the head during its next ordinary operation. In the
-separate `native_mimalloc_initial_live_local_worker` fixture, the initial
-thread keeps its ordinary client in its persistent compiler-TLS owner while
-the child attaches an independent local owner. No initial engine, session, or
-address crosses `clone`, and the parent does not suspend or park its live
-owner. After the child returns all-free, the initial thread continues to query,
-reallocate, validate, free, and reuse its client. This is a serialized
-initial-live/local-worker witness, not a concurrent allocator or general
-pointer handoff. Its companion
-`native_mimalloc_initial_live_parallel_workers` fixture synchronizes two
-distinct later local workers, releases and joins them one at a time, and then
-verifies the initial live client through its direct owner. It likewise admits
-no concurrent PageMap mutation or pointer handoff. The
-`native_mimalloc_initial_live_owner_exit` companion keeps that same initial
-client with its direct owner while a later A leaves the existing mixed
-owner-exit aggregate; fresh B terminally frees its exact C inputs and finishes
-normally before the initial thread queries, reallocates, validates, and frees
-its own client. It does not hand A or B the initial client or admit concurrent
-PageMap mutation. In the
-owner-exit fixture A leaves a
-direct-small block, a non-direct-small block, a medium block, a regular-large
-block, an unaligned arena singleton, and an OS-aligned singleton live; a fresh
-no-page B first reads their PageMap-derived usable extents, then frees their
-exact C addresses through generic pointer-first free. A detached client never
-enters B's `realloc` engine or a route replacement transition; its source
-bytes remain live until that generic free consumes it. This exposes neither
-A's page nor allocator.
-The
-same aggregate exercises A's normal return, `pthread_exit`, and deferred
-cancellation. Its cancellation path runs one cleanup handler and then one
-A-side TSD destructor, each allocating and freeing locally, before A's source
-teardown collect-abandons the surviving pages. The
-`native_mimalloc_many_owner_exit_allocations` fixture drives the same ordinary
-session past its inline ledger with 80 1 KiB direct-small clients, then adds
-non-direct-small, medium, large, and arena-singleton clients. It therefore
-requires the one aggregate traversal to account for a full direct-small page,
-a later nonfull page in that same source bin, and the other regular source
-classes across eight owner-exit epochs. It remains an exact-address,
-pointer-private PageMap witness rather than a general cross-thread allocator.
-The `native_mimalloc_concurrent_post_exit_release` fixture adds the OS-aligned
-singleton tail and releases that same mixed aggregate from four fresh B workers
-that begin together. Each worker receives only a disjoint exact subset of A's
-C inputs; each free starts from its PageMap source and W03 performs only the
-page or abandoned-state serialization required by that source operation. There
-is no `ACTIVE -> BUSY` route entry, completion token, or old-owner admission
-carried into B's normal finish. A's source exit releases A's admission; each B
-finish releases only B's own admission. The terminal free releases the source
-page and OS mapping in source order, and ticket zero may continue whenever that
-source state permits. The same pointer-first rule applies to usable-size and
-nonlocal `realloc`: B allocates and copies its replacement, then consumes the
-old source through generic free before returning the replacement. Exact live
-remote publication is also pointer-first: A's persistent PageMap/page state
-names each exact live client, and B/C can query its immutable usable extent or
-push its canonical block to the source remote head without claiming A's TLS,
-a parked session, or a client ledger. A's next ordinary operation or finish
-collects that source head.
+## Completion tracks
 
-`native_mimalloc_source_published_exit` covers the no-local-client finish:
-after B publishes A's sole exact client, A performs no further allocator
-operation and its ordinary pthread destructor collects the source head before
-ticket zero reactivates. `native_source_published_live_owner_exit` and its
-selected-C companion cover the mixed boundary, where one joined source
-publication is collected by A while a distinct client follows the existing
-post-exit PageMap route.
-
-The direct and selected-C `native_two_live_remote_owners` fixtures keep two
-independent live source pointers while B1/B2 each query or free only the
-pointer handed to them. The historical
-`native_live_remote_owner_registry_reuse` target is now an ungated repeated
-persistent-PageMap epoch witness; it no longer observes or compiles a registry
-audit. These fixtures do not establish general worker-pointer dispatch,
-concurrent PageMap mutation, or a worker allocator.
-The separate two-owner and three-owner fixtures make A workers detach before
-any fresh B starts. Their surviving clients are represented only by PageMap and
-abandoned-page state. A releases its admission when its source owner exits;
-each B derives an exact client from the pointer and completes only its own
-attachment lifecycle. The Rust witnesses interleave B frees and finishes in a
-different order, while the selected C fixture releases the same sources in
-non-FIFO order. This establishes concurrent callers with source-local PageMap
-serialization, not a registry traversal, route completion, or B-held A
-admission. A terminal source failure retains that source state rather than
-publishing a fallback, but it does not make an unrelated B teardown terminal.
-After W07 has claimed one exact final source page, only W03's regular or
-singleton terminal callback may wait on the existing private PageMap lock for
-that short release; ordinary lifecycle admission remains nonblocking and
-reports contention instead.
-The separately feature-gated `native_post_exit_failed_os_release` witness
-constructs the same mixed aggregate but gives B only the OS-aligned address.
-It injects failure into the next source `munmap`, verifies that B's exact free
-returns `Retained`, then lets B finish its own no-page attachment. The failed
-PageMap source is not retried by either a second free or B's teardown; B's
-admission still releases normally. Clearing the direct-test injection does not
-create a retry or fallback, and the hook exposes neither a generic fault plan
-nor an allocator capability.
-`native_post_exit_with_local_session` separately proves that B may already
-hold a local session while it reads A's PageMap extent, establishes a
-replacement, copies A's bounded prefix, and consumes A's source through the
-generic pointer-first free continuation. B then reallocates only its own local
-client; the W03 source operation remains wholly PageMap-owned and B's later
-teardown remains its own lifecycle.
-The feature-gated `native_multiple_post_exit_completions` regression then
-has one B consume two independent abandoned A sources, resume B-local
-allocation and `realloc`, and then discharge B's local client before B's own
-teardown. Its scalar audit requires the two A exits to release their admissions
-before B attaches and B's own finish to release the remaining admission. It
-proves pointer-first source consumption, not a cross-thread client registry or
-a normal no-page finalizer for an abandoned owner.
-`native_terminal_completion_live_remote_free` is now the adjacent
-post-exit/PageMap witness: B frees A's post-exit clients, then source-publishes
-one exact C-owned live client through persistent PageMap/page state. B and C
-finish through their own ordinary boundaries; the test does not use a live
-owner handoff or a worker-pointer dispatcher.
-`tests/native_mimalloc_parallel_local_workers.rs` pauses A with a persistent
-live allocation and B with a distinct local allocation; B can query and free
-only B's own client, complete its all-free thread finish, and leave A's source
-state valid for A's later local free. The
-fixture then proves ticket-zero reactivation after A finishes across 128 fresh
-process epochs. An already parked session retries a lost scheduler CAS only
-while the scheduler still records `BUSY` or a nonzero parked count; `READY`
-and terminal states mean its own token is no longer represented. A first
-session has no token yet, so it may retry from `READY` when a peer completed
-between its sampled CAS and retry. This does not create a pointer handoff or
-concurrent PageMap mutation.
-`tests/native_mimalloc_live_remote_owner_exit.rs` composes that exact live
-publication with A-side source collection and a later deferred A exit: a
-separate fresh worker frees the remaining small/medium aggregate only through
-generic pointer-first PageMap/W03 dispatch. This serial witness does not
-broaden that path into general concurrent pointer dispatch.
-`crabc-mimalloc/tests/native_post_exit_lifecycle.rs`,
-`crabc-mimalloc/tests/native_aggregate_post_exit_reclaim.rs`, and
-`crabc-mimalloc/tests/native_sole_post_exit_lifecycle.rs` are historical
-source-scoped witnesses; production post-exit behavior is instead specified by
-the pointer-first PageMap/W03 regressions and has no B-held scheduler token.
-The selected boundary has no C fallback: wrong-owner native pointers fail-stop.
-`tests/native_mimalloc_owner_exit_realloc.rs` proves the selected C boundary:
-an overflowing foreign `realloc` returns `ENOMEM` while preserving A's exact
-client and source bytes. A valid post-exit foreign `realloc` establishes B's
-persistent replacement owner, allocates and copies the requested prefix, then
-consumes A's source once through generic pointer-first free before returning
-the replacement. B separately preserves its prefix across local shrink and
-growth, receives its zero-size local replacement, and retains that client in a
-TSD value. The destructor makes a further local `realloc` and frees it before
-B's own native finish. B exits through `pthread_exit`: its cleanup handler
-makes and frees a local allocation, then the TSD destructor continues the
-existing local client before freeing it. The same fixture also proves normal
-return's TSD-only phase and repeats the cleanup/TSD ordering through deferred
-cancellation at a real cancellation point. It does not yet cover general
-concurrent owner-exit traversal or arbitrary worker allocation beyond the
-bounded live-entry witnesses, and is not a Gate 5E or promotion pass.
-`tests/native_mimalloc_shadow_abi.rs` runs
-`tests/fixtures/native_mimalloc_shadow_foreign_realloc_test.c`, which keeps A
-live under an explicit pthread handshake while the initial thread presents A's
-client to `realloc`. The native-shadow-only witness requires `NULL`/`ENOMEM`
-and a preserved prefix for its overflowing request; its valid request returns
-B's copied replacement after generic pointer-first free consumes the old
-source. Pinned musl permits this live cross-thread reallocation, so the
-witness remains a differential rather than a native-contract divergence.
-The same command ends with the separately reviewed
-`native-shadow-stress-v3.5.0.json` witness. It applies a behavior-named patch
-to pinned upstream `test/test-stress.c`, routes standard C allocation calls
-through the selected shadow `libc.so`, and runs exactly four source pthread
-workers with fixed `4 1 2` inputs for 128 fresh process epochs. Each selected
-source transfer cleanup runs in one fresh pthread after its producing workers
-join. The contract rejects unsupported heap, walk, subprocess, leak, and
-large-object modes; this is bounded source-derived lifecycle evidence, not a
-general pointer-routing, concurrent-PageMap, or promotion claim.
-
-## Separate completion tracks
-
-Record these outcomes independently:
+Record these outcomes independently; passing one does not assert another, and
+basic malloc/free tests pass none by themselves.
 
 | Track | Required question |
 | --- | --- |
 | libc allocator readiness | Can the Rust engine back crabc's `malloc` family while preserving the existing C ABI, interposition, `errno`, failure, alignment, zero-size, and output-preservation rules? |
 | mimalloc v3.5.0 AArch64 parity | Is every public Linux/AArch64-applicable `mi_*` API and compile-time mode derived from the pinned headers, symbols, declarations, and upstream tests accounted for? |
 | mimalloc v3.5.0 x86-64 parity | Is every selected native Linux/x86-64-applicable `mi_*` API and compile-time mode separately accounted for and verified against native C, without implying public x86 `crabc` support? |
-
-Passing the first track does not assert the second, and basic malloc/free tests
-do not pass either track by themselves.
 
 ## Required evidence
 
@@ -3049,232 +463,22 @@ adds focused invariants, exact-C layout/configuration probes, deterministic
 differential traces, and minimally adapted upstream tests. Cross-thread free,
 atomic protocols, process/thread initialization, teardown, fork, fault
 injection, corruption/wrong-use isolation, pthread/TLS, ABI/interposition, and
-real-program/corpus cases all require direct evidence before promotion.
+real-program/corpus cases need direct evidence before promotion.
 
 Performance evidence compares Rust and exact pinned C under matching
 configuration, fixture, build profile, artifact hashes, host provenance, and
-sample contract. It covers throughput, latency, RSS, virtual mappings,
-startup, and allocation-path behavior. The ordinary musl–crabc performance
-matrix is complementary integration evidence, not a substitute; see
-[`compat/perf/README.md`](../perf/README.md).
+sample contract, covering throughput, latency, RSS, virtual mappings, startup,
+and allocation-path behavior. The musl-versus-crabc matrix in
+[`compat/perf/README.md`](../perf/README.md) is complementary, not a
+substitute.
 
 Do not change an upstream algorithm, configuration, allocation policy, or
-fixture merely to make the Rust port look better. A measured divergence may be
+fixture merely to make the Rust port look better; a measured divergence may be
 investigated only under the design-note, differential, and performance rule in
 [`docs/design/allocator.md`](../../docs/design/allocator.md).
 
 ## Difference register
 
 [`known-differences.md`](known-differences.md) is the single durable register
-for accepted or pending Rust/C differences. A missing entry is not permission
-to deviate. The register currently records private invalid-owner/lifecycle
-boundaries and the degraded-entropy substitution, but no ordinary allocation-
-trace difference. The bounded small-allocation slice has exact logical-trace
-parity; its deliberately absent lifecycle and API regions are incomplete scope
-rather than claimed differences.
-
-### Native M2 normal-release large-page retry suppression
-
-`allocator-m2` also compares a child-isolated direct pinned-C `_mi_prim_alloc`
-record with Rust `Mapping::map_unix_policy`. Both force failed normal
-MAP_HUGETLB attempts, retain each ordinary fallback mapping through its exact
-release, and observe the eight-call suppression lifetime. The C direct child
-starts without a source Theap, so its first attempt is null-hinted and its
-reopened retry is high-hint/null-hint; the Rust direct-policy test supplies its
-own initialized random image and observes the high-hint/null-hint pair. The record proves that `allow_large=false`, ineligible geometry, and
-a disabled `allow_large_os_pages` option do not consume the counter; the ninth
-eligible call retries the failed large route. One controlled real competing
-AcqRel decrement proves the source's ignored strong-CAS failure while the
-ordinary fallback owner remains valid. This is direct VM-policy evidence only:
-it does not qualify successful hardware huge pages, ambient diagnostics, or an
-allocator/runtime caller.
-
-### Native M2 direct THP policy outcome matrix
-
-`allocator-m2` compares one finite child-isolated direct pinned-C
-`_mi_prim_mem_init` matrix with a private Rust `VmPolicy` capture. The named
-cases are `allow_thp=1` with no PRCTL calls; `allow_thp=0` with
-`PR_GET_THP_DISABLE(0,0,0,0)` returning EPERM, EINVAL, raw nonzero `1`, raw
-nonzero `3`, or zero; and GET-zero followed by the exact
-`PR_SET_THP_DISABLE(1,0,0,0)` returning zero, EPERM, or EINVAL. The raw `3`
-case is a selected nonzero control-flow representative, not a Linux kernel
-result claim. C records only exact tuple/count control flow, its void
-continuation, and the forced disabled configuration for `allow_thp=0`; it does
-not compare its ambient allow-enabled THP detection. Rust separately proves
-that `Allowed` preserves both synthetic configuration states and records the
-fixed `DisabledQueryFailed`, `DisabledAlready`, `DisabledSet`, and
-`DisabledSetFailed` typed outcomes. The direct C/Rust matrix ends before
-the process owner; that owner discards the typed Rust result when it is
-separately exercised below.
-
-A separate `process-main-thp-policy-owner-traversal` Rust-unit check starts
-the existing explicit `ProcessMainInitializationStorage` test owners only in
-raw-fork children. Its fixed `AllowEnabled`, `QueryNonzeroOne`, and `SetPerm`
-cases cover the owner-visible zero-call, GET-only, and GET-then-SET shapes.
-Each child checks the final READY configuration plus its retained
-`VmProcess` and matching `ProcessMainBackingBinding`; the SET-permission
-failure continues to READY. This is Rust owner traversal evidence, not a C
-owner comparison: the pinned C initializer remains a void-continuation record,
-while Rust's typed direct result is discarded by this owner.
-
-The two named clean source images add bounded runtime admission evidence only;
-they do not qualify arbitrary source-option syntax or mutation, C/Rust
-detector implementation parity beyond their retained observations, other
-production policy callers, hardware THP/huge-page mapping or arena behavior,
-or VM/M2 completion. The pinned THP branch itself emits no diagnostics. Actual
-OS and large-page diagnostic paths remain open VM evidence.
-
-### Native M2 large-only one-GiB terminal failure
-
-`allocator-m2` also compares a child-isolated direct pinned-C
-`_mi_os_alloc_huge_os_pages` record with Rust
-`HugeOsAllocation::allocate_for_process`. The first claimed one-GiB huge map
-fails with ENOMEM, retries with the same explicit hint as a two-MiB huge map
-and fails, then a second upper request obtains a new hint and attempts only the
-sticky two-MiB form. Each side captures its own raw map length, protection, and
-exact huge-page flags; it does not compare raw addresses across languages.
-The C terminal upper outcomes return NULL with zero pages/size and
-`MI_MEM_NONE`; Rust returns `Unavailable` with no allocation owner. Both
-observe unchanged reserve/commit statistics. The C fixture separately observes
-no `MADV_HUGEPAGE` call. The first direct attempt also checks the actual
-warning fragments: the one-GiB fallback warning precedes the upper allocation
-failure warning, with the same owner and counter result on both sides. ENOMEM
-here is a wrapped primitive observation, not
-an ambient final-errno contract of `_mi_os_alloc_huge_os_pages`.
-
-This is failure-only evidence for one requested page. It does not qualify
-hardware huge-page success, multiple-page/partial-prefix or timeout behavior,
-mbind/NUMA placement, other diagnostics, THP success, or allocator/runtime callers;
-the M2 VM component remains partial.
-
-### Native M2 aligned-overmap cleanup boundary
-
-`./compat/allocator/run-x86_64.sh allocator-m2` records one finite native
-C/Rust boundary for pinned `src/os.c:240-430` and
-`src/prim/unix/prim.c:318-365`. Its direct-include C fixture runs a normal
-aligned direct map, direct-map failure fallback, normal prefix-zero/suffix-only
-geometry, successful direct/prefix/suffix cleanup, and every cleanup failure
-for Reserved and Committed requests. Both sides follow
-the source `mi_os_prim_free` rule: a failed direct, prefix, or suffix release
-is warned, still counted, and leaked live, and the aligned middle is returned.
-The same boundary now exercises the normal aligned allocation receiver after
-failed prefix and suffix trims. Each side checks its returned `MemoryId`, the
-escaped live range, counter changes, warning order and delivery before the
-final failed free's counter decrease, and raw cleanup without a second
-statistics update. Rust retains the failed final release owner for that raw
-retry. `os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace`
-emits twelve row verdicts, and the receipt requires equality with pinned C.
-The VM component remains partial because other receivers, broader callbacks
-and retry paths, source runtime options, huge-page success, and NUMA policy
-are unqualified.
-
-### Native huge-registry ownership prerequisite
-
-`./compat/allocator/run-x86_64.sh allocator-huge-registry` compares the pinned
-C multi-arena manage path with the same-process Rust registry and checks
-unpublished rejection and partial-publication ownership. Eight trace values
-and three ownership tests cover a 17-GiB span without imposing a one-arena
-limit. Both fixtures use anonymous memory to simulate successful huge
-primitives. The report `allocator/x86_64/huge-registry.json` records that
-boundary explicitly; it does not qualify kernel huge allocation, startup,
-failed-page cleanup storage, or M2 closure.
-
-### Native huge reservation and retained cleanup
-
-`./compat/allocator/run-x86_64.sh allocator-huge-reservation` compares 69
-values from unchanged pinned interleave/free policy functions and runs ten
-focused Rust tests for metadata-backed failed-page ownership and startup
-reservation order. The C fixture explicitly records downstream primitives;
-it does not require or prove hardware huge-page success. The report is
-`allocator/x86_64/huge-reservation.json`. The regular aligned-map retry after
-an injected direct-map failure remains source behavior, including at startup.
-
-### Native 1-GiB huge-page and multi-NUMA qualification
-
-Ordinary x86 qualification uses `--qualification-profile baseline` for the
-M6/M7 gates and `--profile baseline` for M9/M10. This profile keeps every
-ordinary producer, logical NUMA policy, failure/fallback check, source
-convergence condition, qualified performance threshold, release prerequisite
-and artifact audit. The pinned `allow_large_os_pages` option defaults to zero;
-its enablement and failure/fallback producers remain required. Successful
-configured-host 2-MiB `MAP_HUGETLB` allocation remains unqualified alongside
-physical NUMA and 1-GiB pages; THP advice is not proof of that mapping route.
-Reports explicitly retain `physical-numa`, `2mib-pages` and `1gib-pages` as
-unqualified modes. A full-profile reader rejects a baseline
-report. Baseline readiness does not change the selected C backend or public
-platform support; the actual promotion and rerun gates still apply.
-
-The full profile retains successful physical reservation/placement obligations.
-Baseline qualification does not rewrite or hide failed hardware receipts. The
-configured-host command below remains the route for qualifying those modes.
-
-`./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification` is the
-hardware-only companion to the simulated reservation and registry evidence.
-It first runs those existing source-policy and ownership workloads, then runs
-the pinned C `mi_reserve_huge_os_pages_at(1, node, 0)` entry and the existing
-Rust `HugeOsAllocation::allocate_for_process` primitive. Each implementation
-holds two one-GiB mappings concurrently and records the kernel's own live
-`/proc/self/numa_maps` evidence. The C observer proves the exact requested
-node set, rather than assigning address-sorted `numa_maps` rows to reservation
-call order; the Rust observer binds each requested mapping address to its
-observed node. `--reader-tests` runs only the parser and source-boundary tests.
-
-The job selects any two distinct nodes with IDs 0 through 62 that are online,
-permitted by both the process `Mems_allowed_list` and
-`cpuset.mems.effective`, and each have at least one free one-GiB huge page.
-That is exactly two GiB of concurrent hugetlb reservation. It is not the
-whole virtual-address requirement: the prior source-policy workloads run
-sequentially before hardware qualification. `m2_huge_registry_x86_64.c`
-keeps a 32-MiB regular arena while its 17-GiB anonymous replacement is live;
-the source aligned-map retry can instead hold 18 GiB plus that arena. The
-same registry lane's one Rust libtest process runs its three `huge_` ownership
-tests together. Two retain 17-GiB anonymous replacements and their regular
-arenas; the third has a one-GiB replacement whose aligned retry can occupy two
-GiB beside a third 32-MiB arena. Its source-shaped virtual-address peak is
-therefore **36 GiB + 96 MiB** (`38,755,368,960` bytes). The direct-alignment
-branch can be smaller, but qualification must permit the source retry.
-
-No other selected prerequisite is larger: the huge-reservation C fixture has
-an exact three-GiB `PROT_NONE` anonymous span, and each selected Rust
-huge-reservation test is a separate cargo-test process with at most a
-four-GiB aligned-retry span. The later C and Rust hardware workloads are also
-sequential, so their two-GiB hugetlb reservation is not added to the
-36-GiB-plus-96-MiB source prerequisite peak.
-
-Provision the job with `RLIMIT_AS=unlimited`. The source-derived mapping
-component is exact, but it deliberately excludes the varying executable,
-dynamic-loader, libtest, and compiler address space; source alone cannot
-honestly turn that into a finite total address-space floor. This is a virtual
-mapping condition, not an ordinary resident-memory or compiler budget.
-Compiler/build memory, binaries, and ordinary process memory remain separate
-unmeasured capacity needs. The report retains the active cgroup memory counter
-and `RLIMIT_AS`/`RLIMIT_DATA`/`RLIMIT_MEMLOCK` values, and the job imposes no
-CPU-per-node affinity condition. It also requires readable `/proc/self/numa_maps`,
-the launcher's narrowly added `CAP_IPC_LOCK`, and an approved
-`mbind(MPOL_PREFERRED, flags=0)` syscall. Before resources are used,
-one private ordinary anonymous page performs that raw `mbind` form and is
-immediately unmapped. Its result is recorded rather than inferred from the
-container's seccomp mode; a nonzero result remains a pending external
-permission/resource gate.
-
-Each invocation writes one immutable full receipt beneath
-`allocator/x86_64/huge-numa-hardware-qualification-runs/`; the stable
-`allocator/x86_64/huge-numa-hardware-qualification.json` is only an
-atomic latest-receipt pointer with its hash. The collector refuses to reuse a
-run directory or retained executable path. A successful full receipt records
-the committed source inputs, verified pinned source files and anchors,
-container image ID, C/Rust toolchain commands, and hashes of the retained C
-and Rust executables that were actually run. A missing topology, pool, cgroup
-headroom, capability, observer, or raw `mbind` gate returns exit 3 with
-`pending_external_resources`; a build, parser, or harness problem is a
-separate failed receipt. This bounded job proves neither M2 completion nor
-general allocator/runtime integration, and it supplies no AArch64 evidence.
-
-Provision one native x86-64 qualification runner whose container can see two
-such source-valid NUMA nodes and one free one-GiB hugetlb page on each, with
-`RLIMIT_AS=unlimited` and ordinary build/runtime headroom (resident-memory
-floor remains unmeasured; inspect the recorded cgroup/RLIMIT values). Preserve
-the default security controls; if the recorded private-page probe is nonzero,
-have the platform owner approve only the needed `mbind(MPOL_PREFERRED,
-flags=0)` rule while retaining all other controls—never use an unconfined
-seccomp profile.
+for accepted or pending Rust/C differences. A missing entry is not permission to
+deviate.

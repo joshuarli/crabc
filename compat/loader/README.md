@@ -1,5 +1,7 @@
 # AArch64 loader inventory and evidence
 
+> The Linux/AArch64 route this page describes is paused; native x86-64 is the active target (see `./scripts/dev-x86_64.sh --help`).
+
 This loader inventory keeps the reference loader ABI and the crabc loader feature
 surface explicit without treating either one as full loader parity.
 

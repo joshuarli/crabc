@@ -4,7 +4,7 @@ Mount-table access is C ABI compatibility machinery over conventional text
 files. The native owned runtime implements `setmntent`, `getmntent`,
 `getmntent_r`, `addmntent`, and `endmntent` in
 `libc/src/c_abi/x86_64/owned_mount_table.rs`. The independently qualified
-`hasmntopt` leaf remains in `libc/src/c_abi/x86_64/hasmntopt.rs`. The new module
+`hasmntopt` leaf remains in `libc/src/c_abi/x86_64/hasmntopt.rs`. The module
 is selected only by `x86-owned-static-runtime`, also selected by the owned
 dynamic feature. The frozen standalone `hasmntopt` archive contract and paused
 AArch64 implementation are unchanged.
@@ -66,11 +66,5 @@ position and literal output, successful and missing-path opens, NULL close,
 read-only append, bad-descriptor read/close, non-seekable append, and
 `hasmntopt` boundaries.
 
-The regression passed pinned musl before implementation and failed the
-installed static driver's final link with the five absent symbols. After
-implementation, the complete matrix passed in the pinned native image. The
-optional runner argument reuses a supplied dynamic product and executes the
-four dynamic entries; it does not claim fresh static-product evidence.
-
-This is a focused family proof. It does not complete the native runtime
-campaign or promote x86-64 to public support.
+The optional runner argument reuses a supplied dynamic product and executes
+the four dynamic entries only; it carries no fresh static-product evidence.

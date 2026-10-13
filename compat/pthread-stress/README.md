@@ -43,8 +43,8 @@ per-stream byte hashes and hex bytes, and the aggregate pass state.
 
 ## Development-image integration
 
-`scripts/dev.sh` provides a `pthread-stress` command with the same forwarding
-behavior as the other native runners. Its integration hook is:
+The paused AArch64 `scripts/dev.sh pthread-stress` command forwards to the
+runner as follows:
 
 ```sh
 ensure_image
@@ -55,5 +55,8 @@ run_in_container python3 compat/pthread-stress/run.py "$@"
 `ensure_image` and `run_in_container` are required: they select the pinned
 `linux/arm64` image, mount the workspace and AArch64 target volume, and expose
 `/opt/musl-1.2.6`. No host compiler, glibc runtime, or host execution path is
-part of this evidence. Dashboard integration, if desired, is a separate
-caller concern; this runner's report is complete without it.
+part of this evidence.
+
+This AArch64 route is paused. The native x86-64 component runs the same
+fixture through the installed product with a derived source profile; see
+[owned-pthread-stress.md](../x86_64/owned-pthread-stress.md).

@@ -23,7 +23,7 @@ Use the native dispatcher to build or replay an audit from retained evidence:
 
 ```bash
 ./scripts/dev-x86_64.sh native-abi-selection build-report \
-  --measurement-checkout .work/worktrees/measurement-source \
+  --measurement-checkout MEASUREMENT_CHECKOUT \
   --elf-facts .work/x86_64/elf-facts/report.json \
   --base-inventory .work/x86_64/abi-inventory/report.json \
   --static-product .work/x86_64/static/products/primary \
@@ -112,7 +112,7 @@ definitions, no other candidate artifact names it, and pinned musl has no
 public definition of it. Any other row keeps its ordinary blockers; the report
 retains each owned identity in `module_private_joins`.
 
-A companion whose reader or attachment rejects it no longer aborts the
+A companion whose reader or attachment rejects it does not abort the
 report: `_admit`/`_attach` leave it unattached (restoring accounting from a
 snapshot) and record a `companion-rejected` blocker naming it and the reason.
 
@@ -779,12 +779,14 @@ the pinned x86 public long-double algorithms. Frozen `__restore` maps to the
 native hidden `rt_sigreturn` restorer in `signal_foundation.rs`. None implies
 a fabricated native helper export.
 
-`__crabc_runtime_v1` needs separate treatment. The current `crabc-rs` crate root
-gates its old `cfile`, `dl`, and `runtime_thread` consumers to AArch64. Their
-absent native getter is not a current unresolved link. Full native facade
-parity still requires explicit native consumer/protocol selection and evidence;
-the existing private loader TLS descriptor does not automatically satisfy that
-future facade contract.
+`__crabc_runtime_v1` needs separate treatment. The owned dynamic libc supplies
+the private getter from `runtime_facade_v1.rs`, and the `crabc-rs` `cfile`, `dl`,
+and `runtime_thread` facades import it on x86-64. Its component evidence is the
+`runtime-private-facades` run described in [README.md](README.md). The policy
+nevertheless keeps the name unresolved: full native facade parity still
+requires explicit native consumer/protocol selection and evidence; the
+existing private loader TLS descriptor does not automatically satisfy that
+facade contract.
 
 ## Runtime component attachments
 
@@ -854,10 +856,8 @@ are unchanged.
 The policy also selects a finite source-backed set of 108 frozen-project
 callable identities. The exact names, artifacts, and metadata live in
 `native-abi-selection.toml` under `source-owned-*`; this section records the
-owner boundary that makes those finite lists meaningful. The retained source
-ownership audit was navigation evidence only and is not an input to the
-selection reader. Selection comes from the named current source roots. It does
-not promote another spelling with a common prefix or an equal ELF value.
+owner boundary that makes those finite lists meaningful. Selection comes
+from the named current source roots. It does not promote another spelling with a common prefix or an equal ELF value.
 
 | Source-owner groups | Native root and selected placement |
 | --- | --- |
@@ -880,7 +880,7 @@ The BSD random quartet (`initstate`, `random`, `setstate`, `srandom`) is selecte
 through the checked installed-header provider route and the owned static
 runtime's exact feature roster. The source is `bsd_random.rs`; its installed
 semantic receipt must still prove the selected static and shared products.
-`run_owned_bsd_random.sh` now writes `report.json` beside its raw outputs.
+`run_owned_bsd_random.sh` writes `report.json` beside its raw outputs.
 `owned_bsd_random_receipt.py` replays that report in the native product mount;
 `--bsd-random-receipt-report REPORT` attaches it to the selection audit only
 when its clean source and both installed products match the selected cohort.
@@ -1027,8 +1027,8 @@ can reread the retained archive and shared libc with pinned ELF tools when
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, and compiler helpers
 also require their own physical visibility and consumer decisions. They do
-not inherit the allocator decision. The x86 abort-only libc root no longer
-defines `rust_eh_personality`: stock Rust std owns the real personality in
+not inherit the allocator decision. The x86 abort-only libc root does not
+define `rust_eh_personality`: stock Rust std owns the real personality in
 Rust consumers. The owned Rust cleanup consumer rejects ambient native
 unwind inputs and exercises that ownership; ordinary installed C consumers
 must retain link closure without a libc personality definition or dependency.
@@ -1041,7 +1041,7 @@ removal of a concrete consumer's provider.
 
 The finite `owned-compiler-helper-archive` group reads
 [`builtins/x86_64-helper-contract.toml`](../../builtins/x86_64-helper-contract.toml):
-its exact 23 Rust `extern "C"` definitions are unversioned `FUNC GLOBAL
+its exact Rust `extern "C"` definitions are unversioned `FUNC GLOBAL
 DEFAULT` in the distinct `static-builtins` and `dynamic-builtins` archive
 placements. When the helper reader has replayed the same selected products,
 the selection attachment also consumes its exact source-bound `shared_libc`

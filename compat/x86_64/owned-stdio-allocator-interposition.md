@@ -27,10 +27,9 @@ The runner compiles one consumer object through the installed crabc dynamic
 product, links that same object with pinned musl and the product's PIE and
 non-PIE drivers, and verifies the executable exports all three interposers. It
 runs each dynamic executable through kernel and direct-interpreter entry in a
-disposable chroot, retaining and comparing status, stdout, and stderr. The
-pre-fix candidate reached mimalloc's private `mi_free` while closing an
-executable-allocated FILE and received SIGSEGV; the passing receipt requires
-all eight runs to exit successfully.
+disposable chroot, retaining and comparing status, stdout, and stderr. A
+passing receipt requires all eight runs to exit successfully; closing an
+executable-allocated FILE must not reach mimalloc's private `mi_free`.
 
 `run_owned_stdio_allocator_interposition.sh [DYNAMIC_SYSROOT]` accepts the
 qualification owner's selected product; without an argument it builds a fresh

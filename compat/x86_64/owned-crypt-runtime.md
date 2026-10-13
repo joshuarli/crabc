@@ -59,7 +59,7 @@ It records actual pointer nullness and output bytes; expected profile rejection
 requires nonnull `*`. The two supported low-round SHA settings normalize rounds
 to 1000 and retain their exact upstream hashes. Twelve legacy hashes and sixteen
 unsupported SHA settings have finite profile differences. The original upstream
-unit remains unchanged and retains its raw failure and 28 diagnostics.
+unit remains unchanged and keeps its raw failure.
 
 `owned_crypt_profile.py` reconstructs `crypt-profile.json` from both fixture
 objects, retained compiler/header identities, physical ELF metadata, sealed

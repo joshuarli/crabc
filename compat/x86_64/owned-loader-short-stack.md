@@ -27,11 +27,6 @@ contains only its musl executable and `ld-musl-x86_64.so.1`; the candidate root
 contains only the freshly materialized owned product and executable. Both must
 produce the same line and exit successfully.
 
-Before this change, the candidate died with SIGSEGV at 96, 100, 104, and
-112 KiB, while the musl oracle passed at 100 KiB. The candidate first passed at
-120 KiB. That isolated the failure to early interpreter startup rather than
-the application or libc-test workload.
-
 ## Loader ownership change
 
 `x86_64_general_initial_graph::run_with_initial_tls` previously formed its
@@ -64,9 +59,8 @@ installed dynamic product.
 
 ## Recheck
 
-Run the focused command above in the pinned native x86 environment. It retains
+Run the focused command above in the pinned native x86 environment. It writes
 its generated roots, binaries, stdout, and build products below
-`.work/x86_64/tmp/owned-loader-short-stack.*`; those paths are measurements for
-the exact checkout revision, not durable status claims. The loader/TLS source
+`.work/x86_64/tmp/owned-loader-short-stack.*`. The loader/TLS source
 tests remain a separate check of the existing transaction and RuntimeV1
 invariants.

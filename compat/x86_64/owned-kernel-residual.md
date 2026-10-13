@@ -45,16 +45,11 @@ default. The selected observer retains that errno side effect: the clamp is
 musl's required missing-auxv behavior, not an added fallback.
 
 Run `./scripts/dev-x86_64.sh owned-kernel-residual` for the focused evidence.
-Before the owned configuration selection, the same installed-driver C object
-passed the pinned musl reference and failed the candidate only at the
-signal-stack `sysconf` selector with `EINVAL`; that isolated regression is
-retained as the reason for the aggregate-only configuration module. The
+The
 `sysconf-table` selector prints every selector from -3 through 260 with its
 errno, which the product must reproduce byte for byte; `_SC_AVPHYS_PAGES`,
 which moves between processes, is bracketed by the probe's own `sysinfo`
-samples, and a child checks finite and infinite resource limits. Before the
-full table the owned products returned `EINVAL` for 136 of those selectors.
-`run_owned_kernel_residual.sh` compiles that object once with installed
+samples, and a child checks finite and infinite resource limits. `run_owned_kernel_residual.sh` compiles that object once with installed
 project headers, links it unchanged to pinned musl and owned static
 `ET_EXEC`/static PIE plus dynamic PIE/non-PIE applications, and compares raw
 exit status, stdout, and stderr for each selector. Dynamic applications run

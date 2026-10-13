@@ -30,7 +30,7 @@ Run the aggregate proof only inside the established pinned native x86 evidence
 container, with a fresh checkout-local work directory:
 
 ```sh
-CRABC_X86_COMPILER_HELPER_IMAGE=crabc-core-evidence@sha256:<pinned-image-id> \
+CRABC_X86_COMPILER_HELPER_IMAGE=crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py) \
 CRABC_COMPILER_HELPER_WORK_DIR=/workspace/.work/x86_64/compiler-helper-aggregate \
   bash /workspace/builtins/run_x86_64_compiler_helper_aggregate.sh
 ```
@@ -60,8 +60,7 @@ support. The private shared placement is source-owned separately from public
 selection and needs a fresh installed-product proof. The single observed static
 ordinary `__popcountdi2` import is attached only when fresh same-source
 static/dynamic products, complete ELF facts, and the existing public-data
-ordinary-link receipt are supplied. Historical `3e` products remain historical
-and must not be relabeled by this contract.
+ordinary-link receipt are supplied.
 The ordinary report seals link receipts relative to the checkout; each driver
 receipt names its map and trace relative to its own directory. The helper
 reader uses the ordinary reader's identity resolver for the outer receipt,
@@ -84,7 +83,7 @@ environment used by the dynamic components. It is directly callable there; it
 does not add a dispatcher command:
 
 ```sh
-CRABC_X86_COMPILER_HELPER_IMAGE=crabc-core-evidence@sha256:<pinned-image-id> \
+CRABC_X86_COMPILER_HELPER_IMAGE=crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py) \
 CRABC_COMPILER_HELPER_SHARED_WORK_DIR=/workspace/.work/x86_64/compiler-helper-shared-placement \
   bash /workspace/builtins/run_x86_64_compiler_helper_shared_placement.sh
 ```

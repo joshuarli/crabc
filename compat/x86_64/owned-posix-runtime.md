@@ -28,7 +28,7 @@ contract uses them as follows.
 | **Installed static** | A public C workload is compiled with installed crabc headers and linked by the owned static driver as both ordinary static `ET_EXEC` and static PIE. |
 | **Extracted static** | That workload is built and run from an extracted copy of the packaged static sysroot. It is an additional product result, not a receipt inherited from the original sysroot. |
 | **Installed dynamic** | A public C workload runs against the installed shared libc and interpreter as dynamic PIE and dynamic non-PIE, through both normal `PT_INTERP` resolution and direct interpreter entry. |
-| **Three-product dynamic result** | The registered dynamic qualification case passed for `installed`, `second`, and `extracted` products. It only covers the case named in `owned_dynamic_qualification.py`. |
+| **Three-product dynamic result** | The registered dynamic qualification case must pass for the `installed`, `second`, and `extracted` products. It only covers the case named in `owned_dynamic_qualification.py`. |
 | **Header-absent ABI entry** | Installed project headers remain the source of public types, records, and declarations. A frozen ABI spelling deliberately absent from those headers may use an exact local `extern` declaration, source-verified against the installed header types. This admits `__xstat`, `__lxstat`, `__fxstat`, and `__fxstatat`; it does not add declarations to `sys/stat.h`. |
 
 A provider symbol table, a source leaf, a static-only observation, and a
@@ -41,9 +41,7 @@ private leaf to stand in for runtime composition.
 The catalog is the coordinator's spelling roster. The frozen ledger
 remains authoritative; the catalog copies each capability's exact `symbols`
 list from `compat/crabc-rs/coverage.toml`. The following table describes the
-installed workload bindings. The complete matrix passed at `730cafc1`;
-its retained receipt is `.work/x86_64/posix-family-matrix/execution.json`.
-The remaining native aggregate and declared family prerequisites apply to
+installed workload bindings. The remaining native aggregate and declared family prerequisites apply to
 every row. Later source changes require fresh qualification.
 
 | Frozen capability | Names | Current installed binding |
@@ -58,7 +56,7 @@ every row. Later source changes require fresh qualification.
 | `process.signal` | 34 | `signal-full` supplies the 23 residual primary spellings through static/static-PIE and dynamic PIE/non-PIE kernel/direct entries, while `owned-posix-signals.toml` names the helper/reporting, wait-cancellation, pthread, and timer cases it reuses. `owned-posix-composition` adds one bounded multi-threaded signal/`FILE`/syslog/fork/exec/spawn scenario. |
 | `system.kernel-admin` | 42 | `linux-control` covers 18 names, `syslog` covers five, `system-cancellation` covers `system`, and `kernel-residual` runs the remaining 18 spellings from one installed-driver object. `owned-posix-composition` supplies a bounded logger/`FILE`/signal/fork state scenario. `gethostid.rs` retains its private constant-zero artifact matching musl. |
 
-All seven catalog workload identifiers now have source-bound focused runners:
+All seven catalog workload identifiers have source-bound focused runners:
 `posix-filesystem` for `legacy-filesystem`, `process-control` for
 `control-residual`, `credentials-profile`, `environment-lifecycle`,
 `signal-full`, `kernel-residual`, and `posix-composition` for
@@ -68,11 +66,9 @@ All seven catalog workload identifiers now have source-bound focused runners:
 fixture replaces their retained objects, receipts, raw streams, or source
 identity checks.
 
-`dynamic-product.toml` declares seventy required dynamic qualification cases.
+`dynamic-product.toml` declares the required dynamic qualification cases.
 The full dynamic gate must execute and retain its complete current roster for
-the required products. The earlier fifty-case result at `730cafc1` is historical;
-`plan.md` records later measurements and their exact source revisions.
-No individual dynamic case, including a three-product replay, is that aggregate.
+the required products. No individual dynamic case, including a three-product replay, is that aggregate.
 
 `owned_posix_family_workloads.py` makes the coordinator input executable:
 it partitions all 149 spellings among named workload records, retains each
@@ -154,7 +150,7 @@ harness contracts only as the required shape of native evidence.
 
 ## Current workload bindings and required behavior
 
-The catalog's seven workload identifiers now each have a focused source-bound
+The catalog's seven workload identifiers each have a focused source-bound
 runner. Their `product_matrix = "all"` contract remains a coordinator
 obligation: the runner column records current evidence, while the required
 behavior remains the acceptance contract for a family receipt.

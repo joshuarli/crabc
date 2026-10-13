@@ -85,7 +85,7 @@ consumer may own no PT_TLS and refer to an initially mapped GD provider;
 the relocation itself validates the requirement even if the flag is absent.
 No runtime-loaded module, worker, or DTV-growth policy is implied.
 
-General owned CRT admission now accepts absent main preinit/init/fini array
+General owned CRT admission accepts absent main preinit/init/fini array
 tag pairs. Present arrays retain their bounds/alignment validation and a
 half-pair fails parsing. The actual constructor-free consumer proves this;
 legacy private CRT modes retain their strict original shape.
@@ -97,10 +97,8 @@ addressing crossed with GD/IE dependencies. Each runs the six existing
 return/exit/_Exit lifecycle cases, startup rejection cases, and single-FS
 ownership trace. Ordinary PIE exercises `environ` COPY. Candidate linking
 does not ignore unresolved executable symbols.
-Before implementation, the same ordinary-PIE lifecycle application against
-baseline `cf7fe88f` exited 127 with `reloc` and no callback output because its
-real `environ` COPY relocation was rejected. The default standalone lifecycle
-runner now uses PIE; PIC is an explicit regression profile.
+The default standalone lifecycle runner uses PIE; PIC is an explicit
+regression profile.
 
 The dedicated ordinary-PIE application additionally proves pointer-bearing
 COPY data after R_X86_64_64 provider fixups, byte data, breadth-first scope,
@@ -112,7 +110,7 @@ size 64 and removal of the consumer STATIC_TLS flag remain musl differentials.
 Twenty-one ELF mutations must exit 127 before any FS installation or callback.
 Unit tests additionally prove no earlier graph writes on a later failure,
 byte alignment, table-order repeated writes, exact symbol scopes and signed
-TLS bounds. The negative tracer now kills/reaps a fatal stopped child rather
+TLS bounds. The negative tracer kills/reaps a fatal stopped child rather
 than suppressing its fault forever; a trap regression checks that cleanup.
 
 One controlled case deliberately differs from pinned musl: main defines

@@ -67,10 +67,6 @@ same fused CGU are recorded rather than attributed to this leaf.
 
 ## Evidence
 
-The retained paths in this section are rooted at the isolated
-`.work/worktrees/owned_rand` checkout in the shared repository. They are not
-paths under the integration checkout's `.work/x86_64` directory.
-
 `compat/x86_64/run_owned_rand.sh` compiles one C workload through the installed
 dynamic driver, records the installed-header dependency receipt, and links the
 unchanged object against pinned musl, static ET_EXEC, static PIE, dynamic PIE
@@ -90,39 +86,25 @@ exactly 1024 published transitions without running a musl data race. A dynamic
 application DSO consumes the same libc stream as `main`; its separate dynamic
 receipt proves the DSO and libc `DT_NEEDED` order and its `/usr/lib` lookup.
 
-The retained first red is
-`.work/worktrees/owned_rand/.work/x86_64/preprovider-red`: the same
-installed-header object succeeded in pinned musl for core, serialized-worker,
-and fork scenarios, while native static ET_EXEC, static PIE, dynamic PIE, and
-dynamic non-PIE links each failed with both absent `rand` and `srand` symbols.
-`provider-absence.json` records no selected definition in either old product.
-This is pre-provider evidence, not a candidate execution result.
+The pre-provider control is the same installed-header object linked without a
+selected provider: it succeeds in pinned musl, while each native link fails
+with absent `rand` and `srand` symbols. This is pre-provider evidence, not a
+candidate execution result.
 
-The final supplied-product six-mode receipt passed at
-`.work/worktrees/owned_rand/.work/x86_64/tmp/owned-rand.a3Q5o8`. It binds static manifest
-`f7edf45b7c50fcc6523bb9dd6bcf230ede799752c81009119f83d49d2132235a`
-and dynamic manifest
-`f91ed65b4183f52de72b5385fc4e3fab309548853639d4c60509d9db5a33a8e1`.
-Its `link-identities.json`, raw streams/statuses, compile receipt, header
-witnesses, dependency audit, and provider object audit are retained there.
+The supplied-product six-mode run writes `link-identities.json`, raw
+streams/statuses, a compile receipt, header witnesses, a dependency audit, and a
+provider object audit under its output directory.
 
-A fresh `--no-default-features` native archive check retained
-`.work/worktrees/owned_rand/.work/x86_64/reports/owned-rand-default-ratchet.symbols` with no `rand` or
-`srand` definition (archive SHA-256
-`7bedc564039cf1baa68aff87576732bfcd64f324eb934211512d31252f39b800`).
-That confirms the target-gated dependency and module do not widen the frozen
-non-owned selected-static surface.
+A `--no-default-features` native archive check requires no `rand` or
+`srand` definition, confirming that the target-gated dependency and module do
+not widen the frozen non-owned selected-static surface.
 
-Using the unchanged signed 59-APK closure (index SHA-256
-`1a66c389ffa52b213474fb345577f3cd8716b98249fb5a21cce283d6e2566f2c`),
-the focused package replay passed `tier-c-curl`, `tier-c-curl-file`,
-`tier-d-git`, and `tier-d-git-init`: each candidate status/stdout/stderr
-matched pinned musl. Its report is
-`.work/worktrees/owned_rand/.work/x86_64/owned-rand-package-replay/owned-package-corpus-egfs24ii/report.json`
-(SHA-256 `b2eb40303c4cb4e0592534f4781a9630ae0055d52a504acff4f5611313b4de83`).
-The replay leaves package payload and loader policy unchanged.
+The focused package replay runs the unchanged signed Alpine APK closure
+(`tier-c-curl`, `tier-c-curl-file`, `tier-d-git`, `tier-d-git-init`) and
+requires each candidate status/stdout/stderr to match pinned musl. It leaves
+package payload and loader policy unchanged.
 
-Run a fresh native qualification with:
+Run the native qualification with:
 
 ```bash
 CRABC_X86_64_WORK_DIR="$PWD/.work/x86_64" \

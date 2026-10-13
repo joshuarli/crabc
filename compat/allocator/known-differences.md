@@ -5,91 +5,17 @@ the incomplete `crabc-mimalloc` Rust port and exact pinned mimalloc v3.5.0 C.
 The source pin is defined in
 [`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md).
 
-## Current status
+## Register
 
-The trace baselines below describe retained historical evidence, including the
-paused AArch64 implementation. They do not describe the current native x86
-implementation frontier.
-
-No successful ordinary pinned-mimalloc engine allocation-trace difference is
-recorded. One public-C ABI backend known red is recorded below. It is not a
-pinned-engine parity claim; it is deliberately visible in the paired
-ordinary/native libc artifact report. The current Rust crate contains source-mapped
-foundations plus a private, explicit single-thread ordinary-allocation
-lifecycle across small, medium, large, and singleton pages. Its small path has
-exact address-independent trace parity with pinned C v3.5.0, and the AArch64
-production record has a separate 51-key exact differential slice covering
-page-kind, calloc, realloc, aligned/offset-aligned, usable-size, preservation,
-and failure. Native x86-64 evidence separately extends that private trace to
-75 keys with fixed no-padding in-place expansion and checked `mi_recalloc`; it is not AArch64 production
-evidence, whose expansion revalidation remains pending. This includes live
-arena-backed alignment through 64 KiB and separately
-owned OS-aligned singleton mappings below 256 MiB. The lifecycle is not
-exported and does not imply parity for the absent process/TLS, general remote-free routing,
-teardown, purge, or public-API regions. The bounded ticket-zero and later-main
-page owners now delegate ordinary reallocations to that same live engine; only
-the ticket-zero null case may activate its completed first-arena policy. This
-does not create a public allocator route. The generic
-`MetaAllocator::free` and subprocess-attached/no-theap TLD lifecycle owners
-still record one terminal recovery limitation: an admitted exact-owner error
-may follow capability consumption, so their state poisons rather than retaining
-a capability that could name freed storage. The selected `MetaRelease`
-boundary makes a narrower direct-owner exception explicit: its Malloc branch
-returns the exact live capability as `MallocRetryable` only when invalid thread
-identity, same-thread recursion, or backing-lock acquisition rejects before the
-LIVE-to-RELEASING claim. `ThreadLocalBackingOwner::teardown` restores that exact
-capability and retains its compiler-TLS backing root, count, slots, and `Active` state only
-on this pre-claim result; after the entry drops, its successful retry preserves
-the source free-before-root-clear order. Stale/provenance rejection and every
-post-claim error remain terminal diagnostic state. One selected
-same-current-thread `DynamicTheapAttachment` continuation enters
-`AwaitingBackingRelease` after it has cleared the regular heap-key entry keyed
-by its Heap's `theap_slot` and marked its binding unbound, but only when that
-exact Malloc release rejects before its claim. It retains the compiler-TLS
-backing root/allocation, key lease, TLD, Theap, Heap binding, cached reference,
-and the sealed engine image when present (the direct witness has none and the
-engine witness has one retired PageMap-published page); ordinary page-engine
-operations stay suspended, it never restores or republishes the key entry or
-repeats attached preflight, and it resumes only backing release after the entry
-guard drops. Terminal/post-claim/non-Malloc/impossible-owner failure and later
-page/list errors remain terminal or unmodeled; a wrong-current-thread call is
-rejected without a new continuation. The separately selected final
-pre-mutation regular-key lock failure retains `AwaitingKeyRelease`. This is Rust ownership
-safety around C's void teardown, not C retry, mutex, lifecycle, race, signal,
-callback, pthread/process, ABI, or general shutdown parity. Its
-normal anonymous `Mapping` owner remains live and is returned after a failed
-`munmap`. That regular-OS form is an intentionally unconnected retry witness,
-not a C metadata caller: pinned `_mi_meta_zalloc` forms Malloc IDs, while a
-real `_mi_arenas_free` OS owner needs a wider memory-ID/subprocess contract. It
-intentionally does not represent no-free, huge, or remap source branches.
-Separately,
-`ArenaSliceClaim::release_for_subprocess` carries one live typed arena claim:
-a foreign `MainSubprocess` identity returns that unchanged claim before purge
-or free-bitmap mutation, while the matching identity consumes it through the
-existing terminal release result. This makes C's internal arena/subprocess
-assertion a Rust fail-closed safety boundary; it does not add a
-`MetaRelease::Arena` branch or generic metadata-free dispatch. The selected
-later-TLD witness now covers only one direct-Malloc caller lifetime: ticket-zero
-teardown has no metadata capability, an injected post-ready direct-zeroed
-failure consumes its sequence without a capability or lease, and one retry
-releases its typed Malloc capability. The separate nonexclusive dynamic-Theap
-witness follows a sequence-one Malloc TLD and Malloc Theap through no-page
-teardown. Its implementation releases regular backing, then the Theap, then
-the TLD; the audit distinguishes those three attachment-local capabilities
-from the process-owned registry bitmap. The separate selected TLS-resize
-witness begins only after a fresh 16-slot Rust image: one injected
-pre-allocation failure preserves the direct-Malloc root/count/old slot/exact
-capability, and one 16-to-32 retry copies slot 15, publishes slot 16, reaches
-live-one/high-water-two, then tears down to zero. It is not a comparison of
-C's initial count-zero `_mi_meta_rezalloc(NULL, ...)` route with Rust's
-separate fresh zalloc image. None of these witnesses claims normal C backing,
-arbitrary growth, generic metadata-free dispatch, exclusive-arena Theap
-allocation, complete TLS/TLD/Theap/registry lifecycle, concurrency,
-pthread/process lifecycle, or ABI integration.
-This state
-is not a valid C-program observable difference and has no C differential
-entry; the selected arena witness is source-level safety evidence over C's
-assertion-invalid input, not C/Rust invalid-input parity.
+Entries are `### \`CRABC-MI-*\` — <status>` sections, parsed by
+`compat/allocator/source_convergence.py` and read by
+`compat/allocator/divergence_evidence.py`; the status is `observed`, `pending`,
+`accepted`, or `rejected`. Each entry records one difference, its reproducer or
+differential, and the decision and conditions for removing it; the
+[entry requirements](#entry-requirements) at the end list what each must state
+and how a port-map row carries it. The register covers both the paused
+AArch64 production record and the native x86 port, and the trace figures quoted
+in entries are tied to the target they name.
 
 ### `CRABC-MI-LIVE-PAGE-ASSERTION-CUSTODY` — failure ownership boundary
 
@@ -155,8 +81,7 @@ Every valid allocation, size, alignment, offset, payload and address-reuse
 observation remains in the differential. Unchanged source debug failures are
 retained and compared against their exact diagnostics and outcomes, including
 usable-size/free and ordinary/Heap reallocation controls. This oracle condition
-is explicit in the receipt, original commands and owning reader; it does not
-claim unchanged debug C parity.
+does not claim unchanged debug C parity.
 
 Calls that violate separate source assertion preconditions run in isolated
 processes: null `mi_reallocarr` output, zero-size `mi_reallocarr`, non-power-of-two
@@ -2061,15 +1986,10 @@ transfer capability.
   capacity/prefix and follows the ordinary source fresh retry rather than
   treating inaccessible backing as live.
 - **Evidence:**
-  `.work/allocator-x86_64/tmp/incremental-arena-oracle.c` and
-  `.work/allocator-x86_64/incremental-arena-oracle.log` record the matching
-  pinned-C arena trace: 400 live 64-byte metadata allocations yield block 64,
+  The pinned-C arena trace: 400 live 64-byte metadata allocations yield block 64,
   capacity 512, offset 64, prefix 49,152, one arena, and release 49,152.
-  `.work/allocator-x86_64/tmp/incremental-os-oracle.c` with the paired
-  setter and pre-constructor environment invocations records the pinned-C
-  faults (exit 139) in
-  `.work/allocator-x86_64/incremental-os-oracle.log` and
-  `.work/allocator-x86_64/incremental-os-environment-oracle.log`.
+  The pinned-C OS-only setter and pre-constructor environment invocations
+  fault (exit 139).
   `meta::tests::process_metadata_incrementally_commits_and_releases_its_arena_page_prefix`
   asserts the C arena geometry/accounting;
   `meta::tests::process_metadata_os_only_on_demand_commits_before_publishing_capacity`
@@ -2126,13 +2046,7 @@ transfer capability.
   free loses the retry owner, so the fixture releases only the observed range
   through the raw primitive after recording its source state. Rust retains
   the published owner and retries its exact range raw, with no second warning
-  or statistics event. The focused
-  `allocator-unit` regressions pass. The private native
-  smoke command
-  `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`
-  completed successfully and emitted
-  `.work/allocator-x86_64/reports/allocator/x86_64/perf/m2-incremental-on-demand.json`;
-  it is a bounded performance record, not a promotion threshold.
+  or statistics event.
 - **Decision/removal:** retain this correction while v3.5.0 remains pinned.
   Revisit it only with an upstream fix and a fresh setter/environment
   differential. Do not generalize it into a different allocation policy or
@@ -2215,10 +2129,7 @@ transfer capability.
   `allocator_live_32m`, and 5240 KiB against 7384 KiB for
   `allocator_live_4m`, against musl's 2188, 33576 and 4936 KiB. Kernel
   instructions rise where pages now fault in at 4 KiB (`allocator_live_32m`
-  3.56M to 33.4M, musl 48.1M); user instructions are unchanged. The raw
-  record is
-  `.work/allocator-x86_64/reports/allocator/x86_64/thp-arena-residency.txt`;
-  the qualified integrated report's startup and churn rows are its
+  3.56M to 33.4M, musl 48.1M); user instructions are unchanged. The qualified integrated report's startup and churn rows are its
   performance gate (`divergence-evidence-v3.5.0.json`).
 - **Decision/removal:** retain while the musl-defaults contract stands.
   Remove it, restoring the source advice, only if that contract changes or a

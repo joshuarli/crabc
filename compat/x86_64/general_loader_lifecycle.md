@@ -66,8 +66,7 @@ directly. `CRABC_GENERAL_LOADER_LIFECYCLE_TLS=1` adds the existing general
 initial TLS feature and verifies TLS reads in constructors, application
 code, and finalizers. No external libc is linked into the candidate.
 
-The native regression first failed with the old parser's `graph` rejection.
-The candidate and musl 1.2.6 then produce equal traces for both sibling
+The candidate and musl 1.2.6 must produce equal traces for both sibling
 encounter orders of a diamond graph. The shared dependency runs once. The
 candidate recursively calls its finalizer from destructor callbacks and
 calls it again after completion. Malformed null/non-executable fini entries

@@ -1,23 +1,49 @@
 # Ordered qualification chain
 
-The eight `plan.md` qualification gates run in one fixed order:
-`compat.abi-differential`, `compat.posix-process`, `compat.resolver-network`,
-`compat.loader-corpus`, `consumer.rust-std-lto`, `consumer.source-build`,
-`capability.accounting`, `performance.release`. Each gate is also the
-`parity.toml` family of the same id; its family status records an earlier
-admission, while the chain re-proves it against the current checkout.
+Qualification runs eight gates in one fixed order. Each gate is also the
+`parity.toml` family of the same id; the family status records an earlier
+admission, while the chain re-proves the gate against the current checkout.
+Nothing here is a pass until a receipt revalidates (see Receipts).
+
+| # | Gate | What it consumes (published as) | Producer command |
+| - | ---- | ------------------------------- | ---------------- |
+| 1 | `compat.abi-differential` | one current-source cohort of ABI inventory, ELF facts, declaration inventory, public-data link report and selection companions (`abi-evidence`) | `abi-differential-evidence assemble` |
+| 2 | `compat.posix-process` | the native POSIX aggregate receipt (`posix-native`) | `owned-posix-native` |
+| 3 | `compat.resolver-network` | the retained resolver-network report (`resolver-network`) | `owned-resolver-network`, or the network step of `owned-resolver-family` |
+| 4 | `compat.loader-corpus` | the loader family receipt (`loader-family`) | `owned-loader-family --work DIR` |
+| 5 | `consumer.rust-std-lto` | the Rust std/LTO consumer receipt (`rust-std-lto`) | `consumer-rust-std-lto run` |
+| 6 | `consumer.source-build` | the Lua source-build admission (`lua-source-build`) | `lua-source-build-admission --output DIR` after `lua-static-source-build` and `lua-dynamic-source-build` |
+| 7 | `capability.accounting` | `parity.toml` and the frozen baseline; no publication | `python3 compat/x86_64/validate_parity_ledger.py` |
+| 8 | `performance.release` | retained performance receipts; never measures (`performance-release`) | `python3 compat/x86_64/performance_release_gate.py evaluate` |
+
+All commands are `./scripts/dev-x86_64.sh <command>` except the two Python
+validators. Each producer's own contract document owns its inputs and flags;
+`./scripts/dev-x86_64.sh --help` lists them.
 
 ## Declarations
 
-The v2 `qualification_manifest.json` declares every gate `ready` with a
-finite, hash-pinned case manifest. `consumer.source-build` runs its dedicated
-`compat/lua/qualify_source_build.py` case (`qualification_source_build.json`,
-described in `compat/lua/README.md`); every other gate names a manifest in
-`qualification-gates/` whose single `gate-conditions` case runs the pinned
-`run_qualification_gate.py GATE`. Ready means executable and hash-pinned,
-never passed. `generate_qualification_manifest.py --check` keeps the generated
-projection current; the declaration's `promotion_ready` and
-`completed_gate_count` stay false and zero.
+`qualification_manifest.json` declares every gate `ready` with a finite,
+hash-pinned case manifest. `generate_qualification_manifest.py --check` keeps
+the generated projection (`generated/qualification_manifest.json`) current.
+`consumer.source-build` runs `compat/lua/qualify_source_build.py`
+(`qualification_source_build.json`, see `compat/lua/README.md`); the loader gate
+uses `qualification_loader_corpus.json`; every other gate names a manifest in
+`qualification-gates/` whose single `gate-conditions` case runs
+`run_qualification_gate.py GATE`. Ready means executable and hash-pinned, never
+passed. `promotion_ready` stays false and `completed_gate_count` stays zero in
+the declaration.
+
+## Profiles
+
+`qualification_profile` in the declaration selects the default scope, currently
+`full`. `--profile` overrides it for ordered execution and `--status` only.
+
+- `full`: all eight gates.
+- `correctness`: the first seven gates; `performance.release` is deferred
+  because it needs an uncontended host.
+
+A correctness receipt records its deferred gate, so it is never a full-chain
+result (`complete_profile` is true only when the profile's last gate passed).
 
 ## Gate conditions
 
@@ -27,62 +53,51 @@ projection current; the declaration's `promotion_ready` and
   earlier chain gate that is not `foundation-verified`.
 - `evidence[N]` covers each `native_evidence` command of the gate family. A
   command needs a registered reader; a prose placeholder or unregistered
-  command is itself the unmet condition. Readers call the leaf's existing
-  validator: `publication` readers reread a published retained receipt,
-  `report` readers a fixed-location report, `ledger` readers checked-in
-  source, and `execution` readers run a self-contained native leaf (only once
-  every other condition is met).
-- Gate-specific checks: `capability.accounting` adds `capability-completion`,
-  naming every frozen capability not yet `implemented-foundation`.
+  command is itself the unmet condition. Readers call the leaf's own validator:
+  `publication` readers reread a published retained receipt, `report` readers a
+  fixed-location report, `ledger` readers checked-in source, and `execution`
+  readers run a self-contained native leaf (only once every other condition is
+  met).
+- `capability.accounting` adds `capability-completion`, naming every frozen
+  capability not yet `implemented-foundation`.
 
-The case prints the condition record and exits 1 with
+The gate case prints the condition record and exits 1 with
 `x86 qualification gate GATE: UNMET (...)`; only a native evaluation with every
 condition met ends with `x86 qualification gate GATE: PASS`. Host evaluation
-(`campaign-qualification` while blocked) reports prerequisites, registration
-and completion checks and leaves native reads unevaluated.
+(`campaign-qualification` while blocked) reports prerequisites, registration and
+completion checks and leaves native reads unevaluated. A gate is closed by
+making its ledger command executable and registering its reader in
+`qualification_gates.py`; no case-manifest pin changes.
 
-The owning lane closes a gate by making its ledger command executable and
-registering its reader in `qualification_gates.py`; no case manifest pin
-changes. Every chain gate's evidence is now an executable command with a
-registered reader; an unpublished or failing receipt is the named unmet
-condition.
+## Publication
 
-## Evidence publication
+Leaves that write caller-chosen directories are selected with
 
-Leaves that write caller-chosen directories are selected by
-`./scripts/dev-x86_64.sh qualification-manifest --publish GATE PUBLICATION RECEIPT`.
-Publishing runs the leaf reader first and atomically writes
-`.work/x86_64/qualification-evidence/GATE/PUBLICATION.json` with the receipt
-path and byte hash. The gate rereads the receipt through the leaf reader on
-every evaluation, so replaced, stale-source or partial receipts fail. Current
-publications: `compat.abi-differential abi-evidence` (`abi-evidence.json`
-from `abi-differential-evidence assemble`), `compat.posix-process
-posix-native` (`native-execution.json` from `owned-posix-native`),
-`compat.resolver-network resolver-network` (the retained
-`STATE_ROOT/report.json` copy of a published resolver-network report, from
-`owned-resolver-network` or the network step of `owned-resolver-family`),
-`compat.loader-corpus loader-family` (`receipt.json` from
-`owned-loader-family`), `consumer.rust-std-lto rust-std-lto` (`receipt.json`
-from `consumer-rust-std-lto run`), `consumer.source-build lua-source-build`
-(`admission.json` from `lua-source-build-admission --output`, after both Lua
-lanes) and `performance.release performance-release` (`receipt.json` from
-`compat/x86_64/performance_release_gate.py evaluate`).
+```sh
+./scripts/dev-x86_64.sh qualification-manifest --publish GATE PUBLICATION RECEIPT
+```
+
+Publishing runs the leaf reader first, then atomically writes
+`.work/x86_64/qualification-evidence/GATE/PUBLICATION.json` holding the
+receipt path and byte hash. The gate rereads the receipt through the leaf reader
+on every evaluation, so a replaced, stale-source or partial receipt fails.
+Publication names are the ones in the table above; each is paired with its
+gate and the receipt file its producer writes: `abi-evidence.json`,
+`native-execution.json`, the resolver report copy `STATE_ROOT/report.json`,
+`receipt.json` (loader, Rust std/LTO, performance) and `admission.json` (Lua).
 
 `abi-evidence` binds one current-source set: the static preparation and
-product, the materialized dynamic product, the natively collected native ABI
-inventory, ELF facts, declaration inventory and public-data ordinary-link
-reports, and the selection companion receipts. `collect-companions` runs each
-companion's existing runner (`PRODUCERS` in `abi_differential_evidence.py`)
-against that one cohort and writes `companions.json`; a failed runner, and any
-companion that consumes its receipt, is recorded and never bound, so its
-selection blockers stay open. The text-family and POSIX `__sysv_signal`
-receipts come only from their family admission flows. Assembly then produces the
-ratchet check and selection report from exactly those inputs. Every product
-and report must come from the evaluated clean revision, and assembly runs in
-the pinned image because the ratchet and selection reports record checkout
-paths. Each of the gate's seven retained evidence rows reruns its own leaf
-reader against the published set; the last applies
-`native-abi-selection require-closure`. The development path is:
+product, the materialized dynamic product, and the native ABI inventory, ELF
+facts, declaration inventory, public-data link report and selection companion
+receipts. `collect-companions` runs each companion's runner (`PRODUCERS` in
+`abi_differential_evidence.py`) against that one cohort and writes
+`companions.json`; a failed runner, and any companion that consumes its receipt,
+is recorded and never bound, so its selection blockers stay open. The text-family
+and POSIX `__sysv_signal` receipts come only from their family admission flows.
+Every product and report must come from the evaluated clean revision, and
+assembly runs in the pinned image because the reports record checkout paths.
+Each of the gate's retained evidence rows reruns its own leaf reader; the last
+applies `native-abi-selection require-closure`. The manual path is:
 
 ```sh
 ./scripts/dev-x86_64.sh owned-posix-static-products .work/x86_64/abi/static
@@ -103,13 +118,13 @@ R="--native-abi-inventory .work/x86_64/native-abi-inventory/abi/report.json \
 ./scripts/dev-x86_64.sh qualification-manifest --publish compat.abi-differential abi-evidence .work/x86_64/abi-differential/abi/abi-evidence.json
 ```
 
-`resolver-network` publication replays the public report that the selected
-retained copy names and requires identical bytes, so a stale `latest.json`
-from an older producer schema or revision is never read implicitly.
+`resolver-network` publication replays the report that the retained copy names
+and requires identical bytes, so a stale `latest.json` from an older producer
+revision is never read implicitly.
 
-`lua-source-build` rereads only while a fresh admission of the current
-source, both latest Lua lane reports and their products is identical to the
-retained one:
+`lua-source-build` rereads only while a fresh admission of the current source,
+both latest Lua lane reports and their products is identical to the retained
+one:
 
 ```sh
 ./scripts/dev-x86_64.sh lua-static-source-build
@@ -119,41 +134,52 @@ retained one:
 ```
 
 `performance-release` never measures. `performance_release_gate.py evaluate`
-reads the three-attempt runtime C collector through the `perf-c check`
-reader and rechecks every row against the plan's 0.90 CPU/PSS/`memory.peak`
-and 2R syscall rules, replays one `perf-native --mode full` report, and
-applies the allocator promotion table to at least three agreeing M9 qualified
-full reports read by `compat/allocator`'s own reader. Each input must carry an
-`uncontended_host` record. The receipt names every unmet condition; the
-publication reruns that evaluation and admits only a pass.
+reads the three-attempt runtime C collector through the `perf-c check` reader and
+rechecks every row against the plan's 0.90 CPU/PSS/`memory.peak` and 2R syscall
+rules, replays one `perf-native --mode full` report, and applies the allocator
+promotion table to at least three agreeing M9 qualified full reports read by
+`compat/allocator`'s own reader. Each input must carry an `uncontended_host`
+record. The receipt names every unmet condition; publication reruns that
+evaluation and admits only a pass.
 
-## Execution and receipts
+## Running the chain
 
-`./scripts/dev-x86_64.sh qualification-manifest` executes the complete chain;
-`--through GATE` executes the contiguous prefix ending at `GATE`. Every
-selected predecessor runs again, a planned gate is a named blocker, and
-execution stops at the first failing case. The runner requires clean committed
-source and the pinned image, runs each case in a fresh session under the
-receipt process's child-subreaper boundary with the scrubbed environment, and
-writes `receipt.json` below `.work/x86_64/qualification-receipts/chain-*`
-for failure as well as success. The receipt binds the clean revision and
-content hash, tool/Rust/GCC/musl inputs before and after, the contract and
-case-manifest hashes, and each case's command, runner hash, status, timing and
-raw stdout/stderr. `qualified_gates` lists the leading gates whose cases all
-passed; `complete_chain` is true only for a passing full chain.
+```sh
+./scripts/dev-x86_64.sh qualification-manifest [--profile correctness|full] [--through GATE]
+./scripts/dev-x86_64.sh qualification-manifest [--profile correctness|full] --status
+./scripts/dev-x86_64.sh qualification-manifest --validate-receipt PATH
+./scripts/dev-x86_64.sh qualification-manifest --private-admission
+```
 
-`--validate-receipt PATH` independently rereads a chain receipt: the current
-source, inputs, contract, case pins and runner bytes must match, every log must
-hash to its record, outcomes must follow from raw status and markers, and no
-case may follow a failure. A failed receipt validates as an intact failure and
-exits 1; only `outcome: passed` is qualification evidence for its prefix.
-`--status` evaluates all eight gates independently in the pinned image as a
+With no operation the command executes the active profile's chain;
+`--through GATE` executes the contiguous prefix ending at `GATE`. Every selected
+predecessor runs again, a planned gate is a named blocker, and execution stops
+at the first failing case. It requires clean committed source and the pinned
+image (it runs only through the dispatcher; never directly on the host), runs
+each case in a fresh session under the receipt process's child-subreaper
+boundary with a scrubbed environment, and writes `receipt.json` below
+`.work/x86_64/qualification-receipts/chain-*` for failure as well as success.
+
+`--status` evaluates every gate independently in the pinned image as a
 diagnostic; it writes no receipt and is not a chain result.
-
 `campaign-qualification` reports family blockers plus each gate's host
-conditions while families are incomplete. Once every chain family and its
-dependencies are `foundation-verified`, it runs exactly the full chain, never
-the families' placeholder-bearing development commands.
+conditions while families are incomplete; once every chain family and its
+dependencies are `foundation-verified` it runs exactly the full chain.
+
+### Receipts
+
+The receipt binds the clean revision and content hash, tool/Rust/GCC/musl inputs
+before and after, the contract and case-manifest hashes, and each case's
+command, runner hash, status, timing and raw stdout/stderr. `qualified_gates`
+lists the leading gates whose cases all passed.
+
+`--validate-receipt PATH` rereads a chain receipt: the current source, inputs,
+contract, case pins and runner bytes must match, every log must hash to its
+record, outcomes must follow from raw status and markers, and no case may follow
+a failure. A failed receipt validates as an intact failure and exits 1; only
+`outcome: passed` is qualification evidence for its prefix.
+
+### Environment
 
 The scrubbed case environment fixes `/opt/cargo/bin` and `/opt/rustup`, while
 `CARGO_HOME` and temporary state stay under the mounted checkout's
@@ -161,53 +187,77 @@ The scrubbed case environment fixes `/opt/cargo/bin` and `/opt/rustup`, while
 `config.toml`, so ignored wrapper, linker or rustflags injection cannot alter a
 recorded build; each input snapshot rechecks it. Input identity covers every
 resolved directory on the scrubbed `PATH`, rustup's selected Cargo/Rustc and
-their sysroot, GCC's builtin include tree, and the pinned musl runtime,
-loader, specs, manifests and header tree.
+their sysroot, GCC's builtin include tree, and the pinned musl runtime, loader,
+specs, manifests and header tree.
 
-## Private admission
+### Private admission
 
-`qualification-manifest --private-admission` remains the closed five-case
-static POSIX/ABI admission. Its private runner records per-case receipts (the
-same-object ABI leaf also retains its selected `libc.a`, shared workload
-object, pinned-musl reference, freestanding candidate and ELF/stream
-inspection outputs) under a prefix receipt with the same source/tool/runtime
-bindings. A timeout kills the named active leaf, then the runner, then every
-orphan adopted through the subreaper boundary, including `setsid` and
-double-fork escapees. The prefix fixes `non_promoting: true`,
-`promotion_ready: false` and zero completed gates; it cannot satisfy or
-replace any chain gate.
+`--private-admission` is the closed five-case static POSIX/ABI admission
+(`qualification_posix_abi.json`). It writes per-case receipts under a prefix
+receipt with the same source/tool/runtime bindings. A timeout kills the named
+active leaf, then the runner, then every orphan adopted through the subreaper
+boundary, including `setsid` and double-fork escapees. The prefix fixes
+`non_promoting: true`, `promotion_ready: false` and zero completed gates; it
+cannot satisfy or replace any chain gate.
 
 ## One-command candidate run
 
-`./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/NAME
-[--inputs FILE] [--through STEP] [--dry-run]` is the unattended final
-qualification of one clean candidate checkout
-([`qualification_candidate.py`](qualification_candidate.py)). It builds the
-cohort once (`owned-posix-static-products`, `materialized-dynamic-sysroot`),
-runs every family aggregate in dependency order (the POSIX admission sequence
-above, pthread/TLS, the text family's per-pair producers and assembly,
-resolver, c-abi-compat, the loader inventories and family, crt and the two
-sysroot families), runs every gate producer and publishes its receipt, runs
-this chain, then the parity-ledger validator, and writes `NAME/summary.json`.
+```sh
+./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/NAME [--inputs FILE] [--through STEP] [--dry-run]
+```
 
-Receipt paths are fixed by `--work`. A family row that names a `receipt`
-(the candidate's transition rows) must name the path this run produces; a
-different path is a preflight blocker, and a row without one is reported
-unattached. `--inputs` names the pre-seeded inputs the native container
-cannot fetch or must not measure under contention:
-`{"rust_std_lto": {"provider_vendor", "dependency_vendor"},
-"performance_release": {"runtime_c_collector", "native_facade_report",
-"rustybench_source", "rustix_source", "allocator_reports": [...]}}`. The
-pinned OS-test/libc-test source checkouts and the package corpus input must
-also be seeded.
+[`qualification_candidate.py`](qualification_candidate.py) is the unattended
+final qualification of one clean candidate checkout. It runs on the host and
+every step is itself a dispatcher command that owns its container. `--work`
+must be a physical child of `.work/x86_64`. It has no `--profile`: the final
+`qualification-chain` step runs `qualification-manifest` with the declaration's
+default profile.
 
-The run is bound to the clean source identity recorded in
+`plan()` fixes the step order; step ids, in order:
+
+1. Cohort: `static-products` (`owned-posix-static-products`),
+   `dynamic-products` (`materialized-dynamic-sysroot`).
+2. POSIX: `posix-family`, `crypt-profile`, `atomic-profile`,
+   `wordexp-profile`, `wordexp-inputs`, `posix-native`, `publish-posix-native`,
+   `posix-admission`; then `pthread-family`.
+3. Text family: `text-{primary,reproduction,extracted}-<producer>` for the
+   producers in `TEXT_PRODUCERS` (the primary pair has no `wordexp` step; the
+   reproduction and extracted pairs add a `wordexp-inputs` step), then
+   `text-family`.
+4. `resolver-family`, `c-abi-compat-family`.
+5. Loader: `loader-inventory-{installed,second,extracted}`, `loader-request`,
+   `loader-family`, `publish-loader-family`.
+6. `crt-dynamic-startup`, `static-sysroot`, `combined-sysroot`.
+7. ABI: `abi-inventory`, `abi-elf-facts`, `abi-declarations`,
+   `abi-public-data`, `abi-evidence`, `publish-abi-evidence`.
+8. Consumers: `rust-std-lto`, `publish-rust-std-lto`, `lua-static`,
+   `lua-dynamic`, `lua-admission`, `publish-lua-source-build`.
+9. `performance-release`, `publish-performance-release`.
+10. `publish-resolver-network`, `qualification-chain`, `parity-ledger`.
+
+`python3 -B -c 'import qualification_candidate as q; print([s.id for s in
+q.plan()])'` run from `compat/x86_64/` prints the authoritative list.
+
+Receipt paths are fixed by `--work`. A family row that names a `receipt` must
+name the path this run produces; a different path is a preflight blocker, and a
+row without one is reported unattached. `--inputs FILE` is JSON naming the
+pre-seeded inputs the native container cannot fetch or must not measure under
+contention: `lua_source_build.archive_seed`,
+`rust_std_lto.{provider_vendor, dependency_vendor}` and
+`performance_release.{runtime_c_collector, native_facade_report,
+rustybench_source, rustix_source, allocator_reports}`. The pinned OS-test and
+libc-test source checkouts (`SOURCE_ORACLES` in the module) and the package
+corpus input (`.work/x86_64/owned-package-corpus-input/apks`) must also be
+seeded under `.work/x86_64/`.
+
+The run is bound to the clean source identity, inputs and core image recorded in
 `NAME/candidate.json`. A restart on the same revision skips each step whose
-recorded outputs still hash identically and resumes at the first incomplete
-one; a failed attempt's step directory and fresh outputs are renamed
-`*.failed-N`. A different revision, a changed completed output, or a failed
-step stops the run with the summary naming the step and every step not run.
-`--through STEP` runs a prefix (for staged preflights; never reported
-complete) and `--dry-run` resolves every command with placeholders for
-not-yet-produced outputs and lists the preflight blockers without running
-anything.
+recorded outputs still hash identically and resumes at the first incomplete one;
+a failed attempt's step directory and fresh outputs are renamed `*.failed-N`.
+A different revision, changed inputs or environment, a changed completed output,
+or a failed step stops the run; `NAME/summary.json` names the step and every step
+not run. `--through STEP` runs the prefix ending at that step id (staged
+preflights; never reported complete). `--dry-run` resolves every command with
+placeholders for not-yet-produced outputs, prints the preflight blockers as
+JSON, and runs nothing. Exit status: 0 for a complete run or a finished
+`--through` prefix, 1 for an incomplete run, 2 for a candidate error.

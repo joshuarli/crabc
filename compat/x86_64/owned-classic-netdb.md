@@ -109,7 +109,7 @@ unselected non-owned resolver-runtime lookup remains on the strict core path.
 Other resolver behavior remains unqualified; this does not claim family closure.
 The owned adapter distinguishes local socket-creation errno from exhausted
 transport attempts without creating probe sockets. Existing native
-`exchange` keeps its prior timeout behavior. Owned C callers now use the
+`exchange` keeps its prior timeout behavior. Owned C callers use the
 separate [resolver cancellation owner](owned-resolver-cancellation.md): real
 send/receive/poll cancellation points, explicit descriptor cleanup, MASKED
 state transitions, and source TCP-start ordering. Native Rust and the private
@@ -196,8 +196,8 @@ checks and cannot qualify current source or admit a family.
 Read a retained receipt inside the current native evidence image. The reader
 resolves its Rust compiler and linker paths from `rust-toolchain.toml`; the
 captured executable identities and image digest are in
-`owned_classic_netdb_image_inputs.json`. The current image is
-`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
+`owned_classic_netdb_image_inputs.json`, which must be refreshed when
+`core_image.py` pins a new image.
 Collection requires the dispatcher's observed immutable identity in
 `CRABC_CLASSIC_NETDB_IMAGE_ID`, using the `crabc-core-evidence@sha256:...`
 spelling, before source/product capture or compiler execution. The source seal

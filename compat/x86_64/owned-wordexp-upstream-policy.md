@@ -105,10 +105,8 @@ comment-sensitive lexical boundary after physical backslash-newline joining.
 
 ## Source and standards basis
 
-The source spellings were checked against the retained raw result from the
-unchanged source unit,
-`.work/x86_64/wordexp-selection-review/upstream-functional-96a4a847.log`.
-That log is byte-spelling evidence only.  It does not turn any failed upstream
+The source spellings come from the raw result of the unchanged `libc-test`
+`functional/wordexp` unit.  That result is byte-spelling evidence only.  It does not turn any failed upstream
 case into an aggregate waiver.
 
 The policy is bounded by the POSIX `wordexp` interface, the

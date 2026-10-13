@@ -22,9 +22,8 @@ tables, and the five executable modes: static,
 static PIE, musl dynamic PIE/non-PIE, and crabc dynamic PIE/non-PIE. A finite
 validator-owned pinned-image manifest seals every runner/oracle/compiler tool,
 including the invoked LLD path, bytes, and mode. The current manifest is
-`owned_pthread_timed_feature_image_inputs_current.json` for core image
-`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`;
-it derives Rust and LLD paths from `rust-toolchain.toml`. The original
+`owned_pthread_timed_feature_image_inputs_current.json`, which records the
+core image it was captured from; it derives Rust and LLD paths from `rust-toolchain.toml`. The original
 `owned_pthread_timed_feature_image_inputs.json` remains unchanged for historical
 receipts. Static link receipts bind the
 contract object, owned CRT objects, selected `libc.a`, builtins archive, linker

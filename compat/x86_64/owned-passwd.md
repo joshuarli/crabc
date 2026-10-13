@@ -101,9 +101,6 @@ the AArch64-derived inventory digest. This is provider accounting only; it
 does not promote the still-unqualified owned feature archive or execute any
 AArch64 qualification.
 
-The initial regression passed all fourteen original musl scenarios and failed
-the owned static link on all nine missing providers. The completed fifteen-case
-matrix passes all installed entry modes. Focused dispatcher authority/argument
-forwarding and dynamic product/qualification contract tests also pass. This
+The matrix runs in all installed entry modes. This
 leaf does not qualify the entire users family, exhaust all underlying FILE or
 allocator failures, or establish a live three-product publication receipt.

@@ -81,9 +81,3 @@ channels, zero-limit pending state, thread-local CTYPE overrides, returned curso
 errno, and output canaries. Protected pages prove bounded input reads for both
 directions, including zero source counts and the bulk threshold. Duplication checks empty/nonempty
 strings, independent ownership, literal code units, and ordinary `free`.
-
-Before implementation, the oracle workload passed and the installed dynamic
-link failed with precisely the three missing providers. The later bulk-resume
-regression independently failed on the source-cursor difference before the
-owned wrapper correction. This is focused family evidence, not complete
-native runtime qualification or public x86 platform promotion.

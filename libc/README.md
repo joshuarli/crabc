@@ -1,5 +1,7 @@
 # crabc-libc
 
+> The Linux/AArch64 route this page describes is paused; native x86-64 is the active target (see `./scripts/dev-x86_64.sh --help`).
+
 A `no_std` Rust implementation of the libc ABI for crabc's focused modern
 runtime profile. It produces `libc.so` and `libc.a` for running selected
 unmodified musl-linked ELF binaries on Linux AArch64.

@@ -1,44 +1,60 @@
-# Native x86-64 foundation evidence
+# Native x86-64 harness
 
-This directory records the native Linux/x86-64 little-endian campaign defined by
-[plan.md](../../plan.md). It is private foundation evidence until the
-completion predicate in plan.md passes; it is not a public-support claim.
+This directory holds the probes, manifests, ledgers, validators and component
+contracts for the native Linux/x86-64 little-endian campaign defined by
+[plan.md](../../plan.md). Everything here is private foundation evidence until
+the completion predicate in plan.md passes; it is not a public-support claim.
 
-## Current authority
+## Development commands
+
+Run from the repository root. Inside the pinned native environment the
+dispatcher owns container setup; `./scripts/dev-x86_64.sh --help` lists every
+command.
+
+```sh
+./scripts/dev-x86_64.sh campaign-status             # frozen baseline, ledger and family status
+./scripts/dev-x86_64.sh campaign-family FAMILY      # one family's blockers and evidence commands
+python3 -B scripts/test_python.py --directory compat/x86_64/tests --jobs 4
+scripts/lanes/rust-check.sh                         # type-check runtime crates in the pinned image
+./scripts/dev-x86_64.sh core --cached               # crabc-core tests on a checkout-local Cargo target
+```
+
+`scripts/test_python.py` runs isolated modules with immediate failure
+diagnostics and private logs under `.work/python-test-runs/`. The large parity
+ledger module is split into exact test-ID shards with fail-closed completion
+accounting. Select the nearest module while developing and reserve the full
+campaign for integration. `core --cached` copies Cargo's current test binary
+into private scratch and runs the same serial core tests and fenv code-generation
+check; `core` without the flag does the cold qualification build, which a cached
+result does not replace.
+
+## Authority
 
 The frozen comparison target is the AArch64 snapshot at commit
 3e100d45c5a0798c2d3862d5e2eef584c610ccf9: 223 capabilities, 26 required
 families, and the three digests recorded in [aarch64_frozen_baseline.json](aarch64_frozen_baseline.json).
-The validator rejects drift and has no refresh mode. Do not rebaseline or turn
-historical checkpoints into current status.
+The validator rejects drift and has no refresh mode; do not rebaseline.
 
 [parity.toml](parity.toml) is the authoritative finite capability/family
 mapping and promotion ledger. Every capability is mapped exactly once; every
-required family must reach foundation-verified in dependency order.
-The generated inventory is orientation only. Export rosters and selected
-artifacts are ratchets or evidence, not completion predicates.
+required family must reach foundation-verified in dependency order. The
+generated inventory is orientation only. Export rosters and selected artifacts
+are ratchets or evidence, not completion predicates.
 
 [feature-archive-roster.md](feature-archive-roster.md) defines the explicit
-feature provider rows, including the narrow non-header callable field
-that remains outside compiler-derived header accounting.
+feature provider rows, including the narrow non-header callable field that
+remains outside compiler-derived header accounting.
 
-For current state and the exact completion contract, use
-plan.md, COMPATIBILITY-PROFILE.md, and executable contracts. The
-large prior status narrative is preserved in
-[historical-evidence.md](historical-evidence.md); its instructions and
-checkpoint statuses are historical, not a live queue.
+For the exact completion contract, use plan.md, COMPATIBILITY-PROFILE.md, and
+the executable contracts.
 
 The focused [native scalar math corrections](math-scalar-corrections.md) retain
 independent exact numerical expectations and raw fixed-musl defects. Run
 `./scripts/dev-x86_64.sh math-scalar-corrections` for their pure ABI proof and
-existing family corpora; the linked document separates installed-product evidence.
-The native libc-test observer separately records only `math/fmaf`, `math/fmal`,
-and `math/powf` as source-bound candidate-pass/pinned-musl-oracle-defect
-dispositions. It requires the exact complete source graph, prepared
-source/header hashes, correction proof sources, and retained oracle diagnostic
-bytes; it does not classify `nextafterl`, `wordexp`, or `random` this way. This
-finite accounting does not close the dynamic aggregate, whose `wordexp` and
-`random` blockers remain.
+existing family corpora; the document separates installed-product evidence.
+The native libc-test observer records only `math/fmaf`, `math/fmal`, and
+`math/powf` as source-bound candidate-pass/pinned-musl-oracle-defect
+dispositions; it does not classify `nextafterl`, `wordexp`, or `random` this way.
 
 [owned-static-dl-iterate-phdr.md](owned-static-dl-iterate-phdr.md) records the
 installed static main-executable program-header and calling-thread TLS
@@ -62,38 +78,14 @@ The campaign status/family commands validate the frozen baseline, ledger, and
 generated C-ABI evidence matrix. Product and promotion commands report blockers
 until their real gates pass; a private fixture or focused leaf never promotes.
 
-The ordered qualification chain executes only through the pinned
-`qualification-manifest` dispatcher surface, never directly on the host.
-Inside the native image it requires the checkout-local `.work/x86_64` work,
-temporary and mutable Cargo directories, the fixed `/opt/cargo/bin` and
-`/opt/rustup` Rust paths, and the pinned musl oracle compiler. With no
-arguments it runs all eight gates in order (`--through GATE` runs a prefix),
-stops at the first unmet gate, and writes a source-bound receipt that
-`--validate-receipt PATH` rereads; each gate names its unmet prerequisite
-families, unread evidence and completion checks. `--status` evaluates every
-gate independently, `--publish` selects retained leaf receipts for gate
-readers, and `--private-admission` keeps the non-promoting five-case
-POSIX/ABI admission. [qualification-chain.md](qualification-chain.md) owns
-the gate conditions, reader registration, publication and receipt contract.
+The ordered qualification chain runs only through the pinned
+`qualification-manifest` dispatcher command, never directly on the host.
+[qualification-chain.md](qualification-chain.md) owns the gates, their
+commands, profiles, publication, receipts, and `qualification-candidate`.
 
 Use `./scripts/dev-x86_64.sh --help` and the owning ledger's evidence commands
 for focused gates. The dispatcher owns the command roster; this guide does not
 duplicate it or define alternate host paths.
-
-For Python-only iteration, `python3 -B scripts/test_python.py --directory
-compat/x86_64/tests --jobs 4` runs isolated modules with immediate failure
-diagnostics and private logs under `.work/python-test-runs/`. The large parity
-ledger module is automatically split into exact test-ID shards, with live test
-progress and fail-closed completion accounting. Select the nearest module
-while developing; reserve the full campaign for integration.
-
-`./scripts/dev-x86_64.sh core --cached` reuses a checkout-local Cargo target for
-development. Each invocation copies Cargo's exact current test binary into
-private scratch and runs the same serial core tests and fenv code-generation
-check. Builds serialize; private executions may overlap. `core` without the
-flag retains its cold qualification build. Cancellation kills/reaps owned
-children and retains failure logs; cached results do not establish cold-build
-reproducibility.
 
 The installed static sysroot gate runs independent consumers with four workers
 by default. Set `CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS=1` for a serial replay
@@ -106,8 +98,7 @@ terminated and reaped.
 `./scripts/dev-x86_64.sh materialized-dynamic-sysroot` builds the real shared
 runtime twice and tests installed and extracted PIE/DSO consumers. See
 [materialized-dynamic-sysroot.md](materialized-dynamic-sysroot.md) for the
-initial-graph boundary and remaining loader work. The older
-`owned-dynamic-sysroot` command is a plan-only seed, not this executing gate.
+initial-graph boundary.
 
 [native-abi-inventory.md](native-abi-inventory.md) defines the source-bound
 measurement and host replay of fixed musl plus selected materialized owned
@@ -158,8 +149,8 @@ replays one public header envelope, binds clang to that retained compiler
 snapshot, and retains the missing compiler-resource and `readelf` bytes. It
 leaves `FILE`, array extent, `h_errno` storage semantics, provider selection,
 family completion, and promotion open. Native ABI selection may reuse that one
-current header replay for the declaration-object reader; it does not admit a
-historical declaration receipt or treat the finite observation as closure.
+current header replay for the declaration-object reader; it does not treat the
+finite observation as closure.
 
 [public-data-ordinary-link.md](public-data-ordinary-link.md) describes the
 ordinary-link matrix for the 32 data objects shared by the static and dynamic
@@ -300,26 +291,19 @@ interpreter, headers, or libraries as candidate inputs. The accepted allocator
 backend remains the runtime backend until the separately qualified native
 mimalloc program is promoted; allocator parity alone never closes this campaign.
 
-## Product and capability workflow
-
-Close finite work in dependency order: ABI/header and crabc-core foundations;
-libc/runtime state, allocator, errno/TLS, pthread and process lifecycle; CRT and
-static PIE; loader, relocations, TLS and dynamic products; then consumers,
-qualification, performance, and promotion. Independent families may progress
-in parallel, including the static and dynamic product tracks. Integration and
-final qualification require each product's actual owned prerequisites.
+## Product requirements
 
 The owned static product must use installed crabc headers, CRT objects,
 libc.a, compiler-builtins, the accepted allocator backend, and explicitly
 admitted application objects. It must reject ambient CRT/libc/compiler-runtime/
 loader/header inputs, be reproducible, and pass static and static-PIE smoke
-tests from an extracted sysroot.
-
-The owned dynamic product must use the installed interpreter/shared libc and
-general loader, with relocation, symbol scope, RuntimeV1 handoff, initial-exec
-and dynamic TLS, DTV/module lifecycle, DSO init/fini, dl*, locking, retained close/reopen,
-and admitted reentrancy covered by its contracts. Fixed graphs and isolated
-artifacts are not equivalent.
+tests from an extracted sysroot. The owned dynamic product must use the
+installed interpreter/shared libc and general loader, with relocation, symbol
+scope, RuntimeV1 handoff, initial-exec and dynamic TLS, DTV/module lifecycle,
+DSO init/fini, dl*, locking, retained close/reopen, and admitted reentrancy
+covered by its contracts. Fixed graphs and isolated artifacts are not
+equivalent. Machine-readable requirements live in `static-product.toml` and
+`dynamic-product.toml`.
 
 The [owned word-expansion record](owned-wordexp.md) defines its x86 evaluator,
 typed errors, result ownership, and fixed musl/POSIX comparisons. Ordinary
@@ -337,46 +321,28 @@ loader case; it is separate from the 50-case all-entry dynamic-product
 qualification. Its leaf requires a materialized dynamic product and runs only
 through the root-capable native container command registered by the dispatcher.
 
-The ordered qualification chain is:
+Musl 1.2.6 is the C/POSIX oracle; Rustix is a pinned test-only native-API
+oracle. Glibc and ambient target inputs are never fallbacks. The qualification
+gates are listed in [qualification-chain.md](qualification-chain.md). AArch64
+implementation and qualification remain paused, and native mimalloc work follows
+[plan.md](../../plan.md) without weakening runtime gates.
 
-```
-compat.abi-differential
-  -> compat.posix-process
-  -> compat.resolver-network
-  -> compat.loader-corpus
-  -> consumer.rust-std-lto
-  -> consumer.source-build
-  -> capability.accounting
-  -> performance.release
-```
+## Evidence layout
 
-The selected AArch64 consumer set is reproduced on x86. Musl 1.2.6 is the
-C/POSIX oracle; Rustix is a pinned test-only native-API oracle. Glibc and
-ambient target inputs are never fallbacks. AArch64 implementation and
-qualification remain paused, and native mimalloc work follows
-[plan.md](../../plan.md#native-allocator-completion) without weakening runtime
-gates.
-
-## Evidence and repository layout
-
-- compat/x86_64/: probes, manifests, ledgers, validators, fixtures, and
+- `compat/x86_64/`: probes, manifests, ledgers, validators, fixtures, and
   product state. Keep durable evidence beside its owning contract.
-- compat/x86_64/parity.toml and aarch64_frozen_baseline.json: finite
-  accounting and immutable baseline.
-- static-product.toml and dynamic-product.toml: owned product requirements
-  and machine-readable state.
-- compat/*/README.md, docs/design/, and docs/evidence/: harness mechanics,
-  architecture, and durable rationale.
-- COMPATIBILITY.md: generated dashboard; never edit by hand.
-- .work/: all mutable worktrees, scratch, source extracts, caches,
-  sysroots, and generated report backing storage. Do not create new external
-  scratch or target state.
+- `parity.toml` and `aarch64_frozen_baseline.json`: finite accounting and
+  immutable baseline.
+- `compat/*/README.md`, `docs/design/`, and `docs/evidence/`: harness
+  mechanics, architecture, and durable rationale.
+- `COMPATIBILITY.md`: generated dashboard; never edit by hand.
+- `.work/`: all mutable worktrees, scratch, source extracts, caches, sysroots,
+  and generated report backing storage. It is disposable.
 
 Evidence must identify the source revision, target, pinned inputs, command,
 scope, and report path. Generated reports are measurements, not policy.
-Requalify after source or backend changes; do not inherit a prior revision's
-pass. Keep unique behavior differences and intentional exclusions in the
-nearest contract or evidence document.
+Requalify after source or backend changes. Keep unique behavior differences and
+intentional exclusions in the nearest contract or evidence document.
 
 ## Completion boundary
 
@@ -402,8 +368,7 @@ roster. The resulting receipt remains non-promoting: it does not complete
 resolver capabilities to their exact behavior readers. Its cancellation reader
 replays one source-bound static/dynamic 847-run raw receipt, while its protocol
 reader replays pinned-musl fixed-table behavior through three product pairs and
-all eighteen C-runtime entries. The remaining hard gap is one current
-source-bound installed/reproduction/extracted cohort shared by every component.
+all eighteen C-runtime entries.
 [`owned_resolver_family.py`](owned_resolver_family.py) only replays explicitly
 named evidence and reports those gaps; it does not build a product, run DNS, or
 promote `libc.resolver`.
@@ -428,9 +393,7 @@ queries. The [component contract](owned-pthread-cpuclock.md) records the source
 mapping, exact Linux CPU-clock encoding, and distinct target-lifetime rules:
 finished or withdrawn `ESRCH` applies only to selected-worker registry handles;
 the retained initial-main token has no exited-main invalidation and is valid
-only while its caller holds main live. The pre-route behavioral red records the
-expanded consumer exiting 86 under the retained installed product while musl
-exited 0; the added initial-target route closes that live case. It is focused
+only while its caller holds main live. It is focused
 private evidence and does not complete the pthread family or qualify a public
 platform.
 

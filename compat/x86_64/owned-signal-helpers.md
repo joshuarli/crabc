@@ -50,10 +50,8 @@ output or build. Invalid arguments exit 2; product and runtime failures exit 1.
 
 The selected installed `crabc-cc-dynamic` compiles one ordinary application
 object with installed headers, `--dynamic-pie -std=c11 -fno-builtin`, and its
-implicit `-fPIE -fstack-protector-strong` policy. Previously the standalone path
-compiled through the static-PIE driver, whose implicit stack-protection policy
-was `-fno-stack-protector`; supplied dynamic runs already used strong protection.
-All invocation forms now share the latter policy. There are no fixture macros
+implicit `-fPIE -fstack-protector-strong` policy. All invocation forms share
+that policy. There are no fixture macros
 that select different oracle, candidate or linkage behavior. A separate header
 dependency audit uses the installed compiler and exact compilation flags without
 replacing the application object. `compile.json` records the actual driver
@@ -83,22 +81,18 @@ reserved signal
 rejection; successful and failed action-installation EINTR bookkeeping;
 mask-syscall failure after an installed action; cancellation after helper use;
 reporting bytes, null and empty prefixes, retained locale/orientation, and
-EBADF; and nonblocking pipe partial-write EAGAIN behavior. The initial
-regression passed the initial musl cases and failed the owned static link on
-the eight missing providers. Pipe-capacity setup uses raw `SYS_fcntl` because
+EBADF; and nonblocking pipe partial-write EAGAIN behavior. Pipe-capacity setup uses raw `SYS_fcntl` because
 the current owned `fcntl(F_GETPIPE_SZ)` returns `EINVAL`; descriptor-control
 completion is separate work. All helper behavior itself crosses installed C
 boundaries. The fixture does not attempt asynchronous-handler reporting or
 exhaustively qualify the underlying signal, FILE, or cancellation owners.
 
-The private `libc-signal-legacy-aliases`, `libc-psignal`, and repaired
-`libc-signal-sysv-helpers` gates also pass.
-The initial private `libc-signal-sysv-helpers` run stopped at a stale header
-judge expecting X/Open-800 legacy-XSI hiding. Its focused C/C++ declaration
-matrix now requires the native x86 project's declarations to match pinned
-musl in X/Open-800 as well as X/Open-700, GNU, BSD, and default-source modes.
-Strict ANSI and POSIX-only profiles still reject those declarations. This
-repairs the evidence owner. The private XSI runtime fixture also uses the
+The private `libc-signal-legacy-aliases`, `libc-psignal`, and
+`libc-signal-sysv-helpers` gates cover the frozen archives. The
+`libc-signal-sysv-helpers` focused C/C++ declaration matrix requires the native
+x86 project's declarations to match pinned musl in X/Open-800 as well as
+X/Open-700, GNU, BSD, and default-source modes. Strict ANSI and POSIX-only
+profiles reject those declarations. The private XSI runtime fixture uses the
 concrete handler pointer type instead of assuming GNU-only `sighandler_t`
 visibility. Public headers and the separate architecture
 branch retain their existing visibility contracts.

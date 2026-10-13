@@ -119,17 +119,12 @@ the main thread repeatedly replaces the corresponding shared records; their
 results must remain valid after those replacements. This composition receipt
 adds no new provider selection or account lookup mechanism.
 
-The original absent-provider red check used the same installed-header C
-object, ran it against pinned musl, then showed all thirteen unresolved owned
-providers in static, static-PIE, dynamic PIE, and dynamic non-PIE links. Its
-retained evidence is `.work/x86_64/tmp/owned-account-files.im2VMw`. The runner
-keeps that baseline as `--expect-missing` for a source tree before these
-providers are selected.
+The runner keeps an absent-provider baseline as `--expect-missing`: the same
+installed-header C object run against pinned musl, with all thirteen owned
+providers unresolved in static, static-PIE, dynamic PIE, and dynamic non-PIE
+links, for a source tree before these providers are selected.
 
-The completed disposable six-path matrix passed at
-`.work/x86_64/tmp/owned-account-files.7Q2Inq`; a supplied static-plus-dynamic
-product replay passed at `.work/x86_64/tmp/owned-account-files.XF5bL7`. Run
-the current matrix with:
+Run the matrix with:
 
 ```bash
 CRABC_X86_64_WORK_DIR="$PWD/.work/x86_64" \

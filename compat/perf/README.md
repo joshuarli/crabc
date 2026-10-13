@@ -77,13 +77,13 @@ only direct roots reach either executable's `DT_NEEDED`; the installed-driver
 receipt records the complete schema-3 closure and the musl link resolves it
 only through `-Wl,-rpath-link`.
 
-Use the restored immutable native image. Its performance-tool manifest binds
-the pinned musl compiler, loader and libc, readelf and strace; changing an image
-identity does not transfer historical qualification:
+The dispatcher runs the pinned native image (`compat/x86_64/core_image.py`;
+override with `CRABC_X86_64_CORE_IMAGE`). Its performance-tool manifest binds
+the pinned musl compiler, loader and libc, readelf and strace; changing the
+image identity does not transfer earlier qualification:
 
 ```bash
-CRABC_X86_64_CORE_IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
-  ./scripts/dev-x86_64.sh perf-c-test
+./scripts/dev-x86_64.sh perf-c-test
 ```
 
 `perf-c plan`, `perf-c run`, `perf-c collect`, and `perf-c check` are the
@@ -112,7 +112,7 @@ snapshots before its build and after its last measurement. The collector
 derives the `uncontended_host` record the `performance.release` gate reads:
 `uncontended` only when every snapshot has a one-minute load average of at
 most 1.0 and at most two runnable tasks (`HOST_LOAD_POLICY` in
-`x86_64_evidence.py`), otherwise `contended` with a named release blocker.
+`x86_64_evidence.py`, which owns these numbers), otherwise `contended` with a named release blocker.
 A full-budget attempt refuses to start on a contended host; `check` rederives
 the record from the raw files. The Rust-facade companion's report carries the
 same record under the same policy, and its full mode fails closed likewise.
@@ -127,17 +127,16 @@ owned-dynamic-qualification receipt binds the supplied product; its absence is
 also a named blocker.
 
 ```bash
-IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a
 P=$PWD/.work/x86_64/<dynamic-product>
 W=$PWD/.work/x86_64/<fresh-roster>
-CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c plan \
+./scripts/dev-x86_64.sh perf-c plan \
   --implementation-smoke --dynamic-product "$P" --work-dir "$W"
 for i in 1 2 3; do
-  CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c run \
+  ./scripts/dev-x86_64.sh perf-c run \
     --implementation-smoke --dynamic-product "$P" --work-dir "$W/attempt-$i" \
     --attempt-roster "$W/attempt-roster.json" --attempt-index "$i"
 done
-CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c collect \
+./scripts/dev-x86_64.sh perf-c collect \
   --dynamic-product "$P" --work-dir "$W/collector" --attempt-roster "$W/attempt-roster.json"
 ./scripts/dev-x86_64.sh perf-c check "$W/collector/collector.json"
 ```
@@ -155,16 +154,15 @@ The final sequence, with `P` and `Q` set to that cohort's product and validated
 dynamic qualification receipt, is:
 
 ```bash
-IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a
 W=$PWD/.work/x86_64/runtime-c-performance-final
-CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c plan \
+./scripts/dev-x86_64.sh perf-c plan \
   --dynamic-product "$P" --dynamic-qualification "$Q" --work-dir "$W"
 for i in 1 2 3; do
-  CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c run \
+  ./scripts/dev-x86_64.sh perf-c run \
     --dynamic-product "$P" --work-dir "$W/attempt-$i" \
     --attempt-roster "$W/attempt-roster.json" --attempt-index "$i"
 done
-CRABC_X86_64_CORE_IMAGE=$IMAGE ./scripts/dev-x86_64.sh perf-c collect \
+./scripts/dev-x86_64.sh perf-c collect \
   --dynamic-product "$P" --work-dir "$W/collector" --attempt-roster "$W/attempt-roster.json"
 ./scripts/dev-x86_64.sh perf-c check "$W/collector/collector.json"
 ```
@@ -179,7 +177,7 @@ worker-local allocation, TCP/UDP loopback, hermetic hosts/DNS, and
 empty/sub-64/guard primitive dispositions. Every row also has a separately
 linked memory observer with its fixed main-state and plateau R/C checkpoints.
 
-No x86 release result exists. A full scorecard requires every workload to meet
+A full scorecard requires every workload to meet
 CPU upper-95% `<= 0.90` across 31 paired fresh processes, both live PSS and
 `memory.peak` against the memory thresholds below, and both the marked-route
 and whole-process syscall
@@ -201,8 +199,7 @@ upper bound. Syscall rules remain unchanged.
 Both producer and replay derive these limits into the existing threshold
 fields. Reference and candidate PSS/peak values remain complete raw totals:
 no payload, image size, file-cache charge or accounting batch is subtracted.
-Equality passes only for the floor-limited metric; any increase fails. Historical
-reports are not relabeled as qualification under the changed policy.
+Equality passes only for the floor-limited metric; any increase fails.
 
 `perf-c-memory-smoke` is a separate bounded native collector test. It uses a
 fresh supplied product/work directory, seven selected rows across all six
@@ -211,8 +208,7 @@ raw proc snapshots, and ordered R/C checkpoints. It is implementation-only
 and never produces a scorecard or promotion claim:
 
 ```bash
-CRABC_X86_64_CORE_IMAGE=sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
-  ./scripts/dev-x86_64.sh perf-c-memory-smoke \
+./scripts/dev-x86_64.sh perf-c-memory-smoke \
   /workspace/.work/x86_64/<dynamic-product> \
   /workspace/.work/x86_64/<fresh-memory-smoke-work>
 ```

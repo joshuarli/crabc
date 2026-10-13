@@ -82,18 +82,6 @@ header-declaration agreement.  The result explicitly leaves provider selection,
 object/record layout, runtime behavior, family completion, and public support
 unclaimed.
 
-Development checked the retained full declaration receipt at
-`native_abi_selection_manifest/.work/x86_64/header-declaration-inventory/full-d8e03de0/report.json`
-(SHA-256 `dac12db499d4938aa12cc3ece02e0aa42c46aa25e17604ca01af74064fb8f1ab`)
-with one post-repair account pass, recorded under this worktree's
-`.work/x86_64/native-public-data-declarations/repair-0f605b56/full-receipt-account-r6/`.
-That receipt binds the report hash and the adapter, reviewed TOML, selected
-object-contract, and source revision identities before and after accounting.
-The source-oracle excerpts under `source-contract/` compare the relevant installed
-headers with pinned musl 1.2.6 using
-`crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`.
-Those files are development evidence, not an input dependency of the adapter.
-
 Run the focused contract test with:
 
 ```sh

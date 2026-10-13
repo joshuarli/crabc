@@ -121,26 +121,9 @@ the preprocessing closure, and retained raw bytes against observations.
 `pthread-stress.json` schema v2 binds the source map, receipts, raw artifacts,
 closed cell/iteration roster, source profile, and the narrowly scoped result.
 
-## Native profile measurement
-
-The default ten-iteration run with supplied static and dynamic product copies is
-retained at `.work/x86_64/tmp/owned-pthread-stress.sig5hn1h/pthread-stress.json`
-from the component worktree. All 70 observations are exactly exit 0, stdout
-`pthread stress ok\n`, and empty stderr. The four strict owned links and final
-source, tool, header, object, executed-copy, and raw-observation checks passed.
-The prepared source SHA-256 is
-`9551d1d34918551c7d9a7747e0210ff487026808eebfe9db79384e7f0a2c36bd`;
-the common object SHA-256 is
-`d9392ff629b2d198539351c604c2a0fdfa590db78f5bc1a227666fa8892700a3`.
-This is remaining-workload evidence for those supplied products. The receipt
-still declares the complementary I/O requirement and an incomplete native
-aggregate; it does not qualify newly built products or bind a family matrix.
-
 ## Preserved frozen failure measurement
 
-The original native frozen-source measurement is retained unchanged in
-`.work/x86_64/tmp/owned-pthread-stress.btkuqhwq/pthread-stress.json` from the
-component worktree. All 70 observations returned exit 1 with
+The original native frozen-source measurement: all 70 observations returned exit 1 with
 `pthread stress FAIL 4\n`, two
 `FAIL: deferred stdio cancellation probe\n` lines, then two
 `FAIL: asynchronous stdio cancellation probe\n` lines; none hit the outer timeout.

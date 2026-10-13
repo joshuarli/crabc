@@ -72,6 +72,4 @@ capacity, valid opaque C and C.UTF-8 locale tokens, multiple variadic `double`
 arguments, every source parser flag, width and precision, literal-percent and
 full-capacity literal behavior, conversion truncation/E2BIG, and complete
 output-buffer canaries. Symbol checks require strong independent providers in
-the archive, each static final executable, and the shared object. This is
-focused evidence for the two entries only; it does not close a monetary,
-locale, formatting, runtime, or public x86-support family.
+the archive, each static final executable, and the shared object.

@@ -1,0 +1,137 @@
+# Campaign lanes
+
+How parallel work on [plan.md](../plan.md) is run in this repository. The
+general mechanics (workstreams, rolling waves, the lane contract, review then
+merge then verify) are the campaign reference of the `orchestrate` skill; this
+file holds only what is specific to crabc. `plan.md` owns what to work on and
+in which order.
+
+## Roles
+
+- **Coordinator.** Selects ready items, briefs lanes, reviews and merges their
+  commits into `main`, verifies on the merged tree, and updates `plan.md`. It
+  alone edits `plan.md` and `AGENTS.md`, and it writes no feature code while
+  lanes are running.
+- **Lane.** Delivers one workstream slice end to end (code, tests, the docs it
+  makes stale) in its own worktree and branch, inside the files its brief
+  names. Lanes never coordinate with each other; a lane that needs something
+  outside its boundary reports it.
+
+## Agents
+
+Route by difficulty, not size, using the `orchestrate` tiers. The harness
+refuses any other agent type, so the repository defines none of its own.
+
+| Work | Tier |
+| --- | --- |
+| Read-only inventory, log triage, "where is X" | `scout` |
+| Fully specified edits: registrations, renames, runner flags | `mechanic` |
+| A slice with a named method and acceptance check (most lanes) | `worker` |
+| No hypothesis yet, or a change spanning owners | `expert` |
+| A failure an `expert` could not explain; a design others build on | `god` |
+
+Under Codex use the model and effort the `orchestrate` skill's Codex column
+gives for the same row. Escalate a tier on evidence that the work was harder
+than briefed, not because a command failed.
+
+## Worktrees
+
+```sh
+git worktree add -b lane/<id> .work/wt/<id> main
+(cd .work/wt/<id> && scripts/lanes/prepare-worktree.sh)
+```
+
+`prepare-worktree.sh` fetches and vendors the locked Cargo closure into the
+worktree's own `.work/x86_64/cargo`, seeds the verified mimalloc archive from
+the primary checkout, and materializes the pinned package-corpus input. It
+needs the core image and, the first time, the network.
+
+Every worktree has its own `.work/` and therefore its own cold target
+directories. Containers write root-owned files there, so remove a worktree
+with the helper, then delete the merged branch:
+
+```sh
+scripts/lanes/remove-worktree.sh .work/wt/<id>
+git branch -d lane/<id>
+```
+
+The helper refuses a path outside `.work/wt/` and a worktree with uncommitted
+tracked changes. At any moment the only worktrees are those of running lanes
+plus the coordinator's scratch verification tree.
+
+## Width
+
+The limit is memory and disjoint file ownership, not a fixed lane count. A
+cold `crabc-mimalloc` test build was measured at roughly 8 GiB resident on
+this 32-CPU, 60 GiB host. Launch the first lanes, read peak memory once they
+build, and keep at least 12 GiB available. `.claude/settings.json` caps
+concurrent subagents at 16. Qualifying performance measurements need an
+uncontended host: no lane builds while one runs.
+
+## The lane loop
+
+A lane uses the cheapest build that compiles its change and runs only the
+tests it wrote or changed, by name. Suites, optimized builds, family
+aggregates and qualification gates belong to the coordinator, after the merge.
+
+| Need | Command | Measured |
+| --- | --- | --- |
+| Type-check one crate | `scripts/lanes/rust-check.sh cargo check -q --locked -p <crate>` | 2 s warm |
+| Type-check every runtime feature profile (before each handoff) | `scripts/lanes/rust-check.sh` | 98 s cold, 10 s warm |
+| One allocator unit test | `scripts/lanes/rust-check.sh env CARGO_PROFILE_DEV_OPT_LEVEL=0 CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc --lib --no-default-features <module::tests::name> -- --exact --test-threads=1` | 52 s cold |
+| The same through the allocator launcher (workspace `opt-level = 2`) | `./compat/allocator/run-x86_64.sh allocator-unit --filter <module::tests::name>` | 299 s cold, 3 s unchanged |
+| One host-side reader or validator test | `python3 -B scripts/test_python.py --module <path/to/test_file.py>` | under 1 s to 30 s |
+| Ledger structure | `python3 compat/x86_64/validate_parity_ledger.py` | 1 s |
+| Family and gate state | `./scripts/dev-x86_64.sh campaign-status` | 2 s |
+
+Other narrow routes are in the harness guides:
+[native x86-64](../compat/x86_64/README.md) and
+[allocator](../compat/allocator/README.md).
+
+## Rules specific to this repository
+
+- Build and test only through the pinned native x86-64 environment
+  (`scripts/lanes/rust-check.sh`, `./scripts/dev-x86_64.sh`,
+  `./compat/allocator/run-x86_64.sh`). Never `scripts/dev.sh`, and never
+  `compat/allocator/run.py` directly: it defaults to AArch64.
+- Never use `git stash`. This repository sets `rebase.autostash`, which would
+  use the stash stack shared by all worktrees: commit or discard every change
+  before rebasing. Never push, and write no ref other than the lane's branch.
+- Reproduce a bug with a failing regression before fixing it, and keep the
+  regression.
+- Shared tooling has one owner at a time: `scripts/dev-x86_64.sh`,
+  `compat/allocator/run.py`, the shared receipt readers, and family status in
+  `compat/x86_64/parity.toml`. Other lanes may only append a new command or
+  their own `[[family.verified_slice]]` entry, one entry per line group, with
+  no reordering or reformatting.
+- Do not record qualifying performance numbers from a lane, and do not
+  throttle builds; retry one killed by memory pressure and report it.
+- Every commit is a Conventional Commit with the workstream as scope.
+
+## Integrate
+
+One lane at a time, as each reports:
+
+1. Read the diff. Rebase the lane onto `main` and fast-forward.
+2. If `compat/x86_64/aarch64_parity_inventory.json` conflicts, take either
+   side and run `python3 scripts/lanes/refresh-parity-digests.py`; the file is
+   fully derived from the ledgers.
+3. Verify the merged commit from a scratch worktree (`.work/wt/verify`), never
+   in the integration tree: `python3 compat/x86_64/validate_parity_ledger.py`,
+   `python3 compat/x86_64/aarch64_parity_inventory.py`,
+   `scripts/lanes/rust-check.sh`, the test files the commits touch, and the
+   lane's native command when it claims new evidence.
+4. Never merge a lane's family admission. Rerun the family aggregate on merged
+   `main`.
+5. Remove the worktree and delete the branch. A parked lane keeps its
+   committed branch and is named in `plan.md`.
+
+Send a failure back to the lane that holds the context, with the command and
+its output, rather than starting a new one.
+
+## Stop
+
+Tell running lanes to finish the item they hold and take no other. Stop the
+containers mounting their worktrees, commit leftover work to each lane branch,
+merge what verifies, remove every lane worktree, and write the handoff at the
+top of `plan.md`.

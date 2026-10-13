@@ -70,7 +70,7 @@ fall back to libc's static TLS plan.
 
 ## Implemented private initial-TLS foundation
 
-`ldso/src/x86_64_initial_graph.rs` now has one cfg-isolated sibling compiled
+`ldso/src/x86_64_initial_graph.rs` has one cfg-isolated sibling compiled
 with `crabc_initial_tls_graph` and `crabc_loader_libc_tls_runtime_v1`. After
 its fixed graph has materialized every admitted initial `PT_TLS` image and
 successfully installed `%fs`, it publishes the 72-byte private
@@ -107,7 +107,7 @@ protocol.
 
 ## Implemented initial registry-state foundation
 
-`ldso/src/x86_64_initial_tls_registry.rs` now owns the typed state used by
+`ldso/src/x86_64_initial_tls_registry.rs` owns the typed state used by
 that private producer's initial planner. It assigns only TLS-bearing initial
 objects stable one-based `TlsModuleId` values in loader order, records their
 object-index association, and seals the sole `InitialTlsGeneration` value
@@ -393,11 +393,9 @@ descriptor, the dynamic consumer branch in
 `compat/x86_64/run_ldso_initial_tls.sh` stays a regression seed while an
 installed product-level test is built; it is not that product test.
 
-Descriptor-negative proof is complete at both the private fixed-graph and
-bounded-general foundations. The remaining required native evidence is still
-planned: installed dynamic PIE and non-PIE Variant-II layout; dynamic pthread
+The required native evidence still to be built is: installed dynamic PIE and non-PIE Variant-II layout; dynamic pthread
 workers; runtime TLS DTV growth before and after worker creation; clean
 pre-growth rejection through the installed loader; and loader/pthread fork,
 cancellation, and TLS-lifetime stress. Those are prerequisites to a later
 `libc.pthread-tls`, `ldso.dynamic-runtime`, and owned dynamic-product
-transition, not evidence for either transition now.
+transition; they are not evidence for either transition.

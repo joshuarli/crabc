@@ -1,6 +1,6 @@
 # Musl-vs-crabc differential runner
 
-This is the first compatibility-laboratory runner. It compiles one workload
+This runner compiles one workload
 object from `tests/foundational.c` using the headers from the pinned musl 1.2.6
 tree, then links that same object twice:
 
@@ -30,7 +30,7 @@ Every comparison publishes a machine-readable JSON result atomically at
 `compat/reports/differential/<case>.json` by default. It records the case,
 pass/fail result, both exit statuses, normalization metadata, errno, and byte
 length/SHA-256/text metadata for reference and candidate stdout/stderr. The
-normalization fields are currently always an empty list and zero count.
+normalization fields are always an empty list and zero count.
 Override the destination with `--report PATH` or
 `CRABC_DIFFERENTIAL_REPORT=PATH`; the parent directory is created as needed.
 
@@ -51,8 +51,8 @@ The intended Docker entry point is the same final command from `/workspace`:
 python3 compat/differential/run.py foundational
 ```
 
-`dev.sh` integration is intentionally left to its owner. A smoke-test wrapper
-that also checks `--help` is available at `tests/runner_test.py`.
+`./scripts/dev.sh differential` (paused AArch64 route) wraps the same command.
+A smoke-test wrapper that also checks `--help` is at `tests/runner_test.py`.
 
 For a non-default installation, override only paths while retaining the pinned
 basename and AArch64 loader:
@@ -64,7 +64,7 @@ python3 compat/differential/run.py
 ```
 
 To keep a report outside the repository, pass for example
-`--report /tmp/crabc-foundational.json`.
+`--report .work/tmp/crabc-foundational.json`.
 
 The foundational case has no filesystem side effects and produces stable
 streams. Future cases should document every normalization explicitly; semantic

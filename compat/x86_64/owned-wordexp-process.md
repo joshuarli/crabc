@@ -159,7 +159,7 @@ compiles `owned_wordexp_process_private_probe.c` against the ordinary installed
 headers, and directly links that object with the disposable archive plus the
 ordinary CRT and bounded builtins through the pinned LLD. No installed header,
 normal Cargo feature, or normal-product export names the bridge, and the normal
-archive is never replaced. The retained `.work/x86_64/tmp/owned-wordexp-process-private.*`
+archive is never replaced. The `.work/x86_64/tmp/owned-wordexp-process-private.*`
 leaf records the private build, consumer, program headers, stdout/stderr,
 marker, leader PID, and hashes.
 
@@ -179,5 +179,4 @@ This is a private actual-process proof of the selected process owner, not an
 installed C ABI probe, product qualification, or full wordexp closure. The
 selected binding composes the pathname adapter and sole C result transaction;
 direct C/product validation remains the evidence boundary for installed ABI
-claims. The private fixture's earlier measured results remain provenance for
-these owner invariants and are not installed-product PASS results.
+claims. The private fixture's results are not installed-product PASS results.

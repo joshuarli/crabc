@@ -53,7 +53,6 @@ exists with `./scripts/dev-x86_64.sh image`:
 bash /workspace/builtins/run_x86_64_signed_int128.sh
 ```
 
-The runner is intentionally standalone while `scripts/dev-x86_64.sh` is in an
-active stdio integration.  This leaf does not promote public x86 support,
+The runner is standalone: `scripts/dev-x86_64.sh` has no subcommand for it.  This leaf does not promote public x86 support,
 alter archive admission, or select adjacent signed helpers such as
 `__divmodti4`.

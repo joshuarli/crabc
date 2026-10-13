@@ -67,7 +67,7 @@ different source location from the first-descriptor defect below.
 * Pinned `aio_cancel` deadlocks for a queued second full-pipe write: a
   canceler holds the queue lock while it waits for a worker whose cancellation
   cleanup must reacquire that lock. The source oracle target and cancel-all
-  cases are retained as raw watchdog outcomes (status `137`). The owned port
+  cases end as raw watchdog outcomes (status `137`). The owned port
   uses a stack cancellation cursor to bound the initial request set and
   counted worker pins while it drops the queue lock. Cleanup knows whether a
   canceled condition wait already owns that lock, publishes terminal state
@@ -80,8 +80,7 @@ different source location from the first-descriptor defect below.
   `q->lock` acquisition, and map-lock release, but it restores the caller
   mask before returning the still-locked queue. The fixed-source direct
   inclusion in `aio_source_signal_order_witness.c` proves that source order
-  without rewriting the pinned `aio.c` bytes. Its retained fresh receipt at
-  `.work/x86_64/tmp/aio-source-signal-order.xE0yJf/fresh.stdout` is
+  without rewriting the pinned `aio.c` bytes. Its fresh output is
   `SFGBPUHC`: it records the exact fresh map state after q-lock acquisition,
   queues `SIGUSR1` while blocked, then enters the handler and its same-fd
   `close` without either restore or close returning. This is an instrumented
@@ -93,24 +92,18 @@ different source location from the first-descriptor defect below.
   fork-per-attempt candidate watchdog at
   `owned_aio_fresh_signal_probe.c` records setup (`S/T/A`), handler entry and
   exact close start (`H/C`), close return (`R`), and a parent-only bounded
-  kill. Before this correction, the unchanged owned static product produced
-  `STAHC` without `R` at attempt 0 in
-  `.work/x86_64/tmp/owned-aio.xjN7wv/static-fresh-signal.stdout`; this is a
-  product regression observation, not an instruction-location attribution.
-  After the correction, all six installed product routes report
-  `fresh-signal-handler-close-pending=not-observed` in the 128-attempt
-  replay at `.work/x86_64/tmp/owned-aio.fjxdKn`. Sender setup or join timeouts have distinct invalid-result
+  kill. Without the correction, the owned static product produced
+  `STAHC` without `R` at attempt 0; this is a product regression
+  observation, not an instruction-location attribution. With it, every
+  installed product route must report
+  `fresh-signal-handler-close-pending=not-observed` over 128 attempts. Sender setup or join timeouts have distinct invalid-result
   classifications and cannot become a close-pending result.
 * Pinned `__aio_close` cancels matching work but leaves its four-level map
   slot visible until later worker cleanup performs the final queue unref. A
   newly opened pipe can therefore reuse the numeric descriptor while the old
   regular-file queue still supplies cached `seekable`/`append` state; its AIO
-  read uses `pread` and fails with `ESPIPE`. The raw pinned-musl witness is
-  retained at
-  `/workspace/.work/x86_64/tmp/owned-aio.JyQBh7/oracle-fd-reuse.stderr`
-  (attempt 103), and the pre-fix owned static witness at
-  `/workspace/.work/x86_64/tmp/owned-aio.628s2Q/static-fd-reuse.stderr`
-  (attempt 502). The reverse pipe-to-regular-file transition can retain a
+  read uses `pread` and fails with `ESPIPE`. Pinned musl and the pre-fix
+  owned static product both reach this `ESPIPE` witness. The reverse pipe-to-regular-file transition can retain a
   nonseekable queue: the completed one-byte write advances the file offset to
   one, and the subsequent read returns zero at EOF instead of reading the
   byte at offset zero. A controlled inclusion of the exact pinned `aio.c`
@@ -172,22 +165,17 @@ live releases its control block, buffer, and descriptor at the function/exit
 boundary, violating the caller lifetime required by POSIX and by
 `owned_aio.rs`.
 
-The preserved full-campaign raw observation at
-`.work/worktrees/os_test_mode_fix_full_replay/.work/x86_64/tmp/owned-os-test.dkxfi_6t/os-test.json`
-(SHA-256 `0d2fe146d2cbf166838dccdbd964ecf019610e8ffb14af2fac9834469e19e619`)
-records candidate `basic/aio/aio_suspend.out` as `exit: 139` and pinned musl
-as `exit: 0`. That outcome is consistent with the invalid lifetime, but it
-does not identify the exact faulting instruction or prove a runtime AIO defect.
+The full os-test campaign recorded candidate `basic/aio/aio_suspend.out` as
+`exit: 139` and pinned musl as `exit: 0`. That outcome is consistent with the
+invalid lifetime, but it does not identify the exact faulting instruction or
+prove a runtime AIO defect.
 
 `owned_aio_suspend_lifetime_probe.c` keeps the same two-write shape, records
 the terminal count immediately after the single `aio_suspend` return, and
 then drains both controls while their buffer and descriptor remain live. Its
 controlled-pipe branch proves that a second request can remain live after the
-first completion. Pinned musl and all four dynamic supplied-product routes
-recorded `source-shape-completed=1 controlled-second-live=1 drained=2` in
-`.work/worktrees/aio_suspend_regression/.work/x86_64/tmp/owned-aio.7DaVMv`; this is bounded development evidence for
-the fixture boundary, not a promotion or a replacement for a fresh runtime
-build.
+first completion. Pinned musl and all four dynamic supplied-product routes must
+report `source-shape-completed=1 controlled-second-live=1 drained=2`.
 
 `owned_os_test_aio_suspend_source.py` carries the upstream ISC notice and
 admits only those exact frozen source bytes. `owned_os_test.py` leaves the
@@ -198,22 +186,19 @@ Each side has a preparation receipt; the native observation reader requires
 the source hash, prepared hash, preparer hash, replacement map, identical
 side receipts, and prepared copy bytes. This is an audited fixture repair on
 both sides, not a profile waiver or an AIO ABI/state workaround. Earlier v1
-raw os-test reports without this explicit `source_preparation` record remain
-historical evidence and cannot be silently admitted as a repaired aggregate.
+raw os-test reports without an explicit `source_preparation` record are not
+admitted as a repaired aggregate.
 
 The focused native replay materializes the same derivative with its unchanged
 `basic/basic.h`, `misc/errors.h`, and `misc/compile.sh` support inputs. The
 last script supplies its frozen `-Wall`, `-Wextra`,
 `-Werror=implicit-function-declaration`, `-D_GNU_SOURCE`, `-D_BSD_SOURCE`,
 `-D_ALL_SOURCE`, and `-D_DEFAULT_SOURCE` arguments, so the isolated build uses
-the source suite's normal C surface. In
-`.work/worktrees/aio_suspend_regression/.work/x86_64/tmp/owned-aio.7btggs`,
-pinned musl and all four supplied-product dynamic routes (PIE/non-PIE,
-kernel/direct loader) compiled and ran the prepared fixture with status zero
-and empty streams. `owned_aio_evidence.py validate` re-derived its source tree,
-support hashes, preparation receipt, compile flags, links, and execution
-records. This remains bounded development evidence against the supplied
-pre-existing product; it does not qualify a changed runtime build.
+the source suite's normal C surface. Pinned musl and all four supplied-product dynamic routes (PIE/non-PIE,
+kernel/direct loader) must compile and run the prepared fixture with status
+zero and empty streams. `owned_aio_evidence.py validate` re-derives its source
+tree, support hashes, preparation receipt, compile flags, links, and execution
+records.
 
 ## Installed-product evidence
 
@@ -224,33 +209,23 @@ owned products. It also runs focused ordinary behavior, source-deadlock,
 cursor/pin, handoff-cancellation, fresh signal/close, lio-create-failure, and
 wake-all probes.
 
-The fresh component build and run recorded at
-`/workspace/.work/x86_64/tmp/owned-aio.JyQBh7` used the current runtime:
+Run it with:
 
 ```sh
 TMPDIR="$PWD/.work/x86_64" ./scripts/dev-x86_64.sh owned-aio
 ```
 
-It passed pinned musl, owned static and static-PIE, plus owned dynamic PIE and
+It covers pinned musl, owned static and static-PIE, plus owned dynamic PIE and
 non-PIE through both kernel-selected and direct
 `/lib/ld-crabc-x86_64.so.1` interpreter paths. The ordinary transcript covers
 positioned, append, and nonseekable I/O; queued sequencing; close
 cancellation; timeout/interrupted/canceled `aio_suspend`; SIGEV_SIGNAL and
 SIGEV_THREAD notification including callback close and partial `sigevent`
 records; LIO_WAIT/NOWAIT and list failure; and live AIO across fork. The
-wake-all transcript covers eight
-simultaneous suspenders on each source futex route. The source fd-reuse
-observation reached its `ESPIPE` witness in this run; all six owned products
-completed the 512-attempt regular-fd-to-pipe regression. The fresh
-signal/close watchdog completed 128 fresh-descriptor attempts in every static,
-static-PIE, dynamic PIE, and dynamic non-PIE kernel/direct route without a
-handler-close-pending receipt. Its final fixture-only replay is
-`/workspace/.work/x86_64/tmp/owned-aio.fjxdKn`; it reused the unchanged
-static and dynamic products from `owned-aio.JyQBh7` after the bounded event
-receipt was tightened, rather than rebuilding the runtime.
-
-This focused evidence does not promote x86-64 to public support or close the
-broader native campaign.
+wake-all transcript covers eight simultaneous suspenders on each source futex
+route. Every owned product must complete the 512-attempt regular-fd-to-pipe
+regression and the 128-attempt fresh-descriptor signal/close watchdog without a
+handler-close-pending receipt.
 
 ### Retained installed-product receipts
 
@@ -282,5 +257,5 @@ sealed linked consumer, and required `/dev/null` device. Dynamic roots must
 contain every copied product file and the one loader compatibility alias, plus
 exactly the nine copied consumers. Static and pinned-musl roots have their
 fixed consumer rosters. Extra entries, missing files, changed bytes or modes,
-and changed aliases invalidate the receipt. The runner retains failed evidence
-under its checkout-local `.work/x86_64/tmp/owned-aio.*` directory for review.
+and changed aliases invalidate the receipt. The runner keeps failed evidence
+under its checkout-local `.work/x86_64/tmp/owned-aio.*` directory.

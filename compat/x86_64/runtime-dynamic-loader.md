@@ -3,9 +3,8 @@
 The materialized initial dynamic product is the execution substrate, not a
 substitute for runtime loading. `run_general_dynamic_dlopen.sh` reuses the
 ordinary nested plugin consumer, whose plugin and transitive dependency are
-absent from the initial graph. Its original status-10 failure is now replaced
-by an executed installed/extracted runtime-load differential, not a private
-selected-graph callback seam. The complete dynamic campaign remains open.
+absent from the initial graph. It runs as an executed installed/extracted runtime-load differential, not a
+private selected-graph callback seam. The complete dynamic campaign remains open.
 
 The compatibility source is musl 1.2.6, revision
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT:
@@ -153,7 +152,7 @@ AArch64 contract or claim the remaining dynamic-loader family complete.
 
 ## Relocation and coherent TLS generations
 
-`x86_64_general_relocation.rs` now takes borrowed slice-sized scope views and
+`x86_64_general_relocation.rs` takes borrowed slice-sized scope views and
 uses the same lookup, preflight and apply algorithms for initial and runtime
 transactions. Ordinary runtime relocation writes only the new suffix: retained
 maps supply symbols, while only explicitly queued deferred GOT/PLT words may
@@ -193,8 +192,8 @@ over-aligned template/TBSS, unchanged addresses/live values, abandoned
 preparation, old-view readers, bounds and unchanged initial attachment.
 Concurrent acquire readers remain valid during repeated generation
 publication; malformed/gapped/duplicate/overflowing module populations leave
-the live view unchanged. The installed initial-product gate still passes
-through the updated resolver/release path. `PreparedAllThreads` now owns every
+the live view unchanged. The installed initial-product gate passes
+through the same resolver/release path. `PreparedAllThreads` owns every
 unpublished per-thread view under the mutation guard: partial failure drops
 only new views and leaves every live descriptor untouched. Successful admission
 publishes all views before making new object scope observable.
@@ -207,9 +206,7 @@ filesz/memsz, alignment/phase, duplicate-TLS and initialized-prefix checks
 remain active. This follows musl 1.2.6 `map_library` and initial main-template
 admission in `ldso/dynlink.c`. `general_dynamic_tbss.c` proves a filesz-zero,
 8192-byte, 4096-aligned main template outside every LOAD extent, with distinct
-zero-filled worker storage in installed PIE/non-PIE processes. The same
-ordinary executable failed at `mainelf` with status 127 before the parser fix;
-the musl oracle and corrected candidate print the same result. Legacy general
+zero-filled worker storage in installed PIE/non-PIE processes. The musl oracle and the candidate print the same result. Legacy general
 initial-TLS negative cases still reject malformed prefixes before FS changes.
 
 ## One executing runtime registry
@@ -437,8 +434,7 @@ absolute relocation leaving old GOT bytes/object count/visibility unchanged,
 LOCAL versus GLOBAL promotion, preexisting-worker GD TLS, retained close, and
 read-only GOT protection after completion. PLT output is a musl differential;
 the GOT/RELRO fault versus success is the isolated safety correction above.
-The prior retained loader rejects the same lazy consumer with status 2 before
-callbacks. The complete dynamic campaign and broader introspection/order
+The complete dynamic campaign and broader introspection/order
 qualification remain open. Main/last-thread process exit is qualified by the
 separate installed `run_general_dynamic_pthread_exit.sh` consumer.
 
@@ -568,11 +564,10 @@ and unmounts proc and removes temporary setuid bits on completion or failure.
 The coordinator's dedicated materialized-loader dispatcher supplies only
 that command's additional namespace-mount authority.
 
-The preceding fixed search returned status 2 for a dependency available only
-through main ancestry or `/lib`, and 7 instead of the preloaded 8. Initial
-breadth-first identity selection separately failed with 8 instead of 7. The
-retained regressions now match musl. Direct interpreter command-line entry
-now reuses this policy for owned PIE and non-PIE executables. Its independent
+The fixed search regressions cover a dependency available only through main
+ancestry or `/lib`, a preloaded identity (8, not 7), and initial breadth-first
+identity selection (7, not 8); all match musl. Direct interpreter command-line
+entry reuses this policy for owned PIE and non-PIE executables. Its independent
 main-image role, transaction mapping ownership, stack/auxv handoff, options,
 listing and relocated-interpreter prefix behavior are specified and tested
 in [direct-interpreter.md](direct-interpreter.md).

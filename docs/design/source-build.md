@@ -1,8 +1,11 @@
 # Source-build design
 
-## Purpose and current boundary
+## Purpose and boundary
 
-The completed Lua 5.4.8 gate proves that a nontrivial upstream C application
+This page describes both Lua source-build lanes. The AArch64 lane
+(`./scripts/dev.sh lua`) is paused; the native x86-64 lanes are active.
+
+The Lua 5.4.8 gate proves that a nontrivial upstream C application
 graph can compile, link, extend dynamically, and run through the installed
 Linux/AArch64 crabc sysroot. Its canonical command is:
 
@@ -23,23 +26,18 @@ C extensions are application inputs, not target-runtime implementation code.
 
 The target-runtime purity boundary is deliberately split:
 
-| Claim | Current result | Meaning |
-| --- | --- | --- |
-| CRT/sysroot purity | Passed | The Rust CRT, builtins archive, installed runtime inputs, driver, and final Lua links are owned and audited. |
-| Complete target-runtime purity | Blocked by native allocator | `libmimalloc-sys` remains the current libc allocator backend. The report records this rather than calling the complete runtime pure. |
+| Claim | Meaning |
+| --- | --- |
+| CRT/sysroot purity | The Rust CRT, builtins archive, installed runtime inputs, driver, and final Lua links are owned and audited. |
+| Complete target-runtime purity | Blocked by the native allocator while `libmimalloc-sys` is the libc allocator backend. The report records this rather than calling the complete runtime pure. |
 
 `compat/reports/sysroot/latest.json` and the installed
 `share/crabc/purity.json` are the machine-readable records. See
 [`crt-and-sysroot.md`](crt-and-sysroot.md) for the production/runtime design.
 
-## Historical adapter evidence
-
-Earlier Lua adapter-sysroot lanes that borrowed a musl CRT are retained only
-as historical differential evidence. They are neither the default build path
-nor evidence for the installed crabc sysroot, and they must not be used to
-turn a missing crabc startup or runtime input into a passing candidate result.
-Musl continues to be the behavior oracle in the explicitly separate reference
-lane described below.
+Adapter-sysroot lanes that borrow a musl CRT are not a build path or evidence
+for the installed crabc sysroot; musl is only the behavior oracle in the
+reference lane below.
 
 ## Lua build graph
 
@@ -147,7 +145,7 @@ only, never a performance result.
 
 ## Future source-build work
 
-CPython remains unimplemented. Its activation conditions and narrow
-acceptance contract are in [`plan.md`](../../plan.md#deferred-work).
-It starts from this owned-sysroot boundary; it must not introduce a portability
-layer, a package-management framework, or unproved optional dependencies.
+CPython is not implemented. Its activation conditions and acceptance contract
+are in [`plan.md`](../../plan.md). It starts from this owned-sysroot boundary;
+it must not introduce a portability layer, a package-management framework, or
+unproved optional dependencies.

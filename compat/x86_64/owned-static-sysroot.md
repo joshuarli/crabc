@@ -284,7 +284,7 @@ standard streams, forwarded va_lists, long strings, and allocated results.
 The digest-checked wide parser source and owned FILE callbacks are mapped in
 `owned_wide_format.rs`; there is no foreign FILE representation. Both wide
 probes run unchanged against pinned musl and all four installed product arms.
-The 24 bounded jobs now include separately receipted syscall-cancellation consumers.
+The 24 bounded jobs include separately receipted syscall-cancellation consumers.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
@@ -398,7 +398,7 @@ runner-owned directory beneath `.work/`. Pending `open`, `openat`, and `creat`
 requests cancel before creating or truncating a file, while disabled requests
 retain mode selection and close-on-exec behavior. FIFO opens and a child-held
 POSIX record lock establish actual blocking cancellation boundaries. The owned
-`fcntl` dispatch now admits `F_SETLKW`; standalone archive selections retain
+`fcntl` dispatch admits `F_SETLKW`; standalone archive selections retain
 their prior rejection. `F_GETLK`, `F_SETLK`, and descriptor/status commands
 remain non-canceling, including masked requests. Handled signals preserve the
 source's `EINTR`/`SA_RESTART` behavior for FIFO opens and blocking locks. The
@@ -436,7 +436,7 @@ validation order. Signal masks remain intact through user cleanup.
 
 `owned_semaphore_wait_cancellation_probe.c` isolates the source's mandatory
 cancellation check before consuming an available token. Its companion
-`owned_semaphore_cancellation_probe.c` qualifies owned `sem_wait` and the new
+`owned_semaphore_cancellation_probe.c` qualifies owned `sem_wait` and the
 owned-only `sem_timedwait` in every TLS job. Waiter accounting uses explicit
 pthread cleanup registration because signal-driven cancellation bypasses Rust
 Drop. Tests check cleanup-before-user ordering, multiple waiters after one is
@@ -510,7 +510,7 @@ CNAME answers, and missing-name behavior. Each fixture reserves a distinct
 loopback DNS address and uses a private chroot configuration; the concurrent
 isolation check also occupies the former shared endpoint and verifies early
 failure reaps the server. This proves no external DNS behavior or full resolver
-family closure. Both modes and extracted copies now run in the same bounded
+family closure. Both modes and extracted copies run in the same bounded
 24-job consumer matrix. Cold producer reproducibility remains a separate
 mandatory check; serial-versus-parallel timing is opt-in, not extra default work.
 

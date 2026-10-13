@@ -48,10 +48,8 @@ not proof of a deterministic interruption at a particular locked instruction.
 The child inspects captured robust storage directly rather than invoking a
 non-async-signal-safe mutex operation.
 
-Before implementation the common installed object linked against pinned musl
-but failed the owned static link with `undefined symbol: _Fork` at its ordinary
-and error-case call sites. The existing clone/process-trio, ordinary atfork and
-worker TLS evidence must accompany the new matrix after shared-owner changes.
+The existing clone/process-trio, ordinary atfork and worker TLS evidence must
+accompany this matrix after shared-owner changes.
 AArch64 and the frozen private archive retain their existing paths.
 
 The `underscore-fork` case is required for all three dynamic products. Its

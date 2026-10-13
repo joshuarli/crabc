@@ -21,14 +21,9 @@ these fixtures. The pinned toolchain's prebuilt `core` is compiled for
 unwinding, and its bundled object carries `DW.ref.rust_eh_personality`; the
 C runtime deliberately leaves that personality to Rust std, so the
 freestanding final link fails with an undefined `rust_eh_personality`.
-The existing target-runtime archive is not a valid closed input for that
-fixture.  The retained `da2` diagnosis records one `alloc` object, one `core`
-object, and seventeen `compiler_builtins` objects with an undefined
-`rust_eh_personality`; the old final
-`-nostdlib -static --no-undefined --gc-sections` link selected a `core` object
-and failed before the probe.  The raw archive list is an input diagnostic, not
-a reachability result: it does not identify which of the remaining archive
-members a garbage-collected final link would select.
+A raw archive member list is an input diagnostic, not a reachability result:
+it does not identify which archive members a garbage-collected final link
+would select.
 
 The source-runtime builder replaces that **entire three-crate runtime set**
 with one source-built Cargo graph. It must never splice a source `core` or `alloc`
@@ -41,9 +36,9 @@ and final-link inputs establish provenance.
 
 ## Source graph and profile
 
-The development producer will create private state below
-`.work/x86_64/native-mimalloc-shadow-pthread-teardown/run.*/source-runtime-*/`
-and invoke the pinned nightly's Cargo once for `crabc-libc`, using the existing
+The development producer creates private state below
+`.work/x86_64/tmp/source-runtime-libc.*` (removed on success, retained on
+failure) and invoke the pinned nightly's Cargo once for `crabc-libc`, using the existing
 workspace lock and an authenticated offline vendor view.  Networked staging uses
 pinned-image `cargo fetch --locked`, then pinned-image `cargo vendor --locked
 --offline --versioned-dirs` to materialize the complete checked workspace
@@ -162,8 +157,8 @@ runtime built with `panic=immediate-abort` bypasses that handler for a Rust
 panic and terminates immediately through the compiler's abort path.  The
 fixture has no supported Rust-panic entry point, so this is a deliberately
 observable development-profile difference rather than an asserted C/POSIX
-behavior change.  A retained controlled-panic witness must record the
-termination behavior before any product builder can adopt this profile.
+behavior change.  A controlled-panic witness must record the termination behavior before any
+product builder can adopt this profile.
 
 No installed static or dynamic product, C ABI panic policy, Rust consumer
 unwinder/provider contract, or current descriptor lifecycle claim changes

@@ -509,21 +509,19 @@ Keep `global_asm!` for cases which genuinely require translation-unit-level asse
 
 ## 18. Centralize architecture-specific assembly
 
-Linux AArch64 knowledge should live in obvious modules such as:
+Architecture knowledge lives in the per-architecture module trees:
 
 ```text
-arch/aarch64/syscall.rs
-arch/aarch64/start.rs
-arch/aarch64/signal.rs
-arch/aarch64/tls.rs
+libc/src/c_abi/aarch64/
+libc/src/c_abi/x86_64/
 ```
 
 Do not scatter:
 
 ```text
-svc #0
+svc #0, syscall
 register assignments
-AArch64 constants
+architecture constants
 special register access
 ```
 
@@ -1613,7 +1611,7 @@ Coding style must reinforce the project scope:
 
 ```text
 Linux >= 5.10
-AArch64 first
+AArch64 and x86-64 only
 no NSS
 C/POSIX + C.UTF-8 locales
 no legacy charset museum

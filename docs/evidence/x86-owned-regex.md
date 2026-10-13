@@ -91,10 +91,9 @@ invalid surrogate/out-of-range encodings), so `REG_ICASE` and `C.UTF-8`
 classification are compared on the parallel matcher. Directed locale edges
 compile and execute under a `uselocale` thread locale while the global locale
 stays `C`, execute patterns compiled under one locale in the other, and read
-`regerror` text there. Other `CORPUS_SEED` values also reach the drift
-difference above: every divergence found in the alternative seeds tried was a
-musl match whose offsets extend past the subject terminator, where the port
-reports no match. Each owned executable's
+`regerror` text there. Other `CORPUS_SEED` values can reach the drift
+difference above: a musl match whose offsets extend past the subject
+terminator, where the port reports no match. Each owned executable's
 stdout and stderr must exactly match the pinned musl execution. The retained object has
 exactly one undefined public row for each of `regcomp`, `regexec`, `regerror`,
 and `regfree`; pinned musl, the static archive and linked static entries, and

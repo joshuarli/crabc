@@ -8,10 +8,11 @@ not allocator promotion or public x86 support.
 
 The loader owns mappings, ELF metadata and TLS coordinates. Its
 `GeneralLoaderLibcTlsRuntimeV1` handshake has no allocator pointer or allocator
-ownership transfer. `x86_64_initial_graph.rs` and
-`x86_64_general_initial_tls_state.rs` allocate their storage through raw Linux
-mapping syscalls. After the validated initial TLS handshake and installation
-of environment/auxv/security state, `owned_dynamic_runtime::prepare` initializes
+ownership transfer. `ldso/src/x86_64_initial_graph.rs` and
+`ldso/src/x86_64_general_initial_tls_state.rs` allocate their storage through
+raw Linux mapping syscalls. After the validated initial TLS handshake and
+installation of environment/auxv/security state,
+`libc/src/c_abi/x86_64/owned_dynamic_runtime.rs`'s `prepare` initializes
 libc's native process owner and dormant initial arena before constructors.
 Failure terminates startup; it never substitutes the C allocator.
 `pthread_create_join` retains its selected native attach/finish handshake. A
@@ -22,16 +23,17 @@ The finalizer remains an entry in **libc's own `.fini_array`**. The accepted C
 oracle is `libmimalloc-sys` 0.1.49's bundled v3.3.2
 `c_src/mimalloc/v3/src/prim/prim.c`: its compiler destructor calls
 `_mi_auto_process_done`. The owned producer suppresses only that transport with
-`MI_PRIM_HAS_PROCESS_ATTACH=1`; `allocator_mimalloc_lifecycle.rs` replaces it in
-the same image. The native v3.5.0 source pin and port mapping remain in
-`crabc-mimalloc/UPSTREAM.md`. This comparison establishes lifecycle transport,
+`MI_PRIM_HAS_PROCESS_ATTACH=1`; `libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs`
+replaces it in the same image. The native v3.5.0 source pin and port mapping remain in
+[`crabc-mimalloc/UPSTREAM.md`](../../crabc-mimalloc/UPSTREAM.md); the shared
+allocator design is in [`allocator.md`](allocator.md). This comparison establishes lifecycle transport,
 not equivalence between the two allocator versions.
 
-`dynamic_main_thread_runtime_v1_lifecycle::exit` runs user atexit handlers,
+`libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs`'s `exit` runs user atexit handlers,
 executable fini, loader dependency fini, then stdio flush. Thus a DSO depending
 on libc finalizes before libc; an independent DSO can finalize after libc.
 Moving native process-done after all DSO or stdio callbacks would change the
-source ordering. Instead `native_mimalloc_lifecycle.rs` preserves the same-image
+source ordering. Instead `libc/src/c_abi/x86_64/native_mimalloc_lifecycle.rs` preserves the same-image
 finalizer and source default-release backing retention, allowing subsequent
 DSO and buffered-stream callbacks to allocate. This does not select the
 separate destroy-on-exit path or retire arenas with live owners.

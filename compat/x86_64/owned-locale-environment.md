@@ -34,12 +34,6 @@ unsupported environment name separately from musl differential behavior.
 The `object` scenario isolates `newlocale` from the earlier `setlocale`
 regression. Native reports must keep those scenarios distinct.
 
-Initial same-installed-object development regressions against frozen
-`26dfb153` products passed pinned musl and failed the candidate at status 10
-(`setlocale`) and status 20 (`newlocale`). These receipts are retained in the
-parent checkout under `.work/x86_64/locale-environment-regression/`; the
-regressions do not qualify the frozen products or complete `locale.core`.
-
 `owned_locale_probe.c` includes these assertions in the one installed-header
 object used by `run_owned_locale.sh`. The v3 reader seals the shared source,
 requires its exact compiler include trace, and admits no other checkout source

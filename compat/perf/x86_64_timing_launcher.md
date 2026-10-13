@@ -79,12 +79,14 @@ It also passes a real low and high non-close-on-exec descriptor through Python
 `pass_fds` and requires the direct client to observe both exact descriptor
 numbers as closed after `close_range(2)`.
 
-Run it in the pinned native image:
+Run it in the pinned native image (`core_image.py` prints the immutable image ID the dispatcher launches;
+`perf-c-test` does not cover this test or smoke, so there is no dispatcher
+form):
 
 ```bash
 docker run --rm --init --platform linux/amd64 --network none --cap-add=SYS_CHROOT \
   --workdir /workspace --env PYTHONDONTWRITEBYTECODE=1 \
   --env TMPDIR=/workspace/.work/x86_64/tmp --volume "$PWD:/workspace" \
-  crabc-core-evidence:x86_64 python3 -B \
+  "$(python3 -B compat/x86_64/core_image.py)" python3 -B \
   compat/perf/tests/run_x86_64_timing_launcher_smoke.py
 ```

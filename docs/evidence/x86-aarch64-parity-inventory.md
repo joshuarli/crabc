@@ -1,4 +1,4 @@
-# Derived x86-64/AArch64 parity inventory
+# x86-64/AArch64 parity inventory
 
 `compat/x86_64/aarch64_parity_inventory.json` is a checked snapshot generated
 from the AArch64 semantic-capability ledger, its pinned musl ABI/header oracle,
@@ -32,7 +32,7 @@ a malformed ledger from turning an unrelated or unproven capability into
 `selected-private` when the inventory runs on its own; they do not make that
 state a completion or promotion decision.
 
-The report also checks the 183 pinned public header paths against the AArch64
+The report also checks the pinned public header paths against the AArch64
 musl header oracle and records the selected x86 static-export ratchet only as
 boundary evidence. Neither measure establishes C ABI or runtime parity.
 

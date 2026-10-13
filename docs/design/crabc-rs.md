@@ -53,11 +53,6 @@ documented as ABI-only, Rust-subsumed, internal runtime, or the allocator scope
 exception. Do not turn a documented C group into a native API merely to raise
 a wrapper count.
 
-The exact classification and scope limits for deferred groups are in
-[`compat/crabc-rs/coverage.toml`](../../compat/crabc-rs/coverage.toml); the
-current completion frontier is in the Progress status section of
-[`plan.md`](../../plan.md), and acceptance remains in the relevant contract.
-
 ## Bounded netdb snapshots
 
 `crabc_rs::netdb` provides immutable owned snapshots for `/etc/hosts`,
@@ -586,7 +581,7 @@ Normal dependencies must be small, mature, focused, pure Rust where practical,
 and compatible with the `no_std`/LTO boundary. Before adding one, document its
 primitive, why `core`/`alloc` is insufficient, normal transitive graph,
 proc-macros/build scripts/native code, allocation/global state, `no_std`
-status, and LTO effect; obtain user approval unless already explicitly given.
+status, and LTO effect. Selection is implementation judgment, not an approval round trip.
 
 No cryptography is hand-written. The C `crypt(3)` compatibility slice uses
 RustCrypto `sha-crypt`; its limits and dependency review live in

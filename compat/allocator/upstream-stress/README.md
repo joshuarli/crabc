@@ -1,5 +1,7 @@
 # Canonical upstream `test-stress.c` lane
 
+Paused AArch64 harness: it targets Linux/AArch64 and runs through `scripts/dev.sh allocator-upstream`. The x86-64 stress lanes are `allocator-upstream-heap-stress` and `allocator-upstream-subprocess-stress` in [`../README.md`](../README.md).
+
 `run.py` is the canonical, source-unmodified upstream stress lane for the
 selected `native-mimalloc-shadow` `crabc-libc`. It extracts the SHA-256-pinned
 mimalloc v3.5.0 archive and compiles its exact `test/test-stress.c` member with

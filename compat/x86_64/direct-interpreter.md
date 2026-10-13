@@ -110,17 +110,15 @@ no musl equivalent; the ordinary command matrix retains its musl comparison.
 Run this focused component with
 `./scripts/dev-x86_64.sh owned-loader-libc-identity DYNAMIC_SYSROOT`.
 
-The original ordinary musl invocation passed while the installed candidate
-segfaulted with `AT_BASE=0`, exit 139. The direct-main rollback test then failed
-because only the dependency was released; the fixed owner releases main last.
-The relocated-prefix regression failed at graph admission before interpreter
-prefix selection was implemented. The source suite additionally reserves a
-real mapping, attempts colliding non-PIE admission, and checks that the
-original mapping and contents survived.
+The direct-main rollback test requires that the owner release main last, not
+only the dependency. The relocated-prefix regression requires graph admission
+to succeed before interpreter prefix selection. The source suite additionally
+reserves a real mapping, attempts colliding non-PIE admission, and checks that
+the original mapping and contents survived.
 
-The first listing comparison exposed basename-only output where musl prints
-the original pathname request. All three pathname/alias cases failed before
-`initial_load_name_is_short` preserved the first admission's name form,
-independently of the later mutable short-name search alias. The focused runner
+The listing comparison requires the original pathname request, as musl prints
+it, not a basename. `initial_load_name_is_short` preserves the first
+admission's name form, independently of the later mutable short-name search
+alias. The focused runner
 can select one case with `CRABC_GENERAL_DYNAMIC_CLI_CASE`; the aggregate always
 runs the full matrix.

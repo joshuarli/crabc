@@ -73,10 +73,7 @@ strong and weak spelling with ordinary, null, and protected ignored inputs,
 checks byte-for-byte preservation of caller records and errno, verifies both
 name entries return `-1` with `ENOTSUP`, and retains the observed musl
 `pututxline` call with errno initially zero. Every candidate stream must match
-the pinned musl stream. The original preimplementation RED remains recorded at
-`.work/x86_64/tmp/owned-utmpx.DSceUc`, where the installed-header workload
-failed to link on the six original utmpx names; the expanded source-file slice
-also covers the remaining aliases captured by the final provider checks.
+the pinned musl stream. The source-file slice also covers the aliases captured by the final provider checks.
 
 `compat/x86_64/tests/test_owned_utmpx.py` covers argument ambiguity, product
 containment, and the physical evidence-directory boundary without building a
@@ -105,14 +102,12 @@ python3 -B compat/x86_64/owned_utmpx_receipt.py collect \
 ```
 
 It is invoked only from the pinned native `/workspace` mount. The image is the
-fixed `crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
+fixed `PINNED_IMAGE_ID` in `owned_utmpx_receipt.py`.
 `owned_utmpx_current_image_inputs.json` is a finite generated manifest of that image's
 runner commands, compiler support programs, musl oracle inputs, Rust compiler,
 and LLD. The older image's `owned_utmpx_image_inputs.json` remains frozen. The current
 manifest authenticates newly collected inputs; it does not admit products or
-receipts produced under another image. Read-only inspection of the restored
-image found identical compiler and pinned-musl inputs, while Python's executable
-bytes changed and are recorded with their actual digest.
+receipts produced under another image.
 Collection regenerates the current manifest inside the exact image before
 and after the runner; the collector refuses a mismatch. It also refuses a
 dirty source revision, same or symlinked product inputs, a static preparation

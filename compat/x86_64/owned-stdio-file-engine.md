@@ -139,8 +139,8 @@ with this fixture authority. It selects the existing dynamic-loader mount
 container policy with `SYS_CHROOT`, `SYS_ADMIN`, and AppArmor unconfined; it does
 not select a privileged container or change the earlier `owned-stdio` route.
 
-A development replay may bind the frozen `26df` supplied static/dynamic products
-read-only under `.work/frozen-26df`. Its report seals the current consumer source
+A development replay may bind supplied static/dynamic products from an earlier
+source revision read-only. Its report seals the current consumer source
 and the exact frozen product trees before and after the run. That mixed-epoch
 result is development evidence only: it is neither a same-source qualification
 nor stdio-family promotion.

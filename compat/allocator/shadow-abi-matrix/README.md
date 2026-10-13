@@ -1,5 +1,7 @@
 # Paired native-shadow C ABI matrix
 
+Paused AArch64 harness: `scripts/dev.sh allocator-shadow` is the AArch64 route, not the active x86 one.
+
 This harness compares the public local C allocation semantics of two distinct
 `crabc-libc` artifacts:
 

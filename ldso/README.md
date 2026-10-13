@@ -1,5 +1,7 @@
 # crabc-ldso
 
+> The Linux/AArch64 route this page describes is paused; native x86-64 is the active target (see `./scripts/dev-x86_64.sh --help`).
+
 A `no_std` Rust dynamic linker (`ldso`) for crabc's focused Linux AArch64
 musl-compatible runtime profile. It produces `libldso.so`, which can be used
 as `--dynamic-linker` for selected unmodified musl-linked executables.

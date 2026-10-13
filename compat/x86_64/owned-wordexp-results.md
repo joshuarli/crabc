@@ -69,7 +69,7 @@ record, so a later `WRDE_REUSE | WRDE_DOOFFS` call retains the caller's
 sentinel, allocates one exact NUL-terminated C string, validates that the
 iterator yields exactly `byte_len` non-NUL bytes, and only then accepts that
 word into the staging vector. Short, long, or NUL-containing streams free the
-new string without accepting it. This avoids the former repeated
+new string without accepting it. This avoids a repeated
 indexed-byte scan that would copy atom-backed words in quadratic time.
 
 `WordexpResultTransaction::begin()` is unsafe because it takes a raw C record.
@@ -121,6 +121,4 @@ sole result transaction. The selected C binding already supplies the engine
 sink, C status mapping, REUSE policy, cancellation envelope, and process/path
 owners; this private check still does not establish installed C ABI/public
 promotion or family/platform completion. Direct C/product POSIX/musl evidence
-remains the separate validation boundary. Earlier focused results are retained
-as provenance for these transaction invariants, not installed-product PASS
-results.
+remains the separate validation boundary.

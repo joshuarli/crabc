@@ -10,8 +10,7 @@ This module translates musl 1.2.6 release commit
 `COPYRIGHT`. `src/exit/at_quick_exit.c::{at_quick_exit,__funcs_on_quick_exit}`
 maps to the fixed registry and drain, while
 `src/exit/quick_exit.c::quick_exit` maps to its final `_Exit` dispatch. The
-source archive is pinned by `compat/upstreams.toml`; the development copy is
-kept under `.work/x86_64/source-oracles/`.
+source archive is pinned by `compat/upstreams.toml`.
 
 The registry retains musl's 32 function-pointer slots and count. Its private
 one-word guard uses the source `__lock`/`__unlock` sign-bit congestion state,

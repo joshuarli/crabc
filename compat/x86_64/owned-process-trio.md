@@ -98,10 +98,9 @@ nested adopted robust-list preservation, restricted shared-VM callback,
 non-VM clone sharing of kernel descriptor and filesystem tables,
 vfork shared-memory suspension and exec, daemon sessions and intermediate
 child reaping, directory/descriptor options, missing `/dev/null`, and denied
-fork/vfork/clone syscalls. The nested robust regression first passed musl and
-failed the owned static product because resetting an already adopted main
-lost its linked head; the shared robust helper now preserves that head while
-clearing only registration offset and pending state.
+fork/vfork/clone syscalls. The nested robust case pins that resetting an
+already adopted main preserves its linked head: the shared robust helper
+clears only registration offset and pending state.
 
 This evidence does not claim namespace creation, arbitrary application locks
 held across clone/fork, loader mutation racing clone, AIO, or expansion of the

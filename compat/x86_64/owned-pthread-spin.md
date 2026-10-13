@@ -21,8 +21,7 @@ main task publish a counter and its complement through a private lock; a
 parent and fork child repeat the publication through shared anonymous memory.
 The child first observes `EBUSY` while its parent holds the lock. The workload
 also checks trylock/release, errno preservation, and quiescent destruction.
-Before owned selection, musl passed and the owned link failed on the three
-missing operations. Contention tests establish behavior, not fairness or
+Contention tests establish behavior, not fairness or
 performance qualification.
 
 `run_owned_pthread_spin.sh` accepts an existing dynamic product for the

@@ -1,12 +1,11 @@
-# Historical initial-graph worker TLS foundation
+# Initial-graph worker TLS allocation token
 
-This page records the original fixed-graph worker TLS component. Its no-growth
-boundary and 32-byte CRT handoff below describe that historical stage. Current
-installed ownership, runtime TLS generations, and worker reclamation are
-defined in [prepared-worker-tls.md](prepared-worker-tls.md) and
+This page defines the process-private worker TLS allocation token and its
+no-growth boundary. Installed ownership, runtime TLS generations, and worker
+reclamation are defined in [prepared-worker-tls.md](prepared-worker-tls.md) and
 `loader-libc-tls-runtime-v1.toml::owned_runtime`, including its 144-byte CRT
 carrier. The 32-byte worker allocation token and 72-byte initial TLS descriptor
-remain distinct current contracts.
+remain distinct contracts.
 
 The installed dynamic component selects `x86_64-owned-dynamic-runtime` in
 ldso. It retains the established arbitrary admitted initial graph, its module
@@ -14,7 +13,7 @@ IDs, Variant-II offsets, relocated templates and initial TLS generation. This
 does not introduce runtime module growth, DTV replacement or module unloading.
 The 72-byte RuntimeV1 and 32-byte OwnedCrtHandoff are unchanged.
 
-`ldso/src/x86_64_initial_graph.rs::materialize_initial_tls` now owns allocation
+`ldso/src/x86_64_initial_graph.rs::materialize_initial_tls` owns allocation
 and template copying without installing FS. Initial startup wraps it with the
 existing once-only ARCH_SET_FS; workers receive its TP through CLONE_SETTLS.
 The initialized template, zeroed TBSS, DTV slots and module-size table are
@@ -49,12 +48,5 @@ General relocation preflight recognizes only the exact private function names,
 undefined strong/default function-or-NOTYPE requests, zero-addend GOT/PLT
 relocations. Existing weak/main-only RuntimeV1 and CRT wire checks stay intact.
 
-Native evidence at this component boundary: the general RuntimeV1 source root
-with the installed loader feature and lifecycle cfgs passes 33 tests, including actual mmap
-ownership regressions for wrong span, wrong TP, stale ID and double release,
-plus independent over-aligned template/TBSS/DTV copies with unchanged FS and
-rejection of malformed private function imports before any graph write;
-the unchanged `run_general_dynamic_lifecycle.sh` still passes ordinary PIE,
-musl callback ordering, malformed handoffs, entropy guard and one-FS-install
-checks. Installed worker and package evidence belongs to the materialized
-dynamic sysroot gate; these unit results alone do not complete that product.
+Installed worker and package evidence belongs to the materialized dynamic
+sysroot gate ([materialized-dynamic-sysroot.md](materialized-dynamic-sysroot.md)).

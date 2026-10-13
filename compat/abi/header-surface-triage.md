@@ -3,15 +3,14 @@
 The ABI probe derives its compile-coverage inventory from
 `/opt/musl-1.2.6/include` (excluding musl's private `bits/` tree), then
 compiles an empty translation unit containing each pinned header and its
-candidate counterpart. The 74 pinned-only names found before this closure
-pass are triaged below. A `compile_ok` record proves only that the compiler can
+candidate counterpart. The pinned-only names are triaged below. A `compile_ok` record proves only that the compiler can
 consume both headers; it is not a claim of declaration, constant, macro, or
 layout parity, and it does not claim that a declaration-only header supplies a
 missing libc implementation.
 
-## Added now: public declaration and constant surface (39)
+## Public declaration and constant surface
 
-These headers now carry the pinned musl 1.2.6 AArch64 declaration and
+These headers carry the pinned musl 1.2.6 AArch64 declaration and
 constant surface (including necessary private `bits/` type definitions) rather
 than an empty compatibility shim. They either have no libc entry point or
 forward to an already-public candidate interface. The focused
@@ -30,7 +29,7 @@ every declared kernel or protocol operation has runtime coverage.
 `sys/syslog.h`, `sys/sysmacros.h`, `sys/termios.h`, `sys/ttydefaults.h`,
 `sysexits.h`, `values.h`, `wait.h`.
 
-## ABI declarations backed by existing crabc exports (18)
+## ABI declarations backed by existing crabc exports
 
 These headers expose entry points already implemented in the candidate
 library.  They are separate from the declaration-only group so symbol parity
@@ -47,9 +46,9 @@ does not get mistaken for implementation work.
 `sys/timerfd.h` (`timerfd_*`), `sys/vfs.h` (the `sys/statfs.h` view),
 `stdio_ext.h` (the `__f*` stream-state functions), and `utime.h` (`utime`).
 
-## Runtime follow-up boundaries (19)
+## Runtime follow-up boundaries
 
-All of these now have candidate declarations. They remain runtime follow-up
+All of these have candidate declarations. They are runtime follow-up
 records where a declaration is backed by a kernel/protocol behavior not yet
 exercised by a focused workload. The probe supplies the native Linux UAPI
 include directory for headers that depend on kernel declarations.
@@ -67,18 +66,16 @@ include directory for headers that depend on kernel declarations.
 
 ## Evidence
 
-Run the native probe with its report outside the source tree:
+Run the native probe with its report under `.work/tmp`:
 
 ```sh
-./scripts/dev.sh abi-probe --probe stat --output /tmp/crabc-aarch64-abi.json
+./scripts/dev.sh abi-probe --probe stat --output .work/tmp/crabc-aarch64-abi.json
 ```
 
 The full matrix is the default when `--probe` is omitted.  The generated
 report records the pinned/reference header count, candidate counterpart count,
 candidate-only headers, every per-header compile status, and header-specific
-archive symbol evidence. The closure pass measured 183 pinned headers, 190
-candidate headers, 183 `compile_ok` records, zero missing candidate counterparts,
-and 7 candidate-only headers.  The report records the required native Linux
+archive symbol evidence.  The report records the required native Linux
 UAPI input at `inputs.linux_uapi` (default `/usr/include`) and passes it to
 both reference and candidate header compilation; a missing UAPI directory
 remains an explicit `missing_input` failure.

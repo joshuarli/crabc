@@ -43,6 +43,5 @@ exists with `./scripts/dev-x86_64.sh image`:
 bash /workspace/builtins/run_x86_64_addoti4.sh
 ```
 
-The runner stays standalone while the shared x86 dispatcher is in active
-stdio integration.  This leaf does not promote public x86 support, alter
+The runner is standalone: `scripts/dev-x86_64.sh` has no subcommand for it.  This leaf does not promote public x86 support, alter
 archive admission, or select `__suboti4` or `__muloti4`.

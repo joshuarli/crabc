@@ -138,7 +138,8 @@ blanket `-Bsymbolic` policy.
 The actual shared libc and loader must have no NEEDED, PT_INTERP, TEXTREL or
 absolute 32-bit dynamic relocations, and must have RELRO and an NX stack.
 The exact one-member `libcrabc-builtins.a` is also linked into libc only for
-private compiler-generated calls. Its 23 bounded helper definitions are made
+private compiler-generated calls. Its bounded helper definitions (the roster in
+[`builtins/x86_64-helper-contract.toml`](../../builtins/x86_64-helper-contract.toml)) are made
 local with `--exclude-libs=libcrabc-builtins.a`; the separately installed
 archive remains the ordinary provider for applications and application DSOs.
 Every application link records hashed inputs, exact command and checked LLD
@@ -295,12 +296,11 @@ dynamic PIE/non-PIE images. Each
 worker's initial errno is still required to be zero, independent of the
 main's live errno.
 
-The first actual libc exposed 648 RELA entries, exceeding the legacy 512-write
-scratch buffer. General relocation preflight now owns checked ELF-sized raw
-mmap scratch, with no libc allocation or arbitrary new limit. Regression tests
-cover 1025 RELA writes, 600 RELR entries, and size overflow rejected before
-any graph write. Legacy private roots retain their
-bounded admission. Allocation failure aborts the uncommitted initial graph.
+General relocation preflight owns checked ELF-sized raw mmap scratch, with no
+libc allocation or arbitrary new limit; the libc's RELA count exceeds the
+legacy 512-write scratch buffer. Regression tests cover 1025 RELA writes, 600
+RELR entries, and size overflow rejected before any graph write. Legacy
+private roots retain their bounded admission. Allocation failure aborts the uncommitted initial graph.
 
 The gate also runs an ordinary ELF memory-interposition consumer through both
 installed and extracted drivers. The application exports `memcpy`/`memset`,
@@ -309,15 +309,15 @@ executable. No application memory callback may run in the shared-address-space
 child or during lock-held spawn stack setup; neither child nor parent uses an
 ambient target executable.
 
-The component gate also runs 46 loader tests, 18 driver/package and two CRT-mode
-boundary tests. Two cold producer manifests and deterministic package bytes
+The component gate also runs the loader, driver/package and CRT-mode boundary
+tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.
 
 `run_general_dynamic_dlopen.sh INSTALLED_SYSROOT` is the independent
 ordinary regression, reusing the portable nested plugin fixtures without an
 initial dependency. Its nested plugin, 41-module worker TLS/lifecycle, scope
-and rollback consumers now run through installed and extracted products with
+and rollback consumers run through installed and extracted products with
 pinned musl differentials for both PIE and non-PIE entry. Initial/runtime-loaded constructors that call exit
 must skip their own incomplete destructor, while completed objects finalize;
 `run_general_dynamic_constructor_exit.sh` checks both installed product arms.
@@ -347,7 +347,7 @@ extracted sysroots. Both startup paths publish the auxiliary vector used by
 `pthread_attr::pthread_getattr_np`; workers retain their actual application
 stack metadata independently of loader TLS storage. The initial executable's
 pure-TBSS TLS fixture ensures caller-stack checks do not depend on a guessed
-musl TLS/control size. Both dynamic entries now include fork adoption through
+musl TLS/control size. Both dynamic entries include fork adoption through
 the complete loader/libc transaction below.
 
 `./scripts/dev-x86_64.sh owned-dynamic-fork` qualifies the loader/libc fork
@@ -406,16 +406,13 @@ probes qualify the selected loader and libc owners, not the whole campaign.
 The shared initial/runtime search matrix proves 37 musl decisions through
 installed/extracted PIE and non-PIE consumers, including conventional system
 path configuration, preload TLS/lifecycle, main ORIGIN with contained proc,
-and real setuid AT_SECURE execution. Direct interpreter entry now admits
+and real setuid AT_SECURE execution. Direct interpreter entry admits
 owned PIE/non-PIE executables through the same transaction, with musl command
 options, listing, explicit mapping ownership and reconstructed argv/auxv.
 Its 46-case-per-arm installed/extracted differential is described in
 [direct-interpreter.md](direct-interpreter.md); the shared search policy and
 limits remain in [runtime-dynamic-loader.md](runtime-dynamic-loader.md).
-Remaining product work includes broader introspection/order
-qualification, followed
-by the complete installed dynamic campaign. Musl's
-retained dlclose mappings, not physical unloading, are the parity target.
+Musl's retained dlclose mappings, not physical unloading, are the parity target.
 
 ### Contained process search evidence
 
@@ -438,12 +435,8 @@ stderr for both kernel and direct-loader entries. An explicitly supplied static
 sysroot additionally links the same object through static ET_EXEC and static
 PIE with sealed receipts and ELF evidence. Its read-only proc mount observes
 completed kernel tasks before checking still-valid joinable handles, and is
-unmounted by the runner's exit trap. The integrated dynamic gate passed with
-search policy, pure-TBSS, live pthread attributes, signal transactions and
-existing cancellation/lifecycle consumers; retained log:
-`.work/x86_64/pthread-signals-getattr-search-integrated.log`, product:
-`.work/x86_64/tmp/materialized-dynamic.irVBKA`. This is component evidence,
-not final same-revision platform qualification.
+unmounted by the runner's exit trap. This is component evidence, not final same-revision platform
+qualification.
 
 Installed and extracted products also run `run_owned_pthread_join_cancel.sh`.
 The selected installed or extracted product compiles one fixture object, which
@@ -477,17 +470,12 @@ installed driver and compares both dependency orders, PIE/non-PIE, and kernel
 reverse finalizer ordering, initial and worker TLS, and repeated `dlopen`
 without reinitialization. Both installed and extracted products run this gate.
 
-The three-product execution regression rejects the earlier artifact whose
-second clean build had only a manifest/archive comparison and no consumer
-outcome. `check_basic_product` now requires matching musl output, spawn
+A second clean build needs more than a manifest/archive comparison:
+`check_basic_product` requires matching musl output, spawn
 interposition and non-PIE startup for each product; `check_runtime_suites`
-runs the same leaf roster for all three. The integrated gate passed at the
-`550bb254` runtime plus this harness change; log
-`.work/x86_64/three-dynamic-products-integrated.log`, retained product
-`.work/x86_64/tmp/materialized-dynamic.uyzJLv`. This measurement predates the dedicated
-dynamic cancellation composition and current publication receipts.
+runs the same leaf roster for all three.
 
-The current catalog also requires `loader-synthetic` and `package-corpus`
+The catalog also requires `loader-synthetic` and `package-corpus`
 for each supplied product. They execute all 21 synthetic loader workloads
 and all 34 pinned package workloads in a fresh network namespace with no
 active interfaces. Package inputs come from the separate byte-pinned cache

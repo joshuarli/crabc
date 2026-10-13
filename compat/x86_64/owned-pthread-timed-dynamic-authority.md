@@ -51,27 +51,18 @@ function/data rosters, source relocation forms, PLT encodings or dynamic table
 forms fail and need separate review. It does not attest compiler execution or
 qualify the entire pthread family, loader, CRT or platform.
 
-## Retained provenance and regression
+## Regression
 
-The first regression used the original `clean-d7b7a137` pthread receipt from
-collector `d7b7a137657a38b94cf0235977df5649cce52677`, whose report SHA256 is
-`56401807033430630975bd4fa8f563a6d4ccde33e130af103c18605eb0066960`.
-Replacing the final `test_condition_timedwait` prefix `554889` with `31c0c3`
-(`xor eax,eax; ret`) skipped that operation while the old public reader still
-accepted the resealed output/link/root records. The source object and other
-function bytes were unchanged. The new relation rejects that exact control.
+The control that motivated this relation replaces the final
+`test_condition_timedwait` prefix `554889` with `31c0c3` (`xor eax,eax; ret`),
+skipping that operation while leaving the source object and every other
+function byte unchanged. The relation must reject it.
 
-The retained original input identities are:
-
-| Artifact | SHA256 |
-| --- | --- |
-| `contract.o` | `c61f15b78c17e100d4007dac45f95402c1d505f632f127553f9970de78f0e44c` |
-| `dynamic-pie-contract` | `acee29d5f521da328170e064d7c18a516b4dd647b4d8eaf82c9e69a84f7c427c` |
-| `dynamic-non-pie-contract` | `9335b75f268da66cf9b7c1aff18bdd300261abcd195e3dae0f7454eab0be5f03` |
-
-`tests/test_owned_pthread_timed_dynamic_authority.py` takes these retained ELF
-fixtures through `CRABC_PTHREAD_DYNAMIC_AUTHORITY_FIXTURE`. Tests admit both
-original modes without processes and reject helper no-ops, every actual
-PC32/PLT32 field change, PLT/GOT/import substitutions, all local data placement
-changes, constant corruption, dynamic relocation/table redirection and mapped
-byte/permission substitutions. Test scratch stays beneath checkout `.work`.
+`tests/test_owned_pthread_timed_dynamic_authority.py` takes the original
+`contract.o` and the `dynamic-pie-contract` and `dynamic-non-pie-contract`
+executables from a directory named by `CRABC_PTHREAD_DYNAMIC_AUTHORITY_FIXTURE`.
+Tests admit both original modes without processes and reject helper no-ops,
+every actual PC32/PLT32 field change, PLT/GOT/import substitutions, all local
+data placement changes, constant corruption, dynamic relocation/table
+redirection and mapped byte/permission substitutions. Test scratch stays
+beneath checkout `.work`.

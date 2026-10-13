@@ -1,7 +1,7 @@
 # Owned C assertion failure
 
 An enabled `assert` in the installed `<assert.h>` calls `__assert_fail`.
-The owned runtime now supplies that entry through `owned_assert.rs`, using
+The owned runtime supplies that entry through `owned_assert.rs`, using
 the existing FILE engine and abort signal transition. The frozen private
 archive and paused AArch64 implementation remain unchanged.
 
@@ -22,9 +22,6 @@ reinclusion proves `NDEBUG` suppresses expression evaluation and enabled
 successful assertions evaluate once. The dynamic qualification catalog runs
 this same workload on each of its three products.
 
-The initial regression passed musl and failed the owned static link with
-undefined `__assert_fail`: `.work/x86_64/owned-assert-before.log`. The fixed
-six-entry matrix passed in `.work/x86_64/owned-assert-after.log`, with
-retained artifacts in `.work/x86_64/tmp/owned-assert.30nkdF`. These are focused
-component results; the expanded dynamic catalog still requires complete
-qualification, and family completion and public x86 support remain open.
+The six-entry matrix is a focused component check; the expanded dynamic
+catalog still requires complete qualification, and family completion and
+public x86 support remain open.

@@ -148,7 +148,7 @@ never points at the reclaimed root.
 
 The upstream graph selects normal installed dynamic PIE binaries entered by
 the kernel through PT_INTERP. It does not select a non-PIE or direct-loader
-corpus. The separate 50-case
+corpus. The separate
 [owned dynamic-product qualification](dynamic-product-qualification.md) owns
 all-entry product coverage; this source graph does not weaken that product
 contract.
@@ -168,7 +168,7 @@ members have the explicitly recorded non-runtime edges. Runtime results compare
 raw and candidate exit status, stdout, and stderr byte for byte only after both
 sides pass their own prepared root.
 
-The report's counts are a current measurement. A non-passing result names the
+A non-passing result names the
 failed or blocked boundary and retains its exact command and bytes for the
 owner; it does not convert that unit into a skip or a supported capability.
 
@@ -208,10 +208,7 @@ execution. Existing product, oracle, and root-payload before/after checks
 still apply. Missing or invalid identity evidence is a setup failure, even
 when a child reports exit zero.
 
-The isolated proof reused the unchanged full-campaign target and `runtest`
-binaries: root candidate and musl both failed with `fork succeeded despite
-rlimit`; the fixed nonroot identity made both pass with empty stdout/stderr.
-The producer's focused native replay also passes on both sides. This evidence
-does not rewrite the earlier incomplete aggregate or replace a fresh full
-campaign after producer/collector integration. Focused receipt and invocation
-regressions live in `test_owned_libc_test_identity.py`.
+Under a root identity both candidate and musl fail this unit with `fork
+succeeded despite rlimit`; the fixed nonroot identity is what makes it
+meaningful. Focused receipt and invocation regressions live in
+`test_owned_libc_test_identity.py`.

@@ -49,8 +49,6 @@ retains 4096. Contained syscall
 failures then verify parent completion and subsequent registration at resource
 size. The runner records the native Linux/x86-64 host identity beside raw
 oracle and candidate stdout for every installed entry mode.
-The first regression passed on pinned musl and failed the owned static
-product at registration 33 with `ENOMEM`.
 
 `run_owned_atfork_registry.sh` runs the probe through the pinned musl oracle
 and installed static/static-PIE products, plus dynamic PIE/non-PIE with kernel

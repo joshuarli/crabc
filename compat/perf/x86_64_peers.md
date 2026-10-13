@@ -44,18 +44,20 @@ directory outside the client root. Resolver staging records must name the exact
 private `etc` paths, not equivalent bytes elsewhere below the root.
 
 Run the focused reader/lifecycle tests and the reduced native smoke with the
-pinned image:
+pinned image (`core_image.py` prints the immutable image ID the dispatcher launches;
+`perf-c-test` does not cover this test or smoke, so there is no dispatcher
+form):
 
 ```bash
 docker run --rm --init --platform linux/amd64 --network none --cap-add=SYS_CHROOT \
   --workdir /workspace --env PYTHONDONTWRITEBYTECODE=1 \
   --env TMPDIR=/workspace/.work/x86_64/tmp --volume "$PWD:/workspace" \
-  crabc-core-evidence:x86_64 python3 -B compat/perf/tests/test_x86_64_peers.py
+  "$(python3 -B compat/x86_64/core_image.py)" python3 -B compat/perf/tests/test_x86_64_peers.py
 
 docker run --rm --init --platform linux/amd64 --network none --cap-add=SYS_CHROOT \
   --workdir /workspace --env PYTHONDONTWRITEBYTECODE=1 \
   --env TMPDIR=/workspace/.work/x86_64/tmp --volume "$PWD:/workspace" \
-  crabc-core-evidence:x86_64 python3 -B compat/perf/tests/run_x86_64_peers_smoke.py
+  "$(python3 -B compat/x86_64/core_image.py)" python3 -B compat/perf/tests/run_x86_64_peers_smoke.py
 ```
 
 The smoke compiles only the existing network fixture with the pinned musl

@@ -74,24 +74,16 @@ receipt places that record after source acquisition of `q->lock`; the harness
 does not probe or modify the mutex. This separates a valid fresh registered
 queue from a setup or sender failure.
 
-## Observed evidence
+## Output
 
-The retained native run at
-`.work/x86_64/tmp/aio-source-signal-order.xE0yJf` produced raw status `0` and
-empty stderr for every case:
-
-```text
-mode=early events=SQWHRAX child_status=0 timeout=0 classification=early-close-returned
-mode=deferred events=SQWBPUHRVX child_status=0 timeout=0 classification=deferred-close-returned
-mode=fresh events=SFGBPUHC child_status=9 timeout=1 fresh_report=1 fresh_queue_registered=1 fresh_queue_fd_matches=1 fresh_queue_ref=0 fresh_queue_init=0 fresh_queue_head_empty=1 fresh_aio_fd_count=1 classification=fresh-queue-handler-close-pending
-```
-
-For the fresh case, `child_status=9` is the parent watchdog's `SIGKILL`, not a
-source-generated status. The classification requires the ordered source and
-handler checkpoints plus the fresh queue receipt before it calls the close
-pending. `evidence.json` binds the archive, oracle archive, source, runner,
-object, binary, and raw stream/status hashes; `source-order.json`, link map,
-symbol tables, and disassembly remain beside the raw records.
+For the fresh case the expected classification is
+`fresh-queue-handler-close-pending` with `child_status=9`, which is the parent
+watchdog's `SIGKILL`, not a source-generated status. The classification requires
+the ordered source and handler checkpoints plus the fresh queue receipt before it
+calls the close pending. The run writes `evidence.json` (binding the archive,
+oracle archive, source, runner, object, binary, and raw stream/status hashes)
+and `source-order.json`, with the link map, symbol tables, and disassembly
+beside the raw records.
 
 Run the script only in the pinned native x86 container with `TMPDIR` under the
 checkout's `.work/x86_64/tmp`. It deliberately has no dispatcher registration;

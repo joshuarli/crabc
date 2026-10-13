@@ -96,9 +96,7 @@ The receipt schema is
 record includes the fixed tracked path, physical file identity, and parsed
 policy content. `validate-report` reconstructs all three from the fixed
 baseline and fixed additions file; it rejects an altered policy hash, policy
-content, or report field. Neither command accepts a policy selector. The
-pre-provider products are not a passing result for this new required extension;
-this policy change records no product evidence.
+content, or report field. Neither command accepts a policy selector.
 
 ## Commands
 

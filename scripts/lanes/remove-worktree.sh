@@ -6,7 +6,7 @@ set -eu
 [ "$#" -eq 1 ] || { echo "usage: $0 WORKTREE_PATH" >&2; exit 2; }
 path=$(cd "$1" && pwd -P)
 root=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir | xargs dirname)
-case "$path" in "$root"/.work/worktrees/*) ;; *) echo "refusing path outside $root/.work/worktrees" >&2; exit 2;; esac
+case "$path" in "$root"/.work/wt/*) ;; *) echo "refusing path outside $root/.work/wt" >&2; exit 2;; esac
 if [ -n "$(git -C "$path" status --porcelain --untracked-files=no)" ]; then
     echo "refusing to remove $path: tracked changes are uncommitted" >&2; exit 1
 fi

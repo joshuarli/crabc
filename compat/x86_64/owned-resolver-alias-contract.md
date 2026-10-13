@@ -84,9 +84,8 @@ equal the pre-execution copy. The pre-execution record uses
 `crabc.x86_64-owned-resolver-alias-collection-begin/v1` and retains its selected
 source, finite inputs, and source-owned product-mode projection. The pinned image marker and canonical invocation
 paths bind the raw header compiler, `readelf`, `timeout`, `chroot`, and musl
-oracle inputs. `owned_resolver_alias_image_inputs.json` authenticates the current
-immutable core image
-`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
+oracle inputs. `owned_resolver_alias_image_inputs.json` authenticates the immutable core
+image it records, which must match the pin in `core_image.py`.
 The retained collector inputs include `core_image.py`, `rust-toolchain.toml`
 and `scripts/rust_toolchain.py`; final sealing checks their original bytes.
 Updating this manifest does not admit historical receipts from a different image

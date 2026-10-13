@@ -110,8 +110,7 @@ command search path against `owned_resolver_network_image_inputs.json`.
 The reader independently performs the same authentication. The receipt binds
 both the input manifest and central image pin as source inputs. Rebuilding the
 image requires measuring its actual input bytes and replacing the current
-manifest; prior receipts retain their original image and manifest identities
-and do not become current evidence through a label change.
+manifest.
 
 Replay it from the pinned core image with the checkout mounted read-only at
 `/workspace` and each of the four supplied products mounted at the physical
@@ -133,9 +132,8 @@ in a missing mode. `resolver_network_component_receipt.py` derives the fixed
 exit-zero/stdout/stderr requirement and all candidate comparisons from the raw
 files; summary booleans cannot establish this receipt.
 
-Older `schema_version: 1` and `schema_version: 2` resolver reports remain useful
-measurements, but they do not contain per-mode DNS evidence and the reader rejects them for
-component admission. A fresh collector may inspect specifically supplied
+`schema_version: 1` and `schema_version: 2` resolver reports do not contain
+per-mode DNS evidence and the reader rejects them for component admission. A fresh collector may inspect specifically supplied
 products from a different source revision: the collector-source seals and the
 four product manifest/tree seals remain separate. Such a mixed supplied-product
 replay proves only those exact bytes and this bounded component. It does not
@@ -218,8 +216,8 @@ server manifest fails as a setup error before any resolver-file write.
 
 ## Running
 
-Build crabc first, then from the repository root in the pinned native
-AArch64 Linux/musl environment:
+Legacy AArch64 `run.py` path: build crabc first, then from the repository root
+in the pinned native AArch64 Linux/musl environment:
 
 ```sh
 cargo build --workspace
@@ -242,7 +240,7 @@ CRABC_RESOLVER_NETWORK_ISOLATED=1 \
 MUSL_ROOT=/opt/musl-1.2.6 \
 CRABC_TARGET_DIR=/workspace/target/debug \
 python3 compat/resolver-network/run.py \
-  --report /tmp/resolver-network.json
+  --report .work/tmp/resolver-network.json
 ```
 
 The command exits `0` only when both binaries exit `0`, both exact streams
@@ -251,11 +249,8 @@ exits `1` for a differential/contract failure and `2` for setup errors. The
 runner does not run Docker, `dev.sh`, formatters, linters, or pre-commit
 hooks.
 
-A failure is intentionally retained as evidence: the report keeps the raw
-streams and server events, including a missing TCP retry or an incomplete
-resolver run. This allows the current resolver implementation's malformed-
-packet/TC behavior to be observed without changing libc as part of the
-harness.
+A failure is retained in the report with the raw streams and server events,
+including a missing TCP retry or an incomplete resolver run.
 
 ## Legacy AArch64 report contract
 

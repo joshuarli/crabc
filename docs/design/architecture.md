@@ -1,14 +1,12 @@
 # Runtime ownership architecture
 
-`crabc` has seven runtime-development/evidence layers with deliberately narrow ownership
-boundaries.
+`crabc` has seven runtime and evidence layers with deliberately narrow ownership
+boundaries. Native Linux/x86-64 is the active target; AArch64 is paused and
+preserved.
 
-1. `crabc-core` owns stateless typed Linux kernel and vDSO operations. Linux/
-   AArch64 is the current public target; the staged native x86-64 program has
-   a separately evidenced syscall, thread-pointer, vDSO, floating-point-state,
-   and raw-signal foundation here. That foundation does not by itself enable
-   x86 libc, loader, CRT, Rust facade, or public-platform support. It has no
-   process-global runtime owner.
+1. `crabc-core` owns stateless typed Linux kernel and vDSO operations
+   (syscalls, thread pointer, vDSO, floating-point state, raw signals). It has
+   no process-global runtime owner.
 2. `libc` owns the public C ABI: `errno`, `FILE`, pthread and locale state,
    C layouts, compatibility translation, and other libc process state.
 3. `ldso` is the one production dynamic linker. It owns ELF loading,
@@ -16,17 +14,14 @@ boundaries.
 4. `crt` owns Rust-produced application entry/start/end objects and the
    conventional executable lifecycle boundary. `builtins` owns the separate
    Rust `no_std` compiler-helper archive. Neither owns libc or loader process
-   state. The x86 program currently has only a separately proven static-PIE
-   `rcrt1.o`/`crti.o`/`crtn.o` foundation, including one private first-thread
-   Variant-II TLS image bootstrap; it is not an installed x86 sysroot,
-   pthread/TLS lifecycle, or dynamic-CRT contract.
-5. `crabc-mimalloc` is the incomplete pinned, errno-free allocator engine. It
-   consumes `crabc-core` and reviewed focused cryptographic primitives, but
-   never libc. Before promotion, `libc` has one private Rust-only dependency
-   on its no-page process/pthread lifecycle control; that boundary owns no C
-   ABI, allocation routing, or backend choice. `libc` will own full C ABI
-   adaptation and lifecycle integration after promotion. The existing C
-   backend remains production until then.
+   state. See [`crt-and-sysroot.md`](crt-and-sysroot.md).
+5. `crabc-mimalloc` is the pinned, errno-free allocator engine (see
+   [`allocator.md`](allocator.md)). It consumes `crabc-core` and reviewed
+   focused cryptographic primitives, but never libc. Before promotion, `libc`
+   has one private Rust-only dependency on its no-page process/pthread
+   lifecycle control; that boundary owns no C ABI, allocation routing, or
+   backend choice. `libc` owns full C ABI adaptation and lifecycle integration
+   after promotion. The C backend remains production until then.
 6. `crabc-rs` is the idiomatic Rust facade. It consumes `crabc-core` directly
    for typed native operations and never treats the C ABI as its syscall API.
 7. `compat`, `tests`, and `libc-test-harness` are executable evidence. They
@@ -34,8 +29,8 @@ boundaries.
 
 The normal dependency direction is toward narrower boundaries: `crabc-rs`,
 `crabc-mimalloc`, and `libc` may consume `crabc-core`; `libc` may consume the
-bounded private lifecycle control in `crabc-mimalloc` now, while full allocator
-adaptation remains a post-promotion boundary; evidence may exercise every
+bounded private lifecycle control in `crabc-mimalloc`, while full allocator
+adaptation is a post-promotion boundary; evidence may exercise every
 runtime layer before promotion.
 `ldso` stays independently bootstrappable because it starts before ordinary
 runtime services are available. Neither `crabc-core` nor `crabc-rs` may own

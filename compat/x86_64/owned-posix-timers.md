@@ -180,9 +180,8 @@ then remains in a futex wait after the worker has disappeared.
 The runner isolates this in fresh processes using `failure-once`: one invalid
 clock, one SIGEV_THREAD creation, no earlier timer, key or callback state. It
 records the stopped caller's `/proc/PID/task` status, wait channel and syscall
-when the race occurs, then kills and reaps only its own child. The original
-shared workload also reproduced the hang before candidate execution. These
-are retained oracle observations, not a weakened success expectation.
+when the race occurs, then kills and reaps only its own child. These are
+oracle observations, not a weakened success expectation.
 
 The candidate uses a separate negative creation-result ID after the ready
 handshake, never a pending pthread-cancellation request. The worker always
@@ -192,15 +191,8 @@ reclamation, the two-way lifetime handshake and every valid callback lifecycle.
 The shared normal/exit/cancel workload remains a direct musl comparison;
 failure stress requires bounded successful reclamation only from the candidate.
 
-Development verification for this component passed with retained evidence at
-`.work/x86_64/tmp/owned-posix-timers.5ONJge`: the complete six-entry workload,
-failure stress, and both native loader checks. The first fresh oracle process
-had one task remaining in syscall 202, `FUTEX_WAIT_PRIVATE`, matching the
-source failure handshake. The missing-provider, TLS-errno, creator-cancellation and interrupted-wait
-errno regressions were observed before their fixes. The wire, product-contract,
-qualification-receipt and dispatcher checks also passed (41 Python tests).
 Full three-product receipt production and family qualification remain separate
-integration gates; this development run makes no promotion claim.
+integration gates; the component makes no promotion claim.
 
 The aggregate runner accepts only physical product directories inside the
 checkout’s `.work` tree. A supplied extracted dynamic product drives compilation

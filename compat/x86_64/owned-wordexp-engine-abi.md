@@ -57,11 +57,10 @@ The exact pinned-musl control output is:
 The invalid-multibyte selector accounts for the fnmatch `FNM_PATHNAME`
 difference in [owned-pattern.md](owned-pattern.md): musl's component scan
 never returns once it reaches an invalid pattern byte, and the owned
-`fnmatch_with_mode` now returns `FNM_NOMATCH` there. Word expansion never
+`fnmatch_with_mode` returns `FNM_NOMATCH` there. Word expansion never
 takes that path. Pathname expansion matches one component at a time without
 `FNM_PATHNAME`, and parameter removal matches whole values, so these inputs
-terminated with the same words before and after that fix; a static product
-built without it passes this selector unchanged.
+terminate with the same words either way.
 
 The undefined append source result must expose precisely the offset-two
 three-word record `old-one old-two new-root`. The NOCMD source result requires

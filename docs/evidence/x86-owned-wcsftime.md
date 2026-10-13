@@ -72,10 +72,8 @@ the byte-to-wide `%n`/`%t`/`%%` bridge, exact truncation, expanded years and
 the `+` width rule, invalid directives, literal non-ASCII wide characters, and
 non-ASCII conversion rejection. It records errno and a complete output
 checksum while canaries prove that every capacity leaves adjacent and unused
-wide storage unchanged. This is focused native evidence, not complete C ABI or
-runtime qualification and not a public x86 support claim.
+wide storage unchanged.
 
 The owned dynamic qualification catalog requires `wide-calendar` for each of
 its installed, relocated, and second products. This binds the focused runner
-to the aggregate product and source closure; registration alone is not a
-qualification pass.
+to the aggregate product and source closure.

@@ -1,5 +1,7 @@
 # Pinned AArch64 musl ABI inventory
 
+> The Linux/AArch64 route this page describes is paused; native x86-64 is the active target (see `./scripts/dev-x86_64.sh --help`).
+
 This inventory records evidence for crabc's supported modern runtime profile:
 Linux AArch64 on Linux kernel versions 5.10 and newer. It measures the pinned
 musl 1.2.6 reference boundary; it is not a claim of complete historical musl

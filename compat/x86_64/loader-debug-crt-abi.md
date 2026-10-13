@@ -62,8 +62,7 @@ Musl's public headers declare none of these spellings. Their presence in the
 combined musl libc/loader dynamic symbol table remains an ABI input; it is
 not an instruction to reproduce that source's internal stage graph.
 
-The native resolution under the final provider-closure rule in `plan.md`
-(Families and public ABI) is explicit:
+The native resolution under the final provider-closure rule in `plan.md` is explicit:
 
 | Identity | Resolved native structural boundary |
 | --- | --- |
@@ -86,7 +85,7 @@ native dynamic-symbol ratchet.
 
 Run `compat/x86_64/run_loader_debug_abi.sh collect --output PATH` inside the
 pinned native Docker environment, with a physical checkout `.work` TMPDIR and
-`CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@sha256:...` supplied from the
+`CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py)` supplied from the
 actual Docker image identity by the invoking dispatcher. The collector
 requires clean source, builds one fresh static and one fresh dynamic product,
 and checks that source content/revision did not change. It is a component
@@ -96,7 +95,7 @@ That default product-build route is unchanged. A consumer that must bind this
 workload to an already sealed source cohort supplies both roots together:
 
 ```sh
-CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@sha256:... \
+CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py) \
   compat/x86_64/run_loader_debug_abi.sh collect --output PATH \
   --static-product STATIC_PRODUCT --dynamic-product DYNAMIC_PRODUCT
 ```

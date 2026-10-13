@@ -61,16 +61,9 @@ affinity or scheduling attributes, cancellation, synchronization, TSS,
 dynamic TLS policy, CRT/sysroot completion, pthread-family completion,
 promotion, and public x86 support.
 
-## Behavioral regression direction
+## Live-main target
 
-The retained pre-route installed dynamic product was compiled with this
-unchanged consumer after the worker-to-held-main check was added. Pinned musl
-exited 0; the installed product exited 86 with empty standard output and
-error. The consumer encodes that result as main's `64` plus the held-main
-worker check's `22`: its old resolver reached the selected-worker registry for
-the main token, found no registry record, and returned `ESRCH=3`, which the
-consumer records as its nonzero call result. The retained red receipt is
-`cpuclock-main-target-red.z62Sok/assertion.txt` below this worktree's ignored
-`.work/x86_64/tmp/` state. It demonstrates the normal live-main target that
-the initial-target scalar route now covers; it is not evidence for exited-main
-or other lifecycle cases.
+The worker-to-held-main check pins the normal live-main target: the main token
+is not in the selected-worker registry, so it must resolve through the
+initial-target scalar route rather than return `ESRCH`. It is not evidence for
+exited-main or other lifecycle cases.

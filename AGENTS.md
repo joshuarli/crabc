@@ -1,174 +1,100 @@
 # crabc
 
-Build a small, auditable modern Unix runtime, not every historical libc
-subsystem: a Rust `no_std` libc, dynamic linker, owned CRT/compiler builtins,
-and an idiomatic `crabc-rs` facade. Narrow scope must not weaken ordinary Unix
+A small, auditable modern Unix runtime: a Rust `no_std` libc, dynamic linker,
+owned CRT and compiler builtins, a faithful Rust port of mimalloc v3.5.0, and
+an idiomatic `crabc-rs` facade. Narrow scope must not weaken ordinary Unix
 semantics.
 
-## Scope and authority
+The active target is native Linux/x86-64 on an x86-64 host. AArch64 is the
+public target and is paused: preserve it, never run or emulate it.
 
-- Linux, little-endian, kernel **5.10 or newer**. Public support remains
-  AArch64. Native x86-64 runtime parity and fixed-mimalloc completion are active
-  under `plan.md`; x86 becomes public only through its promotion gates.
-  AArch64 implementation and qualification are paused: preserve its behavior,
-  selected allocator, frozen baseline, and target-qualified evidence. Do not
-  run or emulate its suites for the x86 goal.
-- No new architectures, 32-bit/big-endian targets, non-Linux libc, or
-  speculative portability layers in the active campaign. A future
-  macOS/AArch64 libSystem backend for `crabc-rs` is separately scoped, and
-  LLVM/Clang integration (`llvm.md`) waits until `plan.md` is complete.
-- Pinned musl **1.2.6** is the C/POSIX compatibility oracle. Use the applicable
-  Linux and System V AMD64 ABI contracts for target boundaries. Rustix is a
-  pinned test oracle, never a production dependency. Glibc is neither an oracle
-  nor a fallback; candidate target artifacts must not borrow ambient runtime
-  inputs from musl, CRT, compiler runtimes, headers, or loaders either.
-- Read this file and `plan.md` to start. Consult the selected behavior in
-  `COMPATIBILITY-PROFILE.md`, the relevant executable contracts, pinned source,
-  and code-adjacent guidance as needed—not the entire documentation tree.
-  User direction governs, followed by this scope and the compatibility profile,
-  then `plan.md` and its machine-readable acceptance contracts. Tests and source
-  establish behavior; generated reports measure it. Reconcile contradictions;
-  neither stale prose nor an assertion in a report waives a requirement.
+Start with [plan.md](plan.md), the only implementation plan and progress
+handoff. User direction governs, then [docs/scope.md](docs/scope.md) and
+[COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md), then `plan.md`.
 
-## Product boundaries
+## Commands
 
-**Core runtime.** Be exact about filesystems, descriptors, pipes, signals,
-fork/exec, pthread/C11 threads, TLS, sockets, mappings, time, stdio, resolver,
-dynamic linking, errno, ABI, and their composition. Do not add pre-5.10 kernel
-fallbacks. Record newer-kernel requirements centrally before relying on them.
-Existing correct functionality need not be deleted merely because it exceeds
-these minimums.
+Everything builds and runs inside the pinned native images; direct Cargo
+belongs inside them.
 
-**Rust facade.** Classify capabilities as OS mechanisms, useful POSIX/runtime
-facilities, C ABI machinery, Rust-subsumed, or deliberately unsupported.
-Expose the first two idiomatically; account for all capabilities in
-`compat/crabc-rs/coverage.toml`. Do not mechanically wrap every C symbol or
-recreate Rust allocation, formatting, strings, slices, or sorting. Keep native
-paths thin and LLVM-visible rather than round-tripping through the C ABI.
-Expose real platform mechanisms, not emulations or a portable runtime framework.
+```sh
+./scripts/dev-x86_64.sh image                  # build the core image
+./compat/allocator/run-x86_64.sh image         # build the allocator image
+scripts/lanes/rust-check.sh                    # type-check every runtime feature profile
+scripts/lanes/rust-check.sh cargo check -q --locked -p <crate>
+./compat/allocator/run-x86_64.sh allocator-unit --filter <module::tests::name>
+python3 -B scripts/test_python.py --module <path/to/test_file.py>
+python3 compat/x86_64/validate_parity_ledger.py
+./scripts/dev-x86_64.sh campaign-status        # families, capabilities, gates
+./scripts/dev-x86_64.sh --help
+```
 
-**Allocator.** No allocator invention. The exception is the faithful Rust
-semantic port of pinned mimalloc **v3.5.0**, with provenance in
-`crabc-mimalloc/UPSTREAM.md`. Preserve source algorithms, data structures,
-ownership, memory ordering, lifecycle, and valid-program behavior. Retain the
-exact C source as an oracle after production promotion. Algorithmic divergence
-needs a durable rationale plus differential and performance evidence; a more
-idiomatic-looking design is not sufficient. Backend selection is compile-time.
-The C backend remains selected until the native x86 promotion gates pass.
+Measured timings and the fast allocator test route are in
+[docs/lanes.md](docs/lanes.md).
 
-**Cryptography.** Never implement cryptographic primitives locally, including
-when translating compatibility source. Use reviewed focused Rust dependencies
-for hashes, ciphers, password primitives, and PRNG/DRBG cores, or explicitly
-limit the feature. Direct OS entropy and surrounding domain-specific state
-machines are allowed. The sole legacy PRNG exception is a source-faithful port
-of musl 1.2.6 `random`, `srandom`, `initstate`, and `setstate`, including seeding,
-state layout, recurrence, and switching, with attribution. Never use it for
-entropy, secrets, allocator hardening, or other security-sensitive purposes.
+## Invariants
 
-**Text and locale.** Support `C`, `POSIX`, and `C.UTF-8`; preserve byte-oriented
-C/POSIX versus UTF-8 semantics. Cheap UTF-8 aliases may normalize to the same
-profile, but unsupported names must fail honestly. Rust-facing text is UTF-8.
-The compatibility encoding profile is ASCII, UTF-8, UTF-16LE/BE, and
-UTF-32LE/BE—not general locale databases, collation/language packs, or legacy
-charset catalogs. Gettext is at most small ABI machinery, not a subsystem.
+- Linux, little-endian, kernel 5.10 or newer; no older-kernel fallbacks, new
+  architectures, or portability layers.
+- Pinned musl 1.2.6 is the C/POSIX oracle. Glibc is neither oracle nor
+  fallback; rustix is a test oracle only. Target artifacts borrow no ambient
+  musl, CRT, compiler runtime, header or loader input.
+- No allocator invention: only the source-faithful port of pinned mimalloc
+  v3.5.0, with the exact C source kept as its oracle. The C backend stays
+  selected until the native allocator passes its promotion gate.
+- Never implement cryptographic primitives locally. The one legacy exception
+  is the attributed port of musl's `random` family, never used for security.
+- Locales are `C`, `POSIX` and `C.UTF-8`; unsupported names fail honestly.
+- Consume conventional system files; no NSS/PAM plugins, bundled databases,
+  or DNS beyond the bounded A/AAAA/CNAME profile.
+- Provide synchronous mechanisms, not frameworks: no executor, plugin system,
+  provider registry, or hypothetical backend abstraction.
+- The `crabc-rs` facade exposes real OS mechanisms idiomatically and accounts
+  for every capability in `compat/crabc-rs/coverage.toml`; it does not wrap
+  every C symbol.
+- Every public unsafe API documents concrete caller obligations; no
+  references whose aliasing promises the implementation cannot uphold.
+- Preserve upstream revisions, source-to-Rust mappings, licenses, and raw
+  failures. Never weaken a gate or rewrite an upstream workload to hide a
+  defect.
+- Validators check structure and receipts, tests exercise behavior. No
+  per-artifact validators, source-literal tests, prose archives, or duplicate
+  status files; `plan.md` and Git are the record.
+- `COMPATIBILITY.md` is generated; never hand-edit it.
 
-**System data and DNS.** Consume conventional passwd/group, hosts,
-resolv.conf, services, protocols, and zoneinfo files. Support `TZ`, POSIX TZ
-syntax, and tzfile parsing; do not bundle databases. DNS stays within the
-bounded A/AAAA/CNAME, search, UDP/TCP fallback, retry/failover and netdb profile.
-No NSS/PAM/provider plugins, DNSSEC, DoH, DoT, mDNS, recursive-resolver framework,
-or IDNA policy.
+## Where things are
 
-**Mature algorithms.** Preserve selected POSIX regex/glob/fnmatch semantics;
-a Rust regex library is not a substitute without equivalence. Use proven musl
-or equivalent focused math algorithms, including NaNs, infinities, signed
-zero, subnormals, rounding, exceptions, and long-double ABI. No new numerical
-algorithms or general-purpose regex ecosystem.
-
-**Mechanisms, not frameworks.** Provide synchronous OS substrate. Do not add
-an executor/reactor, `Future`/`Stream` API layer, process supervisor, shell
-pipeline framework, security-policy language, generic provider registry,
-plugin system, or hypothetical platform/backend abstraction. Use coarse
-features only for real dependency or environment boundaries.
-
-## Dependencies, safety, and performance
-
-Prefer small, mature, focused, auditable Rust dependencies over risky local
-reimplementations; zero dependencies is not itself a goal. Selection is
-implementation judgment, not a routine approval round trip. Record the actual
-primitive and normal transitive graph, native/build/proc-macro code, allocation
-and global state, `no_std`, and LTO implications where the dependency is owned.
-Broad or difficult-to-audit dependencies need stronger justification, not a
-scope expansion. Production allocator restrictions in `plan.md` still apply.
-
-Every public unsafe Rust API documents concrete caller obligations; explain
-nontrivial unsafe blocks at the actual ownership, lifetime, ABI, or provenance
-boundary. Do not invent superficially safe APIs with unenforceable invariants.
-Use short validated projections for concurrently accessed runtime metadata,
-not references whose aliasing promises the implementation cannot uphold.
-
-Remove unnecessary syscalls, allocation, indirection, and algorithmic work
-first; prove simple scalar semantics, then inspect active-target codegen.
-SIMD is a narrow, separately tested and measured optimization, not an internal
-framework or a substitute for a better algorithm. An established math kernel
-may be appropriate earlier when its numerical contract is proved. Crypto
-primitives remain in reviewed dependencies, including vectorized ones.
-
-## Working rules
-
-- Implement coherent behavior with focused regressions and real boundary
-  evidence. Reproduce bugs before fixing them; prose or behavior-neutral edits
-  do not need artificial failing tests. Reuse existing test matrices rather
-  than adding a runner, receipt schema, and status paragraph for each symbol.
-- Preserve exact upstream revisions, source-to-Rust mappings, licenses, and
-  intentional differences. Do not rewrite upstream workloads, suppress raw
-  failures, or weaken gates to conceal an implementation defect.
-- Keep unrelated dirty work. Do not run broad formatters, linters, pre-commit
-  hooks, or push a remote unless the user explicitly requests them.
-- Keep new worktrees, scratch, caches, extracted sources, and build state
-  inside the owning checkout's ignored `.work/` boundary. Honor stricter
-  launcher paths and existing ignored report locations. No external scratch,
-  symlink escapes, or shared mutable build outputs.
-- For Codex lane coordination, use `.agents/skills/lanes/SKILL.md` to map the
-  shared lane process in `.claude/skills/lanes` and
-  `.claude/agents/crabc-lane.md` to Codex collaboration tools. For Claude Code,
-  use those Claude lane instructions directly; current user orchestration
-  instructions still govern models.
-  Keep 16 lane agents occupied while `plan.md` has open work, alongside
-  ongoing integration to `main`: when a lane finishes, integrate it and
-  start its successor in the same pass. Each lane gets one well-defined,
-  difficult, nontrivial deliverable with a proving command and an exclusive file
-  boundary that does not overlap another running lane; give shared state one
-  owner. No scheduling board, handoff schema, or wave ceremony. Do not
-  throttle builds within a lane; qualifying benchmarks need an uncontended
-  host.
-- Validators check structure, cross-references, and runtime receipts, not
-  restated ledger prose, owner lists, or counts; tests exercise behavior,
-  not source text. Do not add per-artifact validator functions or
-  source-literal tests.
-- `plan.md` is the only implementation plan and repository-wide progress
-  handoff. Update its small Progress status section in place when the frontier
-  changes. Put required per-capability/source state in existing manifests and
-  raw evidence in ignored reports. Git is the history; do not add prose
-  archives, per-leaf settlement narratives, or duplicate status files.
-
-## Code and command map
-
-| Boundary | Location |
+| Topic | Owner |
 | --- | --- |
-| C ABI and libc-owned state | `libc/`; target root `src/lib.rs`, shared ABI translation `src/c_abi.rs` |
-| Loader and private runtime wire boundary | `ldso/`; `src/lib.rs` and `src/loader.rs` |
+| Scope, product boundaries, oracles, dependency and safety rules | [docs/scope.md](docs/scope.md) |
+| Selected behavior and deliberate limits | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |
+| Active work, decisions, sequence, acceptance | [plan.md](plan.md) |
+| Running parallel lanes, the lane loop, integration | [docs/lanes.md](docs/lanes.md) |
+| Layer ownership and the private runtime wire format | [docs/design/architecture.md](docs/design/architecture.md) |
+| Rust facade design and capability accounting | [docs/design/crabc-rs.md](docs/design/crabc-rs.md) |
+| CRT, installed sysroot, target-input purity | [docs/design/crt-and-sysroot.md](docs/design/crt-and-sysroot.md) |
+| Allocator design | [docs/design/allocator.md](docs/design/allocator.md) |
+| Dynamic native-allocator ownership and lifecycle | [docs/design/x86-dynamic-native-allocator.md](docs/design/x86-dynamic-native-allocator.md) |
+| Allocator pin, license, source-to-Rust map | [crabc-mimalloc/UPSTREAM.md](crabc-mimalloc/UPSTREAM.md) |
+| Allocator intentional differences | [compat/allocator/known-differences.md](compat/allocator/known-differences.md) |
+| Allocator harness commands | [compat/allocator/README.md](compat/allocator/README.md) |
+| Unwinder design and trust boundary | [docs/design/unwinder.md](docs/design/unwinder.md), build in [unwinder/README.md](unwinder/README.md) |
+| Performance methodology and acceptance bounds | [docs/design/performance.md](docs/design/performance.md), commands in [compat/perf/README.md](compat/perf/README.md) |
+| Lua source-build consumer | [docs/design/source-build.md](docs/design/source-build.md), commands in [compat/lua/README.md](compat/lua/README.md) |
+| Native x86-64 harness, families, component contracts | [compat/x86_64/README.md](compat/x86_64/README.md) |
+| Qualification gates, profiles, the cohort runner | [compat/x86_64/qualification-chain.md](compat/x86_64/qualification-chain.md) |
+| Scoped technical arguments for single behaviors | [docs/evidence/](docs/evidence/) |
+| Other harnesses (ABI, corpus, loader, std/LTO, rustix, resolver) | the `README.md` beside each under [compat/](compat/) |
+| Rust style | [STYLE.md](STYLE.md) |
+
+| Code | Location |
+| --- | --- |
+| C ABI and libc-owned state | `libc/`; root `libc/src/lib.rs`, shared ABI translation `libc/src/c_abi.rs` |
+| Loader and private runtime wire boundary | `ldso/`; `ldso/src/lib.rs`, `ldso/src/loader.rs` |
 | Owned application CRT and compiler helpers | `crt/`, `builtins/` |
 | Shared typed primitives and Rust facade | `crabc-core/`, `crabc-rs/` |
-| Fixed allocator port and source provenance | `crabc-mimalloc/`, `compat/allocator/` |
+| Allocator port and its harness | `crabc-mimalloc/`, `compat/allocator/` |
+| Unwinder provider build | `unwinder/` |
 | Public headers and integration fixtures | `include/`, `tests/` |
-| Native campaign and frozen parity contracts | `compat/x86_64/` |
-| Compatibility, corpus, std/LTO, and performance evidence | `compat/`, `libc-test-harness/` |
-| Pins | `rust-toolchain.toml`, `compat/upstreams.toml`, target Dockerfiles |
-
-Use `./scripts/dev-x86_64.sh --help` and `campaign-status` for active runtime
-work; use `./compat/allocator/run-x86_64.sh` for the separate allocator lane.
-Direct Cargo belongs inside the relevant pinned native environment. The
-AArch64 `scripts/dev.sh` route is paused. Harness READMEs own detailed options;
-`docs/README.md` is an optional reference index. `COMPATIBILITY.md` is generated,
-never hand-edited.
+| Native campaign ledgers and contracts | `compat/x86_64/` |
+| Pins | `rust-toolchain.toml`, `compat/upstreams.toml`, `docker/Dockerfile.x86_64`, `compat/allocator/Dockerfile.x86_64` |

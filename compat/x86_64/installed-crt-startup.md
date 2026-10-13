@@ -108,9 +108,8 @@ streams. It also reconstructs the two finite schema-2 link receipts: source
 object, selected runtime and linker identities, direct DSO input, exact command
 and trace, output, and manifest. The general ordinary-link reader intentionally
 does not admit application DSOs; this component owns only this one named direct
-DSO relation. A previous source/product cohort that admits a malformed wire cannot
-produce a schema-v4 receipt. It remains an observed development failure, not
-a waiver or a qualified green result.
+DSO relation. A source/product cohort that admits a malformed wire cannot produce a
+schema-v4 receipt.
 
 Schema v4 adds a separate RuntimeV1 selected-object admission account to that
 same transaction. Its collector-only
@@ -153,10 +152,8 @@ changed order, or a missing selected operation. These are source-level lexical
 claims plus selected-object local behavior. They do not verify compiler
 lowering or arbitrary concurrent publication interleavings.
 
-The earlier rebuilt-interpreter twelve-cell development matrix and its source
-tests remain author evidence under ignored `.work/x86_64` only. This reader
-does not consume or reseal that matrix: a component receipt can use only its
-selected installed dynamic product, finite linked inputs, and canonical plan.
+A component receipt can use only its selected installed dynamic product,
+finite linked inputs, and canonical plan.
 
 The component does not requalify prepared-worker/72-byte descriptor lifetime,
 first-bootstrap failure transitions, or the full process-exit family. Its

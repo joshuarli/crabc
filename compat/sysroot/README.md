@@ -1,5 +1,8 @@
 # Owned CRT/sysroot evidence
 
+This is the Linux/AArch64 route, which is paused; x86-64 is the active target
+and builds its sysroots through `scripts/dev-x86_64.sh`.
+
 `compat/sysroot/` proves the installed Linux/AArch64 crabc application
 sysroot. It rejects musl CRT objects, GCC `crtbegin`/`crtend`, `libgcc`,
 `libatomic`, `libssp`, compiler-rt target archives, and ambient target
@@ -71,6 +74,39 @@ removed only after its hash is verified.
 That narrowly recorded exception includes only the pinned allocator source and
 its direct pinned `cc` compiler-discovery build helper; another native
 production dependency is a harness failure.
+
+## Tool and input boundary
+
+The host-side proof accepts only the pinned Docker Linux/AArch64 environment,
+Clang/lld, pinned Rust `rustc`/Cargo and rust-src, Python's standard-library
+runner, and LLVM archive/ELF inspection tools. These are build and inspection
+tools, not target runtime inputs.
+
+| Rejected target input | Enforcement point |
+| --- | --- |
+| musl CRT or target library | archive/ELF and resolved-link-input audits |
+| GCC `crtbegin`/`crtend`, `libgcc`, `libatomic`, or `libssp` | wrapper plan and resolved-link-input audits |
+| compiler-rt target archive, C object, or assembly object | static-runtime provenance, archive inventory, and link audit |
+| ambient target sysroot/header/library path | sealed `crabc-cc` driver and header/link traces |
+
+The report's `purity.static_runtime` record binds `libc.a` to exactly two ELF
+members, the Rust libc root and the documented mimalloc exception.
+
+## Mode witnesses
+
+| Mode | Required result |
+| --- | --- |
+| Compile, preprocess, assembly, relocatable output | installed driver owns target include and tool inputs |
+| Shared DSO | owned startup/library ordering and no foreign runtime input |
+| Dynamic PIE and non-PIE | canonical `/lib/ld-crabc-aarch64.so.1` and owned maps |
+| Static non-PIE | no interpreter or dynamic dependencies |
+| Static PIE | genuine `ET_DYN`, self-relocation, ASLR, and fail-closed malformed table/target checks |
+| Pinned Lua 5.4.8 | source build, extension loading, and execution through `crabc-cc` (`./scripts/dev.sh lua`; the musl lane is a behavior oracle only) |
+
+The harness also requires constructor/destructor ordering (including
+executable and DSO finalizer bypass through `_Exit`), `atexit` and
+`__cxa_finalize`, TLS, stack guard, dynamic loading and initial stack/auxv
+witnesses.
 
 ## Failure taxonomy
 

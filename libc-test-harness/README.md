@@ -1,5 +1,7 @@
 # libc-test Integration Harness
 
+> The Linux/AArch64 route this page describes is paused; native x86-64 is the active target (see `./scripts/dev-x86_64.sh --help`).
+
 Builds and runs the selected [Laputa Systems libc-test](https://github.com/laputa-systems/libc-test)
 subsets against crabc's `libc.so` to produce a categorized failure report.
 The runtime check is scoped to Linux AArch64 on Linux kernel versions 5.10 and
@@ -61,9 +63,8 @@ python3 -m unittest discover -s libc-test-harness -p 'test_*.py'
 
 ## Known Limitations
 
-- **The current full report has no missing-symbol blockers** — retain the
-  graph because later ABI changes can reintroduce one; do not infer behavior
-  from an export count.
+- **Missing-symbol blockers are graph facts** — a later ABI change can
+  reintroduce one; do not infer behavior from an export count.
 - **`functional/crypt` is a profile-limitation skip** — its single upstream
   executable combines the supported dependency-backed SHA-crypt boundary with
   MD5-crypt and bcrypt, which are deliberately unsupported. The direct
@@ -100,7 +101,7 @@ python3 -m unittest discover -s libc-test-harness -p 'test_*.py'
   passing and is not part of this exception. Evidence is recorded in
   `oracle-evidence/math-gamma-aarch64-musl-1.2.6-2026-08-20.txt`.
 
-## Current measurements
+## Measurements
 
 Reports are deliberately local and timestamped. Generate the repository-level
 summary with `./scripts/dev.sh dashboard`; it separates current exported ABI

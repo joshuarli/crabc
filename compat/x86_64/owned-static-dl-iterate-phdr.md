@@ -71,17 +71,5 @@ ELF inspections, execution output, and a locally verifiable `SHA256SUMS`.
 The real libc has TLS, so this consumer does not exercise an executable with
 no `PT_TLS`.
 
-Before the fix, both musl modes passed and the owned ET_EXEC consumer aborted
-at its first callback-result check: the private runtime record was absent.
-After the fix, both owned modes and overrides pass. This component does not
+This component does not
 alone prove Rust panic cleanup, DSO unwinding, family closure, or promotion.
-
-The private `fixed_graph_dlfcn_runtime.rs` source root also compiles with the
-pinned native compiler. Full `ldso-public-dlfcn` replay is blocked at baseline
-`a4101799` by an unrelated missing `virtual_range_in_readable_file_load` in
-`ldso/src/x86_64_initial_graph.rs:1886`. The focused host static-TLS contract
-passes. Two nearby host checks already fail at that baseline: the dispatcher's
-closed-roster test captures newly nested command groups, and the auxv source
-check rejects `malloc` inside the existing `native-mimalloc-shadow` cfg name.
-Both failures were reproduced with tracked source reads from the baseline;
-this component does not broaden into repairing those checks or loader code.

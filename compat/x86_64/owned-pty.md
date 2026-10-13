@@ -86,16 +86,13 @@ ignored `setsid`/`dup2` errors; forkpty atfork/CLOEXEC/mask/cancellation state;
 pipe and fork failures; child-login error propagation/reaping; cancellation
 before allocation, non-canceling name observation, and pending cancellation
 during the disabled forkpty handshake. Error fixtures use contained Linux
-5.10 seccomp filters, not runtime fallback code. The initial regression
-passed all fourteen original musl scenarios and failed the owned static link
-on all eight missing public providers. The additional session-leader case
-strengthens the explicit `O_NOCTTY` boundary. No `getpt` alias is added:
+5.10 seccomp filters, not runtime fallback code. The
+session-leader case strengthens the explicit `O_NOCTTY` boundary. No `getpt` alias is added:
 the pinned musl PTY source does not export it.
 
-The frozen `libc-ttyname-r` gate independently passes its default-archive
-symbol closure and musl/static runtime differential. Its evidence owner now
-checks the musl-form `bits/alltypes.h` type dependency instead of a stale
-transitive `sys/types.h` include, and accepts the compiler's existing private
+The frozen `libc-ttyname-r` gate checks its default-archive symbol closure and
+musl/static runtime differential. Its evidence owner checks the musl-form
+`bits/alltypes.h` type dependency and accepts the compiler's private
 syscall2/3/4 leaves as direct callees when they are not inlined. Named syscall
 numbers, their instruction bodies, `TIOCGWINSZ`, and the absence of every
 excluded public helper remain required. An inlined `isatty` body is judged

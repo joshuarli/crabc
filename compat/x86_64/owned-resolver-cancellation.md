@@ -221,9 +221,7 @@ forced unavailable: setsockopt state=DISABLE; connect state=DISABLE;
 ```
 
 Both paths then reach the witnessed blocked TCP receive wait and cancel with
-the resolver descriptors already closed before caller cleanup. Evidence is
-`oracle-fastopen-transition.*` and `oracle-connect-transition.*` in the focused
-evidence directory. This establishes why the initial source-mapped fastopen
+the resolver descriptors already closed before caller cleanup. This establishes why the initial source-mapped fastopen
 operation is disabled and subsequent shared frame progress remains a CP.
 
 ## Regression and installed evidence
@@ -232,10 +230,8 @@ operation is disabled and subsequent shared frame progress remains a CP.
 headers and linked against both pinned musl and the existing owned static-PIE
 product. Execution is in a disposable native x86-64 Docker container with
 `--network none`, private chroot conventional files, and local UDP/TCP port 53.
-No external DNS or host resolver files are used. Evidence is retained under
-`.work/x86_64/tmp/owned-resolver-cancellation.*/` for the canonical gate; the
-initial failure and focused implementation evidence used
-`.work/x86_64/tmp/cancellation-regression/` and `cancellation-fixed/`.
+No external DNS or host resolver files are used. Evidence is written under
+`.work/x86_64/tmp/owned-resolver-cancellation.*/`.
 
 The server withholds an answer after receiving the UDP request or complete TCP
 query frame, then cancels the client. The caller's cleanup counts descriptors
@@ -271,18 +267,18 @@ receive. Both musl and owned must report `EAGAIN` exactly, with the same
 descriptor and cancellation-state checks. This proves the finite alternate
 residue without weakening the original stimulus.
 
-| Initial same-object case (`res_query`) | Musl | Existing owned product |
-| --- | --- | --- |
-| Blocked UDP or TCP cancellation | Canceled; cleanup once; no live resolver fd | Normal timeout return; cleanup not invoked |
-| Pending ENABLE | Canceled before first packet; cleanup once; no live resolver fd | Sends packet; normal timeout return |
-| Pending DISABLE | Normal return; remains DISABLE; packet sent | Same lifecycle; ordinary timeout errno differs |
-| Pending MASKED | Normal return; becomes DISABLE; no packet; errno 125 | Remains MASKED; packet sent; errno 110 |
+| Same-object case (`res_query`) | Musl behavior the owned product must match |
+| --- | --- |
+| Blocked UDP or TCP cancellation | Canceled; cleanup once; no live resolver fd |
+| Pending ENABLE | Canceled before first packet; cleanup once; no live resolver fd |
+| Pending DISABLE | Normal return; remains DISABLE; packet sent (ordinary timeout errno may differ) |
+| Pending MASKED | Normal return; becomes DISABLE; no packet; errno 125 |
 
-The same blocked and pending-enabled failures reproduced through `res_send`,
-`gethostbyname_r`, and `getaddrinfo`. The retained failed-TCP-acquisition test
-then exposed immediate EMFILE return after earlier MASKED consumption, while
-musl reentered its deadline poll and returned ECANCELED. Both regressions are
-kept in `owned_resolver_cancellation_probe.c`.
+The blocked and pending-enabled cases are also covered through `res_send`,
+`gethostbyname_r`, and `getaddrinfo`. A failed TCP acquisition after an earlier
+MASKED consumption must reenter the deadline poll and return ECANCELED, as
+musl does, rather than return EMFILE immediately. Both regressions are kept in
+`owned_resolver_cancellation_probe.c`.
 
 Run `./scripts/dev-x86_64.sh owned-resolver-cancellation [DYNAMIC_SYSROOT]`.
 Without an argument it constructs static and dynamic products before entering

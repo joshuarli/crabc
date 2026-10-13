@@ -107,8 +107,7 @@ untrusted collector.
 
 The underlying v1 reader also requires literal `false` for its three fixed
 measurement-status flags. Rebinding a base report with numeric `0` cannot turn
-Python equality into an accepted Boolean contract. This corrects the reader's
-type check without changing the v1 schema or its source/product revision rules.
+Python equality into an accepted Boolean contract.
 
 `native_abi_inventory.parse_elf_facts` joins the hardened complete header,
 section and symbol-table APIs for standalone `REL` or `DYN` ELF. Its archive

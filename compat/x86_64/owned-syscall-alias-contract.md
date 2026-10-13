@@ -106,7 +106,7 @@ rejects a forwarding body that merely shares an archive member and zero
 
 Before those runtime cases, the runner invokes the pinned LLD from the supplied
 product on a two-object PIC fixture. The preserved no-list control has an
-`ordinary_local_call` PLT relocation (the focused RED). The checked list
+`ordinary_local_call` PLT relocation. The checked list
 removes that ordinary relocation while retaining `optind` `GLOB_DAT` and
 `malloc` `JUMP_SLOT` relocations. The fixture never executes, so it observes
 allocator interposition as ELF linkage only. It also rejects a supplied product
@@ -154,7 +154,7 @@ facts must bind the exact `libc.a` and `libc.so` bytes, and its base-inventory
 binding must name the supplied inventory byte-for-byte.
 
 ```sh
-CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
+CRABC_X86_SYSCALL_ALIAS_IMAGE_ID="crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py)" \
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
   --output "$PWD/.work/x86_64/syscall-alias-receipt/current" \
   --static-preparation "$PWD/.work/x86_64/current-cohort/out/static/preparation.json" \
@@ -162,7 +162,7 @@ python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
   --dynamic-product "$PWD/.work/x86_64/current-cohort/out/dynamic/installed" \
   --elf-facts "$PWD/.work/x86_64/native-abi-elf-facts/current-cohort/report.json" \
   --base-inventory "$PWD/.work/x86_64/native-abi-inventory/current-cohort/report.json" \
-  --image-id crabc-core-evidence@sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a
+  --image-id "crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py)"
 
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report \
   --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
@@ -248,12 +248,8 @@ current selected evidence.
 authority for the current core image. The original
 `owned-syscall-alias-image-inputs.json` remains unchanged as the July 24
 historical authority. The collector also seals `rust-toolchain.toml`, from
-which its current Rust and LLD paths are derived. The restored core image has
-a distinct immutable ID. Its read-only capture
-contains the same finite tool roster; Python's resolved executable bytes
-changed from the previous core image. Reports naming the previous image
-`sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`
-remain historical and cannot pass the current reader. Updating this authority
+which its current Rust and LLD paths are derived. Reports naming a different
+image remain historical and cannot pass the reader. Updating this authority
 does not change any historical report or transfer its qualification.
 The current manifest records
 invocation paths, resolved paths, modes, sizes and SHA-256 values for
@@ -262,7 +258,7 @@ wrapper/archive/shared/specs. Regenerate it reproducibly from the exact image:
 
 ```sh
 docker run --rm --network none --read-only -v "$PWD:/workspace:ro" -w /workspace \
-  sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a \
+  "$(python3 -B compat/x86_64/core_image.py)" \
   python3 -B compat/x86_64/owned_syscall_alias_authority.py \
   > .work/x86_64/syscall-image-inputs.json
 cmp compat/x86_64/owned-syscall-alias-image-inputs-current.json \

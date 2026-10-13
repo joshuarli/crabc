@@ -59,8 +59,6 @@ Source/object hashes, binaries, stdout/stderr, and status records remain below
 the worktree's `.work` directory. A supplied dynamic product selects only its
 four entries. This runner does not execute or claim the full libc-test corpus.
 
-The focused matrix passed pinned musl and all six owned link/entry cells.
-The supplied-product rerun passed all four dynamic entries. Existing
-`run_owned_pthread_scheduling.sh` and `run_owned_pthread_join_cancel.sh` also
-passed against that same dynamic product, covering scheduler failure
-reclamation, C11/default attributes, and cancellation/join transitions.
+`run_owned_pthread_scheduling.sh` and `run_owned_pthread_join_cancel.sh` cover
+the neighboring scheduler-failure reclamation, C11/default attribute and
+cancellation/join transitions against the same dynamic product.

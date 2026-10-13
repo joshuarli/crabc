@@ -24,10 +24,8 @@ allowed shared dynsym removal is the exact contract list. It derives the
 baseline's extras from the retained reference/candidate symbol identities and
 requires every raw triage record to equal its candidate record, rather than
 only sharing its identity; any independent extra present on both sides remains
-present. The ae0fcc22 pair
-measured 475 extras before and 51 after this change, but those counts are a
-historical measurement rather than the 424-name visibility policy. The runner
-records the actual before/after counts for its supplied matched pair. It also
+present. The runner records the actual before/after extra counts for its
+supplied matched pair. It also
 reads complete `--syms --wide` tables. It rejects a dynsym row for
 any contract name, requires its one shared definition to be `LOCAL`, and
 matches its raw spelling, version, kind, and object/TLS size to the sole
@@ -56,10 +54,9 @@ This is component evidence only. It does not qualify the native runtime,
 allocator, product campaign, or public x86 support.
 
 Both backend paths authenticate the same inspection-tool manifest before
-building products. The immutable core image is
-`sha256:a635e97c4bb5afe33d29ec9607f1c906a5c958c720527a658f1f91035d28466a`.
-The restored image's `ar`, `nm` and `readelf` bytes match their existing hashes;
-this observation does not transfer reports produced under the previous image.
+building products. The manifest (`owned_mimalloc_export_visibility_image_inputs.json`)
+records the immutable core image it was captured from, which must match the pin
+in `core_image.py`; reports produced under another image are not transferred.
 Run `owned_mimalloc_export_visibility.py --check-image-inputs` inside that image
 to authenticate the manifest and tool bytes without reading or building any
 runtime product. The command prints the authenticated image and file identities.

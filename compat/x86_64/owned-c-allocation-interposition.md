@@ -41,9 +41,8 @@ The `timezone` case installs a POSIX `TZ` rule longer than the 32-byte static
 cache, then rejects every executable `malloc` while `tzset` grows `OLD_TZ`.
 Pinned musl's `src/time/__tz.c` maps that allocation to `__libc_malloc` because
 it occurs under the timezone lock. The case requires no public allocation
-attempt and checks the parsed standard and daylight names. The selected native
-shadow previously called the executable allocator and failed this case; the
-private `allocator::allocate_internal` seam now owns the cache.
+attempt and checks the parsed standard and daylight names. The private
+`allocator::allocate_internal` seam owns the cache.
 
 `owned_printf.rs::vasprintf` already has an ordinary external `malloc`
 boundary: the product records its `R_X86_64_GLOB_DAT` lookup and the consumer
@@ -56,16 +55,14 @@ matching release edges must use that same public provider. The direct Rust
 `free` spelling was lowered to private `mi_free` in the candidate product.
 `__crabc_x86_passwd_cabi_free` is a hidden x86 opaque tail that branches to
 `free@plt`; `next_record` and `lookup_reentrant` use it for their line cleanup.
-The retained product symbol, relocation, and disassembly artifacts prove the
-public `malloc` lookup and passwd `free@plt` tail.
+The product symbol, relocation, and disassembly audit checks the public
+`malloc` lookup and passwd `free@plt` tail.
 The AIO `__crabc_x86_aio_cabi_malloc` and `__crabc_x86_aio_cabi_free` tails
 likewise retain ordinary public PLT lookups for list state; the product audit
 and executed `lio` observer both check that boundary.
 `owned_classic_netdb.rs` uses the same public lookup for its nonreentrant host
 cache through `__crabc_x86_host_cache_cabi_malloc` and
-`__crabc_x86_host_cache_cabi_free`. The selected native shadow previously
-reached its private `native_free` with the executable's cache pointer and
-terminated with status 134 on the second lookup. The product audit checks both
+`__crabc_x86_host_cache_cabi_free`. The product audit checks both
 hidden tails and their `malloc@plt`/`free@plt` jumps.
 
 The runner compiles the consumer once through a fresh installed crabc dynamic

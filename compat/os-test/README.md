@@ -1,5 +1,7 @@
 # Pinned os-test POSIX profile
 
+> `run.py` is the AArch64 runner and is paused; x86-64 is the active target and uses `compat/x86_64/owned_os_test.py`.
+
 `run.py` runs the pinned `os-test` revision from `compat/upstreams.toml` in
 isolated temporary directories under both pinned musl 1.2.6 and crabc.  It
 uses os-test's own `make <suite>-test` targets, so its include, namespace,

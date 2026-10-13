@@ -60,16 +60,9 @@ cancelled join result. An already disabled caller's prior state is preserved.
 Each scenario runs in a disposable chroot below checkout `.work`; it never
 opens the host console or changes the host stderr route.
 
-The initial regression retained the same installed-header object for the
-oracle and candidate link: the candidate lacked `fmtmsg`, while pinned musl
-passed all three scenarios. The semantic probe is the regression, and
-`tests/test_owned_fmtmsg.py` covers replay parser and evidence containment.
-
-The focused installed run passed all three scenarios against musl in all six
-owned execution forms. Its workload SHA-256 is
-`090580e91cd8e3193d7e30a16e317202a5d5b16885f1efcba264e47c7499bf61`, identical
-to the initial missing-symbol regression object. The separate replay/containment
-suite passed three tests. This proves the named `fmtmsg` boundary, not an
+The semantic probe is the regression, and `tests/test_owned_fmtmsg.py` covers
+replay parser and evidence containment. All three scenarios must match musl in
+all six owned execution forms. This proves the named `fmtmsg` boundary, not an
 unrelated campaign or public-support promotion.
 
 The owned feature selects `x86-legacy-misc` as its dependency baseline and

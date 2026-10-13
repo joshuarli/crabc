@@ -24,8 +24,3 @@ reproduces this timeout: children are in the counter loop, the worker waits
 for children, and the main thread waits for the worker. The existing
 `native_signal_fork_reaping_probe.c` diagnoses the same window and tests child
 identity checks inside the loop without modifying the pinned workload.
-
-This diagnosis cannot qualify an earlier failed full cohort whose live task
-state was not captured. Keep its original timeout and raw evidence. A later
-isolated pass establishes only that execution and its source-bound inputs;
-it does not replace the failed cohort or qualify the complete runtime matrix.

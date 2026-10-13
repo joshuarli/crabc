@@ -78,15 +78,14 @@ indeterminate local record. The owned adapters retain the Rust boundary's early
 error, rather than reproducing undefined source behavior. `signalfd` retains the
 Linux 5.10 direct `signalfd4` path without musl's pre-baseline ENOSYS fallback.
 
-The isolated first differential passed all ten musl scenarios and failed all
-four dynamic entry modes in exactly three places: `sigpause` returned to user
-code before pending/blocked cancellation; a `siginterrupt` change left a forced
-futex EINTR turning into ETIMEDOUT; and a 2048-byte alternate stack succeeded
-where musl returned ENOMEM, with SS_ONSTACK also exposing size-validation order.
-The retained subcases are the regressions for those owned corrections. All ten
-scenarios, and later the added `waits` scenario, match musl in all six installed entry cells. The three
-corrected entries are owned-static replacement callables; their frozen default
-providers and public spelling roster remain unchanged.
+Three owned corrections are pinned by dedicated subcases: `sigpause` must not
+return to user code before pending/blocked cancellation; a `siginterrupt`
+change must not leave a forced futex EINTR turning into ETIMEDOUT; and a
+2048-byte alternate stack must return ENOMEM as musl does, with SS_ONSTACK also
+exposing size-validation order. All eleven scenarios, including `waits`, match
+musl in all six installed entry cells. The three corrected entries are
+owned-static replacement callables; their frozen default providers and public
+spelling roster remain unchanged.
 
 ## Runner and qualification boundary
 

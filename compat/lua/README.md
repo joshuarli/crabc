@@ -21,6 +21,17 @@ Run it through the architecture-specific Docker entry point:
 python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
+`--offline` requires the verified archive cache at
+`compat/lua/.cache/lua-5.4.8.tar.gz`; a cache miss is an error. The AArch64
+report is `compat/reports/lua/latest.json`; it and the cache are ignored
+generated artifacts. A passing AArch64 report requires that every candidate
+link is limited to installed crabc runtime artifacts and declared Lua objects,
+candidate `lua`/`luac` name `/lib/ld-crabc-aarch64.so.1` with maps hash-matching
+the installed loader/libc, no musl libc, glibc loader or GCC/compiler runtime
+appears in the candidate boundary, source and bytecode workloads match pinned
+musl byte-for-byte, and the C-module success, cached reload, missing-symbol and
+init-failure cases follow the fixture contract.
+
 For focused native static development, invoke `run.py` inside the pinned x86
 environment with `--target x86_64-static --build-profile debug --sysroot ROOT`
 and checkout-local `--work-root` and `--report` paths. `--mode static` selects

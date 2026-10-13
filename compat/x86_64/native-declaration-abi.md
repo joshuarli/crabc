@@ -83,9 +83,9 @@ For example, after retaining a source-matching header receipt locally:
 
 ```sh
 docker run --rm --network none --user "$(id -u):$(id -g)" \
-  -e CRABC_X86_DECLARATION_ABI_IMAGE_ID='crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d' \
+  -e CRABC_X86_DECLARATION_ABI_IMAGE_ID="crabc-core-evidence@$(python3 -B compat/x86_64/core_image.py)" \
   -v "$PWD:/workspace" -w /workspace \
-  crabc-core-evidence:x86_64@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
+  "$(python3 -B compat/x86_64/core_image.py)" \
   python3 -B compat/x86_64/native_declaration_abi.py --collect \
     --header-report /workspace/.work/x86_64/header-declaration-input/report.json \
     --output /workspace/.work/x86_64/native-declaration-abi/clean-COMMIT

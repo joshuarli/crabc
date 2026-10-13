@@ -72,9 +72,9 @@ A separate expected-failure action omits Lord Howe and must emit the fixed
 missing-fixture assertion. The reader checks staged and copied fixture bytes
 and modes, the supplied dynamic product copy before consumer and fixture
 staging, complete before/after root rosters, and expected private-probe
-cleanup. The pre-existing 427712-byte ordinary calendar stream remains
-historical bounded differential evidence; it does not qualify named-zone
-fixture availability or transitions.
+cleanup. The ordinary calendar stream is a bounded
+differential; it does not qualify named-zone fixture availability or
+transitions.
 
 `adjustment-query` only supplies a null adjustment or zero `timex`. The two
 invalid-input guards are input-validation evidence only. Their Docker launch
@@ -108,9 +108,8 @@ SHA-256 pins. It then resolves the core image's ID and runs
 builds current static and dynamic products when no pair is supplied, derives a
 fresh TZif input with `prepare-tzif-input` in that image, and runs
 `run_owned_calendar_component.py`. The receipt reader admits only the pinned
-current core image,
-`sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d`;
-reports from the retired `sha256:5990e55b…` image remain historical evidence.
+core image (`core_image.py`); reports from a different image remain historical
+evidence.
 
 The producer itself never builds a product. The report retains source/product
 and tool seals before and after (including the launcher), every installed-header

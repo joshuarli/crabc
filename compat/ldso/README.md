@@ -1,5 +1,7 @@
 # Synthetic AArch64 ldso differential suite
 
+> The AArch64 runner (`run.py`) described here is paused; x86-64 is the active target and uses `run_x86.py` through the installed synthetic-loader component ([evidence](../../docs/evidence/x86-owned-loader-synthetic.md)).
+
 This is the runtime evidence suite. It compiles the C fixtures once with
 the pinned musl 1.2.6 compiler, links equivalent PIEs for the pinned musl
 interpreter and crabc's `libldso.so`/`libc.so`, then compares raw exit status,

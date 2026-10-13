@@ -30,7 +30,7 @@ process-finalizer callbacks. Invalid non-null data fails with status 127. The
 executable runs the dependency callback after its preinit array and before
 `_init`, while libc receives the process finalizer as its sixth argument. This
 is a CRT acceptance wire only. The separate private
-`ldso-owned-crt-handoff` artifact now publishes it to one fixed graph; that
+`ldso-owned-crt-handoff` artifact publishes it to one fixed graph; that
 does not select a general x86 interpreter or dynamic-CRT path.
 
 The callback arguments retain the conventional executable order: preinit

@@ -39,7 +39,7 @@ ordinary state transitions are both visible in the raw comparison report.
 
 ## Run
 
-Inside the pinned native Docker image:
+Inside the pinned native Docker image (paused AArch64 route):
 
 ```sh
 ./scripts/dev.sh corpus                 # Tier A (fast gate)
@@ -120,10 +120,6 @@ ordinary application payload, then stages and checks those base fixtures in
 each case/side root; it never copies a device node. No account record, device,
 or directory is inherited from the host. Tree seals encode the device kind,
 major/minor, and mode as well as regular files and symlinks.
-
-A receipt made before this per-root staging rule is a failed fixture
-qualification if its cloned `/dev/null` is a regular file. It remains useful
-only as a preliminary diagnostic; it cannot qualify a package outcome.
 
 Every side/case root is retained under a fresh run directory below the
 checkout-local `.work` boundary, with pre/post tree seals, product and archive

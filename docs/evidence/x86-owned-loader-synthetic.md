@@ -23,8 +23,7 @@ both PIE and DSO bases differ across two starts.
 `lifecycle` requires the musl-observed `ctor`, `lifecycle=73`, `after-close`,
 `reopened=73`, and `dtor` markers, then compares the complete raw stream with
 the candidate.  It does not infer a close-to-destructor or reopen-to-
-constructor ordering from the marker presence.  This component does not claim
-a loader-family qualification.
+constructor ordering from the marker presence.
 
 A selected subset can record `selected_passed`, but it cannot set
 `component_complete`.  Completion requires a successful, duplicate-free

@@ -22,7 +22,7 @@ surface. For every function that both archives define, it assembles a program
 that defines the function and names every other public symbol both archives
 define, except those in the function's own musl member, and links it with
 musl and with the candidate in both static modes. Musl links it unless its
-own objects need that member. The report (`sweep/report.json`) lists every
+own objects need that member. The report (`sweep/report.json` under the run output) lists every
 result and each musl-replaceable function the candidate still rejects. Each
 function in `compat/x86_64/owned-static-replacement-roster.txt` must link with musl
 and with the candidate.
@@ -189,7 +189,7 @@ for a null buffer, as musl does.
 Replacing the whole family leaves the program with no initialized TLS (the
 bundled allocator's `.tdata` is not linked). LLD then places the `.tbss`-only
 `PT_TLS` outside every `PT_LOAD`; the static TLS bootstrap
-(`libc/src/c_abi/x86_64/static_tls.rs`) now requires `PT_LOAD` coverage only
+(`libc/src/c_abi/x86_64/static_tls.rs`) requires `PT_LOAD` coverage only
 for a template with initialized bytes.
 
 Musl itself does not support every subset. With only the trio replaced, its

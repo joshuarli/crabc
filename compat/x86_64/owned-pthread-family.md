@@ -179,15 +179,14 @@ anchor and the earlier pre-receipt input ledger:
 ```sh
 TMPDIR="$PWD/.work/x86_64/tmp" \
   ./compat/x86_64/run_owned_pthread_alias_contract.sh \
-  --receipt-dir "$PWD/.work/x86_64/pthread-alias-receipt/clean-receipt" \
-  --product-report "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/loader-debug-report.json" \
-  --historical-inputs "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/historical-input-identities.json" \
-  --historical-source-commit d8d6dc9a8fcfabb088ebd4de7e7504d526ff7d46 \
-  "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/static-product" \
-  "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/dynamic-product"
+  --receipt-dir "$PWD/.work/x86_64/pthread-alias-receipt/RECEIPT_DIR" \
+  --product-report PRODUCT_REPORT.json \
+  --historical-inputs HISTORICAL_INPUT_IDENTITIES.json \
+  --historical-source-commit COMMIT \
+  STATIC_SYSROOT DYNAMIC_SYSROOT
 
 python3 -B compat/x86_64/owned_pthread_alias_contract_reader.py \
-  --validate-report "$PWD/.work/x86_64/pthread-alias-receipt/clean-receipt/report.json"
+  --validate-report "$PWD/.work/x86_64/pthread-alias-receipt/RECEIPT_DIR/report.json"
 ```
 
 `owned_pthread_alias_contract_reader.py` writes and replays the closed
@@ -196,9 +195,9 @@ the collector, probe, compact source-contract roster from the selected product
 commit, musl inputs, selected product manifests and payloads, and the supplied
 loader-debug product anchor.  The collector’s clean checkout identity and the
 selected product source commit/digest are separate fields: the receipt code
-may be newer than the b41 products it inspects.  The static and dynamic
+may be newer than the products it inspects.  The static and dynamic
 manifests independently seal the drivers, `libc.a`, `libc.so`, and dynamic
-loader.  The prior `d8d6dc9a` input ledger is retained only as historical
+loader.  The `--historical-inputs` ledger is retained only as historical
 provenance and is explicitly forbidden from serving as a selected product.
 
 The record contains every command argv/status/stdout/stderr, one compiled

@@ -52,11 +52,8 @@ invalid commands, descriptors, pointers or paths in the private chroot.
 Those rows prove syscall/C-errno behavior, not successful system reconfiguration.
 No added Docker administration capabilities are required.
 
-The earlier unfinished `x86/reboot-feature-20260904` work remains preserved as
-historical source/evidence work. Its isolated feature/export-count runner is
-superseded by this owned-product batch. The owned reboot entry follows the
-release source's three syscall arguments, retaining both fixed magic words
-and the caller's command. It does not change the frozen default archive.
+The owned reboot entry follows the release source's three syscall arguments,
+retaining both fixed magic words and the caller's command. It does not change the frozen default archive.
 
 This component leaves the `system.kernel-admin` capability and POSIX family
 completion open. The remaining C logging APIs have independent state and

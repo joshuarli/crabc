@@ -25,7 +25,7 @@ rule.
 
 DES crypt, BSDI extended DES, MD5-crypt (`$1$`), and bcrypt
 (`$2a$`/`$2y$`) remain intentionally unsupported crypt semantics. The shared
-x86 `legacy_des_compat.rs` owner supplies inert link-compatible
+x86 `libc/src/c_abi/x86_64/legacy_des_compat.rs` owner supplies inert link-compatible
 `encrypt`/`setkey` names through the narrow `x86-legacy-des-compat` feature.
 The owned-static runtime selects that feature directly, while selected-private
 `legacy.misc` depends on it and contributes its separate `fmtmsg` owner. They

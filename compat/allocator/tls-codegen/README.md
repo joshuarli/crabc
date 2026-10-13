@@ -1,6 +1,8 @@
 # Allocator compiler-TLS codegen judge
 
-Run this bounded evidence through the pinned native image:
+The first section is the paused AArch64 judge (`scripts/dev.sh`); the native x86-64 proof path is the last section.
+
+Run the AArch64 evidence through the pinned native image:
 
 ```sh
 ./scripts/dev.sh allocator-tls

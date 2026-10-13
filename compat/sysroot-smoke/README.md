@@ -4,7 +4,8 @@ This harness tests the packaged `.tar.xz` after safe extraction. It does not
 rebuild or repair the archive and never installs the crabc loader into the
 container's real `/lib`.
 
-Re-run a release asset through the pinned native development container with:
+Re-run a release asset through the pinned native AArch64 development container
+(paused route) with:
 
 ```sh
 ./scripts/dev.sh sysroot-smoke \

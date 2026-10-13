@@ -46,21 +46,15 @@ IN6ADDR_LOOPBACK, Ipv6Constants}` gives the correspondence an explicit,
 searchable native spelling; `ethers` checks the octets and the no-std
 probe keeps the value path independent of C address helpers.
 
-## Scope-reset interpretation
+## Scope boundary
 
-These observations preserve completed capability-accounting evidence; they do not widen the
-future platform or API contract. `crabc` remains Linux/AArch64 with Linux
-kernel MSRV 5.10. An optional macOS/AArch64 backend belongs only to
-`crabc-rs`, through libSystem and a separate implementation boundary.
+These observations do not widen the platform or API contract: `crabc` targets
+Linux kernel 5.10 or newer, and `AGENTS.md` owns the product scope. An optional
+macOS/AArch64 backend belongs only to `crabc-rs`, through libSystem and a
+separate implementation boundary.
 
 The evidence is complete when the ledger accounts for the profile rather than
-demanding a Rust wrapper around every C symbol. The current machine-readable
-ledger, rather than this prose note, owns the exact group counts and statuses.
-The allocator exception remains at the libc boundary;
-Rust-native callers use ordinary Rust allocation. Future work must keep the
-bounded C/POSIX/C.UTF-8 locale profile, UTF-8-first text model, conventional
-file-backed user/host/service/protocol lookup without NSS, small DNS resolver,
-system-supplied timezone data, and no gettext framework. Crabc does not
-implement cryptography, async runtimes, process supervisors, or security-policy
-frameworks. Existing codec or compatibility evidence remains factual without
-creating an obligation to expand those legacy domains.
+demanding a Rust wrapper around every C symbol. The machine-readable ledger,
+rather than this note, owns the exact group counts and statuses. The allocator
+exception remains at the libc boundary; Rust-native callers use ordinary Rust
+allocation.
