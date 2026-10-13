@@ -56,17 +56,32 @@ git branch -d lane/<id>
 ```
 
 The helper refuses a path outside `.work/wt/` and a worktree with uncommitted
-tracked changes. At any moment the only worktrees are those of running lanes
-plus the coordinator's scratch verification tree.
+tracked changes. A workstream keeps its worktree, with its built targets,
+for as long as it has ready or running work; remove it when the workstream
+has nothing ready.
 
-## Width
+## Width and pace
 
-The limit is memory and disjoint file ownership, not a fixed lane count. A
-cold `crabc-mimalloc` test build was measured at roughly 8 GiB resident on
-this 32-CPU, 60 GiB host. Launch the first lanes, read peak memory once they
-build, and keep at least 12 GiB available. `.claude/settings.json` caps
-concurrent subagents at 16. Qualifying performance measurements need an
-uncontended host: no lane builds while one runs.
+An idle slot with ready work is a defect. The limit is memory and disjoint
+file ownership, not a fixed lane count: a cold `crabc-mimalloc` test build
+was measured at roughly 8 GiB resident on this 32-CPU, 60 GiB host. Launch
+the first lanes, read peak memory once they build, and keep at least 12 GiB
+available. `.claude/settings.json` caps concurrent subagents at 24.
+
+- **Stagger, never wave.** Launch a lane the moment the narrowest thing it
+  needs has merged. Split an item into the part that needs nothing and the
+  part that waits, and start the first part now.
+- **Discovery belongs to the lane.** A lane's first act is to run its own
+  family's steps or gates on its own committed branch and report what fails.
+- **Resume, do not respawn.** When a lane reports and its workstream has more
+  ready work, rebase its branch onto `main` and send the next item to the
+  same agent in the same worktree.
+- **Read-side lanes are free.** Inventories, reconnaissance and profiling
+  that change no product code never conflict; keep them running.
+- **Measurement windows.** Qualifying benchmarks need a quiet host. Collect
+  every pending measurement, tell running lanes to finish the command in
+  flight and hold, measure, then release them. Diagnose with CPU time and
+  instruction counts instead, which need no window.
 
 ## The lane loop
 
@@ -117,22 +132,23 @@ Other narrow routes are in the harness guides:
 
 ## Integrate
 
-One lane at a time, as each reports:
+Merge every lane that has reported, then verify the merged tip once:
 
-1. Read the diff. Rebase the lane onto `main` and fast-forward.
+1. Read each diff. Rebase each lane onto `main` and fast-forward; lanes own
+   disjoint files, so order does not matter.
 2. If `compat/x86_64/aarch64_parity_inventory.json` conflicts, take either
    side and run `python3 scripts/lanes/refresh-parity-digests.py`; the file is
    fully derived from the ledgers.
-3. Verify the merged commit from a scratch worktree (`.work/wt/verify`), never
-   in the integration tree: `python3 compat/x86_64/validate_parity_ledger.py`,
+3. Verify the merged tip from a scratch worktree (`.work/wt/verify`), never
+   in the integration tree, and bisect by lane only if it fails: `python3 compat/x86_64/validate_parity_ledger.py`,
    `python3 compat/x86_64/aarch64_parity_inventory.py`,
    `python3 scripts/check_structure.py`, `scripts/lanes/rust-check.sh`, the
    test files the commits touch, and the lane's native command.
 4. A receipt a lane produced proves the lane's commit, not `main`. Rerun the
    cohort steps the lane claims to have fixed in the cohort worktree at the
    merged commit.
-5. Remove the worktree and delete the branch. A parked lane keeps its
-   committed branch and is named in `plan.md`.
+5. Launch what the merge unblocked before anything slow. A parked lane keeps
+   its committed branch and is named in `plan.md`.
 
 Send a failure back to the lane that holds the context, with the command and
 its output, rather than starting a new one.
