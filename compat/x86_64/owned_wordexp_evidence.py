@@ -232,7 +232,7 @@ def _hash_physical_file(path: Path) -> str:
 
 
 def _mode(path: Path) -> int:
-    return stat.S_IMODE(_physical(path, "mode-recorded artifact").lstat().st_mode)
+    return stat.S_IMODE(_physical(path, "mode-recorded artifact", directory=False).lstat().st_mode)
 
 
 def _file_identity(root: Path, relative: str, description: str) -> dict[str, Any]:
@@ -242,7 +242,7 @@ def _file_identity(root: Path, relative: str, description: str) -> dict[str, Any
         path.relative_to(root)
     except ValueError as error:
         raise EvidenceError(f"{description} escapes execution root") from error
-    return {"path": relative, "sha256": _hash_physical_file(path), "mode": stat.S_IMODE(path.lstat().st_mode)}
+    return {"path": relative, "sha256": _hash_physical_file(path), "mode": _mode(path)}
 
 
 def _null_device_identity(root: Path, relative: str, description: str) -> dict[str, Any]:

@@ -145,6 +145,36 @@ class OwnedWordexpFileIdentityTests(unittest.TestCase):
         with self.assertRaisesRegex(module.EvidenceError, "not a physical regular file"):
             module._file_identity(root, "linked-file", "test artifact")
 
+    def test_file_identity_rejects_leaf_or_ancestor_replacement_during_hash(self) -> None:
+        for replacement in ("directory", "symlink-ancestor"):
+            with self.subTest(replacement=replacement):
+                module = load_module()
+                root = TMP_ROOT / self.id().replace(".", "-") / replacement
+                directory = root / "physical"
+                directory.mkdir(parents=True)
+                self.addCleanup(shutil.rmtree, root)
+                path = directory / "artifact"
+                path.write_bytes(b"sealed bytes")
+                path.chmod(0o755)
+                hash_file = module._hash_physical_file
+
+                def hash_then_replace(selected):
+                    digest = hash_file(selected)
+                    if replacement == "directory":
+                        selected.unlink()
+                        selected.mkdir(mode=0o755)
+                        selected.chmod(0o755)
+                    else:
+                        retained = root / "retained"
+                        directory.rename(retained)
+                        directory.symlink_to(retained, target_is_directory=True)
+                    return digest
+
+                message = "not a physical regular file" if replacement == "directory" else "traverses a symlink"
+                with unittest.mock.patch.object(module, "_hash_physical_file", side_effect=hash_then_replace):
+                    with self.assertRaisesRegex(module.EvidenceError, message):
+                        module._file_identity(root, "physical/artifact", "test artifact")
+
 
 class OwnedWordexpDiagnosticTests(unittest.TestCase):
     def test_cell_replay_does_not_publish_component_evidence(self) -> None:
