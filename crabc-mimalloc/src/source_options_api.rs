@@ -206,6 +206,10 @@ pub unsafe fn options_print_out(output: Option<OutputFunction>, argument: *mut c
 /// not unwind across its C ABI. It may allocate and free its own clients;
 /// registration flushing retains the source delayed-buffer lock, so it must
 /// not recursively register a custom output while that flush is in progress.
+/// Automatic process startup, including `_mi_options_post_init`, must already
+/// be complete. The pinned post-init step requires the default output sink to
+/// remain unset until it flushes the startup buffer and installs stderr; an
+/// earlier registration violates that source ordering.
 pub unsafe fn register_output(output: Option<OutputFunction>, argument: *mut c_void) {
     let Some(owner) = owner() else { return };
     // SAFETY: forwarded.

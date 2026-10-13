@@ -4958,6 +4958,170 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn first_tld_numa_verbose_output_is_buffered_until_post_init_and_reuses_cache() {
+        crate::test_process::run_in_fresh_process(
+            "process_init::tests::first_tld_numa_verbose_output_is_buffered_until_post_init_and_reuses_cache",
+            || {
+                use crate::runtime_lifecycle::{
+                    finish_current_thread_native_after_user_destructors,
+                    prepare_native_later_thread_arena, NativePageFreeResult,
+                    ThreadFinishResult,
+                };
+                use crate::subproc::lifecycle::{
+                    native_child_heap_allocate, native_child_heap_new, native_subproc_add_current_thread,
+                    native_subproc_destroy, native_subproc_new, NativeChildThreadAdd,
+                };
+                use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize};
+
+                struct NumaOutputTrace {
+                    output_identity: AtomicUsize,
+                    prefix_fragments: AtomicUsize,
+                    numa_lines: AtomicUsize,
+                    output_owner_matches: AtomicBool,
+                    process_ready: AtomicBool,
+                    main_tld_live: AtomicBool,
+                    policy_count: AtomicUsize,
+                    total_threads: AtomicUsize,
+                    live_threads: AtomicUsize,
+                }
+
+                static TRACE: AtomicPtr<NumaOutputTrace> = AtomicPtr::new(core::ptr::null_mut());
+
+                unsafe extern "C" fn capture_stderr(message: *const core::ffi::c_char) {
+                    if message.is_null() { return; }
+                    let trace = TRACE.load(Ordering::Acquire);
+                    if trace.is_null() { return; }
+                    // SAFETY: startup and delayed-output delivery are
+                    // synchronous; the stack trace remains live until after
+                    // the later worker has joined.
+                    let trace = unsafe { &*trace };
+                    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if bytes.windows(b"mimalloc: ".len()).any(|window| window == b"mimalloc: ") {
+                        trace.prefix_fragments.fetch_add(1, Ordering::Relaxed);
+                    }
+                    let numa_line: &[u8] = b"mimalloc: using 3 numa regions\n";
+                    let numa_line_count = bytes.windows(numa_line.len())
+                        .filter(|window| *window == numa_line)
+                        .count();
+                    if numa_line_count == 0 {
+                        return;
+                    }
+
+                    let storage = ProcessMainInitializationStorage::global();
+                    let output = storage.published_source_options();
+                    trace.output_owner_matches.store(
+                        output.is_some_and(|owner| core::ptr::from_ref(owner) as usize
+                            == trace.output_identity.load(Ordering::Relaxed)),
+                        Ordering::Relaxed,
+                    );
+                    trace.process_ready.store(
+                        storage.state.load(Ordering::Acquire) == READY,
+                        Ordering::Relaxed,
+                    );
+                    let subprocess = MainSubprocess::global();
+                    trace.main_tld_live.store(
+                        subprocess.test_main_tld_is_live(), Ordering::Relaxed,
+                    );
+                    trace.policy_count.store(
+                        NonNull::new(storage.vm_policy_ptr.load(Ordering::Acquire))
+                            .map_or(0, |policy| unsafe { policy.as_ref().test_numa_node_count_cache() }),
+                        Ordering::Relaxed,
+                    );
+                    trace.total_threads.store(subprocess.total_thread_count(), Ordering::Relaxed);
+                    trace.live_threads.store(subprocess.live_thread_count(), Ordering::Relaxed);
+                    trace.numa_lines.fetch_add(numa_line_count, Ordering::Relaxed);
+                }
+
+                // The source NUMA line enters the delayed sink during initial
+                // TLD construction and reaches this embedding stderr callback
+                // only at the normal options post-init flush.
+                unsafe {
+                    std::env::set_var("mimalloc_verbose", "1");
+                    std::env::set_var("mimalloc_use_numa_nodes", "3");
+                }
+                let facts = unsafe {
+                    crate::runtime_lifecycle::NativeProcessStartupFacts::new(
+                        4096,
+                        crate::runtime_lifecycle::test_host_process_environment,
+                        crate::__crabc_runtime::RuntimeStderrOutput::new(capture_stderr),
+                    )
+                }.expect("host facts supply the exact startup environment");
+                assert!(crate::runtime_lifecycle::publish_native_process_startup_facts(facts));
+
+                let trace = NumaOutputTrace {
+                    output_identity: AtomicUsize::new(0),
+                    prefix_fragments: AtomicUsize::new(0),
+                    numa_lines: AtomicUsize::new(0),
+                    output_owner_matches: AtomicBool::new(false),
+                    process_ready: AtomicBool::new(false),
+                    main_tld_live: AtomicBool::new(false),
+                    policy_count: AtomicUsize::new(0),
+                    total_threads: AtomicUsize::new(0),
+                    live_threads: AtomicUsize::new(0),
+                };
+                TRACE.store(core::ptr::from_ref(&trace).cast_mut(), Ordering::Release);
+                let output = prepare_process_source_options()
+                    .expect("published startup facts prepare the options-only owner");
+                trace.output_identity.store(core::ptr::from_ref(output) as usize, Ordering::Relaxed);
+                assert_eq!(PROCESS_MAIN_INITIALIZATION.state.load(Ordering::Acquire), COLD);
+                assert!(PROCESS_MAIN_INITIALIZATION.vm_policy_ptr.load(Ordering::Acquire).is_null());
+                assert!(MainSubprocess::global().test_main_tld_is_cold());
+                assert_eq!(trace.numa_lines.load(Ordering::Relaxed), 0);
+
+                assert!(crate::runtime_lifecycle::initialize_process());
+                assert_eq!(trace.numa_lines.load(Ordering::Relaxed), 1,
+                    "the first multi-node count emits one verbose region line");
+                assert!(trace.prefix_fragments.load(Ordering::Relaxed) >= 1);
+                assert!(trace.output_owner_matches.load(Ordering::Relaxed));
+                assert!(trace.process_ready.load(Ordering::Relaxed));
+                assert!(trace.main_tld_live.load(Ordering::Relaxed));
+                assert_eq!(trace.policy_count.load(Ordering::Relaxed), 3,
+                    "the count is release-published before delayed output delivery");
+                assert_eq!(trace.total_threads.load(Ordering::Relaxed), 1,
+                    "post-init output follows ticket-zero registration");
+                assert_eq!(trace.live_threads.load(Ordering::Relaxed), 1,
+                    "post-init output follows source attachment publication");
+
+                assert!(prepare_native_later_thread_arena());
+                let child = native_subproc_new().expect("the initialized parent creates a child");
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) },
+                        Ok(NativeChildThreadAdd::Added));
+                    let heap = native_child_heap_new().unwrap().unwrap().unwrap();
+                    let block = unsafe { native_child_heap_allocate(heap, 80) }
+                        .unwrap().expect("the child Heap allocates its source client");
+                    assert_eq!(unsafe { crate::runtime_lifecycle::native_free(block) },
+                        NativePageFreeResult::Freed);
+                    assert!(unsafe {
+                        crate::subproc::lifecycle::native_child_heap_release(heap, false)
+                    }.unwrap().unwrap().is_ok());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(),
+                        ThreadFinishResult::Finished);
+                }).join().expect("the child member allocates and releases its Heap");
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()));
+
+                crate::source_options_api::option_set(
+                    crate::config::SourceOption::UseNumaNodes as core::ffi::c_int, 4,
+                );
+                let policy = NonNull::new(PROCESS_MAIN_INITIALIZATION.vm_policy_ptr.load(Ordering::Acquire))
+                    .expect("the completed process retains its VM policy");
+                assert!(unsafe { policy.as_ref().current_numa_node() } < 3);
+                assert_eq!(unsafe { policy.as_ref().test_numa_node_count_cache() }, 3,
+                    "a later option mutation cannot replace the source count cache");
+                assert_eq!(trace.numa_lines.load(Ordering::Relaxed), 1,
+                    "child activity and a later option change do not repeat the line");
+
+                TRACE.store(core::ptr::null_mut(), Ordering::Release);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn selected_static_theap_is_counted_after_tld_link_before_heap_publication() {
         crate::test_process::run_in_fresh_process(
             "process_init::tests::selected_static_theap_is_counted_after_tld_link_before_heap_publication",
