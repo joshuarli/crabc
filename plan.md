@@ -434,7 +434,7 @@ whose files are disjoint, all measured in the same window.
 | O1 | L | Runtime scorecard in the cohort worktree at the H1 commit: three `perf-c` attempts and `perf-native --mode full`. Fix any row above 1.00 or over 2R by removing work (syscalls, copies, passes), as `performance-by-mechanism` describes, without changing selected semantics; confirm each fix with a focused development-mode rerun of its rows, since a full run binds to a qualified commit. Log every row against 0.90. | H1, A1, T2, T3 | The full scorecard is in the campaign log, and every row above 1.00 has a merged fix whose focused rerun is at or below 1.00 |
 | O2 | L | The promotion revision (D4). One commit sets `public_support = true` in the ledger, the generator and the manifest, marks `performance.release` verified with its receipt path, and updates `README.md`, `AGENTS.md` and `docs/scope.md`. Then, at that commit, in one work directory: the cohort `--through publish-lua-source-build`, the correctness chain, the performance measurements, then the same cohort resumed with the performance inputs under `--profile full`, and the promotion check. A failure is fixed forward and the revision is requalified. | O1, T1, T5 | In the cohort worktree, `./scripts/dev-x86_64.sh campaign-promotion-check --qualification-receipt PATH` passes |
 | O3 | L | Allocator performance. First a fresh three-run engine baseline (`allocator-perf-engine --full`) and a profile. Then remove work in the order the profile gives. Each increment is one mechanism with before and after numbers vetted by `benchmark-checklist`. | A4, A5, T1 | In one checkout at one commit, `./compat/allocator/run-x86_64.sh allocator-m9 --profile baseline` exits 0 on three agreeing full reports: suite throughput lower95 at least 0.95, critical rows at least 0.90, critical p99 cost upper95 at most 1.10, peak RSS and PSS upper95 at most 1.05 geomean and 1.10 critical; `architecture_ratchet.py --gate --runtime-evidence FILE` exits 0 |
-| O4 | L | The switch revision (D5): one commit sets `DEFAULT_ALLOCATOR_BACKEND = "native"` in `scripts/build_x86_64_owned_sysroot.py`; then requalify that commit as O2 did | O2, O3, T4 | `./compat/allocator/run-x86_64.sh allocator-m10 --profile baseline --check --performance-receipt PATH` passes, and the promotion check passes at the switched revision |
+| O4 | L | The switch revision (D5): one commit sets `DEFAULT_ALLOCATOR_BACKEND = "native"` in `scripts/build_x86_64_owned_sysroot.py`; then requalify that commit as O2 did | O2, O3, T4 | `./compat/allocator/run-x86_64.sh allocator-m10 --profile baseline --check --performance-receipt PATH --qualification-receipt CHAIN` passes, and the promotion check passes at the switched revision |
 
 ### Close
 
@@ -500,6 +500,10 @@ Forbidden:
   making `promotion-rerun` and the build audit evaluable as T4 states.
 
 Made so far, each with its commit, for the owner:
+
+- `d7ec2008f` (T4): M10 accepts `--qualification-receipt` and requires a
+  passing full-profile chain bound to the current revision for its rerun
+  condition; native and native-shadow both receive the ELF ownership audit.
 
 - `de3a8e968`: the core image identity in `compat/x86_64/core_image.py` is
   the image rebuilt on 2026-10-13 from the unchanged recipe.
@@ -588,6 +592,15 @@ Append one line per merge batch, per parked item, and per contract change.
   26 families. Fifteen ready lanes launched in priority order, each in its
   own `.work/wt/` worktree. Native cold allocator builds reserve 8 GiB each;
   initial available memory was 45 GiB, with a 12-GiB minimum margin.
+
+- 2026-10-13: first integration batch: `d7ec2008f` (T4, full-profile
+  current-revision M10 rerun receipt and native ELF audit), `03527a113`
+  (pthread dispatcher image initialization and installed-product arguments),
+  `09acf288b` (R7 static-TLS scratch confinement), `c03d7857e` (G1a source,
+  Lua and Rust vendor seeding), `072bcfb89` (stale resolver-fixture assertion).
+  Static-TLS oracle, installed pthread lifecycle and primary POSIX components
+  pass in their lanes; merged batch verification is running in a detached
+  checkout. No qualification or promotion claim has changed.
 
 ## For the owner afterwards
 
