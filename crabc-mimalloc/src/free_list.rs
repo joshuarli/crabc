@@ -120,6 +120,7 @@ impl LocalFreeList {
     /// source page state, with `free_is_zero` truthful for its current free
     /// blocks. The caller must use every returned block as an allocation and
     /// return it at most once through [`Self::push_local`].
+    #[cfg(test)]
     pub(crate) unsafe fn from_raw_parts(
         base: NonNull<u8>,
         bytes: usize,
@@ -635,6 +636,7 @@ impl LocalFreeList {
     /// This is the local-list part of `_mi_page_free_collect`; `force == true`
     /// performs the source's linear append when `free` is already non-empty.
     /// Remote `thread_free` collection is intentionally absent.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn collect_local(&mut self, force: bool) -> Result<bool, FreeListError> {
         let Some(local_free) = NonNull::new(self.local_free()) else {
@@ -666,11 +668,13 @@ impl LocalFreeList {
         Ok(true)
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn capacity(&self) -> u16 {
         self.capacity_value()
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn reserved(&self) -> u16 {
         self.reserved
@@ -681,6 +685,7 @@ impl LocalFreeList {
         self.used_value()
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) fn free_is_zero(&self) -> bool {
         self.free_is_zero_value()
@@ -744,6 +749,7 @@ impl LocalFreeList {
     }
 
     #[inline]
+    #[cfg(test)]
     fn list_tail(&self, mut block: NonNull<u8>) -> Result<NonNull<u8>, FreeListError> {
         let mut count = 0usize;
         loop {
