@@ -231,42 +231,42 @@ performance_qualified = false
 
 [[unit]]
 upstream = "src/bitmap.c"
-source_region = "bitmap and binned bitmap claims and selected relaxed observers"
-rust_module = "crabc_mimalloc::bitmap"
-rust_item = "partial: ordinary and binned dynamic bitmap initialization, mutation, search, binning, rollback, abandoned-page single-bit source-snapshot claim visitation with rejected-bit restoration, clear-once-set quiescence, the ordinary tseq-zero lowest-bit registry claim, selected scalar clear-range/rangesn wrapper visits, ordinary Relaxed highest-set and conservative-map popcount observers, and the binned Relaxed highest-clear observer"
-intentional_difference = "Other visitor/callback families and statistics counters remain absent. The abandoned visitor restores a rejected candidate and its conservative chunk-map bit before this source snapshot returns; it does not retry that chunk in the same traversal. The selected generic clear-range visitor snapshots the conservative map, exchanges one field at a time, emits low-to-high field-bounded runs, and restores only an unvisited residual when its callback stops. The selected rangesn wrapper separately delegates inputs <= 1 to that generic visitor, caps larger input at one field, and otherwise visits only complete source-aligned windows while restoring partial windows and a top suffix. The selected highest-set scan reads the chunk map and data Relaxed in descending source order, scans below an in-layout stale high map bit without repairing it, and rejects an out-of-layout stale bit rather than deriving C's assertion-invalid pointer. The selected ordinary popcount scans conservative map fields low to high, counts selected data with Relaxed loads without repair, and likewise retains an out-of-layout stale map bit while skipping its invalid data access. The selected binned highest-clear C/Rust differential intentionally ignores that conservative set-bit map, observes the source-rounded top padding, and proves one descending two-chunk/field walk; it is not binned search or claim behavior. `clear_once_set` waits for that temporary clear to be restored, while another reader can claim an independently set atomic word. The arena capability, not this non-owning BitmapView, verifies the ordinary page bit and supplies PageMap/lifetime authority. The TLS-key registry and one private dynamic arena-pages owner receive distinct typed transient MetaAllocation projections."
+source_region = "complete default-profile scalar bitmap algorithms from src/bitmap.c:26-1997, including field/chunk kernels, ordinary and binned operations, visitor dispositions, relaxed observers, rollback paths, and subprocess statistic events"
+rust_module = "crabc_mimalloc::bitmap, crabc_mimalloc::abandoned, and crabc_mimalloc::subproc"
+rust_item = "complete active scalar profile: field/chunk kernels; ordinary and binned bitmap layouts, initialization, mutation, search, claims, rollback, observers and inverse scans; all source visitor dispositions; and unconditional subprocess statistic events"
+intentional_difference = "Optional SIMD/debug modes and full mi_stats_t ABI/reporting are outside this scalar profile. Checked Rust ranges and typed subprocess counters preserve the selected source algorithms and atomic orders. The abandoned visitor restores a rejected candidate and its conservative chunk-map bit before the source snapshot returns; it does not retry that chunk in the same traversal. The clear-range visitors preserve source snapshot, field-run, aligned-window, callback-stop and residual-restoration behavior. Relaxed observers preserve source traversal order and stale-map handling, with checked Rust views rejecting assertion-invalid out-of-layout access. The arena capability, not this non-owning BitmapView, supplies PageMap/lifetime authority; the TLS-key registry and one private dynamic arena-pages owner receive distinct typed transient MetaAllocation projections."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/bitmap_native_tests.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
 [[unit]]
 upstream = "src/bitmap.h"
-source_region = "bitmap field/chunk representations and binned bitmap declarations"
+source_region = "complete scalar field/chunk and ordinary/binned bitmap layouts and declarations from src/bitmap.h:1-340"
 rust_module = "crabc_mimalloc::bitmap"
-rust_item = "partial: Chunk, BitmapView, and BinnedBitmapView lifetime-bound dynamic representations"
-intentional_difference = "The Rust flexible-array boundary is an explicitly sized lifetime-bound view. The TLS-key registry and one private dynamic arena-pages owner obtain it transiently from distinct exact typed metadata capabilities; general allocator-backed raw views and other visitor families remain absent."
+rust_item = "complete active scalar profile: field/chunk representations, ordinary and binned flexible-tail views, checked size geometry, declarations, and source claim dispatch"
+intentional_difference = "The Rust flexible-array boundary is an explicitly sized lifetime-bound view rather than a general raw flexible-array API. The TLS-key registry and one private dynamic arena-pages owner obtain it transiently from distinct exact typed metadata capabilities."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/bitmap_native_tests.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
 [[unit]]
 upstream = "src/heap.c"
-source_region = "first-class heap lifecycle, selected static main-heap initialization and canonical identity publication, and heap-Theap intrusive list transition"
-rust_module = "crabc_mimalloc::types, crabc_mimalloc::main_theap, crabc_mimalloc::main_heap_thread, crabc_mimalloc::main_heap_page, and crabc_mimalloc::dynamic_theap"
-rust_item = "partial: cache-aligned Heap field slots within one process-static owner, a caller-pinned pristine dynamic Heap binding, source prefix through memid, exact kind-only static first-heap provenance/fields plus the selected kind-only memid -> Release canonical identity -> remaining static initialization sequence, locked one-Theap attach/detach with Release heap clear, and a borrowed later-thread projection which may install one matched in-place pages_main image"
-intentional_difference = "This does not provide first-class heap allocation/deletion, subprocess lists, general arenas, general page routing, or a full C heap layout/API. The canonical static main-Heap identity is one opaque comparison witness only: it cannot dereference or project a Heap like C `_mi_subproc_heap_main`, and it does not establish general heap linkage. The static Heap abandoned/arena fields remain zero/deferred. One bounded static owner and one sequential later-thread owner can use its in-place pages_main image only through matching process map/arena leases; neither models general concurrent routing. A caller-pinned dynamic Heap can participate in the sealed borrowed private non-abandoning page session, one consuming same-owner mapped-regular handoff (adoption or one same-origin allow-collect remote-free reclaim), and one post-TLS full-singleton drain. The mapped all-free result and the singleton's raw failed-reclaim all-free result each perform the exact queue-detached release, while an existing owner or post-publication lock/list/metadata/release failure retains a terminal owner and never invents rollback. The unmapped protocol is not general dynamic routing. Static private-lock failures use the established terminal invalid-owner policy. C locks do not return these errors and this slice omits source heap-busy retry."
+source_region = "selected first-class Heap creation, attachment, release and membership routes from src/heap.c:22-293, with the bounded static main-Heap initialization, child/main-subprocess Heap lifecycles, and selected Heap-Theap transitions"
+rust_module = "crabc_mimalloc::source_heap_api, crabc_mimalloc::source_api, crabc_mimalloc::types, crabc_mimalloc::main_theap, crabc_mimalloc::main_heap_thread, crabc_mimalloc::main_heap_page, crabc_mimalloc::dynamic_theap, crabc_mimalloc::subproc::main_heaps, and crabc_mimalloc::subproc::lifecycle"
+rust_item = "partial: selected first-class Heap creation/deletion and membership APIs; cache-aligned Heap field slots within one process-static owner; a caller-pinned pristine dynamic Heap binding; source prefix through memid; exact kind-only static first-heap provenance/fields plus the selected kind-only memid -> Release canonical identity -> remaining static initialization sequence; locked one-Theap attach/detach with Release heap clear; and a borrowed later-thread projection which may install one matched in-place pages_main image"
+intentional_difference = "The fixed profile selects first-class Heap operations only for the bounded process-main and child-subprocess owners; it does not provide general arenas, arbitrary concurrent page routing, a full C Heap layout/API, or complete release policy. The canonical static main-Heap identity is one opaque comparison witness only: it cannot dereference or project a Heap like C `_mi_subproc_heap_main`, and it does not establish general heap linkage. Static Heap abandoned counts, the OS-abandoned list, and arena-pages slots have exact bounded owners: one static owner and one sequential later-thread owner use the in-place pages_main image and selected OS-list routes only through matching process PageMap/arena leases; neither provides general concurrent routing. A caller-pinned dynamic Heap can participate in the sealed borrowed private non-abandoning page session, one consuming same-owner mapped-regular handoff (adoption or one same-origin allow-collect remote-free reclaim), and one post-TLS full-singleton drain. The mapped all-free result and the singleton's raw failed-reclaim all-free result each perform the exact queue-detached release, while an existing owner or post-publication lock/list/metadata/release failure retains a terminal owner and never invents rollback. The unmapped protocol is not general dynamic routing. Static private-lock failures use the established terminal invalid-owner policy. C locks do not return these errors and this slice omits source heap-busy retry."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/main_heap_thread.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/dynamic_theap.rs"]
+tests = ["crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/source_heap_api.rs", "crabc-mimalloc/src/source_api.rs", "crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/main_heap_thread.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/dynamic_theap.rs", "crabc-mimalloc/src/subproc_main_heaps.rs", "crabc-mimalloc/src/heap_lifecycle.rs", "crabc-mimalloc/src/subproc_lifecycle.rs"]
 exported = false
 implemented = false
 unit_verified = false
@@ -340,9 +340,9 @@ upstream = "src/os.c"
 source_region = "selected allocator OS memory policy, normal and huge OS-page transitions, protection, reuse, and the fixed NUMA count-cache caller"
 rust_module = "crabc_mimalloc::os, crabc_mimalloc::diagnostic_output, crabc_mimalloc::arena_huge, and crabc_mimalloc::arena::owned::huge"
 rust_item = "partial: immutable MemoryConfig, allocation-size policy, MAP_NORESERVE selection, guaranteed-aligned regular mappings, typed aligned-overmap cleanup ownership, one fixed normal/offset non-huge OS allocation owner plus one selected base-only normal-aligned regular-OS arena caller carrying its exact Mapping/MemoryId, one source-startup huge OS-page allocation owner and warning route, the selected Linux contained-range reuse no-op and its separately mapped all-committed external-arena caller, source protect/unprotect wrappers, and one fixed no-option NUMA count-cache/current-node-normalization wrapper with one selected static ticket-zero live-TLD caller"
-intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. NormalOsBaseAllocation transfers only the zero-offset/base-equals-client aligned normal form and its exact MemoryId into the selected one-arena regular-OS reservation caller, while a nonzero offset remains unable to become arena backing. HugeOsAllocation retains one source-selected contiguous prefix of independently mapped 1-GiB pages until its typed arena installation/release; the C path returns a pointer and aggregate memory ID. Mapping::reuse admits only the selected source-conservative complete page range and returns an explicit Linux no-op without a syscall, fault seam, or ownership mutation; empty conservative ranges return None and invalid/closed Mapping inputs are Rust errors. The separately mapped all-committed external-arena caller supplies one non-owning exact-span use of the same no-op. Protect/unprotect retain Rust Errno results and the mapping after failure, while C returns a boolean and emits its warning. The separately mapped NUMA wrapper retains only the source raw branch: it omits `mi_option_use_numa_nodes` and verbose diagnostics, calls one selected ticket-zero static-TLD path after Rust static-MemoryId formation, has no arena-placement policy, and leaves the raw M1 primitive trace unchanged. Randomized hints, full option-driven THP policy, complete OS allocation ownership, and source-backed runtime callers outside the selected regular and huge reservation, reuse, and ticket-zero NUMA paths remain absent."
+intentional_difference = "Linux/AArch64 raw primitives are supplied by crabc-core. AlignedMappingFailure transfers the exact live direct candidate, untrimmed overmap, or prefix-trimmed suffix when an internal cleanup edge fails; this private Rust safety boundary is covered by focused fault tests and is separate from the M1 success-only trace. NormalOsAllocation retains the full regular mapping base/extent in MemoryId::os while exposing a potentially interior offset-aligned client pointer, ignores the source-best-effort committed-prefix decommit result, and returns retained Rust ownership after a failed cleanup or unmap; C returns NULL or records a void/best-effort release instead. NormalOsBaseAllocation transfers only the zero-offset/base-equals-client aligned normal form and its exact MemoryId into the selected one-arena regular-OS reservation caller, while a nonzero offset remains unable to become arena backing. HugeOsAllocation retains one source-selected contiguous prefix of independently mapped 1-GiB pages until its typed arena installation/release; the C path returns a pointer and aggregate memory ID. Mapping::reuse admits only the selected source-conservative complete page range and returns an explicit Linux no-op without a syscall, fault seam, or ownership mutation; empty conservative ranges return None and invalid/closed Mapping inputs are Rust errors. The separately mapped all-committed external-arena caller supplies one non-owning exact-span use of the same no-op. Protect/unprotect retain Rust Errno results and the mapping after failure, while C returns a boolean and emits its warning. The separately mapped NUMA wrapper retains only the source raw branch: it omits `mi_option_use_numa_nodes` and verbose diagnostics, calls one selected ticket-zero static-TLD path after Rust static-MemoryId formation, has no arena-placement policy, and leaves the raw M1 primitive trace unchanged. The aligned-hint cursor, random draw, and CAS behavior have selected mappings and native M2 differential coverage; complete option-driven THP policy, complete OS allocation ownership, and source-backed runtime callers outside the selected regular and huge reservation, reuse, and ticket-zero NUMA paths remain absent."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/arena_huge.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-core/src/miri_model.rs"]
+tests = ["crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/arena_huge.rs", "crabc-mimalloc/src/arena_owned.rs", "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/process_arena.rs", "crabc-core/src/miri_model.rs", "compat/allocator/m2_vm_x86_64.c", "compat/allocator/m2_vm_x86_64.py"]
 exported = false
 implemented = false
 unit_verified = false
@@ -396,15 +396,15 @@ performance_qualified = false
 [[unit]]
 upstream = "src/page-queue.c"
 source_region = "page queue algorithms"
-rust_module = "crabc_mimalloc::types::page_queue and crabc_mimalloc::single_thread"
-rust_item = "partial: intrusive kernels plus direct-cache, page-count, and full-queue reserved-byte accounting for bounded regular/full small queues"
-intentional_difference = "General candidate search, huge queues, abandonment, and theap lifecycle remain incomplete. The separately recorded dynamic mapped-regular and post-TLS mapped-one-block handoffs use only exact regular queue remove/reappend kernels."
+rust_module = "crabc_mimalloc::types::page_queue, crabc_mimalloc::single_thread, crabc_mimalloc::size_class, and crabc_mimalloc::free_list"
+rust_item = "reachable fixed-profile page/bin queue selection, intrusive membership transitions, direct-cache and page-count updates, full-queue byte accounting, and bin-size policy"
+intentional_difference = "The pinned `_mi_page_queue_append` helper has no source callers and is outside the active closure. This unit covers queue mechanics; broader Theap lifecycle, abandonment, and owner-exit policy are accounted for in their own source units and caller rows."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/page_queue.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py"]
+tests = ["crabc-mimalloc/src/page_queue.rs", "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/size_class.rs", "crabc-mimalloc/src/free_list.rs", "compat/allocator/run.py", "compat/allocator/x86_64_m3_queue_retirement.c", "compat/allocator/x86_64_m3_queue_retirement.py"]
 exported = false
-implemented = false
-unit_verified = false
-differential_verified = false
+implemented = true
+unit_verified = true
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -1418,11 +1418,11 @@ rust_module = "crabc_mimalloc::size_class"
 rust_item = "good_size"
 intentional_difference = "The OS page size is an explicit validated input pending startup-context ownership; invalid inputs and overflow are Option results."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/size_class.rs"]
+tests = ["crabc-mimalloc/src/size_class.rs", "compat/allocator/x86_64_m4_operations_driver.c", "compat/allocator/x86_64_m4_gate.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2036,11 +2036,11 @@ rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BFIELD_BITS/BCHUNK_FIELDS/BCHUNK_SIZE/Chunk/ChunkIndex"
 intentional_difference = "Checked chunk indices reject source assertion failures; the cache-line-sized atomic representation and bit numbering are retained."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2052,11 +2052,11 @@ rust_module = "crabc_mimalloc::bitmap"
 rust_item = "field_mask and Chunk run/observer operations"
 intentional_difference = "C assertion preconditions become checked Option results; the scalar Linux/AArch64 scan order, AcqRel mutations, Acquire observations, Relaxed probes, and partial-claim rollback are retained."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2068,11 +2068,11 @@ rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapLayout/BitmapView"
 intentional_difference = "The C flexible allocation is a lifetime-bound view over explicitly sized, aligned storage. The TLS-key registry and one private dynamic arena-pages owner receive distinct transient views only through exact live Malloc MetaAllocation capabilities; no generic allocator-owned raw view exists."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2082,13 +2082,13 @@ name = "mi_bitmap-size-init-and-range-operations"
 source_region = "mi_bitmap_size/init, cross-chunk unsafe/set/clear/query/popcount operations, and conservative chunk-map maintenance"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapLayout/BitmapView::initialize_zeroed/publish_preserved/try_find_and_claim_lowest"
-intentional_difference = "Assertion-invalid layouts and ranges are rejected before access. The typed TLS-key path has distinct fresh-zero and copied-prefix publication, but other visitor/callback families, statistics, and allocator-owned raw metadata remain absent."
+intentional_difference = "Assertion-invalid layouts and ranges are rejected before access. The typed TLS-key path has distinct fresh-zero and copied-prefix publication, Optional SIMD/debug modes, full mi_stats_t ABI/reporting, and general allocator-owned raw metadata remain outside this profile."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2098,9 +2098,9 @@ name = "abandoned-page-claim-and-clear-once-set-quiescence"
 source_region = "src/bitmap.c:594-710 scalar one-bit claim, 1024-1042 size/init and conservative chunk-map repair, 1306-1328 mi_bitmap_find, 1340-1380 mi_bitmap_try_find_and_claim_visit/mi_bitmap_try_find_and_claim, and 1425-1432 mi_bitmap_clear_once_set; paired with src/arena.c:655-671 mi_arena_try_claim_abandoned, src/arena.c:684-696 mi_page_arena_pages, src/arena.c:725-778 mi_arenas_page_try_find_abandoned, src/arena.c:1304-1337 _mi_arenas_page_abandon, and src/arena.c:1383-1409 _mi_arenas_page_unabandon"
 rust_module = "crabc_mimalloc::bitmap and crabc_mimalloc::arena"
 rust_item = "BitmapView::try_find_and_claim_lowest/try_find_and_claim_abandoned/clear_once_set; ArenaAbandonedPages::main_page_is_set; and the MappedAbandonedPages implementations for MainArenaMappedAbandonedPage and DynamicArenaMappedAbandonedPage, including publish, try_claim, clear_once_set, and decrement_after_identity_clear"
-intentional_difference = "The checked view rejects an invalid bit index. The ordinary TLS-key path uses tseq zero and low-to-high chunk-map candidates; the abandoned path retains its visitor cycle, AcqRel claim/restore, conservative-map repair, and the applicable Relaxed/Acquire observations. A native pinned-C/Rust one-chunk trace fixes sequence five and bit 17: a `KeepSet` rejection restores the bit and chunk-map state, an accepted claim clears the bit while intentionally retaining the conservative map, then one drained probe invokes no callback and clears that stale map. The two purpose-bound arena capabilities add a checked counterpart to the source `mi_page_arena_pages` ordinary-`pages` assertion: a candidate whose paired ordinary bit is absent is rejected as `KeepSet`, so the abandoned bit and paired Heap count remain available rather than fabricating an adoption. A successful claim alone decrements that count; an unabandon clear waits for a temporary claimant to restore before it clears the bit, then its caller clears identity and decrements. The source snapshot visits a rejected candidate once, so it cannot retry the same chunk in that traversal; an independent reader may claim a later atomic-word candidate. This is not the C `keep_set = false` rejection route, a PageMap lookup, a general arena scan, runtime reclaim integration, multi-chunk/sequence distribution, races, other visitor families, statistics, or flexible-array allocation ownership."
+intentional_difference = "The checked view rejects an invalid bit index. The ordinary TLS-key path uses tseq zero and low-to-high chunk-map candidates; the abandoned path retains its visitor cycle, AcqRel claim/restore, conservative-map repair, and the applicable Relaxed/Acquire observations. A native pinned-C/Rust one-chunk trace fixes sequence five and bit 17: a `KeepSet` rejection restores the bit and chunk-map state, an accepted claim clears the bit while intentionally retaining the conservative map, then one drained probe invokes no callback and clears that stale map. The two purpose-bound arena capabilities add a checked counterpart to the source `mi_page_arena_pages` ordinary-`pages` assertion: a candidate whose paired ordinary bit is absent is rejected as `KeepSet`, so the abandoned bit and paired Heap count remain available rather than fabricating an adoption. A successful claim alone decrements that count; an unabandon clear waits for a temporary claimant to restore before it clears the bit, then its caller clears identity and decrements. The source snapshot visits a rejected candidate once, so it cannot retry the same chunk in that traversal; an independent reader may claim a later atomic-word candidate. The bounded capability is not a PageMap lookup, a general arena scan, runtime reclaim integration, or flexible-array allocation owner."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/arena.rs", "compat/allocator/run.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/arena.rs", "compat/allocator/run.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -2114,9 +2114,9 @@ name = "scalar-clear-range-visitor-for-default-arena-purge"
 source_region = "src/bitmap.c:1462-1509 _mi_bitmap_forall_setc_ranges and 1517-1521 _mi_bitmap_forall_setc_rangesn <=1 dispatch; paired with src/arena.c:2321-2355 and 2376-2383 frozen-default delayed-purge visitor/call site"
 rust_module = "crabc_mimalloc::bitmap and crabc_mimalloc::arena"
 rust_item = "BitmapView::visit_set_ranges_clear and ArenaView::collect_scheduled_purge/purge_scheduled_range"
-intentional_difference = "The selected native pinned-C/Rust trace calls the generic routine directly on one scalar one-chunk image: a completed walk emits maximal low-to-high runs without crossing a 64-bit source field and retains the conservative map; a stopped callback leaves its visited range clear, restores only the unvisited residual in its exchanged field, and does not touch a later field. Rust checks a stale source-map candidate against the dynamic layout before storage access, whereas C relies on its valid bitmap precondition. The source's `rangesn <= 1` delegation makes this the relevant frozen-default-purge implementation; the separately mapped rangesn wrapper trace covers selected non-default scalar behavior, not actual arena policy. The existing Rust arena callback returns false only after its typed retryable error has rescheduled its current range, so the visitor restores the still-unvisited suffix instead of silently losing work; C's selected purge visitor always continues. This does not claim multi-chunk traversal, binned bitmaps, statistics, arena/subprocess ownership, races, general purge integration, or allocator integration."
+intentional_difference = "The selected native pinned-C/Rust trace calls the generic routine directly on one scalar one-chunk image: a completed walk emits maximal low-to-high runs without crossing a 64-bit source field and retains the conservative map; a stopped callback leaves its visited range clear, restores only the unvisited residual in its exchanged field, and does not touch a later field. Rust checks a stale source-map candidate against the dynamic layout before storage access, whereas C relies on its valid bitmap precondition. The source's `rangesn <= 1` delegation makes this the relevant frozen-default-purge implementation; the separately mapped rangesn wrapper trace covers selected non-default scalar behavior, not actual arena policy. The existing Rust arena callback returns false only after its typed retryable error has rescheduled its current range, so the visitor restores the still-unvisited suffix instead of silently losing work; C's selected purge visitor always continues. This visitor mapping does not claim general purge policy or allocator integration; the scalar C/Rust profile separately covers multi-chunk visitor disposition."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/arena.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "crabc-mimalloc/src/arena.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -2130,9 +2130,9 @@ name = "scalar-rangesn-aligned-window-visitor"
 source_region = "src/bitmap.c:1517-1575 _mi_bitmap_forall_setc_rangesn wrapper and non-default aligned-window branch; src/arena.c:2376-2383 is the unexercised source caller"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapView::visit_set_ranges_clear_aligned"
-intentional_difference = "The selected native pinned-C/Rust trace directly calls the wrapper on fresh scalar one-chunk images. For rngslices three, completed windows at 0, 3, and 9 clear while an incomplete window, later partial window, and non-divisible top suffix restore; a separate stopped image has skipped bits before the first eligible window, leaves that rejected window clear, restores those earlier skipped bits and all later snapshot bits, and never exchanges its next field. Separate zero and one images prove generic maximal-range delegation, while 65 proves the source cap at 64. Rust checks a stale source-map candidate against its dynamic layout before storage access, whereas C relies on its valid bitmap precondition. This is not actual _mi_os_minimal_purge_size/transparent-huge-page policy, ArenaView integration, arena/subprocess ownership, multi-chunk traversal, binned behavior, races, statistics, other visitor families, or allocator integration."
+intentional_difference = "The selected native pinned-C/Rust trace directly calls the wrapper on fresh scalar one-chunk images. For rngslices three, completed windows at 0, 3, and 9 clear while an incomplete window, later partial window, and non-divisible top suffix restore; a separate stopped image has skipped bits before the first eligible window, leaves that rejected window clear, restores those earlier skipped bits and all later snapshot bits, and never exchanges its next field. Separate zero and one images prove generic maximal-range delegation, while 65 proves the source cap at 64. Rust checks a stale source-map candidate against its dynamic layout before storage access, whereas C relies on its valid bitmap precondition. This is not actual _mi_os_minimal_purge_size/transparent-huge-page policy or general ArenaView integration; optional SIMD/debug modes and full mi_stats_t ABI/reporting remain outside this scalar bitmap proof."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -2146,9 +2146,9 @@ name = "scalar-read-only-set-bit-visitor"
 source_region = "src/bitmap.c:1437-1460 _mi_bitmap_forall_set; source caller src/arena.c:2484-2493 _mi_heap_visit_blocks"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapView::visit_set_bits"
-intentional_difference = "The selected native pinned-C/Rust trace calls the source visitor directly on fresh valid 65-chunk images: bits 1, 65, and 32770 cross chunk-map fields zero and one; a completed walk emits each one-slice callback low-to-high, while a second-callback refusal stops immediately. Both records retain all selected data fields and conservative map fields. The source assumes every map bit names an in-layout chunk; Rust snapshots its immutable chunk count once and skips a stale out-of-layout map bit without deriving an invalid pointer, retaining that map bit (a Rust-only unit test covers this checked safety divergence). This does not claim Heap/Page/Arena pointers, _mi_heap_visit_blocks integration, callback mutation, flexible allocation ownership, arena/subprocess ownership, binned behavior, races, statistics, or allocator integration."
+intentional_difference = "The selected native pinned-C/Rust trace calls the source visitor directly on fresh valid 65-chunk images: bits 1, 65, and 32770 cross chunk-map fields zero and one; a completed walk emits each one-slice callback low-to-high, while a second-callback refusal stops immediately. Both records retain all selected data fields and conservative map fields. The source assumes every map bit names an in-layout chunk; Rust snapshots its immutable chunk count once and skips a stale out-of-layout map bit without deriving an invalid pointer, retaining that map bit (a Rust-only unit test covers this checked safety divergence). This selected visitor does not provide `_mi_heap_visit_blocks` pointer traversal, callback mutation, or flexible-array allocation ownership; those behaviors are outside the bitmap module boundary."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -2194,13 +2194,13 @@ name = "ordinary-bitmap-highest-set-relaxed-stale-chunkmap-scan"
 source_region = "mimalloc v3.5.0 src/bitmap.c:1383-1403 mi_bitmap_bsr and src/bitmap.h:205-208 highest-set result contract"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapView::highest_set_relaxed"
-intentional_difference = "The selected Rust-only observer reads chunk-map fields and data fields Relaxed from high to low, then scans every lower chunk below the highest selected map bit so an in-layout stale high map bit cannot hide a lower live data bit. It leaves both images unchanged. Pinned C asserts that a selected map bit names its flexible trailing layout; Rust caps the final field scan to its initialized chunk count rather than deriving that assertion-invalid pointer. The focused three-chunk regression covers an in-layout stale high chunk and map preservation only. It is not a C differential and does not establish binned search/claim behavior, popcount beyond its separately mapped observer, callback visitors, ownership/allocation of flexible images, Heap/Page/Arena integration, statistics, concurrency, or allocator routing."
+intentional_difference = "The selected Rust-only observer reads chunk-map fields and data fields Relaxed from high to low, then scans every lower chunk below the highest selected map bit so an in-layout stale high map bit cannot hide a lower live data bit. It leaves both images unchanged. Pinned C asserts that a selected map bit names its flexible trailing layout; Rust caps the final field scan to its initialized chunk count rather than deriving that assertion-invalid pointer. The focused regression checks an in-layout stale high chunk and map preservation. The native scalar C/Rust transcript compares repeated highest-set and popcount observations, including stale in-layout chunk-map entries; an additional Rust-only check rejects assertion-invalid out-of-layout access. Heap/Page/Arena integration and allocator routing remain outside this observer row."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2210,13 +2210,13 @@ name = "ordinary-bitmap-popcount-relaxed-conservative-chunkmap"
 source_region = "mimalloc v3.5.0 src/bitmap.c:1406-1420 mi_bitmap_popcount: low-to-high conservative chunk-map-field traversal and Relaxed selected-chunk counts"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BitmapView::popcount_relaxed"
-intentional_difference = "The selected read-only observer retains source low-to-high map-field and selected-chunk Relaxed order: an in-layout stale map bit selects an empty chunk, contributes zero, and remains set. C requires its valid trailing-storage layout; Rust retains an out-of-layout stale map bit while skipping its invalid data access. This is neither C differential nor snapshot/concurrency, visitor, flexible-image ownership, binned behavior, Heap/Page/Arena integration, statistics, or allocator-routing evidence."
+intentional_difference = "The selected read-only observer retains source low-to-high map-field and selected-chunk Relaxed order: an in-layout stale map bit selects an empty chunk, contributes zero, and remains set. C requires its valid trailing-storage layout; Rust retains an out-of-layout stale map bit while skipping its invalid data access. This observer is compared in the native scalar C/Rust transcript; it does not establish snapshot semantics, flexible-image ownership, Heap/Page/Arena integration, or allocator routing."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/tests/test_runner.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2386,16 +2386,16 @@ performance_qualified = false
 [[item]]
 upstream = "src/page-queue.c"
 name = "page-queue-intrusive-metadata-kernels"
-source_region = "queue predicates plus remove/push/push-at-end/move-to-front/enqueue intrusive link, endpoint, count, and in-full flag transitions"
-rust_module = "crabc_mimalloc::types::page_queue"
-rust_item = "page_queue_*_metadata and queue predicate functions"
-intentional_difference = "The `_metadata` suffix prevents these kernels from being mistaken for complete live allocator operations: absent theap lifecycle state still owns direct-page-cache, page_count, and pages_full_size accounting. Source link order, queue counts, endpoints, second-position insertion, and Relaxed page flag changes are retained."
+source_region = "reachable queue predicates and remove/push/push-at-end/move-to-front/enqueue intrusive link, endpoint, count, direct-cache, page-count, and in-full flag transitions"
+rust_module = "crabc_mimalloc::types::page_queue and crabc_mimalloc::single_thread"
+rust_item = "page_queue_* metadata and queue predicate functions, with source-shaped caller accounting in single_thread"
+intentional_difference = "The C/Rust queue-retirement matrix covers source link order, queue counts, endpoints, second-position insertion, direct-cache/page-count changes, full-queue byte accounting, and Relaxed page flag changes. This row maps the fixed-profile queue transitions; broader owner lifecycle remains in separate source units."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/page_queue.rs"]
+tests = ["crabc-mimalloc/src/page_queue.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/x86_64_m3_queue_retirement.c", "compat/allocator/x86_64_m3_queue_retirement.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2708,9 +2708,9 @@ upstream = "src/init.c"
 # attachment item deliberately delegates that precise classification to the
 # source-specific row.
 name = "later-thread-process-static-main-heap-no-page-attachment"
-source_region = "later-thread `_mi_thread_init_with_heap(mi_heap_main())`, `mi_thread_theaps_done`, and `_mi_thread_done` ordering from src/init.c:236-282,305-360,377-421,448-481; `_mi_theap_collect_abandon` page visit from src/theap.c:89-152; `_mi_theap_init` and `_mi_tld_detach_theaps` from src/theap.c:228-306,414-449; count-zero root handling from src/threadlocal.c:205-214; and the fixed main fast slot from src/heap.c:103-126"
-rust_module = "crabc_mimalloc::main_heap_thread, crabc_mimalloc::main_heap_page, crabc_mimalloc::main_theap, crabc_mimalloc::tld, crabc_mimalloc::types, crabc_mimalloc::compiler_tls, and crabc_mimalloc::meta"
-rust_item = "MainHeapThreadAttachment/MainHeapThreadAttachmentBeginError/MainHeapThreadPageSession/MainHeapThreadPageDrainSession, MainHeapThreadProcessPageAllocator/MainHeapThreadProcessPageExitDrain/MainHeapThreadProcessPageExitSingletonHandoff/MainHeapThreadProcessPageExitMappedOneBlockHandoff/MainHeapThreadProcessPageExitFullMediumRoute/MainHeapThreadProcessPageExitFullLargeRoute/MainHeapThreadProcessPageExitFullNonDirectSmallRoute/MainHeapThreadProcessPageExitFullDirectSmallRoute/MainHeapThreadProcessPageExitMappedRegularRoute/MainHeapThreadProcessPageExitMappedRegularPagesRoute, MainHeapThreadProcessPageExitDrain::{abandon_full_medium_after_force_collect_to_mapped_process_route,abandon_full_large_after_force_collect_to_mapped_process_route,abandon_full_non_direct_small_after_force_collect_to_mapped_process_route,abandon_full_direct_small_after_force_collect_to_mapped_process_route}, MainStaticHeapLease, ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata, Theap::initialize_shared_main_metadata, blocking shared heap-list attach/detach, default-then-fixed-fast root publication, direct no-page teardown, post-drain teardown, and finish_after_detached_process_page_route"
+source_region = "later-thread `_mi_thread_init_with_heap(mi_heap_main())`, `mi_thread_theaps_done`, and `_mi_thread_done` ordering from src/init.c:305-360,377-421,448-481; `_mi_theap_init`/`_mi_theap_create`, reference updates, and Heap/TLD detach from src/theap.c:236-370,381-445; regular thread-local slots and count-zero release from src/threadlocal.c:103-214; cached-Theap access from src/prim/prim-tls.c:211-229; the fixed main fast slot from src/heap.c:103-126; and Theap count fields/macros from include/mimalloc-stats.h:77 and include/mimalloc/internal.h:394-398"
+rust_module = "crabc_mimalloc::main_heap_thread, crabc_mimalloc::main_theap, crabc_mimalloc::tld, crabc_mimalloc::types, crabc_mimalloc::compiler_tls, crabc_mimalloc::meta, crabc_mimalloc::statistics, crabc_mimalloc::subproc, and crabc_mimalloc::subproc::main_heaps"
+rust_item = "ThreadLocalDataOwner::begin_later_main_heap_attachment_with_metadata; Theap::initialize_shared_main_metadata; SubprocessHeapList blocking attach/detach; default-then-fixed-fast root publication; SubprocessStatistics::{theap_linked,theap_unlinked}; ThreadLocalData::count; no-live-page later-thread teardown; and subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace"
 # Rust-only storage/scheduling boundary: a live later-main engine may split
 # into `PageAllocatorEngineState` plus the attachment's suspended marker and
 # `ProcessPageMapSuspendedEngineAccess`. The latter releases only the plain-map
@@ -2723,13 +2723,13 @@ rust_item = "MainHeapThreadAttachment/MainHeapThreadAttachmentBeginError/MainHea
 # that count reaches zero. The scheduler remains one PageMap mutation at a
 # time and exposes neither a client address nor a public/concurrent allocator
 # capability.
-intentional_difference = "This is the ordinary later-thread branch after an already selected ticket-zero main attachment. The static owner lends a borrow-tied lock-serialized Heap projection and rejects its own teardown while a later Theap remains linked. Later construction allocates typed metadata TLD/Theap state. Separately recorded bounded page owners may validate one matching process PageMap/arena pair, use the shared Heap's in-place pages_main bitmap, and retain a map lifecycle through one engine and scoped producer. The later-owner extension includes an all-free scan, eight sole-page handoffs, four source-specific one-remote full-page predecessors of the mapped regular route, and one aggregate regular-pages traversal. One sole `MemoryKind::Os` singleton links exactly `Heap::os_abandoned_pages` before common unown, removes it before clipped PageMap/alias/primary/mapping release, and terminally retains a failed `munmap` owner; it exposes no list traversal, reclaim, or requeue. Full arena medium/full arena large and full arena non-direct/direct small retain the source-unmapped mostly-used tail; direct forms keep their rounded-cache/partial-head constraints; the full-large terminal release proves all 64 slices. Separately, a full medium or large `BIN_FULL`, full non-direct-small ordinary-bin, or full direct-small ordinary-bin page with exactly one joined remote free becomes `used == reserved - 1` during force collection and immediately enters the mapped regular route after false collection removes its source member. The large branch retains its complete 64-slice span, the non-direct-small branch retains an empty direct-cache image, and the direct-small branch clears its rounded range before page-count detach. Full origins remain sequential client-free until ordinary source handling leaves one final mapped nonfull regular member. The nonfull route admits `0 < used < reserved`, and its direct small form additionally proves its rounded cache image and `reserved >= 16`. Exactly its sole mapped nonfull medium form may be explicitly consumed by a fresh matching later-main owner through the separately recorded short-to-long PageMap handoff, exact bitmap/count claim, reassociation, and queue-tail reentry; small/direct/full and aggregate members cannot use that sole-route handoff. The aggregate route preflights every direct slot and every nonfull regular small/medium/large member, plus a full `BIN_FULL` medium or large page or an ordinary-bin full direct/non-direct small page only when a joined remote head must make it nonfull during force collection, then publishes survivors for short-locked sequential client frees. The separately recorded aggregate-last-member handoff may consume one client-selected mapped regular member only after every sibling and singleton tail terminally releases; a fresh engine cannot manipulate any other aggregate member. Other full, singleton, unmapped, huge, foreign, malformed, automatic-scanning, concurrent/general map-routing, allocation-time reclaim/requeue beyond that exact sole-medium or aggregate-last-member handoff, general cached-root policy, pthread/TLS callback, process shutdown, and public allocator routing remain absent. A page/root/list/metadata mismatch after source mutation retains the owner rather than fabricating teardown recovery. Normal shared heap-list lock contention waits through the private futex lock; unexpected lock wake errors remain explicit private invalid-owner errors."
+intentional_difference = "This is the ordinary later-thread attachment after the ticket-zero process-main Heap is ready. The trace creates a non-main Heap before the worker, then the worker initializes its native thread, allocates and frees blocks from two Heaps, verifies Theap list order, cached-root switches, refcounts and statistics, deletes one Heap, and finishes with no live client pages. Thread finish detaches and releases each Theap and its key; the still-live Heap is deleted after the worker returns. The fixture explicitly invokes the source thread-done path because this pinned C build does not attach it to pthread exit. Page-bearing owner exit, map/arena handoff, aggregate drains, arbitrary cached-root policy, process shutdown, and public concurrent allocator routing are outside this trace and are recorded on their own rows."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/main_heap_thread.rs", "crabc-mimalloc/src/main_heap_page.rs", "crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/types.rs"]
+tests = ["crabc-mimalloc/src/main_heap_thread.rs", "crabc-mimalloc/src/main_theap.rs", "crabc-mimalloc/src/tld.rs", "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/subproc_main_heaps.rs", "compat/allocator/heap_lifecycle.c", "compat/allocator/heap_lifecycle.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2755,13 +2755,13 @@ name = "mi_bbitmap-layout-bins-search-and-rollback"
 source_region = "mi_bbitmap_size/init/unsafe_setN/setN/try_clearNC/is_xsetN, chunk-bin maps, two-level specialized claims, and multi-chunk claim rollback"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "BinnedBitmapLayout/BinnedBitmapView/ChunkBin"
-intentional_difference = "The C flexible allocation is a checked caller-owned view. Assertion-invalid ranges are rejected, statistics counters remain deferred, and scalar atomic behavior is canonical."
+intentional_difference = "The C flexible allocation is a checked caller-owned view. Assertion-invalid ranges are rejected and scalar atomic behavior is canonical. The selected chunk-bin statistic events are included; full mi_stats_t ABI/reporting is outside this profile."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
-differential_verified = false
+differential_verified = true
 stress_verified = false
 performance_qualified = false
 
@@ -2771,9 +2771,9 @@ name = "binned-bitmap-highest-clear-relaxed-scan"
 source_region = "mimalloc v3.5.0 src/bitmap.c:997-1009 mi_bchunk_bsr_inv and 1616-1634 mi_bbitmap_bsr_inv: high-to-low field and rounded-chunk inverse scans"
 rust_module = "crabc_mimalloc::bitmap"
 rust_item = "Chunk::highest_clear_relaxed and BinnedBitmapView::highest_clear_relaxed"
-intentional_difference = "The selected C/Rust observer deliberately retains the pinned source's rounded chunk capacity, including its TODO-documented top padding, and ignores the ordinary conservative set-bit map. Its direct two-chunk trace compares padded 1023 and descending 963 -> 585 -> 511 -> none results while that map stays empty. It is a read-only Relaxed observation, not a binned search, claim, bin-selection, rollback, statistics, concurrency, flexible-image ownership, Heap/Page/Arena integration, or allocator-routing claim."
+intentional_difference = "The selected C/Rust observer deliberately retains the pinned source's rounded chunk capacity, including its TODO-documented top padding, and ignores the ordinary conservative set-bit map. Its direct two-chunk trace compares padded 1023 and descending 963 -> 585 -> 511 -> none results while that map stays empty. It is a read-only Relaxed observation, distinct from binned search, claim, bin-selection, and rollback; flexible-image ownership, Heap/Page/Arena integration, and allocator routing remain outside this observer row."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py"]
+tests = ["crabc-mimalloc/src/bitmap.rs", "compat/allocator/m2-memory-substrate-v3.5.0.json", "compat/allocator/run.py", "compat/allocator/tests/test_runner.py", "compat/allocator/m2_bitmaps_x86_64.py"]
 exported = false
 implemented = true
 unit_verified = true
@@ -3038,6 +3038,22 @@ stress_verified = false
 performance_qualified = false
 
 [[item]]
+upstream = "src/heap.c"
+name = "heap-membership-ownership-and-utilization-queries"
+source_region = "263-293 mi_heap_of, mi_any_heap_contains, mi_heap_contains, mi_check_owned, and mi_unsafe_heap_page_is_under_utilized"
+rust_module = "crabc_mimalloc::source_heap_api, crabc_mimalloc::source_api, crabc_mimalloc::subproc::main_heaps, and crabc_mimalloc::types"
+rust_item = "source_heap_api::{heap_of,any_heap_contains,heap_contains,heap_page_is_under_utilized}; source_api::check_owned; main_heaps::{heap_of_pointer,heap_of_block}; Heap::is_under_utilized_for_heap"
+intentional_difference = "The selected queries use a safe PageMap lookup and require the caller to exclude concurrent Heap/page transitions for the queried page; they do not provide a general concurrent membership snapshot. Unit coverage exercises null, foreign, interior, moved, wrong-Heap, and non-head-page utilization cases. The fresh pinned-C adapter comparison remains unverified."
+difference_kind = "boundary"
+tests = ["crabc-mimalloc/src/source_heap_api.rs", "crabc-mimalloc/src/subproc_main_heaps.rs", "compat/allocator/x86_64_m6_adapter_driver.c", "compat/allocator/x86_64_m6_adapter.py"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
+
+[[item]]
 upstream = "src/theap.c"
 name = "nonexclusive-dynamic-theap-direct-malloc-lifetime-checkpoint"
 source_region = "later TLD initialization/create/free from src/init.c:236-282; selected `_mi_thread_init_with_heap` dynamic-TLD/Theap setup from src/init.c:306-360; no-page `mi_thread_theaps_done` and outer `_mi_thread_done` order from src/init.c:377-421,452-480; regular TLS-backing lifecycle from src/threadlocal.c:103-173,205-214; selected MI_MEM_MALLOC `_mi_meta_free` dispatch from src/subproc.c:73-81; process-global key-registry lifecycle from src/threadlocal.c:221-315; source regular-slot/key setup from src/heap.c:37-42,60-84,128-147; and `_mi_theap_init` list linking, nonexclusive `_mi_theap_alloc`/`_mi_theap_create`, decr/free, and `_mi_tld_detach_theaps` from src/theap.c:236-369,415-450"
@@ -3141,7 +3157,7 @@ rust_module = "crabc_mimalloc::free_list"
 rust_item = "LocalFreeList::{validate_local_free_preflight,extend,extend_count} over PageFreeListState plus collect_local/collect_local_false over PageLocalCollectState"
 intentional_difference = "The borrowed core uses real live-page fields and the frozen unencoded normal-release profile. The narrow preflight validates only initialized geometry and the source `used > 0` lower bound; unsafe producer admission still proves an exact-once allocation. The raw collector preserves both source branches: false force transfers only into an empty immediate list, while true force validates and appends the local list before it becomes immediate; a bounded raw walk rejects a malformed cycle before linking it. Ordinary regular/full and detached callers select only false force; the separately recorded later-main all-free scan invokes true force after remote detachment and before its all-free release decision, its sole singleton handoff invokes false force before queue detach, and the mapped-one-block sole handoffs plus aggregate regular-pages traversal preserve true then false before bitmap publication. The post-exit routes then carry no local-free-list authority after their Theap/TLD tears down. The raw helper remains neither a general traversal nor a queue-transition/remote-detach policy. It does not detach xthread_free. Encoded links, padding/security, general cross-thread routing, the unrelated _mi_deferred_free user callback, and API policy remain outside this item; pinned v3.5.0 has no separate delayed-free state."
 difference_kind = "boundary"
-tests = ["crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py"]
+tests = ["crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/single_thread.rs", "compat/allocator/run.py", "compat/allocator/x86_64_m3_queue_retirement.c", "compat/allocator/x86_64_m3_queue_retirement.py"]
 exported = false
 implemented = true
 unit_verified = true
