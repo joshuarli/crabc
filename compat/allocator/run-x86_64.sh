@@ -39,7 +39,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--profile baseline|full] [--check|--reader-tests|--report PATH...]
   allocator-divergence-evidence [--profile correctness|full] [--check|--reader-tests]
-  allocator-m10 [--profile correctness|baseline|full] [--check [--performance-receipt PATH]|--build-audit|--reader-tests]
+  allocator-m10 [--profile correctness|baseline|full] [--check [--performance-receipt PATH] [--qualification-receipt PATH]|--build-audit|--reader-tests]
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-concurrent-init | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
@@ -659,7 +659,7 @@ case "$command" in
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             m10_command=(python3 compat/allocator/tests/test_x86_64_m10_gate.py)
         else
-            fail "allocator-m10 accepts --check [--performance-receipt PATH], --build-audit, or --reader-tests"
+            fail "allocator-m10 accepts --check [--performance-receipt PATH] [--qualification-receipt PATH], --build-audit, or --reader-tests"
         fi
         if [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             [ "$m10_profile_selected" = false ] || fail "allocator-m10 reader-tests does not select a qualification profile"

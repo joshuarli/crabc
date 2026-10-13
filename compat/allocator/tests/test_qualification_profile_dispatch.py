@@ -129,6 +129,21 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 with self.subTest(command=command, arguments=arguments):
                     self.assert_rejected(command, *arguments)
 
+    def test_m10_qualification_receipt_is_documented_and_forwarded(self) -> None:
+        help_result = self.invoke("compat/allocator/run-x86_64.sh", "--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("allocator-m10 [--profile correctness|baseline|full]", help_result.stdout)
+        self.assertIn("--qualification-receipt PATH", help_result.stdout)
+        self.assertFalse(self.log.exists(), "help must not inspect or run Docker")
+
+        runner, arguments = self.runner_arguments(
+            "allocator-m10", "--check", "--qualification-receipt", "chain.json"
+        )
+        self.assertEqual(runner, "compat/allocator/x86_64_m10_gate.py")
+        self.assertEqual(arguments, [
+            "--check", "--qualification-receipt", "chain.json", "--profile", "correctness"
+        ])
+
     def test_operation_matrix_and_retained_readers_reach_original_gate(self) -> None:
         for operation in ([], ["--read"], ["--replay"], ["--read", "--replay"]):
             with self.subTest(operation=operation):
