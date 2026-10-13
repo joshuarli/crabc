@@ -23875,6 +23875,176 @@ mod tests {
 
     #[cfg(target_arch = "x86_64")]
     #[test]
+    fn pointer_first_reallocation_replaces_another_live_threads_client() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::pointer_first_reallocation_replaces_another_live_threads_client",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(native_round_trip(48));
+                assert!(prepare_native_later_thread_arena());
+
+                let (client_sender, client_receiver) = mpsc::sync_channel(0);
+                let (continue_sender, continue_receiver) = mpsc::sync_channel(0);
+                let owner = thread::spawn(move || {
+                    let descriptor = admission::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker registers its own descriptor through
+                    // its exact allocator exit.
+                    assert!(unsafe {
+                        admission::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let NativePageAllocationResult::Allocated(client) =
+                        native_allocate_aligned(64, 16, false)
+                    else {
+                        panic!("the live source owner allocates the original client");
+                    };
+                    // SAFETY: the worker owns these exact initialized bytes
+                    // until it transfers the live pointer to the survivor.
+                    unsafe { client.as_ptr().write_bytes(0x6d, 64) };
+                    client_sender
+                        .send(client.as_ptr().addr())
+                        .expect("the survivor receives the live client");
+                    continue_receiver
+                        .recv()
+                        .expect("the survivor completes pointer-first realloc");
+                    assert_eq!(
+                        finish_current_thread_native_after_user_destructors(),
+                        ThreadFinishResult::Finished,
+                    );
+                });
+
+                let client_address = client_receiver
+                    .recv()
+                    .expect("the attached owner publishes its live client");
+                let client = NonNull::new(client_address as *mut u8)
+                    .expect("the transferred live client is nonnull");
+                // SAFETY: the source owner is paused and has transferred sole
+                // client access to this surviving thread.
+                let result = unsafe { native_reallocate(Some(client), 4096) };
+                let (replacement_address, preserved, freed) = match result {
+                    NativePageAllocationResult::Allocated(replacement) => {
+                        // SAFETY: the successful realloc owns a readable
+                        // prefix copied from the transferred client.
+                        let preserved = unsafe {
+                            core::slice::from_raw_parts(replacement.as_ptr(), 64)
+                        }
+                        .iter()
+                        .all(|byte| *byte == 0x6d);
+                        let freed = unsafe { native_free(replacement) };
+                        (Some(replacement.as_ptr().addr()), preserved, freed)
+                    }
+                    _ => (
+                        None,
+                        false,
+                        // SAFETY: a refused realloc leaves the original client live.
+                        unsafe { native_free(client) },
+                    ),
+                };
+                continue_sender
+                    .send(())
+                    .expect("the source owner may finish after the realloc");
+                owner.join().expect("the live source owner completes its exit");
+
+                assert!(replacement_address.is_some(), "foreign live realloc succeeds");
+                assert_ne!(replacement_address, Some(client_address));
+                assert!(preserved, "realloc copies the foreign client's contents");
+                assert_eq!(freed, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn pointer_first_reallocation_replaces_an_abandoned_page_client() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::pointer_first_reallocation_replaces_an_abandoned_page_client",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(native_round_trip(48));
+                assert!(prepare_native_later_thread_arena());
+
+                let (client_sender, client_receiver) = mpsc::sync_channel(0);
+                let owner = thread::spawn(move || {
+                    let descriptor = admission::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker registers its own descriptor through
+                    // its exact allocator exit.
+                    assert!(unsafe {
+                        admission::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let NativePageAllocationResult::Allocated(client) =
+                        native_allocate_aligned(64, 16, false)
+                    else {
+                        panic!("the later source owner allocates the original client");
+                    };
+                    // SAFETY: the worker exclusively owns the client before
+                    // publishing its address and then exits with it live.
+                    unsafe { client.as_ptr().write_bytes(0x73, 64) };
+                    client_sender
+                        .send(client.as_ptr().addr())
+                        .expect("the survivor receives the live client");
+                    assert_eq!(
+                        finish_current_thread_native_after_user_destructors(),
+                        ThreadFinishResult::Finished,
+                    );
+                });
+
+                let client_address = client_receiver
+                    .recv()
+                    .expect("the attached owner publishes its live client");
+                owner.join().expect("the source owner abandons its live page");
+                let client = NonNull::new(client_address as *mut u8)
+                    .expect("the transferred live client is nonnull");
+                let page_map = RUNTIME_PROCESS
+                    .page_map_for_live_native_allocation()
+                    .expect("the active source process has a PageMap");
+                // SAFETY: the exact client remains live after owner exit, so
+                // its page and PageMap registration stay stable.
+                let page = unsafe {
+                    page_map.page_map().unwrap().checked_lookup(client.as_ptr())
+                };
+                assert!(!page.is_null(), "the abandoned client remains registered");
+                let source_id = unsafe { (*page).abandoned_test_thread_id() };
+                assert!(matches!(
+                    source_id,
+                    crate::types::THREAD_ID_ABANDONED
+                        | crate::types::THREAD_ID_ABANDONED_MAPPED
+                ));
+
+                // SAFETY: the old client remains live and exclusively belongs
+                // to this survivor after its former owner has exited.
+                let result = unsafe { native_reallocate(Some(client), 4096) };
+                let (replacement_address, preserved, freed) = match result {
+                    NativePageAllocationResult::Allocated(replacement) => {
+                        // SAFETY: the successful realloc owns a readable
+                        // prefix copied from the abandoned-page client.
+                        let preserved = unsafe {
+                            core::slice::from_raw_parts(replacement.as_ptr(), 64)
+                        }
+                        .iter()
+                        .all(|byte| *byte == 0x73);
+                        let freed = unsafe { native_free(replacement) };
+                        (Some(replacement.as_ptr().addr()), preserved, freed)
+                    }
+                    _ => (
+                        None,
+                        false,
+                        // SAFETY: a refused realloc leaves the original client live.
+                        unsafe { native_free(client) },
+                    ),
+                };
+                assert!(replacement_address.is_some(), "abandoned-page realloc succeeds");
+                assert_ne!(replacement_address, Some(client_address));
+                assert!(preserved, "realloc copies the abandoned client's contents");
+                assert_eq!(freed, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
     fn word_sized_aligned_reallocation_uses_ordinary_replacement() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::word_sized_aligned_reallocation_uses_ordinary_replacement",
