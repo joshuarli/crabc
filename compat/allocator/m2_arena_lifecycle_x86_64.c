@@ -727,6 +727,8 @@ typedef struct cross_abandoned_s {
   sem_t reclaim;
 } cross_abandoned_t;
 
+static void cross_thread_regular_purge_lifecycle(void);
+
 static void* cross_abandoned_origin(void* argument) {
   cross_abandoned_t* state = argument;
   mi_subproc_add_current_thread(state->child);
@@ -998,6 +1000,142 @@ static void cross_thread_abandoned_lifecycle(void) {
     require(__real_munmap(state.raw, raw_size) == 0);
     if (retention_enabled) retention_child_coverage(kind*2 + (size_t)blocked);
   }
+  if (!retention_enabled) cross_thread_regular_purge_lifecycle();
+}
+
+typedef struct regular_purge_lifecycle_s {
+  mi_subproc_id_t child;
+  mi_arena_t* arena;
+  mi_heap_t* heap;
+  mi_page_t* page;
+  void* first;
+  void* survivor;
+  size_t request;
+  sem_t ready;
+  sem_t release;
+  sem_t reclaim;
+} regular_purge_lifecycle_t;
+
+static void* regular_purge_origin(void* argument) {
+  regular_purge_lifecycle_t* state = argument;
+  mi_subproc_add_current_thread(state->child);
+  mi_arena_id_t arena_id = _mi_arena_id_none();
+  require(mi_reserve_os_memory_ex2((mi_subproc_t*)state->child._mi_subproc_id,
+      MI_ARENA_MIN_SIZE, false, false, false, &arena_id) == 0);
+  state->arena = _mi_arena_from_id(arena_id);
+  require(state->arena != NULL && mi_memid_is_os(state->arena->memid)
+      && !state->arena->memid.is_pinned);
+  state->heap = mi_heap_new_in_arena(arena_id);
+  require(state->heap != NULL);
+  state->first = mi_heap_malloc(state->heap, state->request);
+  state->survivor = mi_heap_malloc(state->heap, state->request);
+  require(state->first != NULL && state->survivor != NULL);
+  state->page = _mi_ptr_page(state->first);
+  require(state->page == _mi_ptr_page(state->survivor)
+      && state->page->memid.mem.arena.arena == state->arena);
+  require(sem_post(&state->ready) == 0 && sem_wait(&state->release) == 0);
+  return NULL;
+}
+
+static void* regular_purge_target(void* argument) {
+  regular_purge_lifecycle_t* state = argument;
+  require(sem_wait(&state->reclaim) == 0);
+  mi_subproc_add_current_thread(state->child);
+  mi_arena_t* const arena = state->arena;
+  mi_heap_t* const heap = state->heap;
+  mi_page_t* const page = state->page;
+  const size_t bin = mi_bin(page->block_size);
+  const size_t slice = page->memid.mem.arena.slice_index;
+  const size_t slices = page->memid.mem.arena.slice_count;
+  mi_arena_pages_t* const pages = mi_atomic_load_ptr_acquire(mi_arena_pages_t,
+      &heap->arena_pages[arena->arena_idx]);
+  emit(mi_memid_is_os(arena->memid) && !arena->memid.is_pinned);
+  emit(state->request);
+  emit(page->used);
+  emit(mi_page_is_abandoned_mapped(page));
+  emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+  emit(mi_bitmap_is_setN(pages->pages_abandoned[bin], slice, 1));
+
+  held_abandoned_t held = {.page=page};
+  require(sem_init(&held.ready, 0, 0) == 0 && sem_init(&held.release, 0, 0) == 0);
+  pthread_t holder;
+  require(pthread_create(&holder, NULL, &hold_abandoned_owner, &held) == 0);
+  require(sem_wait(&held.ready) == 0);
+  void* fallback[512];
+  size_t fallback_count = 0;
+  fallback[fallback_count++] = mi_heap_malloc(heap, state->request);
+  require(fallback[0] != NULL);
+  mi_page_t* const fallback_page = _mi_ptr_page(fallback[0]);
+  const size_t fallback_capacity = fallback_page->capacity;
+  require(fallback_page != page && fallback_page->memid.mem.arena.arena == arena
+      && mi_bin(fallback_page->block_size) == bin
+      && fallback_capacity > 0 && fallback_capacity <= sizeof(fallback) / sizeof(fallback[0]));
+  while (fallback_count < fallback_capacity) {
+    fallback[fallback_count] = mi_heap_malloc(heap, state->request);
+    require(fallback[fallback_count] != NULL && _mi_ptr_page(fallback[fallback_count]) == fallback_page);
+    fallback_count++;
+  }
+  require(fallback_page->used == fallback_capacity);
+  emit(_mi_ptr_page(fallback[0]) != page);
+  emit(fallback_page->memid.mem.arena.arena == arena && mi_bin(fallback_page->block_size) == bin);
+  emit(fallback_page->used == fallback_capacity);
+  for (size_t i = 0; i < fallback_count; i++) mi_free(fallback[i]);
+  mi_heap_collect(heap, true);
+  require(sem_post(&held.release) == 0 && pthread_join(holder, NULL) == 0);
+  require(sem_destroy(&held.ready) == 0 && sem_destroy(&held.release) == 0);
+
+  void* const reclaimed = mi_heap_malloc(heap, state->request);
+  require(reclaimed != NULL && _mi_ptr_page(reclaimed) == page);
+  emit(mi_bitmap_is_clearN(pages->pages_abandoned[bin], slice, 1));
+  emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+  emit(page->used == 3);
+  mi_free(state->first);
+  mi_free(state->survivor);
+  mi_free(reclaimed);
+  require(page->used == 0);
+  /* Clear the unrelated page-retirement delay so a non-forced collection
+     reaches the arena's delayed-purge path without purging it immediately. */
+  page->retire_expire = 0;
+  mi_heap_collect(heap, false);
+  emit(mi_bbitmap_is_setN(arena->slices_free, slice, slices));
+  emit(mi_bitmap_is_setN(arena->slices_purge, slice, slices));
+  emit(mi_bitmap_is_setN(arena->slices_committed, slice, slices));
+  emit(mi_atomic_loadi64_relaxed(&arena->purge_expire) != 0);
+
+  mi_atomic_storei64_release(&arena->purge_expire, -1);
+  mi_atomic_storei64_release(&((mi_subproc_t*)state->child._mi_subproc_id)->purge_expire, -1);
+  mi_arenas_try_purge(false, true, (mi_subproc_t*)state->child._mi_subproc_id, 0);
+  emit(mi_bitmap_is_clearN(arena->slices_purge, slice, slices));
+  emit(mi_bitmap_is_clearN(arena->slices_committed, slice, slices));
+  emit(mi_bbitmap_is_setN(arena->slices_free, slice, slices));
+  emit(mi_atomic_loadi64_relaxed(&arena->purge_expire) == 0);
+
+  mi_option_set(mi_option_purge_delay, -1);
+  mi_heap_collect(heap, true);
+  mi_heap_delete(heap);
+  return NULL;
+}
+
+static void cross_thread_regular_purge_lifecycle(void) {
+  configure(true, 0, 1, false);
+  mi_option_set(mi_option_arena_purge_mult, 1);
+  mi_option_set(mi_option_purge_decommits, 1);
+  mi_option_set(mi_option_purge_delay, 100000);
+  regular_purge_lifecycle_t state = {.request=MI_SMALL_SIZE_MAX + 1024};
+  state.child = mi_subproc_new();
+  require(state.child._mi_subproc_id != NULL);
+  require(sem_init(&state.ready, 0, 0) == 0 && sem_init(&state.release, 0, 0) == 0
+      && sem_init(&state.reclaim, 0, 0) == 0);
+  pthread_t origin, target;
+  require(pthread_create(&origin, NULL, &regular_purge_origin, &state) == 0);
+  require(sem_wait(&state.ready) == 0);
+  require(pthread_create(&target, NULL, &regular_purge_target, &state) == 0);
+  require(sem_post(&state.release) == 0 && pthread_join(origin, NULL) == 0);
+  require(sem_post(&state.reclaim) == 0 && pthread_join(target, NULL) == 0);
+  require(sem_destroy(&state.ready) == 0 && sem_destroy(&state.release) == 0
+      && sem_destroy(&state.reclaim) == 0);
+  _mi_arenas_unsafe_destroy_all((mi_subproc_t*)state.child._mi_subproc_id);
+  mi_subproc_destroy(state.child);
 }
 
 static void retention_snapshot(size_t cycle) {

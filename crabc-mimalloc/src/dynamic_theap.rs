@@ -4306,7 +4306,265 @@ mod tests {
         thread::scope(|scope| {
             cross_thread_managed_abandoned_lifecycle_observe(scope, &control, &mut emit,
                 |_, _, _, _| {}, |_| {});
+            cross_thread_regular_arena_purge_trace(scope, &control, &mut emit);
         });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn cross_thread_regular_arena_purge_trace<'scope, 'env>(
+        scope: &'scope thread::Scope<'scope, 'env>,
+        control: &'scope CrossThreadAbandonedControl,
+        emit: &mut impl FnMut(i64),
+    ) {
+        use core::sync::atomic::Ordering;
+
+        let set_option = |option, value| {
+            crate::source_options_api::option_set(option as i32, value as core::ffi::c_long);
+        };
+        set_option(crate::config::SourceOption::ArenaReserve, 0);
+        set_option(crate::config::SourceOption::ArenaEagerCommit, 1);
+        set_option(crate::config::SourceOption::DisallowOsAlloc, 0);
+        set_option(crate::config::SourceOption::DisallowArenaAlloc, 0);
+        set_option(crate::config::SourceOption::ArenaIsNumaLocal, 0);
+        set_option(crate::config::SourceOption::AllowLargeOsPages, 0);
+        set_option(crate::config::SourceOption::PurgeDecommits, 1);
+        set_option(crate::config::SourceOption::PurgeDelay, 100_000);
+        set_option(crate::config::SourceOption::ArenaPurgeMult, 1);
+
+        let request = SMALL_SIZE_MAX + 1024;
+        let child = crate::source_heap_api::subproc_new();
+        assert!(!child.is_null(), "live child for regular-arena purge lifecycle");
+        let child_address = child.expose_provenance();
+        control.origin_ready_succeeded.store(false, Ordering::Release);
+        let origin = scope.spawn(move || {
+            let readiness = AbandonedWorkerReadiness(&control.origin_ready);
+            let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+            // SAFETY: this worker retains its own TLS descriptor through its
+            // explicit allocator finish and physical thread exit.
+            assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+            let child = core::ptr::with_exposed_provenance_mut(child_address);
+            assert_eq!(unsafe { crate::source_heap_api::subproc_add_current_thread(child) },
+                crate::source_heap_api::SubprocAddCurrentThread::Added);
+            let mut arena = core::ptr::null_mut();
+            let reserved = unsafe { crate::source_heap_api::reserve_os_memory_ex(
+                ARENA_MIN_SIZE, false, false, false, &mut arena) };
+            assert_eq!(reserved.value, 0, "reserve one regular OS-backed arena");
+            assert!(!arena.is_null());
+            let heap = unsafe { crate::source_heap_api::heap_new_in_arena(arena) };
+            assert!(!heap.is_null());
+            let first = unsafe { crate::source_heap_api::heap_malloc(heap, request) }
+                .value.expect("first regular-arena client");
+            let survivor = unsafe { crate::source_heap_api::heap_malloc(heap, request) }
+                .value.expect("survivor keeps the regular-arena page live");
+            let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs().unwrap();
+            let page = unsafe { binding.page_map().lookup_live_allocation(first) }
+                .unwrap().unwrap().page();
+            assert_eq!(unsafe { binding.page_map().lookup_live_allocation(survivor) }
+                .unwrap().unwrap().page(), page);
+            let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+            let memory = state.memid.arena_memory().unwrap();
+            let arena_view = unsafe { ArenaView::from_ptr(memory.arena) }.unwrap();
+            assert_eq!(arena_view.arena().memid.kind(), crate::types::MemoryKind::Os);
+            assert!(!arena_view.arena().memid.is_pinned());
+            let original_thread = unsafe { state.xthread_id.as_ref() }.load(Ordering::Relaxed)
+                & !(crate::types::PAGE_FLAG_MASK as usize);
+            assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                crate::runtime_lifecycle::ThreadFinishResult::Finished);
+            control.origin_heap.store(heap.expose_provenance(), Ordering::Relaxed);
+            control.origin_first_client.store(first.as_ptr().expose_provenance(), Ordering::Relaxed);
+            control.origin_survivor_client.store(survivor.as_ptr().expose_provenance(), Ordering::Relaxed);
+            control.origin_thread.store(original_thread, Ordering::Relaxed);
+            control.origin_ready_succeeded.store(true, Ordering::Release);
+            drop(readiness);
+            control.origin_release.wait();
+        });
+        let mut origin = ParkedOrigin { control, worker: Some(origin), ready_observed: false };
+        let (heap_address, first_address, survivor_address, original_thread) = origin.wait_ready()
+            .expect("regular-arena owner publishes live clients");
+        let target = scope.spawn(move || {
+            let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+            // SAFETY: this worker retains its own TLS descriptor through its
+            // explicit allocator finish and physical thread exit.
+            assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+            let child = core::ptr::with_exposed_provenance_mut(child_address);
+            let heap = core::ptr::with_exposed_provenance_mut::<core::ffi::c_void>(heap_address);
+            let first = NonNull::new(core::ptr::with_exposed_provenance_mut(first_address)).unwrap();
+            let survivor = NonNull::new(core::ptr::with_exposed_provenance_mut(survivor_address)).unwrap();
+            assert_eq!(unsafe { crate::source_heap_api::subproc_add_current_thread(child) },
+                crate::source_heap_api::SubprocAddCurrentThread::Added);
+            let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs().unwrap();
+            let page_of = |client| unsafe { binding.page_map().lookup_live_allocation(client) }
+                .unwrap().unwrap().page();
+            let page = page_of(first);
+            let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+            let memory = state.memid.arena_memory().unwrap();
+            let slice = memory.slice_index as usize;
+            let slices = memory.slice_count as usize;
+            let arena = unsafe { ArenaView::from_ptr(memory.arena) }.unwrap();
+            let bin = crate::size_class::bin(state.block_size).unwrap();
+            let heap_pointer = heap.cast::<crate::types::Heap>();
+            let pages = unsafe { (*heap_pointer).arena_pages_at(arena.arena().arena_index as usize) }.unwrap();
+            let layout = crate::arena::ArenaPagesLayout::for_slice_count(arena.arena().slice_count).unwrap();
+            let bitmap_set = |index| {
+                // SAFETY: this child Heap retains the initialized page maps;
+                // each atomic view is dropped before the next observation.
+                let map = unsafe { crate::bitmap::BitmapView::attach(
+                    pages.as_ptr().cast::<u8>().add(layout.bitmap_offset(index).unwrap()),
+                    layout.bitmap_layout().byte_size(), layout.bitmap_layout()) }.unwrap();
+                map.is_set_range(slice, 1) == Some(true)
+            };
+            let bitmap_clear = |index| {
+                // SAFETY: same retained child Heap and one-at-a-time views.
+                let map = unsafe { crate::bitmap::BitmapView::attach(
+                    pages.as_ptr().cast::<u8>().add(layout.bitmap_offset(index).unwrap()),
+                    layout.bitmap_layout().byte_size(), layout.bitmap_layout()) }.unwrap();
+                map.is_clear_range(slice, 1) == Some(true)
+            };
+            let abandoned_count = || unsafe { (*heap_pointer).abandoned_count(bin) }.unwrap();
+            let span_free = |set| {
+                let free = unsafe { arena.slices_free() }.unwrap();
+                if set { free.is_set_range(slice, slices) == Some(true) }
+                else { free.is_clear_range(slice, slices) == Some(true) }
+            };
+            let purge_range_set = || unsafe { arena.slices_purge() }.unwrap()
+                .is_set_range(slice, slices) == Some(true);
+            let purge_range_clear = || unsafe { arena.slices_purge() }.unwrap()
+                .is_clear_range(slice, slices) == Some(true);
+            let committed_range_set = || unsafe { arena.slices_committed() }.unwrap()
+                .is_set_range(slice, slices) == Some(true);
+            let committed_range_clear = || unsafe { arena.slices_committed() }.unwrap()
+                .is_clear_range(slice, slices) == Some(true);
+            let purge_expire = || crate::atomic::i64_load_relaxed(&arena.arena().purge_expire);
+
+            assert_eq!(arena.arena().memid.kind(), crate::types::MemoryKind::Os);
+            assert!(!arena.arena().memid.is_pinned());
+            let mut rows = std::vec![
+                (arena.arena().memid.kind().is_os() && !arena.arena().memid.is_pinned()) as i64,
+                request as i64,
+                unsafe { state.used.as_ptr().read() } as i64,
+                ((unsafe { state.xthread_id.as_ref() }.load(Ordering::Relaxed)
+                    & !(crate::types::PAGE_FLAG_MASK as usize)) == THREAD_ID_ABANDONED_MAPPED) as i64,
+                abandoned_count() as i64,
+                bitmap_set(bin + 1) as i64,
+            ];
+
+            let head = unsafe { crate::types::Page::abandonment_atomic_state_at(page) }
+                .xthread_free.as_ptr().expose_provenance();
+            control.claimed.store(false, Ordering::Release);
+            control.holder_ready_for_release.store(false, Ordering::Release);
+            let holder = scope.spawn(move || {
+                let readiness = AbandonedWorkerReadiness(&control.held);
+                // SAFETY: two live clients retain the page while this worker
+                // owns only the atomic low-owner word.
+                let head = unsafe { &*core::ptr::with_exposed_provenance::<crate::atomic::AtomicWord>(head) };
+                let claim = crate::remote_free::claim_abandoned_owner(head);
+                control.claimed.store(claim == crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned,
+                    Ordering::Release);
+                control.holder_ready_for_release.store(true, Ordering::Release);
+                drop(readiness);
+                control.unhold.wait();
+                assert_eq!(claim, crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned);
+                let mut hook: Option<fn()> = None;
+                assert_eq!(crate::remote_free::try_unown_abandoned_head(head, &mut hook),
+                    crate::remote_free::AbandonedOwnerHeadTransition::Released);
+            });
+            let mut holder = HeldAbandonedWorker { control, worker: Some(holder), ready_observed: false };
+            holder.wait_ready();
+            assert!(control.claimed.load(Ordering::Acquire));
+            let fallback = unsafe { crate::source_heap_api::heap_malloc(heap, request) }
+                .value.expect("held claim allocates a regular-arena fallback page");
+            let fallback_page = page_of(fallback);
+            let fallback_capacity = unsafe { fallback_page.as_ref().capacity() } as usize;
+            assert_ne!(fallback_page, page);
+            let fallback_memory = unsafe { crate::types::Page::abandonment_state_at(fallback_page) }
+                .memid.arena_memory().unwrap();
+            assert_eq!(fallback_memory.arena, memory.arena);
+            let mut fallback_clients = std::vec::Vec::with_capacity(fallback_capacity);
+            fallback_clients.push(fallback);
+            while fallback_clients.len() < fallback_capacity {
+                let client = unsafe { crate::source_heap_api::heap_malloc(heap, request) }
+                    .value.expect("fill fallback page so reclaim searches the abandoned page");
+                assert_eq!(page_of(client), fallback_page);
+                fallback_clients.push(client);
+            }
+            assert_eq!(unsafe { fallback_page.as_ref().used() }, fallback_capacity);
+            rows.extend([
+                (fallback_page != page) as i64,
+                (fallback_memory.arena == memory.arena
+                    && crate::size_class::bin(unsafe { fallback_page.as_ref().block_size() }) == Some(bin)) as i64,
+                (unsafe { fallback_page.as_ref().used() } == fallback_capacity) as i64,
+            ]);
+            for client in fallback_clients.drain(..) {
+                assert!(matches!(unsafe { crate::runtime_lifecycle::native_free(client) },
+                    crate::runtime_lifecycle::NativePageFreeResult::Freed));
+            }
+            unsafe { crate::source_heap_api::heap_collect(heap, true) };
+            holder.finish().unwrap();
+
+            let reclaimed = unsafe { crate::source_heap_api::heap_malloc(heap, request) }
+                .value.expect("released owner claim retries regular-page reclaim");
+            assert_eq!(page_of(reclaimed), page, "allocation reclaims the original regular-arena page");
+            let reclaimed_state = unsafe { crate::types::Page::abandonment_state_at(page) };
+            rows.extend([
+                bitmap_clear(bin + 1) as i64,
+                abandoned_count() as i64,
+                (unsafe { reclaimed_state.used.as_ptr().read() } == 3) as i64,
+            ]);
+            for client in [first, survivor, reclaimed] {
+                assert!(matches!(unsafe { crate::runtime_lifecycle::native_free(client) },
+                    crate::runtime_lifecycle::NativePageFreeResult::Freed));
+            }
+            assert_eq!(unsafe { page.as_ref().used() }, 0);
+            // A non-forced collection releases an empty page once its source
+            // retirement countdown reaches zero. This fixture clears only
+            // that unrelated countdown so delayed arena purge remains visible.
+            // SAFETY: this target owns the now-empty retired page and its
+            // Theap queue; no other worker retains an ordinary page field.
+            unsafe { page.as_ptr().as_mut().unwrap() }.set_retire_expire(0);
+            unsafe { crate::source_heap_api::heap_collect(heap, false) };
+            let scheduled = span_free(true) && purge_range_set() && committed_range_set() && purge_expire() > 0;
+            assert!(scheduled, "regular page free schedules a purge before expiry");
+            rows.extend([span_free(true) as i64, purge_range_set() as i64,
+                committed_range_set() as i64, (purge_expire() != 0) as i64]);
+
+            crate::atomic::i64_store_release(&arena.arena().purge_expire, -1);
+            let child_id = unsafe { crate::subproc::lifecycle::NativeSubprocessId::from_ptr(
+                NonNull::new(child).unwrap()) };
+            let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs().unwrap();
+            // SAFETY: the live child id and its arena backing remain retained;
+            // the visit-all collection follows its exact child VM/config pair.
+            let collected = unsafe { child_id.with_owner(|owner| {
+                let Some(owner) = owner.as_mut() else { return false; };
+                owner.with_child_image(|image| {
+                    let Ok(child_process) = crate::os::ChildVmProcess::new(binding.process(), image) else {
+                        return false;
+                    };
+                    let process = child_process.process();
+                    let config = binding.page_map().memory_config().unwrap();
+                    unsafe { child_process.identity().arena_backing()
+                        .collect_purge(process, config, false, true, 0) }
+                }).unwrap_or(false)
+            }) }.unwrap();
+            assert!(collected, "expired regular-arena purge traversal completes");
+            let commitment_cleared = committed_range_clear();
+            let purged = purge_range_clear() && span_free(true) && purge_expire() == 0;
+            assert!(purged, "expired purge clears its schedule and returns the arena slices");
+            rows.extend([purge_range_clear() as i64, commitment_cleared as i64,
+                span_free(true) as i64, (purge_expire() == 0) as i64]);
+
+            set_option(crate::config::SourceOption::PurgeDelay, -1);
+            unsafe { crate::source_heap_api::heap_collect(heap, true) };
+            assert!(unsafe { crate::source_heap_api::heap_release(heap, false) });
+            assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                crate::runtime_lifecycle::ThreadFinishResult::Finished);
+            rows
+        });
+        for value in target.join().expect("regular-arena purge target finishes") { emit(value); }
+        origin.finish().unwrap();
+        assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
