@@ -152,6 +152,24 @@ fi
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
 
+    def test_public_theap_dispatches_only_release_or_debug_leaf(self):
+        for arguments in ((), ("--debug",)):
+            with self.subTest(arguments=arguments):
+                result = self.launch("allocator-public-theap", *arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                index = args.index(b"python3")
+                self.assertEqual(args[index:index + 2], [
+                    b"python3", b"compat/allocator/x86_64_m6_public_theap.py",
+                ])
+                self.assertEqual(b"--debug" in args, bool(arguments))
+
+        self.capture.unlink(missing_ok=True)
+        rejected = self.launch("allocator-public-theap", "--profile", "secure-1")
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("allocator-public-theap accepts only --debug", rejected.stderr)
+        self.assertFalse(self.capture.exists())
+
     def test_allocator_containers_disable_core_dumps(self):
         result = self.launch("allocator-unit")
         self.assertEqual(result.returncode, 0, result.stderr)

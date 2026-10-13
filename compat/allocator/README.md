@@ -27,6 +27,9 @@ it on first use).
 # One Rust unit test. The name must be fully qualified (contain `::`) and is run
 # with `--exact`; zero matches, an ignored test, or a failure all fail.
 ./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name
+# Compare public Theap behavior in release or the opt0 debug product. Both run
+# the main, worker, child-subprocess, and fork contexts.
+./compat/allocator/run-x86_64.sh allocator-public-theap [--debug]
 # The whole crabc-mimalloc library unit suite.
 ./compat/allocator/run-x86_64.sh allocator-unit
 # Local engine under strict-provenance Miri only (writes a separate report, never closes M3).

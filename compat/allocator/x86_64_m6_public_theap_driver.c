@@ -460,6 +460,24 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   return true;
 }
 
+static void* small_stack_worker(void* argument) {
+  bool* complete = (bool*)argument;
+  mi_heap_t* main_heap = mi_heap_main();
+  mi_theap_t* current = mi_theap_get_default();
+  void* block = current == NULL ? NULL : mi_theap_malloc(current, 64);
+  bool selected = main_heap != NULL && current != NULL && mi_heap_theap(main_heap) == current;
+  bool owned = block != NULL && mi_heap_of(block) == main_heap;
+  bool contents = false;
+  if (block != NULL) {
+    memset(block, 0x6b, 64);
+    contents = ((unsigned char*)block)[0] == 0x6b && ((unsigned char*)block)[63] == 0x6b;
+    mi_free(block);
+  }
+  *complete = main_heap != NULL && selected && owned && contents;
+  printf("worker.small_stack=%d,%d,%d,%d\n", main_heap != NULL, selected, owned, contents);
+  return NULL;
+}
+
 static void* worker(void* argument) {
   worker_input_t* input = (worker_input_t*)argument;
   if (input->subprocess._mi_subproc_id != NULL) mi_subproc_add_current_thread(input->subprocess);
@@ -472,8 +490,21 @@ int main(void) {
   puts("CRABC_MI_M6_PUBLIC_THEAP_TRACE_BEGIN");
   if (!run_case("main", NULL)) return 4;
   mi_theap_t* main_default = mi_theap_get_default();
-  worker_input_t input = { main_default, false, { NULL } };
+  bool small_stack_complete = false;
+  pthread_attr_t worker_attributes;
+  if (pthread_attr_init(&worker_attributes) != 0) return 2;
+  /* Worker attachment must fit a legal 16-KiB pthread stack. */
+  if (pthread_attr_setstacksize(&worker_attributes, 16u * 1024u) != 0) {
+    pthread_attr_destroy(&worker_attributes);
+    return 2;
+  }
   pthread_t thread;
+  int small_stack_created = pthread_create(&thread, &worker_attributes, small_stack_worker,
+                                           &small_stack_complete);
+  int attributes_destroyed = pthread_attr_destroy(&worker_attributes);
+  if (small_stack_created != 0) return 2;
+  if (pthread_join(thread, NULL) != 0 || !small_stack_complete || attributes_destroyed != 0) return 3;
+  worker_input_t input = { main_default, false, { NULL } };
   if (pthread_create(&thread, NULL, worker, &input) != 0) return 2;
   if (pthread_join(thread, NULL) != 0 || !input.complete) return 3;
   printf("main.after_worker=%d\n", mi_theap_get_default() == main_default);

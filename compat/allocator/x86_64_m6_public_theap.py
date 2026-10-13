@@ -53,6 +53,7 @@ SOURCE_TRACE = {
     **{f"{context}.{stage}": value
        for context in ("main", "worker", "child", "fork")
        for stage, value in SOURCE_STAGES.items()},
+    "worker.small_stack": "1,1,1,1",
     "main.after_worker": "1",
     "main.after_child": "1",
     "main.after_fork": "1,1",
