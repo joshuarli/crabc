@@ -1,6 +1,7 @@
 """Owned stress evidence rejects incomplete, normalized, or mutated results."""
 import json
 import os
+import select
 import signal
 import time
 from pathlib import Path
@@ -22,6 +23,23 @@ class OwnedPthreadStressTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.work = Path(self.temporary.name)
+
+    def assert_process_stopped(self, pid, message):
+        try:
+            pid_fd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return
+        try:
+            exited = select.poll()
+            exited.register(pid_fd, select.POLLIN)
+            self.assertTrue(exited.poll(2000), message)
+        finally:
+            os.close(pid_fd)
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            return
+        self.assertIn(state, {"Z", "X"}, message)
 
     def test_cli_bounds_defaults_and_required_dynamic_product(self):
         options = stress.parse_arguments(["dynamic"])
@@ -110,9 +128,7 @@ class OwnedPthreadStressTests(unittest.TestCase):
         observation = stress.observe([sys.executable, "-c", script], self.work, self.work / "timeout", 0.2)
         self.assertEqual(observation.status, "TIMEOUT")
         child = int(observation.stdout)
-        status = Path(f"/proc/{child}/stat")
-        if status.exists():
-            self.assertEqual(status.read_text().rsplit(")", 1)[1].split()[0], "Z")
+        self.assert_process_stopped(child, "SIGKILL'd child remained alive")
         self.assertEqual((self.work / "timeout.stdout").read_bytes(), observation.stdout)
 
     def test_interrupted_supervisor_reaps_group_and_retains_actual_status(self):
@@ -149,9 +165,7 @@ class OwnedPthreadStressTests(unittest.TestCase):
                     self.assertEqual(Path(str(prefix) + ".stdout").read_bytes(), b"partial\x00\xff")
                     self.assertEqual(Path(str(prefix) + ".stderr").read_bytes(), b"error\x00")
                     for pid in pids:
-                        stat = Path(f"/proc/{pid}/stat")
-                        if stat.exists():
-                            self.assertEqual(stat.read_text().rsplit(")", 1)[1].split()[0], "Z")
+                        self.assert_process_stopped(pid, "interrupted process group left a live member")
                     self.assertFalse(Path(f"/proc/{pids[0]}").exists(), "direct child was not reaped")
                 finally:
                     if pids:

@@ -211,6 +211,8 @@ class InstalledRustCheckWorktreeTests(unittest.TestCase):
                                cwd=directory, check=True, capture_output=True)
 
             git(repository, "init")
+            git(repository, "config", "maintenance.auto", "false")
+            git(repository, "config", "gc.auto", "0")
             (repository / "main-only.txt").write_text("main index")
             git(repository, "add", "main-only.txt")
             git(repository, "commit", "--no-verify", "-m", "main fixture")

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import select
 import shutil
 import signal
 import stat
@@ -118,18 +119,21 @@ class OwnedStaticConsumerMatrixTests(unittest.TestCase):
         return json.loads((logs / "summary.json").read_text(encoding="utf-8"))
 
     def assert_stopped(self, pid: int, message: str) -> None:
-        status = Path(f"/proc/{pid}/stat")
-        for _ in range(100):
-            if not status.exists():
-                return
-            try:
-                state = status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
-            except (IndexError, OSError):
-                return
-            if state == "Z":
-                return
-            time.sleep(0.02)
-        self.fail(message)
+        try:
+            pid_fd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return
+        try:
+            exited = select.poll()
+            exited.register(pid_fd, select.POLLIN)
+            self.assertTrue(exited.poll(2000), message)
+        finally:
+            os.close(pid_fd)
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+        except FileNotFoundError:
+            return
+        self.assertIn(state, {"Z", "X"}, message)
 
     def wait_for(self, path: Path, message: str) -> None:
         deadline = time.monotonic() + 5.0
@@ -185,6 +189,7 @@ print("success-output", flush=True)
 
     def test_timeout_kills_the_whole_owned_process_group(self) -> None:
         child_pid = self.state_root / "timeout-child-pid"
+        ready = self.state_root / "timeout-child-ready"
         timeout = self.write_child(
             "timeout.py",
             """\
@@ -195,20 +200,23 @@ import time
 
 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
 Path(sys.argv[1]).write_text(str(child.pid), encoding="utf-8")
+Path(sys.argv[2]).touch()
 time.sleep(60)
 """,
         )
         manifest = self.write_manifest(
-            [{"name": "timeout", "argv": [*timeout, str(child_pid)]}]
+            [{"name": "timeout", "argv": [*timeout, str(child_pid), str(ready)]}]
         )
         logs = self.state_root / "timeout-logs"
 
         started = time.monotonic()
-        result = self.invoke(manifest, logs, workers=1, timeout=0.2)
+        # Give the child interpreter time to publish its PID before timeout cleanup.
+        result = self.invoke(manifest, logs, workers=1, timeout=2.0)
 
         self.assertLess(time.monotonic() - started, 5.0)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertEqual(self.summary(logs)["jobs"][0]["status"], "timeout")
+        self.assertTrue(ready.is_file(), "matrix timed out before the child process group became ready")
         self.assert_stopped(
             int(child_pid.read_text(encoding="utf-8")),
             "timeout left an owned child process running",
