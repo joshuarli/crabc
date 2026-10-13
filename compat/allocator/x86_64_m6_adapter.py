@@ -186,8 +186,24 @@ def compare_runs(c_run, native_run, profile):
         if traces["c"][key] != "1,0":
             raise harness.HarnessError(f"{profile} {key} did not return to its pre-allocation count: "
                 f"{traces['c'][key]}")
-    for stream in ("stdout", "stderr"):
-        if c_run[stream] != native_run[stream]:
+    stderr = {"c": c_run["stderr"], "native": native_run["stderr"]}
+    if profile == "debug-1":
+        expected = {
+            "c": "m6-valid-domain profile=debug-1 backend=c guarded_precise=1",
+            "native": "m6-valid-domain profile=debug-1 backend=native guarded_precise=0",
+        }
+        for side, record in (("c", c_run), ("native", native_run)):
+            marker = expected[side]
+            markers = re.findall(r"^m6-valid-domain .*?$", record["stderr"], re.MULTILINE)
+            if markers != [marker]:
+                raise harness.HarnessError(f"debug-1 {side} valid-client source/profile marker differs")
+            stderr[side] = re.sub(r"^m6-valid-domain .*?\n", "", record["stderr"], count=1,
+                                  flags=re.MULTILINE)
+    for stream, c_value, native_value in (
+        ("stdout", c_run["stdout"], native_run["stdout"]),
+        ("stderr", stderr["c"], stderr["native"]),
+    ):
+        if c_value != native_value:
             raise harness.HarnessError(f"{profile} complete public adapter {stream} differs")
     return len(traces["c"])
 
@@ -223,6 +239,49 @@ def compare_precondition_control(profile, c_run, native_run):
                 or any(c_trace.get(key) != value for key, value in expected.items())):
             raise harness.HarnessError(f"{profile} C invalid-alignment control differs: {c_trace}")
         m7.compare_options_traces(c_trace, native_trace)
+
+
+def compare_aligned_offset_control(c_run, native_run):
+    """Require the source debug word-alignment rejection as a bounded control."""
+
+    expected_markers = {
+        "c": "m6-alignment-control profile=debug-1 backend=c guarded_precise=0",
+        "native": "m6-alignment-control profile=debug-1 backend=native guarded_precise=0",
+    }
+    parsed = {}
+    for side, record in (("c", c_run), ("native", native_run)):
+        if record["status"] != 0:
+            raise harness.HarnessError(f"debug-1 {side} aligned-offset control failed")
+        markers = re.findall(r"^m6-alignment-control .*?$", record["stderr"], re.MULTILINE)
+        if markers != [expected_markers[side]]:
+            raise harness.HarnessError(f"debug-1 {side} aligned-offset option marker differs")
+        if re.sub(r"^m6-alignment-control .*?\n", "", record["stderr"], count=1,
+                  flags=re.MULTILINE):
+            raise harness.HarnessError(f"debug-1 {side} aligned-offset control wrote unexpected stderr")
+        parsed[side] = m7.parse_options_trace(record["stdout"], f"debug-1 {side} aligned-offset control",
+            TRACE_BEGIN, TRACE_END)
+        if set(parsed[side]) != {"control.pointer", "control.pages", "control.codes", "control.messages"}:
+            raise harness.HarnessError(f"debug-1 {side} aligned-offset control fields differ")
+
+    pointer = [parsed[side]["control.pointer"].split(",") for side in ("c", "native")]
+    if any(values != ["1", "28"] for values in pointer):
+        raise harness.HarnessError("debug-1 aligned-offset control did not return the valid offset pointer")
+
+    pages = {side: [int(value) for value in parsed[side]["control.pages"].split(",")]
+             for side in ("c", "native")}
+    if any(len(values) != 2 or values[0] <= 0 for values in pages.values()):
+        raise harness.HarnessError("debug-1 aligned-offset control did not allocate a page")
+    if pages != {"c": [2, 2], "native": [2, 1]}:
+        raise harness.HarnessError("debug-1 aligned-offset option-0 control page counts differ")
+
+    c_messages = [bytes.fromhex(message).decode()
+                  for message in parsed["c"]["control.messages"].split(":") if message]
+    if (parsed["c"]["control.codes"] != "22" or c_messages != [
+            "mimalloc: error: thread 0xTID: ",
+            "mi_free: invalid (unaligned) pointer: 0xCLIENT\n"]):
+        raise harness.HarnessError("debug-1 C option-0 control missed its diagnostic or EINVAL callback")
+    if parsed["native"]["control.codes"] or parsed["native"]["control.messages"]:
+        raise harness.HarnessError("debug-1 native option-0 valid client reported an invalid pointer")
 
 def record(output, name, argv, cwd, *, runtime=False, timeout=None):
     result = stress.command_record(argv, cwd=cwd,
@@ -270,6 +329,8 @@ def run_profiles(profiles, output=ARTIFACTS):
     inputs = output / "inputs.json"
     scope = {profile: "full valid public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses; separate invalid alignment violates the source debug precondition (C asserts, Rust reports EINVAL), so this bounded control does not claim matched valid-client fatal semantics"
              for profile in profiles}
+    if "debug-1" in profiles:
+        scope["debug-1"] += "; the source C valid-client run enables guarded_precise only after the pinned debug source's single active option-use is proved; Rust remains at option 0, and a separate option-0 aligned-offset control retains the C rejection, EINVAL, diagnostic, and live page"
     inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
         "profiles": profiles, "scope": scope,
         "boundary": "public native-mi-adapter over pinned musl; native Rust Heap contract"}, indent=2) + "\n")
@@ -289,6 +350,17 @@ def run_profiles(profiles, output=ARTIFACTS):
                   *m4.api_profile_flags(profile), "-I", str(source / "include"), "-I", str(source / "src")]
         oracle = directory / "oracle.o"
         passed("oracle-build", [compiler, "-std=c11", *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
+        if profile == "debug-1":
+            preprocess, logs = record(output, "debug-1-source-debug-preprocess", [
+                compiler, "-std=c11", *m4.api_profile_flags(profile), "-DMI_LIBC_MUSL=1",
+                "-I", str(source / "include"), "-E", str(source / "src/static.c"),
+            ], source)
+            status = preprocess.get("status", 1) if preprocess["kind"] == "process" else 1
+            cases.append(("debug-1-source-debug-preprocess", status, logs))
+            if status != 0:
+                raise harness.HarnessError("debug-1 source option-use preprocessing failed")
+            m4.source_debug_option_scope(preprocess, {"compiler": compiler, "source_directory": source})
+            products[logs[0].name] = logs[0]
         target = directory / "cargo-target"
         passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
             "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
@@ -308,7 +380,10 @@ def run_profiles(profiles, output=ARTIFACTS):
             passed(f"{backend}-link", [compiler, str(caller), str(allocator), "-pthread", "-o", str(binary)])
             products[f"{profile}-{backend}"] = binary
             products[f"{profile}-{backend}.o"] = caller
-            result, logs = record(output, f"{profile}-{backend}-run", [str(binary)], directory, runtime=True)
+            run_arguments = [str(binary)]
+            if profile == "debug-1":
+                run_arguments += ["--valid-domain", "debug-1"]
+            result, logs = record(output, f"{profile}-{backend}-run", run_arguments, directory, runtime=True)
             status = result.get("status", 1) if result["kind"] == "process" else 1
             cases.append((f"{profile}-{backend}-run", status, logs))
             results[backend], runtime_logs[backend] = result, logs
@@ -322,6 +397,22 @@ def run_profiles(profiles, output=ARTIFACTS):
         else:
             cases.append((f"{profile}-comparison", 0, runtime_logs["c"] + runtime_logs["native"]))
             print(f"Public Heap/subprocess adapter {profile} ({scope[profile]}): {count} actual C/native observations match", flush=True)
+        if profile == "debug-1":
+            control_results, control_logs = {}, []
+            for backend in ("c", "native"):
+                result, logs = record(output, f"{profile}-{backend}-aligned-offset-control-run",
+                    [str(directory / backend), "source-aligned-offset-control"], directory, runtime=True)
+                status = result.get("status", 1) if result["kind"] == "process" else 1
+                cases.append((f"{profile}-{backend}-aligned-offset-control-run", status, logs))
+                control_results[backend] = decoded(result)
+                control_logs.extend(logs)
+            try:
+                compare_aligned_offset_control(control_results["c"], control_results["native"])
+            except (harness.HarnessError, UnicodeError, ValueError) as error:
+                failures.append(f"{profile}: {error}; raw in {output}")
+                cases.append((f"{profile}-aligned-offset-control-comparison", 1, control_logs))
+            else:
+                cases.append((f"{profile}-aligned-offset-control-comparison", 0, control_logs))
         control_results, control_logs = {}, []
         for backend in ("c", "native"):
             result, logs = record(output, f"{profile}-{backend}-precondition-aligned-invalid-run",
@@ -390,10 +481,19 @@ def read_and_replay(profiles, replay=False):
     expected_products = {DRIVER.name, "native_heap_visit_contract.rs", "mimalloc.h", "LICENSE",
                          "mimalloc-3.5.0.tar.gz", "inputs.json"}
     for profile in covered:
-        expected_cases.extend(f"{profile}-{phase}" for phase in ("oracle-build", "native-build"))
+        expected_cases.append(f"{profile}-oracle-build")
+        if profile == "debug-1":
+            expected_cases.append("debug-1-source-debug-preprocess")
+            expected_products.add("debug-1-source-debug-preprocess.json")
+        expected_cases.append(f"{profile}-native-build")
         for backend in ("c", "native"):
             expected_cases.extend(f"{profile}-{backend}-{phase}" for phase in ("compile", "imports", "link", "run"))
-        expected_cases.extend((f"{profile}-comparison",
+        expected_cases.append(f"{profile}-comparison")
+        if profile == "debug-1":
+            expected_cases.extend((f"{profile}-c-aligned-offset-control-run",
+                f"{profile}-native-aligned-offset-control-run",
+                f"{profile}-aligned-offset-control-comparison"))
+        expected_cases.extend((
             f"{profile}-c-precondition-aligned-invalid-run",
             f"{profile}-native-precondition-aligned-invalid-run",
             f"{profile}-precondition-aligned-invalid-comparison",
@@ -402,6 +502,13 @@ def read_and_replay(profiles, replay=False):
             ("native-adapter.a", "oracle.o", "c", "native", "c.o", "native.o", "native-contract"))
     if receipt.case_ids() != expected_cases or set(receipt.products) != expected_products:
         raise harness.HarnessError("retained adapter build, workload, contract or products roster differs")
+    if "debug-1" in covered:
+        preprocess = harness.read_json(receipt.path.parent / "products/debug-1-source-debug-preprocess.json")
+        command = preprocess.get("command", [])
+        if len(command) < 2 or not command[-1].endswith("/src/static.c"):
+            raise harness.HarnessError("retained debug source option proof has no pinned source input")
+        source_directory = Path(command[-1]).parent.parent
+        m4.source_debug_option_scope(preprocess, {"compiler": command[0], "source_directory": source_directory})
     print("Public Heap/subprocess adapter exact-source physical receipt: PASS")
     if replay:
         execution = harness.require_native_x86_64(require_image_identity=True)
@@ -422,16 +529,34 @@ def read_and_replay(profiles, replay=False):
                 argv = [str(binary)]
                 if backend == "native-contract":
                     argv += ["--exact", CONTRACT, "--nocapture", "--test-threads=1"]
+                elif profile == "debug-1":
+                    argv += ["--valid-domain", "debug-1"]
                 result, logs = record(scratch, name, argv, scratch, runtime=True,
                     timeout=900 if backend == "native-contract" else 600)
                 if result["kind"] != "process" or result["status"] != 0:
                     raise harness.HarnessError(f"retained {name} failed; see {logs[0]}")
                 results[backend] = decoded(result)
                 recorded = next(case for case in receipt.cases if case["id"] == name + "-run")
-                previous = next(log for log in recorded["logs"] if log.endswith(".stdout"))
-                if backend != "native-contract" and stress.byte_record_payload(result["stdout"], name) != (receipt.path.parent / "logs" / previous).read_bytes():
-                    raise harness.HarnessError(f"retained {name} observations differ; see {scratch}")
+                if backend != "native-contract":
+                    for stream in ("stdout", "stderr"):
+                        previous = next(log for log in recorded["logs"] if log.endswith(f".{stream}"))
+                        if stress.byte_record_payload(result[stream], name) != (receipt.path.parent / "logs" / previous).read_bytes():
+                            raise harness.HarnessError(f"retained {name} {stream} differs; see {scratch}")
             count = compare_runs(results["c"], results["native"], profile)
+            if profile == "debug-1":
+                controls = {}
+                for backend in ("c", "native"):
+                    control_name = f"{profile}-{backend}-aligned-offset-control-run"
+                    binary = scratch / f"{profile}-{backend}"
+                    result, _ = record(scratch, control_name,
+                        [str(binary), "source-aligned-offset-control"], scratch, runtime=True)
+                    controls[backend] = decoded(result)
+                    retained = next(case for case in receipt.cases if case["id"] == control_name)
+                    for stream in ("stdout", "stderr"):
+                        retained_log = next(log for log in retained["logs"] if log.endswith(f".{stream}"))
+                        if stress.byte_record_payload(result[stream], control_name) != (receipt.path.parent / "logs" / retained_log).read_bytes():
+                            raise harness.HarnessError(f"retained {control_name} {stream} differs; see {scratch}")
+                compare_aligned_offset_control(controls["c"], controls["native"])
             controls = {}
             for backend in ("c", "native"):
                 control_name = f"{profile}-{backend}-precondition-aligned-invalid-run"

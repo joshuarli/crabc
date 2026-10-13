@@ -22,10 +22,19 @@ class PublicAdapterObservationTests(unittest.TestCase):
     def run_result(self, stdout=None, stderr=""):
         return {"stdout": trace_stdout() if stdout is None else stdout, "stderr": stderr}
 
+    def valid_domain_result(self, side, stdout=None, extra_stderr=""):
+        marker = (f"m6-valid-domain profile=debug-1 backend={side} guarded_precise="
+                 f"{1 if side == 'c' else 0}\n")
+        return self.run_result(stdout, marker + extra_stderr)
+
     def test_all_original_observations_match_without_profile_geometry_pins(self):
         output=trace_stdout({"heap.malloc.usable":"56","reserve.commit.committed":"67108864"})
         for profile in adapter.PROFILES:
-            adapter.compare_runs(self.run_result(output), self.run_result(output), profile)
+            if profile == "debug-1":
+                adapter.compare_runs(self.valid_domain_result("c", output),
+                                     self.valid_domain_result("native", output), profile)
+            else:
+                adapter.compare_runs(self.run_result(output), self.run_result(output), profile)
 
     def test_missing_obligation_is_rejected_even_when_both_sides_omit_it(self):
         output=trace_stdout().replace("subproc.child.cross_heap_realloc=1\n", "")
@@ -55,7 +64,36 @@ class PublicAdapterObservationTests(unittest.TestCase):
 
     def test_callback_warning_payload_is_compared(self):
         with self.assertRaises(adapter.harness.HarnessError):
-            adapter.compare_runs(self.run_result(),self.run_result(trace_stdout({"subproc.messages":"different"})), "debug-1")
+            adapter.compare_runs(self.valid_domain_result("c"),
+                self.valid_domain_result("native", trace_stdout({"subproc.messages":"different"})), "debug-1")
+
+    def test_aligned_offset_control_retains_source_diagnostic_and_page(self):
+        marker_c = "m6-alignment-control profile=debug-1 backend=c guarded_precise=0\n"
+        marker_native = "m6-alignment-control profile=debug-1 backend=native guarded_precise=0\n"
+        message = ":".join((
+            "mimalloc: error: thread 0xTID: ".encode().hex(),
+            "mi_free: invalid (unaligned) pointer: 0xCLIENT\n".encode().hex(),
+        ))
+        c = {"status": 0, "stderr": marker_c,
+             "stdout": (f"{adapter.TRACE_BEGIN}\ncontrol.pointer=1,28\n"
+                        "control.pages=2,2\ncontrol.codes=22\n"
+                        f"control.messages={message}\n{adapter.TRACE_END}\n")}
+        native = {"status": 0, "stderr": marker_native,
+                  "stdout": (f"{adapter.TRACE_BEGIN}\ncontrol.pointer=1,28\n"
+                             "control.pages=2,1\ncontrol.codes=\ncontrol.messages=\n"
+                             f"{adapter.TRACE_END}\n")}
+        adapter.compare_aligned_offset_control(c, native)
+        with self.assertRaises(adapter.harness.HarnessError):
+            adapter.compare_aligned_offset_control({**c, "stdout": c["stdout"].replace("control.codes=22", "control.codes=")}, native)
+        with self.assertRaises(adapter.harness.HarnessError):
+            adapter.compare_aligned_offset_control(
+                {**c, "stdout": c["stdout"].replace("3078434c49454e54", "30784f54484552")}, native)
+        with self.assertRaises(adapter.harness.HarnessError):
+            adapter.compare_aligned_offset_control(
+                {**c, "stdout": c["stdout"].replace("control.pages=2,2", "control.pages=2,3")}, native)
+        with self.assertRaises(adapter.harness.HarnessError):
+            adapter.compare_aligned_offset_control(
+                c, {**native, "stdout": native["stdout"].replace("control.pages=2,1", "control.pages=2,0")})
 
     def test_entire_stdout_and_stderr_are_compared(self):
         for native in (self.run_result(trace_stdout()+"extra\n"),self.run_result(stderr="unexpected\n")):
@@ -86,12 +124,30 @@ class PublicAdapterReceiptRosterTests(unittest.TestCase):
             product.write_bytes(b"retained fixture input\n")
             self.products[name] = product
         for profile in adapter.PROFILES:
-            for phase in ("oracle-build", "native-build"):
-                self.cases.append((f"{profile}-{phase}", 0, [log]))
+            self.cases.append((f"{profile}-oracle-build", 0, [log]))
+            if profile == "debug-1":
+                source = self.work / "source"
+                command = ["musl-gcc", "-std=c11", *adapter.m4.api_profile_flags("debug-1"),
+                           "-DMI_LIBC_MUSL=1", "-I", str(source / "include"), "-E",
+                           str(source / "src/static.c")]
+                proof = {"kind": "process", "status": 0, "command": command,
+                         "stdout": "mi_option_guarded_precise mi_option_guarded_precise "
+                                   "mi_option_is_enabled(mi_option_guarded_precise)\n", "stderr": ""}
+                proof_path = self.work / "debug-1-source-debug-preprocess.json"
+                proof_path.write_text(json.dumps(proof))
+                self.products[proof_path.name] = proof_path
+                self.cases.append(("debug-1-source-debug-preprocess", 0, [log]))
+            self.cases.append((f"{profile}-native-build", 0, [log]))
             for backend in ("c", "native"):
                 for phase in ("compile", "imports", "link", "run"):
                     self.cases.append((f"{profile}-{backend}-{phase}", 0, [log]))
             self.cases.append((f"{profile}-comparison", 0, [log]))
+            if profile == "debug-1":
+                self.cases.extend([
+                    (f"{profile}-c-aligned-offset-control-run", 0, [log]),
+                    (f"{profile}-native-aligned-offset-control-run", 0, [log]),
+                    (f"{profile}-aligned-offset-control-comparison", 0, [log]),
+                ])
             self.cases.append((f"{profile}-c-precondition-aligned-invalid-run", 0, [log]))
             self.cases.append((f"{profile}-native-precondition-aligned-invalid-run", 0, [log]))
             self.cases.append((f"{profile}-precondition-aligned-invalid-comparison", 0, [log]))

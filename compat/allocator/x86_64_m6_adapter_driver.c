@@ -50,9 +50,10 @@ static void capture_precondition(const char* message, void* argument) {
 
 static char thread_text[40];
 static char child_thread_text[40];
+static uintptr_t client_pointer_value;
 
-/* Messages print as hex with either observed thread's `0x<tid>` replaced
-   by `0xTID`, so address variation cannot affect the comparison. */
+/* Messages are hex encoded with thread IDs and the exact aligned-offset client
+   pointer normalized so runtime address variation cannot affect comparisons. */
 static void print_messages(const char* key) {
   printf("%s=", key);
   const size_t thread_length = strlen(thread_text);
@@ -62,16 +63,51 @@ static void print_messages(const char* key) {
     const char* message = messages[index];
     const size_t length = strlen(message);
     for (size_t i = 0; i < length; ) {
-      size_t matched = 0;
-      if (thread_length > 0 && i + thread_length <= length && memcmp(message + i, thread_text, thread_length) == 0) {
-        matched = thread_length;
+      static const char client_message_prefix[] =
+          "mi_free: invalid (unaligned) pointer: 0x";
+      const size_t client_message_prefix_length = sizeof(client_message_prefix) - 1;
+      if (client_pointer_value != 0
+          && i + client_message_prefix_length < length
+          && memcmp(message + i, client_message_prefix, client_message_prefix_length) == 0) {
+        size_t address_end = i + client_message_prefix_length;
+        uintptr_t observed = 0;
+        bool valid_address = false;
+        while (address_end < length) {
+          const unsigned char digit = (unsigned char)message[address_end];
+          unsigned int nibble;
+          if (digit >= '0' && digit <= '9') nibble = (unsigned int)(digit - '0');
+          else if (digit >= 'a' && digit <= 'f') nibble = (unsigned int)(digit - 'a') + 10;
+          else if (digit >= 'A' && digit <= 'F') nibble = (unsigned int)(digit - 'A') + 10;
+          else break;
+          if (observed > (UINTPTR_MAX - nibble) / 16) break;
+          observed = observed * 16 + nibble;
+          address_end++;
+          valid_address = true;
+        }
+        if (valid_address && address_end < length && message[address_end] == '\n'
+            && observed == client_pointer_value) {
+          for (size_t j = i; j < i + client_message_prefix_length - 2; j++) {
+            printf("%02x", (unsigned char)message[j]);
+          }
+          for (const char* c = "0xCLIENT"; *c != 0; c++) {
+            printf("%02x", (unsigned char)*c);
+          }
+          i = address_end;
+          continue;
+        }
+      }
+      if (thread_length > 0 && i + thread_length <= length
+          && memcmp(message + i, thread_text, thread_length) == 0) {
+        for (const char* c = "0xTID"; *c != 0; c++) {
+          printf("%02x", (unsigned char)*c);
+        }
+        i += thread_length;
       } else if (child_thread_length > 0 && i + child_thread_length <= length
                  && memcmp(message + i, child_thread_text, child_thread_length) == 0) {
-        matched = child_thread_length;
-      }
-      if (matched != 0) {
-        for (const char* c = "0xTID"; *c != 0; c++) printf("%02x", (unsigned char)*c);
-        i += matched;
+        for (const char* c = "0xTID"; *c != 0; c++) {
+          printf("%02x", (unsigned char)*c);
+        }
+        i += child_thread_length;
       } else {
         printf("%02x", (unsigned char)message[i]);
         i++;
@@ -363,6 +399,48 @@ static int run_precondition_control(const char* name) {
   printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
   return q == NULL && error == 0 && retained && error_recorded ? 0 : 1;
 #endif
+}
+
+/* The valid source profile must keep the offset pointer live through the
+ * ordinary M6 workload. This separate control records the pinned debug
+ * rejection with guarded_precise disabled, alongside the Rust option-0 path. */
+static int run_aligned_offset_control(void) {
+  mi_register_output(&capture, NULL);
+  message_count = 0;
+  error_count = 0;
+  mi_register_error(&record_error, NULL);
+  snprintf(thread_text, sizeof(thread_text), "0x%02lX", (unsigned long)(uintptr_t)pthread_self());
+  mi_option_set_enabled(mi_option_guarded_precise, false);
+  mi_option_enable(mi_option_show_errors);
+  fprintf(stderr, "m6-alignment-control profile=debug-1 backend=%s guarded_precise=%ld\n",
+#if defined(CRABC_NATIVE_MI_ADAPTER)
+      "native",
+#else
+      "c",
+#endif
+      mi_option_get(mi_option_guarded_precise));
+
+  mi_heap_t* const heap = mi_heap_new();
+  if (heap == NULL) return 3;
+  const mi_stats_t before = stats_now();
+  void* const pointer = mi_heap_calloc_aligned_at(heap, 5, 50, 32, 4);
+  if (pointer == NULL) return 4;
+  client_pointer_value = (uintptr_t)pointer;
+  const mi_stats_t allocated = stats_now();
+  mi_free(pointer);
+  mi_heap_collect(heap, true);
+  const mi_stats_t after = stats_now();
+
+  printf("CRABC_MI_M6_ADAPTER_TRACE_BEGIN\n");
+  printf("control.pointer=%d,%zu\n", pointer != NULL,
+      (size_t)((uintptr_t)pointer % 32));
+  printf("control.pages=%lld,%lld\n",
+      (long long)(allocated.pages.current - before.pages.current),
+      (long long)(after.pages.current - before.pages.current));
+  print_errors("control.codes");
+  print_messages("control.messages");
+  printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
+  return 0;
 }
 
 static void realloc_section(void) {
@@ -1205,7 +1283,25 @@ int main(int argc, char** argv) {
   if (argc == 2 && strncmp(argv[1], "precondition:", 13) == 0) {
     return run_precondition_control(argv[1] + 13);
   }
-  if (argc != 1) return 2;
+  if (argc == 2 && strcmp(argv[1], "source-aligned-offset-control") == 0) {
+    if (MI_DEBUG != 1 || MI_STAT != 2) return 2;
+    return run_aligned_offset_control();
+  }
+  const bool valid_domain = argc == 3 && strcmp(argv[1], "--valid-domain") == 0
+      && strcmp(argv[2], "debug-1") == 0;
+  if (argc != 1 && !valid_domain) return 2;
+  if (valid_domain) {
+    if (MI_DEBUG != 1 || MI_STAT != 2) return 2;
+#if defined(CRABC_NATIVE_MI_ADAPTER)
+    mi_option_set_enabled(mi_option_guarded_precise, false);
+    fprintf(stderr, "m6-valid-domain profile=debug-1 backend=native guarded_precise=%ld\n",
+        mi_option_get(mi_option_guarded_precise));
+#else
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    fprintf(stderr, "m6-valid-domain profile=debug-1 backend=c guarded_precise=%ld\n",
+        mi_option_get(mi_option_guarded_precise));
+#endif
+  }
   mi_register_output(&capture, NULL);
   message_count = 0;
   mi_register_error(&record_error, NULL);
