@@ -268,7 +268,7 @@ def run_profiles(profiles, output=ARTIFACTS):
         shutil.copy2(original, retained)
         products[retained.name] = retained
     inputs = output / "inputs.json"
-    scope = {profile: "full public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses plus an isolated invalid-alignment control"
+    scope = {profile: "full valid public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses; separate invalid alignment violates the source debug precondition (C asserts, Rust reports EINVAL), so this bounded control does not claim matched valid-client fatal semantics"
              for profile in profiles}
     inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
         "profiles": profiles, "scope": scope,
@@ -451,7 +451,7 @@ def read_and_replay(profiles, replay=False):
             compare_precondition_control(profile, controls["c"], controls["native"])
             if harness.parse_rust_test_count(results["native-contract"]["stdout"] + results["native-contract"]["stderr"]) != 1:
                 raise harness.HarnessError(f"retained {profile} native Heap contract did not execute exactly one test")
-            scope = "full public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses plus an isolated invalid-alignment control"
+            scope = "full valid public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses; separate invalid alignment violates the source debug precondition (C asserts, Rust reports EINVAL), so this bounded control does not claim matched valid-client fatal semantics"
             print(f"Public Heap/subprocess adapter retained {profile} ({scope}) replay PASS")
     case = next(case for case in receipt.cases if case["id"] == profiles[0] + "-c-run")
     log = next(log for log in case["logs"] if log.endswith(".stdout"))
