@@ -1249,9 +1249,10 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
     def test_producer_failure_keeps_partial_payload_private(self):
         output = Path(self.temporary.name) / "produced"
-        def fail(staged, build, *, allocator_backend, lifecycle_test_audit):
+        def fail(staged, build, *, allocator_backend, lifecycle_test_audit, profile):
             self.assertEqual(allocator_backend, "accepted-c")
             self.assertFalse(lifecycle_test_audit)
+            self.assertEqual(profile, "release")
             staged.mkdir()
             (staged / "partial-libc.so").write_bytes(b"partial")
             self.assertFalse(output.exists())
@@ -1313,7 +1314,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
             "-z", "pack-relative-relocs",
             "--symbol-ordering-file=/private/libc-hot.order", "--no-warn-symbol-ordering",
-            "/private/objects/one.o", "/private/objects/two.o", "/private/libcrabc-builtins.a",
+            "/private/objects/one.o", "/private/objects/two.o",
+            "--whole-archive", "/private/libcrabc-builtins.a", "--no-whole-archive",
             str(producer.RUNTIME_DISCARD_UNWIND_SCRIPT), "/private/libc-hot-rodata.ld",
             "-o", "/private/usr/lib/libc.so",
         ])
@@ -1347,9 +1349,10 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         for failure in ("invalid-payload", "competing-publication"):
             with self.subTest(failure=failure):
                 output = Path(self.temporary.name) / failure
-                def finish(staged, build, *, allocator_backend, lifecycle_test_audit):
+                def finish(staged, build, *, allocator_backend, lifecycle_test_audit, profile):
                     self.assertEqual(allocator_backend, "accepted-c")
                     self.assertFalse(lifecycle_test_audit)
+                    self.assertEqual(profile, "release")
                     staged.mkdir()
                     (staged / "payload").write_bytes(b"private candidate")
                     if failure == "competing-publication":
