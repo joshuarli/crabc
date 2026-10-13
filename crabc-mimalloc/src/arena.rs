@@ -1515,52 +1515,6 @@ unsafe fn manage_in_place(
     }
 }
 
-/// Initializes each in-place arena before its caller publishes it.
-///
-/// The source callback can reenter the process arena owner while metadata is
-/// being made accessible. Keeping callback-bearing preparation separate from
-/// registry insertion lets that owner release its reserve lock for the
-/// callback and reacquire it only for the source publication transition.
-///
-/// # Safety
-///
-/// The caller upholds the normal in-place range and memory provenance contract.
-/// The publisher must either make exactly one arena registry-visible, or return
-/// without exposing it. Once it returns success, the arena is permanent.
-#[allow(clippy::too_many_arguments)]
-pub(super) unsafe fn manage_in_place_with_publisher<F>(
-    registry: &ArenaRegistry,
-    start: *mut u8,
-    size: usize,
-    page_size: PageSize,
-    initially_committed: bool,
-    numa_node: i32,
-    exclusive: bool,
-    commit_hook: Option<CommitHook>,
-    memory: MemoryId,
-    publish: F,
-) -> Result<ManagedExternalRegion, ManageArenaError>
-where
-    F: FnMut(*mut Arena) -> Result<(), ManageArenaError>,
-{
-    unsafe {
-        manage_in_place_with_publisher_and_numa_source(
-            registry,
-            start,
-            size,
-            page_size,
-            initially_committed,
-            || numa_node,
-            exclusive,
-            commit_hook,
-            commit_hook,
-            None,
-            memory,
-            publish,
-        )
-    }
-}
-
 /// Common source management loop with a node source that runs only at the
 /// `mi_arena_initialize` field-write position.
 ///
@@ -1720,17 +1674,6 @@ impl SourceInitializationClaimCustody {
     pub(crate) fn belongs_to_subprocess(&self, subprocess: &Subprocess) -> bool {
         self.subprocess == NonNull::from(subprocess)
     }
-
-    /// Transfers the original release obligation to a source-published Theap.
-    /// This returns the stored observation, never a new release capability.
-    ///
-    /// # Safety
-    /// The actual retained issuer remains alive, the Theap carries this exact
-    /// original memory identity, and its TLD/Heap links now retain its image
-    /// for the complete source lifecycle. No pre-link failure or independent
-    /// claim release may remain. Partial initialization that cannot transfer
-    /// the normal lifecycle must instead retain custody terminally.
-    pub(crate) unsafe fn into_published_memory(self) -> MemoryId { self.memory }
 
     /// Consumes custody without returning a possibly published span. The
     /// source owner thereafter retains that span through quiescent teardown;

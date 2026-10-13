@@ -204,25 +204,18 @@ impl<'arena> PageBacking<'arena> for ArenaView<'arena> {
     }
 }
 
-/// The two already-selected arena owners admitted to the permanent
+/// The already-selected arena owner admitted to the permanent
 /// ticket-zero page engine.
 ///
 /// `SelectedSidecar` preserves the historical lazy first-arena owner.  The
-/// source-start variant retains a validated committed regular parent and
-/// delegates every actual claim/release/purge to its process-owned registry.
-/// It retains the process policy as well: after the exact source arena search
-/// refuses an unsuitable page shape, `mi_arenas_page_alloc_fresh_area` takes
-/// its existing direct-OS fallback.  It must not turn that refusal into a
-/// second, private sidecar arena.
+/// source registry retains the process policy: after the exact source arena
+/// search refuses an unsuitable page shape, `mi_arenas_page_alloc_fresh_area`
+/// takes its existing direct-OS fallback. It must not turn that refusal into
+/// a second, private sidecar arena.
 pub(crate) enum RuntimeFirstRegularPageBacking {
     #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     SelectedSidecar(ArenaView<'static>),
     SourceRegistry { process: VmProcess<'static>, numa_node: i32 },
-    SourceStartupRegular {
-        process: VmProcess<'static>,
-        startup_arena: ArenaView<'static>,
-        numa_node: i32,
-    },
 }
 
 impl RuntimeFirstRegularPageBacking {
@@ -230,18 +223,6 @@ impl RuntimeFirstRegularPageBacking {
     #[inline]
     pub(crate) fn selected_sidecar(arena: ArenaView<'static>) -> Self {
         Self::SelectedSidecar(arena)
-    }
-
-    /// Forms the process-owned source-start route after the process binding
-    /// has checked its one published regular parent.  The constructor does
-    /// not reserve, search, or relax that admission.
-    #[inline]
-    pub(crate) fn source_startup_regular(
-        process: VmProcess<'static>,
-        startup_arena: ArenaView<'static>,
-        numa_node: i32,
-    ) -> Self {
-        Self::SourceStartupRegular { process, startup_arena, numa_node }
     }
 
     /// Uses the process registry with the source search/reserve/search policy.
@@ -256,7 +237,6 @@ impl RuntimeFirstRegularPageBacking {
         let pointer = memory.arena_memory()?.arena;
         let selected = match self {
             Self::SelectedSidecar(arena) => arena,
-            Self::SourceStartupRegular { startup_arena, .. } => startup_arena,
             Self::SourceRegistry { .. } => return None,
         };
         if pointer != core::ptr::from_ref(selected.arena()).cast_mut() {
@@ -307,7 +287,6 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         match self {
             #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(arena) => Some(arena),
-            Self::SourceStartupRegular { startup_arena, .. } => Some(startup_arena),
             Self::SourceRegistry { .. } => None,
         }
     }
@@ -318,7 +297,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             Self::SelectedSidecar(arena) => PageArenaSearch::Selected(unsafe {
                 ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut())
             }),
-            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
+            Self::SourceRegistry { process, .. } => {
                 // Pinned arena.c:725-776 searches all NUMA nodes, allowing
                 // pinned arenas, in the same rotated source registry order.
                 let search = ArenaSearch { heap_sequence: 0, heap_count: 0,
@@ -339,7 +318,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             // SAFETY: the PageBacking caller supplies a current arena MemoryId
             // from this process-owned claim or page; the helper validates its
             // immutable published registry identity before forming a view.
-            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => unsafe {
+            Self::SourceRegistry { process, .. } => unsafe {
                 Self::process_arena_for_memory(*process, memory)
             },
         }
@@ -349,7 +328,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         match self {
             #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(_) => None,
-            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => Some(*process),
+            Self::SourceRegistry { process, .. } => Some(*process),
         }
     }
 
@@ -385,7 +364,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             Self::SelectedSidecar(arena) => {
                 arena.try_claim_suitable_slices(requested, slices, commit, thread_sequence)
             }
-            Self::SourceStartupRegular { process, numa_node, .. } | Self::SourceRegistry { process, numa_node } => {
+            Self::SourceRegistry { process, numa_node } => {
                 // Pinned `mi_arenas_page_alloc_fresh_area` reaches
                 // `mi_arenas_try_alloc` with the selected Heap affinity or
                 // its stored TLD NUMA value. Preserve
@@ -429,7 +408,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             #[cfg(any(test, feature = "native-runtime-test-audit"))]
             Self::SelectedSidecar(_) => self.claim_with_numa_node(config, requested, slices,
                 commit, thread_sequence, allocation_numa_node, random),
-            Self::SourceStartupRegular { process, numa_node, .. } | Self::SourceRegistry { process, numa_node } => {
+            Self::SourceRegistry { process, numa_node } => {
                 if process.policy().disallow_arena_alloc()
                     || slices > Self::max_process_arena_object_slices(process.policy().arena_max_object_size_bytes()) { return None; }
                 // SAFETY: forwarded session custody; identity is checked before search.
@@ -451,7 +430,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                 self.selected_matches_memory(memory).is_some()
                     && unsafe { crate::arena::release_arena_slices(memory) }
             }
-            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
+            Self::SourceRegistry { process, .. } => {
                 // SAFETY: `memory` is the current exact page/claim held by
                 // this backing; registry identity is checked before release.
                 unsafe { Self::process_arena_for_memory(*process, memory) }.is_some()
@@ -464,7 +443,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         match self {
             #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(_) => true,
-            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
+            Self::SourceRegistry { process, .. } => {
                 // SAFETY: `memory` belongs to the current live source page;
                 // the helper rejects unregistered/foreign arena identities.
                 unsafe { Self::process_arena_for_memory(*process, memory) }.is_some()
@@ -484,7 +463,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             Self::SelectedSidecar(arena) => {
                 arena.collect_scheduled_purge(config.page_size(), force)
             }
-            Self::SourceStartupRegular { process, .. } | Self::SourceRegistry { process, .. } => {
+            Self::SourceRegistry { process, .. } => {
                 // SAFETY: the page engine retains this process-owned backing
                 // and every page claim it has published; the source backing
                 // performs its normal process-wide purge traversal.

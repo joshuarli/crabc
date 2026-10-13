@@ -58,7 +58,6 @@ use crate::os::{MemoryConfig, VmProcess};
 use crate::os_page::OsAlignedPageOwner;
 #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use crate::process_arena::ProcessPageArenaLease;
-use crate::random::TheapRandomImage;
 use crate::single_thread::{
     StaticMainMappedRegularClaimSelector, StaticMainMappedRegularClaimSource,
     StaticMainMappedRegularClaimSourceHookOutcome,
@@ -3132,19 +3131,6 @@ pub(crate) enum MainStaticProcessPageSessionError {
     AlreadyStarted,
 }
 
-/// A refusal while lending ticket zero's initialized random image to its one
-/// policy-bound first-arena reservation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MainStaticProcessPageSessionRandomError {
-    /// The static roots, image, or zero-page condition ceased to prove the
-    /// narrow first-arena transition. The session is terminally latched.
-    NotFresh,
-    /// The source Theap remained structurally initialized but its mandatory
-    /// random image was unexpectedly absent. A native policy path must not
-    /// substitute a hint-less mapping route, so the session is latched.
-    MissingInitializedRandom,
-}
-
 /// A process-lifetime, ticket-zero page owner which can coexist with copied
 /// shared-main Heap leases.
 ///
@@ -3415,45 +3401,6 @@ impl MainStaticProcessPageSession {
             return false;
         }
         true
-    }
-
-    /// Lends the initialized ticket-zero random image only while this session
-    /// still proves the zero-page first-arena precondition.
-    ///
-    /// The callback cannot retain the borrow, and its result returns only
-    /// after the random borrow ended. This keeps policy-aware mmap hint
-    /// selection before the page engine acquires any mutable static-Theap
-    /// state. An absent random image is a terminal source-state mismatch,
-    /// never permission to enter the legacy hint-less route.
-    pub(crate) fn with_zero_page_vm_random<R>(
-        &mut self,
-        operation: impl FnOnce(&mut TheapRandomImage) -> R,
-    ) -> Result<R, MainStaticProcessPageSessionRandomError> {
-        if !self.preflight_fresh_page_session() {
-            return Err(MainStaticProcessPageSessionRandomError::NotFresh);
-        }
-        let pointer = NonNull::new(self.storage.theap.image.get())
-            .expect("the permanent ticket-zero session retains its static Theap slot");
-        // SAFETY: `&mut self` proves unique ticket-zero session access on its
-        // original thread. The preflight above proves the Theap is live and
-        // initialized; the closure receives only its random field and cannot
-        // retain that borrow after this call returns.
-        let result = unsafe {
-            Theap::with_os_reservation_random_at(pointer, |random| {
-                let random = random?;
-                if !random.is_initialized() {
-                    return None;
-                }
-                Some(operation(random))
-            })
-        };
-        match result {
-            Some(result) => Ok(result),
-            None => {
-                self.latch();
-                Err(MainStaticProcessPageSessionRandomError::MissingInitializedRandom)
-            }
-        }
     }
 
     /// Leaves the permanent static-image owner terminally retained without

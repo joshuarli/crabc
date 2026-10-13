@@ -974,27 +974,6 @@ impl ExclusiveTheapSession<'_> {
         }
     }
 
-    /// Associates `page` with this stable exclusive theap and heap.
-    ///
-    /// The page metadata and its described block area must remain stable and
-    /// exclusively owned for as long as it remains associated. In particular,
-    /// callers must not use the static [`EMPTY_PAGE`] sentinel here.
-    #[inline]
-    pub(crate) fn associate_page(&mut self, page: &mut Page) {
-        let owner = self.owner;
-        let state = self.state_mut();
-        page.associate_exclusive_owner(&mut state.theap, &state.heap, owner);
-    }
-
-    /// Clears a local-page association before metadata reuse.
-    ///
-    /// No queue or direct-cache slot may still point at `page`, and no remote
-    /// free or observer may exist; this is not thread teardown or abandonment.
-    #[inline]
-    pub(crate) fn disassociate_page(&mut self, page: &mut Page) {
-        page.disassociate_exclusive();
-    }
-
     /// Resets a fully free, detached page and returns its release provenance.
     ///
     /// The caller must first clear every direct-cache slot, remove queue

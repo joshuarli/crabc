@@ -1675,24 +1675,6 @@ unsafe fn published_os_page_geometry(
     })
 }
 
-/// Copies the validated full OS page area and its immutable source memory
-/// identity. These scalars grant no protection, commitment or release right.
-///
-/// # Safety
-/// The caller retains the live initialized primary, its original OS mapping
-/// and exclusive ordinary page ownership throughout this short projection.
-/// No metadata, mapping or protection transition overlaps the read. The
-/// returned extent still includes any full-security tail; callers use the
-/// selected legal prefix separately before client or commit publication.
-pub(crate) unsafe fn published_os_page_area_geometry(
-    config: MemoryConfig, primary: NonNull<Page>,
-) -> Option<(NonNull<u8>, usize, MemoryId)> {
-    // SAFETY: the caller retains the same original primary and mapping while
-    // the existing source layout validator copies their immutable geometry.
-    let geometry = unsafe { published_os_page_geometry(config, primary, true) }?;
-    Some((geometry.slice_start, geometry.layout.allocation_size(), geometry.memory))
-}
-
 /// Returns the one source page area that a process-owned on-demand OS page
 /// may commit after its `Mapping` has been published.
 ///

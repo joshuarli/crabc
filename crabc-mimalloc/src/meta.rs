@@ -5909,25 +5909,6 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     }
 }
 
-impl<'heap, 'tracking> ChildMainHeapReleaseFailure<'heap, 'tracking> {
-    /// Retries raw unmaps retained by the completed child arena teardown.
-    /// The parent-issued context and its child identity stay inside this
-    /// failure value until every transferred raw release succeeds.
-    pub(crate) fn retry_arena_backing(
-        self,
-    ) -> Result<ChildMainHeapContextOwner<'heap>, Self> {
-        let Self::ArenaBacking { mut owner, mut destroyed } = self else {
-            return Err(self);
-        };
-        if destroyed.retry_raw().is_err() || !destroyed.is_released() {
-            return Err(Self::ArenaBacking { owner, destroyed });
-        }
-        owner.stage = ChildMainHeapStage::ArenaBackingDestroyed;
-        drop(destroyed);
-        Ok(owner)
-    }
-}
-
 /// Detaches every page of one child-thread Theap for process destruction
 /// through an ordinary child page engine over that Theap, built from the
 /// listed Theap and TLD instead of the thread's own owner (which lives in
@@ -8095,13 +8076,6 @@ impl<'borrow, 'owner> MetaEntry<'borrow, 'owner> {
         // SAFETY: READY plus this held private lock gives exclusive mutation
         // of the final static allocator slot.
         unsafe { (&mut *self.owner.get_ref().allocator.get()).assume_init_mut() }
-    }
-
-    #[inline]
-    fn allocator_ref(&self) -> &MetadataPageAllocator<'owner> {
-        // SAFETY: see `allocator`; this shared projection is used only for
-        // source pointer identity while the same metadata lock is held.
-        unsafe { (&*self.owner.get_ref().allocator.get()).assume_init_ref() }
     }
 }
 
