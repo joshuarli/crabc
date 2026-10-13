@@ -421,6 +421,7 @@ pub(crate) fn current_thread_identity() -> Option<LiveThreadId> {
 /// This is a source-shape/codegen observation only. It is aligned and unique
 /// per thread, but the selected Linux/musl paths use [`current_thread_identity`]
 /// instead because their direct thread-pointer register is available.
+#[cfg(any(test, feature = "tls-codegen-probe"))]
 #[inline(always)]
 fn thread_id_helper_address() -> Option<LiveThreadId> {
     LiveThreadId::new(core::ptr::addr_of_mut!(THREAD_ID_HELPER_ROOT) as usize)
@@ -496,6 +497,7 @@ pub(crate) unsafe fn m1_compiler_tls_first_regular_slot_fields(
 /// embedded in a runtime compiler-TLS record. The runtime must first complete
 /// that owner's explicit source teardown transition, so resetting source
 /// roots cannot make a live page-bearing owner look vacant.
+#[cfg(any(test, feature = "tls-codegen-probe"))]
 #[inline(always)]
 pub(crate) fn reset_for_thread_teardown() {
     let dynamic_root_is_nonempty = match dynamic_backing_peek() {
