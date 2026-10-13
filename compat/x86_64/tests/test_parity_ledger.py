@@ -130,6 +130,22 @@ class PublicSupportDeclarationTests(unittest.TestCase):
 
 
 class X86ParityLedgerTests(unittest.TestCase):
+    def test_verified_family_receipts_are_opt_in_to_the_ledger_check(self) -> None:
+        data = self.data()
+        planned = [row for row in data["family"]
+                   if row["status"] == "planned" and row["id"] != "performance.release"]
+        self.assertEqual(len(planned), 16)
+        for family in planned:
+            family["status"] = "foundation-verified"
+            for evidence in family["native_evidence"]:
+                evidence["state"] = "verified"
+                if family["id"] != "sysroot.static-tls":
+                    evidence["receipt"] = f".work/x86_64/fixture/{family['id']}/receipt.json"
+
+        ledger.validate_ledger(data)
+        with self.assertRaises(ledger.LedgerError):
+            ledger.validate_ledger(data, require_receipts=True)
+
     def test_reviewed_membarrier_cpp_matrix_rows_reject_foreign_or_missing_difference(self) -> None:
         report = json.loads(ledger.HEADER_ABI_MATRIX_REPORT_PATH.read_text(encoding="utf-8"))
         manifest = self.header_foundation_manifest()
@@ -3503,6 +3519,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         evidence[0]["receipt"] = ".work/x86_64/nonphysical-family-admission.json"
         with self.assertRaisesRegex(ledger.LedgerError, "physical checkout .work file"):
             ledger.require_posix_runtime_family_admission(family)
+
+        changed = self.data()
+        family = self.family(changed, "libc.posix-runtime")
+        family["status"] = "foundation-verified"
+        family["native_evidence"][0]["state"] = "verified"
+        family["native_evidence"][0]["receipt"] = ".work/x86_64/nonphysical-family-admission.json"
+        with self.assertRaisesRegex(ledger.LedgerError, "physical checkout .work file"):
+            ledger.validate_ledger(changed, require_receipts=True)
 
 
     def test_math_fenv_rounding_keeps_selected_siblings_out_of_its_leaf_candidate_only(

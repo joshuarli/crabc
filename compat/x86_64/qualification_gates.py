@@ -567,7 +567,9 @@ def _read_parity_ledger(evaluation: Evaluation) -> str:
     del evaluation
     ledger = _import_compat("validate_parity_ledger")
     inventory = _import_compat("aarch64_parity_inventory")
-    report = ledger.validate_ledger(ledger.load_toml(ledger.LEDGER_PATH))
+    report = ledger.validate_ledger(
+        ledger.load_toml(ledger.LEDGER_PATH), require_receipts=True
+    )
     inventory.validate_frozen_baseline()
     inventory.validate_inventory()
     return f"frozen baseline, ledger ({report['family_count']} families) and derived inventory validate"

@@ -11,7 +11,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -56,6 +57,26 @@ CLEAN = {"revision": "a" * 40, "uncommitted": []}
 
 class GateConditionTests(unittest.TestCase):
     gate = gates.CHAIN[2]
+
+    def test_parity_ledger_reader_requires_receipts(self):
+        validation = Mock(return_value={"family_count": 16})
+        ledger = SimpleNamespace(
+            LEDGER_PATH=Path("parity.toml"),
+            load_toml=Mock(return_value={"schema": "fixture"}),
+            validate_ledger=validation,
+        )
+        inventory = SimpleNamespace(
+            validate_frozen_baseline=Mock(),
+            validate_inventory=Mock(),
+        )
+        modules = {"validate_parity_ledger": ledger, "aarch64_parity_inventory": inventory}
+        with patch.object(gates, "_import_compat", side_effect=modules.__getitem__):
+            detail = gates._read_parity_ledger(None)
+
+        validation.assert_called_once_with({"schema": "fixture"}, require_receipts=True)
+        inventory.validate_frozen_baseline.assert_called_once_with()
+        inventory.validate_inventory.assert_called_once_with()
+        self.assertIn("ledger (16 families)", detail)
 
     def evaluate(self, families, readers, *, native=True, checks=None, source=None):
         states = iter(source or (CLEAN, CLEAN))

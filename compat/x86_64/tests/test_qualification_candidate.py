@@ -58,6 +58,7 @@ class PlanTests(unittest.TestCase):
         report = candidate.dry_run(ROOT, work, {})
         self.assertFalse(work.exists())
         by_step = {step["step"]: step for step in report["steps"]}
+        self.assertEqual(by_step["parity-ledger"]["argv"][-1], "--require-receipts")
         self.assertIn("<static-products:preparation>", by_step["posix-family"]["argv"])
         self.assertIn("--report", by_step["text-family"]["argv"])
         self.assertIn("<input:rust_std_lto.provider_vendor>", by_step["rust-std-lto"]["argv"])

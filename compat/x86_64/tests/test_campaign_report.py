@@ -146,6 +146,7 @@ class CampaignReportTests(unittest.TestCase):
             posix_runtime["routine_c_abi_matrix"]["aggregate_command"],
             "./scripts/dev-x86_64.sh routine-c-abi-matrix libc.posix-runtime",
         )
+        self.assertEqual(posix_runtime["receipts"], {"state": "not-required", "declared": []})
         self.assertEqual(
             value["next_dependency_ready_transitions"],
             [
@@ -187,8 +188,15 @@ class CampaignReportTests(unittest.TestCase):
         for family in inputs[1]['family']:
             if family['id'] != 'performance.release':
                 family['status'] = report.COMPLETED_STATUS
+                if family['id'] == 'libc.posix-runtime':
+                    family['native_evidence'][0]['receipt'] = '.work/x86_64/missing/receipt.json'
         with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
             value = report.build_report()
+            posix_receipts = next(row for row in value['families'] if row['id'] == 'libc.posix-runtime')['receipts']
+            self.assertEqual(posix_receipts, {
+                'state': 'unchecked',
+                'declared': ['.work/x86_64/missing/receipt.json'],
+            })
             self.assertTrue(value['gates']['qualification']['pass'])
             self.assertFalse(value['campaign']['promotion_ready'])
             self.assertTrue(value['gates']['promotion']['machine_gate_defined'])

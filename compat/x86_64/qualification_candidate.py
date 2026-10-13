@@ -414,7 +414,8 @@ def _plan() -> tuple[Step, ...]:
                       lambda c: _d("qualification-manifest"),
                       (Output("receipt", printed="receipt.json"),)))
     steps.append(Step("parity-ledger", "capability.accounting",
-                      lambda c: ["python3", "compat/x86_64/validate_parity_ledger.py"]))
+                      lambda c: ["python3", "compat/x86_64/validate_parity_ledger.py",
+                                 "--require-receipts"]))
     return tuple(_with_publications(steps))
 
 

@@ -46,7 +46,9 @@ class PromotionClosureTests(unittest.TestCase):
                                     (closure.static, 'ROOT', self.root), (closure.dynamic, 'ROOT', self.root)):
             self.start(patch.object(target, name, value))
         self.start(patch.object(closure.ledger, 'load_toml', return_value=data))
-        self.start(patch.object(closure.ledger, 'validate_ledger', return_value={}))
+        self.ledger_validation = self.start(
+            patch.object(closure.ledger, 'validate_ledger', return_value={})
+        )
         self.start(patch.object(closure.inventory, 'validate_inventory', return_value=capabilities))
         self.start(patch.object(closure.static, 'source_digest', return_value=self.source['content_sha256']))
         self.start(patch.object(closure.dynamic, 'source_digest', return_value=self.source['content_sha256']))
@@ -116,6 +118,7 @@ class PromotionClosureTests(unittest.TestCase):
         result = closure.validate_promotion_closure(self.complete())
         self.assertTrue(result['functional_readiness'])
         self.assertFalse(result['public_support'])
+        self.ledger_validation.assert_called_once_with(self.data, require_receipts=True)
         self.assertEqual(self.static_reader.call_count, 2)
         self.assertEqual(self.dynamic_reader.call_count, 2)
 

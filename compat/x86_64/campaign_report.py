@@ -515,6 +515,18 @@ def build_report(qualification_receipt: Path | None = None) -> dict[str, Any]:
         row = {
             "id": family_id,
             "status": family.get("status"),
+            "receipts": {
+                "state": (
+                    "unchecked"
+                    if family.get("status") == "foundation-verified"
+                    else "not-required"
+                ),
+                "declared": [
+                    entry["receipt"]
+                    for entry in family.get("native_evidence", [])
+                    if isinstance(entry, Mapping) and isinstance(entry.get("receipt"), str)
+                ],
+            },
             "dependencies": list(family.get("depends_on", [])),
             "readiness": family_readiness,
             "commands": family_evidence_commands(family),

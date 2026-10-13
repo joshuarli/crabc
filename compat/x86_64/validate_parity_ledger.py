@@ -2370,6 +2370,12 @@ VerifiedArtifactCacheEntry = tuple[
 _verified_artifact_cache: ContextVar[
     dict[int, VerifiedArtifactCacheEntry] | None
 ] = ContextVar("x86_verified_artifact_cache", default=None)
+_require_receipts: ContextVar[bool] = ContextVar("x86_require_receipts", default=True)
+
+
+def _receipts_required() -> bool:
+    """Whether this ledger pass must replay source-bound family receipts."""
+    return _require_receipts.get()
 
 
 def require(condition: bool, message: str) -> None:
@@ -6720,6 +6726,8 @@ def require_posix_runtime_family_admission(family: Mapping[str, Any]) -> Mapping
     require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
             "POSIX family admission receipt must be checkout-relative")
     physical = ROOT / receipt_path
+    if not _receipts_required():
+        return {}
     require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
             and physical.is_relative_to(ROOT / ".work"),
             "POSIX family admission receipt must be a physical checkout .work file")
@@ -6757,6 +6765,10 @@ def posix_runtime_private_artifact_view(
     if family.get("status") == "planned":
         require(admission is None, "planned POSIX runtime cannot have an admission receipt")
         return family
+    if not _receipts_required():
+        view = dict(family)
+        view["status"] = "planned"
+        return view
     require(admission is not None, "POSIX runtime leaf ratchets need actual family admission")
     # Existing leaf validators correctly reject an isolated artifact as a
     # promotion. Their ``planned`` check is a local non-promotion boundary,
@@ -6814,6 +6826,8 @@ def require_pthread_runtime_family_admission(
     require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
             "pthread/TLS component receipt must be checkout-relative")
     physical = ROOT / receipt_path
+    if not _receipts_required():
+        return {}
     require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
             and physical.is_relative_to(ROOT / ".work"),
             "pthread/TLS component receipt must be a physical checkout .work file")
@@ -6848,6 +6862,10 @@ def pthread_runtime_private_artifact_view(
     if family.get("status") == "planned":
         require(admission is None, "planned pthread/TLS cannot have family admission")
         return family
+    if not _receipts_required():
+        view = dict(family)
+        view["status"] = "planned"
+        return view
     require(admission is not None, "pthread/TLS leaf ratchets need actual family admission")
     # Each leaf remains deliberately narrower than its owning family. Its
     # planned-status guard is local to that boundary, not a claim that the
@@ -6911,6 +6929,8 @@ def require_resolver_family_admission(
     require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
             "resolver family assessment must be checkout-relative")
     physical = ROOT / receipt_path
+    if not _receipts_required():
+        return {}
     require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
             and physical.is_relative_to(ROOT / ".work"),
             "resolver family assessment must be a physical checkout .work file")
@@ -6964,6 +6984,10 @@ def resolver_private_artifact_view(
     if family.get("status") == "planned":
         require(admission is None, "planned libc.resolver cannot have family admission")
         return family
+    if not _receipts_required():
+        view = dict(family)
+        view["status"] = "planned"
+        return view
     require(admission is not None, "resolver leaf ratchets need actual family admission")
     # Each static C leaf stays narrower than the admitted family. Its local
     # planned-status guard rejects leaf promotion, not the family receipt.
@@ -7015,6 +7039,8 @@ def require_text_math_locale_stdio_family_admission(
     require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
             "text family receipt must be checkout-relative")
     physical = ROOT / receipt_path
+    if not _receipts_required():
+        return {}
     require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
             and physical.is_relative_to(ROOT / ".work"),
             "text family receipt must be a physical checkout .work file")
@@ -7035,6 +7061,10 @@ def text_math_locale_stdio_private_artifact_view(
     if family.get("status") == "planned":
         require(admission is None, "planned text family cannot have admission")
         return family
+    if not _receipts_required():
+        view = dict(family)
+        view["status"] = "planned"
+        return view
     require(admission is not None, "text family leaves need actual family admission")
     view = dict(family)
     view["status"] = "planned"
@@ -7077,6 +7107,8 @@ def require_c_abi_compat_family_admission(
     require(not receipt_path.is_absolute() and ".." not in receipt_path.parts,
             "c-abi-compat family assessment must be checkout-relative")
     physical = ROOT / receipt_path
+    if not _receipts_required():
+        return {}
     require(physical.is_file() and not physical.is_symlink() and physical.resolve() == physical
             and physical.is_relative_to(ROOT / ".work"),
             "c-abi-compat family assessment must be a physical checkout .work file")
@@ -7840,6 +7872,8 @@ def require_lua_source_build_admission(family: Mapping[str, Any]) -> None:
         sys.path.insert(0, str(source_build_root))
     import source_build_admission
 
+    if not _receipts_required():
+        return
     try:
         source_build_admission.validate()
     except Exception as error:
@@ -9400,6 +9434,8 @@ def require_static_tls_family_evidence(
     )
     if status == "planned":
         return
+    if not _receipts_required():
+        return
     incomplete = [
         dependency
         for dependency in family.get("depends_on", [])
@@ -9592,11 +9628,13 @@ def public_support_declaration(data: Mapping[str, Any]) -> bool:
 def validate_ledger(
     data: Mapping[str, Any],
     *,
+    require_receipts: bool = False,
     header_layout_manifest: Mapping[str, Any] | None = None,
     header_layout_foundation_manifest: Mapping[str, Any] | None = None,
     static_product_contract: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate one ledger with no reusable state beyond this invocation."""
+    receipt_token = _require_receipts.set(require_receipts)
     token = _verified_artifact_cache.set({})
     try:
         return _validate_ledger(
@@ -9607,6 +9645,7 @@ def validate_ledger(
         )
     finally:
         _verified_artifact_cache.reset(token)
+        _require_receipts.reset(receipt_token)
 
 
 def _validate_ledger(
@@ -9842,7 +9881,11 @@ def _validate_ledger(
     require_math_log2_artifact(text_leaf)
     require_uchar_stateful_artifact(text_leaf)
     require_text_component_slices(text_leaf)
-    require_posix_process_abi_admission_artifact(by_id["compat.posix-process"])
+    posix_process_leaf = by_id["compat.posix-process"]
+    if posix_process_leaf.get("status") == "foundation-verified" and not _receipts_required():
+        posix_process_leaf = dict(posix_process_leaf)
+        posix_process_leaf["status"] = "planned"
+    require_posix_process_abi_admission_artifact(posix_process_leaf)
 
     musl_oracle = by_id["oracle.musl-toolchain"]
     require(musl_oracle["status"] == "foundation-verified", "musl oracle must remain foundation-verified")
@@ -10014,9 +10057,12 @@ def _validate_ledger(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="validate the checked-in ledger (default)")
+    parser.add_argument("--require-receipts", action="store_true",
+                        help="replay current receipts for foundation-verified families")
     arguments = parser.parse_args()
-    del arguments
-    report = validate_ledger(load_toml(LEDGER_PATH))
+    report = validate_ledger(
+        load_toml(LEDGER_PATH), require_receipts=arguments.require_receipts
+    )
     print(
         "x86 parity ledger: PASS "
         f"({report['family_count']} families; "

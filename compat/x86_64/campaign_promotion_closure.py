@@ -52,7 +52,7 @@ def validate_promotion_closure(receipt_path: Path | None) -> dict:
     require(chain.get('source_before') == before and chain.get('source_after') == before,
             "qualification source differs from promotion source")
     data = ledger.load_toml(ledger.LEDGER_PATH)
-    ledger.validate_ledger(data)
+    ledger.validate_ledger(data, require_receipts=True)
     required = ledger.completion_family_ids(data)
     require(data.get('completion', {}).get('qualification_profile', 'full') == profile,
             "ledger and qualification profiles differ")
