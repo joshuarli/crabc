@@ -39,6 +39,16 @@ class M5GateContractTests(unittest.TestCase):
     def gate_record(self, contract, gate_id):
         return next(entry for entry in contract["gates"] if entry["id"] == gate_id)
 
+    def run_native_evidence(self, command, record):
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            artifacts = Path(temporary) / "artifacts"
+            artifacts.mkdir()
+            with mock.patch.object(gate.harness, "command_record", return_value=record):
+                result = gate.run_evidence({"native:fixture": command}, artifacts)["native:fixture"]
+            return result["status"], (artifacts / "native-fixture.log").read_text()
+
     def test_checked_in_contract_claims_every_native_target_and_blocks_missing_evidence(self) -> None:
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
@@ -57,6 +67,33 @@ class M5GateContractTests(unittest.TestCase):
             [command[index + 1] for index, argument in enumerate(command) if argument == "--test"],
             ["native_pointer_first_free", "native_live_remote_free"],
         )
+
+    def test_native_evidence_rejects_zero_successful_tests_per_target(self) -> None:
+        command = gate.native_test_command(["native_populated", "native_ignored_only"])
+        output = (
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+            "test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        )
+        status, log = self.run_native_evidence(command, {"status": 0, "stdout": output, "stderr": ""})
+        self.assertEqual(status, "failed")
+        self.assertIn("native target native_ignored_only ran no successful tests", log)
+
+    def test_native_evidence_accepts_populated_targets_and_preserves_command_failures(self) -> None:
+        command = gate.native_test_command(["native_first", "native_second"])
+        output = (
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+            "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+        )
+        status, log = self.run_native_evidence(command, {"status": 0, "stdout": output, "stderr": ""})
+        self.assertEqual(status, "passed")
+        self.assertEqual(log, output)
+
+        failed_output = "error: test binary failed\n"
+        status, log = self.run_native_evidence(
+            command, {"status": 101, "stdout": "", "stderr": failed_output}
+        )
+        self.assertEqual(status, "failed")
+        self.assertEqual(log, failed_output)
 
     def test_a_new_native_target_outside_every_evidence_entry_breaks_closure(self) -> None:
         with self.assertRaisesRegex(harness.HarnessError, "native_future_witness"):

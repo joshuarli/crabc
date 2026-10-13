@@ -31,6 +31,7 @@ executed; its pass never removes a blocker by itself.
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -64,6 +65,12 @@ NATIVE_FEATURES = "native-runtime-test-audit,native-runtime-test-fault"
 RUST_TARGET = "x86_64-unknown-linux-musl"
 EVIDENCE_TIMEOUT_SECONDS = 3600
 SCRATCH_PLACEHOLDER = "{scratch}"
+RUST_TEST_SUMMARY = re.compile(
+    r"^test result: (?P<status>ok|FAILED)\. (?P<passed>[0-9]+) passed; "
+    r"(?P<failed>[0-9]+) failed; (?P<ignored>[0-9]+) ignored; "
+    r"(?P<measured>[0-9]+) measured; (?P<filtered>[0-9]+) filtered out;",
+    flags=re.MULTILINE,
+)
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m5-gate"
 QUALIFICATION_PROFILES = ("full", "correctness")
 CORRECTNESS_DEFERRED_GATE = "m5.codegen-performance"
@@ -97,6 +104,27 @@ def native_test_command(targets: Sequence[str]) -> list[str]:
     for target in targets:
         command += ["--test", target]
     return command
+
+
+def native_test_run_issue(command: Sequence[str], output: str) -> str | None:
+    """Require one successful libtest summary with a passing test per target."""
+
+    if command[:2] != ["cargo", "test"] or "--no-fail-fast" not in command:
+        return None
+    targets = [command[index + 1] for index, argument in enumerate(command[:-1]) if argument == "--test"]
+    if not targets:
+        return None
+    summaries = list(RUST_TEST_SUMMARY.finditer(output))
+    if len(summaries) != len(targets):
+        return f"expected {len(targets)} native test summaries, observed {len(summaries)}"
+    for target, summary in zip(targets, summaries):
+        passed = int(summary.group("passed"))
+        failed = int(summary.group("failed"))
+        if summary.group("status") != "ok" or failed != 0:
+            return f"native target {target} did not finish with a passing test summary"
+        if passed == 0:
+            return f"native target {target} ran no successful tests"
+    return None
 
 
 def validate_contract(
@@ -370,11 +398,18 @@ def run_evidence(runnable: Mapping[str, Any], artifacts: Path) -> dict[str, dict
         scratch.mkdir(parents=True)
         command = [argument.replace(SCRATCH_PLACEHOLDER, str(scratch)) for argument in command]
         record = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
-        log.write_text(str(record["stdout"]) + str(record["stderr"]))
+        output = str(record["stdout"]) + str(record["stderr"])
+        status = "passed" if record["status"] == 0 else "failed"
+        if status == "passed":
+            issue = native_test_run_issue(command, output)
+            if issue is not None:
+                output += f"\nM5 native test validation failed: {issue}\n"
+                status = "failed"
+        log.write_text(output)
         results[evidence_id] = {
             "command": list(command),
             "log": harness.relative(log),
-            "status": "passed" if record["status"] == 0 else "failed",
+            "status": status,
         }
     return results
 
