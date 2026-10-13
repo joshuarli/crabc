@@ -5,7 +5,7 @@
  * The reference
  * object uses ordinary C arithmetic, checked-overflow builtins, and defined
  * unsigned loops instead; it is a distinct compiler/musl oracle object, never
- * a same-object claim.  The two-word `unsigned __int128` carrier crosses the
+ * the same object as the candidate.  The two-word `unsigned __int128` carrier crosses the
  * System V AMD64 ABI by value; the Rust source owns its corresponding
  * low-word/high-word `Uint128` representation.
  */

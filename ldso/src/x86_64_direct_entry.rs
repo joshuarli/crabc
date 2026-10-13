@@ -1,6 +1,5 @@
 //! musl 1.2.6 `ldso/dynlink.c::__dls3` (MIT), revision
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417: direct command entry.
-//! The source mapping and retained bounds live in direct-interpreter.md.
 //! Argument strings and the compacted stack remain in the kernel stack mapping.
 use super::*;
 

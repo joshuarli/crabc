@@ -79,7 +79,7 @@ int main(void) {
     if (checkf(cosf(-0x1.a206fp+2f), 0.9692853689193726f, 1e-5f)) return 48;
     if (checkf(tanf(-0x1.a206fp+2f), -0.2537320852279663f, 1e-5f)) return 49;
 
-    /* Wave 3: exp/log/pow exact identities and edge cases */
+    /* exp/log/pow exact identities and edge cases */
     if (check(exp(0.0), 1.0, 1e-12)) return 50;
     if (check(exp(1.0), 2.718281828459045, 1e-12)) return 51;
     if (check(log(1.0), 0.0, 1e-12)) return 52;
@@ -100,7 +100,7 @@ int main(void) {
     if (checkf(powf(-2.0f, 3.0f), -8.0f, 1e-5f)) return 67;
     if (checkf(powf(0x1p-63f, 2.0f), 0x1p-126f, 1e-7f)) return 68;
 
-    /* Wave 4: hyperbolic, inverse trig, hypot, lrint family */
+    /* hyperbolic, inverse trig, hypot, lrint family */
     if (check(hypot(3.0, 4.0), 5.0, 1e-12)) return 69;
     if (check(hypot(1e200, 1e200), 1.4142135623730951e200, 1e185)) return 70;
     if (checkf(hypotf(3.0f, 4.0f), 5.0f, 1e-6f)) return 71;

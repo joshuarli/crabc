@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 //
-// Test-audit-only Theap trace image for the M3 persistent-owner local-path
-// differential (`compat/allocator/m3-local-engine-x86_64-v3.5.0.json`,
-// component `persistent-owner-local-path`).
+// Test-audit-only Theap trace image for the persistent-owner local-path
+// differential against the pinned C allocator.
 //
 // `crabc-mimalloc/tests/native_persistent_owner_local_trace.rs` drives the
 // production `native_allocate_aligned`/`native_free` boundary and, after each

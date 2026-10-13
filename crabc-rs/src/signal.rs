@@ -1,6 +1,6 @@
-//! Native Linux signal facilities for the staged supported targets.
+//! Native Linux signal facilities for the supported targets.
 //!
-//! Linux/AArch64 and staged Linux/x86-64 expose typed masks, handler actions,
+//! Linux/AArch64 and Linux/x86-64 expose typed masks, handler actions,
 //! waiting, queueing, descriptors, and alternate stacks. Delivery to a known
 //! thread is restricted to the calling process.
 //! Handler installation is unsafe because the kernel can later enter supplied
@@ -31,7 +31,7 @@ use crate::Result;
 #[cfg(target_arch = "aarch64")]
 pub use crate::process::Signal;
 
-/// A non-zero Linux process or thread identifier used by the staged x86-64
+/// A non-zero Linux process or thread identifier used by the x86-64
 /// signal facade.
 ///
 /// This narrow type exists here rather than admitting `process` wholesale:
@@ -82,7 +82,7 @@ impl fmt::Display for Pid {
     }
 }
 
-/// A non-zero application-visible Linux signal number on staged x86-64.
+/// A non-zero application-visible Linux signal number on x86-64.
 ///
 /// Musl 1.2.6 reserves 32, 33, and 34 for its runtime; safe construction
 /// covers the standard range 1–31 and the 35–64 realtime range only.
@@ -539,7 +539,7 @@ pub enum SigmaskHow {
 }
 
 bitflags! {
-    /// Signal-action flags accepted by Linux on the staged supported targets.
+    /// Signal-action flags accepted by Linux on the supported targets.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct SigActionFlags: u64 {
@@ -678,7 +678,7 @@ impl SigAction {
         self.handler
     }
 
-    /// Returns the handler when its ABI is known to this staged x86-64 facade.
+    /// Returns the handler when its ABI is known to this x86-64 facade.
     ///
     /// The returned function pointer remains unsafe to invoke. The action
     /// itself is losslessly restorable through [`sigaction`].

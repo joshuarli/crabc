@@ -291,7 +291,7 @@ impl<'mask> SpawnOptions<'mask> {
 /// child path therefore performs only direct descriptor/process syscalls,
 /// `execve`, an error-pipe write, and `exit_group`. Direct current-process
 /// exec remains a separate unsafe capability and is intentionally absent from
-/// this staged x86 surface.
+/// this x86 surface.
 #[cfg(feature = "alloc")]
 pub struct PreparedExec<'fd> {
     path: CString,
@@ -744,7 +744,7 @@ impl Resource {
 /// Current and maximum values for one Linux process resource.
 ///
 /// Linux's `RLIM_INFINITY` is represented as `None`; every finite kernel
-/// value is preserved exactly. The staged x86-64 facade uses this type for
+/// value is preserved exactly. The x86-64 facade uses this type for
 /// queries and its bounded calling-process `setrlimit` operation only.
 #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Rlimit {

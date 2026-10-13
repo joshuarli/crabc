@@ -2558,7 +2558,7 @@ pub enum ThreadFinalProcessExitOwnerResult {
 /// Process-lifetime slots for the ticket-zero owner and its Heap witness.
 ///
 /// Both values are written once before `PROCESS_ACTIVE` is Release-published
-/// and are never moved, mutated, or dropped by this slice. The heap witness
+/// and are never moved, mutated, or dropped by this code. The heap witness
 /// must be minted by the ticket-zero thread before workers exist; worker TPIDR
 /// identities may use only the already-published copy. The initial thread's
 /// page engine is not stored here: it is constructed once, under a
@@ -2815,7 +2815,7 @@ enum RuntimePersistentPageEngineThreadExitDrainFailure<'attachment, 'main> {
     },
 }
 
-// SAFETY: the x86 source once gate (or the paused AArch64 COLD -> INITIALIZING
+// SAFETY: the x86 source once gate (or the AArch64 COLD -> INITIALIZING
 // CAS) gives one writer exclusive access to `owner`. The final owner is written
 // before PROCESS_ACTIVE's Release store
 // and is thereafter read immutably. `initial_owner` is an atomic one-way
@@ -4129,7 +4129,7 @@ impl RuntimeProcessStorage {
             Ok(backing) => MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
                 session, backing, arena_storage,
             ),
-            // Explicit-config fixtures and the paused architecture retain
+            // Explicit-config fixtures and the AArch64 architecture retain
             // their historical constructor. Native x86 requires source VM policy.
             #[cfg(any(not(target_arch = "x86_64"), test))]
             Err(ProcessMainInitError::VmPolicyUnavailable) => {
@@ -4835,7 +4835,7 @@ fn source_vm_options_from_process_environment() -> VmOptions {
 
 /// Reads the C `environ` object without creating an alias to mutable foreign
 /// state. The selected crabc libc exports it as a weak alias of `__environ`.
-/// Only the paused AArch64 bridge still reads it here; the x86 runtime
+/// Only the AArch64 bridge still reads it here; the x86 runtime
 /// receives its reader in [`NativeProcessStartupFacts`] instead.
 #[cfg(all(target_arch = "aarch64", not(miri)))]
 fn process_environment_pointer() -> *const *const core::ffi::c_char {
@@ -7967,7 +7967,7 @@ pub fn native_runtime_terminal_vm_current_test_audit() -> Option<NativeRuntimeTe
 
 /// Reads the scalar static-Heap state while holding exactly the established
 /// short projection guard. The explicit unlock is part of this diagnostic's
-/// contract: an audit failure must not leave an evidence-only lock held.
+/// contract: an audit failure must not leave a test-only lock held.
 #[cfg(feature = "native-runtime-test-audit")]
 fn native_runtime_main_heap_lifecycle_audit(
     main_heap: MainStaticHeapLease<'static>,
@@ -10270,7 +10270,7 @@ fn current_native_process_page_backing() -> Option<ProcessPageBackingLease> {
         Ok(binding) => Some(binding.into()),
         #[cfg(any(test, not(target_arch = "x86_64")))]
         Err(ProcessMainInitError::VmPolicyUnavailable) => {
-            // Explicit-config fixtures and the paused architecture retain
+            // Explicit-config fixtures and the AArch64 architecture retain
             // their typed historical pair; native x86 has no such fallback.
             let page_map = allocation.page_map().ok()?;
             let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
@@ -19720,8 +19720,8 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim_through_normal
 /// enters the existing direct-small cache-validating source drain. B receives
 /// only the resulting opaque regular-page adoption capability; it must use,
 /// drain, and finish the reclaimed page before the common typed proof releases
-/// A's admission. This is private lifecycle evidence, not an aggregate-route
-/// claim, a public reclamation API, or a libc allocator interface.
+/// A's admission. This is private lifecycle support, not an aggregate route,
+/// a public reclamation API, or a libc allocator interface.
 #[doc(hidden)]
 #[cfg(test)]
 pub fn ticket_zero_later_thread_direct_small_owner_exit_reclaim_through_normal_finish(
@@ -20171,7 +20171,7 @@ pub fn ticket_zero_later_thread_mapped_regular_owner_exit_reclaim(
 /// Runs one complete persistent later-worker page-engine lifecycle against
 /// the dormant ticket-zero process pair.
 ///
-/// This private evidence/control seam attaches a fresh worker exactly once,
+/// This private control seam attaches a fresh worker exactly once,
 /// retains one page engine through a fixed mixed local workload, returns that
 /// engine empty, and only then completes normal worker attachment teardown.
 /// It enters through the runtime's typed A-side scheduler operation, but never
@@ -20281,7 +20281,7 @@ pub fn ticket_zero_later_thread_remote_free_roundtrip(
 /// Runs one complete later-worker page-engine lifecycle against the dormant
 /// ticket-zero process pair.
 ///
-/// This is a private evidence/control seam. It does not route a libc
+/// This is a private control seam. It does not route a libc
 /// allocation or make a worker a concurrent allocator owner: it accepts no
 /// pointer, allocates and frees one local block before returning, and then
 /// completes the already-existing worker attachment teardown. The request
@@ -20575,13 +20575,13 @@ fn attach_current_thread_after_entry(
     // SAFETY: libc installed this child TLS image and calls before user code;
     // `slot` retains the returned current-thread owner until its explicit
     // post-destructor finish. The static process owner is never torn down by
-    // this slice, and no other code may mutate the allocator TLS roots.
+    // this code, and no other code may mutate the allocator TLS roots.
     // End the slot borrow before metadata/TLD/Theap construction. Its
     // diagnostic callbacks may enter native allocation, which must be free
     // to observe this still-Fresh slot. The independent entry claim above
     // prevents those callbacks from beginning a second attachment.
     let attachment = unsafe { MainHeapThreadAttachment::begin_with_vm_process(main_heap, config, process) };
-    // The paused AArch64 runtime keeps its existing terminal retention.
+    // The AArch64 runtime keeps its existing terminal retention.
     #[cfg(target_arch = "x86_64")]
     let deferred = match &attachment {
         Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => deferred_attach_reports(*error),
@@ -24188,7 +24188,7 @@ mod tests {
     }
 
     /// Rust half of the pinned-C startup-entry relation read by
-    /// `compat/allocator/x86_64_init_recursion_evidence.py`: a first
+    /// the native differential runner: a first
     /// allocation whose two startup entropy draws fail, followed by the
     /// runtime startup call. Every key is a normalized source-visible scalar.
     #[cfg(target_arch = "x86_64")]

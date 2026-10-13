@@ -39,7 +39,7 @@ pub extern "C" fn crabc_rs_memory_vm_direct_probe() -> i32 {
         Err(error) => return -error.raw(),
     };
 
-    // POSIX advice has its own staged x86 boundary. Keep this shared AArch64
+    // POSIX advice has its own x86 boundary. Keep this shared AArch64
     // probe's existing advice check out of the private x86 VM-control proof.
     #[cfg(target_arch = "aarch64")]
     let advisory = unsafe { mm::posix_madvise(mapping, PAGE_SIZE, PosixAdvice::Normal) };

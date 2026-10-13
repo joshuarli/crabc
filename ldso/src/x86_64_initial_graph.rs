@@ -23,7 +23,7 @@
 //! Musl 1.2.6 oracle: `ldso/dynlink.c` initial-TLS layout and `do_relocs`,
 //! `src/thread/__tls_get_addr.c`, and `arch/x86_64/reloc.h`. The narrow
 //! relocation set and all exclusions are
-//! deliberate evidence boundaries: the interpreter's own pre-Rust bootstrap
+//! deliberate limits: the interpreter's own pre-Rust bootstrap
 //! remains `DT_RELA`-only; the GNU-Dynamic initial-TLS slice accepts only
 //! DTPMOD64/DTPOFF64 plus `__tls_get_addr`. Its cfg-isolated initial-exec
 //! sibling additionally admits exactly one leaf-local `R_X86_64_TPOFF64`
@@ -354,7 +354,7 @@ const INITIAL_OBJECT_COUNT: usize = 3;
 // The fixed-graph roots own exactly their fixture graph. General graph
 // objects and edges live in loader mappings sized from the admitted graph
 // (see `x86_64_initial_graph_state`): the installed runtime has no object or
-// DT_NEEDED bound, and the private source roots keep their frozen ceilings.
+// DT_NEEDED bound, and the private source roots keep their fixed ceilings.
 #[cfg(not(crabc_general_initial_graph))]
 #[cfg(crabc_bounded_runtime_dlopen)]
 const MAX_OBJECTS: usize = INITIAL_OBJECT_COUNT + 1;
@@ -2976,7 +2976,7 @@ pub struct TlsIndex {
 /// The resolver returns null for an unmaterialized module or an offset outside
 /// that module's recorded `PT_TLS.p_memsz`; it cannot establish that a
 /// non-null result is safe for a caller's eventual typed dereference. This
-/// private exported ELF symbol is not an installed or public x86 API.
+/// private exported ELF symbol is private to the loader.
 // Source-root tests run on the pinned harness libc's TCB. Its unwinder calls
 // its own resolver through dl_iterate_phdr; exporting this loader-only symbol
 // there would interpret the foreign FS+24 as a RuntimeTlsView during panic.

@@ -1,7 +1,7 @@
 //! Bounded, caller-supplied `/etc/ethers` records.
 //!
 //! This is a crabc-specific native extension, not an implicit `/etc/ethers`
-//! lookup and not a claim of musl parity. Musl's C host/database functions are
+//! lookup, and it does not mirror musl's behavior. Musl's C host/database functions are
 //! stubs here; callers that want this behavior provide the file bytes (or any
 //! other bounded source) explicitly. The parser has no C ABI, filesystem, TLS
 //! `errno`, or process-global state.

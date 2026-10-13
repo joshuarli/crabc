@@ -5,8 +5,7 @@
 //! It preserves direct Linux `mount(2)` and `umount2(2)` errors without a C
 //! ABI or thread-local `errno` boundary. Successful mount-namespace mutation,
 //! null source/type forms, arbitrary data pointers, propagation policy, and
-//! newer filesystem-descriptor mount APIs remain outside the x86 evidence
-//! slice.
+//! newer filesystem-descriptor mount APIs are not provided.
 
 use bitflags::bitflags;
 use core::ffi::CStr;
@@ -18,9 +17,8 @@ bitflags! {
     /// Linux `MS_*` mount flags.
     ///
     /// These direct Linux bits are retained for the existing mount request
-    /// vocabulary. The staged x86 evidence currently proves only checked
-    /// missing-target failure behavior; it does not claim successful
-    /// bind/remount/propagation or mount-namespace policy.
+    /// vocabulary. Bind, remount, propagation, and mount-namespace policy
+    /// are left to the kernel and the caller.
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
     pub struct MountFlags: u64 {
@@ -55,9 +53,8 @@ bitflags! {
 bitflags! {
     /// Linux `MNT_*` unmount flags.
     ///
-    /// The selected x86 evidence covers direct checked missing-target failure
-    /// behavior only; it does not claim successful detachment or namespace
-    /// mutation.
+    /// Detachment and namespace effects are whatever the kernel does for the
+    /// direct request.
     #[repr(transparent)]
     #[derive(Copy, Clone, Debug, Eq, Hash, PartialEq)]
     pub struct UnmountFlags: i32 {
@@ -97,7 +94,7 @@ pub fn mount<'a, Source: PathArg, Target: PathArg, Fs: PathArg>(
 ///
 /// `target` is byte-oriented and checked for interior NUL bytes before the
 /// direct syscall. A successful request changes the calling process's mount
-/// namespace; the selected x86 evidence currently covers only failure paths.
+/// namespace.
 #[inline]
 pub fn unmount<Target: PathArg>(target: Target, flags: UnmountFlags) -> Result<()> {
     target.into_with_c_str(|target| crabc_core::mount::umount2(target, flags.bits()))

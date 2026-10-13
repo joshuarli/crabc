@@ -1545,7 +1545,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
     /// Makes the next selected final attachment-boundary attempts fail before
     /// any root/list/TLD mutation.
     ///
-    /// This is test-only evidence for the consuming collect-abandon wrapper.
+    /// This is test-only support for the consuming collect-abandon wrapper.
     /// It deliberately cannot select production cleanup, a scheduler, a
     /// registry, or a page route.
     #[cfg(test)]
@@ -4163,7 +4163,7 @@ mod tests {
     /// metadata, list, root, counter, and explicit-finish state; it has no
     /// C-call hooks and must not present those facts as order equivalence.
     /// Its finish is an explicit owner call after the attached post-state was
-    /// observed. It does not claim automatic pthread destruction, process
+    /// observed. It does not cover automatic pthread destruction, process
     /// shutdown, fork, or recursion behavior.
     #[test]
     fn emit_m2_later_main_theap_publication_success_c_rust_trace() {
@@ -4697,7 +4697,7 @@ mod tests {
     /// invariant recorded below: reentry creates no second current owner.
     /// The runtime's `AlreadyAttached` result owns the public worker-wrapper
     /// form of that distinction; this test stays at the source attachment
-    /// boundary and does not claim its callback or runtime integration.
+    /// boundary and does not cover its callback or runtime integration.
     #[test]
     fn emit_x86_64_init_recursion_teardown_c_rust_trace() {
         thread::spawn(|| {

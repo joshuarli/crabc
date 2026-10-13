@@ -1,12 +1,12 @@
 #![no_std]
 
-//! Native x86-64 observable fixture for the bounded `rcrt1.o` foundation.
+//! Native x86-64 observable fixture for `rcrt1.o`.
 //!
 //! The production CRT now delegates first-thread TLS to the hidden libc
 //! bootstrap. This intentionally libc-free unit fixture supplies only a
 //! test-local successful handoff so it can keep proving relative relocation,
 //! lifecycle order, and static-PIE entry independently. The real
-//! CRT-to-libc TLS composition belongs to the x86 compatibility artifact.
+//! CRT-to-libc TLS composition is exercised by the composed native artifact.
 
 use core::ffi::c_void;
 
@@ -17,7 +17,7 @@ type LifecycleHook = unsafe extern "C" fn();
 ///
 /// The no-TLS CRT foundation must stay linkable without pulling a runtime
 /// archive. It proves the call boundary exists but deliberately does not
-/// claim to materialize TLS; the composed native artifact proves that path.
+/// materialize TLS; the composed native artifact covers that path.
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_static_tls_bootstrap(_initial_stack: *const usize) -> i32 {
     0

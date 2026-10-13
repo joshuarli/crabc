@@ -3,8 +3,7 @@
 //! Conventional Linux/x86-64 non-PIE application entry.
 //!
 //! One `crt1.o` serves ordinary static `ET_EXEC` and dynamic non-PIE
-//! executables, as pinned musl's does and as the frozen AArch64
-//! `crt/src/normal_entry.rs` did, so a combined sysroot installs it once for
+//! executables, as pinned musl's does, so a combined sysroot installs it once for
 //! both products. Facts fixed before `_start` runs select the startup owner:
 //!
 //! - Kernel entry of a static executable: Linux clears `%rdx`, and there is

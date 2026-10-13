@@ -1851,7 +1851,7 @@ impl OutputOwner {
         }
     }
 
-    /// Performs this slice's `_mi_options_init` contribution before OS setup.
+    /// Performs this code's `_mi_options_init` contribution before OS setup.
     ///
     /// The exclusive borrow encodes the source startup ordering: initialize
     /// the descriptor-derived maximum before the owner becomes shared with

@@ -265,7 +265,7 @@ pub enum CurrentLockRange {
 /// form an owned [`CString`] and leave Linux to enforce its pathname limit.
 pub const SMALL_PATH_BUFFER_SIZE: usize = 256;
 
-/// A pathname or memory-file name input accepted by the staged path lifecycle,
+/// A pathname or memory-file name input accepted by the path lifecycle,
 /// [`access`], [`accessat`], [`statat`], [`stat`], [`statx`], [`statfs`], [`statvfs`],
 /// [`readlinkat_raw`], [`canonicalize_into`], the extended-attribute family,
 /// the timestamp-mutation family, the temporary-object family,
@@ -481,7 +481,7 @@ impl PathArg for PathBuf {
 /// `AT_FDCWD`, the directory token representing the current working directory.
 ///
 /// This is a reserved Linux token rather than an owned descriptor. It is
-/// accepted only as the directory argument to staged `*at` operations and can
+/// accepted only as the directory argument to `*at` operations and can
 /// never become an owned descriptor.
 pub const CWD: BorrowedFd<'static> =
     // SAFETY: `AT_FDCWD` is a reserved, non-allocatable Linux token. The
@@ -493,7 +493,7 @@ bitflags! {
     ///
     /// `SYMLINK_NOFOLLOW` observes a final symlink rather than its target.
     /// `AT_EMPTY_PATH`, `AT_NO_AUTOMOUNT`, and all unknown bits remain outside
-    /// this staged metadata boundary and return [`Errno::INVAL`] before a syscall.
+    /// this metadata boundary and return [`Errno::INVAL`] before a syscall.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct AtFlags: u32 {
@@ -560,7 +560,7 @@ bitflags! {
     ///
     /// The no-replace and exchange operations are ordinary namespace
     /// transitions. Whiteout creation is filesystem- and privilege-specific,
-    /// so it remains outside this staged Rust boundary.
+    /// so it remains outside this Rust boundary.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct RenameFlags: u32 {
@@ -605,7 +605,7 @@ bitflags! {
     /// Flags accepted by [`accessat`].
     ///
     /// This operation-specific type is intentionally distinct from
-    /// [`AtFlags`], whose closed vocabulary belongs to the staged `statat`
+    /// [`AtFlags`], whose closed vocabulary belongs to the `statat`
     /// metadata boundary. Linux reuses these flag bits across unrelated
     /// `*at` syscalls; keeping the types separate prevents an access flag from
     /// silently becoming a valid metadata flag. Unknown bits are rejected
@@ -813,7 +813,7 @@ pub enum Advice {
 bitflags! {
     /// Linux file-creation permission and process-mask bits.
     ///
-    /// This is shared by the staged x86-64 pathname lifecycle and the native
+    /// This is shared by the x86-64 pathname lifecycle and the native
     /// process::umask vocabulary. The bitset intentionally retains future
     /// Linux mode bits, matching the AArch64 facade contract. Individual
     /// operations such as [`mknodat`] may deliberately validate a narrower
@@ -2861,7 +2861,7 @@ const TEMP_DIR_MODE: Mode = Mode::RWXU;
 
 // Linux's x86-64 pathname ceiling includes its terminating NUL. This local
 // limit belongs to temporary pathname construction only; canonicalization is
-// a separately staged x86 capability and must not leak its API or policy here.
+// a separately x86 capability and must not leak its API or policy here.
 const TEMP_DIR_PATH_MAX: usize = 4096;
 
 /// Creates a private temporary directory below `parent` and writes the
@@ -3137,7 +3137,7 @@ pub fn renameat<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
 /// [`RenameFlags::NOREPLACE`] and [`RenameFlags::EXCHANGE`] are mutually
 /// exclusive; their combination and unknown flag bits return [`Errno::INVAL`]
 /// before path conversion or syscall entry. Whiteout creation remains outside
-/// this filesystem- and privilege-dependent staged boundary.
+/// this filesystem- and privilege-dependent boundary.
 #[inline]
 pub fn renameat_with<P: PathArg, Q: PathArg, PFd: AsFd, QFd: AsFd>(
     old_dirfd: PFd,

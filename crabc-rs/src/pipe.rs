@@ -22,7 +22,7 @@ const PIPE2_O_DIRECT: u32 = 0x0001_0000;
 const PIPE2_O_DIRECT: u32 = 0x0000_4000;
 
 bitflags! {
-    /// Flags accepted by Linux `pipe2` on the staged 64-bit targets.
+    /// Flags accepted by Linux `pipe2` on the 64-bit targets.
     ///
     /// Unknown bits are retained so callers which forward a newer
     /// kernel-defined flag do not lose it before the kernel validates it.

@@ -12,7 +12,7 @@
 //! state and `MADV_DONTNEED` zeroing), deterministic clocks, identities, and
 //! entropy, and returns `ENOSYS` for every other call. It does not model page
 //! protection faults, file systems, RSS, NUMA placement, signals, or process
-//! lifetime; evidence must not infer any of those from it. The entropy stream
+//! lifetime; a passing Miri run says nothing about any of those. The entropy stream
 //! is a fixed test sequence and must never feed a security decision.
 //!
 //! Nothing here is compiled without `cfg(miri)`.

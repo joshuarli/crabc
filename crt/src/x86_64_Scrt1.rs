@@ -17,9 +17,9 @@ mod x86_64_dynamic_startup;
 
 pub use x86_64_dynamic_startup::__crabc_x86_64_dynamic_start;
 
-// This private marker is the crabc-loader's owned-entry admission check, not
+// This private marker is the crabc-loader's owned-entry check, not
 // an ELF export or the lifecycle handoff record. Pinned musl ignores it, which
-// keeps this evidence executable with the declared C/POSIX oracle.
+// keeps this executable runnable under the musl loader.
 core::arch::global_asm!(
     r#"
     .section .note.crabc.owned-crt,"a",@note

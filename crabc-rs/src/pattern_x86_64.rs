@@ -1,8 +1,8 @@
-//! Native filename matching and explicit-root traversal for staged Linux/x86-64.
+//! Native filename matching and explicit-root traversal for Linux/x86-64.
 //!
 //! The allocation-free matcher delegates directly to the shared byte matcher.
 //! With `alloc`, the module additionally traverses an explicit pathname or
-//! borrowed directory descriptor through staged `openat` and `RawDir` calls.
+//! borrowed directory descriptor through `openat` and `RawDir` calls.
 //! It does not select C `fnmatch`, `glob`, `globfree`, `DIR`, `errno`, or a
 //! process-global current-directory search policy.
 

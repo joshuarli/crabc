@@ -1,9 +1,8 @@
 //! Bounded Linux/x86-64 system identity and status observations.
 //!
-//! This staged module admits `uname(2)` and `sysinfo(2)` values with fixed
-//! x86-64 kernel layouts, plus a separately evidenced inotify descriptor and
-//! event-record boundary. Other system/runtime facilities remain outside the
-//! x86 facade until they have independent evidence.
+//! This module provides `uname(2)` and `sysinfo(2)` values with fixed
+//! x86-64 kernel layouts, plus an inotify descriptor and event-record
+//! boundary. Other system/runtime facilities are not part of the x86 facade.
 
 use core::ffi::CStr;
 

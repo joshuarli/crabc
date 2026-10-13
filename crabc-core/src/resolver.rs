@@ -1061,7 +1061,7 @@ pub fn exchange_with_transport(
 ///
 /// This proves only that the header and exact echoed question matched and that
 /// a complete UDP datagram or complete TCP frame was received. It does not
-/// assert that every declared resource record fits. The selected x86 C lookup,
+/// assert that every declared resource record fits. The x86 C lookup,
 /// reverse PTR lookup, and raw resolver callers use their source-shaped
 /// callback parsers to retain a complete answer prefix before a late malformed
 /// record. It deliberately keeps the core's stronger exact-question
@@ -1078,7 +1078,7 @@ impl QuestionMatchedReply {
     pub const fn len(&self) -> usize { self.length }
 }
 
-/// Performs the selected x86 C callback exchange through its explicit
+/// Performs the x86 C callback exchange through its explicit
 /// cancellation/lifetime owner.
 ///
 /// Existing native and AArch64 exchange entrypoints retain complete-record

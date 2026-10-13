@@ -5,7 +5,7 @@ use core::ffi::CStr;
 
 /// Linux's ABI-visible scheduler clock tick rate.
 ///
-/// On the staged Linux targets this `USER_HZ` value is fixed at 100. The
+/// On the Linux targets this `USER_HZ` value is fixed at 100. The
 /// separately exposed [`page_size`] reads the process auxiliary vector rather
 /// than assuming a target-wide page size.
 #[inline]
@@ -52,7 +52,7 @@ pub fn linux_minsigstksz() -> usize {
 /// The pointer is owned by the process's initial stack and remains valid for
 /// the process lifetime. A missing entry returns an empty C string.
 ///
-/// This accessor is not admitted in the staged x86 facade: an auxv word read
+/// This accessor is not admitted in the x86 facade: an auxv word read
 /// from `/proc/self/auxv` alone does not prove pointer provenance, mapping, or
 /// NUL bounds. A future x86 startup-state owner must establish that contract
 /// before exposing a safe executable-path reference.

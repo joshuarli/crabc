@@ -34,7 +34,7 @@ pub type DecodeStop = DecodeStatus;
 /// Result of decoding one bounded radix-64-long value.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct DecodedLong {
-    /// The low 32-bit payload sign-extended to staged Linux 64-bit `long` width.
+    /// The low 32-bit payload sign-extended to Linux 64-bit `long` width.
     pub value: i64,
     /// Number of input bytes consumed, excluding the stopping byte.
     pub consumed: usize,
@@ -46,7 +46,7 @@ pub struct DecodedLong {
 pub type DecodeOutcome = DecodedLong;
 
 impl DecodedLong {
-    /// Returns the decoded staged Linux 64-bit `long` value.
+    /// Returns the decoded Linux 64-bit `long` value.
     #[must_use]
     pub const fn value(self) -> i64 {
         self.value
@@ -72,7 +72,7 @@ impl DecodedLong {
     }
 }
 
-/// The bounded musl radix-64 representation of a staged Linux 64-bit `long`.
+/// The bounded musl radix-64 representation of a Linux 64-bit `long`.
 ///
 /// The representation owns its six-byte inline storage, so it remains useful
 /// in `no_std` code and never inherits `l64a`'s process-global return buffer.
@@ -83,7 +83,7 @@ pub struct EncodedLong {
 }
 
 impl EncodedLong {
-    /// Constructs the bounded representation for a staged Linux 64-bit `long` value.
+    /// Constructs the bounded representation for a Linux 64-bit `long` value.
     #[must_use]
     pub const fn new(value: i64) -> Self {
         Self::encode(value)

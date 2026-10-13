@@ -216,7 +216,7 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
         }
     };
     // This private Scrt1 build mode is selected only by the general
-    // RuntimeV1 main-thread evidence. Its main image provides the companion
+    // RuntimeV1 main-thread startup. Its main image provides the companion
     // directly, so this is neither a weak fallback nor a libc.so import. A
     // failed descriptor observation must stop before the dynamic libc sees
     // the six-argument startup boundary or any main-image callback runs.

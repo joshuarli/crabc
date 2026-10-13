@@ -4094,7 +4094,7 @@ impl MemoryId {
     ///
     /// `mi_heap_main_init_once` uses this kind-only provenance for its static
     /// detached TLD, process heap, and detached metadata Theap. It
-    /// deliberately does not claim concrete image extent, pinning, or initial
+    /// deliberately does not cover concrete image extent, pinning, or initial
     /// commitment; `_mi_memid_create_static` is separate.
     #[inline]
     pub(crate) const fn static_kind_only() -> Self {
@@ -5659,7 +5659,7 @@ impl Page {
 
     /// Changes `used` only for the exclusive local lifecycle. The caller must
     /// preserve the source page equation relative to the free list and
-    /// capacity; remote-free collection is not implemented in this slice.
+    /// capacity; remote-free collection is not implemented here.
     #[inline]
     pub(crate) fn set_exclusive_used(&mut self, used: usize) {
         self.used = used;
@@ -8285,7 +8285,7 @@ impl Theap {
     ///
     /// The caller must first attach `tld` to a valid [`LiveThreadId`] and must
     /// ensure both input addresses remain stable for every associated page.
-    /// `ExclusiveTheapBootstrap` is the only owner in this slice and
+    /// `ExclusiveTheapBootstrap` is the only owner here and
     /// makes that condition explicit with `Pin`. Publishing `heap` last is
     /// source order from `src/theap.c:_mi_theap_init`: it is the initialized
     /// predicate and must not become non-null before the preceding fields are

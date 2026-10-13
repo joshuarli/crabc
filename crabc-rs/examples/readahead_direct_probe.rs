@@ -1,7 +1,4 @@
 //! Link-free no-std proof for the native `readahead` seam.
-//!
-//! This source is intentionally left unregistered until the architecture
-//! harness adds the corresponding static-archive and syscall checks.
 
 #![no_std]
 

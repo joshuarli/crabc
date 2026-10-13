@@ -1,9 +1,8 @@
 //! Target-independent Unix-time, Gregorian-calendar, and explicit timezone projection values.
 //!
 //! This private implementation keeps the pinned-musl semantic UTC conversion
-//! and rule-input-only local-calendar projection shared by the admitted native
-//! facades. `crabc-rs/UPSTREAM.md` records the exact musl 1.2.6 source map,
-//! license notice, and intentional Rust-native differences. It owns no clock,
+//! and rule-input-only local-calendar projection shared by the native
+//! facades. It follows musl 1.2.6 and owns no clock,
 //! C record, libc timezone state, or zoneinfo I/O.
 
 use crate::{Errno, Result};

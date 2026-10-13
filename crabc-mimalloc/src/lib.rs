@@ -1,9 +1,10 @@
 //! Linux allocator-engine port of the pinned mimalloc upstream.
 //!
-//! AArch64 retains its selected integration. Native x86-64 has an explicit
-//! private backend with source-owned process, thread, Heap and Theap lifetimes.
-//! Compiling this crate does not select that backend or enable public x86
-//! support; libc owns compile-time backend selection.
+//! The production allocator on both targets is the C `libmimalloc-sys`
+//! backend. This crate is the Rust port, used only when an explicit
+//! non-default feature selects it; on x86-64 it provides source-owned process,
+//! thread, Heap and Theap lifetimes. Compiling this crate does not select it;
+//! libc owns compile-time backend selection.
 //!
 //! The native engine retains independent thread owners, routes clients through
 //! the process PageMap, and uses page-local atomic remote publication. Source
@@ -25,12 +26,10 @@ extern crate alloc as rust_alloc;
 #[cfg(test)]
 extern crate std;
 
-// These are the explicit allocator-engine target profiles. The AArch64
-// profile retains its selected integration; the x86-64 profile also supports
-// the explicitly selected private runtime backend. `cfg(miri)` selects the
-// private `crabc-core` kernel model as a test instrument: it never makes
-// another target supported
-// by the allocator engine or a public production build.
+// These are the explicit allocator-engine target profiles. The x86-64
+// profile also supports the explicitly selected runtime backend. `cfg(miri)`
+// selects the private `crabc-core` kernel model as a test instrument: it never
+// makes another target supported by the allocator engine.
 #[cfg(all(
     not(miri),
     not(all(

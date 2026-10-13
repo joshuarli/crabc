@@ -170,7 +170,7 @@ pub(crate) enum DynamicTheapPageSessionError {
 /// A post-registration allocation/list/backing failure must not silently drop
 /// a TLD registration, typed metadata capability, or regular-key lease. The
 /// caller receives that owner to account for an invalid-owner state or retry
-/// the one pre-mutation key-release lock failure; this slice intentionally
+/// the one pre-mutation key-release lock failure; this code intentionally
 /// invents no rollback after Theap/list publication.
 #[must_use = "a retained dynamic attachment error carries live ownership that must be handled explicitly"]
 pub(crate) enum DynamicTheapBeginError<'heap> {
@@ -11638,7 +11638,7 @@ mod tests {
                 }
             };
             // The native C half observes completion of real `mi_thread_done`.
-            // This bounded Rust owner does not claim a pthread/TLS callback;
+            // This bounded Rust owner does not cover a pthread/TLS callback;
             // clearing its typed dynamic regular slot is the corresponding
             // observable owner-exit transition.
             let owner_exit_transition_completed = drain.test_dynamic_regular_slot_is_clear();
@@ -15684,7 +15684,7 @@ mod tests {
             assert_eq!(drain.test_page_count(), 1);
             assert_eq!(drain.test_queue_count(bin), Some(1));
 
-            // General dynamic post-TLS traversal remains outside this slice.
+            // General dynamic post-TLS traversal remains outside this code.
             // Retain the unchanged owner after proving class refusal did not
             // detach or abandon the medium page.
             core::mem::forget(drain);
@@ -15820,7 +15820,7 @@ mod tests {
             assert_eq!(drain.test_page_count(), 2);
 
             // General dynamic post-TLS traversal remains deliberately outside
-            // this slice. Retain this unchanged source image after proving the
+            // this code. Retain this unchanged source image after proving the
             // refusal did not detach either page.
             core::mem::forget(drain);
             DynamicPageFixtureOutcome::RetainTerminal
@@ -17087,8 +17087,8 @@ mod tests {
     }
 
     /// Emits an address-independent native x86-64 record for the bounded
-    /// dynamic full-medium force-collect route. This is private allocator
-    /// engine evidence only: one joined remote producer is consumed during
+    /// dynamic full-medium force-collect route. This exercises only the allocator
+    /// engine: one joined remote producer is consumed during
     /// the post-TLS drain, after which the joined consumer frees the mapped
     /// handoff sequentially through the dynamic bitmap/count and arena span.
     #[cfg(target_arch = "x86_64")]
@@ -22186,7 +22186,7 @@ mod tests {
                 );
             }
 
-            // General dynamic post-TLS traversal remains outside this slice.
+            // General dynamic post-TLS traversal remains outside this code.
             // Retain the unchanged source owner after proving the cache
             // mismatch cannot be silently repaired by detaching the page.
             core::mem::forget(drain);
@@ -22464,7 +22464,7 @@ mod tests {
             }
 
             // General dynamic post-TLS traversal of direct-small pages stays
-            // deliberately outside this slice. Retain the unchanged source
+            // deliberately outside this code. Retain the unchanged source
             // owner after proving that the refusal did not detach it.
             core::mem::forget(drain);
             DynamicPageFixtureOutcome::RetainTerminal
@@ -24348,7 +24348,7 @@ mod tests {
     }
     /// Emits an address-independent native x86-64 record for exactly two
     /// initially-nonfull dynamic medium pages in distinct regular bins.
-    /// This is private engine evidence only: the typed owner-exit drain
+    /// This exercises only the engine: the typed owner-exit drain
     /// publishes both mapped-abandoned bitmap/count entries, then sequential
     /// client frees release the second page followed by the first.
     #[cfg(target_arch = "x86_64")]
@@ -24741,8 +24741,8 @@ mod tests {
     }
 
     /// Emits an address-independent native x86-64 record for the bounded
-    /// dynamic full-large force-collect route. This is private allocator
-    /// engine evidence only: one joined remote producer is consumed during
+    /// dynamic full-large force-collect route. This exercises only the allocator
+    /// engine: one joined remote producer is consumed during
     /// the post-TLS drain, after which the joined consumer frees the mapped
     /// handoff sequentially through the dynamic bitmap/count and arena span.
     #[cfg(target_arch = "x86_64")]

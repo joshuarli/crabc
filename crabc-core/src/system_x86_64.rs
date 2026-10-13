@@ -1,8 +1,7 @@
 //! Bounded Linux/x86-64 system-information operations.
 //!
 //! This module owns only the fixed kernel `new_utsname` and `sysinfo` output
-//! records used by the staged Rust facade. It does not establish C header or
-//! `crabc-libc` support.
+//! records used by the Rust facade. It defines no C header or libc surface.
 
 use core::mem::MaybeUninit;
 

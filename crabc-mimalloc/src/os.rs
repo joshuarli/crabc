@@ -29,7 +29,7 @@
 //! resolved [`VmPolicy`], supply the real [`TheapRandomImage`] to the source
 //! callers that consume it, and bind arena/metadata backing before those
 //! callers can claim full process VM integration. One-GiB huge-page progress,
-//! timeout, and release ownership have a staged retaining primitive, but no
+//! timeout, and release ownership have a retaining primitive, but no
 //! live arena/request dispatch selects it yet; that process path remains
 //! unqualified, and this module never represents it as a successful fallback.
 //!
@@ -587,7 +587,7 @@ unsafe fn thp_policy_prctl_raw(
 /// the one process descriptor table beside the diagnostic [`OutputOwner`] at
 /// each source `mi_option_get` read point, so `mi_option_set` before first
 /// use changes every later decision exactly as in C. An explicit fixture
-/// policy (and the paused AArch64 process) instead receives a [`VmOptions`]
+/// policy (and the AArch64 process) instead receives a [`VmOptions`]
 /// image. That image may be incomplete when retained with the raw source
 /// environment reader that initialized it: each unresolved descriptor returns
 /// its pinned current default for that call and retries on a later source
@@ -1402,7 +1402,7 @@ impl VmPolicy {
 
     /// Mirrors a source `mi_option_set` performed by the unique process
     /// options owner. Rust's exclusive borrow makes a concurrent mutation
-    /// impossible here; it does not claim that upstream's ambient global
+    /// impossible here; it does not imply that upstream's ambient global
     /// option API is generally thread-safe.
     #[inline]
     pub(crate) fn set_option(&mut self, option: VmOption, value: i64) {
@@ -1434,7 +1434,7 @@ impl VmPolicy {
     }
 
     /// Delivers one source `_mi_warning_message` body through the process
-    /// output route. An image policy (fixtures, the paused AArch64 process)
+    /// output route. An image policy (fixtures, the AArch64 process)
     /// has no route and drops it, as a source build with warnings disabled
     /// would.
     #[cfg_attr(target_arch = "x86_64", inline(never))]
@@ -2251,7 +2251,7 @@ pub(crate) enum DecommitOutcome {
     NeedsRecommit,
 }
 
-/// Preserve the paused target profile while selecting source debug or secure-3
+/// Preserve the AArch64 profile while selecting source debug or secure-3
 /// protection for native x86. This flag survives advisory and protection failures.
 #[inline]
 pub(crate) const fn decommit_needs_recommit() -> bool {
@@ -6139,7 +6139,7 @@ pub(crate) mod fault {
     // The THP process-policy matrix is intentionally narrower than the generic
     // fault plan. It selects one named direct source case at a time, accepts
     // only GET(0,0,0,0)/SET(1,0,0,0), and otherwise falls through to the real
-    // primitive when no token is active. It is test-only evidence, not a
+    // primitive when no token is active. It is test-only, not a
     // programmable production policy receiver.
     const THP_DIRECT_POLICY_CAPTURE_CAPACITY: usize = 2;
     static THP_DIRECT_POLICY_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);

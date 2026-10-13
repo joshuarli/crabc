@@ -1056,7 +1056,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     Session(MainHeapThreadPageSessionError),
     PageMap(ProcessPageMapError),
     /// The source bitmap had no currently claimable exact page. The target
-    /// owner is retained; this slice never turns that miss into fresh page
+    /// owner is retained; this code never turns that miss into fresh page
     /// allocation.
     Pending,
     /// Direct page-area commitment failed after queue-tail restoration, and
@@ -1320,7 +1320,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesRouteBeginFailure
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullSingletonPagesPostExitParts<'static>,
         error: ProcessPageMapError,
@@ -1396,7 +1396,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailu
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry remains terminally
-    /// retained for evidence.
+    /// retained for inspection.
     PageMap {
         parts: ThreadExitFullOsSingletonPagesPostExitParts<'main>,
         error: ProcessPageMapError,
@@ -1469,7 +1469,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesRouteBeginFailure<'a
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullMediumPagesPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
@@ -1547,7 +1547,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFai
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullMediumOrLargePagesPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
@@ -1626,7 +1626,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRouteBeg
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullSingletonOrRegularPagesPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
@@ -1706,7 +1706,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesRouteBeginFa
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullNonDirectSmallPagesPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
@@ -1785,7 +1785,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesRouteBeginFailu
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullDirectSmallPagesPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
@@ -1857,7 +1857,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesRouteBeginFailure<'at
     },
     /// The old Theap/TLD is gone, but short PageMap access could not be
     /// created. The map root is poisoned and the registry facts remain
-    /// terminally retained for evidence.
+    /// terminally retained for inspection.
     PageMap {
         parts: ThreadExitFullLargePagesPostExitParts<'main, 'static>,
         error: ProcessPageMapError,
@@ -7351,7 +7351,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// search: it transfers the same PageMap access capability to the new
     /// long engine, claims only its stable page identity, then restores source
     /// queue-tail order. A bitmap miss and every post-transfer failure retain
-    /// the target owner; this slice never allocates a fresh replacement or
+    /// the target owner; this code never allocates a fresh replacement or
     /// broadens into non-direct-small, malformed or out-of-profile
     /// no-immediate metadata, full-origin, multi-member aggregate-registry,
     /// or concurrent adoption.
@@ -8846,7 +8846,7 @@ pub(crate) mod tests {
 
     /// The one linear aggregate route and exact client aliases that a scoped
     /// worker returns only after source teardown. It is deliberately test-only
-    /// evidence for the pinned native x86-64 differential, not a general
+    /// support for the pinned native x86-64 differential, not a general
     /// cross-thread allocator interface.
     #[cfg(target_arch = "x86_64")]
     struct FullDirectSmallPagesExitConsumer<'main> {
@@ -19991,7 +19991,7 @@ pub(crate) mod tests {
     /// Exercises the real full-medium post-exit route. Native x86 evidence
     /// selects this exact test with `--nocapture` and compares the scalar
     /// trace below with the pinned C route; ordinary test runs retain the
-    /// same lifecycle assertions without granting any public x86 behavior.
+    /// same lifecycle assertions without the trace comparison.
     #[test]
     fn later_thread_exit_full_medium_route_reabandons_after_mostly_used_frees() {
         thread::spawn(|| {
@@ -21286,7 +21286,7 @@ pub(crate) mod tests {
     /// each member's independent unmapped-to-mapped transition, and the
     /// one-slice terminal release order.
     ///
-    /// This is private allocator-engine evidence only. It does not establish
+    /// This exercises only the allocator engine and does not cover
     /// public x86 runtime support, a general thread lifecycle, concurrent
     /// frees, allocation-time reclaim/requeue, or another aggregate shape.
     #[cfg(target_arch = "x86_64")]
@@ -25148,7 +25148,7 @@ pub(crate) mod tests {
     /// alias through the mapped process route.
     ///
     /// The paired pinned-C fixture follows the same deliberately narrow
-    /// route. This is private allocator-engine evidence only: it establishes
+    /// route. This exercises only the allocator engine: it covers
     /// neither public x86 runtime support nor general owner-exit, remote-free,
     /// or allocation-time routing.
     #[cfg(target_arch = "x86_64")]
@@ -25606,8 +25606,8 @@ pub(crate) mod tests {
     /// alias through the mapped process route.
     ///
     /// The paired pinned-C fixture follows this deliberately narrow direct
-    /// cache shape. This is private allocator-engine evidence only: it
-    /// establishes neither public x86 runtime support nor general owner-exit,
+    /// cache shape. This exercises only the allocator engine: it
+    /// covers neither public x86 runtime support nor general owner-exit,
     /// remote-free, or allocation-time routing.
     #[cfg(target_arch = "x86_64")]
     #[test]

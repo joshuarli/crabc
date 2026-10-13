@@ -1,7 +1,7 @@
 //! Stateless Linux process operations.
 //!
-//! The full source surface is used by Linux/AArch64; staged Linux/x86-64
-//! facades admit only individually evidenced operations from this module.
+//! The full source surface is used by Linux/AArch64; the Linux/x86-64
+//! facades use only a subset of these operations.
 
 use core::{ffi::CStr, mem::MaybeUninit};
 

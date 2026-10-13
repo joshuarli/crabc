@@ -1,7 +1,7 @@
 //! Concrete Linux/x86-64 syscall instruction boundary and result decoding.
 
 //! The syscall numbers in this file are checked against Linux `asm/unistd_64.h`
-//! by the architecture evidence tooling. Linux/x86-64 uses `syscall`, with
+//! by the architecture checking tooling. Linux/x86-64 uses `syscall`, with
 //! `rax` carrying both the syscall number and result, arguments in
 //! `rdi`, `rsi`, `rdx`, `r10`, `r8`, and `r9`, and `rcx`/`r11` clobbered.
 

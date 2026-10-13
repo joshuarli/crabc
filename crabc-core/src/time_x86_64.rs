@@ -4,7 +4,7 @@
 //! `itimerval`, `itimerspec`, and `gettimeofday` wire records; clock-query and
 //! mutation boundaries; owned POSIX timer syscalls; timerfd operations; and
 //! the direct `nanosleep` and typed `clock_nanosleep` syscalls. The C ABI
-//! remains outside this staged slice.
+//! is not part of this module.
 
 use core::mem::MaybeUninit;
 

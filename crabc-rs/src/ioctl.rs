@@ -12,7 +12,7 @@ use core::ptr;
 
 use crate::{AsFd, Result};
 
-/// A Linux ioctl request code on the staged supported 64-bit targets.
+/// A Linux ioctl request code on the supported 64-bit targets.
 pub type Opcode = u32;
 
 /// The signed integer result reported by a successful ioctl.

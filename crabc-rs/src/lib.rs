@@ -10,11 +10,8 @@
 //! `alloc` feature is reserved for APIs that need owned allocation.
 #![no_std]
 
-// `crabc-rs` is a public facade, unlike the fixed-mimalloc engine's narrowly
-// scoped native x86-64 evidence lane. Linux/x86-64 admission here is the
-// explicit staged direct-facade foundation; it does not make
-// the facade or platform publicly supported, and runtime-owned features stay
-// separately gated until their own native boundaries exist.
+// Runtime-owned features stay behind their own features until their native
+// boundaries exist.
 #[cfg(not(all(
     target_os = "linux",
     any(target_arch = "aarch64", target_arch = "x86_64"),
@@ -30,9 +27,9 @@ extern crate std;
 
 pub mod buffer;
 // Pure Unix-time, Gregorian-calendar, and explicit immutable-timezone-rule
-// algorithms are shared by the AArch64 facade and the deliberately admitted
-// private x86-64 civil-time slice. This does not admit a C time ABI, process
-// timezone state, or public x86-64 support.
+// algorithms are shared by the AArch64 facade and the private
+// x86-64 civil-time module. They define no C time ABI or process timezone
+// state.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 mod civil_time;
 // The three private RuntimeV1 consumers (`cfile`, `dl`, `runtime_thread`)
@@ -42,9 +39,9 @@ mod civil_time;
 #[cfg(feature = "runtime-stdio")]
 pub mod cfile;
 pub mod collections;
-// The staged x86-64 facade exposes only `buffer`, `collections`, `event`
+// The x86-64 facade exposes only `buffer`, `collections`, `event`
 // (eventfd counters plus bounded poll/ppoll/pause, select/pselect, and packed
-// epoll readiness with temporary signal masks), the staged typed `fs`
+// epoll readiness with temporary signal masks), the typed `fs`
 // pathname-lifecycle and namespace batch (metadata, open/create,
 // directories/nodes/removal, permission/ownership, links, caller-buffer
 // readlink, and ordinary/no-replace/exchange rename), direct
@@ -120,8 +117,8 @@ pub mod collections;
 // `SIGEV_THREAD` callbacks, and the root descriptor/error types. These
 // are the target-record-independent families or have an explicit x86 ABI
 // proof. Every other public module owns an AArch64 kernel-record contract and
-// stays absent until its record family has its own x86 proof; admission must
-// not silently make an AArch64 layout usable on x86-64. The direct credential
+// stays absent on x86-64 until its record family is defined there; an AArch64
+// layout must never be silently used on x86-64. The direct credential
 // setters retain Linux calling-task scope; they are not musl-style process-wide
 // credential transitions.
 mod eventfd;
@@ -157,8 +154,8 @@ pub mod mount;
 pub mod mount;
 // Socket transport, allocation-free address/message values, bounded
 // network-device ioctl/rtnetlink snapshots, and the caller-owned resolver plus
-// conventional hosts/service/protocol snapshots have native Linux LP64 evidence
-// on both admitted architectures.
+// conventional hosts/service/protocol snapshots use the Linux LP64 layouts
+// shared by both architectures.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 pub mod net;
 #[cfg(all(feature = "alloc", any(target_arch = "aarch64", target_arch = "x86_64")))]
@@ -254,8 +251,8 @@ mod tests {
     #[test]
     fn borrowed_fd_preserves_the_raw_descriptor() {
         // SAFETY: `3` is a non-negative descriptor value. This test only
-        // exercises the type boundary; it does not claim that descriptor 3 is
-        // open in the test process.
+        // exercises the type boundary; descriptor 3 need not be open in the
+        // test process.
         let descriptor = unsafe { BorrowedFd::borrow_raw(3) };
 
         assert_eq!(descriptor.as_raw_fd(), 3);

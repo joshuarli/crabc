@@ -13,9 +13,8 @@
 #[cfg(test)]
 extern crate std;
 
-// Linux/AArch64 is the current public crabc target. Linux/x86-64 core support
-// is a staged native foundation for the separately documented runtime program;
-// it does not by itself select libc, loader, CRT, or facade artifacts.
+// This crate holds syscall primitives for Linux/AArch64 and Linux/x86-64; it
+// does not by itself select libc, loader, CRT, or facade artifacts.
 #[cfg(not(all(
     target_os = "linux",
     target_endian = "little",

@@ -1,8 +1,8 @@
 //! Link-free no-std proof for the direct x86 mount error seam.
 //!
 //! The probe passes checked non-null byte strings and null data through the
-//! Rust boundary. It does not need mount authority and makes no successful
-//! mount-namespace mutation claim.
+//! Rust boundary. It does not need mount authority and never changes the
+//! mount namespace.
 
 #![no_std]
 

@@ -2,7 +2,7 @@
 name = "crabc-mimalloc"
 version.workspace = true
 edition.workspace = true
-description = "Pinned Rust mimalloc port: Linux/AArch64 production plus private native x86 evidence"
+description = "Pinned Rust port of mimalloc v3.5.0, selected only by explicit non-default features"
 # The allocator contains MIT-only semantic translations of pinned mimalloc.
 license = "MIT"
 repository.workspace = true
@@ -120,21 +120,21 @@ path = "tests/native_concurrent_post_exit_page_release.rs"
 [[test]]
 name = "native_persistent_worker_fastpath"
 path = "tests/native_persistent_worker_fastpath.rs"
-# This direct Phase-B witness exercises one, two, four, and eight independent
+# This direct witness exercises one, two, four, and eight independent
 # persistent local owners under the scalar lifecycle audit only.
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
 name = "native_pointer_first_current_owner_reallocate"
 path = "tests/native_pointer_first_current_owner_reallocate.rs"
-# This direct Phase-B/C witness keeps exact current local realloc dispatch
+# This direct witness keeps exact current local realloc dispatch
 # behind the scalar audit surface rather than the production allocator ABI.
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
 name = "native_pointer_first_usable_size"
 path = "tests/native_pointer_first_usable_size.rs"
-# This direct Phase-C witness keeps exact-client usable-size observation
+# This direct witness keeps exact-client usable-size observation
 # behind the scalar audit surface rather than the production allocator ABI.
 required-features = ["native-runtime-test-audit"]
 

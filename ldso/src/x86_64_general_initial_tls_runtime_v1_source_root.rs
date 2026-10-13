@@ -5,7 +5,7 @@
 
 //! Standalone root for the private x86 general-initial TLS RuntimeV1 wire.
 //!
-//! Direct evidence supplies `crabc_general_initial_graph`,
+//! The direct build supplies `crabc_general_initial_graph`,
 //! `crabc_general_initial_tls_materialization_v1`, and
 //! `crabc_general_loader_libc_tls_runtime_v1` together. Cargo selects the
 //! same isolated path with `x86_64-general-initial-tls-runtime-v1-interpreter`.

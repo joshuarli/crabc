@@ -9,8 +9,8 @@
 //!
 //! Musl 1.2.6 `ldso/dynlink.c::install_new_tls` likewise prepares every live
 //! thread's DTV before exposing newly loaded TLS modules. The descriptor and
-//! retained-generation memory scheme here are crabc ownership machinery, not
-//! a claim to translate musl's internal pthread layout or signal barrier.
+//! retained-generation memory scheme here are crabc ownership machinery; they
+//! do not follow musl's internal pthread layout or signal barrier.
 
 use super::*;
 use core::sync::atomic::{AtomicPtr, Ordering};

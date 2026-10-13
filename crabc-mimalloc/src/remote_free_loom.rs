@@ -64,9 +64,9 @@
 //! exits with a foreign publication still pending. The source's eligibility
 //! policy and queue append remain outside the atomic model. Fault injection
 //! after an irreversible transition is not an atomic interleaving; the
-//! deterministic unit and native tests keep that evidence.
+//! deterministic unit and native tests cover that.
 //!
-//! The model is only evidence if its plain cells can observe a missing
+//! The model is only meaningful if its plain cells can observe a missing
 //! ordering. [`loom_model_rejects_a_head_without_source_acq_rel_ordering`]
 //! reruns the live-owner schedule with every head operation weakened to
 //! `Relaxed` and requires Loom to report the resulting causality violation;
@@ -74,9 +74,8 @@
 //! same report for a page release that is not ordered after a client's read.
 //!
 //! Each model runs under `LOOM_MAX_PREEMPTIONS` when it is set, and otherwise
-//! under [`DEFAULT_PREEMPTION_BOUND`]. The x86-64 lifecycle judge runs this
-//! module as its `remote-free-finite-loom-page-protocol` lane:
-//! `./compat/allocator/run-x86_64.sh allocator-lifecycle`.
+//! under [`DEFAULT_PREEMPTION_BOUND`]. The x86-64 allocator lifecycle
+//! runner runs this module.
 
 use super::{
     AbandonedExpectedHeadTransition, AbandonedOwnerClaim, AbandonedOwnerHeadTransition,

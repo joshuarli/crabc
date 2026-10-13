@@ -3,7 +3,7 @@
 //! Controlled x86-64 static-PIE CRT and builtins consumer.
 //!
 //! This is deliberately a private bundle fixture: it consumes the Rust
-//! `rcrt1.o`/`crti.o`/`crtn.o` objects and the evidence-only
+//! `rcrt1.o`/`crti.o`/`crtn.o` objects and the
 //! `libcrabc-builtins.a` helper archive without selecting a sysroot, libc, or
 //! an ambient compiler runtime.
 

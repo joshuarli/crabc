@@ -4029,7 +4029,7 @@ struct PageAllocatorEngineCollectionPoisonMemoryAudit {
 }
 
 /// The exact selected-main predicate that rejects a `mi_page_to_full`
-/// transition before queue detachment.  This is private diagnostic evidence;
+/// transition before queue detachment.  This is a private diagnostic;
 /// it does not turn a rejected page into an alternative allocation route.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SelectedMainArenaRegularFullPreflightError {
@@ -6544,7 +6544,7 @@ enum ThreadExitMappedRegularPostExitOrigin {
     /// The page was already a nonfull regular large member with exactly two
     /// client blocks when source owner exit began. Its complete 64-slice
     /// release proof is sufficient only for sequential client frees; no
-    /// allocation-time adoption or requeue proof exists in this slice.
+    /// allocation-time adoption or requeue proof exists here.
     InitiallyNonfullLargeTwoBlock,
     /// A source-shaped aggregate traversal released every other member and
     /// left exactly this initially-nonfull medium page with an immediate
@@ -19076,7 +19076,7 @@ unsafe fn abandon_mapped_one_block_after_thread_exit<'arena, 'map, Session: Thea
     // Source `_mi_theap_collect_abandon` force-collects every queue before it
     // abandons live pages. This narrow handoff can run the target page's exact
     // force then false pass only because it proves every other queue/direct
-    // entry is empty; it does not claim a general traversal/release order.
+    // entry is empty; it does not cover a general traversal/release order.
     let mut sole_page = engine.session.theap().page_count() == 1;
     for queue_bin in 0..BIN_COUNT {
         let expected = if queue_bin == bin { 1 } else { 0 };
@@ -22263,7 +22263,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
 
 impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     /// Whether this exact source route has an allocation-time reclaim tail
-    /// completed in this slice: an initially-nonfull medium, or an
+    /// completed here: an initially-nonfull medium, or an
     /// initially-nonfull direct-small page with an immediate local free block,
     /// exact fully committed scalar-extension shape, exact prefix-covered
     /// extension shape, or exact on-demand page-area-commit shape.
@@ -50931,7 +50931,7 @@ mod tests {
     /// owner false-collects and releases that page while its live successor
     /// remains ordinary and map-published.
     ///
-    /// This is private allocator-engine evidence only. It does not establish
+    /// This exercises only the allocator engine and does not cover
     /// public x86 runtime support, a pthread/TLS ABI, a general concurrent
     /// remote-free service, abandonment, or another full-page shape.
     /// Rust stages its linear producers through separate scoped workers; this
@@ -51385,7 +51385,7 @@ mod tests {
     /// scoped producer makes a full arena-backed medium page nonfull.  The
     /// owner then observes the source requeue order and reaches the returned
     /// block through ordinary allocation after exhausting its predecessor.
-    /// This is private allocator-engine evidence only: it does not establish
+    /// This exercises only the allocator engine: it does not cover
     /// C pthread/TLS ABI parity, teardown or abandonment behavior, broad
     /// routing/concurrency, or public x86/runtime support.
     #[cfg(target_arch = "x86_64")]
@@ -53982,7 +53982,7 @@ mod tests {
 
     /// Emits one address-independent native x86-64 record for the bounded
     /// in-arena aligned over-allocation and reallocation route. This is
-    /// private evidence for the pinned allocator engine: it does not claim
+    /// private to the pinned allocator engine: it does not cover
     /// public x86 support, general aligned lifecycle coverage, or a portable
     /// allocation policy.
     #[cfg(target_arch = "x86_64")]
@@ -54415,8 +54415,8 @@ mod tests {
 
             // The 51-field production/AArch64 record stays frozen until a
             // native revalidation extends it. These private `expand` and
-            // `recalloc` facts belong only to the native x86-64 evidence
-            // profile selected by `compat/allocator/run.py`.
+            // `recalloc` facts belong only to the native x86-64
+            // profile.
             #[cfg(target_arch = "x86_64")]
             {
             let recalloc_original_size = 257usize;

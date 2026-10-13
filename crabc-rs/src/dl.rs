@@ -30,8 +30,8 @@ bitflags! {
     ///
     /// The current Linux/AArch64 and x86-64 loaders record `GLOBAL` scope and
     /// accept the lazy/now choice. Other platform-specific dlfcn flags are
-    /// intentionally not advertised until their crabc loader semantics have
-    /// native evidence.
+    /// intentionally not advertised because the crabc loader does not implement
+    /// their semantics.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
     pub struct OpenFlags: i32 {

@@ -178,7 +178,7 @@ pub(crate) struct ArenaStatistics<'statistics> {
 
 /// One read-only observation of the selected source arena lifecycle events.
 ///
-/// This evidence-only value deliberately exposes no generic adjustment path:
+/// This test-only value deliberately exposes no generic adjustment path:
 /// its two fields name the exact pinned `mi_stats_t` counters that the bounded
 /// Rust arena registry and delayed-purge receivers mutate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

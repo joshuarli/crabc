@@ -1,4 +1,4 @@
-//! Link-free no-std proof for the complete staged x86 xattr facade.
+//! Link-free no-std proof for the complete x86 xattr facade.
 //!
 //! The canonical x86 runner builds this static library but does not execute
 //! its entry point. Path calls use a missing file; descriptor calls use an
@@ -17,7 +17,7 @@ fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
     loop {}
 }
 
-/// Instantiates every staged xattr operation against a caller-provided descriptor.
+/// Instantiates every xattr operation against a caller-provided descriptor.
 ///
 /// # Safety
 ///

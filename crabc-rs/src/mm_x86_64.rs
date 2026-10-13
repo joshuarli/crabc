@@ -1,9 +1,9 @@
 //! The deliberately bounded Linux/x86-64 mapping facade.
 //!
-//! This admission owns ordinary anonymous/file mappings, bounded remapping,
+//! This module owns ordinary anonymous/file mappings, bounded remapping,
 //! protection changes, unmapping, per-range/process-wide memory locking, and
-//! legacy file-page remapping. It deliberately exposes bounded mapping
-//! synchronization, advice, and residency operations without admitting the
+//! legacy file-page remapping. It also exposes bounded mapping
+//! synchronization, advice, and residency operations, but not the
 //! broader AArch64 VM policy surface.
 
 use bitflags::bitflags;
@@ -67,7 +67,7 @@ bitflags! {
     /// `MREMAP_FIXED` is deliberately not a value in this set: callers use
     /// [`mremap_fixed`] when they need a selected destination, and that
     /// operation adds the kernel's fixed-address bit at its syscall boundary.
-    /// `MREMAP_DONTUNMAP` remains outside this slice because retaining a
+    /// `MREMAP_DONTUNMAP` is not exposed because retaining a
     /// moved source range changes its page-fault and ownership semantics.
     #[repr(transparent)]
     #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

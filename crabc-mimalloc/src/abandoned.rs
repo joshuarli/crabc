@@ -321,7 +321,7 @@ pub(crate) enum MappedAbandonedFreeAfterFailedReclaimResult {
 /// source instead collects that publication, then selects terminal release,
 /// reabandonment to the exact arena bitmap, or unownership. [`Self::Empty`]
 /// retains the low owner bit and page metadata for a separate page-map/span
-/// terminal-release capability; it does not claim that raw storage is safe to
+/// terminal-release capability; it does not imply that raw storage is safe to
 /// reuse.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UnmappedAbandonedFreeResult {

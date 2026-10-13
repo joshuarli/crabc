@@ -1,6 +1,6 @@
 //! Checked Linux/x86-64 base-relative relocation foundation.
 //!
-//! This module is deliberately not selected by `crabc-ldso` yet.  It isolates
+//! This module is deliberately not used by `crabc-ldso` yet.  It isolates
 //! the two relocation encodings which need neither symbol lookup nor loader
 //! TLS: symbol-free `R_X86_64_RELATIVE` ELF64 RELA records and packed ELF64
 //! RELR records.  A future x86-64 loader must first derive every

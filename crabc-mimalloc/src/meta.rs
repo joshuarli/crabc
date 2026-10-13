@@ -136,7 +136,7 @@ pub(crate) enum MetaError {
     ConfigurationMismatch,
     /// This metadata owner was initialized for a different bounded
     /// process-main identity. One owner may not silently serve two
-    /// subprocesses in this slice.
+    /// subprocesses here.
     SubprocessMismatch,
     /// The source process has not yet published its detached `theap_meta`
     /// identity. Rust refuses the metadata route before it enters the private
@@ -2129,7 +2129,7 @@ impl NativeChildHeapImage {
 
 /// A child context whose main Heap image is retained by the exact parent
 /// user-Heap allocation token. This owner spans registry admission through
-/// the represented Heap/Theap list transitions; it does not claim page
+/// the represented Heap/Theap list transitions; it does not cover page
 /// destruction or child MetadataEngine readiness.
 #[must_use = "a parent-allocated child Heap owner must remain through terminal release"]
 pub(crate) struct ChildMainHeapContextOwner<'heap> {

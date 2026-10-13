@@ -1,11 +1,10 @@
 //! The deliberately narrow Linux/x86-64 event facade.
 //!
-//! This target admits the scalar `eventfd2` counter seam and typed `poll(2)`,
+//! This target provides the scalar `eventfd2` counter seam and typed `poll(2)`,
 //! `ppoll(2)`, `select(2)`, `pselect(2)`, signal-only `pause`, and epoll
 //! readiness operations. The descriptor-set records and pselect signal-mask
-//! pair stay target-specific: this module never reuses an AArch64 record or
-//! claims a public C polling ABI. Signalfd remains absent until it has
-//! independent x86-64 evidence.
+//! pair stay target-specific: this module never reuses an AArch64 record and
+//! defines no C polling ABI. Signalfd is not provided here.
 
 use core::convert::TryFrom;
 use core::ffi::c_void;

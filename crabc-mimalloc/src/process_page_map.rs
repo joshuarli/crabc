@@ -476,7 +476,7 @@ pub(crate) struct ProcessPageMapStorage {
 // SAFETY: `initialization_lock` serializes every write to the final slots.
 // READY is Release-published only after the initialized map/header/config and
 // root are all valid.  The `PageMap` itself retains its documented source
-// plain-entry synchronization contract; this storage does not claim to
+// plain-entry synchronization contract; this storage does not
 // serialize registration or lookup.  The process lifetime forbids a safe
 // concurrent destroy while a lease or root reader can exist.
 unsafe impl Sync for ProcessPageMapStorage {}
@@ -1185,7 +1185,7 @@ impl ProcessPageMapRoot {
     /// the nonblocking `try_lock`. A bare map lease therefore cannot enter the
     /// short claim path without an independently validated
     /// [`crate::process_arena::ProcessPageArenaLease`] witness. This does not
-    /// construct a [`ProcessPageMapMutationLease`] or enter W03's blocking
+    /// construct a [`ProcessPageMapMutationLease`] or enter the blocking
     /// post-owner-exit mutation path.
     ///
     /// # Safety
@@ -1198,7 +1198,7 @@ impl ProcessPageMapRoot {
     /// `release_span`/all-PageMap-span validation. It must then finish through
     /// one [`MappedAbandonedClaimAccess`] constructor. It must not retain a
     /// raw PageMap access, perform another candidate search, register or
-    /// unregister a range, use W03, or call
+    /// unregister a range, use the post-owner-exit path, or call
     /// [`MappedAbandonedClaimedRange::into_page`] inside the closure.
     ///
     /// Any successful claim must return `Claimed`; any post-low-owner failure
@@ -1663,18 +1663,18 @@ impl ProcessPageMapRoot {
         })
     }
 
-    /// Blocks for one short, exact W03 post-owner-exit PageMap mutation.
+    /// Blocks for one short, exact post-owner-exit PageMap mutation.
     ///
     /// This is deliberately separate from [`Self::begin_page_lifecycle`].
     /// Normal page-engine admission remains nonblocking so a second owner is
     /// rejected as [`ProcessPageMapError::LifecycleBusy`] instead of becoming
-    /// an implicit recursive or scheduled lifecycle. Only W03's terminal
-    /// callbacks may wait here after W07 has claimed the exact abandoned page
+    /// an implicit recursive or scheduled lifecycle. Only the terminal
+    /// callbacks may wait here after the exact abandoned page has been claimed
     /// and immediately before that source tail mutates its PageMap range.
     ///
     /// # Safety
     ///
-    /// The caller must hold W07's unique low-bit claim for one exact
+    /// The caller must hold the unique low-bit claim for one exact
     /// post-owner-exit terminal source continuation. It must use the returned
     /// mutation lease only for that page's bounded map/list/metadata/backing
     /// release, then call
@@ -1834,10 +1834,10 @@ impl ProcessPageMapMutationLease {
 
     /// Releases one short, exact post-owner-exit PageMap mutation boundary.
     ///
-    /// Unlike [`Self::finish`], this does not claim that the whole process
+    /// Unlike [`Self::finish`], this does not imply that the whole process
     /// PageMap is empty. It is deliberately unsafe and narrowly intended for
     /// a source post-owner-exit continuation which has already proved all of
-    /// the following: it held W07's unique page claim, serialized every plain
+    /// the following: it held the unique page claim, serialized every plain
     /// PageMap operation on that exact page through this lease, and either
     /// removed that exact registration before releasing its metadata or left
     /// it untouched under another still-live source owner. Other entries must
@@ -2758,7 +2758,7 @@ mod tests {
     fn live_allocation_pointer_post_exit_publication_handles_stale_source_snapshots() {
         // A lookup that was live before owner exit must still use the exact
         // allow-collect CAS. If exit clears the head first, the source result
-        // is the W07 claim—not a re-read or a former-owner route.
+        // is the low-bit claim—not a re-read or a former-owner route.
         with_live_pointer_remote_fixture(|lease, page, block| {
             let live = unsafe { lease.lookup_live_allocation(block) }
                 .expect("the fixture map remains ready")
@@ -3213,7 +3213,7 @@ mod tests {
         let waiter = thread::spawn(move || {
             waiter_barrier.wait();
             // SAFETY: this empty isolated fixture models one already-claimed
-            // W03 final callback. It has no raw PageMap access or page state,
+            // post-owner-exit final callback. It has no raw PageMap access or page state,
             // and it releases the returned short boundary before returning.
             let completion = unsafe { lease.begin_blocking_exact_post_owner_exit_mutation() }
                 .and_then(|mutation| unsafe {

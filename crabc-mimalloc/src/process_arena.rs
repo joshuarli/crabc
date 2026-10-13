@@ -63,7 +63,7 @@ use crate::process_page_map::{ProcessPageMapError, ProcessPageMapRoot, ProcessPa
 use crate::subproc::MainSubprocess;
 
 // The historical one-arena sidecar and legacy pair below are compiled only
-// for the paused AArch64 target and test-only builds.
+// for the AArch64 target and test-only builds.
 #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use {
     core::cell::UnsafeCell,
@@ -2060,8 +2060,8 @@ static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStora
 /// with the corresponding source environment. This Rust fixture owns one
 /// canonical process policy/PageMap binding and a live default-Theap random
 /// image, then forces the same two large-map failures and THP-advice failure.
-/// It is test-only evidence for the selected ticket-zero policy route; it
-/// grants no general arena or source-option completion claim.
+/// It exists only for tests of the ticket-zero policy route; it
+/// grants no general arena or source-option completion.
 #[cfg(test)]
 pub(crate) struct M2VmPolicyFirstArenaTrace {
     pub(crate) source_options_applied: bool,

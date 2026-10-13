@@ -704,7 +704,7 @@ enum MainStaticRuntimeFirstArenaRoute {
 
 /// The only two source-backed entry routes for the permanent ticket-zero
 /// owner. The legacy explicit-config path retains its frozen PageMap-only
-/// state for paused AArch64 and historical fixtures. Native x86 production
+/// state for AArch64 and historical fixtures. Native x86 production
 /// must carry the coordinator's non-forgeable process binding instead; an
 /// absent binding cannot select the legacy mapping route.
 #[derive(Clone, Copy)]
@@ -1134,7 +1134,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
     /// arena.
     ///
     /// This legacy route intentionally retains its frozen PageMap-only state
-    /// for the paused AArch64 execution path and older isolated fixtures. New
+    /// for the AArch64 execution path and older isolated fixtures. New
     /// native x86 runtime startup must use [`Self::begin_for_process`].
     #[cfg(any(test, not(target_arch = "x86_64")))]
     pub(crate) fn begin_legacy(

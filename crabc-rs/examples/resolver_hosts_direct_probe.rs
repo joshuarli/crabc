@@ -1,4 +1,4 @@
-//! Link-free no-std probe for the staged x86 resolver and hosts boundary.
+//! Link-free no-std probe for the x86 resolver and hosts boundary.
 //!
 //! It checks only caller-provided host data and numeric resolver behavior. It
 //! deliberately excludes `/etc/services`, `/etc/protocols`, C resolver state,

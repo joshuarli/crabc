@@ -4,7 +4,7 @@
 
 //! Standalone root for private x86 general-initial TLS materialization.
 //!
-//! The direct-rustc evidence supplies both `crabc_general_initial_graph` and
+//! The direct-rustc build supplies both `crabc_general_initial_graph` and
 //! `crabc_general_initial_tls_materialization_v1`. Cargo selects the same
 //! isolated source path with `x86_64-general-initial-tls-interpreter`. This
 //! root is not the fixed RuntimeV1 producer and does not select a dynamic CRT,

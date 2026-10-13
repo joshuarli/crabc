@@ -6,7 +6,7 @@
 //! thread-local `errno` participates in conversion.
 //!
 //! The native slice supports strict UTF-8, ASCII, UTF-16LE/BE, UTF-32LE/BE,
-//! staged Linux targets' little-endian 32-bit `WChar`, and the shared ISO-8859-2..16
+//! Linux targets' little-endian 32-bit `WChar`, and the shared ISO-8859-2..16
 //! single-byte tables. The remaining shared encoding names are retained for
 //! the C compatibility facade but remain unsupported here. ISO table slots
 //! which were undefined in the extracted source retain their table value;

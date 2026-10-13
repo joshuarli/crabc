@@ -1,8 +1,4 @@
 //! Link-free no-std proof for the native current-CPU observation seam.
-//!
-//! This source is intentionally left unregistered until the architecture
-//! harness adds the corresponding release static-archive and direct-syscall
-//! checks.
 
 #![no_std]
 

@@ -2081,7 +2081,7 @@ impl MainStaticThreadLocalData {
     ///
     /// # Safety
     /// The initial thread cannot resume, every old TLD observation has ended,
-    /// and the exact static storage remains pinned. This does not claim the
+    /// and the exact static storage remains pinned. This does not imply the
     /// caller has the initial thread's TLS identity or change survivor roots.
     pub(crate) unsafe fn vanished_initial_mut(&mut self) -> &mut ThreadLocalData {
         unsafe { self.pointer.as_mut() }

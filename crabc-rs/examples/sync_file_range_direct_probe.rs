@@ -1,7 +1,4 @@
 //! Link-free no-std proof for the native `sync_file_range` seam.
-//!
-//! This source is intentionally left unregistered until the architecture
-//! harness adds the corresponding static-archive and direct-syscall checks.
 
 #![no_std]
 

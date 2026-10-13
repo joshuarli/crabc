@@ -201,10 +201,9 @@ include!("iconv_iso8859.rs");
 /// One of the single-byte ISO-8859 table-backed encodings currently present
 /// in the legacy iconv implementation.
 ///
-/// These accessors preserve the existing table data exactly. They do not
-/// claim that the legacy C adapter's aliases, error progress, or undefined
-/// byte policy are the final musl contract; those remain a separate adapter
-/// parity task.
+/// These accessors preserve the existing table data exactly. Aliases, error
+/// progress, and undefined-byte policy belong to the legacy C adapter and are
+/// not defined here.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Iso8859 {
     /// ISO-8859-2 (Latin-2).

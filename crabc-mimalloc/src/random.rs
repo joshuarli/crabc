@@ -191,7 +191,7 @@ impl Drop for TheapRandomImage {
 impl TheapRandomImage {
     // The release-oracle layout record is emitted from `types`' test module,
     // while these fields remain private to the random-state owner. Keep that
-    // evidence boundary explicit instead of widening the mutable image API.
+    // test boundary explicit instead of widening the mutable image API.
     #[cfg(test)]
     pub(crate) const INPUT_OFFSET: usize = core::mem::offset_of!(Self, input);
     #[cfg(test)]
@@ -648,8 +648,8 @@ impl TheapRandomImage {
 /// Project policy forbids translating that PRNG. We retain the same degraded
 /// lifecycle and gather its direct observables plus Linux process/thread
 /// identities and the source extra seed. `expand_into` passes those bytes to a
-/// domain-separated RustCrypto original-ChaCha block; it does not claim to add
-/// entropy or implement a new cryptographic primitive.
+/// domain-separated RustCrypto original-ChaCha block; it adds no
+/// entropy and implements no new cryptographic primitive.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct WeakObservations {
     context_identity: u64,

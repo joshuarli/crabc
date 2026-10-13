@@ -856,7 +856,7 @@ impl OsAlignedPageClaim {
             alignment, requested, random, true) }
     }
 
-    /// Borrowed construction on the paused target retains its original owner
+    /// Borrowed construction on the AArch64 target retains its original owner
     /// transport. The caller retains the exact process image and external
     /// context until publication/reclaim or explicit claim release completes.
     /// # Safety
@@ -961,7 +961,7 @@ impl OsAlignedPageClaim {
             alignment, requested, random, false) }
     }
 
-    /// Borrowed construction on the paused target retains its original owner
+    /// Borrowed construction on the AArch64 target retains its original owner
     /// transport. The caller retains the exact process image and external
     /// context until publication/reclaim or explicit claim release completes.
     /// # Safety
@@ -1490,7 +1490,7 @@ impl OsAlignedPageClaim {
         }
     }
 
-    /// Borrowed release on the paused target retains its original transport.
+    /// Borrowed release on the AArch64 target retains its original transport.
     /// # Safety
     /// The caller retains the exact captured process image and this claim's
     /// sole terminal release right throughout the operation.

@@ -2,7 +2,7 @@
 //! clock-query/mutation, owned POSIX timer, relative `nanosleep`, typed
 //! `clock_nanosleep`, interval-timer-control, and timerfd operations.
 //!
-//! This staged facade admits validated Linux clock IDs, typed whole-second and
+//! This facade provides validated Linux clock IDs, typed whole-second and
 //! millisecond realtime observations, direct `gettimeofday` wall-clock
 //! observations, strict UTC Gregorian conversion, alloc-gated explicit
 //! immutable POSIX-TZ/TZif local projections, direct safe clock mutation, and
@@ -10,9 +10,8 @@
 //! preserve the kernel's remainder instead of retrying or hiding `EINTR`. It
 //! intentionally does not expose C time/tm APIs, libc `TZ` state, zoneinfo
 //! loading, inverse ambiguous-local conversion, C `timer_t`/`sigevent` ABI,
-//! or a timer/signal policy framework. The interval-timer and timerfd slices
-//! are direct kernel boundaries; none selects a C time API or promotes x86-64
-//! platform support.
+//! or a timer/signal policy framework. The interval-timer and timerfd operations
+//! are direct kernel boundaries; none selects a C time API.
 
 use core::convert::TryFrom;
 use core::mem::MaybeUninit;

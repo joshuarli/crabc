@@ -3,8 +3,8 @@
  *
  * The candidate calls the archive helper directly. The reference arm recreates
  * only the selected source branch in defined unsigned C: a negative or >=128
- * count returns zero, otherwise it performs the in-range shift. It does not
- * claim ordinary C semantics for an out-of-range shift expression.
+ * count returns zero, otherwise it performs the in-range shift. This
+ * is not C semantics for an out-of-range shift expression.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)

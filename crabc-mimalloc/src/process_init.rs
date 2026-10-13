@@ -69,7 +69,7 @@ const INITIALIZING: u8 = 1;
 const READY: u8 = 2;
 const RETAINED: u8 = 3;
 // Default Theap/TLD and the allocation tuple exist; source startup
-// reservations and their completed receipt do not yet exist.
+// reservations and their completed record do not yet exist.
 const SOURCE_ATTACHED: u8 = 4;
 const TERMINAL_CLOSED: u8 = 5;
 
@@ -2017,7 +2017,7 @@ impl Drop for ProcessMainStartup {
 ///
 /// C reads the one global `mi_options[]`; this reads the process table of
 /// the production coordinator once x86 startup has installed it. Before
-/// then, on isolated fixture coordinators, and on the paused AArch64
+/// then, on isolated fixture coordinators, and on the AArch64
 /// process (which has no table), the read returns the pinned release
 /// default, which is what every such read point used before the table
 /// existed.
@@ -2035,7 +2035,7 @@ pub(crate) fn process_source_option(option: crate::config::SourceOption) -> i64 
 
 /// `_mi_warning_message(...)` for one source warning site, delivered through
 /// the process output owner's `verbose`/`show_errors`/`max_warnings` gate.
-/// Before x86 startup has installed the table (and on the paused AArch64
+/// Before x86 startup has installed the table (and on the AArch64
 /// process) no output owner exists and the release defaults suppress it.
 ///
 /// The caller must hold no page-engine, owner, TLD, or Theap projection: a

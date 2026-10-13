@@ -2,9 +2,9 @@
 //!
 //! This module exposes only the raw mapping, bounded remapping, protection,
 //! unmapping, per-range/process-wide memory locking, and legacy file-page
-//! remapping calls used by the staged Rust facade. It intentionally does not
-//! expose the broader AArch64 VM policy surface before each x86-specific
-//! contract is admitted and proven.
+//! remapping calls used by the Rust facade. It intentionally does not
+//! expose the broader AArch64 VM policy surface; each x86-specific contract
+//! is added only when a caller needs it.
 
 use crate::syscall::{
     decode, syscall0, syscall1, syscall2, syscall3, syscall4, syscall5, syscall6, SYS_MLOCK,

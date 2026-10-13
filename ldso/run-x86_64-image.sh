@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 evidence runner for the source-only ELF image parser.
+# Native Linux/x86-64 runner for the source-only ELF image parser.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

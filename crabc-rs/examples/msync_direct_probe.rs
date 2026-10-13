@@ -1,7 +1,4 @@
 //! Link-free no-std proof for the native `msync` seam.
-//!
-//! This source is intentionally left unregistered until the evidence
-//! harness owns its archive and direct-syscall verification rules.
 
 #![no_std]
 

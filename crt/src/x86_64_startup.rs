@@ -1,10 +1,10 @@
 //! Shared Linux/x86-64 static application startup.
 //!
-//! This is deliberately separate from the active AArch64 startup module. It
-//! is only a private static-startup foundation. `rcrt1.o` reaches it after
+//! This is deliberately separate from the AArch64 startup module. It
+//! is only the private static-startup path. `rcrt1.o` reaches it after
 //! checked self-relocation and GNU RELRO; ordinary `crt1.o` reaches it after
-//! final static linking. Neither path implies a dynamic-loader handoff,
-//! `Scrt1.o`, installed sysroot, or public x86 support.
+//! final static linking. Neither path implies a dynamic-loader handoff
+//! or `Scrt1.o`.
 
 use core::ffi::c_int;
 

@@ -238,7 +238,7 @@ impl Resolver {
     ) -> core::result::Result<AddressResults, ResolveError> {
         if options.flags.contains(LookupFlags::ADDRCONFIG) {
             // Interface-aware address selection needs a separate direct
-            // netlink/sysfs seam. Do not silently claim the C flag here.
+            // netlink/sysfs seam. Do not silently accept the C flag here.
             return Err(ResolveError::InvalidInput);
         }
         let socket_types = service_choices(service, &options)?;

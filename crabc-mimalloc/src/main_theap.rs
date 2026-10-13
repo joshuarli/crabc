@@ -2397,7 +2397,7 @@ struct M1SameTldTerminalTrace {
 /// Theap and one Malloc-backed cached auxiliary Theap share the exact
 /// ticket-zero TLD.  The mutable borrow of the main attachment is its linear
 /// proof that no singleton teardown/page session can overlap the two-member
-/// list.  This exists only for differential evidence; it is not a public
+/// list.  This exists only for differential tests; it is not a public
 /// first-class heap or multi-Theap API.
 #[cfg(test)]
 struct M1SameTldTerminalFixture<'main, 'heap> {
@@ -2560,7 +2560,7 @@ impl<'main, 'heap> M1SameTldTerminalFixture<'main, 'heap> {
     ///
     /// Its matching C fixture uses the pinned internal `_mi_heap_init` plus
     /// `_mi_heap_theap_get_or_init` setup to form a page-free D/A input; it
-    /// intentionally does not claim public `mi_heap_new` or page-bearing
+    /// intentionally does not cover public `mi_heap_new` or page-bearing
     /// collection lifecycle parity. The trace still records the source's two
     /// no-page collect calls before it binds default/cached reset, Heap
     /// detaches, TLD final loop, and final-reference observations.
@@ -4301,7 +4301,7 @@ mod tests {
     /// Emits the address-free same-TLD terminal trace compared with the
     /// pinned C fixture's internal page-free `D -> A` setup. The fixture uses
     /// a Rust caller heap only to represent the selected source auxiliary
-    /// Heap image; it does not claim public `mi_heap_new` lifecycle parity.
+    /// Heap image; it does not cover public `mi_heap_new` lifecycle parity.
     #[test]
     fn emit_m1_same_tld_terminal_c_rust_trace() {
         thread::spawn(|| {

@@ -30,8 +30,8 @@ pub(crate) enum ObjectAdmission {
     New { index: usize },
 }
 
-/// The private source-root graphs keep their original admission bounds as
-/// part of their frozen negative evidence. The installed runtime has none.
+/// The private source-root graphs keep their original fixed object and edge
+/// bounds. The installed runtime has none.
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
 const SOURCE_ROOT_MAX_OBJECTS: usize = 32;
 #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
@@ -40,7 +40,7 @@ const SOURCE_ROOT_MAX_NEEDED: usize = 16;
 /// Graph failures. In the installed runtime the two capacity errors mean the
 /// kernel refused the loader mapping that would hold another object or edge:
 /// its graph has no fixed object or `DT_NEEDED` bound, as musl's loader has
-/// none. Private source roots also report their retained admission bounds.
+/// none. Private source roots also report their fixed bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GraphStateError {
     ObjectCapacity,

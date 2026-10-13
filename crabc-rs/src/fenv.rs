@@ -1,4 +1,4 @@
-//! Typed floating-point environment operations for the staged Linux targets.
+//! Typed floating-point environment operations for the Linux targets.
 //!
 //! These wrappers preserve the native Rust contract: they update the calling
 //! thread's architecture-specific floating-point environment directly through

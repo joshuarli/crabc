@@ -6,13 +6,11 @@
     feature(linkage)
 )]
 
-//! Linux/AArch64 dynamic linker.
+//! Linux dynamic linker for AArch64 and x86-64.
 
-// The x86 roots are deliberately feature-gated private evidence targets. The
-// original root retains the fixed graph; the separate general-initial roots
-// admit either a non-TLS graph or one initial TLS generation retained by the
-// loader. Neither broadens the public loader support boundary or selects
-// portability.
+// The x86 roots are feature-gated private targets. The original root retains
+// the fixed graph; the separate general-initial roots admit either a non-TLS
+// graph or one initial TLS generation retained by the loader.
 #[cfg(all(
     target_os = "linux",
     target_arch = "x86_64",

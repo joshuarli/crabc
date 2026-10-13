@@ -12,7 +12,7 @@ name = "crabc_core"
 
 [features]
 default = []
-# Retained for existing private allocator evidence manifests. Linux/x86-64
-# core selection no longer depends on this feature; it does not by itself
-# select libc, loader, CRT, or facade artifacts.
+# Retained for existing private allocator builds. Linux/x86-64 core selection
+# no longer depends on this feature; it does not by itself select libc,
+# loader, CRT, or facade artifacts.
 allocator-x86-evidence = []
