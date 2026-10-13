@@ -2043,8 +2043,7 @@ pub(crate) enum NativeChildThreadDoneError {
 
 /// The allocation branch of the native runtime entry points: allocates for
 /// an admitted child thread through its own Theap. `None` when the current
-/// thread is not a child member. Deferred-free callbacks are not invoked on
-/// this route yet.
+/// thread is not a child member.
 ///
 /// `aligned` is `None` for an ordinary `_mi_theap_malloc_zero` request and
 /// `Some((alignment, offset))` for `mi_theap_malloc_zero_aligned_at`.
@@ -2054,21 +2053,26 @@ pub(crate) fn native_child_thread_allocate(
     zero: bool,
 ) -> Option<crate::runtime_lifecycle::NativePageAllocationResult> {
     use crate::runtime_lifecycle::NativePageAllocationResult;
-    // SAFETY: current-thread slot, no other reference live.
-    let current = unsafe { current_child_member() }.as_mut()?;
-    let binding = current.binding;
-    // SAFETY: this is the admitted thread operating on its own Theap.
-    let block = unsafe {
-        current.member.with_page_engine(binding, |_child, engine| match (aligned, zero) {
-            (None, zero) => engine.allocate(request, zero),
-            (Some((alignment, offset)), true) => engine.allocate_aligned_zeroed_at(request, alignment, offset),
-            (Some((alignment, offset)), false) => engine.allocate_aligned_at(request, alignment, offset),
-        })
+    // Copy the fixed child Theap out of a short member projection. The shared
+    // request driver owns callback admission and ends every engine/record
+    // projection before invoking deferred-free callbacks.
+    let Some(theap) = (unsafe { current_child_member() })
+        .as_ref()
+        .map(|current| current.member.theap_pointer())?
+    else {
+        return Some(NativePageAllocationResult::Retained);
     };
-    Some(match block {
+    // SAFETY: this admitted thread retains its fixed child Theap throughout
+    // the synchronous request; the driver leases the actual child issuer
+    // across callbacks and resumed allocation phases.
+    Some(match unsafe { native_child_theap_allocate_request(
+        theap,
+        NativeChildAllocationRequest::Ordinary { size: request, aligned, zero },
+    ) } {
         Ok(Some(block)) => NativePageAllocationResult::Allocated(block),
         Ok(None) => NativePageAllocationResult::AllocationFailed,
-        Err(_) => NativePageAllocationResult::Retained,
+        Err(NativeChildAllocationRefusal::Unavailable | NativeChildAllocationRefusal::Retained) =>
+            NativePageAllocationResult::Retained,
     })
 }
 

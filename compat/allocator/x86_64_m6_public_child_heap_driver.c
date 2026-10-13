@@ -16,6 +16,34 @@ typedef struct worker_state_s {
   bool complete;
 } worker_state_t;
 
+typedef struct deferred_callback_state_s {
+  size_t callback_count;
+  size_t force;
+  unsigned long long heartbeat;
+  size_t nested_allocation;
+  size_t nested_owner;
+  size_t nested_free;
+  size_t nested_collect_suppressed;
+} deferred_callback_state_t;
+
+static void child_deferred_free(bool force, unsigned long long heartbeat,
+                                void* argument) {
+  deferred_callback_state_t* const state = (deferred_callback_state_t*)argument;
+  state->callback_count++;
+  state->force = (size_t)force;
+  state->heartbeat = heartbeat;
+
+  void* const nested = mi_malloc(33);
+  if (nested != NULL) {
+    state->nested_allocation = 1;
+    state->nested_owner = (mi_heap_of(nested) == mi_heap_main());
+    mi_free(nested);
+    state->nested_free = 1;
+  }
+  mi_collect(false);
+  state->nested_collect_suppressed = (state->callback_count == 1);
+}
+
 typedef struct visit_state_s {
   mi_heap_t* expected[3];
   size_t count;
@@ -144,6 +172,20 @@ static void* child_worker(void* argument) {
   mi_free(default_restored);
   mi_free(direct_zero);
   mi_free(direct);
+
+  deferred_callback_state_t deferred = {0};
+  mi_register_deferred_free(&child_deferred_free, &deferred);
+  errno = 0;
+  void* const oversized = mi_malloc((size_t)PTRDIFF_MAX + 1u);
+  const int oversized_errno = errno;
+  mi_register_deferred_free(NULL, NULL);
+  printf("child.deferred_oom=%d,%d,%zu,%zu,%llu,%zu,%zu,%zu,%zu\n",
+         oversized == NULL, oversized_errno, deferred.callback_count,
+         deferred.force, deferred.heartbeat, deferred.nested_allocation,
+         deferred.nested_owner, deferred.nested_free,
+         deferred.nested_collect_suppressed);
+  if (oversized != NULL) mi_free(oversized);
+
   void* block = mi_heap_malloc(first, 64);
   if (block == NULL) return NULL;
   printf("child.owned=%d,%d\n", mi_heap_of(block) == first, mi_heap_contains(first, block));

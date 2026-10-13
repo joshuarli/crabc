@@ -36,6 +36,7 @@ EXPECTED = {
     "child.default_second": "1,1,1",
     "child.default_restored": "1,1,1,1",
     "child.direct_failure": "1,12,1",
+    "child.deferred_oom": "1,12,1,1,1,1,1,1,1",
     "child.owned": "1,1",
     "child.deleted": "1,1",
     "child.destroyed": "1",

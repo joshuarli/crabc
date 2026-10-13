@@ -73,6 +73,22 @@ class ChildHeapProfileTests(unittest.TestCase):
             with self.subTest(runner=runner.__name__), self.assertRaises(runner.harness.HarnessError):
                 runner.observations(stdout, wrong, 'c')
 
+    def test_child_default_oversized_allocation_requires_forced_callback_reentry(self):
+        trace = dict(public.EXPECTED)
+        self.assertEqual(trace["child.deferred_oom"], "1,12,1,1,1,1,1,1,1")
+        stdout = public.BEGIN + "\n" + "\n".join(
+            f"{key}={value}" for key, value in trace.items()
+        ) + "\n" + public.END + "\n"
+        stderr = "\n".join(f"{key}={value}" for key, value in public.SOURCE.items()) + "\n"
+        self.assertEqual(public.observations(stdout, stderr, "c"), trace)
+
+        omitted = dict(trace, **{"child.deferred_oom": "1,12,0,0,0,0,0,0,0"})
+        stdout = public.BEGIN + "\n" + "\n".join(
+            f"{key}={value}" for key, value in omitted.items()
+        ) + "\n" + public.END + "\n"
+        with self.assertRaisesRegex(public.harness.HarnessError, "child Heap trace changed"):
+            public.observations(stdout, stderr, "c")
+
     def test_partial_profile_receipt_cannot_be_read_as_the_complete_matrix(self):
         for runner in (public, reuse):
             receipt = SimpleNamespace(parameters={'profiles': ','.join(runner.PROFILES)},
