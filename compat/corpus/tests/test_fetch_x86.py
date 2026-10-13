@@ -37,7 +37,44 @@ class InstallTests(unittest.TestCase):
         self.pinned = b"pinned bytes"
         self.digest = hashlib.sha256(self.pinned).hexdigest()
         self.destination = self.root / FETCH.INPUT / "apks/fixture-1.apk"
+        self.cache = self.root / "compat/corpus/.cache"
         (self.seed / "apks").mkdir(parents=True)
+
+    def test_matching_archive_cache_is_used_without_network(self) -> None:
+        cached = self.cache / "apks/fixture-1.apk"
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(self.pinned)
+        with mock.patch.object(FETCH.urllib.request, "urlopen", side_effect=AssertionError("network used")):
+            self.assertEqual(FETCH.install("apks/fixture-1.apk", self.digest, "https://invalid/x", None), "cache")
+        self.assertEqual(self.destination.read_bytes(), self.pinned)
+
+    def test_downloaded_pinned_archive_is_persisted_in_cache(self) -> None:
+        with mock.patch.object(FETCH.urllib.request, "urlopen", return_value=io.BytesIO(self.pinned)):
+            self.assertEqual(FETCH.install("apks/fixture-1.apk", self.digest, "https://invalid/x", None), "download")
+        self.assertEqual((self.cache / "apks/fixture-1.apk").read_bytes(), self.pinned)
+
+    def test_mismatching_archive_cache_is_not_used(self) -> None:
+        cached = self.cache / "apks/fixture-1.apk"
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b"stale cache bytes")
+        with mock.patch.object(FETCH.urllib.request, "urlopen", return_value=io.BytesIO(self.pinned)) as request:
+            self.assertEqual(FETCH.install("apks/fixture-1.apk", self.digest, "https://invalid/x", None), "download")
+        request.assert_called_once()
+        self.assertEqual(self.destination.read_bytes(), self.pinned)
+        self.assertEqual(cached.read_bytes(), self.pinned)
+
+    def test_archive_cache_symlink_is_replaced_without_following_it(self) -> None:
+        outside = self.root / "outside.apk"
+        outside.parent.mkdir(parents=True)
+        outside.write_bytes(b"outside bytes")
+        cached = self.cache / "apks/fixture-1.apk"
+        cached.parent.mkdir(parents=True)
+        cached.symlink_to(outside)
+        with mock.patch.object(FETCH.urllib.request, "urlopen", return_value=io.BytesIO(self.pinned)):
+            FETCH.install("apks/fixture-1.apk", self.digest, "https://invalid/x", None)
+        self.assertFalse(cached.is_symlink())
+        self.assertEqual(cached.read_bytes(), self.pinned)
+        self.assertEqual(outside.read_bytes(), b"outside bytes")
 
     def test_matching_primary_copy_is_used_without_network(self) -> None:
         (self.seed / "apks/fixture-1.apk").write_bytes(self.pinned)
@@ -74,13 +111,16 @@ class InstallTests(unittest.TestCase):
 
     def test_unpinned_index_snapshot_is_kept_until_refreshed(self) -> None:
         index = self.root / FETCH.INPUT / FETCH.INDEX_NAME
+        cached = self.cache / FETCH.INDEX_NAME
         with mock.patch.object(FETCH.urllib.request, "urlopen", return_value=io.BytesIO(b"first snapshot")):
             self.assertEqual(FETCH.install(FETCH.INDEX_NAME, None, "https://invalid/i", None), "download")
+        self.assertEqual(cached.read_bytes(), b"first snapshot")
         with mock.patch.object(FETCH.urllib.request, "urlopen", side_effect=AssertionError("network used")):
             self.assertEqual(FETCH.install(FETCH.INDEX_NAME, None, "https://invalid/i", None), "present")
         with mock.patch.object(FETCH.urllib.request, "urlopen", return_value=io.BytesIO(b"regenerated snapshot")):
             self.assertEqual(FETCH.install(FETCH.INDEX_NAME, None, "https://invalid/i", None, refresh=True), "download")
         self.assertEqual(index.read_bytes(), b"regenerated snapshot")
+        self.assertEqual(cached.read_bytes(), b"regenerated snapshot")
 
 
 class MaterializeTests(unittest.TestCase):

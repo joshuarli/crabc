@@ -65,10 +65,13 @@ system's loader. A non-AArch64 invocation is an explicit setup error.
 for the existing manifest workloads. It seals the unchanged `manifest.toml` workload
 bytes, so all case IDs, argv, setup, stateful cases, and DT_RELR obligations
 remain exactly those frozen workloads. It does not transfer an AArch64 result
-or claim package-source equivalence. Five unavailable historical x86_64 URLs
-are recorded as explicit target-only version deltas: gzip `1.14-r3`, sqlite
-`3.53.4-r0`, curl `8.22.0-r0`, openssl `3.5.8-r0`, and
-openssh-client-default `10.3_p1-r1`.
+or claim package-source equivalence. Nine archives from the previous x86_64
+snapshot could not be recovered byte-for-byte from the repository or two
+mirrors, so all 59 archive pins now match package records in one current signed
+v3.24 index. Twelve archive filenames changed; the 59 package names and all 34
+workloads remain unchanged. The direct-package version deltas from AArch64 are
+gzip `1.14-r3`, sqlite `3.53.4-r0`, curl `8.22.0-r0`, openssl `3.5.9-r0`,
+openssh-client-default `10.3_p1-r1`, and python3 `3.14.8-r0`.
 
 The native runner takes a supplied, already-built owned dynamic product. It
 does not build a replacement product. Before any private execution it verifies
@@ -95,13 +98,14 @@ Materialize the inputs on the host (the corpus container has no network):
 `compat/corpus/fetch_x86.py` places exactly the 59 pinned archives and one
 index snapshot at `.work/x86_64/owned-package-corpus-input`, the runner's
 default `--archive-dir`/`--index`. Each archive must match its manifest digest;
-it is kept if already present, else copied from the primary checkout's same
-directory, else downloaded from the exact manifest URL. An existing index
+the helper checks the ignored `compat/corpus/.cache/apks/` cache first, then
+the primary checkout's same `.work` input, then the exact manifest URL. Valid
+input and downloaded archives are saved in that cache. The signed index is
+cached at `compat/corpus/.cache/index/main-x86_64.APKINDEX.tar.gz`; an existing
 snapshot is kept unless `--refresh-index` is given.
-`scripts/lanes/prepare-worktree.sh` runs this helper in a fresh lane worktree
-whose `apks` directory is absent, so its `materialized-dynamic-sysroot`
-package-corpus case has its input; run the command above once in the primary
-checkout to let worktrees copy instead of download.
+`scripts/lanes/prepare-worktree.sh` copies these caches into fresh lane
+worktrees before running the helper, so the network-isolated
+`materialized-dynamic-sysroot` package-corpus case has all inputs.
 
 The package closure includes third-party application DSOs such as `libgcc_s`
 and `libstdc++`; those archives and bytes are shared by both roots. They are

@@ -6,19 +6,20 @@ Produces `.work/x86_64/owned-package-corpus-input/{apks,index}`, the default
 `archive_roster` APKs and one repository index snapshot.
 
 Each archive must match its pinned SHA-256 before it is kept. A matching file
-already present is kept; otherwise it is copied from the primary checkout's
-same input directory when that copy matches (lane worktrees share one primary
-checkout), and only then downloaded from the manifest's exact repository URL.
-Explicit `--mirror-base-url` repositories may recover unavailable archives at
-the same exact filenames; their bytes must still match the pinned SHA-256.
-Unavailable files are all reported after the remaining inputs are collected.
+already present is kept; otherwise the helper checks the ignored cache beside
+this script, then the primary checkout's same input directory, then the
+manifest's exact repository URL. Explicit `--mirror-base-url` repositories may
+recover unavailable archives at the same exact filenames; their bytes must
+still match the pinned SHA-256. Successful inputs are atomically copied to the
+cache so they survive a `.work/` reset. Unavailable files are all reported
+after the remaining inputs are collected.
 
 The index is a mutable upstream snapshot and is not digest-pinned. An existing
-snapshot is kept unless `--refresh-index` is given; otherwise the primary
-checkout's snapshot is copied when present, else the current index is
-downloaded. The runner authenticates it inside the pinned native image with
-the manifest's signing key alone and retains its observed digest. This host
-helper only moves and hashes bytes; it never extracts or executes packages.
+snapshot is kept unless `--refresh-index` is given; otherwise the cache is
+checked before the primary checkout's snapshot and current index URL. The
+runner authenticates it inside the pinned native image with the manifest's
+signing key alone and retains its observed digest. This host helper only moves
+and hashes bytes; it never extracts or executes packages.
 """
 from __future__ import annotations
 
@@ -37,6 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = Path(__file__).with_name("manifest-x86_64.toml")
 INPUT = Path(".work/x86_64/owned-package-corpus-input")
+CACHE = Path("compat/corpus/.cache")
 INDEX_NAME = "index/main-x86_64.APKINDEX.tar.gz"
 
 
@@ -65,6 +67,21 @@ def primary_input() -> Path | None:
     return None if primary == ROOT else primary / INPUT
 
 
+def persist_cache(source: Path, relative: str) -> None:
+    """Atomically replace one recoverable cached input without following its leaf."""
+    destination = ROOT / CACHE / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle, name = tempfile.mkstemp(dir=destination.parent, prefix=f".{destination.name}.")
+    temporary = Path(name)
+    try:
+        with os.fdopen(handle, "wb") as output, source.open("rb") as input_stream:
+            shutil.copyfileobj(input_stream, output)
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def install(relative: str, expected: str | None, url: str, seed: Path | None, refresh: bool = False,
             mirrors: tuple[str, ...] = ()) -> str:
     """Place one file at INPUT/relative, returning how it was obtained.
@@ -73,39 +90,49 @@ def install(relative: str, expected: str | None, url: str, seed: Path | None, re
     must match `expected` and a mismatching copy or download is never kept.
     """
     destination = ROOT / INPUT / relative
+    cache = ROOT / CACHE / relative
     present = sha256(destination)
     if not refresh and present is not None and (expected is None or present == expected):
+        if expected is None or sha256(cache) != expected:
+            persist_cache(destination, relative)
         return "present"
     destination.parent.mkdir(parents=True, exist_ok=True)
     handle, name = tempfile.mkstemp(dir=destination.parent, prefix=f".{destination.name}.")
     temporary = Path(name)
     try:
         with os.fdopen(handle, "wb") as output:
-            seeded = None if seed is None or refresh else sha256(seed / relative)
-            if seeded is not None and (expected is None or seeded == expected):
-                with (seed / relative).open("rb") as source:
+            cached = None if refresh else sha256(cache)
+            if cached is not None and (expected is None or cached == expected):
+                with cache.open("rb") as source:
                     shutil.copyfileobj(source, output)
-                origin = "primary checkout"
+                origin = "cache"
             else:
-                if expected is None and mirrors:
-                    raise FetchError("unpinned index snapshots cannot use archive mirrors")
-                candidates = (url, *mirrors)
-                for position, candidate in enumerate(candidates):
-                    try:
-                        response = urllib.request.urlopen(candidate, timeout=60)
-                    except OSError:
-                        if position + 1 == len(candidates):
-                            raise
-                        continue
-                    with response:
-                        shutil.copyfileobj(response, output)
-                    origin = "download" if candidate == url else f"mirror {candidate}"
-                    url = candidate
-                    break
+                seeded = None if seed is None or refresh else sha256(seed / relative)
+                if seeded is not None and (expected is None or seeded == expected):
+                    with (seed / relative).open("rb") as source:
+                        shutil.copyfileobj(source, output)
+                    origin = "primary checkout"
+                else:
+                    if expected is None and mirrors:
+                        raise FetchError("unpinned index snapshots cannot use archive mirrors")
+                    candidates = (url, *mirrors)
+                    for position, candidate in enumerate(candidates):
+                        try:
+                            response = urllib.request.urlopen(candidate, timeout=60)
+                        except OSError:
+                            if position + 1 == len(candidates):
+                                raise
+                            continue
+                        with response:
+                            shutil.copyfileobj(response, output)
+                        origin = "download" if candidate == url else f"mirror {candidate}"
+                        url = candidate
+                        break
         observed = sha256(temporary)
         if expected is not None and observed != expected:
             raise FetchError(f"{url}: SHA-256 {observed} differs from pinned {expected}")
         os.chmod(temporary, 0o644)
+        persist_cache(temporary, relative)
         os.replace(temporary, destination)
         return origin
     finally:

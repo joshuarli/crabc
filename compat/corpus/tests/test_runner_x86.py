@@ -103,12 +103,37 @@ class NativeManifestTests(unittest.TestCase):
     def test_native_archive_closure_and_version_deltas_are_finite(self) -> None:
         with self.manifest.source_manifest.open("rb") as stream:
             source_packages = tomllib.load(stream)["packages"]
+        source_versions = {package["name"]: package["version"] for package in source_packages}
+        changed = {name for name, version in self.manifest.direct_packages.items() if version != source_versions[name]}
+        deltas = tomllib.loads(RUNNER.MANIFEST.read_text())["native_version_deltas"]
         self.assertEqual(len(self.manifest.archive_roster), 59)
         self.assertEqual(self.manifest.excluded_archives, {"musl-1.2.6-r2.apk"})
-        self.assertEqual(
-            {name for name, version in self.manifest.direct_packages.items() if version != source_packages[list(self.manifest.direct_packages).index(name)]["version"]},
-            {"gzip", "sqlite", "curl", "openssl", "openssh-client-default"},
-        )
+        self.assertEqual(set(deltas), changed)
+        for name in changed:
+            self.assertEqual(deltas[name], {"aarch64": source_versions[name], "x86_64": self.manifest.direct_packages[name]})
+
+    def test_current_native_snapshot_can_record_an_additional_target_version_delta(self) -> None:
+        source_versions = {
+            package["name"]: package["version"]
+            for package in tomllib.loads(self.manifest.source_manifest.read_text())["packages"]
+        }
+        package_name = "git"
+        current = self.manifest.direct_packages[package_name]
+        updated = "2.54.1-r0"
+        manifest_text = RUNNER.MANIFEST.read_text()
+        self.assertIn(f'{package_name} = "{current}"', manifest_text)
+        manifest_text = manifest_text.replace(f'{package_name} = "{current}"', f'{package_name} = "{updated}"', 1)
+        marker = "\n[archive_roster]\n"
+        delta = f'\n{package_name} = {{ aarch64 = "{source_versions[package_name]}", x86_64 = "{updated}" }}\n'
+        self.assertIn(marker, manifest_text)
+        manifest_text = manifest_text.replace(marker, delta + marker, 1)
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-manifest-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            path = Path(temporary) / "manifest.toml"
+            path.write_text(manifest_text)
+            parsed = RUNNER.load_manifest(path)
+        self.assertEqual(parsed.direct_packages[package_name], updated)
 
     def test_any_signed_index_snapshot_is_retained_by_its_observed_digest(self) -> None:
         # Alpine regenerates the mutable v3.24 index; an earlier snapshot can

@@ -352,10 +352,9 @@ def load_manifest(path: Path = MANIFEST) -> ManifestSpec:
     if set(source_versions) != package_names or not all(isinstance(value, str) for value in source_versions.values()):
         fail("native corpus source package identities drifted")
     changed = {name for name in package_names if direct[name] != source_versions[name]}
-    expected_changed = {"gzip", "sqlite", "curl", "openssl", "openssh-client-default"}
-    if changed != expected_changed or set(deltas) != expected_changed:
+    if set(deltas) != changed:
         fail("native corpus target-specific version delta roster drifted")
-    for name in expected_changed:
+    for name in changed:
         delta = deltas[name]
         if not isinstance(delta, dict) or delta.get("aarch64") != source_versions[name] or delta.get("x86_64") != direct[name]:
             fail(f"native corpus target-specific version delta is invalid: {name}")
