@@ -149,10 +149,21 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   cases under seven option profiles (`default` sets nothing, the other six set
   `mimalloc_*` environment variables) so each process reads them from its own
   option table.
-- Public API adapter: `allocator-m6-adapter` links
+- Public API adapter: `allocator-m6-adapter [--matrix]` links
   [`x86_64_m6_adapter_driver.c`](x86_64_m6_adapter_driver.c) once against the
   pinned C sources and once against the native adapter's M6 exports and
-  compares the traces; `allocator-public-heap-alignment`,
+  compares valid-client traces. The default runs `release`; `--matrix` runs
+  `release`, `debug-1`, `stat-1`, and `stat-2`, as the M6 gate does. In
+  `debug-1`, the source C workload enables `guarded_precise=1` only after
+  preprocessing proves the pinned debug source has one active option use;
+  native remains at option 0. A separate aligned-offset control runs both at
+  option 0: source C reports `EINVAL` with its diagnostic and retains the live
+  page, while Rust stays quiet. Invalid alignment passed to
+  `mi_heap_realloc_aligned_at` is another control, outside the valid-client
+  domain: debug C asserts on the source precondition while Rust reports
+  `EINVAL` through its error callback. These controls stay separate from the
+  valid-client parity claim. Other public API lanes include
+  `allocator-public-heap-alignment`,
   `allocator-heap-convenience [--read|--replay]`,
   `allocator-upstream-heap-stress`, `allocator-upstream-subprocess-stress`.
 - Local trace: `allocator-native-local-trace [--profile initial|worker]`

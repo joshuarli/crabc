@@ -279,6 +279,12 @@ pre-claim rejections. `ArenaSliceClaim::release_for_subprocess` returns a claim
 unchanged, before any purge or bitmap mutation, when the `MainSubprocess`
 identity does not match (a fail-closed form of C's internal assertion).
 
+The default-Theap allocation path for a native child uses the same phased
+deferred-free protocol. When a callback is registered, an oversized request
+runs the forced callback before returning the allocation miss. Callback
+reentry can allocate through the child main Heap, while nested collection does
+not invoke the callback recursively.
+
 The regular TLS backing (`thread_local.rs`, `compiler_tls.rs`) is a
 `mi_thread_locals_t`-shaped zeroed flexible image from `MetaAllocator`: 16
 slots, doubling below 1024, plus 1024 at and above, a least-index override, a
@@ -414,6 +420,12 @@ subprocess arenas (`ProcessArenaBacking::destroy_all`, from external tracking
 storage outside the retiring arenas), emit the final statistics, retire the
 PageMap, then the `process done` tail. Any failure retains its exact owner and
 is terminal; libc must not fall back to the retaining path or to C cleanup.
+
+On the first native x86-64 child-destruction pass, an empty arena registry skips
+arena-release retry storage. If arenas exist, the parent metadata allocator
+supplies retry storage outside the child arenas before teardown; the child
+record keeps that storage and the child owner across raw release failures, so
+retries preserve custody of the remaining child state.
 
 Main-Heap destruction (`heap_destroy.rs`, `force_destroy_main_heap_theaps_quiescent`)
 runs after whole-process quiescence. Pinned `arena.c:2640-2643` returns early
