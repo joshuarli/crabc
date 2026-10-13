@@ -173,6 +173,80 @@ visit.main.population
 visit.main.setup
 """.split())
 
+_FALLBACK_WARNING = (
+    "unable to allocate aligned OS memory directly, fall back to over-allocation "
+    "(size: {size} bytes, address: {address}, alignment: {alignment}, commit: {commit})\n"
+)
+_DEBUG_SUBPROC_DIAGNOSTICS = {
+    "subproc.add_main.messages": (
+        ("error", "allocation request is too large (9223372036854775807 * 3 bytes)\n"),
+        *(("warning", (0x340000, 0x10000000, 0)) for _ in range(10)),
+    ),
+    "subproc.live.messages": (
+        ("warning", (0x40000000, 0x10000000, 1)),
+    ),
+    "subproc.messages": (
+        ("warning", (0x40000000, 0x10000000, 1)),
+        ("warning", (0x110000, 0x10000000, 0)),
+        ("warning", (0x240000, 0x10000000, 0)),
+        ("warning", (0x8400000, 0x10000000, 0)),
+        ("error", "aligned allocation with a large alignment cannot be used with an alignment offset "
+                   "(size 4096, alignment 1048576, offset 7)\n"),
+        ("error", "allocation request is too large (9223372036854775807 * 3 bytes)\n"),
+        ("warning", "requested alignment is too large (262144 KiB)\n"),
+        ("warning", "requested alignment is too large (262144 KiB)\n"),
+        ("error", "unable to allocate memory (4096 bytes)\n"),
+        ("error", "allocation request is too large (9223372036854775807 * 3 bytes)\n"),
+        ("error", "allocation request is too large (9223372036854775807 * 3 bytes)\n"),
+    ),
+}
+_FALLBACK_WARNING_RE = re.compile(
+    r"unable to allocate aligned OS memory directly, fall back to over-allocation "
+    r"\(size: (0x[0-9A-Fa-f]+) bytes, address: (0x[0-9A-Fa-f]+), "
+    r"alignment: (0x[0-9A-Fa-f]+), commit: ([01])\)\n"
+)
+
+
+def _canonicalize_debug_subproc_diagnostics(trace, side):
+    """Pin these source warnings while masking only their released map address."""
+
+    canonical = dict(trace)
+    for key, expected in _DEBUG_SUBPROC_DIAGNOSTICS.items():
+        try:
+            chunks = [bytes.fromhex(part).decode("utf-8") for part in trace[key].split(":") if part]
+        except (ValueError, UnicodeDecodeError) as error:
+            raise harness.HarnessError(f"debug-1 {side} {key} has malformed callback bytes") from error
+        if len(chunks) != 2 * len(expected):
+            raise harness.HarnessError(f"debug-1 {side} {key} diagnostic count differs: "
+                                       f"expected={len(expected)} observed={len(chunks) // 2}")
+
+        normalized = []
+        for index, (severity, expected_body) in enumerate(expected):
+            prefix, body = chunks[2 * index:2 * index + 2]
+            if prefix != f"mimalloc: {severity}: thread 0xTID: ":
+                raise harness.HarnessError(f"debug-1 {side} {key} diagnostic {index} prefix differs")
+            if isinstance(expected_body, tuple):
+                match = _FALLBACK_WARNING_RE.fullmatch(body)
+                if match is None:
+                    raise harness.HarnessError(f"debug-1 {side} {key} aligned-OS warning {index} schema differs")
+                size, address, alignment, commit = match.groups()
+                expected_size, expected_alignment, expected_commit = expected_body
+                address_value = int(address, 16)
+                alignment_value = int(alignment, 16)
+                if (int(size, 16) != expected_size or alignment_value != expected_alignment
+                        or int(commit) != expected_commit):
+                    raise harness.HarnessError(f"debug-1 {side} {key} aligned-OS warning {index} fields differ")
+                if (address_value == 0 or address_value > (1 << 64) - 1
+                        or address_value % 4096 != 0
+                        or address_value % alignment_value == 0):
+                    raise harness.HarnessError(f"debug-1 {side} {key} aligned-OS warning {index} candidate geometry differs")
+                body = (body[:match.start(2)] + "0xADDRESS" + body[match.end(2):])
+            elif body != expected_body:
+                raise harness.HarnessError(f"debug-1 {side} {key} diagnostic {index} body differs")
+            normalized.extend((prefix.encode().hex(), body.encode().hex()))
+        canonical[key] = ":".join(normalized)
+    return canonical
+
 
 def compare_runs(c_run, native_run, profile):
     traces = {side: m7.parse_options_trace(result["stdout"], side, TRACE_BEGIN, TRACE_END)
@@ -181,13 +255,23 @@ def compare_runs(c_run, native_run, profile):
         if set(trace) != EXPECTED_KEYS:
             raise harness.HarnessError(f"{profile} {side} original public workload fields differ: "
                 f"missing={sorted(EXPECTED_KEYS-set(trace))} extra={sorted(set(trace)-EXPECTED_KEYS)}")
+    if profile == "debug-1":
+        traces = {side: _canonicalize_debug_subproc_diagnostics(trace, side)
+                  for side, trace in traces.items()}
     m7.compare_options_traces(traces["c"], traces["native"])
     for key in ("unabandon.pages_abandoned", "unabandon.os.pages_abandoned"):
         if traces["c"][key] != "1,0":
             raise harness.HarnessError(f"{profile} {key} did not return to its pre-allocation count: "
                 f"{traces['c'][key]}")
+    stdout = {"c": c_run["stdout"], "native": native_run["stdout"]}
     stderr = {"c": c_run["stderr"], "native": native_run["stderr"]}
     if profile == "debug-1":
+        for side in ("c", "native"):
+            for key in _DEBUG_SUBPROC_DIAGNOSTICS:
+                pattern = re.compile(rf"^{re.escape(key)}=.*$", re.MULTILINE)
+                stdout[side], count = pattern.subn(f"{key}={traces[side][key]}", stdout[side])
+                if count != 1:
+                    raise harness.HarnessError(f"debug-1 {side} {key} stdout row is not unique")
         expected = {
             "c": "m6-valid-domain profile=debug-1 backend=c guarded_precise=1",
             "native": "m6-valid-domain profile=debug-1 backend=native guarded_precise=0",
@@ -200,7 +284,7 @@ def compare_runs(c_run, native_run, profile):
             stderr[side] = re.sub(r"^m6-valid-domain .*?\n", "", record["stderr"], count=1,
                                   flags=re.MULTILINE)
     for stream, c_value, native_value in (
-        ("stdout", c_run["stdout"], native_run["stdout"]),
+        ("stdout", stdout["c"], stdout["native"]),
         ("stderr", stderr["c"], stderr["native"]),
     ):
         if c_value != native_value:

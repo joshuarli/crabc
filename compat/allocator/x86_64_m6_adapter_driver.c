@@ -32,10 +32,56 @@
 static size_t message_count;
 static char messages[MAX_MESSAGES][MAX_MESSAGE_BYTES];
 
+/* Only normalize an emitted thread ID when it belongs to the callback thread;
+   allocator warnings can come from workers outside the main and child threads. */
+static void normalize_callback_thread_prefix(char* message, size_t capacity) {
+  static const char warning_prefix[] = "mimalloc: warning: thread 0x";
+  static const char error_prefix[] = "mimalloc: error: thread 0x";
+  const char* prefix = NULL;
+  if (strncmp(message, warning_prefix, sizeof(warning_prefix) - 1) == 0) {
+    prefix = warning_prefix;
+  } else if (strncmp(message, error_prefix, sizeof(error_prefix) - 1) == 0) {
+    prefix = error_prefix;
+  } else {
+    return;
+  }
+
+  const size_t prefix_length = strlen(prefix);
+  size_t address_end = prefix_length;
+  uintptr_t observed = 0;
+  while (message[address_end] != 0) {
+    const unsigned char digit = (unsigned char)message[address_end];
+    unsigned int nibble;
+    if (digit >= '0' && digit <= '9') nibble = (unsigned int)(digit - '0');
+    else if (digit >= 'a' && digit <= 'f') nibble = (unsigned int)(digit - 'a') + 10;
+    else if (digit >= 'A' && digit <= 'F') nibble = (unsigned int)(digit - 'A') + 10;
+    else break;
+    if (observed > (UINTPTR_MAX - nibble) / 16) return;
+    observed = observed * 16 + nibble;
+    address_end++;
+  }
+  if (address_end == prefix_length || message[address_end] != ':'
+      || message[address_end + 1] != '\x20'
+      || observed != (uintptr_t)pthread_self()) {
+    return;
+  }
+
+  static const char normalized[] = "TID";
+  const size_t suffix_length = strlen(message + address_end);
+  const size_t replacement_length = sizeof(normalized) - 1;
+  const size_t new_length = prefix_length + replacement_length + suffix_length;
+  if (new_length >= capacity) return;
+  memmove(message + prefix_length + replacement_length, message + address_end, suffix_length + 1);
+  memcpy(message + prefix_length, normalized, replacement_length);
+}
+
 static void capture(const char* message, void* argument) {
   (void)argument;
   if (message == NULL || message[0] == 0) return;
-  if (message_count < MAX_MESSAGES) snprintf(messages[message_count], MAX_MESSAGE_BYTES, "%s", message);
+  if (message_count < MAX_MESSAGES) {
+    snprintf(messages[message_count], MAX_MESSAGE_BYTES, "%s", message);
+    normalize_callback_thread_prefix(messages[message_count], MAX_MESSAGE_BYTES);
+  }
   message_count++;
 }
 

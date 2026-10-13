@@ -18,22 +18,64 @@ def trace_stdout(values=None):
     return adapter.TRACE_BEGIN + "\n" + "".join(f"{key}={value}\n" for key,value in trace.items()) + adapter.TRACE_END + "\n"
 
 
+def debug_subproc_messages(side):
+    address = 0x7F001000 if side == "c" else 0x7E001000
+    values = {}
+    for key, diagnostics in adapter._DEBUG_SUBPROC_DIAGNOSTICS.items():
+        chunks = []
+        for severity, body in diagnostics:
+            chunks.append(f"mimalloc: {severity}: thread 0xTID: ")
+            if isinstance(body, tuple):
+                size, alignment, commit = body
+                chunks.append(adapter._FALLBACK_WARNING.format(
+                    size=hex(size), address=hex(address), alignment=hex(alignment), commit=commit))
+                address += 0x1000
+            else:
+                chunks.append(body)
+        values[key] = ":".join(chunk.encode().hex() for chunk in chunks)
+    return values
+
+
+def mutate_debug_message(result, key, mutate):
+    stdout = result["stdout"]
+    trace = stdout.split(adapter.TRACE_BEGIN + "\n", 1)[1].split(adapter.TRACE_END, 1)[0]
+    rows = dict(line.split("=", 1) for line in trace.splitlines())
+    chunks = [bytes.fromhex(part).decode() for part in rows[key].split(":") if part]
+    rows[key] = ":".join(chunk.encode().hex() for chunk in mutate(chunks))
+    changed = adapter.TRACE_BEGIN + "\n" + "".join(f"{name}={value}\n" for name, value in rows.items())
+    changed += adapter.TRACE_END + "\n"
+    return {**result, "stdout": changed}
+
+
+def mutate_first_warning_field(chunks, field, replacement):
+    for index, chunk in enumerate(chunks):
+        if chunk.startswith("unable to allocate aligned OS memory directly"):
+            marker = f"{field}: "
+            start = chunk.index(marker) + len(marker)
+            end = chunk.index(")" if field == "commit" else ",", start)
+            return [*chunks[:index], chunk[:start] + replacement + chunk[end:], *chunks[index + 1:]]
+    raise AssertionError("debug fixture has no aligned-OS fallback warning")
+
+
 class PublicAdapterObservationTests(unittest.TestCase):
     def run_result(self, stdout=None, stderr=""):
         return {"stdout": trace_stdout() if stdout is None else stdout, "stderr": stderr}
 
     def valid_domain_result(self, side, stdout=None, extra_stderr=""):
+        if stdout is None:
+            stdout = trace_stdout(debug_subproc_messages(side))
         marker = (f"m6-valid-domain profile=debug-1 backend={side} guarded_precise="
                  f"{1 if side == 'c' else 0}\n")
         return self.run_result(stdout, marker + extra_stderr)
 
     def test_all_original_observations_match_without_profile_geometry_pins(self):
-        output=trace_stdout({"heap.malloc.usable":"56","reserve.commit.committed":"67108864"})
+        values = {"heap.malloc.usable":"56","reserve.commit.committed":"67108864"}
         for profile in adapter.PROFILES:
             if profile == "debug-1":
-                adapter.compare_runs(self.valid_domain_result("c", output),
-                                     self.valid_domain_result("native", output), profile)
+                adapter.compare_runs(self.valid_domain_result("c", trace_stdout({**values, **debug_subproc_messages("c")})),
+                                     self.valid_domain_result("native", trace_stdout({**values, **debug_subproc_messages("native")})), profile)
             else:
+                output = trace_stdout(values)
                 adapter.compare_runs(self.run_result(output), self.run_result(output), profile)
 
     def test_missing_obligation_is_rejected_even_when_both_sides_omit_it(self):
@@ -63,9 +105,35 @@ class PublicAdapterObservationTests(unittest.TestCase):
         adapter.compare_precondition_control("debug-1", c, native)
 
     def test_callback_warning_payload_is_compared(self):
+        native = self.valid_domain_result("native")
+        native = mutate_debug_message(native, "subproc.messages",
+            lambda chunks: [*chunks[:-1], "different\n"])
         with self.assertRaises(adapter.harness.HarnessError):
-            adapter.compare_runs(self.valid_domain_result("c"),
-                self.valid_domain_result("native", trace_stdout({"subproc.messages":"different"})), "debug-1")
+            adapter.compare_runs(self.valid_domain_result("c"), native, "debug-1")
+
+    def test_debug_warning_addresses_are_the_only_callback_bytes_canonicalized(self):
+        adapter.compare_runs(self.valid_domain_result("c"), self.valid_domain_result("native"), "debug-1")
+
+    def test_debug_warning_mutations_are_rejected(self):
+        c = self.valid_domain_result("c")
+        native = self.valid_domain_result("native")
+        warning_chunk = 2
+        mutations = (
+            ("missing", lambda chunks: chunks[:warning_chunk * 2] + chunks[warning_chunk * 2 + 2:]),
+            ("extra", lambda chunks: chunks[:warning_chunk * 2] + chunks[warning_chunk * 2:warning_chunk * 2 + 2] + chunks[warning_chunk * 2:]),
+            ("reordered", lambda chunks: chunks[2:4] + chunks[:2] + chunks[4:]),
+            ("size", lambda chunks: mutate_first_warning_field(chunks, "size", "0x40001000")),
+            ("alignment", lambda chunks: mutate_first_warning_field(chunks, "alignment", "0x20000000")),
+            ("commit", lambda chunks: mutate_first_warning_field(chunks, "commit", "0")),
+            ("null candidate", lambda chunks: mutate_first_warning_field(chunks, "address", "0x0")),
+            ("unaligned candidate", lambda chunks: mutate_first_warning_field(chunks, "address", "0x7e001001")),
+            ("requested-alignment candidate", lambda chunks: mutate_first_warning_field(chunks, "address", "0x10000000")),
+            ("unknown diagnostic", lambda chunks: [*chunks[:-1], "unexpected warning\n"]),
+        )
+        for name, mutate in mutations:
+            with self.subTest(name=name), self.assertRaises(adapter.harness.HarnessError):
+                changed = mutate_debug_message(native, "subproc.messages", mutate)
+                adapter.compare_runs(c, changed, "debug-1")
 
     def test_aligned_offset_control_retains_source_diagnostic_and_page(self):
         marker_c = "m6-alignment-control profile=debug-1 backend=c guarded_precise=0\n"
