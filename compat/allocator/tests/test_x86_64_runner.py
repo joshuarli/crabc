@@ -152,6 +152,13 @@ fi
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
 
+    def test_allocator_containers_disable_core_dumps(self):
+        result = self.launch("allocator-unit")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        limit = args.index(b"--ulimit")
+        self.assertEqual(args[limit + 1], b"core=0:0")
+
     def test_m3_queue_reorder_mode_reaches_its_existing_receiver(self):
         result = self.launch("allocator-m3", "--queue-reorder-only")
         self.assertEqual(result.returncode, 0, result.stderr)

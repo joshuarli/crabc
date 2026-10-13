@@ -406,7 +406,9 @@ run_in_container() {
     # Receipts and executions must name the same inspected bytes even if the
     # development tag changes between inspection and container creation.
     execution_image="$image_id"
+    # Keep allocator aborts from creating core files in the shared checkout.
     docker run --rm --init "${reader_args[@]}" "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
+        --ulimit core=0:0 \
         --platform "$PLATFORM" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo \
