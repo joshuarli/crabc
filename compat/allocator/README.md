@@ -172,8 +172,7 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   `allocator-static-modes` observe the pinned C build outputs; they do not
   claim behavior or Rust parity.
 - Abandon/adopt/exit scenarios: the remaining `allocator-*` commands in the
-  contract table (remote free, mapped reclaim/adoption
-  (`allocator-regular-mapped-reclaim` takes an optional, redundant `--offline`), unmapped reabandon,
+  contract table (remote free, mapped reclaim/adoption, unmapped reabandon,
   on-demand commit, full-page force-collect and reabandon, aggregate
   post-exit, pthread-destructor and cancellation, deferred-free callback,
   automatic arena reservation, and so on). `allocator-automatic-arena-reservation
