@@ -68,6 +68,7 @@ Measured timings are in [docs/lanes.md](docs/lanes.md).
 | Scope, product boundaries, oracles, dependency and safety rules | [docs/scope.md](docs/scope.md) |
 | Selected behavior and deliberate limits | [COMPATIBILITY-PROFILE.md](COMPATIBILITY-PROFILE.md) |
 | Active work, decisions, sequence, acceptance | [plan.md](plan.md) |
+| What complete means for each family and for the allocator port | [docs/completion-requirements.md](docs/completion-requirements.md) |
 | Running parallel lanes, the lane loop, integration | [docs/lanes.md](docs/lanes.md) |
 | Layer ownership and the private runtime wire format | [docs/design/architecture.md](docs/design/architecture.md) |
 | Rust facade design and capability accounting | [docs/design/crabc-rs.md](docs/design/crabc-rs.md) |
