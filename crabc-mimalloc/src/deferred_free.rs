@@ -182,6 +182,7 @@ pub(crate) enum DeferredFreeInvocation {
 
 impl DeferredFreeInvocation {
     #[inline]
+    #[cfg(test)]
     pub(crate) const fn heartbeat(&self) -> u64 {
         match self {
             Self::Complete(heartbeat) => *heartbeat,

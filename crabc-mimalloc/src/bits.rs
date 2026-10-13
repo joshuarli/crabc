@@ -44,16 +44,19 @@ pub(crate) const fn bsr(value: usize) -> Option<usize> {
     }
 }
 
+#[cfg(test)]
 #[inline]
 pub(crate) const fn rotr(value: usize, shift: usize) -> usize {
     value.rotate_right((shift & (SIZE_BITS - 1)) as u32)
 }
 
+#[cfg(test)]
 #[inline]
 pub(crate) const fn rotl(value: usize, shift: usize) -> usize {
     value.rotate_left((shift & (SIZE_BITS - 1)) as u32)
 }
 
+#[cfg(test)]
 #[inline]
 pub(crate) const fn rotl32(value: u32, shift: u32) -> u32 {
     value.rotate_left(shift & 31)
