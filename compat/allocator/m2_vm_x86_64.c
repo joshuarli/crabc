@@ -86,6 +86,12 @@ typedef struct m2_numa_raw_answers_s {
   size_t current_answer_index;
   size_t count_calls;
   size_t current_calls;
+  long use_numa_nodes_answer;
+  size_t* verbose_fragments;
+  size_t verbose_recursive_queries;
+  size_t verbose_recursive_count;
+  size_t verbose_cache_at_output;
+  size_t verbose_fragments_at_current;
 } m2_numa_raw_answers_t;
 
 static m2_numa_raw_answers_t m2_numa_raw_answers = {0};
@@ -230,13 +236,18 @@ static size_t m2_os_numa_node_count_primitive(void) {
 static size_t m2_os_numa_node_primitive(void) {
   if (!m2_numa_raw_answers.active) return _mi_prim_numa_node();
   m2_numa_raw_answers.current_calls++;
+  if (m2_numa_raw_answers.verbose_fragments != NULL) {
+    m2_numa_raw_answers.verbose_fragments_at_current =
+        *m2_numa_raw_answers.verbose_fragments;
+  }
   const size_t index = m2_numa_raw_answers.current_answer_index++;
   if (index >= m2_numa_raw_answers.current_answer_count) return 0;
   return m2_numa_raw_answers.current_answers[index];
 }
 
 static long m2_os_numa_option_get(mi_option_t option) {
-  if (m2_numa_raw_answers.active && option == mi_option_use_numa_nodes) return -1;
+  if (m2_numa_raw_answers.active && option == mi_option_use_numa_nodes)
+    return m2_numa_raw_answers.use_numa_nodes_answer;
   return mi_option_get(option);
 }
 
@@ -261,6 +272,50 @@ typedef struct m2_numa_controlled_trace_s {
   size_t current_edges_raw_current_calls;
 } m2_numa_controlled_trace_t;
 
+typedef struct m2_numa_verbose_controlled_trace_s {
+  size_t count;
+  size_t cached_count;
+  size_t current;
+  size_t raw_count_calls;
+  size_t raw_current_calls;
+  size_t count_after_option_change;
+  size_t recursive_queries;
+  size_t recursive_count;
+  size_t cache_at_output;
+  size_t fragments_at_current;
+  size_t output_fragments;
+  bool prefix_matches;
+  bool body_matches;
+} m2_numa_verbose_controlled_trace_t;
+
+typedef struct m2_numa_verbose_output_capture_s {
+  size_t fragments;
+  bool prefix_matches;
+  bool body_matches;
+} m2_numa_verbose_output_capture_t;
+
+static void m2_capture_controlled_numa_verbose_output(const char* message, void* argument) {
+  m2_numa_verbose_output_capture_t* capture = argument;
+  if (capture == NULL || message == NULL) return;
+  const size_t index = capture->fragments++;
+  m2_numa_raw_answers.verbose_fragments = &capture->fragments;
+  if (index == 0 && m2_numa_raw_answers.active) {
+    m2_numa_raw_answers.verbose_cache_at_output =
+        mi_atomic_load_acquire(&mi_numa_node_count);
+    m2_numa_raw_answers.verbose_recursive_count =
+        (size_t)_mi_os_numa_node_count();
+    m2_numa_raw_answers.verbose_recursive_queries++;
+  }
+  if (index == 0) {
+    capture->prefix_matches = strcmp(message, "mimalloc: ") == 0;
+  } else if (index == 1) {
+    capture->body_matches = strcmp(message, "using 3 numa regions\n") == 0;
+  } else {
+    capture->prefix_matches = false;
+    capture->body_matches = false;
+  }
+}
+
 /* Exercise the actual source cache with controlled raw answers, then restore
  * the host observation so this witness cannot change later allocator work. */
 static m2_numa_controlled_trace_t m2_capture_controlled_numa_trace(void) {
@@ -268,6 +323,7 @@ static m2_numa_controlled_trace_t m2_capture_controlled_numa_trace(void) {
   m2_numa_controlled_trace_t trace = {0};
   memset(&m2_numa_raw_answers, 0, sizeof(m2_numa_raw_answers));
   m2_numa_raw_answers.active = true;
+  m2_numa_raw_answers.use_numa_nodes_answer = -1;
 
   mi_atomic_store_release(&mi_numa_node_count, 0);
   m2_numa_raw_answers.count_answer = 3;
@@ -324,6 +380,51 @@ static m2_numa_controlled_trace_t m2_capture_controlled_numa_trace(void) {
 
   m2_numa_raw_answers.active = false;
   mi_atomic_store_release(&mi_numa_node_count, saved_count);
+  return trace;
+}
+
+/* Exercise the option-selected cache fill and its real source verbose call.
+ * The C fixture captures only the resulting two callback fragments. */
+static m2_numa_verbose_controlled_trace_t m2_capture_controlled_numa_verbose_trace(void) {
+  const size_t saved_count = mi_atomic_load_acquire(&mi_numa_node_count);
+  m2_numa_verbose_controlled_trace_t trace = {0};
+  m2_numa_verbose_output_capture_t output = {
+      .prefix_matches = true,
+      .body_matches = true,
+  };
+  memset(&m2_numa_raw_answers, 0, sizeof(m2_numa_raw_answers));
+  m2_numa_raw_answers.use_numa_nodes_answer = 3;
+  m2_numa_raw_answers.current_answers[0] = 8;
+  m2_numa_raw_answers.current_answer_count = 1;
+  m2_numa_raw_answers.verbose_fragments = &output.fragments;
+  const long saved_verbose = mi_option_get(mi_option_verbose);
+  mi_register_output(m2_capture_controlled_numa_verbose_output, &output);
+  output.fragments = 0;
+  output.prefix_matches = true;
+  output.body_matches = true;
+  mi_option_set(mi_option_verbose, 1);
+  m2_numa_raw_answers.active = true;
+
+  mi_atomic_store_release(&mi_numa_node_count, 0);
+  trace.current = (size_t)_mi_os_numa_node();
+  trace.count = (size_t)_mi_os_numa_node_count();
+  trace.cached_count = (size_t)_mi_os_numa_node_count();
+  trace.raw_count_calls = m2_numa_raw_answers.count_calls;
+  trace.raw_current_calls = m2_numa_raw_answers.current_calls;
+  m2_numa_raw_answers.use_numa_nodes_answer = 4;
+  trace.count_after_option_change = (size_t)_mi_os_numa_node_count();
+  trace.recursive_queries = m2_numa_raw_answers.verbose_recursive_queries;
+  trace.recursive_count = m2_numa_raw_answers.verbose_recursive_count;
+  trace.cache_at_output = m2_numa_raw_answers.verbose_cache_at_output;
+  trace.fragments_at_current = m2_numa_raw_answers.verbose_fragments_at_current;
+  trace.output_fragments = output.fragments;
+  trace.prefix_matches = output.prefix_matches;
+  trace.body_matches = output.body_matches;
+
+  m2_numa_raw_answers.active = false;
+  mi_atomic_store_release(&mi_numa_node_count, saved_count);
+  mi_option_set(mi_option_verbose, saved_verbose);
+  mi_register_output(NULL, NULL);
   return trace;
 }
 
@@ -6052,6 +6153,8 @@ int main(void) {
   const int numa_current = _mi_os_numa_node();
   if (numa_count < 1 || numa_current < 0 || numa_current >= numa_count) return 30;
   const m2_numa_controlled_trace_t numa_controlled = m2_capture_controlled_numa_trace();
+  const m2_numa_verbose_controlled_trace_t numa_verbose_controlled =
+      m2_capture_controlled_numa_verbose_trace();
 
   puts("CRABC_MI_M2_VM_TRACE_BEGIN");
   U("m2.vm.config.page_size", page);
@@ -6211,6 +6314,29 @@ int main(void) {
       numa_controlled.current_edges_raw_count_calls);
   U("m2.vm.numa.controlled.current_edges.raw_current_calls",
       numa_controlled.current_edges_raw_current_calls);
+  U("m2.vm.numa.controlled.verbose.count", numa_verbose_controlled.count);
+  U("m2.vm.numa.controlled.verbose.cached_count", numa_verbose_controlled.cached_count);
+  U("m2.vm.numa.controlled.verbose.current", numa_verbose_controlled.current);
+  U("m2.vm.numa.controlled.verbose.raw_count_calls",
+      numa_verbose_controlled.raw_count_calls);
+  U("m2.vm.numa.controlled.verbose.raw_current_calls",
+      numa_verbose_controlled.raw_current_calls);
+  U("m2.vm.numa.controlled.verbose.count_after_option_change",
+      numa_verbose_controlled.count_after_option_change);
+  U("m2.vm.numa.controlled.verbose.recursive_queries",
+      numa_verbose_controlled.recursive_queries);
+  U("m2.vm.numa.controlled.verbose.recursive_count",
+      numa_verbose_controlled.recursive_count);
+  U("m2.vm.numa.controlled.verbose.cache_at_output",
+      numa_verbose_controlled.cache_at_output);
+  U("m2.vm.numa.controlled.verbose.fragments_at_current",
+      numa_verbose_controlled.fragments_at_current);
+  U("m2.vm.numa.controlled.verbose.output_fragments",
+      numa_verbose_controlled.output_fragments);
+  U("m2.vm.numa.controlled.verbose.prefix_matches",
+      numa_verbose_controlled.prefix_matches);
+  U("m2.vm.numa.controlled.verbose.body_matches",
+      numa_verbose_controlled.body_matches);
   U("m2.vm.aligned_hint.cold_missing_default_advances_cursor",
       aligned_hint_cold_missing_default_advances);
   U("m2.vm.aligned_hint.eligibility_and_geometry",

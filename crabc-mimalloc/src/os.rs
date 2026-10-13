@@ -1941,7 +1941,9 @@ impl VmPolicy {
     /// Resolves the source option-aware NUMA-region count into this policy's
     /// private cache.  It deliberately preserves `src/os.c`'s simple
     /// load/fill/store shape rather than introducing a stronger once or CAS
-    /// protocol for the first topology observation.
+    /// protocol for the first topology observation. The initial lookup can
+    /// precede output initialization, when the retained owner buffers this
+    /// message; publishing first also makes a reentrant query observe the cache.
     #[inline]
     fn numa_node_count_with_raw(&self, mut raw_count: impl FnMut() -> usize) -> usize {
         let count = self.numa_node_count.load(Ordering::Acquire);
@@ -1958,6 +1960,16 @@ impl VmPolicy {
                 }
             };
             self.numa_node_count.store(resolved, Ordering::Release);
+            if resolved > 1 {
+                if let Some(output) = self.process_options {
+                    // SAFETY: initial process startup may still hold its TLD
+                    // projection, but the default sink only appends to delayed
+                    // output and cannot call externally. The process cache is
+                    // filled before callback-capable output is installed; other
+                    // policy owners dispatch only after projections and locks end.
+                    unsafe { output.numa_regions_verbose(resolved) };
+                }
+            }
             resolved
         } else {
             count
@@ -7531,6 +7543,155 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
+    struct NumaVerboseOutputCapture {
+        messages: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>>,
+        policy: core::sync::atomic::AtomicPtr<VmPolicy>,
+        recursive_queries: AtomicUsize,
+        recursive_count: AtomicUsize,
+        cache_at_output: AtomicUsize,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_numa_verbose_output(message: *const c_char, argument: *mut c_void) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the process test retains this capture through each synchronous
+        // output callback and serializes registration with the one test thread.
+        let capture = unsafe { &*(argument as *const NumaVerboseOutputCapture) };
+        let first_fragment = if let Ok(mut messages) = capture.messages.lock() {
+            messages.push(unsafe { CStr::from_ptr(message) }.to_bytes().to_vec());
+            messages.len() == 1
+        } else {
+            false
+        };
+        if first_fragment {
+            let policy = capture.policy.load(Ordering::Acquire);
+            if !policy.is_null() {
+                // SAFETY: the fixture retains this policy for the whole
+                // synchronous callback and only publishes it after creation.
+                let policy = unsafe { &*policy };
+                capture.cache_at_output.store(policy.test_numa_node_count_cache(), Ordering::Release);
+                capture.recursive_count.store(policy.numa_node_count(), Ordering::Release);
+                capture.recursive_queries.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct ControlledProcessNumaVerboseTrace {
+        count: usize,
+        cached_count: usize,
+        current: usize,
+        raw_count_calls: usize,
+        raw_current_calls: usize,
+        count_after_option_change: usize,
+        recursive_queries: usize,
+        recursive_count: usize,
+        cache_at_output: usize,
+        fragments_at_current: usize,
+        output_fragments: usize,
+        prefix_matches: bool,
+        body_matches: bool,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn controlled_process_numa_verbose_trace() -> ControlledProcessNumaVerboseTrace {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("source environment test lock is not poisoned");
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_verbose=0".as_ptr(),
+            c"mimalloc_use_numa_nodes=3".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+
+        let capture = std::boxed::Box::leak(std::boxed::Box::new(
+            NumaVerboseOutputCapture {
+                messages: std::sync::Mutex::new(std::vec::Vec::new()),
+                policy: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+                recursive_queries: AtomicUsize::new(0),
+                recursive_count: AtomicUsize::new(0),
+                cache_at_output: AtomicUsize::new(0),
+            },
+        ));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(unexpected_default_diagnostic_output),
+        ));
+        // SAFETY: this fixed test retains the owner, raw environment, callback,
+        // and capture for the synchronous option and output observations below.
+        unsafe {
+            output.initialize_source_options(vm_policy_source_environment_for_test);
+            output.post_init();
+            output.register_output(
+                Some(capture_numa_verbose_output),
+                core::ptr::from_ref(capture).cast_mut().cast(),
+            );
+            output.option_set(SourceOption::Verbose, 1)
+                .expect("the installed source option table remains writable");
+        }
+        capture.messages.lock().unwrap().clear();
+
+        // SAFETY: the owner has its selected option table installed and its output
+        // callback remains registered for this process-shaped policy fixture.
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(unsafe {
+            VmPolicy::from_process_options(output)
+        }));
+        capture.policy.store(core::ptr::from_ref(policy).cast_mut(), Ordering::Release);
+        let mut raw_count_calls = 0;
+        let mut raw_current_calls = 0;
+        let mut fragments_at_current = 0;
+        let current = policy.current_numa_node_with_raw(
+            || {
+                raw_count_calls += 1;
+                13
+            },
+            || {
+                raw_current_calls += 1;
+                fragments_at_current = capture.messages.lock().unwrap().len();
+                8
+            },
+        );
+        let count = policy.numa_node_count_with_raw(|| {
+            raw_count_calls += 1;
+            7
+        });
+        let cached_count = policy.numa_node_count_with_raw(|| {
+            raw_count_calls += 1;
+            11
+        });
+        // SAFETY: the focused trace serializes option reads/writes and output
+        // delivery; the selected count has already filled its source cache.
+        unsafe { output.option_set(SourceOption::UseNumaNodes, 4) }
+            .expect("the installed source option table remains writable");
+        let count_after_option_change = policy.numa_node_count_with_raw(|| {
+            raw_count_calls += 1;
+            17
+        });
+        let fragments = capture.messages.lock().unwrap();
+
+        ControlledProcessNumaVerboseTrace {
+            count,
+            cached_count,
+            current,
+            raw_count_calls,
+            raw_current_calls,
+            count_after_option_change,
+            recursive_queries: capture.recursive_queries.load(Ordering::Acquire),
+            recursive_count: capture.recursive_count.load(Ordering::Acquire),
+            cache_at_output: capture.cache_at_output.load(Ordering::Acquire),
+            fragments_at_current,
+            output_fragments: fragments.len(),
+            prefix_matches: fragments
+                .first()
+                .is_some_and(|fragment| fragment.as_slice() == b"mimalloc: "),
+            body_matches: fragments
+                .get(1)
+                .is_some_and(|fragment| fragment.as_slice() == b"using 3 numa regions\n"),
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     unsafe impl Sync for MbindDiagnosticCapture {}
 
     #[cfg(target_arch = "x86_64")]
@@ -10386,6 +10547,70 @@ mod tests {
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
         );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_numa_cache_emits_source_verbose_region_line_once() {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("source environment test lock is not poisoned");
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_verbose=0".as_ptr(),
+            c"mimalloc_use_numa_nodes=3".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+
+        let capture = std::boxed::Box::leak(std::boxed::Box::new(
+            NumaVerboseOutputCapture {
+                messages: std::sync::Mutex::new(std::vec::Vec::new()),
+                policy: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+                recursive_queries: AtomicUsize::new(0),
+                recursive_count: AtomicUsize::new(0),
+                cache_at_output: AtomicUsize::new(0),
+            },
+        ));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(unexpected_default_diagnostic_output),
+        ));
+        // SAFETY: both owner and raw environment are retained for this test's
+        // process lifetime; the output callback and its capture stay live.
+        unsafe {
+            output.initialize_source_options(vm_policy_source_environment_for_test);
+            output.post_init();
+            output.register_output(
+                Some(capture_numa_verbose_output),
+                core::ptr::from_ref(capture).cast_mut().cast(),
+            );
+            output.option_set(SourceOption::Verbose, 1)
+                .expect("the installed source option table remains writable");
+        }
+        capture.messages.lock().unwrap().clear();
+
+        // SAFETY: `output` is the initialized process option owner retained by
+        // this policy, and the test serializes option and output operations.
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(unsafe {
+            VmPolicy::from_process_options(output)
+        }));
+        capture.policy.store(core::ptr::from_ref(policy).cast_mut(), Ordering::Release);
+        assert_eq!(policy.numa_node_count(), 3);
+        assert_eq!(
+            capture.messages.lock().unwrap().as_slice(),
+            [b"mimalloc: ".as_slice(), b"using 3 numa regions\n".as_slice()],
+            "the cache fill emits the pinned verbose prefix and body separately",
+        );
+        assert_eq!(capture.cache_at_output.load(Ordering::Acquire), 3);
+        assert_eq!(capture.recursive_queries.load(Ordering::Acquire), 1);
+        assert_eq!(capture.recursive_count.load(Ordering::Acquire), 3);
+
+        // SAFETY: only this test changes the installed option table; the
+        // source count is already cached and no output dispatch overlaps.
+        unsafe { output.option_set(SourceOption::UseNumaNodes, 4) }
+            .expect("the installed source option table remains writable");
+        assert_eq!(policy.numa_node_count(), 3, "the source cache ignores later option changes");
+        assert_eq!(capture.messages.lock().unwrap().len(), 2, "a cached query emits no second line");
     }
 
     #[test]
@@ -15911,6 +16136,7 @@ mod tests {
         let numa_count = os_numa_node_count();
         let numa_current = os_numa_node();
         let numa_controlled = controlled_os_numa_wrapper_trace();
+        let numa_verbose_controlled = controlled_process_numa_verbose_trace();
         assert!(numa_count >= 1, "the allocator-facing NUMA cache normalizes to one");
         assert!(numa_current < numa_count, "the source current-node route normalizes modulo count");
 
@@ -16164,6 +16390,19 @@ mod tests {
         emit!("m2.vm.numa.controlled.current_above_int_max", numa_controlled.current_above_int_max);
         emit!("m2.vm.numa.controlled.current_edges.raw_count_calls", numa_controlled.current_edges_raw_count_calls);
         emit!("m2.vm.numa.controlled.current_edges.raw_current_calls", numa_controlled.current_edges_raw_current_calls);
+        emit!("m2.vm.numa.controlled.verbose.count", numa_verbose_controlled.count);
+        emit!("m2.vm.numa.controlled.verbose.cached_count", numa_verbose_controlled.cached_count);
+        emit!("m2.vm.numa.controlled.verbose.current", numa_verbose_controlled.current);
+        emit!("m2.vm.numa.controlled.verbose.raw_count_calls", numa_verbose_controlled.raw_count_calls);
+        emit!("m2.vm.numa.controlled.verbose.raw_current_calls", numa_verbose_controlled.raw_current_calls);
+        emit!("m2.vm.numa.controlled.verbose.count_after_option_change", numa_verbose_controlled.count_after_option_change);
+        emit!("m2.vm.numa.controlled.verbose.recursive_queries", numa_verbose_controlled.recursive_queries);
+        emit!("m2.vm.numa.controlled.verbose.recursive_count", numa_verbose_controlled.recursive_count);
+        emit!("m2.vm.numa.controlled.verbose.cache_at_output", numa_verbose_controlled.cache_at_output);
+        emit!("m2.vm.numa.controlled.verbose.fragments_at_current", numa_verbose_controlled.fragments_at_current);
+        emit!("m2.vm.numa.controlled.verbose.output_fragments", numa_verbose_controlled.output_fragments);
+        emit!("m2.vm.numa.controlled.verbose.prefix_matches", u8::from(numa_verbose_controlled.prefix_matches));
+        emit!("m2.vm.numa.controlled.verbose.body_matches", u8::from(numa_verbose_controlled.body_matches));
         emit!(
             "m2.vm.aligned_hint.cold_missing_default_advances_cursor",
             u8::from(aligned_hint_cold_missing_default_advances)

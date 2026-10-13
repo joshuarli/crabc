@@ -654,6 +654,17 @@ impl RegularReservationDiagnostic {
 }
 
 impl SourceFormattedMessage {
+    /// Formats `src/os.c`'s first successful multi-region cache-fill line.
+    /// The source uses `%zd` for the already bounded, nonnegative node count.
+    #[inline]
+    pub(crate) fn numa_regions(count: usize) -> Self {
+        let mut message = Self::empty();
+        message.append(b"using ");
+        append_mbind_unsigned_decimal(&mut message.bytes, &mut message.length, count as u64);
+        message.append(b" numa regions\n");
+        message
+    }
+
     /// Copies an already source-formatted C string through the pinned 990-byte
     /// payload limit. The current selected callers have static deterministic
     /// bodies; general variadic formatting is outside this constructor.
@@ -2580,6 +2591,25 @@ impl OutputOwner {
         // before invoking the retained output route.
         if unsafe { self.option_value(SourceOption::Verbose) } == 0 { return; }
         self.fputs_default(Some(VERBOSE_PREFIX), diagnostic.message().as_c_str());
+    }
+
+    /// Emits the first multi-region NUMA cache fill through `_mi_verbose_message`'s
+    /// signed verbose gate and `_mi_fputs`' separate prefix/body fragments.
+    ///
+    /// # Safety
+    /// The source option table is installed. Initial process startup may reach
+    /// this while its TLD projection is active, but only while the default sink
+    /// appends to the delayed buffer and cannot call an external callback. The
+    /// process-wide cache is filled before callback-capable output is installed,
+    /// so later process paths do not reach this emission. Any other owner whose
+    /// sink can deliver externally requires serialized registration and callback
+    /// lifetimes, with mutable owner, engine, TLD, and reservation-lock
+    /// projections ended before dispatch.
+    pub(crate) unsafe fn numa_regions_verbose(&self, count: usize) {
+        // SAFETY: installed table; option delivery releases descriptor locks
+        // before invoking the retained output route.
+        if unsafe { self.option_value(SourceOption::Verbose) } == 0 { return; }
+        self.fputs_default(Some(VERBOSE_PREFIX), SourceFormattedMessage::numa_regions(count).as_c_str());
     }
 
     /// Selects whether the current source process-final phase prints

@@ -509,6 +509,26 @@ class NativeVmAssemblyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             producer._validate_trace_values(values, source="test")
 
+        values["m2.vm.numa.controlled.multi.raw_count_calls"] = 1
+        values["m2.vm.numa.controlled.verbose.output_fragments"] = 1
+        with self.assertRaises(ValueError):
+            producer._validate_trace_values(values, source="test")
+
+        values["m2.vm.numa.controlled.verbose.output_fragments"] = 2
+        values["m2.vm.numa.controlled.verbose.body_matches"] = 0
+        with self.assertRaises(ValueError):
+            producer._validate_trace_values(values, source="test")
+
+        values["m2.vm.numa.controlled.verbose.body_matches"] = 1
+        values["m2.vm.numa.controlled.verbose.cache_at_output"] = 2
+        with self.assertRaises(ValueError):
+            producer._validate_trace_values(values, source="test")
+
+        values["m2.vm.numa.controlled.verbose.cache_at_output"] = 3
+        values["m2.vm.numa.controlled.verbose.fragments_at_current"] = 1
+        with self.assertRaises(ValueError):
+            producer._validate_trace_values(values, source="test")
+
     def test_policy_trace_schema_requires_the_bounded_option_hint_large_and_thp_relations(self):
         """Keep the coherent policy slice explicit in the C/Rust record."""
 
