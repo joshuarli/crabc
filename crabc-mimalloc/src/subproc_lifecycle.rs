@@ -3864,8 +3864,8 @@ pub(crate) mod tests {
         child.identity_pointer().expect("a created child projects its identity")
     }
 
-    fn main_totals(parent: &MainSubprocess) -> FinalStatisticsSnapshot {
-        parent.statistics().final_output_snapshot()
+    fn process_main_totals() -> FinalStatisticsSnapshot {
+        MainSubprocess::global().statistics().final_output_snapshot()
     }
 
     /// The process inputs of a child subprocess fixture over one attached
@@ -4083,13 +4083,13 @@ pub(crate) mod tests {
             trace.push(facts.statistics.theaps.current);
             trace.push(facts.statistics.threads.total);
 
-            let before = main_totals(parent);
+            let before = process_main_totals();
             // SAFETY: the child has no users, blocks, or threads left.
             unsafe {
                 destroy_child(first, registry, binding, &mut [], attachment, &mut heap_owner)
             }
             .expect("the older child is destroyed from the middle of the list");
-            let after = main_totals(parent);
+            let after = process_main_totals();
             let members = registry_members(registry);
             trace.push(members.len() as i64);
             trace.push(i64::from(
@@ -4110,14 +4110,14 @@ pub(crate) mod tests {
                 .expect("the child metadata engine is available");
             let second_facts = second.test_created_child_facts(parent).unwrap();
             trace.push(second_facts.statistics.pages.current);
-            let before = main_totals(parent);
+            let before = process_main_totals();
             // SAFETY: the child has no users or threads; its live metadata
             // block is released with the child arenas, as in source.
             unsafe {
                 destroy_child(second, registry, binding, &mut [], attachment, &mut heap_owner)
             }
             .expect("the newest child is destroyed from the list head");
-            let after = main_totals(parent);
+            let after = process_main_totals();
             trace.push(registry_members(registry).len() as i64);
             trace.push(after.pages.current - before.pages.current);
             trace.push(i64::from(
