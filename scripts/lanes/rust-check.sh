@@ -6,8 +6,12 @@ set -u
 root=$(git rev-parse --show-toplevel)
 work=$root/.work/x86_64
 image=${CRABC_X86_64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py")} || exit
-if ! docker image inspect "$image" >/dev/null 2>&1; then
-    printf 'ERROR: native Rust-check image %s is unavailable\n' "$image" >&2
+if docker image inspect "$image" >/dev/null; then
+    :
+else
+    inspect_status=$?
+    printf 'ERROR: could not inspect native Rust-check image %s (docker image inspect exited %s)\n' \
+        "$image" "$inspect_status" >&2
     exit 1
 fi
 identity=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image") || exit

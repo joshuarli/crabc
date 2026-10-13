@@ -40,7 +40,13 @@ class CoreImageDispatchTests(unittest.TestCase):
             "with open(os.environ['IMAGE_DISPATCH_LOG'], 'a') as log:\n"
             "    log.write(json.dumps(args) + '\\n')\n"
             "if args[:2] == ['image', 'inspect']:\n"
-            f"    if args[-1] == {PIN!r} and os.environ.get('PIN_MISSING'): sys.exit(1)\n"
+            "    failure = os.environ.get('IMAGE_INSPECT_FAILURE')\n"
+            "    if failure:\n"
+            "        print(failure, file=sys.stderr)\n"
+            "        sys.exit(1)\n"
+            f"    if args[-1] == {PIN!r} and os.environ.get('PIN_MISSING'):\n"
+            f"        print({'Error response from daemon: No such image: ' + PIN!r}, file=sys.stderr)\n"
+            "        sys.exit(1)\n"
             "    fmt = args[args.index('--format') + 1] if '--format' in args else ''\n"
             f"    print((args[-1] if args[-1].startswith('sha256:') else {STALE!r}) "
             "if fmt == '{{.Id}}' else 'linux/amd64')\n"
@@ -86,8 +92,31 @@ class CoreImageDispatchTests(unittest.TestCase):
                 with self.subTest(script=script, explicit=explicit):
                     result = self.invoke(script, *arguments)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("unavailable", result.stderr)
+                    expected_message = "unavailable" if script == "scripts/dev-x86_64.sh" else "could not inspect"
+                    self.assertIn(expected_message, result.stderr)
                     self.assertFalse(any(call[0] in ("run", "build") for call in self.calls()))
+
+    def test_rust_check_preserves_docker_inspect_failure_diagnostics(self) -> None:
+        failures = (
+            ("missing image", "Error response from daemon: No such image: " + PIN, None),
+            ("daemon permission", None,
+             "permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"),
+            ("daemon unavailable", None,
+             "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?"),
+        )
+        for category, missing_image, injected_error in failures:
+            with self.subTest(category=category):
+                self.environment.pop("IMAGE_INSPECT_FAILURE", None)
+                self.environment.pop("PIN_MISSING", None)
+                if missing_image is not None:
+                    self.environment["PIN_MISSING"] = "1"
+                else:
+                    self.environment["IMAGE_INSPECT_FAILURE"] = injected_error
+                result = self.invoke("scripts/lanes/rust-check.sh")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(missing_image or injected_error, result.stderr)
+                self.assertIn("could not inspect", result.stderr)
+                self.assertFalse(any(call[0] in ("run", "build") for call in self.calls()))
 
     def test_help_does_not_require_an_available_pin_or_docker(self) -> None:
         self.environment["PIN_MISSING"] = "1"
