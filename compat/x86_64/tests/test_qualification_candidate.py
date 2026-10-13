@@ -46,12 +46,48 @@ class PlanTests(unittest.TestCase):
                 self.assertEqual(registered.gate, gate)
                 self.assertEqual(Path(step.outputs[0].fixed or "").name, registered.receipt_name, step.id)
         published = {step.id for step in steps if step.id.startswith("publish-")}
+        expected_publications = {f"publish-{publication}" for publication in gates.PUBLICATIONS}
         self.assertIn("publish-resolver-network", published)
-        self.assertEqual(published, {f"publish-{publication}" for publication in gates.PUBLICATIONS})
+        self.assertEqual(published, expected_publications | {"publish-dynamic-product", "publish-static-product"})
         context = candidate.Context(ROOT, ROOT / ".work/x86_64/candidate-test", {}, dry_run=True)
         attached = candidate.attachments(ROOT, context, steps)
         self.assertEqual({record["family"] for record in attached},
                          {"libc.posix-runtime", "libc.pthread-tls", "libc.resolver", "libc.c-abi-compat"})
+
+    def test_product_publications_follow_their_validated_cohorts(self) -> None:
+        steps = candidate.plan()
+        identifiers = [step.id for step in steps]
+        context = candidate.Context(ROOT, ROOT / ".work/x86_64/publication-test", {}, dry_run=True)
+        for producer, publication in (("dynamic-products", "publish-dynamic-product"),
+                                      ("static-sysroot", "publish-static-product")):
+            self.assertEqual(identifiers.index(publication), identifiers.index(producer) + 1)
+            step = steps[identifiers.index(publication)]
+            self.assertEqual(candidate.fresh_paths(context, step), [])
+            receipt = f"<{producer}:qualification>" if producer == "dynamic-products" else "<static-sysroot:receipt>"
+            reader = ("owned_dynamic_qualification.py" if producer == "dynamic-products"
+                      else "static_product_contract.py")
+            self.assertEqual(step.argv(context), ["python3", "-B", f"compat/x86_64/{reader}", "publish",
+                                                  "--receipt", receipt])
+
+    def test_correctness_profile_defers_performance_steps_and_reaches_the_chain(self) -> None:
+        steps = candidate.plan(profile="correctness")
+        identifiers = [step.id for step in steps]
+        self.assertNotIn("performance-release", identifiers)
+        self.assertNotIn("publish-performance-release", identifiers)
+        chain = next(step for step in steps if step.id == "qualification-chain")
+        self.assertEqual(chain.argv(candidate.Context(ROOT, ROOT / ".work/x86_64/profile", {}, dry_run=True)),
+                         ["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", "correctness"])
+        report = candidate.dry_run(ROOT, ROOT / ".work/x86_64/profile", {}, profile="correctness")
+        self.assertFalse(any("performance_release" in blocker for blocker in report["preflight_blockers"]))
+
+    def test_preflight_checks_package_corpus_inputs_against_the_manifest(self) -> None:
+        context = candidate.Context(ROOT, ROOT / ".work/x86_64/corpus-preflight", {}, dry_run=True)
+        with mock.patch.object(candidate, "_validate_package_corpus",
+                                side_effect=ValueError("APK archive digest differs: sample.apk")) as check:
+            blockers = candidate.preflight(ROOT, context, candidate.plan(through="static-products"))
+        check.assert_called_once()
+        self.assertTrue(any("package corpus input does not match its manifest" in blocker
+                            and "sample.apk" in blocker for blocker in blockers))
 
     def test_dry_run_resolves_placeholders_and_names_blockers_without_writing(self) -> None:
         work = ROOT / ".work/x86_64/candidate-dry-run-test"
@@ -104,6 +140,8 @@ class ExecutionTests(unittest.TestCase):
         self.fail: set[str] = set()
         self.inputs = {"lua_source_build": {"archive_seed": "lua.tar.gz"}, "rust_std_lto": {"provider_vendor": "v", "dependency_vendor": "d"},
                        "performance_release": {key: "x" for key in candidate.INPUT_KEYS["performance_release"]}}
+        for path in {value for group in self.inputs.values() for value in group.values() if isinstance(value, str)}:
+            (self.root / path).write_text(path, encoding="utf-8")
         patcher = mock.patch.object(candidate, "preflight", return_value=[])
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -181,12 +219,14 @@ class ExecutionTests(unittest.TestCase):
         receipt = self.root / ".work/x86_64/tmp/leaf" / output.printed
         receipt.parent.mkdir(parents=True)
         receipt.write_text("{}\n", encoding="utf-8")
-        printed_path = "/workspace/" + receipt.relative_to(self.root).as_posix()
-        diagnostic = json.dumps({"product": printed_path, "details": "x" * 5000}, separators=(",", ":"))
-        stdout = diagnostic + "\nretained evidence: " + printed_path + "\n"
         context = candidate.Context(self.root, self.work, self.inputs)
-        self.assertEqual(candidate._discover(self.root, context, step, stdout),
-                         {output.name: receipt.relative_to(self.root).as_posix()})
+        relative_path = receipt.relative_to(self.root).as_posix()
+        for printed_path in ("/workspace/" + relative_path, relative_path):
+            with self.subTest(printed_path=printed_path):
+                diagnostic = json.dumps({"product": printed_path, "details": "x" * 5000}, separators=(",", ":"))
+                stdout = diagnostic + "\nretained evidence: " + printed_path + "\n"
+                self.assertEqual(candidate._discover(self.root, context, step, stdout),
+                                 {output.name: relative_path})
 
     def test_failure_stops_closed_and_a_restart_resumes_from_the_failed_step(self) -> None:
         self.fail = {"pthread-family"}
@@ -216,9 +256,21 @@ class ExecutionTests(unittest.TestCase):
                               source={**SOURCE, "revision": "o" * 40})
 
     def test_restart_rejects_changed_inputs_before_reusing_steps(self) -> None:
-        self._execute(through="static-products")
+        self._execute(through="rust-std-lto")
         self.inputs["rust_std_lto"]["provider_vendor"] = "different-vendor"
-        with self.assertRaisesRegex(candidate.CandidateError, "candidate inputs or environment"):
+        with self.assertRaisesRegex(candidate.CandidateError, "candidate input group rust_std_lto changed after sealing"):
+            self._execute(through="rust-std-lto")
+
+    def test_restart_rejects_the_previous_candidate_state_schema(self) -> None:
+        self._execute(through="static-products")
+        state_path = self.work / "candidate.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        legacy_state = {key: value for key, value in state.items() if key != "input_seals"}
+        legacy_state["schema"] = "crabc.x86_64-qualification-candidate/v1"
+        legacy_state["inputs"] = candidate._input_identity(self.root, self.inputs)
+        state_path.write_text(json.dumps(legacy_state), encoding="utf-8")
+
+        with self.assertRaisesRegex(candidate.CandidateError, "candidate state fields drifted; use a fresh --work"):
             self._execute(through="static-products")
 
     def test_restart_rejects_replaced_input_at_the_same_path(self) -> None:
@@ -226,10 +278,29 @@ class ExecutionTests(unittest.TestCase):
         vendor.mkdir()
         (vendor / "crate.rs").write_text("original")
         self.inputs["rust_std_lto"]["provider_vendor"] = ".work/vendor"
-        self._execute(through="static-products")
+        self._execute(through="rust-std-lto")
         (vendor / "crate.rs").write_text("changed")
-        with self.assertRaisesRegex(candidate.CandidateError, "candidate inputs or environment"):
-            self._execute(through="static-products")
+        with self.assertRaisesRegex(candidate.CandidateError, "candidate input group rust_std_lto changed after sealing"):
+            self._execute(through="rust-std-lto")
+
+    def test_performance_inputs_can_be_added_after_their_consumers_and_resumed(self) -> None:
+        self.inputs.pop("performance_release")
+        prefix = self._execute(through="lua-admission")
+        self.assertNotIn("error", prefix)
+        state = json.loads((self.work / "candidate.json").read_text(encoding="utf-8"))
+        self.assertNotIn("performance_release", state["input_seals"])
+
+        self.inputs["performance_release"] = {
+            key: "x" for key in candidate.INPUT_KEYS["performance_release"]
+        }
+        self.calls.clear()
+        resumed = self._execute()
+        self.assertTrue(resumed["complete"], resumed.get("error"))
+        self.assertTrue(self.calls and self.calls[0] == "publish-lua-source-build", self.calls)
+        self.assertEqual(self.calls[1], "performance-release")
+        self.assertIn("publish-performance-release", self.calls)
+        state = json.loads((self.work / "candidate.json").read_text(encoding="utf-8"))
+        self.assertIn("performance_release", state["input_seals"])
 
     def test_restart_rejects_changed_completed_invocation(self) -> None:
         self._execute(through="static-products")

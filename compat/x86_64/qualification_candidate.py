@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -39,7 +40,7 @@ from typing import Callable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = "crabc.x86_64-qualification-candidate/v1"
+SCHEMA = "crabc.x86_64-qualification-candidate/v2"
 DISPATCHER = "./scripts/dev-x86_64.sh"
 MOUNT = "/workspace"
 WORK_PARENT = Path(".work/x86_64")
@@ -62,6 +63,7 @@ SOURCE_ORACLES = (
     ".work/x86_64/source-oracles/laputa-libc-test-68edb8bd73dab8147ee54c8bec638f4d2b3cff37",
 )
 PACKAGE_CORPUS_INPUT = ".work/x86_64/owned-package-corpus-input/apks"
+PACKAGE_CORPUS_INDEX = ".work/x86_64/owned-package-corpus-input/index/main-x86_64.APKINDEX.tar.gz"
 INPUT_KEYS = {
     "lua_source_build": ("archive_seed",),
     "rust_std_lto": ("provider_vendor", "dependency_vendor"),
@@ -100,9 +102,9 @@ class Step:
     argv: Callable[["Context"], list[str]] | None
     outputs: tuple[Output, ...] = ()
     # Fresh producer outputs (checkout-relative templates). A failed
-    # attempt's are renamed aside before a retry. Empty means the directory
-    # holding the first fixed output.
-    fresh: tuple[str, ...] = ()
+    # attempt's are renamed aside before a retry. None means the directory
+    # holding the first fixed output; an empty tuple preserves atomic pointers.
+    fresh: tuple[str, ...] | None = None
     # Internal steps write their outputs without running a command.
     internal: Callable[["Context"], None] | None = None
     # Candidate inputs this step needs (keys of `--inputs`).
@@ -230,13 +232,14 @@ POSIX_NATIVE_COMMAND = (
 )
 
 
-def plan(through: str | None = None) -> tuple[Step, ...]:
+def plan(through: str | None = None, profile: str = "full") -> tuple[Step, ...]:
     """Return the fixed candidate sequence in dependency order.
 
     ``through`` selects the prefix ending at one step, for staged runs; the
     summary of a prefix is never complete qualification.
     """
-    steps = _plan()
+    require(profile in {"correctness", "full"}, f"unknown qualification profile: {profile}")
+    steps = _plan(profile)
     if through is None:
         return steps
     identifiers = [step.id for step in steps]
@@ -244,7 +247,7 @@ def plan(through: str | None = None) -> tuple[Step, ...]:
     return steps[: identifiers.index(through) + 1]
 
 
-def _plan() -> tuple[Step, ...]:
+def _plan(profile: str = "full") -> tuple[Step, ...]:
     primary = lambda c: ["--static-sysroot", c.static_pair("primary"), c.dynamic_pair("primary")]  # noqa: E731
     steps: list[Step] = [
         # One product cohort for every family and gate.
@@ -256,6 +259,10 @@ def _plan() -> tuple[Step, ...]:
              lambda c: _d("materialized-dynamic-sysroot", "--work", c.template("{work}/out/dynamic")),
              (Output("qualification", fixed="{work}/out/dynamic/qualification.json"),),
              fresh=("{work}/out/dynamic",)),
+        Step("publish-dynamic-product", "cohort",
+             lambda c: ["python3", "-B", "compat/x86_64/owned_dynamic_qualification.py", "publish", "--receipt",
+                        c.out("dynamic-products", "qualification")],
+             (Output("publication", fixed=".work/x86_64/owned-dynamic-qualification.json"),), fresh=()),
         # libc.posix-runtime: matrix, four companions, native aggregate, admission.
         Step("posix-family", "libc.posix-runtime",
              lambda c: _d("owned-posix-family", *c.cohort(), "--output", c.template("{work}/out/posix-family")),
@@ -329,7 +336,12 @@ def _plan() -> tuple[Step, ...]:
         # crt and sysroot families, in dependency order.
         Step("crt-dynamic-startup", "crt.dynamic-startup",
              lambda c: _d("owned-crt-dynamic-startup", c.dynamic_pair("primary"))),
-        Step("static-sysroot", "sysroot.static-tls", lambda c: _d("owned-static-sysroot")),
+        Step("static-sysroot", "sysroot.static-tls", lambda c: _d("owned-static-sysroot"),
+             (Output("receipt", printed="receipt.json"),)),
+        Step("publish-static-product", "sysroot.static-tls",
+             lambda c: ["python3", "-B", "compat/x86_64/static_product_contract.py", "publish", "--receipt",
+                        c.out("static-sysroot", "receipt")],
+             (Output("publication", fixed=".work/x86_64/owned-static-qualification.json"),), fresh=()),
         Step("combined-sysroot", "sysroot.owned-artifact", lambda c: _d("owned-combined-sysroot")),
         # compat.abi-differential: one current-source evidence set.
         Step("abi-inventory", "compat.abi-differential",
@@ -395,23 +407,25 @@ def _plan() -> tuple[Step, ...]:
              (Output("receipt", fixed="{work}/out/lua-admission/admission.json"),),
              publishes=("consumer.source-build", "lua-source-build")),
         # performance.release reads measurements taken on an uncontended host.
-        Step("performance-release", "performance.release",
-             lambda c: ["python3", "compat/x86_64/performance_release_gate.py", "evaluate",
-                        "--runtime-c-collector", str(c.given("performance_release", "runtime_c_collector")),
-                        "--native-facade-report", str(c.given("performance_release", "native_facade_report")),
-                        "--rustybench-source", str(c.given("performance_release", "rustybench_source")),
-                        "--rustix-source", str(c.given("performance_release", "rustix_source")),
-                        *[item for report in _reports(c) for item in ("--allocator-report", report)],
-                        "--output", c.template("{work}/out/performance-release")],
-             (Output("receipt", fixed="{work}/out/performance-release/receipt.json"),),
-             needs_input="performance_release", publishes=("performance.release", "performance-release")),
+        *([] if profile == "correctness" else [
+            Step("performance-release", "performance.release",
+                 lambda c: ["python3", "compat/x86_64/performance_release_gate.py", "evaluate",
+                            "--runtime-c-collector", str(c.given("performance_release", "runtime_c_collector")),
+                            "--native-facade-report", str(c.given("performance_release", "native_facade_report")),
+                            "--rustybench-source", str(c.given("performance_release", "rustybench_source")),
+                            "--rustix-source", str(c.given("performance_release", "rustix_source")),
+                            *[item for report in _reports(c) for item in ("--allocator-report", report)],
+                            "--output", c.template("{work}/out/performance-release")],
+                 (Output("receipt", fixed="{work}/out/performance-release/receipt.json"),),
+                 needs_input="performance_release", publishes=("performance.release", "performance-release")),
+        ]),
     ]
     # The resolver family's network run is the compat.resolver-network receipt.
     steps.append(Step("publish-resolver-network", "compat.resolver-network",
                       lambda c: _d("qualification-manifest", "--publish", "compat.resolver-network",
                                    "resolver-network", c.out("resolver-family", "network"))))
     steps.append(Step("qualification-chain", "qualification",
-                      lambda c: _d("qualification-manifest"),
+                      lambda c: _d("qualification-manifest", "--profile", profile),
                       (Output("receipt", printed="receipt.json"),)))
     steps.append(Step("parity-ledger", "capability.accounting",
                       lambda c: ["python3", "compat/x86_64/validate_parity_ledger.py",
@@ -517,8 +531,10 @@ def preflight(root: Path, context: Context, steps: Sequence[Step]) -> list[str]:
     for relative in SOURCE_ORACLES:
         if not (root / relative).is_dir():
             blockers.append(f"pinned source oracle is not seeded (the native container has no network): {relative}")
-    if not (root / PACKAGE_CORPUS_INPUT).is_dir():
-        blockers.append("package corpus input is absent: run ./scripts/dev-x86_64.sh owned-package-corpus-input")
+    try:
+        _validate_package_corpus(root)
+    except Exception as error:  # noqa: BLE001 - any corpus mismatch blocks native qualification
+        blockers.append(f"package corpus input does not match its manifest: {error}")
     for group in {step.needs_input for step in steps if step.needs_input is not None}:
         for key, value in context.inputs.get(group, {}).items():
             for item in value if isinstance(value, list) else [value]:
@@ -570,6 +586,28 @@ def _input_identity(root: Path, inputs: Mapping[str, Mapping[str, object]]) -> d
     return {"paths": inputs, "sha256": seals}
 
 
+def _input_group_identity(root: Path, inputs: Mapping[str, Mapping[str, object]], group: str) -> dict[str, object]:
+    require(group in inputs, f"candidate input {group} is not supplied (--inputs)")
+    identity = _input_identity(root, {group: inputs[group]})
+    return identity
+
+
+def _validate_package_corpus(root: Path) -> None:
+    """Check the exact pinned APK roster and bytes before starting the cohort."""
+
+    path = root / "compat/corpus/run_x86.py"
+    spec = importlib.util.spec_from_file_location("qualification_candidate_package_corpus", path)
+    require(spec is not None and spec.loader is not None, f"cannot load package corpus reader: {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+        manifest = module.load_manifest()
+        module.input_identity(manifest, root / PACKAGE_CORPUS_INPUT, root / PACKAGE_CORPUS_INDEX)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+
 def _write(path: Path, value: object) -> None:
     staged = path.with_name(path.name + ".tmp")
     staged.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -586,7 +624,10 @@ def _discover(root: Path, context: Context, step: Step, stdout: str) -> dict[str
     found: dict[str, str] = {}
     # Receipt readers also print JSON diagnostics. A quoted path ends at its
     # string delimiter, rather than including the following JSON fields.
-    printed = {_host(root, token.rstrip(".,;:)")) for token in re.findall(r"/workspace/[^\s\"']+", stdout)}
+    printed = set()
+    for token in re.findall(r"(?:/workspace/)?\.work/[^\s\"']+", stdout):
+        path = token.rstrip(".,;:)")
+        printed.add(root / path if path.startswith(".work/") else _host(root, path))
     for output in step.outputs:
         if output.fixed is not None:
             path = root / context.template(output.fixed)
@@ -643,8 +684,8 @@ def _validate_products(root: Path, step: Step, found: Mapping[str, str]) -> None
 
 
 def fresh_paths(context: Context, step: Step) -> list[Path]:
-    templates = step.fresh or tuple(str(Path(output.fixed).parent) for output in step.outputs[:1]
-                                    if output.fixed is not None)
+    templates = step.fresh if step.fresh is not None else tuple(
+        str(Path(output.fixed).parent) for output in step.outputs[:1] if output.fixed is not None)
     return [context.root / context.template(template) for template in templates]
 
 
@@ -667,11 +708,11 @@ def _run(argv: list[str], stdout: Path, stderr: Path) -> int:
 
 def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], *,
             runner: Runner = _run, source: Mapping[str, str] | None = None,
-            through: str | None = None) -> dict[str, object]:
+            through: str | None = None, profile: str = "full") -> dict[str, object]:
     """Run or resume the candidate sequence; always write `summary.json`."""
 
     context = Context(root, work, inputs)
-    steps = plan(through)
+    steps = plan(through, profile)
     blockers = preflight(root, context, steps)
     authenticate_source = source is None
     if source is None:
@@ -682,16 +723,30 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
     candidate = work / "candidate.json"
     import core_image
 
-    identity = {"schema": SCHEMA, "source": dict(source), "inputs": _input_identity(root, inputs),
+    identity = {"schema": SCHEMA, "source": dict(source),
                 "core_image": os.environ.get("CRABC_X86_64_CORE_IMAGE", core_image.CORE_IMAGE_ID)}
     if candidate.exists():
-        require(json.loads(candidate.read_text(encoding="utf-8")) == identity,
+        retained = json.loads(candidate.read_text(encoding="utf-8"))
+        require(isinstance(retained, dict) and set(retained) == {*identity, "input_seals"},
+                "candidate state fields drifted; use a fresh --work")
+        input_seals = retained["input_seals"]
+        require(isinstance(input_seals, dict) and set(input_seals) <= set(INPUT_KEYS),
+                "candidate input seals are malformed; use a fresh --work")
+        require({key: retained[key] for key in identity} == identity,
                 "candidate work belongs to another source revision, candidate inputs or environment; use a fresh --work")
+        for group, sealed in input_seals.items():
+            try:
+                current_group = _input_group_identity(root, inputs, group)
+            except CandidateError as error:
+                raise CandidateError(f"candidate input group {group} changed after sealing: {error}") from error
+            require(current_group == sealed, f"candidate input group {group} changed after sealing")
     else:
-        _write(candidate, identity)
+        input_seals = {}
+        retained = {**identity, "input_seals": input_seals}
+        _write(candidate, retained)
     records: list[dict[str, object]] = []
     summary: dict[str, object] = {"schema": SCHEMA, "source": dict(source), "work": context.rel(work),
-                                  "through": through,
+                                  "through": through, "profile": profile,
                                   "preflight_blockers": blockers, "steps": records,
                                   "attachments": attachments(root, context, steps), "complete": False}
     try:
@@ -701,6 +756,20 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
                 require(static.source_identity(root) == source, "candidate source changed during execution")
             directory = work / "steps" / f"{index:02d}-{step.id}"
             argv = ["internal", step.id] if step.internal is not None else step.argv(context)
+            if step.needs_input is not None:
+                group = step.needs_input
+                current_group = _input_group_identity(root, inputs, group)
+                if group in input_seals:
+                    require(input_seals[group] == current_group,
+                            f"candidate input group {group} changed after sealing")
+                else:
+                    require(not (directory / "record.json").exists(),
+                            f"completed step {step.id} has no {group} input seal")
+                    require(all(value is not None for value in current_group["sha256"].values()),
+                            f"candidate input group {group} is absent")
+                    input_seals[group] = current_group
+                    retained["input_seals"] = input_seals
+                    _write(candidate, retained)
             done = _completed(root, directory / "record.json", source, argv)
             if done is not None:
                 _validate_products(root, step, done)
@@ -734,7 +803,13 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
             if authenticate_source:
                 require(static.source_identity(root) == source, "candidate source changed during execution")
             if step.needs_input is not None:
-                require(_input_identity(root, inputs) == identity["inputs"], "candidate inputs changed during execution")
+                group = step.needs_input
+                try:
+                    current_group = _input_group_identity(root, inputs, group)
+                except CandidateError as error:
+                    raise CandidateError(f"candidate input group {group} changed while {step.id} ran: {error}") from error
+                require(current_group == input_seals[group],
+                        f"candidate input group {group} changed while {step.id} ran")
             _validate_products(root, step, found)
             context.outputs[step.id] = found
             _write(directory / "record.json", {
@@ -754,18 +829,18 @@ def execute(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]], 
 
 
 def dry_run(root: Path, work: Path, inputs: Mapping[str, Mapping[str, object]],
-            through: str | None = None) -> dict[str, object]:
+            through: str | None = None, profile: str = "full") -> dict[str, object]:
     """Resolve every step's command with placeholders; run and write nothing."""
 
     context = Context(root, work, inputs, dry_run=True)
-    steps = plan(through)
+    steps = plan(through, profile)
     rendered = []
     for step in steps:
         rendered.append({"step": step.id, "family": step.family,
                          "argv": ["internal", step.id] if step.internal is not None else step.argv(context),
                          "outputs": [context.template(output.fixed or output.glob or "") or f"printed {output.printed}"
                                      for output in step.outputs]})
-    return {"schema": SCHEMA, "dry_run": True, "work": context.rel(work),
+    return {"schema": SCHEMA, "dry_run": True, "work": context.rel(work), "profile": profile,
             "preflight_blockers": preflight(root, context, steps),
             "attachments": attachments(root, context, steps), "steps": rendered}
 
@@ -784,15 +859,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--inputs", type=Path, help="JSON naming pre-seeded vendors and performance measurements")
     parser.add_argument("--through", help="run only the prefix ending at this step")
+    parser.add_argument("--profile", choices=("correctness", "full"), default="full")
     parser.add_argument("--dry-run", action="store_true")
     values = parser.parse_args(arguments)
     try:
         work = _work(ROOT, values.work)
         inputs = _load_inputs(ROOT, values.inputs)
         if values.dry_run:
-            print(json.dumps(dry_run(ROOT, work, inputs, values.through), indent=2, sort_keys=True))
+            print(json.dumps(dry_run(ROOT, work, inputs, values.through, values.profile), indent=2, sort_keys=True))
             return 0
-        summary = execute(ROOT, work, inputs, through=values.through)
+        summary = execute(ROOT, work, inputs, through=values.through, profile=values.profile)
     except CandidateError as error:
         print(f"x86 qualification candidate: ERROR: {error}", file=sys.stderr)
         return 2

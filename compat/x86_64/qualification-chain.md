@@ -203,20 +203,22 @@ cannot satisfy or replace any chain gate.
 ## One-command candidate run
 
 ```sh
-./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/NAME [--inputs FILE] [--through STEP] [--dry-run]
+./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/NAME [--profile correctness|full] [--inputs FILE] [--through STEP] [--dry-run]
 ```
 
 [`qualification_candidate.py`](qualification_candidate.py) is the unattended
 final qualification of one clean candidate checkout. It runs on the host and
 every step is itself a dispatcher command that owns its container. `--work`
 must be a physical child of `.work/x86_64`. It has no `--profile`: the final
-`qualification-chain` step runs `qualification-manifest` with the declaration's
-default profile.
+`qualification-chain` step receives the selected profile, which defaults to
+`full`. `--profile correctness` skips `performance-release` and its publication
+while passing that profile to `qualification-manifest`.
 
 `plan()` fixes the step order; step ids, in order:
 
 1. Cohort: `static-products` (`owned-posix-static-products`),
-   `dynamic-products` (`materialized-dynamic-sysroot`).
+   `dynamic-products` (`materialized-dynamic-sysroot`), then
+   `publish-dynamic-product` after its receipt passes the product reader.
 2. POSIX: `posix-family`, `crypt-profile`, `atomic-profile`,
    `wordexp-profile`, `wordexp-inputs`, `posix-native`, `publish-posix-native`,
    `posix-admission`; then `pthread-family`.
@@ -227,16 +229,18 @@ default profile.
 4. `resolver-family`, `c-abi-compat-family`.
 5. Loader: `loader-inventory-{installed,second,extracted}`, `loader-request`,
    `loader-family`, `publish-loader-family`.
-6. `crt-dynamic-startup`, `static-sysroot`, `combined-sysroot`.
+6. `crt-dynamic-startup`, `static-sysroot`, `publish-static-product` after its
+   receipt passes the product reader, then `combined-sysroot`.
 7. ABI: `abi-inventory`, `abi-elf-facts`, `abi-declarations`,
    `abi-public-data`, `abi-evidence`, `publish-abi-evidence`.
 8. Consumers: `rust-std-lto`, `publish-rust-std-lto`, `lua-static`,
    `lua-dynamic`, `lua-admission`, `publish-lua-source-build`.
-9. `performance-release`, `publish-performance-release`.
+9. Full profile only: `performance-release`, `publish-performance-release`.
 10. `publish-resolver-network`, `qualification-chain`, `parity-ledger`.
 
 `python3 -B -c 'import qualification_candidate as q; print([s.id for s in
-q.plan()])'` run from `compat/x86_64/` prints the authoritative list.
+q.plan(profile="correctness")])'` run from `compat/x86_64/` prints the
+correctness-profile list; pass `profile="full"` for the full list.
 
 Receipt paths are fixed by `--work`. A family row that names a `receipt` must
 name the path this run produces; a different path is a preflight blocker, and a
@@ -247,11 +251,18 @@ contention: `lua_source_build.archive_seed`,
 `performance_release.{runtime_c_collector, native_facade_report,
 rustybench_source, rustix_source, allocator_reports}`. The pinned OS-test and
 libc-test source checkouts (`SOURCE_ORACLES` in the module) and the package
-corpus input (`.work/x86_64/owned-package-corpus-input/apks`) must also be
-seeded under `.work/x86_64/`.
+corpus archives (`.work/x86_64/owned-package-corpus-input/apks`) and signed
+index (`.work/x86_64/owned-package-corpus-input/index/main-x86_64.APKINDEX.tar.gz`)
+must also be seeded under `.work/x86_64/`. Preflight checks that the archive
+directory has exactly the manifest roster and every APK matches its pinned
+digest; the native corpus runner separately verifies signatures and index
+contents.
 
-The run is bound to the clean source identity, inputs and core image recorded in
-`NAME/candidate.json`. A restart on the same revision skips each step whose
+The run is bound to the clean source identity and core image recorded in
+`NAME/candidate.json`. Each `--inputs` group is sealed immediately before its
+first consuming step runs, and is checked again on resume and after each
+consumer. This lets a correctness prefix resume after performance inputs are
+added for `performance-release`. A restart on the same revision skips each step whose
 recorded outputs still hash identically and resumes at the first incomplete one;
 a failed attempt's step directory and fresh outputs are renamed `*.failed-N`.
 A different revision, changed inputs or environment, a changed completed output,
