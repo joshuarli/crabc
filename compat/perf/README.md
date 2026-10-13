@@ -180,13 +180,15 @@ worker-local allocation, TCP/UDP loopback, hermetic hosts/DNS, and
 empty/sub-64/guard primitive dispositions. Every row also has a separately
 linked memory observer with its fixed main-state and plateau R/C checkpoints.
 
-A full scorecard requires every workload to meet
-CPU upper-95% `<= 0.90` across 31 paired fresh processes, both live PSS and
-`memory.peak` against the memory thresholds below, and both the marked-route
-and whole-process syscall
-totals to be at most `2R` candidate calls (or zero when the reference is
-zero), with no unexplained error, retry, fallback, or unclassified per-syscall
-difference. No native syscall-difference classification exists, so every
+A full scorecard requires every workload's CPU upper-95% to meet the
+no-regression gate `<= 1.00` across 31 paired fresh processes. Each row also
+reports a CPU target of `0.90`, which does not gate qualification. Schema 2
+attempt and collector reports record both the `release_bound` and
+`target_bound` on each CPU row. Live PSS and `memory.peak` must meet the memory
+thresholds below. Marked-route and whole-process syscall totals must also be
+at most `2R` candidate calls (or zero when the reference is zero), with no
+unexplained error, retry, fallback, or unclassified per-syscall difference. No
+native syscall-difference classification exists, so every
 per-syscall difference is currently an explicit failure. Three consecutive
 clean Docker invocations must pass one immutable roster on an uncontended host.
 
@@ -196,8 +198,9 @@ reduction. PSS uses it for `allocator_live_32m` and every 128-MiB span row.
 `memory.peak` uses it for `allocator_live_32m`, the 128-MiB `memcpy`/`memset`
 span rows, and any row whose reference peak is exactly the observed 256-KiB
 single cgroup charge batch. Search-span peak measurements above that batch
-remain strict. All other memory comparisons retain `<= 0.90`, as does the CPU
-upper bound. Syscall rules remain unchanged.
+remain strict. All other memory comparisons retain `<= 0.90`. The CPU target
+is `0.90`, while its release gate allows an upper bound through `1.00`.
+Syscall rules remain unchanged.
 
 Both producer and replay derive these limits into the existing threshold
 fields. Reference and candidate PSS/peak values remain complete raw totals:

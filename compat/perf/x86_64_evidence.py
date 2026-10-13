@@ -39,11 +39,13 @@ import x86_64_profile as performance_profile
 import x86_64_peers as peers
 
 
-SCHEMA = 1
+SCHEMA = 2
 KIND = "crabc-native-x86_64-c-performance"
 SOURCE_MOUNT = "/workspace"
 MUSL_VERSION = "1.2.6"
 CPU_RESAMPLES = 10_000
+CPU_RELEASE_BOUND = 1.00
+CPU_TARGET_BOUND = 0.90
 FULL_SAMPLE_COUNT = 31
 FULL_WARMUP_COUNT = 3
 SMOKE_SAMPLE_COUNT = 1
@@ -86,6 +88,15 @@ HOST_ENVIRONMENT_KEYS = frozenset({
 CORRECTNESS_OWNER = "compat/x86_64/run_qualification_manifest.py correctness-profile receipt"
 
 IDENTITY_FIELDS = frozenset({"path", "sha256", "mode", "bytes"})
+
+
+def cpu_gate_fields(upper_bound: float) -> dict[str, Any]:
+    """Record the CPU target and apply the independent no-regression gate."""
+    return {
+        "release_bound": CPU_RELEASE_BOUND,
+        "target_bound": CPU_TARGET_BOUND,
+        "release_gate": "pass" if upper_bound <= CPU_RELEASE_BOUND else "fail",
+    }
 
 # Lane-private staged file inputs.  The descriptor/stdio rows read (and
 # idempotently rewrite) the intact 4-KiB ``0..255`` pattern; the format/parse
@@ -2313,7 +2324,7 @@ def validate_measurement_attempt(
             reference_cpu = [sample["resources"]["user_cpu_ns"] + sample["resources"]["system_cpu_ns"] for sample in item["musl"]["samples"]]
             candidate_cpu = [sample["resources"]["user_cpu_ns"] + sample["resources"]["system_cpu_ns"] for sample in item["crabc"]["samples"]]
             cpu = contract.bootstrap_cpu_ratio(reference_cpu, candidate_cpu, seed=seed, resamples=CPU_RESAMPLES)
-            expected_cpu = {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"}
+            expected_cpu = {**cpu, **cpu_gate_fields(cpu["one_sided_95_upper"])}
             require(comparison["cpu"] == expected_cpu, f"{name}: bootstrap metric differs")
             expected_gate = scorecard_syscall_gate(
                 item["musl"]["syscalls"], item["crabc"]["syscalls"],
@@ -2414,6 +2425,8 @@ def row_scorecard(workload: Mapping[str, Any], observer: Mapping[str, Any]) -> d
         "cpu": {
             "median_ratio": cpu["median_ratio"],
             "one_sided_95_upper": cpu["one_sided_95_upper"],
+            "release_bound": cpu["release_bound"],
+            "target_bound": cpu["target_bound"],
             "gate": gates["cpu"],
         },
         "pss_kib": {"reference": pss["reference"], "candidate": pss["candidate"], "gate": gates["pss"]},

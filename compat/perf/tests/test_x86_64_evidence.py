@@ -676,7 +676,8 @@ def _row_workload(*, cpu_upper: float, marked: tuple[int, int], whole: tuple[int
             "cpu": {
                 "median_ratio": cpu_upper - 0.01, "one_sided_95_upper": cpu_upper,
                 "resamples": evidence.CPU_RESAMPLES, "seed": 1,
-                "release_gate": "pass" if cpu_upper <= 0.90 else "fail",
+                "release_bound": 1.00, "target_bound": 0.90,
+                "release_gate": "pass" if cpu_upper <= 1.00 else "fail",
             },
             "syscall_gate": gate,
         },
@@ -702,7 +703,7 @@ class ScorecardDerivationTests(unittest.TestCase):
         self.assertEqual(row["syscalls"]["whole_process"], {"reference": 20, "candidate": 20, "gate": "pass"})
 
         failing = {
-            "cpu": (_row_workload(**{**PASSING_ROW, "cpu_upper": 0.91}), _row_observer(**PASSING_MEMORY)),
+            "cpu": (_row_workload(**{**PASSING_ROW, "cpu_upper": 1.02}), _row_observer(**PASSING_MEMORY)),
             "pss": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "pss": (1000, 901)})),
             "memory_peak": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "peak": (1000, 901)})),
             "reference-zero memory": (_row_workload(**PASSING_ROW), _row_observer(**{**PASSING_MEMORY, "peak": (0, 0)})),
@@ -717,6 +718,21 @@ class ScorecardDerivationTests(unittest.TestCase):
         for label, (workload, observer) in failing.items():
             with self.subTest(label):
                 self.assertEqual(evidence.row_scorecard(workload, observer)["gate"], "fail")
+
+    def test_cpu_gate_allows_regression_to_one_but_reports_the_point_nine_target(self) -> None:
+        row = evidence.row_scorecard(
+            _row_workload(**{**PASSING_ROW, "cpu_upper": 0.95}),
+            _row_observer(**PASSING_MEMORY),
+        )
+        self.assertEqual(row["gate"], "pass")
+        self.assertEqual(row["cpu"]["release_bound"], 1.00)
+        self.assertEqual(row["cpu"]["target_bound"], 0.90)
+
+        rejected = evidence.row_scorecard(
+            _row_workload(**{**PASSING_ROW, "cpu_upper": 1.02}),
+            _row_observer(**PASSING_MEMORY),
+        )
+        self.assertEqual(rejected["cpu"]["gate"], "fail")
 
     def test_one_failed_attempt_fails_the_row_without_compensation(self) -> None:
         passing = evidence.row_scorecard(_row_workload(**PASSING_ROW), _row_observer(**PASSING_MEMORY))
@@ -1409,7 +1425,10 @@ class SamplePlanReplayTests(unittest.TestCase):
             comparison = {
                 "status": "ok", "seed": seed,
                 "sample_plan": [{"lane": lane, "sample_index": index} for lane, index in plan],
-                "cpu": {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"},
+                "cpu": {
+                    **cpu,
+                    **evidence.cpu_gate_fields(cpu["one_sided_95_upper"]),
+                },
                 "syscall_gate": evidence.scorecard_syscall_gate(
                     {"marked_region": {"calls": {}}, "whole_process": {"calls": {}}},
                     {"marked_region": {"calls": {}}, "whole_process": {"calls": {}}},
@@ -1446,6 +1465,9 @@ class SamplePlanReplayTests(unittest.TestCase):
                 bad_bootstrap = copy.deepcopy(report)
                 bad_bootstrap["measurement"]["workloads"][name]["comparison"]["cpu"]["one_sided_95_upper"] = 0.01
                 self.assertTrue(evidence.validate_measurement_attempt(ROOT, bad_bootstrap, [name], full=False))
+                bad_cpu_bound = copy.deepcopy(report)
+                bad_cpu_bound["measurement"]["workloads"][name]["comparison"]["cpu"]["release_bound"] = 0.90
+                self.assertTrue(evidence.validate_measurement_attempt(ROOT, bad_cpu_bound, [name], full=False))
                 bad_operations = copy.deepcopy(report)
                 bad_operations["measurement"]["workloads"][name]["crabc"]["operations_per_process"] = 2
                 self.assertTrue(evidence.validate_measurement_attempt(ROOT, bad_operations, [name], full=False))

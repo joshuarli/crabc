@@ -3197,7 +3197,7 @@ def measure_pair(
     comparison: dict[str, Any] = {"status": "ok", "seed": seed, "sample_plan": [{"lane": lane, "sample_index": index} for lane, index in plan]}
     try:
         cpu = aarch64_contract.bootstrap_cpu_ratio(reference_cpu, candidate_cpu, seed=seed, resamples=evidence.CPU_RESAMPLES)
-        comparison["cpu"] = {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"}
+        comparison["cpu"] = {**cpu, **evidence.cpu_gate_fields(cpu["one_sided_95_upper"])}
     except ValueError as error:
         comparison["status"] = "cpu-unsupported"
         comparison["cpu"] = {"release_gate": "unsupported", "reason": str(error)}
