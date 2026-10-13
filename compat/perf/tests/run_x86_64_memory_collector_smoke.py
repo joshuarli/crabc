@@ -29,7 +29,7 @@ import run_x86_64 as runner
 # The three legacy source-family envelopes, dynamic-TLS worker checkpoint,
 # 32-MiB live allocation, external loopback peer, and guard-page primitive
 # together cover the native observer and collector boundaries without turning
-# this smoke into a 114-row scorecard campaign.
+# this smoke into a 114-row scorecard run.
 SMOKE_ROWS = (
     "allocator_4k",
     "startup_constructor_destructor",

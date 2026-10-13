@@ -5,7 +5,7 @@ Tool attestation, header provenance and Cargo archive membership classification
 are shared with the static producer. Final shared linkage is separate: every
 member is explicit. The default retains only the accepted pinned C mimalloc
 implementation; explicit native shadow selection excludes that exact member.
-Neither selection is dynamic-product campaign completion.
+Neither selection completes the dynamic product.
 """
 from __future__ import annotations
 

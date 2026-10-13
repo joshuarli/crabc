@@ -202,7 +202,7 @@ def prior_milestones(m0: Mapping[str, Any], *, profile: str = "full") -> dict[st
 
 
 def functional_milestones(m0: Mapping[str, Any]) -> dict[str, Any]:
-    """Read current functional producers without accepting historical status alone."""
+    """Read current functional producers without accepting a stored status alone."""
     import x86_64_m9_gate as physical
     import x86_64_m5_gate as lifecycle
     import x86_64_foundation_gate_receipts as foundations

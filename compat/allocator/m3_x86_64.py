@@ -1774,7 +1774,7 @@ def run_miri(contract: Mapping[str, Any], *, profile: MiriProfile = MiriProfile.
 
 
 def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
-    # A completed historical receipt cannot qualify the source and compiler
+    # A completed earlier receipt cannot qualify the source and compiler
     # selected for this execution. Keep its reported status while admitting
     # only clean, unchanged source and native image identities that match.
     source_state = run.runtime_ticket_zero_soak_source_state()

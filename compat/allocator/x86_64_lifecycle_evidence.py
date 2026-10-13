@@ -1866,7 +1866,7 @@ def validate_runtime_first_arena_policy_report(report: Mapping[str, Any]) -> Non
 
 
 def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]:
-    """Publish the one policy-bound runtime witness without a campaign claim."""
+    """Publish the one policy-bound runtime witness without a full-qualification claim."""
 
     candidate_source_before = capture_candidate_source_snapshot()
     provenance = require_native_x86_64()

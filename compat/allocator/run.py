@@ -17261,7 +17261,7 @@ def validate_owner_exit_publication_contract(
     an abandoned identity, and the route has either published its exact arena
     bitmap/count capability or its exact non-arena OS-list member before the
     common unown operation. An empty page instead takes its terminal release
-    branch. The contract keeps the old Wave 03/W07 Loom-only claim from being
+    branch. The contract keeps a Loom-only claim from being
     promoted into a reconstruction authority after any of those transitions.
     """
 

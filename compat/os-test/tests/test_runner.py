@@ -119,7 +119,7 @@ class OutcomeComparisonTests(unittest.TestCase):
         self.assertEqual(differences, [])
         self.assertFalse(RUNNER.source_contract_passed("basic", candidate))
         # A matched make status and no accepted differences are still red.
-        # This is the former false-green condition from run_profile.
+        # A matching make status alone must not pass the suite.
         self.assertFalse(
             RUNNER.suite_result_passed(
                 "basic", candidate, make_status_ok=True, unaccepted_difference_count=0

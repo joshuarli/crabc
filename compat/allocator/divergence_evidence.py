@@ -17,7 +17,7 @@ the row back to the source algorithm, or names:
 behavior to compare: both kinds must be ``not_applicable`` with nonempty
 reasons, and the entry's ``c_defect`` must name the pinned C source lines
 where C faults or has undefined behavior plus the accepted
-``known-differences.md`` entry that records the defect and is carried by
+known-difference entry that records the defect and is carried by
 this row. Such an entry stands in for the row's evidence flags in the
 source-convergence reader; nothing else may use ``not_applicable``.
 

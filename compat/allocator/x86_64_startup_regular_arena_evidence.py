@@ -8,7 +8,7 @@ reservation, the source's ignored too-small reservation failure, an absent
 option, both `disallow_os_alloc` outcomes around an existing parent, and the
 `disallow_arena_alloc` direct-OS fallback including its disallow-OS refusal.
 It is not a public allocator API,
-huge-page, physical-NUMA, metadata-destruction, or campaign qualification
+huge-page, physical-NUMA, metadata-destruction, or full qualification
 claim.
 """
 
@@ -138,7 +138,7 @@ REPORT_SCOPE = {
 # The source input roster includes the complete private allocator Rust tree,
 # the exact C input closure, the fixed test/producer, and toolchain/runner
 # inputs. It identifies the candidate measured by this report; validation of a
-# historical receipt remains structural/self-consistency only and never
+# stored receipt remains structural/self-consistency only and never
 # authenticates a later checkout by itself.
 CANDIDATE_INPUT_ROOTS = (
     "Cargo.lock",

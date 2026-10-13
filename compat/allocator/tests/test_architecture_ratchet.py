@@ -42,7 +42,7 @@ class ArchitectureRatchetTests(unittest.TestCase):
         self.assertEqual(report["scope"]["current"], "shadow_subset")
         self.assertTrue(report["scope"]["static_analysis_cannot_close_final_gate"])
         self.assertEqual(report["selected_production"]["status"], "static-selection-confirmed")
-        # The active campaign's production build is native x86-64; its
+        # The selected production build is native x86-64; its
         # compiled route reaches no long PageMap lifecycle lease.
         self.assertEqual(
             self.manifest["phase_bc_call_graph"]["cfg_environment"]["key_values"]["target_arch"],
