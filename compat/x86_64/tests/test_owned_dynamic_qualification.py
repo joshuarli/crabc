@@ -192,6 +192,60 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(qualification.QualificationError, "stale or mismatched"):
             qualification.validate_case(record, "installed", "loader-synthetic", self.source, self.manifest)
 
+    def test_artifact_snapshot_matches_no_follow_pathlib_reference(self):
+        evidence = self.work / "snapshot-evidence"
+        deep = evidence / "a" / "nested" / "deep"
+        deep.mkdir(parents=True)
+        for directory, mode in ((evidence / "a", 0o751), (evidence / "a/nested", 0o710),
+                                (deep, 0o711)):
+            directory.chmod(mode)
+        payload = deep / "payload"
+        payload.write_bytes(b"retained leaf bytes")
+        payload.chmod(0o640)
+        (evidence / "a-z").write_bytes(b"path component ordering")
+        (evidence / ".hidden").write_bytes(b"hidden entries remain evidence")
+
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "secret").write_bytes(b"not part of this snapshot")
+        (evidence / "internal-link").symlink_to("a/nested/deep/payload")
+        (evidence / "outside-file").symlink_to("../../../outside/secret")
+        (evidence / "outside-directory").symlink_to("../../../outside", target_is_directory=True)
+        (evidence / "dangling-link").symlink_to("missing-target")
+        os.mkfifo(evidence / "pipe", 0o620)
+        log = self.work / "snapshot.log"
+        log.write_text(f"leaf passed; evidence: {evidence}\n", encoding="utf-8")
+
+        def pathlib_reference():
+            entries = {}
+            for path in sorted(evidence.rglob("*")):
+                mode = path.lstat().st_mode
+                entry = {"mode": stat.S_IMODE(mode), "type": stat.S_IFMT(mode)}
+                if stat.S_ISREG(mode):
+                    entry["sha256"] = qualification.digest(path)
+                elif stat.S_ISLNK(mode):
+                    entry["target"] = os.readlink(path)
+                entries[path.relative_to(evidence).as_posix()] = entry
+            return {qualification.relative(evidence): entries}
+
+        before = qualification.artifact_snapshot(log, str(self.root))
+        expected = pathlib_reference()
+        evidence_key = qualification.relative(evidence)
+        self.assertEqual(before, expected)
+        self.assertEqual(list(before[evidence_key]), list(expected[evidence_key]))
+        self.assertEqual(before[evidence_key]["a/nested/deep/payload"]["mode"], 0o640)
+        self.assertEqual(before[evidence_key]["pipe"]["type"], stat.S_IFIFO)
+        self.assertEqual(before[evidence_key]["internal-link"]["target"], "a/nested/deep/payload")
+        self.assertEqual(before[evidence_key]["outside-file"]["target"], "../../../outside/secret")
+        self.assertEqual(before[evidence_key]["dangling-link"]["target"], "missing-target")
+        self.assertNotIn("outside-directory/secret", before[evidence_key])
+
+        payload.chmod(0o600)
+        after = qualification.artifact_snapshot(log, str(self.root))
+        self.assertNotEqual(before, after)
+        self.assertEqual(after, pathlib_reference())
+        self.assertEqual(after[evidence_key]["a/nested/deep/payload"]["mode"], 0o600)
+
     def test_classic_netdb_scratch_is_fresh_and_preserves_shared_tmpdir(self):
         shared = self.work / "shared-temporary"
         shared.mkdir(mode=0o750)

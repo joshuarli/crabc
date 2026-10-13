@@ -412,15 +412,25 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
     result = {}
     for directory in sorted(directories):
         entries = {}
-        for path in sorted(directory.rglob("*")):
-            mode = path.lstat().st_mode
-            entry = {"mode": stat.S_IMODE(mode), "type": stat.S_IFMT(mode)}
-            if stat.S_ISREG(mode):
-                entry["sha256"] = digest(path)
-            elif stat.S_ISLNK(mode):
-                entry["target"] = os.readlink(path)
-            entries[path.relative_to(directory).as_posix()] = entry
-        result[relative(directory)] = entries
+        pending = [(os.fspath(directory), "")]
+        while pending:
+            current, parent = pending.pop()
+            with os.scandir(current) as children:
+                for child in children:
+                    name = child.name if not parent else f"{parent}/{child.name}"
+                    mode = child.stat(follow_symlinks=False).st_mode
+                    entry = {"mode": stat.S_IMODE(mode), "type": stat.S_IFMT(mode)}
+                    if stat.S_ISREG(mode):
+                        entry["sha256"] = digest(Path(child.path))
+                    elif stat.S_ISLNK(mode):
+                        entry["target"] = os.readlink(child.path)
+                    entries[name] = entry
+                    if stat.S_ISDIR(mode):
+                        pending.append((child.path, name))
+        # Path ordering compares components, not the slash-joined names.
+        result[relative(directory)] = {
+            name: entries[name] for name in sorted(entries, key=lambda name: tuple(name.split("/")))
+        }
     return result
 
 
