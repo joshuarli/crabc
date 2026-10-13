@@ -773,29 +773,26 @@ class HostLoadTests(unittest.TestCase):
 
 
 class CorrectnessAdmissionTests(unittest.TestCase):
-    def test_every_incomplete_predecessor_gate_is_named(self) -> None:
+    def test_missing_current_source_receipt_names_every_correctness_gate(self) -> None:
         admission = evidence.correctness_admission(ROOT)
         chain = evidence._x86_module(ROOT, "generate_qualification_manifest").CHAIN
-        predecessors = chain[:chain.index(evidence.PERFORMANCE_GATE)]
+        predecessors = chain[:-1]
         self.assertEqual(admission["status"], "unavailable")
         self.assertEqual(admission["owner"], evidence.CORRECTNESS_OWNER)
         self.assertEqual([item.split(":")[0] for item in admission["unmet"]], list(predecessors))
+        self.assertIsNone(admission["receipt"])
+        self.assertIsNone(admission["source"])
+        self.assertEqual(admission["qualified_gates"], [])
 
-    def test_only_completed_predecessors_admit(self) -> None:
+    def test_manifest_declarations_cannot_claim_execution_admission(self) -> None:
         owner = evidence._x86_module(ROOT, "generate_qualification_manifest")
         contract = owner.load_contract()
         completed = copy.deepcopy(contract)
-        completed["incomplete_gates"] = [evidence.PERFORMANCE_GATE]
+        completed["incomplete_gates"] = []
         with patch.object(owner, "load_contract", return_value=completed):
-            self.assertEqual(evidence.correctness_admission(ROOT),
-                             {"status": "available", "owner": evidence.CORRECTNESS_OWNER, "unmet": []})
-        one_open = copy.deepcopy(contract)
-        one_open["incomplete_gates"] = ["capability.accounting", evidence.PERFORMANCE_GATE]
-        with patch.object(owner, "load_contract", return_value=one_open):
             admission = evidence.correctness_admission(ROOT)
         self.assertEqual(admission["status"], "unavailable")
-        self.assertEqual(len(admission["unmet"]), 1)
-        self.assertTrue(admission["unmet"][0].startswith("capability.accounting: "))
+        self.assertEqual(admission["qualified_gates"], [])
 
 
 class CollectorCompositionTests(unittest.TestCase):

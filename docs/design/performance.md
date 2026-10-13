@@ -36,6 +36,14 @@ allocation, `getrusage`, and procfs resource data. It batches 1,000 operations
 per sample and repeats five complete runner invocations. This is a direct
 native-facade comparison, not a musl C-libc benchmark.
 
+Full x86-64 performance runs require a passing correctness-profile chain
+receipt for the current source through `capability.accounting`. The host
+reader replays the retained case roster, source runners, completion markers,
+and raw logs, then binds the admission record to that receipt, source identity,
+and seven-gate prefix. It always selects the correctness-profile receipt, so
+the later full-profile receipt does not change earlier performance evidence.
+Smoke runs remain available without that admission.
+
 Reports are ignored local evidence under `compat/reports/perf/`; compare only
 runs with matching host provenance, fixture hash, sample contract, and runtime
 artifact hashes. The detailed harness contract lives in

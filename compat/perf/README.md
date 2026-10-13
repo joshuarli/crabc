@@ -117,14 +117,17 @@ A full-budget attempt refuses to start on a contended host; `check` rederives
 the record from the raw files. The Rust-facade companion's report carries the
 same record under the same policy, and its full mode fails closed likewise.
 
-Correctness admission is read from the ordered qualification chain
-(`compat/x86_64/qualification_manifest.json`): every gate before
-`performance.release` must have left `incomplete_gates`. A roster records the
-reader's result and cannot assert it. A full-budget run is rejected before any
-build or timed child until that reader admits it. Smoke rosters run and
-collect regardless, and their scorecards always carry the budget blocker. An
-owned-dynamic-qualification receipt binds the supplied product; its absence is
-also a named blocker.
+Correctness admission requires the current source's validated correctness
+profile receipt through `capability.accounting`. The host replays its case
+roster, current runner and manifest hashes, completion markers, and retained
+logs; the record binds the receipt identity, source identity, and seven passed
+gates. It selects only that correctness-profile receipt, so a later
+full-profile receipt does not change the admission recorded by an earlier
+performance report. A roster records the reader's result and cannot assert
+it. A full-budget run is rejected before any build or timed child until that
+reader admits it. Smoke rosters run and collect regardless, and their
+scorecards always carry the budget blocker. An owned-dynamic-qualification
+receipt binds the supplied product; its absence is also a named blocker.
 
 ```bash
 P=$PWD/.work/x86_64/<dynamic-product>

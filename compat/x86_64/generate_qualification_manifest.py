@@ -339,6 +339,17 @@ def load_contract(path: Path | None = None) -> dict[str, object]:
     return validate_contract(load_json(CONTRACT_PATH if path is None else path, "qualification contract"))
 
 
+def host_receipt_directory(checkout: Path) -> Path:
+    """Map the pinned image receipt directory through its checkout bind."""
+
+    receipt = Path(EXECUTION_CONTRACT["receipt_directory"])
+    try:
+        relative = receipt.relative_to(Path("/workspace"))
+    except ValueError as error:
+        raise QualificationManifestError("qualification receipt directory escapes the checkout bind") from error
+    return checkout.resolve(strict=True) / relative
+
+
 def write_or_check(path: Path, report: Mapping[str, object], check: bool) -> None:
     expected = canonical_json(report)
     if check:

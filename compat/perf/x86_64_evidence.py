@@ -81,11 +81,9 @@ HOST_ENVIRONMENT_KEYS = frozenset({
     "PATH", "LANG", "LC_ALL", "TZ", "TMPDIR", "CRABC_PERF_DOCKER_IMAGE_ID",
     "CRABC_PERF_CONTAINER_POLICY", "CRABC_WORK_DIR", "CARGO_HOME",
 })
-# ``performance.release`` is the last gate of the ordered x86 qualification
-# chain.  Its correctness predecessor is every earlier gate of that chain, as
-# owned by the checked qualification manifest; this adapter only reads it.
-CORRECTNESS_OWNER = "compat/x86_64/qualification_manifest.json promotion_chain before performance.release"
-PERFORMANCE_GATE = "performance.release"
+# Full attempts require a replayed correctness-profile prefix; their admission
+# record binds the selected receipt, its source identity, and every passed gate.
+CORRECTNESS_OWNER = "compat/x86_64/run_qualification_manifest.py correctness-profile receipt"
 
 IDENTITY_FIELDS = frozenset({"path", "sha256", "mode", "bytes"})
 
@@ -458,35 +456,72 @@ def _x86_module(checkout: Path, name: str) -> Any:
 
 
 def correctness_admission(checkout: Path) -> dict[str, Any]:
-    """Read whether every qualification gate before this one is complete.
+    """Replay the latest current-source correctness-chain receipt on the host."""
 
-    The ordered chain's owner reports ``incomplete_gates``; a gate leaves that
-    list only through its own source/tool/runtime/artifact-bound execution
-    receipts.  Admission is therefore exactly "no predecessor of
-    ``performance.release`` is incomplete", and each unmet predecessor is named
-    with its declared state.  Nothing in a roster or report can assert it.
-    """
-
-    try:
-        report = _x86_module(checkout, "generate_qualification_manifest").load_contract()
-    except (OSError, RuntimeError, ValueError) as error:
-        raise EvidenceError(f"cannot read the ordered qualification chain: {error}") from error
-    chain = report.get("promotion_chain")
-    incomplete = report.get("incomplete_gates")
-    require(isinstance(chain, list) and isinstance(incomplete, list), "ordered qualification chain is malformed")
-    identifiers = [gate.get("id") if isinstance(gate, dict) else None for gate in chain]
-    require(identifiers.count(PERFORMANCE_GATE) == 1, "ordered qualification chain lacks performance.release")
-    predecessors = chain[:identifiers.index(PERFORMANCE_GATE)]
-    unmet = [
-        f"{gate['id']}: {gate.get('state')}, no qualification execution receipt"
-        for gate in predecessors
-        if gate["id"] in incomplete
-    ]
-    return {
-        "status": "unavailable" if unmet else "available",
+    checkout = checkout.resolve(strict=True)
+    unavailable = {
+        "status": "unavailable",
         "owner": CORRECTNESS_OWNER,
-        "unmet": unmet,
+        "unmet": [],
+        "receipt": None,
+        "source": None,
+        "qualified_gates": [],
     }
+    try:
+        manifest = _x86_module(checkout, "generate_qualification_manifest")
+        receipt_root = manifest.host_receipt_directory(checkout)
+        chain = manifest.CHAIN
+        expected_prefix = list(manifest.active_chain("correctness"))
+        deferred = manifest.deferred_gate_ids("correctness")
+        require(expected_prefix and len(deferred) == 1 and chain == (*expected_prefix, deferred[0]),
+                "ordered qualification chain endpoints drifted")
+        correctness_endpoint = expected_prefix[-1]
+        if receipt_root.is_symlink() or not receipt_root.is_dir() or receipt_root.resolve() != receipt_root:
+            unavailable["unmet"] = [
+                f"{identifier}: ready, no qualification execution receipt"
+                for identifier in chain[:-1]
+            ]
+            return unavailable
+        candidates = sorted(
+            (
+                entry / "receipt.json"
+                for entry in receipt_root.iterdir()
+                if entry.name.startswith(f"chain-{correctness_endpoint}-")
+            ),
+            key=lambda path: path.parent.name,
+            reverse=True,
+        )
+        if not candidates:
+            unavailable["unmet"] = [
+                f"{identifier}: ready, no qualification execution receipt"
+                for identifier in chain[:-1]
+            ]
+            return unavailable
+        receipt_path = candidates[0]
+        receipt_reader = _x86_module(checkout, "run_qualification_manifest")
+        receipt = receipt_reader.validate_chain_receipt(receipt_path, host_replay=True, receipt_root=receipt_root)
+        require(
+            receipt.get("qualification_profile") == "correctness"
+            and receipt.get("through") == correctness_endpoint
+            and receipt.get("complete_profile") is True
+            and receipt.get("complete_chain") is False
+            and receipt.get("outcome") == "passed"
+            and receipt.get("qualified_gates") == expected_prefix,
+            "correctness-chain receipt does not prove the complete current correctness prefix",
+        )
+        identity = file_identity(receipt_path)
+        identity["path"] = receipt_path.relative_to(checkout).as_posix()
+        return {
+            "status": "available",
+            "owner": CORRECTNESS_OWNER,
+            "unmet": [],
+            "receipt": identity,
+            "source": receipt["source_after"],
+            "qualified_gates": expected_prefix,
+        }
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as error:
+        unavailable["unmet"] = [f"correctness-chain receipt: {error}"]
+        return unavailable
 
 
 def dynamic_product_identity(checkout: Path, product: Path) -> dict[str, Any]:

@@ -2676,7 +2676,11 @@ def validate_report(
         raise RunnerError("report invocation is not a private work subtree")
     if cargo_home.is_symlink() or not cargo_home.is_dir() or not _within(cargo_home, work_root):
         raise RunnerError("report Cargo home is not a private work subtree")
-    admission = _require_exact_keys(report["admission"], {"status", "owner", "unmet"}, "report admission")
+    admission = _require_exact_keys(
+        report["admission"],
+        {"status", "owner", "unmet", "receipt", "source", "qualified_gates"},
+        "report admission",
+    )
     if admission != correctness_admission(root):
         raise RunnerError("report admission differs from the ordered qualification chain")
     if mode == "full" and admission["status"] != "available":

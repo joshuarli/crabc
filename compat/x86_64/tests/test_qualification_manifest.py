@@ -38,6 +38,14 @@ class QualificationManifestTests(unittest.TestCase):
     def document(self) -> dict[str, object]:
         return json.loads(qualification.CONTRACT_PATH.read_text(encoding="utf-8"))
 
+    def test_host_receipt_directory_maps_the_pinned_checkout_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            self.assertEqual(
+                qualification.host_receipt_directory(checkout),
+                checkout / ".work/x86_64/qualification-receipts",
+            )
+
     def test_profiles_keep_full_roster_and_close_only_selected_readiness(self):
         document = self.document()
         document['qualification_profile'] = 'full'

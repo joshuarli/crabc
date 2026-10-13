@@ -523,8 +523,8 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
             gate['case_manifest'] = relative
         self.contract = self.root / 'compat/x86_64/qualification_manifest.json'
         self.contract.write_text(json.dumps(document), encoding='utf-8')
-        self.receipts = self.root / 'receipts'
-        self.receipts.mkdir()
+        self.receipts = self.root / '.work/x86_64/qualification-receipts'
+        self.receipts.mkdir(parents=True)
         self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
         self.inputs = {'tools': 'fixture'}
         self.environment = {'PATH': os.environ['PATH'], 'LC_ALL': 'C'}
@@ -572,6 +572,55 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.assertNotIn('performance.release', [case['gate'] for case in receipt['cases']])
         self.assertEqual(receipt['deferred_gate_ids'], ['performance.release'])
         self.assertEqual(runner.validate_chain_receipt(path), receipt)
+
+    def test_host_replay_checks_correctness_receipt_logs_without_image_tools(self):
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting', profile='correctness')
+        with patch.object(runner, 'execution_inputs', side_effect=AssertionError('host replay used image tools')):
+            self.assertEqual(runner.validate_chain_receipt(path, host_replay=True), receipt)
+
+        log = path.parent / receipt['cases'][0]['stdout']['path']
+        original = log.read_bytes()
+        log.chmod(0o644)
+        log.write_bytes(original.replace(b'PASS', b'pass'))
+        with patch.object(runner, 'execution_inputs', side_effect=AssertionError('host replay used image tools')):
+            with self.assertRaisesRegex(runner.QualificationRunError, 'stdout changed'):
+                runner.validate_chain_receipt(path, host_replay=True)
+        log.write_bytes(original)
+        log.unlink()
+        with patch.object(runner, 'execution_inputs', side_effect=AssertionError('host replay used image tools')):
+            with self.assertRaisesRegex(runner.QualificationRunError, 'cannot hash'):
+                runner.validate_chain_receipt(path, host_replay=True)
+
+    def test_performance_admission_uses_only_current_correctness_receipt(self):
+        spec = importlib.util.spec_from_file_location(
+            'qualification_performance_evidence', ROOT / 'compat/perf/x86_64_evidence.py'
+        )
+        assert spec is not None and spec.loader is not None
+        performance_evidence = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = performance_evidence
+        spec.loader.exec_module(performance_evidence)
+
+        correctness_path, correctness = runner.run_chain(
+            manifest.load_contract(), 'capability.accounting', profile='correctness'
+        )
+        modules = {
+            'generate_qualification_manifest': manifest,
+            'run_qualification_manifest': runner,
+        }
+        with patch.object(performance_evidence, '_x86_module', side_effect=lambda _root, name: modules[name]):
+            admitted = performance_evidence.correctness_admission(self.root)
+            self.assertEqual(admitted['status'], 'available')
+            self.assertEqual(admitted['source'], correctness['source_after'])
+            self.assertEqual(admitted['qualified_gates'], list(manifest.CHAIN[:-1]))
+            self.assertEqual(admitted['receipt']['path'], correctness_path.relative_to(self.root).as_posix())
+
+            runner.run_chain(manifest.load_contract(), 'performance.release', profile='full')
+            self.assertEqual(performance_evidence.correctness_admission(self.root), admitted)
+
+            self.source = {'revision': 'c' * 40, 'content_sha256': 'd' * 64}
+            stale = performance_evidence.correctness_admission(self.root)
+            self.assertEqual(stale['status'], 'unavailable')
+            self.assertTrue(any('source is stale' in item for item in stale['unmet']))
 
     def test_correctness_failure_cannot_complete_profile(self):
         self.environment['QUALIFICATION_FIXTURE_FAIL'] = 'capability.accounting'
