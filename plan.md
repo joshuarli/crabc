@@ -6,8 +6,11 @@ H0 dynamic products passed and were published after retained validation;
 POSIX-family, crypt, atomic and wordexp steps passed. POSIX-native continues.
 M1's layout prerequisite is parked after three narrow experiments failed to
 reproduce its aggregate failure. M2 has no failing executed check but remains
-partial. M3/M4/M5/M6, source convergence, focused defect fixes, cleanup and
-campaign review continue in separate worktrees. Nothing
+partial. M3's Miri matrices pass; its native batch has five stale refused-free
+assertions under correction. M4 retains one address-reuse mismatch. M5's native
+runner corrections remain under review. M6's four-profile adapter matrix and
+retained replay pass; the complete baseline gate is running. Source convergence,
+focused defect fixes, cleanup and campaign review continue. Nothing
 has been qualified on main: 0 of 8 gates, 9 of 26 families. Earlier receipts
 were deleted with `.work/` on 2026-10-07.
 
@@ -541,6 +544,10 @@ Made so far, each with its commit, for the owner:
 
 - `de3a8e968`: the core image identity in `compat/x86_64/core_image.py` is
   the image rebuilt on 2026-10-13 from the unchanged recipe.
+- `e8d4deedb`: unsafe output-handler registration documents the existing
+  source startup obligation: automatic startup, including delayed-output
+  post-initialization, must finish before registering a public handler.
+  The NUMA startup witness observes READY and a live TLD before delivery.
 
 ## Non-goals
 
@@ -781,6 +788,50 @@ Append one line per merge batch, per parked item, and per contract change.
   wordexp-profile and wordexp-inputs. POSIX-native differential passes and
   its native os-test continues. The throwaway `21e9a89cf` branch still changes
   no claims on main and is not a main qualification.
+
+- 2026-10-13: integration through `7a26c4526` passes all 23 host-side test
+  directories, ledger/structure/inventory checks and all nine Rust profiles.
+  Its official M6 adapter matrix passes all four profiles with 145 keys;
+  retained replay passes the physical receipt, original-option negative
+  controls and invalid-precondition controls. Debug comparison checks the
+  source option proof and masks only independently validated OS-address
+  operands; raw diagnostics remain retained. This is adapter evidence, not
+  a full milestone or main qualification.
+- 2026-10-13: `0efa7ebd8` restores option-aware NUMA cold-cache verbose
+  output after cache publication and before the current-node primitive;
+  `e8d4deedb` proves early output stays buffered until post-initialization,
+  then children reuse the process cache after option mutation. In frozen
+  `e8d4deedb`, the 141-field C/R VM comparison, exact startup regression and
+  all nine Rust profiles pass. Physical NUMA remains unqualified.
+- 2026-10-13: actual M3 at `8c7abf176` passes all four Miri profiles and
+  its 458,179-observation C/R traces, but exits unmet: prerequisites and five
+  native refused-unmap assertions fail. Source page free consumes its
+  capability after a refused unmap, warns and leaves the range mapped; the
+  old owner tests incorrectly require retained retry custody. Their owner
+  is correcting the tests while preserving real child-arena failure custody.
+- 2026-10-13: actual M4 at `8c7abf176` retains one stat-2 operation mismatch:
+  aligned allocation 846 reports historical address reuse 845 only in the
+  original Rust run. Size, alignment, slice geometry and client contract
+  match. Three gates consume that same failed differential. Exact-environment
+  retained-binary controls do not reproduce it; source release/re-map analysis
+  continues. Raw failure is preserved and no gate is reclassified.
+- 2026-10-13: actual full M5 at `be460576b` passes lifecycle models,
+  functional differential groups and canonical shadow/stress/soak receipts,
+  but remains unmet. Its three native groups misread nested child summaries,
+  and two secure targets run zero tests without their feature profiles.
+  The runner correction checks each target/profile's final parent summary;
+  cancellation ownership defects found in review are being fixed before merge.
+  Code-generation/performance proof is still missing.
+- 2026-10-13: M7 positive-child metadata statistics remain numerically
+  different after destruction; live-child and owner-count observations match.
+  This is retained diagnostic output without a qualification seal, not an
+  accepted numeric waiver. Its fresh-arena witness is committed unverified
+  on `lane/allocator-options` after an image-inspection failure. `71de81358`
+  preserves Docker's actual inspection error; there is no observed harness
+  denial and the parked witness has not been retried.
+- 2026-10-13: `perf-gate-ready` exits 75 after its three load checks:
+  perf gate deferred: host busy. No qualifying timing was collected; no
+  performance-dependent promotion is claimed.
 
 ## For the owner afterwards
 
