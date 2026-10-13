@@ -161,10 +161,10 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
                 panic!("B finds A's post-exit source through PageMap facts")
             }
             NativePageAllocationResult::AllocationFailed => {
-                panic!("B creates the W01 replacement through its persistent owner")
+                panic!("B creates the replacement through its persistent owner")
             }
             NativePageAllocationResult::Retained => {
-                panic!("the selected post-exit source has a generic W03 continuation")
+                panic!("the selected post-exit source has a generic page-owned source tail continuation")
             }
         };
         assert_ne!(
@@ -184,7 +184,7 @@ fn post_exit_replacement_keeps_a_preexisting_b_session_continuable_through_page_
         assert_eq!(
             unsafe { native_free(replacement) },
             NativePageFreeResult::Freed,
-            "B releases its current W01 replacement through its own local owner"
+            "B releases its current replacement through its own local owner"
         );
 
         for (index, (address, request)) in post_exit_clients

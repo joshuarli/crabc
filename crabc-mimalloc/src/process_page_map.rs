@@ -3221,34 +3221,34 @@ mod tests {
                 });
             completion_send
                 .send(completion)
-                .expect("the fixture receives the W03 terminal completion");
+                .expect("the fixture receives the page-owned source tail terminal completion");
         });
 
         barrier.wait();
         assert!(matches!(
             lease.begin_page_lifecycle(),
             Err(ProcessPageMapError::LifecycleBusy)
-        ), "ordinary lifecycle admission remains immediately nonblocking while W03 waits");
+        ), "ordinary lifecycle admission remains immediately nonblocking while page-owned source tail waits");
         assert!(
             completion_receive
                 .recv_timeout(Duration::from_millis(100))
                 .is_err(),
-            "the W03-only terminal acquisition waits instead of converting held-map contention into retention"
+            "the source-tail-only terminal acquisition waits instead of converting held-map contention into retention"
         );
 
         held
             .finish()
-            .expect("releasing the normal lifecycle wakes the exact W03 terminal acquisition");
+            .expect("releasing the normal lifecycle wakes the exact page-owned source tail terminal acquisition");
         match completion_receive.recv_timeout(Duration::from_secs(1)) {
             Ok(Ok(())) => {}
-            completion => panic!("the waiting W03 terminal acquisition releases safely: {completion:?}"),
+            completion => panic!("the waiting page-owned source tail terminal acquisition releases safely: {completion:?}"),
         }
         waiter
             .join()
-            .expect("the W03 waiter completes after the normal lifecycle releases");
+            .expect("the page-owned source tail waiter completes after the normal lifecycle releases");
         lease
             .begin_page_lifecycle()
-            .expect("the completed short W03 mutation leaves ordinary lifecycle semantics unchanged")
+            .expect("the completed short page-owned source tail mutation leaves ordinary lifecycle semantics unchanged")
             .finish()
             .expect("the final normal lifecycle releases the reusable root");
     }

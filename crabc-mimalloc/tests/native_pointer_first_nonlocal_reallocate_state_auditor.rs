@@ -328,7 +328,7 @@ fn native_pointer_first_nonlocal_reallocate_audits_failure_and_one_old_consumpti
     assert_eq!(
         observation.result,
         ReplacementResult::Allocated,
-        "W01 pointer-first nonlocal realloc must allocate through B, copy, and free A's old page exactly once; before={before_success:?}; after={after_success_attempt:?}; observation={observation:?}"
+        "pointer-first nonlocal realloc must allocate through B, copy, and free A's old page exactly once; before={before_success:?}; after={after_success_attempt:?}; observation={observation:?}"
     );
     assert!(
         observation.replacement_is_distinct,

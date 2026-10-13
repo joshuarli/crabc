@@ -1286,7 +1286,7 @@ pub(crate) enum ProcessPostOwnerExitPointerFreeRejection {
 /// It remains separate from its PageMap mutation lease: only a possibly
 /// partial PageMap tail retains that short exact-range lease. A terminal tail
 /// that completed unregistration retains only its exact source owner below.
-#[must_use = "a claimed W03 source owner must be released or sealed terminally"]
+#[must_use = "a claimed page-owned source tail source owner must be released or sealed terminally"]
 enum ProcessPostOwnerExitClaimTerminalRetained {
     /// A different exact page already made the process terminal after this
     /// page's CAS. The claim must remain owned but must not enter a blocked
@@ -1321,7 +1321,7 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
 /// owner.  It has no accessor, retry, lookup, or drop surface: the generic
 /// one-way owner-exit transition leaves exactly one fail-closed owner; a
 /// replacement post-exit route could reopen a partially completed map tail.
-#[must_use = "a terminal W03 source owner must be sealed, never reconstructed"]
+#[must_use = "a terminal page-owned source tail source owner must be sealed, never reconstructed"]
 enum ProcessPostOwnerExitTerminalRetained {
     /// A claim path retained its remote-free source owner and, only when unregister
     /// may have made partial progress, its exclusive PageMap mutation lease.
@@ -48329,7 +48329,7 @@ mod tests {
     // independently of request size. Keep the request deliberately small;
     // allocation rounds it through `_mi_os_good_alloc_size` before it becomes
     // a page block, so the source-valid fixture remains link-aligned.
-    const W03_ALIGNMENT_FORCED_OS_REQUEST: usize = 7;
+    const SOURCE_TAIL_ALIGNMENT_FORCED_OS_REQUEST: usize = 7;
 
     fn w03_paired_process_owner(
         config: MemoryConfig,
@@ -48337,19 +48337,19 @@ mod tests {
     ) -> (ProcessPageMapRoot, ProcessSharedArenaLease) {
         let page_map = ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
-            .expect("the isolated W03 process map initializes");
+            .expect("the isolated page-owned source tail process map initializes");
         let mapping = Mapping::map_aligned_for_allocator(
             config,
             ARENA_MIN_SIZE,
             ARENA_ALIGNMENT,
             MapAccess::Committed,
         )
-        .expect("the isolated W03 process owns one arena mapping");
+        .expect("the isolated page-owned source tail process owns one arena mapping");
         let arena = ProcessSharedArenaStorage::test_static_owner()
             .install_one_owned_external_arena(page_map, mapping);
         let arena = match arena {
             Ok(arena) => arena,
-            Err(_) => panic!("the isolated W03 process publishes one matching arena"),
+            Err(_) => panic!("the isolated page-owned source tail process publishes one matching arena"),
         };
         (page_map, arena)
     }
@@ -48388,11 +48388,11 @@ mod tests {
             let subprocess = MainSubprocess::test_static_owner();
             let (page_map, process_arena) = w03_paired_process_owner(config, subprocess);
             let pair = ProcessPageArenaLease::join(page_map, process_arena)
-                .expect("the isolated W03 map and arena form one process image");
+                .expect("the isolated page-owned source tail map and arena form one process image");
             let main = unsafe {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
             }
-            .expect("the isolated W03 static owner attaches");
+            .expect("the isolated page-owned source tail static owner attaches");
             let session = main
                 .begin_process_lifetime_page_session()
                 .expect("the empty static owner becomes one permanent page session");
@@ -48406,7 +48406,7 @@ mod tests {
             core::mem::forget(main);
         })
         .join()
-        .expect("the W03 fixture stays on its source current thread");
+        .expect("the page-owned source tail fixture stays on its source current thread");
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -48506,7 +48506,7 @@ mod tests {
         // SAFETY: the matching exact-range unregistration and deallocation
         // happen after the direct typed pointer operation returns.
         let base = NonNull::new(unsafe { alloc_zeroed(layout) })
-            .expect("the W03 detached fixture allocates two arena slices");
+            .expect("the page-owned source tail detached fixture allocates two arena slices");
         let page = base.cast::<Page>();
         // SAFETY: this fixture owns the metadata, complete block range, and
         // bound local source owner through its one pointer operation.
@@ -48524,27 +48524,27 @@ mod tests {
                 MemoryId::external(base.as_ptr(), 2 * ARENA_SLICE_SIZE, true, false, true),
             )
         }
-        .expect("the W03 detached fixture page is source-valid");
+        .expect("the page-owned source tail detached fixture page is source-valid");
         // This fixture hands out exactly its first block, keeping the page
         // registered and metadata-live through the rejection observation.
         unsafe { page.as_mut() }.set_exclusive_used(1);
         let block = NonNull::new(unsafe { base.as_ptr().add(page_offset) })
-            .expect("the W03 detached fixture canonical block is non-null");
+            .expect("the page-owned source tail detached fixture canonical block is non-null");
         // SAFETY: this fixture owns the one registered block range and has
         // no competing PageMap reader or writer.
         let map = unsafe { page_map.page_map_for_owned_ranges() }
-            .expect("the isolated W03 map serves its exact fixture range");
+            .expect("the isolated page-owned source tail map serves its exact fixture range");
         unsafe {
             map.register_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE, page)
-                .expect("the W03 detached fixture registers before lookup");
+                .expect("the page-owned source tail detached fixture registers before lookup");
             Page::remote_free_producer_state_at(page)
                 .xthread_id
                 .as_ref()
                 .store(THREAD_ID_DETACHED, Ordering::Release);
         }
         let allocation = unsafe { page_map.lookup_live_allocation(block) }
-            .expect("the W03 detached fixture map remains ready")
-            .expect("the W03 detached fixture pointer resolves");
+            .expect("the page-owned source tail detached fixture map remains ready")
+            .expect("the page-owned source tail detached fixture pointer resolves");
         assert_eq!(allocation.page_state(), crate::process_page_map::LiveAllocationPageState::Detached);
 
         operation(allocation, page, block);
@@ -48553,7 +48553,7 @@ mod tests {
         // and metadata untouched, so the fixture still owns their teardown.
         unsafe {
             map.unregister_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE)
-                .expect("the rejected W03 fixture registration clears exactly once");
+                .expect("the rejected page-owned source tail fixture registration clears exactly once");
             core::ptr::drop_in_place(page.as_ptr());
             dealloc(base.as_ptr(), layout);
         }
@@ -48567,30 +48567,30 @@ mod tests {
         let block_size = w03_singleton_block_size();
         let arena = pair
             .arena()
-            .expect("the W03 arena singleton has the paired arena view");
+            .expect("the page-owned source tail arena singleton has the paired arena view");
         let slice_count = page::singleton_page_slice_count(block_size, config.page_size())
-            .expect("the W03 singleton has one source slice span");
+            .expect("the page-owned source tail singleton has one source slice span");
         let span_size = slice_count
             .checked_mul(ARENA_SLICE_SIZE)
-            .expect("the W03 singleton span fits");
+            .expect("the page-owned source tail singleton span fits");
         let claim = arena
             .try_claim_suitable_slices(ArenaId::none(), slice_count, true, 0)
-            .expect("the isolated W03 arena yields one singleton span");
+            .expect("the isolated page-owned source tail arena yields one singleton span");
         let slice_start = claim.start();
         let metadata = claim
             .page_metadata()
-            .expect("the W03 arena singleton has its aligned metadata slot");
+            .expect("the page-owned source tail arena singleton has its aligned metadata slot");
         let memory = claim.memory_id();
         let usable_offset = page::page_usable_start_offset(block_size)
-            .expect("the W03 singleton has its usable offset");
+            .expect("the page-owned source tail singleton has its usable offset");
         let page_offset = slice_start
             .addr()
             .checked_add(usable_offset)
             .and_then(|start| start.checked_sub(metadata.as_ptr().addr()))
-            .expect("the W03 arena singleton metadata precedes its page area");
+            .expect("the page-owned source tail arena singleton metadata precedes its page area");
         assert!(
             session.ensure_arena_pages(&arena, config),
-            "the W03 arena singleton installs the static main bitmap before publication"
+            "the page-owned source tail arena singleton installs the static main bitmap before publication"
         );
         // SAFETY: `claim` owns the unregistered arena span and its metadata;
         // the permanent static session is the only owner of its static Theap.
@@ -48605,26 +48605,26 @@ mod tests {
                 memory,
             )
         }
-        .expect("the W03 arena singleton page publishes");
+        .expect("the page-owned source tail arena singleton page publishes");
         assert!(unsafe { page.as_mut() }.set_capacity_reserved(1, 1));
         unsafe { page.as_mut() }.set_exclusive_used(1);
         assert!(
             session.set_arena_page(&arena, memory),
-            "the W03 arena singleton marks its ordinary main-arena bit before PageMap publication"
+            "the page-owned source tail arena singleton marks its ordinary main-arena bit before PageMap publication"
         );
         let page_map_size = arena_page_map_size(page, slice_start, span_size)
-            .expect("the W03 arena singleton has one source-clipped map range");
+            .expect("the page-owned source tail arena singleton has one source-clipped map range");
         // SAFETY: this helper owns the complete fresh range and no producer
         // exists until the subsequent typed pointer lookup.
         let page_map = unsafe { pair.page_map_for_owned_ranges() }
-            .expect("the W03 arena singleton has the paired PageMap");
+            .expect("the page-owned source tail arena singleton has the paired PageMap");
         unsafe {
             page_map
                 .register_range(slice_start, page_map_size, page)
-                .expect("the W03 arena singleton range publishes before lookup");
+                .expect("the page-owned source tail arena singleton range publishes before lookup");
         }
         let block = NonNull::new(unsafe { page.as_ref().start() })
-            .expect("the W03 arena singleton canonical block is non-null");
+            .expect("the page-owned source tail arena singleton canonical block is non-null");
         (page, block, memory, memory.arena_memory().unwrap().slice_index as usize)
     }
 
@@ -48636,13 +48636,13 @@ mod tests {
         let page_offset = ARENA_SLICE_SIZE;
         let page_map_size = page::page_map_slice_count(block_size, 1, page_offset)
             .and_then(|slices| slices.checked_mul(ARENA_SLICE_SIZE))
-            .expect("the W03 external singleton has its full source map range");
+            .expect("the page-owned source tail external singleton has its full source map range");
         let layout = Layout::from_size_align(page_map_size, ARENA_SLICE_SIZE)
-            .expect("the W03 external singleton raw backing is slice aligned");
+            .expect("the page-owned source tail external singleton raw backing is slice aligned");
         // SAFETY: the test retains this external backing until process post-exit terminal route clears its
         // map/metadata tail, after which this fixture explicitly deallocates it.
         let base = NonNull::new(unsafe { alloc_zeroed(layout) })
-            .expect("the W03 external singleton backing allocates");
+            .expect("the page-owned source tail external singleton backing allocates");
         let memory = MemoryId::external(base.as_ptr(), page_map_size, true, false, true);
         let mut page = unsafe {
             session.publish_fresh_page(
@@ -48655,20 +48655,20 @@ mod tests {
                 memory,
             )
         }
-        .expect("the W03 external singleton primary metadata publishes");
+        .expect("the page-owned source tail external singleton primary metadata publishes");
         assert!(unsafe { page.as_mut() }.set_capacity_reserved(1, 1));
         unsafe { page.as_mut() }.set_exclusive_used(1);
         // SAFETY: this helper owns the complete external singleton span and
         // page lifetime until process post-exit terminal route's terminal callback unregisters it.
         let page_map = unsafe { pair.page_map_for_owned_ranges() }
-            .expect("the W03 external singleton has the paired PageMap");
+            .expect("the page-owned source tail external singleton has the paired PageMap");
         unsafe {
             page_map
                 .register_range(base.as_ptr(), page_map_size, page)
-                .expect("the W03 external singleton range publishes before lookup");
+                .expect("the page-owned source tail external singleton range publishes before lookup");
         }
         let block = NonNull::new(unsafe { page.as_ref().start() })
-            .expect("the W03 external singleton canonical block is non-null");
+            .expect("the page-owned source tail external singleton canonical block is non-null");
         (page, block, base, layout, page_map_size)
     }
 
@@ -48677,7 +48677,7 @@ mod tests {
         pair: ProcessPageArenaLease,
         session: &mut MainStaticProcessPageSession,
     ) -> (NonNull<Page>, NonNull<u8>, NonNull<u8>, usize) {
-        let block_size = config.good_alloc_size(W03_ALIGNMENT_FORCED_OS_REQUEST);
+        let block_size = config.good_alloc_size(SOURCE_TAIL_ALIGNMENT_FORCED_OS_REQUEST);
         assert_eq!(
             block_size,
             4 * KIB,
@@ -48694,18 +48694,18 @@ mod tests {
             128 * KIB,
         ) {
             Ok(claim) => claim,
-            Err(_) => panic!("the W03 OS singleton claim maps its normal OS backing"),
+            Err(_) => panic!("the page-owned source tail OS singleton claim maps its normal OS backing"),
         };
         let layout = claim.layout();
         let metadata = claim
             .metadata()
-            .expect("the W03 OS singleton has its primary metadata slot");
+            .expect("the page-owned source tail OS singleton has its primary metadata slot");
         let slice_start = claim
             .slice_start()
-            .expect("the W03 OS singleton has its clipped PageMap start");
+            .expect("the page-owned source tail OS singleton has its clipped PageMap start");
         let memory = claim
             .memory_id()
-            .expect("the W03 OS singleton describes its published memory");
+            .expect("the page-owned source tail OS singleton describes its published memory");
         let mut page = unsafe {
             session.publish_fresh_page(
                 metadata,
@@ -48717,7 +48717,7 @@ mod tests {
                 memory,
             )
         }
-        .expect("the W03 OS singleton primary metadata publishes");
+        .expect("the page-owned source tail OS singleton primary metadata publishes");
         assert_eq!(
             unsafe { page.as_ref() }.block_size(),
             block_size,
@@ -48727,26 +48727,26 @@ mod tests {
         unsafe { page.as_mut() }.set_exclusive_used(1);
         assert!(
             unsafe { claim.publish_secondary_metadata(page) },
-            "the W03 OS singleton publishes its secondary metadata before map publication"
+            "the page-owned source tail OS singleton publishes its secondary metadata before map publication"
         );
         // SAFETY: this helper owns the complete published OS singleton span
         // until process post-exit terminal route unregisters it before reclaiming the mapping.
         let page_map = unsafe { pair.page_map_for_owned_ranges() }
-            .expect("the W03 OS singleton has the paired PageMap");
+            .expect("the page-owned source tail OS singleton has the paired PageMap");
         unsafe {
             page_map
                 .register_range(slice_start.as_ptr(), layout.page_map_size(), page)
-                .expect("the W03 OS singleton clipped range publishes before lookup");
+                .expect("the page-owned source tail OS singleton clipped range publishes before lookup");
         }
         let published_memory = claim
             .into_published()
-            .expect("the W03 OS claim transfers exactly once into the page");
+            .expect("the page-owned source tail OS claim transfers exactly once into the page");
         assert!(
             same_non_arena_memory(published_memory, memory),
             "the published OS claim retains exactly the page's copied source memory facts"
         );
         let block = NonNull::new(unsafe { page.as_ref().start() })
-            .expect("the W03 OS singleton canonical block is non-null");
+            .expect("the page-owned source tail OS singleton canonical block is non-null");
         (page, block, slice_start, layout.page_map_size())
     }
 
@@ -48838,8 +48838,8 @@ mod tests {
             // SAFETY: the newly published singleton has one exact current
             // client. This lookup copies only its coherent pointer facts.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
-                .expect("the W03 arena singleton PageMap remains ready")
-                .expect("the W03 arena singleton pointer resolves");
+                .expect("the page-owned source tail arena singleton PageMap remains ready")
+                .expect("the page-owned source tail arena singleton pointer resolves");
             assert_eq!(
                 allocation.page_state(),
                 crate::process_page_map::LiveAllocationPageState::LiveOwnerAssociated
@@ -48863,7 +48863,7 @@ mod tests {
             assert_eq!(
                 result,
                 Ok(ProcessPostOwnerExitPointerFreeDisposition::Released),
-                "the W03 claim consumes the arena singleton's bitmap/map/metadata/slice tail; terminal audit = {:?}",
+                "the page-owned source tail claim consumes the arena singleton's bitmap/map/metadata/slice tail; terminal audit = {:?}",
                 marker.test_audit_snapshot(),
             );
             assert!(!marker.is_retained());
@@ -48902,8 +48902,8 @@ mod tests {
             // SAFETY: the newly published singleton has one exact current
             // client. This lookup copies only its coherent pointer facts.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
-                .expect("the W03 arena singleton PageMap remains ready")
-                .expect("the W03 arena singleton pointer resolves");
+                .expect("the page-owned source tail arena singleton PageMap remains ready")
+                .expect("the page-owned source tail arena singleton pointer resolves");
             assert_eq!(
                 allocation.page_state(),
                 crate::process_page_map::LiveAllocationPageState::LiveOwnerAssociated
@@ -48943,8 +48943,8 @@ mod tests {
             // SAFETY: the newly published singleton has one exact current
             // client. This lookup copies only its coherent pointer facts.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
-                .expect("the W03 arena singleton PageMap remains ready")
-                .expect("the W03 arena singleton pointer resolves");
+                .expect("the page-owned source tail arena singleton PageMap remains ready")
+                .expect("the page-owned source tail arena singleton pointer resolves");
             assert_eq!(
                 unsafe { abandoned::abandon_unmappable_after_collect(page) },
                 Ok(AbandonResult::UnownedUnmapped),
@@ -49001,8 +49001,8 @@ mod tests {
             // SAFETY: the fresh external singleton's one client pins its map
             // entry and metadata through the subsequent source CAS/tail.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
-                .expect("the W03 external singleton PageMap remains ready")
-                .expect("the W03 external singleton pointer resolves");
+                .expect("the page-owned source tail external singleton PageMap remains ready")
+                .expect("the page-owned source tail external singleton pointer resolves");
             w03_abandon_non_arena_singleton(page, main_heap);
             let head = {
                 let mut heap = main_heap
@@ -49073,8 +49073,8 @@ mod tests {
             // SAFETY: the source OS singleton's one live client pins the
             // mapping/metadata through its coherent pre-exit pointer lookup.
             let allocation = unsafe { page_map.lookup_live_allocation(block) }
-                .expect("the W03 OS singleton PageMap remains ready")
-                .expect("the W03 OS singleton pointer resolves");
+                .expect("the page-owned source tail OS singleton PageMap remains ready")
+                .expect("the page-owned source tail OS singleton pointer resolves");
             w03_abandon_non_arena_singleton(page, main_heap);
             let head = {
                 let mut heap = main_heap
