@@ -212,22 +212,122 @@ def run(work: Path, static: Path | None, dynamic: Path | None) -> None:
     print(f'owned resolver cancellation: PASS ({len(outcomes)} same-object cases); evidence: {work}', flush=True)
 
 
+# This read-only development check requires the full retained input and status
+# rosters, but its single observation cannot establish component completion.
+def replay_case(work: Path, static: Path | None, dynamic: Path | None, *,
+                entry: str, api: str, scenario: str) -> None:
+    import owned_resolver_cancellation_receipt as receipt
+
+    if (api, scenario) not in CASES:
+        raise RuntimeError(f'unknown DNS cancellation case: {api}-{scenario}')
+    modes = tuple(mode for mode in receipt.ENTRY_MODES
+                  if (static is not None if mode.startswith('static') else dynamic is not None))
+    if entry not in modes:
+        raise RuntimeError(f'DNS cancellation entry mode is not supplied: {entry}')
+    work = receipt._below(ROOT, work, 'cancellation evidence directory', directory=True)
+    supplied = {kind: receipt._below(ROOT, path, f'{kind} cancellation product', directory=True)
+                for kind, path in (('static', static), ('dynamic', dynamic)) if path is not None}
+    receipt.require(len({work, *supplied.values()}) == 1 + len(supplied),
+                    'cancellation evidence and products must be distinct')
+    source_before = source_digest()
+    fixture = fixture_module()
+    products = {kind: fixture.tree_identity(path) for kind, path in supplied.items()}
+    audit = receipt.read_json(work / receipt.ARTIFACT_AUDIT, 'cancellation artifact audit')
+    receipt.require(isinstance(audit, dict) and set(audit) == {
+        'source_sha256', 'source', 'object', 'products', 'artifacts'}, 'cancellation artifact audit fields differ')
+    receipt.require(audit['source_sha256'] == source_before, 'cancellation source identity differs')
+    receipt.require(audit['source'] == receipt.artifact_record(ROOT / receipt.SOURCE),
+                    'cancellation probe source differs')
+    receipt.require(audit['object'] == receipt.artifact_record(work / 'workload.o'),
+                    'cancellation workload object differs')
+    receipt.require(audit['products'] == products, 'cancellation installed product tree differs')
+    artifacts = {}
+    for kind, specifications in (('static', receipt.STATIC_ARTIFACTS), ('dynamic', receipt.DYNAMIC_ARTIFACTS)):
+        if kind not in supplied:
+            continue
+        for label, option, elf_mode in specifications:
+            binary = receipt.physical_file(work / label, f'cancellation {label} binary')
+            link_name = label + ('.receipt.json' if kind == 'static' else '.crabc-link.json')
+            link = receipt.physical_file(work / link_name, f'cancellation {label} link receipt')
+            linker_audit = fixture.static_receipt_audit if kind == 'static' else fixture.dynamic_receipt_audit
+            artifacts[label] = {
+                'receipt': linker_audit(supplied[kind], option, work / 'workload.o', binary, link),
+                'elf': fixture.elf_audit(binary, mode=elf_mode, dynamic=kind == 'dynamic'),
+            }
+    receipt.require(audit['artifacts'] == artifacts, 'cancellation artifact audit no longer replays')
+    for raw_name, binary_name, is_dynamic in receipt.PROVIDER_FILES:
+        if binary_name.startswith('static') and 'static' not in supplied:
+            continue
+        if binary_name == 'dynamic-product':
+            if 'dynamic' not in supplied:
+                continue
+            binary = supplied['dynamic'] / 'usr/lib/libc.so'
+        else:
+            binary = work / binary_name
+        binary = receipt.physical_file(binary, f'cancellation provider {binary_name}')
+        recorded = receipt._raw(work, raw_name, f'provider audit {binary_name}').read_bytes()
+        replay = subprocess.run(['readelf', '--wide', '--dyn-syms' if is_dynamic else '--syms', str(binary)],
+                                capture_output=True, timeout=20)
+        receipt.require(replay.returncode == 0 and replay.stdout + replay.stderr == recorded,
+                        f'cancellation provider audit differs: {binary_name}')
+        receipt._provider_rows(recorded, PROVIDERS)
+    receipt._verify_namespace(work)
+    receipt._verify_dns_fixture(work)
+    receipt._verify_transition(work, sys.modules[__name__], fallback=False)
+    receipt._verify_transition(work, sys.modules[__name__], fallback=True)
+    expected_status = [{'entry': label, 'api': case_api, 'scenario': case_scenario, 'exit_status': 0}
+                       for label in ('oracle', *modes) for case_api, case_scenario in CASES]
+    receipt.require(receipt.read_json(work / receipt.STATUS, 'cancellation status') == expected_status,
+                    'cancellation execution status matrix differs')
+    for row in expected_status:
+        name = f"{row['entry']}-{row['api']}-{row['scenario']}"
+        for suffix in ('.stdout', '.stderr'):
+            receipt._raw(work, name + suffix, name + suffix)
+    observations = []
+    for label in ('oracle', entry):
+        name = f'{label}-{api}-{scenario}'
+        stdout = receipt._raw(work, name + '.stdout', name + ' stdout').read_bytes()
+        stderr = receipt._raw(work, name + '.stderr', name + ' stderr').read_bytes()
+        observations.append((receipt._strict_observation(sys.modules[__name__], stdout, name), stderr))
+    compare_observation(api, scenario, *observations[0], *observations[1])
+    receipt.require(source_digest() == source_before, 'source changed during cancellation diagnostic replay')
+    receipt.require({kind: fixture.tree_identity(path) for kind, path in supplied.items()} == products,
+                    'product changed during cancellation diagnostic replay')
+    receipt.require(receipt.artifact_record(work / 'workload.o') == audit['object'],
+                    'object changed during cancellation diagnostic replay')
+    print(f'resolver cancellation {entry}-{api}-{scenario}: PASS (diagnostic only; no component receipt)')
+
+
 def main() -> None:
+    import owned_resolver_cancellation_receipt as receipt
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('prepare', 'run'))
+    parser.add_argument('action', choices=('prepare', 'run', 'replay-case'))
     parser.add_argument('--work', required=True, type=Path)
     parser.add_argument('--static-sysroot', type=Path)
     parser.add_argument('--dynamic-sysroot', type=Path)
+    parser.add_argument('--entry', choices=receipt.ENTRY_MODES)
+    parser.add_argument('--api', choices=APIS)
+    parser.add_argument('--scenario', choices=(*SCENARIOS, POST_TCP_LATER_EAGAIN_CASE[1]))
     args = parser.parse_args()
+    if args.action == 'replay-case':
+        if any(value is None for value in (args.entry, args.api, args.scenario)):
+            parser.error('replay-case requires --entry, --api, and --scenario')
+    elif any(value is not None for value in (args.entry, args.api, args.scenario)):
+        parser.error('case selection is diagnostic only; use replay-case')
     work = physical(args.work, 'resolver cancellation evidence')
-    print(f'resolver cancellation evidence: {work}', flush=True)
+    if args.action != 'replay-case':
+        print(f'resolver cancellation evidence: {work}', flush=True)
     if args.action == 'prepare': prepare(work)
     else:
         if args.static_sysroot is None and args.dynamic_sysroot is None:
             raise RuntimeError('at least one supplied static or dynamic product is required')
         static = physical(args.static_sysroot, 'static product') if args.static_sysroot else None
         dynamic = physical(args.dynamic_sysroot, 'dynamic product') if args.dynamic_sysroot else None
-        run(work, static, dynamic)
+        if args.action == 'replay-case':
+            replay_case(work, static, dynamic, entry=args.entry, api=args.api, scenario=args.scenario)
+        else:
+            run(work, static, dynamic)
 
 
 if __name__ == '__main__':

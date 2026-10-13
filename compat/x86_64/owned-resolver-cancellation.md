@@ -311,6 +311,23 @@ namespace and supplied product path. The fixed classic-netdb namespace entry
 remains supported through the shared finite DNS helper. No resolver-family or
 public-support status changes.
 
+For a focused replay of already prepared evidence in the pinned native image:
+
+```sh
+scripts/lanes/rust-check.sh python3 -B compat/x86_64/owned_resolver_cancellation.py replay-case \
+  --work WORK --dynamic-sysroot DYNAMIC_SYSROOT \
+  --entry dynamic-pie-kernel --api query --scenario udp
+```
+
+Add `--static-sysroot STATIC_SYSROOT` when the retained producer used both
+products. The diagnostic checks the full supplied product and status rosters,
+current probe/source/object binding, retained link/ELF/provider audits,
+namespace and conventional files, then compares the selected oracle/candidate
+observation. It neither changes retained evidence nor writes a component
+receipt. An unselected transcript is outside this diagnostic's verdict;
+`run` and the public receipt reader still require every observation. Case
+selection is rejected for `prepare` and `run`.
+
 ## Public receipt replay
 
 [`owned_resolver_cancellation_receipt.py`](owned_resolver_cancellation_receipt.py)
