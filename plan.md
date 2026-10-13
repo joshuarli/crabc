@@ -191,7 +191,7 @@ Measured 2026-10-13 on this host (32 CPUs, 60 GiB).
 | `scripts/lanes/rust-check.sh cargo check -q --locked -p crabc-core` | 2 s |
 | `./compat/allocator/run-x86_64.sh allocator-unit --filter <one test>` | 52 s cold, 9 s after an edit |
 | `python3 -B scripts/test_python.py --directory compat/x86_64/tests --jobs 6` | 127 s |
-| `python3 -B scripts/test_python.py --directory compat/allocator/tests --jobs 6` | 73 s |
+| `python3 -B scripts/test_python.py --directory compat/allocator/tests --jobs 6` | 73 s warm, 149 s in a fresh worktree |
 | `python3 -B compat/allocator/architecture_ratchet.py --check` | 28 s |
 | `scripts/lanes/prepare-worktree.sh` in a fresh worktree | 66 s, network |
 | `./scripts/dev-x86_64.sh owned-posix-static-products DIR` (cohort step 1) | 58 s, passes |
@@ -199,9 +199,12 @@ Measured 2026-10-13 on this host (32 CPUs, 60 GiB).
 
 **Green on `main`**
 
-Every host-side test directory, `scripts/check_structure.py`, the parity
-ledger and inventory checks, `campaign-status`, all nine `rust-check.sh`
-profiles, and `architecture_ratchet.py --check`. Three test modules compare a
+Every host-side test directory (23 directories, 5,802 tests),
+`scripts/check_structure.py`, the parity ledger and inventory checks,
+`campaign-status`, all nine `rust-check.sh` profiles,
+`architecture_ratchet.py --check`, the static product build, and one
+allocator unit test through the launcher, all from a clean worktree at
+`7a86c7a7a`. Three test modules compare a
 digest of the whole checkout (`test_native_abi_selection`,
 `test_owned_static_sysroot_package`, `test_owned_posix_static_products`):
 run them in a tree nothing else is editing.
@@ -234,9 +237,11 @@ run them in a tree nothing else is editing.
     (`compat/allocator/x86_64_m10_gate.py:332`).
   - The generator hard-codes `public_support` false
     (`compat/x86_64/generate_qualification_manifest.py:291`).
-- **Cohort preflight.** `qualification-candidate --dry-run` reports seven
-  blockers: the two unseeded source oracles, the package-corpus input, and
-  the Lua, std/LTO and performance inputs.
+- **Cohort preflight.** `qualification-candidate --dry-run` reports the two
+  unseeded source oracles and the missing Lua, std/LTO and performance
+  inputs. It reports the package corpus only when its directory is absent
+  (`compat/x86_64/qualification_candidate.py:519`), so the partial corpus
+  that `prepare-worktree.sh` leaves, 50 of 59 archives, hides that blocker.
 - **The pinned package corpus can no longer be fetched.** 9 of the 59 APKs in
   `compat/corpus/manifest-x86_64.toml` return 404 from the Alpine v3.24
   repository (superseded revisions of `python3`, `libcrypto3`, `libssl3`,
@@ -317,7 +322,7 @@ G1. Widest: 3 lanes.
 | T2 | S | Runtime bounds (owner decision 3): gate at 1.00, report each row against 0.90. The x86 thresholds are in `compat/perf/run_x86_64.py`, `compat/perf/x86_64_evidence.py` and `performance_release_gate.py`. `compat/perf/run.py` is the AArch64 contract and must not change. | Those three files, their tests, `docs/design/performance.md`, `compat/perf/README.md` | Their test modules pass with one row at 0.95 accepted and one at 1.02 rejected; `git diff` shows `compat/perf/run.py` untouched |
 | T3 | S | Let full performance runs start. `perf-c` full and `perf-native --mode full` require `correctness_admission == available`, which today lists every active gate as incomplete whatever exists. Make it read a validated correctness-chain receipt for the current source. The admission record binds that receipt's source identity and passed correctness prefix, replays on the host (where `performance_release_gate.py evaluate` runs), and does not change when a full-profile receipt appears later. | `compat/perf/x86_64_evidence.py`, `compat/perf/run_x86_64.py`, `compat/perf/native/x86_64_runner.py`, `compat/x86_64/generate_qualification_manifest.py`, their tests | A unit test supplies a valid correctness receipt for the current source and gets `available`, and a receipt for another revision and gets refused |
 | T4 | S | Make M10 provable (prescribed decision): `m10.promotion-rerun` reads a full-profile chain receipt for the current revision, and the build audit is evaluated at the switched revision instead of raising. The native-ELF audit in `scripts/build_x86_64_owned_dynamic_sysroot.py` covers the `native` backend, not only `native-shadow`. | `compat/allocator/x86_64_m10_gate.py`, its test, `scripts/build_x86_64_owned_dynamic_sysroot.py` | Unit tests drive `evaluate` with fixtures: before the switch only `m10.switch` and `m10.promotion-rerun` are unmet; after it, with a full-profile receipt, none is |
-| T5 | M | Cohort runner. Add `--profile correctness` (skip the two performance steps, pass the profile to the chain step). Add the two publication steps the prescribed decision names. Seal each `--inputs` group when its first consuming step runs, not all at the start, so performance inputs measured after the consumer steps can join the same work directory. | `compat/x86_64/qualification_candidate.py`, its test, `compat/x86_64/qualification-chain.md` | Its test module passes, including a run that adds the performance inputs after a `--through` prefix and resumes |
+| T5 | M | Cohort runner. Add `--profile correctness` (skip the two performance steps, pass the profile to the chain step). Add the two publication steps the prescribed decision names. Seal each `--inputs` group when its first consuming step runs, not all at the start, so performance inputs measured after the consumer steps can join the same work directory. Make the preflight check the package corpus against its manifest instead of testing that a directory exists. | `compat/x86_64/qualification_candidate.py`, its test, `compat/x86_64/qualification-chain.md` | Its test module passes, including a run that adds the performance inputs after a `--through` prefix and resumes |
 | G1 | M | Clear the cohort runner's preflight. Extend `scripts/lanes/prepare-worktree.sh` to seed the two source oracles, the Lua archive seed and the std/LTO vendor directories. Recover the package corpus as the prescribed decision says and cache its archives outside `.work/`. Write `.work/x86_64/inputs.json`. | `scripts/lanes/prepare-worktree.sh`, `compat/corpus/fetch_x86.py`, `compat/corpus/manifest-x86_64.toml`, `.gitignore` | After T5, in a clean cohort worktree: `./scripts/dev-x86_64.sh qualification-candidate --work .work/x86_64/cohort --profile correctness --inputs .work/x86_64/inputs.json --dry-run \| jaq -e '.preflight_blockers == []'` |
 | G2 | M | Turn the two prose failures into tracked tests through the existing allocator fixtures, in release and opt0 products. If one does not reproduce on current source in 3 attempts, keep the test as a passing regression and log that. | `compat/allocator/` fixtures and their test files | Each test has a one-line command in the campaign log and fails on `main`, or passes and is logged as not reproducible |
 | G3 | L | Discovery run, as [Qualifying a revision](#qualifying-a-revision) describes but with no ledger commit, under the correctness profile, fixing nothing. The runner stops at the first failing step; past that point run the remaining steps' commands directly, as `--dry-run` prints them, feeding each the outputs that exist. | The cohort worktree only | A table in the campaign log of all 66 correctness steps with pass, fail (first error), or blocked-by, and the wall time of each |
