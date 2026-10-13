@@ -906,6 +906,13 @@ impl HeapTheapStatistics {
         true
     }
 
+    /// `_mi_arenas_page_unabandon(page, NULL)` removes an abandoned page
+    /// from its owning Heap's abandoned-page count before page release.
+    #[inline]
+    pub(crate) fn page_unabandoned(&self) {
+        self.pages_abandoned.update(-1);
+    }
+
     /// Pinned `alloc.c` records a successful binned block by its usable page
     /// block size only when the optional statistics profile is selected.
     #[inline]

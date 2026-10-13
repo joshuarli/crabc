@@ -429,6 +429,16 @@ impl Heap {
         unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) }.page_released(statistics_bin)
     }
 
+    /// `mi_theapx_stat_decrease(heap, NULL, pages_abandoned, 1)` when an
+    /// abandoned page leaves this Heap without being reclaimed by a Theap.
+    ///
+    /// # Safety
+    /// `heap` is a live Heap.
+    pub(crate) unsafe fn record_page_unabandoned_at(heap: NonNull<Self>) {
+        // SAFETY: only the atomic statistics member is projected.
+        unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) }.page_unabandoned();
+    }
+
     /// `heap->exclusive_arena` as the requested arena of a suitability test.
     /// `None` would be a sub-arena, which a Heap never names.
     #[inline]

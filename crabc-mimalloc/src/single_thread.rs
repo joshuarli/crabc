@@ -310,6 +310,22 @@ fn record_claimed_page_released(page: &Page) -> bool {
     unsafe { crate::types::Heap::record_page_released_at(heap, bin) }
 }
 
+/// Completes the abandoned-count half of `_mi_arenas_page_unabandon(page,
+/// NULL)` before its all-free `_mi_arenas_page_free` accounting. This callback
+/// is used only by the claimed singleton free edge; Heap deletion releases
+/// already-owned pages through `record_claimed_page_released` alone.
+fn record_claimed_unabandoned_page_released(page: &Page) -> bool {
+    let (Some(heap), Some(bin)) = (NonNull::new(page.heap()), page_statistics_bin(page)) else {
+        return false;
+    };
+    // SAFETY: an owned page's Heap outlives it, and the singleton claim
+    // serializes this one terminal statistics transition.
+    unsafe {
+        crate::types::Heap::record_page_unabandoned_at(heap);
+        crate::types::Heap::record_page_released_at(heap, bin)
+    }
+}
+
 /// One failed source owner-side page collection boundary.
 ///
 /// These are private invalid-owner/lifecycle observations. The collector
@@ -2140,9 +2156,10 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
             abandoned::continue_post_owner_exit_singleton_remote_claim(claim, |release| {
                 match release.backing() {
                     abandoned::ClaimedPostOwnerExitSingletonBacking::Arena => {
-                        match release_claimed_process_arena_singleton_page_with_ordinary_clear(
+                        match release_claimed_process_arena_singleton_page_with_ordinary_clear_and_statistics(
                             page_map, backing, release.page(), release.memory(),
                             |arena, slice_index| clear_child_heap_ordinary_bit(heap, arena, slice_index),
+                            record_claimed_unabandoned_page_released,
                         ) {
                             ClaimedProcessArenaTerminalRelease::Released => {
                                 abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
@@ -2151,7 +2168,7 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
                         }
                     }
                     abandoned::ClaimedPostOwnerExitSingletonBacking::OsOrExternal => {
-                        match release_claimed_non_arena_page_with_list_removal(
+                        match release_claimed_non_arena_page_with_list_removal_and_statistics(
                             page_map, backing.process(), release.page(), release.memory(),
                             false,
                             |page| if Heap::remove_os_abandoned_page_at(heap, page) {
@@ -2159,6 +2176,7 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
                             } else {
                                 NonArenaPageListRemoval::NotRemoved
                             },
+                            record_claimed_unabandoned_page_released,
                         ) {
                             ClaimedProcessNonArenaPageRelease::Released => {
                                 abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
@@ -3485,10 +3503,36 @@ unsafe fn release_claimed_process_non_arena_singleton_page(
 unsafe fn release_claimed_non_arena_page_with_list_removal(
     page_map: &PageMap,
     process: Option<crate::os::VmProcess<'static>>,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+    regular: bool,
+    remove_from_list: impl FnOnce(NonNull<Page>) -> NonArenaPageListRemoval,
+) -> ClaimedProcessNonArenaPageRelease {
+    // SAFETY: the default callback records only the generic page release for
+    // callers that do not own an abandoned-singleton unabandon transition.
+    unsafe {
+        release_claimed_non_arena_page_with_list_removal_and_statistics(
+            page_map,
+            process,
+            page,
+            expected_memory,
+            regular,
+            remove_from_list,
+            record_claimed_page_released,
+        )
+    }
+}
+
+/// [`release_claimed_non_arena_page_with_list_removal`] with a source-owned
+/// statistics transition supplied by the terminal caller.
+unsafe fn release_claimed_non_arena_page_with_list_removal_and_statistics(
+    page_map: &PageMap,
+    process: Option<crate::os::VmProcess<'static>>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
     regular: bool,
     remove_from_list: impl FnOnce(NonNull<Page>) -> NonArenaPageListRemoval,
+    record_statistics: impl FnOnce(&Page) -> bool,
 ) -> ClaimedProcessNonArenaPageRelease {
     let Some(preflight) = (unsafe {
         preflight_non_arena_page(page_map, process, page, expected_memory, regular)
@@ -3550,7 +3594,7 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
                     ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
                 );
             }
-            if !record_claimed_page_released(page_ref) {
+            if !record_statistics(page_ref) {
                 return retain(
                     OsAlignedPageOwner::Published(published),
                     ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
@@ -3630,7 +3674,7 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
             {
                 return retain(ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved);
             }
-            if !record_claimed_page_released(page_ref) {
+            if !record_statistics(page_ref) {
                 return retain(ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved);
             }
             if unsafe {
