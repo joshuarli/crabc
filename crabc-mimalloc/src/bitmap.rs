@@ -137,9 +137,11 @@ const fn field_mask_valid(bit_count: usize, shift_left: usize) -> usize {
 }
 
 /// A checked bit index in one v3.5.0 bitmap chunk.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ChunkIndex(usize);
 
+#[cfg(test)]
 impl ChunkIndex {
     #[inline]
     pub(crate) const fn new(index: usize) -> Option<Self> {
@@ -189,6 +191,7 @@ pub(crate) struct RunTransition {
 }
 
 impl RunTransition {
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn all_clear(already_set: usize) -> Self {
         Self {
@@ -198,6 +201,7 @@ impl RunTransition {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn all_set() -> Self {
         Self {
