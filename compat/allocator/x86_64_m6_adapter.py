@@ -417,6 +417,13 @@ def decoded(result):
                for stream in ("stdout", "stderr")}}
 
 
+def validate_source_debug_option_scope(record, inputs):
+    """Check the pinned debug preprocessor stream from its retained byte record."""
+    proof = {**record, "stdout": stress.byte_record_payload(
+        record.get("stdout"), "debug-1-source-debug-preprocess").decode()}
+    m4.source_debug_option_scope(proof, inputs)
+
+
 def run_profiles(profiles, output=ARTIFACTS):
     execution = harness.require_native_x86_64(require_image_identity=True)
     seal = receipts.source_seal(harness.ROOT)
@@ -473,7 +480,8 @@ def run_profiles(profiles, output=ARTIFACTS):
             cases.append(("debug-1-source-debug-preprocess", status, logs))
             if status != 0:
                 raise harness.HarnessError("debug-1 source option-use preprocessing failed")
-            m4.source_debug_option_scope(preprocess, {"compiler": compiler, "source_directory": source})
+            validate_source_debug_option_scope(
+                preprocess, {"compiler": compiler, "source_directory": source})
             products[logs[0].name] = logs[0]
         target = directory / "cargo-target"
         passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
@@ -622,7 +630,8 @@ def read_and_replay(profiles, replay=False):
         if len(command) < 2 or not command[-1].endswith("/src/static.c"):
             raise harness.HarnessError("retained debug source option proof has no pinned source input")
         source_directory = Path(command[-1]).parent.parent
-        m4.source_debug_option_scope(preprocess, {"compiler": command[0], "source_directory": source_directory})
+        validate_source_debug_option_scope(
+            preprocess, {"compiler": command[0], "source_directory": source_directory})
     print("Public Heap/subprocess adapter exact-source physical receipt: PASS")
     if replay:
         execution = harness.require_native_x86_64(require_image_identity=True)

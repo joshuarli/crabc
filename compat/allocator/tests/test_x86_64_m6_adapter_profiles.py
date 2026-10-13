@@ -1,5 +1,6 @@
 """Public allocator producer checks complete observations and physical profile receipts."""
 from pathlib import Path
+import hashlib
 import sys
 import json
 import subprocess
@@ -16,6 +17,10 @@ def trace_stdout(values=None):
     trace["unabandon.os.pages_abandoned"] = "1,0"
     trace.update(values or {})
     return adapter.TRACE_BEGIN + "\n" + "".join(f"{key}={value}\n" for key,value in trace.items()) + adapter.TRACE_END + "\n"
+
+
+def byte_record(payload):
+    return {"bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest(), "hex": payload.hex()}
 
 
 def debug_subproc_messages(side):
@@ -231,8 +236,9 @@ class PublicAdapterReceiptRosterTests(unittest.TestCase):
                            "-DMI_LIBC_MUSL=1", "-I", str(source / "include"), "-E",
                            str(source / "src/static.c")]
                 proof = {"kind": "process", "status": 0, "command": command,
-                         "stdout": "mi_option_guarded_precise mi_option_guarded_precise "
-                                   "mi_option_is_enabled(mi_option_guarded_precise)\n", "stderr": ""}
+                         "stdout": byte_record(b"mi_option_guarded_precise mi_option_guarded_precise "
+                                               b"mi_option_is_enabled(mi_option_guarded_precise)\n"),
+                         "stderr": byte_record(b"")}
                 proof_path = self.work / "debug-1-source-debug-preprocess.json"
                 proof_path.write_text(json.dumps(proof))
                 self.products[proof_path.name] = proof_path
