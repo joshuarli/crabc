@@ -118,14 +118,19 @@ the record from the raw files. The Rust-facade companion's report carries the
 same record under the same policy, and its full mode fails closed likewise.
 
 Correctness admission requires the current source's validated correctness
-profile receipt through `capability.accounting`. The host replays its case
-roster, current runner and manifest hashes, completion markers, and retained
-logs; the record binds the receipt identity, source identity, and seven passed
-gates. It selects only that correctness-profile receipt, so a later
-full-profile receipt does not change the admission recorded by an earlier
-performance report. A roster records the reader's result and cannot assert
-it. A full-budget run is rejected before any build or timed child until that
-reader admits it. Smoke rosters run and collect regardless, and their
+profile receipt through `capability.accounting`. Host admission invokes the
+tracked `qualification-manifest --validate-receipt PATH --json` command, so the
+owning reader rechecks the receipt's captured tool and runtime identities,
+case roster, runner and manifest hashes, completion markers, and retained logs
+inside the pinned image. The image reader returns the validated receipt
+object. The host safely opens the selected file without following symlinked
+components, requires its parsed record to match the image result, and binds
+admission to that file identity, source identity, and seven passed gates. The
+in-image performance runner uses the same strict reader directly. Admission
+selects only the correctness-profile receipt, so a later full-profile receipt
+does not change earlier performance evidence. A roster records the reader's
+result and cannot assert it. Full runs require admission before benchmark
+setup or timed children. Smoke rosters run and collect regardless, and their
 scorecards always carry the budget blocker. An owned-dynamic-qualification
 receipt binds the supplied product; its absence is also a named blocker.
 

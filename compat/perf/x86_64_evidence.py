@@ -23,8 +23,10 @@ import importlib.util
 import json
 import os
 import re
+import signal
 import stat
 import struct
+import subprocess
 import sys
 from functools import lru_cache
 from dataclasses import dataclass
@@ -86,6 +88,8 @@ HOST_ENVIRONMENT_KEYS = frozenset({
 # Full attempts require a replayed correctness-profile prefix; their admission
 # record binds the selected receipt, its source identity, and every passed gate.
 CORRECTNESS_OWNER = "compat/x86_64/run_qualification_manifest.py correctness-profile receipt"
+PINNED_RECEIPT_VALIDATION_TIMEOUT_SECONDS = 120
+PINNED_RECEIPT_TERMINATION_GRACE_SECONDS = 5
 
 IDENTITY_FIELDS = frozenset({"path", "sha256", "mode", "bytes"})
 
@@ -466,8 +470,199 @@ def _x86_module(checkout: Path, name: str) -> Any:
     return importlib.import_module(name)
 
 
+def _run_pinned_receipt_validator(checkout: Path, receipt_path: Path) -> dict[str, Any]:
+    """Ask the checked-in dispatcher to return a receipt validated in-image."""
+
+    dispatcher = checkout / "scripts/dev-x86_64.sh"
+    require(
+        dispatcher.is_file() and not dispatcher.is_symlink() and dispatcher.resolve(strict=True) == dispatcher,
+        "pinned qualification reader dispatcher is not a physical checkout file",
+    )
+    command = [
+        str(dispatcher),
+        "qualification-manifest",
+        "--validate-receipt",
+        str(receipt_path),
+        "--json",
+    ]
+    environment = os.environ.copy()
+    environment.pop("BASH_ENV", None)
+    process = subprocess.Popen(
+        command,
+        cwd=checkout,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=PINNED_RECEIPT_VALIDATION_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        try:
+            _terminate_pinned_reader(process)
+        except OSError as cleanup_error:
+            error.add_note(f"could not stop pinned receipt reader process group: {cleanup_error}")
+        raise EvidenceError("pinned qualification receipt validation timed out") from error
+    except BaseException as error:
+        try:
+            _terminate_pinned_reader(process)
+        except OSError as cleanup_error:
+            error.add_note(f"could not stop pinned receipt reader process group: {cleanup_error}")
+        raise
+    if process.returncode != 0:
+        detail = stderr.decode("utf-8", errors="replace").strip()
+        raise EvidenceError(
+            "pinned qualification receipt reader refused the receipt"
+            + (f": {detail}" if detail else f" (exit {process.returncode})")
+        )
+    try:
+        receipt = json.loads(stdout)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise EvidenceError("pinned qualification receipt reader returned invalid JSON") from error
+    require(isinstance(receipt, dict), "pinned qualification receipt reader returned a non-object")
+    return receipt
+
+
+def _terminate_pinned_reader(process: subprocess.Popen[bytes]) -> None:
+    """Stop the dispatcher and its local Docker client on cancellation."""
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        process.communicate()
+        return
+    try:
+        process.communicate(timeout=PINNED_RECEIPT_TERMINATION_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate()
+
+
+def _read_physical_receipt(checkout: Path, receipt_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Read and identify a receipt through no-follow directory handles."""
+
+    checkout = checkout.resolve(strict=True)
+    try:
+        relative = receipt_path.relative_to(checkout)
+    except ValueError as error:
+        raise EvidenceError("qualification receipt escapes the checkout") from error
+    require(relative.parts and ".." not in relative.parts, "qualification receipt path is invalid")
+    require(hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY"),
+            "host receipt replay requires no-follow directory opens")
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    directory_fds: list[int] = []
+    file_fd: int | None = None
+    try:
+        root_fd = os.open(checkout, directory_flags)
+        directory_fds.append(root_fd)
+        root_identity = os.fstat(root_fd)
+        current_fd = root_fd
+        opened_directories: list[tuple[int, str, int, int]] = []
+        for component in relative.parts[:-1]:
+            entry = os.stat(component, dir_fd=current_fd, follow_symlinks=False)
+            require(stat.S_ISDIR(entry.st_mode), "qualification receipt path contains a non-directory")
+            parent_fd = current_fd
+            current_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            opened = os.fstat(current_fd)
+            require((entry.st_dev, entry.st_ino) == (opened.st_dev, opened.st_ino),
+                    "qualification receipt directory changed while opening")
+            directory_fds.append(current_fd)
+            opened_directories.append((parent_fd, component, opened.st_dev, opened.st_ino))
+
+        filename = relative.parts[-1]
+        entry_before = os.stat(filename, dir_fd=current_fd, follow_symlinks=False)
+        require(stat.S_ISREG(entry_before.st_mode), "qualification receipt is not a regular file")
+        file_fd = os.open(filename, file_flags, dir_fd=current_fd)
+        before = os.fstat(file_fd)
+        require(stat.S_ISREG(before.st_mode)
+                and (entry_before.st_dev, entry_before.st_ino) == (before.st_dev, before.st_ino),
+                "qualification receipt changed while opening")
+        chunks = []
+        while True:
+            chunk = os.read(file_fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(file_fd)
+        entry_after = os.stat(filename, dir_fd=current_fd, follow_symlinks=False)
+        require(
+            (before.st_dev, before.st_ino, before.st_mode, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+            == (after.st_dev, after.st_ino, after.st_mode, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+            and stat.S_ISREG(entry_after.st_mode)
+            and (entry_after.st_dev, entry_after.st_ino) == (after.st_dev, after.st_ino),
+            "qualification receipt changed while reading",
+        )
+        for parent_fd, component, device, inode in opened_directories:
+            current = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+            require(stat.S_ISDIR(current.st_mode) and (current.st_dev, current.st_ino) == (device, inode),
+                    "qualification receipt directory changed while reading")
+        root_after = os.stat(checkout, follow_symlinks=False)
+        require((root_identity.st_dev, root_identity.st_ino) == (root_after.st_dev, root_after.st_ino),
+                "checkout root changed while reading qualification receipt")
+        raw = b"".join(chunks)
+        require(len(raw) == after.st_size, "qualification receipt size changed while reading")
+        try:
+            record = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            raise EvidenceError("validated qualification receipt is no longer valid JSON") from error
+        require(isinstance(record, dict), "validated qualification receipt is not an object")
+        identity = {
+            "path": relative.as_posix(),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "mode": stat.S_IMODE(after.st_mode),
+            "bytes": len(raw),
+        }
+        return record, identity
+    except OSError as error:
+        raise EvidenceError("cannot safely read the validated qualification receipt") from error
+    finally:
+        cleanup_errors = []
+        if file_fd is not None:
+            try:
+                os.close(file_fd)
+            except OSError as error:
+                cleanup_errors.append(error)
+        for descriptor in reversed(directory_fds):
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                cleanup_errors.append(error)
+        if cleanup_errors:
+            active_error = sys.exc_info()[1]
+            detail = "; ".join(str(error) for error in cleanup_errors)
+            if active_error is not None:
+                active_error.add_note(f"could not close qualification receipt handles: {detail}")
+            else:
+                raise EvidenceError(f"could not close qualification receipt handles: {detail}")
+
+
+def _validated_chain_receipt(
+    checkout: Path,
+    receipt_path: Path,
+    receipt_root: Path,
+    receipt_reader: Any,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load only the exact receipt record replayed by the pinned image reader."""
+
+    receipt_path = receipt_reader.evidence_path(receipt_path, receipt_root=receipt_root)
+    try:
+        receipt_reader.require_pinned_native_execution()
+    except receipt_reader.QualificationRunError:
+        validated = _run_pinned_receipt_validator(checkout, receipt_path)
+    else:
+        validated = receipt_reader.validate_chain_receipt(receipt_path)
+    current, identity = _read_physical_receipt(checkout, receipt_path)
+    require(current == validated, "pinned receipt reader returned a different record from the selected path")
+    return validated, identity
+
+
 def correctness_admission(checkout: Path) -> dict[str, Any]:
-    """Replay the latest current-source correctness-chain receipt on the host."""
+    """Require the latest current-source receipt to pass its owning reader."""
 
     checkout = checkout.resolve(strict=True)
     unavailable = {
@@ -510,7 +705,7 @@ def correctness_admission(checkout: Path) -> dict[str, Any]:
             return unavailable
         receipt_path = candidates[0]
         receipt_reader = _x86_module(checkout, "run_qualification_manifest")
-        receipt = receipt_reader.validate_chain_receipt(receipt_path, host_replay=True, receipt_root=receipt_root)
+        receipt, identity = _validated_chain_receipt(checkout, receipt_path, receipt_root, receipt_reader)
         require(
             receipt.get("qualification_profile") == "correctness"
             and receipt.get("through") == correctness_endpoint
@@ -520,8 +715,6 @@ def correctness_admission(checkout: Path) -> dict[str, Any]:
             and receipt.get("qualified_gates") == expected_prefix,
             "correctness-chain receipt does not prove the complete current correctness prefix",
         )
-        identity = file_identity(receipt_path)
-        identity["path"] = receipt_path.relative_to(checkout).as_posix()
         return {
             "status": "available",
             "owner": CORRECTNESS_OWNER,

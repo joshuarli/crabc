@@ -37,12 +37,17 @@ per sample and repeats five complete runner invocations. This is a direct
 native-facade comparison, not a musl C-libc benchmark.
 
 Full x86-64 performance runs require a passing correctness-profile chain
-receipt for the current source through `capability.accounting`. The host
-reader replays the retained case roster, source runners, completion markers,
-and raw logs, then binds the admission record to that receipt, source identity,
-and seven-gate prefix. It always selects the correctness-profile receipt, so
-the later full-profile receipt does not change earlier performance evidence.
-Smoke runs remain available without that admission.
+receipt for the current source through `capability.accounting`. Host admission
+invokes `qualification-manifest --validate-receipt PATH --json`, which runs the
+owning validator in the pinned image and returns its verified receipt object.
+That validator rechecks tool/runtime identities, source runners, markers, and
+raw logs and returns the verified record. The host reads the selected receipt
+through no-follow directory handles and requires its parsed content to match
+that record before binding admission to its file identity, source identity,
+and seven-gate prefix. In-image runners call the strict validator directly.
+Admission selects the correctness-profile receipt, so a later full-profile
+receipt does not change earlier performance evidence. Smoke runs remain
+available without that admission.
 
 Reports are ignored local evidence under `compat/reports/perf/`; compare only
 runs with matching host provenance, fixture hash, sample contract, and runtime

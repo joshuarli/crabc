@@ -148,6 +148,7 @@ evaluation and admits only a pass.
 ./scripts/dev-x86_64.sh qualification-manifest [--profile correctness|full] [--through GATE]
 ./scripts/dev-x86_64.sh qualification-manifest [--profile correctness|full] --status
 ./scripts/dev-x86_64.sh qualification-manifest --validate-receipt PATH
+./scripts/dev-x86_64.sh qualification-manifest --validate-receipt PATH --json
 ./scripts/dev-x86_64.sh qualification-manifest --private-admission
 ```
 
@@ -178,6 +179,10 @@ contract, case pins and runner bytes must match, every log must hash to its
 record, outcomes must follow from raw status and markers, and no case may follow
 a failure. A failed receipt validates as an intact failure and exits 1; only
 `outcome: passed` is qualification evidence for its prefix.
+The optional `--json` mode emits the validated chain record only after this
+same replay succeeds. Host-side admission uses that mode so tool and runtime
+snapshots are checked in the pinned image, while in-image readers call the
+validator directly.
 
 ### Environment
 

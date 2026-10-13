@@ -3645,6 +3645,7 @@ COLLECTOR_SOURCES = (
     "compat/perf/x86_64_profile.py",
     "compat/x86_64/run_qualification_manifest.py",
     "compat/x86_64/generate_qualification_manifest.py",
+    "scripts/dev-x86_64.sh",
 )
 
 

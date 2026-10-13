@@ -573,23 +573,31 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.assertEqual(receipt['deferred_gate_ids'], ['performance.release'])
         self.assertEqual(runner.validate_chain_receipt(path), receipt)
 
-    def test_host_replay_checks_correctness_receipt_logs_without_image_tools(self):
+    def test_owner_json_output_contains_the_validated_receipt(self):
         path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting', profile='correctness')
-        with patch.object(runner, 'execution_inputs', side_effect=AssertionError('host replay used image tools')):
-            self.assertEqual(runner.validate_chain_receipt(path, host_replay=True), receipt)
+        output = io.StringIO()
+        with patch.object(manifest, 'write_or_check'), patch.object(runner.sys, 'stdout', output):
+            self.assertEqual(runner.main(['--validate-receipt', str(path), '--json']), 0)
+        self.assertEqual(json.loads(output.getvalue()), receipt)
 
-        log = path.parent / receipt['cases'][0]['stdout']['path']
-        original = log.read_bytes()
-        log.chmod(0o644)
-        log.write_bytes(original.replace(b'PASS', b'pass'))
-        with patch.object(runner, 'execution_inputs', side_effect=AssertionError('host replay used image tools')):
-            with self.assertRaisesRegex(runner.QualificationRunError, 'stdout changed'):
-                runner.validate_chain_receipt(path, host_replay=True)
-        log.write_bytes(original)
-        log.unlink()
-        with patch.object(runner, 'execution_inputs', side_effect=AssertionError('host replay used image tools')):
-            with self.assertRaisesRegex(runner.QualificationRunError, 'cannot hash'):
-                runner.validate_chain_receipt(path, host_replay=True)
+    def test_owner_json_mode_rejects_private_admission_receipts(self):
+        path = self.receipts / 'private.json'
+        path.write_text('{}', encoding='utf-8')
+        with patch.object(manifest, 'write_or_check'), patch.object(
+            runner, 'receipt_kind', return_value='private-admission'
+        ):
+            with self.assertRaisesRegex(runner.QualificationRunError, '--json requires a qualification chain receipt'):
+                runner.main(['--validate-receipt', str(path), '--json'])
+
+    def test_receipt_validation_rejects_paired_input_snapshot_mutation(self):
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting', profile='correctness')
+        changed = copy.deepcopy(receipt)
+        changed['inputs_before']['tools'] = 'altered pinned tools'
+        changed['inputs_after']['tools'] = 'altered pinned tools'
+        path.chmod(0o644)
+        path.write_text(json.dumps(changed), encoding='utf-8')
+        with self.assertRaisesRegex(runner.QualificationRunError, 'tool or runtime inputs drifted'):
+            runner.validate_chain_receipt(path)
 
     def test_performance_admission_uses_only_current_correctness_receipt(self):
         spec = importlib.util.spec_from_file_location(
@@ -608,7 +616,15 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
             'run_qualification_manifest': runner,
         }
         with patch.object(performance_evidence, '_x86_module', side_effect=lambda _root, name: modules[name]):
-            admitted = performance_evidence.correctness_admission(self.root)
+            with patch.object(
+                runner,
+                'require_pinned_native_execution',
+                side_effect=runner.QualificationRunError('host replay must use the image owner'),
+            ), patch.object(
+                performance_evidence, '_run_pinned_receipt_validator', return_value=correctness
+            ) as pinned_reader:
+                admitted = performance_evidence.correctness_admission(self.root)
+            pinned_reader.assert_called_once_with(self.root, correctness_path)
             self.assertEqual(admitted['status'], 'available')
             self.assertEqual(admitted['source'], correctness['source_after'])
             self.assertEqual(admitted['qualified_gates'], list(manifest.CHAIN[:-1]))
@@ -621,6 +637,42 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
             stale = performance_evidence.correctness_admission(self.root)
             self.assertEqual(stale['status'], 'unavailable')
             self.assertTrue(any('source is stale' in item for item in stale['unmet']))
+            self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64}
+
+            changed_inputs = copy.deepcopy(correctness)
+            changed_inputs['inputs_before']['tools'] = 'altered pinned tools'
+            changed_inputs['inputs_after']['tools'] = 'altered pinned tools'
+            correctness_path.chmod(0o644)
+            correctness_path.write_text(json.dumps(changed_inputs), encoding='utf-8')
+            dispatcher = self.root / 'scripts/dev-x86_64.sh'
+            dispatcher.parent.mkdir(parents=True, exist_ok=True)
+            dispatcher.write_bytes((ROOT / 'scripts/dev-x86_64.sh').read_bytes())
+            dispatcher.chmod(0o755)
+            process = SimpleNamespace(
+                pid=4821,
+                returncode=1,
+                communicate=lambda *, timeout: (
+                    b'', b'qualification chain receipt tool or runtime inputs drifted'
+                ),
+            )
+            with patch.object(
+                runner,
+                'require_pinned_native_execution',
+                side_effect=runner.QualificationRunError('host replay must use the image owner'),
+            ), patch.object(
+                performance_evidence.subprocess, 'Popen', return_value=process
+            ) as pinned_reader:
+                rejected_inputs = performance_evidence.correctness_admission(self.root)
+            self.assertEqual(
+                pinned_reader.call_args.args[0],
+                [
+                    str(self.root / 'scripts/dev-x86_64.sh'), 'qualification-manifest',
+                    '--validate-receipt', str(correctness_path), '--json',
+                ],
+            )
+            self.assertEqual(rejected_inputs['status'], 'unavailable')
+            self.assertTrue(any('pinned qualification receipt reader refused' in item
+                                for item in rejected_inputs['unmet']))
 
     def test_correctness_failure_cannot_complete_profile(self):
         self.environment['QUALIFICATION_FIXTURE_FAIL'] = 'capability.accounting'

@@ -720,17 +720,8 @@ def write_new_json(path: Path, value: Mapping[str, object]) -> None:
     write_new_bytes(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"))
 
 
-def read_json(
-    path: Path,
-    label: str,
-    owner: Path | None = None,
-    *,
-    receipt_root: Path | None = None,
-) -> dict[str, Any]:
-    if receipt_root is None:
-        evidence_path(path, owner)
-    else:
-        evidence_path(path, owner, receipt_root=receipt_root)
+def read_json(path: Path, label: str, owner: Path | None = None) -> dict[str, Any]:
+    evidence_path(path, owner)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -1464,8 +1455,6 @@ def validate_chain_case(
     gate: Mapping[str, object],
     case: Mapping[str, Any],
     record: object,
-    *,
-    receipt_root: Path | None = None,
 ) -> bool:
     """Recheck one retained case record against its pinned case and raw logs."""
     label = f"{gate['id']}/{case['id']}"
@@ -1492,12 +1481,7 @@ def validate_chain_case(
         if not isinstance(value, Mapping) or set(value) != {"path", "sha256"} or value.get("path") != f"{directory}/{stream}.log":
             raise QualificationRunError(f"qualification chain case {stream} escapes its case: {label}")
         path = transaction / str(value["path"])
-        checked_path = (
-            evidence_path(path, transaction)
-            if receipt_root is None
-            else evidence_path(path, transaction, receipt_root=receipt_root)
-        )
-        if checked_path != path or sha256_file(path, f"{label} {stream}") != value["sha256"]:
+        if evidence_path(path, transaction) != path or sha256_file(path, f"{label} {stream}") != value["sha256"]:
             raise QualificationRunError(f"qualification chain case {stream} changed: {label}")
         raw[stream] = path.read_bytes()
     passed = record["error"] is None and case_marker_passed(case, record["exit_status"], raw["stdout"])
@@ -1508,27 +1492,17 @@ def validate_chain_case(
     return passed
 
 
-def validate_chain_receipt(
-    path: Path,
-    *,
-    host_replay: bool = False,
-    receipt_root: Path | None = None,
-) -> dict[str, object]:
+def validate_chain_receipt(path: Path) -> dict[str, object]:
     """Reject stale source, inputs, pins, logs or roster; return the receipt.
 
     A failed chain receipt can validate as an intact record of that failure.
     Only ``outcome == "passed"`` is qualification evidence for its prefix.
 
-    Host replay rechecks the source, contract, roster, runners, case markers,
-    and retained logs while accepting the pinned image's recorded input
-    snapshots instead of probing image tools that are absent on the host.
     """
-    if host_replay and receipt_root is None:
-        receipt_root = ROOT / ".work/x86_64/qualification-receipts"
-    path = evidence_path(path, receipt_root=receipt_root)
+    path = evidence_path(path)
     transaction = path.parent
-    evidence_path(transaction, receipt_root=receipt_root)
-    receipt = read_json(path, "qualification chain receipt", transaction, receipt_root=receipt_root)
+    evidence_path(transaction)
+    receipt = read_json(path, "qualification chain receipt", transaction)
     legacy = set(receipt) == CHAIN_RECEIPT_FIELDS
     if not legacy and set(receipt) != CHAIN_RECEIPT_FIELDS | PROFILE_RECEIPT_FIELDS:
         raise QualificationRunError("qualification chain receipt fields drifted")
@@ -1553,21 +1527,15 @@ def validate_chain_receipt(
     source = source_identity()
     if receipt["source_before"] != source or receipt["source_after"] != source:
         raise QualificationRunError("qualification chain receipt source is stale")
-    if host_replay:
-        inputs_before = receipt["inputs_before"]
-        inputs_after = receipt["inputs_after"]
-        if not isinstance(inputs_before, Mapping) or not inputs_before or inputs_before != inputs_after:
-            raise QualificationRunError("qualification chain receipt tool or runtime inputs drifted")
-    else:
-        inputs = execution_inputs()
-        if receipt["inputs_before"] != inputs or receipt["inputs_after"] != inputs:
-            raise QualificationRunError("qualification chain receipt tool or runtime inputs drifted")
+    inputs = execution_inputs()
+    if receipt["inputs_before"] != inputs or receipt["inputs_after"] != inputs:
+        raise QualificationRunError("qualification chain receipt tool or runtime inputs drifted")
     roster = chain_roster(selected)
     records = receipt["cases"]
     if not isinstance(records, list) or not records or len(records) > len(roster):
         raise QualificationRunError("qualification chain receipt case roster drifted")
     outcomes = [
-        validate_chain_case(transaction, order, gate, case, record, receipt_root=receipt_root)
+        validate_chain_case(transaction, order, gate, case, record)
         for order, ((gate, case), record) in enumerate(zip(roster, records), start=1)
     ]
     if not all(outcomes[:-1]):
@@ -1632,6 +1600,7 @@ def argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--profile", choices=("correctness", "full"), help="select correctness or the explicit full performance scope")
     parser.add_argument("--through", choices=manifest.CHAIN, help="execute and receipt the ordered prefix ending at this gate")
     parser.add_argument("--validate-receipt", type=Path, help="revalidate one ignored chain or private-admission receipt in the pinned native image")
+    parser.add_argument("--json", action="store_true", help="emit the validated chain receipt as JSON")
     parser.add_argument("--status", action="store_true", help="evaluate every gate's conditions independently (diagnostic; no receipt)")
     parser.add_argument("--publish", nargs=3, metavar=("GATE", "PUBLICATION", "RECEIPT"), help="validate a retained receipt and select it for one gate's evidence reader")
     return parser
@@ -1640,6 +1609,8 @@ def argument_parser() -> argparse.ArgumentParser:
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argument_parser()
     parsed = parser.parse_args(arguments)
+    if parsed.json and parsed.validate_receipt is None:
+        parser.error("--json requires --validate-receipt")
     operation_count = sum(
         bool(value)
         for value in (
@@ -1666,11 +1637,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 0
     if parsed.validate_receipt is not None:
         require_pinned_native_execution()
-        if receipt_kind(parsed.validate_receipt) == CHAIN_RECEIPT_KIND:
+        kind = receipt_kind(parsed.validate_receipt)
+        if parsed.json and kind != CHAIN_RECEIPT_KIND:
+            raise QualificationRunError("--json requires a qualification chain receipt")
+        if kind == CHAIN_RECEIPT_KIND:
             receipt = validate_chain_receipt(parsed.validate_receipt)
             if receipt["outcome"] != "passed":
                 print(f"x86 qualification chain receipt: FAILED (intact record; {receipt['error']})", file=sys.stderr)
                 return 1
+            if parsed.json:
+                print(json.dumps(receipt, sort_keys=True, separators=(",", ":"), allow_nan=False))
+                return 0
             print(
                 f"x86 qualification chain receipt: PASS (through {receipt['through']}; "
                 f"qualified {', '.join(receipt['qualified_gates'])}; complete_chain={receipt['complete_chain']})"

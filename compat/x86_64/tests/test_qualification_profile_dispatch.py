@@ -50,6 +50,14 @@ class QualificationProfileDispatchTests(unittest.TestCase):
                         self.assertEqual(dispatched[index + 1], profile)
                         self.assertEqual(dispatched[:index] + dispatched[index + 2:], operation)
 
+    def test_validate_receipt_json_reaches_the_in_image_owner(self) -> None:
+        receipt = self.work / 'receipt.json'
+        receipt.write_text('{}')
+        arguments = self.runner_arguments('--validate-receipt', str(receipt), '--json')
+        self.assertEqual(arguments[0], '--validate-receipt')
+        self.assertTrue(arguments[1].startswith('/workspace/.work/x86_64/'))
+        self.assertEqual(arguments[2], '--json')
+
     def test_missing_invalid_and_duplicate_profiles_reject_before_docker(self) -> None:
         for arguments in (
             ("--profile",), ("--profile", "unknown"), ("--profile", "--status"),

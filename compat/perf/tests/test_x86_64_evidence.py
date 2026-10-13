@@ -6,13 +6,16 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
+import signal
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -799,6 +802,90 @@ class CorrectnessAdmissionTests(unittest.TestCase):
         self.assertIsNone(admission["receipt"])
         self.assertIsNone(admission["source"])
         self.assertEqual(admission["qualified_gates"], [])
+
+    def test_host_uses_tracked_pinned_receipt_reader_and_parses_only_its_json(self) -> None:
+        expected = {"outcome": "passed", "qualified_gates": ["compat.abi-differential"]}
+        process = Mock()
+        process.pid = 2741
+        process.returncode = 0
+        process.communicate.return_value = (json.dumps(expected, separators=(",", ":")).encode(), b"")
+        receipt_path = WORK_ROOT / "qualification-receipts/receipt.json"
+        with patch.dict(os.environ, {"BASH_ENV": "/untrusted/shell-startup"}), patch.object(
+            evidence.subprocess, "Popen", return_value=process
+        ) as spawn:
+            self.assertEqual(evidence._run_pinned_receipt_validator(ROOT, receipt_path), expected)
+        command, = spawn.call_args.args
+        self.assertEqual(command, [
+            str(ROOT / "scripts/dev-x86_64.sh"), "qualification-manifest",
+            "--validate-receipt", str(receipt_path), "--json",
+        ])
+        self.assertEqual(spawn.call_args.kwargs["cwd"], ROOT)
+        self.assertEqual(spawn.call_args.kwargs["stdin"], subprocess.DEVNULL)
+        self.assertEqual(spawn.call_args.kwargs["stdout"], subprocess.PIPE)
+        self.assertEqual(spawn.call_args.kwargs["stderr"], subprocess.PIPE)
+        self.assertTrue(spawn.call_args.kwargs["start_new_session"])
+        self.assertNotIn("BASH_ENV", spawn.call_args.kwargs["env"])
+        process.communicate.assert_called_once_with(timeout=120)
+
+    def test_host_rejects_a_nonzero_pinned_receipt_validation(self) -> None:
+        process = Mock()
+        process.pid = 2742
+        process.returncode = 1
+        process.communicate.return_value = (b"", b"inputs drifted")
+        with patch.object(evidence.subprocess, "Popen", return_value=process):
+            with self.assertRaisesRegex(evidence.EvidenceError, "pinned qualification receipt reader refused"):
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+
+    def test_verified_receipt_loader_rejects_symlinked_components(self) -> None:
+        for component in ("file", "directory"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+                checkout = Path(temporary)
+                outside = checkout / "outside"
+                outside.mkdir()
+                (outside / "receipt.json").write_text('{"outcome":"passed"}', encoding="utf-8")
+                if component == "file":
+                    receipt_root = checkout / ".work/x86_64/qualification-receipts"
+                    receipt_root.mkdir(parents=True, exist_ok=True)
+                    receipt_path = receipt_root / "receipt.json"
+                    receipt_path.symlink_to(outside / "receipt.json")
+                else:
+                    (checkout / ".work").symlink_to(outside, target_is_directory=True)
+                    receipt_path = checkout / ".work/x86_64/qualification-receipts/receipt.json"
+                with self.assertRaisesRegex(
+                    evidence.EvidenceError,
+                    "not a regular file|non-directory|no-follow|safely read",
+                ):
+                    evidence._read_physical_receipt(checkout, receipt_path)
+
+    def test_host_timeout_stops_dispatcher_and_docker_client_group(self) -> None:
+        process = Mock()
+        process.pid = 2743
+        process.returncode = None
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired("qualification-manifest", timeout=120),
+            subprocess.TimeoutExpired("qualification-manifest", timeout=5),
+            (b"", b""),
+        ]
+        with patch.object(evidence.subprocess, "Popen", return_value=process), patch.object(
+            evidence.os, "killpg"
+        ) as kill_group:
+            with self.assertRaisesRegex(evidence.EvidenceError, "validation timed out"):
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+        self.assertEqual(
+            [call.args for call in kill_group.call_args_list],
+            [(2743, signal.SIGTERM), (2743, signal.SIGKILL)],
+        )
+
+    def test_host_cancellation_stops_dispatcher_and_docker_client_group(self) -> None:
+        process = Mock()
+        process.pid = 2744
+        process.communicate.side_effect = [KeyboardInterrupt(), (b"", b"")]
+        with patch.object(evidence.subprocess, "Popen", return_value=process), patch.object(
+            evidence.os, "killpg"
+        ) as kill_group:
+            with self.assertRaises(KeyboardInterrupt):
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+        kill_group.assert_called_once_with(2744, signal.SIGTERM)
 
     def test_manifest_declarations_cannot_claim_execution_admission(self) -> None:
         owner = evidence._x86_module(ROOT, "generate_qualification_manifest")
