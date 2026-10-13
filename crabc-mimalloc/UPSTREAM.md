@@ -93,99 +93,10 @@ locally.
 
 `compat/allocator/port-map.toml` owns the exact mapping: every pinned source
 unit and function group, its Rust module and item, its status and its evidence
-flags. The table gives only the file-level summary of the `[[unit]]` rows.
-Each Rust module's header carries the source-specific copyright and MIT notice
-of the pinned file(s) it translates, as the license rule above requires; a
-module that merges two source files carries both.
-
-| Pinned source | Rust module(s) in `crabc-mimalloc/src` unless prefixed |
-| --- | --- |
-| `include/mimalloc.h` | api |
-| `include/mimalloc-stats.h` | stats |
-| `include/mimalloc/types.h` | types |
-| `include/mimalloc/atomic.h` | atomic |
-| `include/mimalloc/bits.h` | bits and config |
-| `include/mimalloc/prim.h` | os |
-| `include/mimalloc/prim-tls.h` | compiler_tls, thread_local, main_theap, dynamic_theap, and runtime_lifecycle |
-| `include/mimalloc/internal.h` | invariants, page, free_list, bootstrap, aligned, alloc, os_page, and single_thread |
-| `src/alloc.c` | alloc, single_thread, free_list, process_page_map, runtime_lifecycle, and source_api |
-| `src/alloc-aligned.c` | aligned, os_page, and single_thread |
-| `src/alloc-posix.c` | source_api |
-| `src/alloc-override.c` | crabc_libc::allocator_boundary |
-| `src/free.c` | free_list, process_page_map, remote_free, runtime_lifecycle, and single_thread |
-| `src/arena.c` | arena, os_page, and single_thread |
-| `src/bitmap.c` | bitmap |
-| `src/bitmap.h` | bitmap |
-| `src/heap.c` | types, main_theap, main_heap_thread, main_heap_page, and dynamic_theap |
-| `src/init.c` | bootstrap, meta, subproc, tld, types, main_theap, process_init, main_static_page, main_heap_thread, main_heap_page, and dynamic_theap |
-| `src/libc.c` | support |
-| `src/options.c` | config, diagnostic_output, os, types, main_theap, main_heap_thread, runtime_lifecycle, runtime_destroy, and libc::c_abi::x86_64::native_mimalloc_lifecycle |
-| `src/os.c` | os |
-| `src/page-map.c` | page_map, process_page_map, and main_static_page |
-| `src/page.c` | page, free_list, remote_free, abandoned, types, and single_thread |
-| `src/page-queue.c` | types::page_queue and single_thread |
-| `src/random.c` | random |
-| `src/stats.c` | stats |
-| `src/static.c` | crabc_mimalloc crate module graph |
-| `src/subproc.c` | subproc, meta, tld, types, main_theap, process_init, and dynamic_theap |
-| `src/theap.c` | bootstrap, types, single_thread, main_theap, main_static_page, main_heap_thread, main_heap_page, and dynamic_theap |
-| `src/threadlocal.c` | compiler_tls, meta, thread_local, owned_tls_key_registry, main_theap, main_heap_thread, and dynamic_theap |
-| `src/prim/prim.c` | os |
-| `src/prim/prim-tls.c` | compiler_tls and runtime_lifecycle |
-| `src/prim/unix/prim.c` | os |
-| `src/prim/unix/prim-tls.c` | thread_local |
-
-The Miri kernel model (`crabc-core/src/miri_model.rs`, `cfg(miri)`) is original crabc code with no upstream counterpart.
-
-### Source ranges not yet in `port-map.toml`
-
-The following pinned ranges were mapped here but no `port-map.toml` row
-contains them. They need rows or should be dropped.
-
-| Pinned range | Rust owner |
-| --- | --- |
-| `src/alloc.c:379-417`, `src/alloc-aligned.c:347-388` | `runtime_lifecycle::{native_reallocate_zeroed, native_reallocate_aligned_zeroed, native_reallocate_aligned}` |
-| `src/arena.c:1794-1869`, `src/arena.c:2167-2191` | `arena_owned::ProcessArenaBacking::install_owned_huge_allocation`, `arena::manage_in_place` |
-| `src/arena.c:2167-2222`, `src/os.c:772-853`, `src/init.c:566-579` | `arena_huge` |
-| `src/options.c:133-134` | `config::VmOption` (`reserve_os_memory`) |
-| `src/prim/unix/prim.c:419-449`, `src/os.c:781-814` | `diagnostic_output::HugePageWarningRoute`, `os::HugeOsAllocation` |
-| `src/page.c:359-388` | `single_thread::PageAllocatorEngine::move_regular_to_full`, `abandoned::abandon_after_collect` |
-| `src/arena.c:630-651`, `src/arena.c:761-765` | `remote_free::collect_abandoned_false`, `abandoned::unown_with` |
-| `src/arena.c:870-1037`, `src/arena.c:1316-1337` | `arena` |
-| `src/subproc.c:19-88`, `src/subproc.c:149-193`, `src/subproc.c:253-255` | `meta`, `subproc_registry` |
-| `src/heap.c:148-170`, `src/heap.c:161-183`, `src/theap.c:347-376` | `heap_destroy`, `subproc_registry` |
-| `src/page.c:987-1117` | `deferred_free`, `single_thread` (`_mi_deferred_free`, `mi_malloc_generic_fallback`) |
-| `src/os.c:240-430` | `os` (aligned overmap) |
-| `src/init.c:151-214` | `process_init`, `bootstrap` |
-| `src/threadlocal.c:23-315` | `thread_local`, `owned_tls_key_registry` |
-| `include/mimalloc/atomic.h:544-557` | `once` over `lock` |
-| `include/mimalloc/internal.h:1316-1344` | `types` (static memory-ID construction) |
-| `src/bitmap.c:1616-1634` | `bitmap::BinnedBitmapView::highest_clear_relaxed` |
-| `src/os.c:690-712`, `src/prim/unix/prim.c:600-604` | `os` (`_mi_os_protect`/`_mi_os_unprotect`) |
-| `src/theap.c:381-412`, `src/heap.c:162-185`, `src/heap.c:209-225`, `src/arena.c:2640-2643` | `heap_destroy::Heap::force_destroy_main_heap_theaps_quiescent`, `main_theap` `force_destroy_source_owned_theaps` / `force_destroy_source_owned_main_heap` |
-| `src/init.c:200-205`, `src/subproc.c:233-255` | `meta::MetaAllocator::prepare_for_main_heap`, `close_process_engine_quiescent`; `bootstrap::bind_detached_for_main_heap`; `metadata_session::CanonicalMetadataTheapSession`; `heap_registry::SubprocessHeapList` |
-
-### Differences not yet registered
-
-Language-boundary adaptations that `port-map.toml` rows state but
-`compat/allocator/known-differences.md` has no entry for:
-
-- The allocator-private lock (`lock.rs`) is a no-libc futex lock in place of
-  the upstream normal process-private pthread mutex. It keeps Acquire/Release
-  exclusion and implies no fork repair. `ThreadLocalData` therefore keeps the
-  source field order and meaning but is not a C `sizeof` claim.
-- The once protocol (`once.rs`) takes an explicit validated thread identity and
-  models the enter/body/release scope with a completion token; it runs no
-  callbacks and defines no initializer-failure policy.
-- The bounded string helpers (`support.rs`) skip the C source's condition-order
-  re-read after N equal bytes; no valid-program result changes.
-- `bits.rs` returns `Option<usize>` for `mi_bsf`/`mi_bsr`, and `atomic.rs` uses
-  concrete atomic types in place of C macro polymorphism with the same
-  orderings. These are type-level adaptations, not algorithmic differences.
-
-Integration boundaries are not engine differences: `crabc-libc` owns the C ABI
-and `errno`, `crabc-mimalloc` is errno-free, and thread and fork hooks use the
-crabc runtime lifecycle rather than public pthread APIs.
+flags. `[[unit]]` rows cover source files, and `[[item]]` rows name narrower
+function groups and their Rust routes. This file does not keep a second source
+inventory. The Miri kernel model (`crabc-core/src/miri_model.rs`, `cfg(miri)`)
+is original crabc code with no upstream counterpart.
 
 ## Configuration profile
 
