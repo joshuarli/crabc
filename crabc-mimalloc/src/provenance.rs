@@ -20,6 +20,7 @@ use crate::types::{MemoryId, MemoryInfo, MemoryKind, OsMemory};
 pub(crate) struct Address(usize);
 
 impl Address {
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn new(value: usize) -> Self {
         Self(value)
@@ -35,6 +36,7 @@ impl Address {
         self.0
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn checked_add(self, bytes: usize) -> Option<Self> {
         match self.0.checked_add(bytes) {
@@ -43,6 +45,7 @@ impl Address {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn is_aligned_to(self, alignment: usize) -> bool {
         // `_mi_is_aligned` treats zero as an unconstrained alignment. Keep
@@ -57,6 +60,7 @@ impl Address {
         }
     }
 
+    #[cfg(test)]
     #[inline]
     pub(crate) const fn align_down(self, alignment: usize) -> Option<Self> {
         match invariants::align_down(self.0, alignment) {
