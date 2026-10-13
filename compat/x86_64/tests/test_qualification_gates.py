@@ -58,6 +58,12 @@ CLEAN = {"revision": "a" * 40, "uncommitted": []}
 class GateConditionTests(unittest.TestCase):
     gate = gates.CHAIN[2]
 
+    def test_performance_release_command_has_no_allocator_report_inputs(self):
+        self.assertEqual(gates.PERFORMANCE_RELEASE_COMMAND,
+                         "python3 compat/x86_64/performance_release_gate.py evaluate "
+                         "--runtime-c-collector COLLECTOR.json --native-facade-report REPORT.json "
+                         "--rustybench-source DIR --rustix-source DIR --output NEW_DIR")
+
     def test_parity_ledger_reader_requires_receipts(self):
         validation = Mock(return_value={"family_count": 16})
         ledger = SimpleNamespace(

@@ -184,6 +184,21 @@ AARCH64_PARITY_INVENTORY_VALIDATOR_PATH = (
     ROOT / "compat" / "x86_64" / "aarch64_parity_inventory.py"
 )
 EXPECTED_SCHEMA = "crabc.x86_64-runtime-parity/v3"
+EXPECTED_PERFORMANCE_RELEASE_COMMAND = (
+    "python3 compat/x86_64/performance_release_gate.py evaluate --runtime-c-collector COLLECTOR.json "
+    "--native-facade-report REPORT.json --rustybench-source DIR --rustix-source DIR --output NEW_DIR"
+)
+EXPECTED_PERFORMANCE_RELEASE_SCOPE = (
+    "Read-only gate over retained receipts; it never measures. Requires the three-attempt runtime C scorecard "
+    "(`perf-c check` reader) to be release-qualified with every row within CPU upper bound <= 1.00, "
+    "PSS/memory.peak ratios <= 1.00 (<= 1.0 for floor-limited metrics), and 2R syscall rules, plus a "
+    "complete `perf-native --mode full` report; each receipt carries an uncontended-host record. "
+    "Allocator promotion is separately owned by M9. Performance evidence cannot substitute for correctness "
+    "or promotion gates."
+)
+EXPECTED_PERFORMANCE_RELEASE_SOURCE_OWNERS = (
+    "compat/perf", "compat/perf/native", "compat/x86_64/performance_release_gate.py", "docs/design/performance.md",
+)
 EXPECTED_STATIC_PRODUCT_SCHEMA = "crabc.x86_64-owned-static-product/v1"
 EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
@@ -9404,6 +9419,25 @@ def validate_static_product_contract(
     }
 
 
+def require_performance_release_family(family: Mapping[str, Any]) -> None:
+    """Pin performance.release to the runtime and facade readers, not allocator promotion."""
+    status = family.get("status")
+    require(status in ALLOWED_STATUSES, "performance.release status is invalid")
+    evidence = family.get("native_evidence")
+    require(
+        isinstance(evidence, list) and len(evidence) == 1 and isinstance(evidence[0], Mapping)
+        and set(evidence[0]) == {"state", "command", "scope"}
+        and evidence[0].get("state") == ("required" if status == "planned" else "verified")
+        and evidence[0].get("command") == EXPECTED_PERFORMANCE_RELEASE_COMMAND
+        and evidence[0].get("scope") == EXPECTED_PERFORMANCE_RELEASE_SCOPE,
+        "performance.release must pin the runtime/facade-only release reader and its scope",
+    )
+    require(
+        family.get("source_owners") == list(EXPECTED_PERFORMANCE_RELEASE_SOURCE_OWNERS),
+        "performance.release source owners changed",
+    )
+
+
 def require_static_tls_family_evidence(
     family: Mapping[str, Any], families: Mapping[str, Mapping[str, Any]]
 ) -> None:
@@ -9831,6 +9865,7 @@ def _validate_ledger(
         header_layout_manifest,
         header_layout_foundation_manifest,
     )
+    require_performance_release_family(by_id["performance.release"])
     posix_runtime = by_id["libc.posix-runtime"]
     require_posix_native_profile_companions(posix_runtime)
     posix_runtime_admission = require_posix_runtime_family_admission(posix_runtime)

@@ -1689,7 +1689,8 @@ class ArchitectureBenchmarkEvidenceTests(unittest.TestCase):
             "single_thread_throughput_ratio", "four_thread_local_throughput_ratio",
             "cross_thread_free_throughput_ratio",
         })
-        self.assertTrue(all(value >= 0.90 for value in result["metrics"].values()))
+        self.assertTrue(all(value >= RATCHET.promotion_benchmark_minimum()
+                            for value in result["metrics"].values()))
         self.assertNotIn("metadata_plateau_after_warmup", result["metrics"])
         self.assertIn("host", result["identity"])
 
@@ -1698,7 +1699,8 @@ class ArchitectureBenchmarkEvidenceTests(unittest.TestCase):
             ROOT, self.manifest, self.benchmark(self.fixtures.synthetic_report(2.0)),
         )
         self.assertEqual(len(result["unmet"]), 3)
-        self.assertTrue(all(value < 0.90 for value in result["metrics"].values()))
+        self.assertTrue(all(value < RATCHET.promotion_benchmark_minimum()
+                            for value in result["metrics"].values()))
 
     def test_rejects_stale_hash_raw_sample_forgery_and_partial_measurements(self) -> None:
         for mutation, message in (

@@ -80,6 +80,15 @@ class PlanTests(unittest.TestCase):
         report = candidate.dry_run(ROOT, ROOT / ".work/x86_64/profile", {}, profile="correctness")
         self.assertFalse(any("performance_release" in blocker for blocker in report["preflight_blockers"]))
 
+    def test_performance_release_candidate_uses_only_runtime_and_facade_inputs(self) -> None:
+        self.assertEqual(candidate.INPUT_KEYS["performance_release"], (
+            "runtime_c_collector", "native_facade_report", "rustybench_source", "rustix_source"))
+        step = next(step for step in candidate.plan() if step.id == "performance-release")
+        inputs = {"performance_release": {key: key for key in candidate.INPUT_KEYS["performance_release"]}}
+        argv = step.argv(candidate.Context(ROOT, ROOT / ".work/x86_64/performance-release-plan", inputs, dry_run=True))
+        self.assertFalse(any(argument.startswith("--allocator-report") for argument in argv))
+        self.assertEqual(argv[-2:], ["--output", ".work/x86_64/performance-release-plan/out/performance-release"])
+
     def test_preflight_checks_package_corpus_inputs_against_the_manifest(self) -> None:
         context = candidate.Context(ROOT, ROOT / ".work/x86_64/corpus-preflight", {}, dry_run=True)
         with mock.patch.object(candidate, "_validate_package_corpus",
@@ -265,12 +274,10 @@ class ExecutionTests(unittest.TestCase):
         self._execute(through="static-products")
         state_path = self.work / "candidate.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        legacy_state = {key: value for key, value in state.items() if key != "input_seals"}
-        legacy_state["schema"] = "crabc.x86_64-qualification-candidate/v1"
-        legacy_state["inputs"] = candidate._input_identity(self.root, self.inputs)
-        state_path.write_text(json.dumps(legacy_state), encoding="utf-8")
+        state["schema"] = "crabc.x86_64-qualification-candidate/v2"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
 
-        with self.assertRaisesRegex(candidate.CandidateError, "candidate state fields drifted; use a fresh --work"):
+        with self.assertRaisesRegex(candidate.CandidateError, "another source revision, candidate inputs or environment"):
             self._execute(through="static-products")
 
     def test_restart_rejects_replaced_input_at_the_same_path(self) -> None:

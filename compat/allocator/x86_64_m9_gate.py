@@ -5,8 +5,8 @@ The gate requires a complete matrix, three distinct qualified reports with
 matching source, configuration, host and built products, a complete codegen
 audit without Rust-only structural cost, source convergence, one qualified
 integrated-product report, and current correctness gate reports. It names
-every unmet condition. Numerical promotion thresholds are applied separately
-to the qualified reports' metrics.
+every unmet condition and applies the promotion thresholds to the qualified
+reports' metrics.
 The codegen condition replays retained executables to check executed traces;
 it does not take a performance measurement.
 """
@@ -43,6 +43,11 @@ CONDITION_IDS = (
     "m9.correctness",
 )
 MINIMUM_REPORTS = 3
+SUITE_THROUGHPUT_LOWER_MIN = 0.95
+CRITICAL_THROUGHPUT_LOWER_MIN = 0.90
+CRITICAL_P99_UPPER_MAX = 1.10
+MEMORY_GEOMEAN_UPPER_MAX = 1.05
+CRITICAL_MEMORY_UPPER_MAX = 1.10
 ENGINE_REPORTS = engine.REPORT_ROOT
 CODEGEN_REPORTS = engine.REPORT_ROOT.parent / "codegen-audit"
 CORRECTNESS_GATES = ("m4", "m5", "m6", "m7")
@@ -63,6 +68,56 @@ Reader = Callable[[Path, Path], Mapping[str, Any]]
 
 def _condition(identifier: str, unmet: Sequence[str], detail: str) -> dict[str, Any]:
     return {"id": identifier, "met": not unmet, "detail": detail if not unmet else list(unmet)}
+
+
+def _metric_rows(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def allocator_metric_unmet(label: str, metrics: Mapping[str, Any]) -> list[str]:
+    """Apply the M9 promotion table to one qualified report's metrics."""
+    unmet: list[str] = []
+    throughput = _metric_rows(metrics.get("throughput"))
+    tail = _metric_rows(metrics.get("tail_latency"))
+    memory = _metric_rows(metrics.get("memory"))
+    suite = _finite_number(throughput.get("suite_geometric_mean_lower_95"))
+    if suite is None or suite < SUITE_THROUGHPUT_LOWER_MIN:
+        unmet.append(f"{label}: suite geometric-mean throughput lower 95% bound {suite} < "
+                     f"{SUITE_THROUGHPUT_LOWER_MIN}")
+    critical_throughput = _metric_rows(throughput.get("critical_lower_95"))
+    critical_tail = _metric_rows(tail.get("critical_p99_upper_95"))
+    critical_memory = _metric_rows(memory.get("critical_peak_upper"))
+    rosters = {frozenset(critical_throughput), frozenset(critical_tail), frozenset(critical_memory)}
+    if len(rosters) != 1 or not critical_throughput:
+        unmet.append(f"{label}: throughput, tail-latency and memory do not share one nonempty critical roster")
+    for row, value in critical_throughput.items():
+        bound = _finite_number(value)
+        if bound is None or bound < CRITICAL_THROUGHPUT_LOWER_MIN:
+            unmet.append(f"{label}: critical {row} throughput lower bound {bound} < "
+                         f"{CRITICAL_THROUGHPUT_LOWER_MIN}")
+    for row, value in critical_tail.items():
+        bound = _finite_number(value)
+        if bound is None or bound > CRITICAL_P99_UPPER_MAX:
+            unmet.append(f"{label}: critical {row} p99 upper bound {bound} > {CRITICAL_P99_UPPER_MAX}")
+    geomean = _metric_rows(memory.get("geometric_mean_peak_upper"))
+    for kind in ("rss", "pss"):
+        bound = _finite_number(geomean.get(kind))
+        if bound is None or bound > MEMORY_GEOMEAN_UPPER_MAX:
+            unmet.append(f"{label}: geometric-mean peak {kind.upper()} upper ratio {bound} > "
+                         f"{MEMORY_GEOMEAN_UPPER_MAX}")
+    for row, value in critical_memory.items():
+        for kind in ("rss", "pss"):
+            bound = _finite_number(_metric_rows(value).get(kind))
+            if bound is None or bound > CRITICAL_MEMORY_UPPER_MAX:
+                unmet.append(f"{label}: critical {row} peak {kind.upper()} upper ratio {bound} > "
+                             f"{CRITICAL_MEMORY_UPPER_MAX}")
+    return unmet
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
 
 
 def matrix_condition(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -129,6 +184,10 @@ def read_reports(paths: Sequence[Path], inspect: Callable[[Path, Path], Mapping[
                     seen_labels.add(attempt["label"])
                     seen_attempts.add(attempt["fingerprint"])
                     inspected["product_identity"] = attempt["products"]
+        if not inspected.get("unmet"):
+            metrics = inspected.get("metrics")
+            inspected["unmet"] = allocator_metric_unmet(
+                harness.relative(Path(path)), metrics if isinstance(metrics, Mapping) else {})
         records.append({"path": harness.relative(Path(path)), **inspected})
     return records
 

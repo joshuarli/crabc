@@ -38,13 +38,13 @@ bound for `local_scaling_1`, `local_scaling_4`, and `remote_free_1`. These becom
 `single_thread_throughput_ratio`, `four_thread_local_throughput_ratio`, and
 `cross_thread_free_throughput_ratio`, respectively. Each must meet the existing
 critical-workload lower bound from
-`performance_release_gate.ALLOCATOR_CRITICAL_THROUGHPUT_LOWER_MIN` (0.90).
+`x86_64_m9_gate.CRITICAL_THROUGHPUT_LOWER_MIN` (0.90).
 A slow but otherwise qualified measurement is retained as a threshold failure.
 An optional metric claim in the runtime record must match the derived value;
 booleans and status strings cannot stand in for a ratio.
 
 The complete allocator suite, tail-latency, memory-ratio, repeated-report, and
-runtime performance requirements remain owned by the release performance gate.
+runtime performance requirements remain owned by the M9 gate.
 Passing the three architecture throughput rows does not close those obligations.
 
 Allocator metadata high-water and plateau are separate observations. Process

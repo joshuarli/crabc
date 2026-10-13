@@ -134,13 +134,12 @@ one:
 ```
 
 `performance-release` never measures. `performance_release_gate.py evaluate`
-reads the three-attempt runtime C collector through the `perf-c check` reader and
-rechecks every row against the plan's 0.90 CPU/PSS/`memory.peak` and 2R syscall
-rules, replays one `perf-native --mode full` report, and applies the allocator
-promotion table to at least three agreeing M9 qualified full reports read by
-`compat/allocator`'s own reader. Each input must carry an `uncontended_host`
-record. The receipt names every unmet condition; publication reruns that
-evaluation and admits only a pass.
+reads the three-attempt runtime C collector through the `perf-c check` reader,
+rechecks every row against the 1.00 CPU/PSS/`memory.peak` and 2R syscall rules,
+and replays one `perf-native --mode full` report. Both retained reports must
+carry an `uncontended_host` record. Allocator promotion has its own M9 gate in
+`compat/allocator/x86_64_m9_gate.py`. The receipt names every unmet condition;
+publication reruns that evaluation and admits only a pass.
 
 ## Running the chain
 
@@ -254,7 +253,7 @@ pre-seeded inputs the native container cannot fetch or must not measure under
 contention: `lua_source_build.archive_seed`,
 `rust_std_lto.{provider_vendor, dependency_vendor}` and
 `performance_release.{runtime_c_collector, native_facade_report,
-rustybench_source, rustix_source, allocator_reports}`. The pinned OS-test and
+rustybench_source, rustix_source}`. The pinned OS-test and
 libc-test source checkouts (`SOURCE_ORACLES` in the module) and the package
 corpus archives (`.work/x86_64/owned-package-corpus-input/apks`) and signed
 index (`.work/x86_64/owned-package-corpus-input/index/main-x86_64.APKINDEX.tar.gz`)

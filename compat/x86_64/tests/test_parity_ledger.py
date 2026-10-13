@@ -47,6 +47,30 @@ class CompletionScopeTests(unittest.TestCase):
             ledger.completion_family_ids(data)
 
 
+class PerformanceReleaseContractTests(unittest.TestCase):
+    def family(self) -> dict:
+        return {
+            "status": "planned",
+            "source_owners": list(ledger.EXPECTED_PERFORMANCE_RELEASE_SOURCE_OWNERS),
+            "native_evidence": [{
+                "state": "required",
+                "command": ledger.EXPECTED_PERFORMANCE_RELEASE_COMMAND,
+                "scope": ledger.EXPECTED_PERFORMANCE_RELEASE_SCOPE,
+            }],
+        }
+
+    def test_runtime_and_facade_release_contract_is_pinned(self) -> None:
+        ledger.require_performance_release_family(self.family())
+        for field, value in (
+            ("command", ledger.EXPECTED_PERFORMANCE_RELEASE_COMMAND + " --allocator-report REPORT.json"),
+            ("scope", ledger.EXPECTED_PERFORMANCE_RELEASE_SCOPE.replace("1.00", "0.90", 1)),
+        ):
+            family = self.family()
+            family["native_evidence"][0][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ledger.LedgerError, "runtime/facade-only"):
+                ledger.require_performance_release_family(family)
+
+
 class PublicSupportDeclarationTests(unittest.TestCase):
     def completed(self):
         data = ledger.load_toml(ledger.LEDGER_PATH)

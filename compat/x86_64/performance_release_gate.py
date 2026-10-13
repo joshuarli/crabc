@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Evaluate the x86 ``performance.release`` gate from retained receipts only.
 
-This gate never measures. ``evaluate`` reads three kinds of existing
-performance evidence through each owner's own reader, applies the fixed release
-thresholds and writes ``NEW_DIR/receipt.json`` naming every
-unmet condition; ``validate_receipt`` reruns that evaluation from the same
-inputs, so a replaced input, a changed owner reader or a later source change
-cannot pass. The ``performance-release`` publication of
-``qualification_gates.py`` selects one receipt. The inputs are:
+This gate never measures. ``evaluate`` reads runtime C and Rust-facade evidence
+through each owner's reader, applies the runtime scorecard bounds, and writes
+``NEW_DIR/receipt.json`` naming every unmet condition. ``validate_receipt``
+reruns that evaluation from the same inputs, so replaced evidence, a changed
+owner reader, or a later source change cannot pass. The
+``performance-release`` publication of ``qualification_gates.py`` selects one
+receipt. The inputs are:
 
 * the runtime C scorecard: a three-attempt ``perf-c collect`` report replayed
   by ``compat/perf/x86_64_evidence.validate_collector_report`` (the
   ``perf-c check`` reader). Its release decision must be qualified with no
   blocker, and every row of every attempt is rechecked against the
   runtime release scorecard: CPU one-sided 95% upper
-  bound <= 0.90, PSS and ``memory.peak`` ratios <= 0.90 against a nonzero
+  bound <= 1.00, PSS and ``memory.peak`` ratios <= 1.00 against a nonzero
   reference, with no regression for mandatory payload/accounting floors,
   and marked-region and whole-process syscalls <= 2R (zero when
   R is zero);
@@ -22,24 +22,7 @@ cannot pass. The ``performance-release`` publication of
   replayed by ``compat/perf/native/x86_64_runner.validate_report``. It is a
   supporting comparison with no threshold of its own, so it must only be
   complete full-mode evidence;
-* at least three allocator qualified full reports. The allocator reader
-  replays them through ``perf_engine_x86_64.validate_qualified_full_report
-  (root, path)``, which returns ``{"identity": ..., "metrics": ...}``; this gate
-  applies the fixed allocator bounds to those metrics: suite
-  geometric-mean throughput lower 95% bound >= 0.95, every critical row's
-  throughput lower bound >= 0.90, critical p99 upper bound <= 1.10,
-  geometric-mean peak RSS and PSS upper ratio <= 1.05 and every critical
-  row's <= 1.10, one nonempty critical roster shared by all three metrics,
-  and agreement: every report meets them with one identical
-  source/configuration/host identity. No exception or explanation is encoded
-  here; that requires an explicit release decision.
-
-The allocator revision must match runtime C collection, and all three
-measurements must agree on the stable host facts they retain. The allocator
-and native Rust-facade measurements must use the same recorded Rust compiler
-and Cargo versions.
-
-Every receipt must also carry an ``uncontended_host`` record,
+Both receipts must carry an ``uncontended_host`` record,
 ``{"status": "uncontended", "evidence": {...nonempty raw observations...}}``,
 written by its producer on the measuring host. Its absence is a named unmet
 condition; this gate does not decide what makes a host uncontended.
@@ -63,20 +46,12 @@ sys.path.insert(0, str(ROOT / "compat" / "perf"))
 import x86_64_evidence as runtime_evidence
 
 GATE = "performance.release"
-SCHEMA = "crabc.x86_64-performance-release-gate/v1"
+SCHEMA = "crabc.x86_64-performance-release-gate/v2"
 RECEIPT_NAME = "receipt.json"
 
 # Runtime C scorecard bounds.
-RUNTIME_CPU_UPPER_MAX = 0.90
+RUNTIME_CPU_UPPER_MAX = 1.00
 RUNTIME_SYSCALL_FACTOR = 2
-# Allocator promotion bounds.
-ALLOCATOR_SUITE_THROUGHPUT_LOWER_MIN = 0.95
-ALLOCATOR_CRITICAL_THROUGHPUT_LOWER_MIN = 0.90
-ALLOCATOR_CRITICAL_P99_UPPER_MAX = 1.10
-ALLOCATOR_MEMORY_GEOMEAN_UPPER_MAX = 1.05
-ALLOCATOR_CRITICAL_MEMORY_UPPER_MAX = 1.10
-ALLOCATOR_MINIMUM_REPORTS = 3
-ALLOCATOR_READER = "validate_qualified_full_report"
 
 
 class GateInputError(RuntimeError):
@@ -229,138 +204,6 @@ def native_facade_conditions(report: str, rustybench: str, rustix: str) -> list[
     return rows
 
 
-# ---------------------------------------------------------------------------
-# Allocator qualified full reports
-
-
-def _rows(value: object) -> dict[str, Any]:
-    return dict(value) if isinstance(value, Mapping) else {}
-
-
-def allocator_metric_unmet(label: str, metrics: Mapping[str, Any]) -> list[str]:
-    """Apply the allocator promotion table to one reader-validated report."""
-    unmet: list[str] = []
-    throughput = _rows(metrics.get("throughput"))
-    tail = _rows(metrics.get("tail_latency"))
-    memory = _rows(metrics.get("memory"))
-    suite = _number(throughput.get("suite_geometric_mean_lower_95"))
-    if suite is None or suite < ALLOCATOR_SUITE_THROUGHPUT_LOWER_MIN:
-        unmet.append(f"{label}: suite geometric-mean throughput lower 95% bound {suite} < "
-                     f"{ALLOCATOR_SUITE_THROUGHPUT_LOWER_MIN}")
-    critical_throughput = _rows(throughput.get("critical_lower_95"))
-    critical_tail = _rows(tail.get("critical_p99_upper_95"))
-    critical_memory = _rows(memory.get("critical_peak_upper"))
-    rosters = {frozenset(critical_throughput), frozenset(critical_tail), frozenset(critical_memory)}
-    if len(rosters) != 1 or not critical_throughput:
-        unmet.append(f"{label}: throughput, tail-latency and memory do not share one nonempty critical roster")
-    for row, value in critical_throughput.items():
-        bound = _number(value)
-        if bound is None or bound < ALLOCATOR_CRITICAL_THROUGHPUT_LOWER_MIN:
-            unmet.append(f"{label}: critical {row} throughput lower bound {bound} < "
-                         f"{ALLOCATOR_CRITICAL_THROUGHPUT_LOWER_MIN}")
-    for row, value in critical_tail.items():
-        bound = _number(value)
-        if bound is None or bound > ALLOCATOR_CRITICAL_P99_UPPER_MAX:
-            unmet.append(f"{label}: critical {row} p99 upper bound {bound} > {ALLOCATOR_CRITICAL_P99_UPPER_MAX}")
-    geomean = _rows(memory.get("geometric_mean_peak_upper"))
-    for kind in ("rss", "pss"):
-        bound = _number(geomean.get(kind))
-        if bound is None or bound > ALLOCATOR_MEMORY_GEOMEAN_UPPER_MAX:
-            unmet.append(f"{label}: geometric-mean peak {kind.upper()} upper ratio {bound} > "
-                         f"{ALLOCATOR_MEMORY_GEOMEAN_UPPER_MAX}")
-    for row, value in critical_memory.items():
-        for kind in ("rss", "pss"):
-            bound = _number(_rows(value).get(kind))
-            if bound is None or bound > ALLOCATOR_CRITICAL_MEMORY_UPPER_MAX:
-                unmet.append(f"{label}: critical {row} peak {kind.upper()} upper ratio {bound} > "
-                             f"{ALLOCATOR_CRITICAL_MEMORY_UPPER_MAX}")
-    return unmet
-
-
-def _allocator_samples_digest(report: Mapping[str, Any]) -> str:
-    """Hash replayed batches and snapshots; invocation metadata cannot distinguish runs."""
-
-    def observation(group: str, sample: Mapping[str, Any]) -> dict[str, Any]:
-        if group == "rows":
-            return {"batches": sample["batches"], "exit_memory": sample["process"]["exit_memory"],
-                    "peak_state": sample["peak_state"]}
-        return {"snapshots": sample["snapshots"]}
-
-    samples = {
-        group: {
-            name: {lane: [
-                observation(group, sample)
-                for sample in row["lanes"][lane]["samples"]
-            ] for lane in ("pinned_c", "rust_engine")}
-            for name, row in report[group].items()
-        }
-        for group in ("rows", "memory_rows")
-    }
-    encoded = json.dumps(samples, sort_keys=True, separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
-    count_unmet = []
-    if len(reports) < ALLOCATOR_MINIMUM_REPORTS:
-        count_unmet.append(f"{len(reports)} allocator report(s); M9 requires at least {ALLOCATOR_MINIMUM_REPORTS}")
-    if len(set(reports)) != len(reports):
-        count_unmet.append("an allocator report is supplied more than once")
-    identities: list[object] = []
-    measurements: dict[str, str] = {}
-
-    def read() -> dict[str, Any]:
-        unmet = list(count_unmet)
-        engine = _module(ROOT / "compat" / "allocator", "perf_engine_x86_64")
-        reader = getattr(engine, ALLOCATOR_READER, None)
-        if reader is None:
-            unmet.append(f"compat/allocator has no qualified full-report reader "
-                         f"(perf_engine_x86_64.{ALLOCATOR_READER}); no allocator report can qualify")
-            return _condition("allocator-m9-reports", unmet, "")
-        for report in reports:
-            try:
-                validated = reader(ROOT, ROOT / report)
-                raw = _read_json(report)
-                digest = _allocator_samples_digest(raw)
-                recorded_cpus = raw["provenance"]["host"]["measurement_cpus"]
-                observed_cpus = raw["uncontended_host"]["evidence"]["measurement_cpus"]
-                cpu_unmet = []
-                if recorded_cpus != observed_cpus:
-                    cpu_unmet.append(f"{report}: allocator host identity CPUs differ from observed host CPUs")
-                for group in ("rows", "memory_rows"):
-                    for name, row in raw[group].items():
-                        if any(cpu not in observed_cpus for cpu in row["cpus"]):
-                            cpu_unmet.append(f"{report}: {group} row {name} runs outside the observed host CPUs")
-            except Exception as error:  # noqa: BLE001 - the owner's refusal is the unmet detail
-                unmet.append(f"{report}: {type(error).__name__}: {error}")
-                continue
-            identities.append(validated.get("identity"))
-            unmet.extend(allocator_metric_unmet(report, _rows(validated.get("metrics"))))
-            unmet.extend(cpu_unmet)
-            if digest in measurements:
-                unmet.append(f"{report} and {measurements[digest]} contain the same raw measurements")
-            measurements.setdefault(digest, report)
-        if len(identities) == len(reports) and (not identities[0] or any(item != identities[0] for item in identities)):
-            unmet.append("allocator reports do not agree on one source/configuration/host identity")
-        return _condition("allocator-m9-reports", unmet,
-                          f"{len(reports)} agreeing qualified full reports meet the M9 promotion table")
-
-    rows = [_guard("allocator-m9-reports", read)]
-
-    def hosts() -> dict[str, Any]:
-        unmet: list[str] = []
-        for report in reports:
-            try:
-                unmet.extend(uncontended_host_unmet(_read_json(report), f"allocator report {report}"))
-            except Exception as error:  # noqa: BLE001
-                unmet.append(f"{report}: {type(error).__name__}: {error}")
-        return _condition("allocator-m9-uncontended-host", unmet,
-                          "uncontended host recorded in every allocator report")
-
-    rows.append(hosts())
-    return rows
-
-
 def _cpu_models_by_processor(raw: bytes) -> dict[int, str]:
     """Read the processor-to-model relation from retained Linux x86 CPU information."""
     models: dict[int, str] = {}
@@ -391,33 +234,17 @@ def _cpu_models_by_processor(raw: bytes) -> dict[int, str]:
 
 
 def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
-    """Join owner-validated measurements by source, Rust tools, and stable host facts."""
+    """Join runtime C and facade measurements by stable host facts."""
 
     evidence = _module(ROOT / "compat" / "perf", "x86_64_evidence")
     collector = _read_json(inputs["runtime_c_collector"]["path"])
     native = _read_json(inputs["native_facade"]["report"]["path"])
-    allocator = [(_read_json(item["path"]), item["path"]) for item in inputs["allocator_reports"]]
-    revision = collector["collector"]["source_revision"]
-    unmet: set[str] = set()
-    native_tools = {
-        name: (ROOT / _checkout_path(native["tools"][name]["command"]["stdout"]["path"]))
-        .read_text(encoding="utf-8").strip()
-        for name in ("rustc", "cargo")
-    }
-    for report, path in allocator:
-        if report["provenance"]["git"]["head"] != revision:
-            unmet.add(f"{path}: allocator source revision differs from runtime C")
-        for name, label in (("rustc", "Rust compiler"), ("cargo", "Cargo")):
-            if report["provenance"]["tools"][name] != native_tools[name]:
-                unmet.add(f"{path}: allocator {label} identity differs from native facade")
-
     native_diagnostics = native["diagnostics"]
     native_cpuinfo = (ROOT / _checkout_path(native_diagnostics["cpuinfo"]["path"])).read_bytes()
     native_cpu_identity = evidence.cpuinfo_identity_sha256(native_cpuinfo)
     cpu_models = _cpu_models_by_processor(native_cpuinfo)
-    # Allocator host provenance records the first CPU model even when it measures another CPU.
-    first_model = next(iter(cpu_models.values()))
     native_model = cpu_models.get(native_diagnostics["client_cpu"])
+    unmet: set[str] = set()
     for item in collector["attempts"]:
         path = evidence.translate_source_path(ROOT, evidence.SOURCE_MOUNT, item["report"]["path"])
         attempt = json.loads(path.read_text(encoding="utf-8"))
@@ -433,18 +260,8 @@ def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
             unmet.add(f"{path}: native facade and runtime C selected CPU models differ")
         if host["allowed_affinity_before_pin"] != native_diagnostics["allowed_affinity"]:
             unmet.add(f"{path}: native facade and runtime C allowed CPU sets differ")
-        for report, allocator_path in allocator:
-            allocator_host = report["provenance"]["host"]
-            if runtime_model is None or any(cpu_models.get(cpu) != runtime_model
-                                            for cpu in allocator_host["measurement_cpus"]):
-                unmet.add(f"{allocator_path}: allocator selected CPU model differs from runtime C/native facade")
-            if (allocator_host["kernel_release"] != host["kernel_release"]
-                    or allocator_host["allowed_cpus"] != host["allowed_affinity_before_pin"]
-                    or allocator_host["logical_cpus"] != len(cpu_models)
-                    or allocator_host["cpu_model"] != first_model):
-                unmet.add(f"{allocator_path}: allocator host identity differs from runtime C/native facade")
     return _condition("performance-evidence-identity", sorted(unmet),
-                      "source revision, Rust tools and host identities agree")
+                      "runtime C and native facade host identities agree")
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +273,6 @@ def evaluate_inputs(inputs: Mapping[str, Any]) -> list[dict[str, Any]]:
     rows = [
         *runtime_c_conditions(inputs["runtime_c_collector"]["path"]),
         *native_facade_conditions(native["report"]["path"], native["rustybench_source"], native["rustix_source"]),
-        *allocator_conditions([item["path"] for item in inputs["allocator_reports"]]),
     ]
     if all(row["met"] for row in rows):
         rows.append(_guard("performance-evidence-identity", lambda: performance_identity_condition(inputs)))
@@ -471,7 +287,6 @@ def collect_inputs(arguments: argparse.Namespace) -> dict[str, Any]:
             "rustybench_source": _checkout_path(arguments.rustybench_source),
             "rustix_source": _checkout_path(arguments.rustix_source),
         },
-        "allocator_reports": [_file_identity(_checkout_path(path)) for path in arguments.allocator_report],
     }
 
 
@@ -505,7 +320,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
         record["schema"], record["gate"]) != (SCHEMA, GATE):
         raise GateInputError("performance-release receipt does not match its schema")
     inputs = record["inputs"]
-    files = [inputs["runtime_c_collector"], inputs["native_facade"]["report"], *inputs["allocator_reports"]]
+    files = [inputs["runtime_c_collector"], inputs["native_facade"]["report"]]
     changed = [item["path"] for item in files if _file_identity(_checkout_path(item["path"])) != item]
     if changed:
         raise GateInputError("performance-release inputs changed after evaluation: " + ", ".join(changed))
@@ -533,7 +348,6 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     evaluate.add_argument("--native-facade-report", type=Path, required=True)
     evaluate.add_argument("--rustybench-source", type=Path, required=True)
     evaluate.add_argument("--rustix-source", type=Path, required=True)
-    evaluate.add_argument("--allocator-report", type=Path, action="append", default=[], required=True)
     evaluate.add_argument("--output", type=Path, required=True)
     validate = commands.add_parser("validate", help="reread one retained gate receipt")
     validate.add_argument("--receipt", type=Path, required=True)

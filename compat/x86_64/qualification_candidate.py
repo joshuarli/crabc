@@ -40,7 +40,7 @@ from typing import Callable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = "crabc.x86_64-qualification-candidate/v2"
+SCHEMA = "crabc.x86_64-qualification-candidate/v3"
 DISPATCHER = "./scripts/dev-x86_64.sh"
 MOUNT = "/workspace"
 WORK_PARENT = Path(".work/x86_64")
@@ -68,7 +68,7 @@ INPUT_KEYS = {
     "lua_source_build": ("archive_seed",),
     "rust_std_lto": ("provider_vendor", "dependency_vendor"),
     "performance_release": ("runtime_c_collector", "native_facade_report", "rustybench_source",
-                            "rustix_source", "allocator_reports"),
+                            "rustix_source"),
 }
 
 
@@ -414,7 +414,6 @@ def _plan(profile: str = "full") -> tuple[Step, ...]:
                             "--native-facade-report", str(c.given("performance_release", "native_facade_report")),
                             "--rustybench-source", str(c.given("performance_release", "rustybench_source")),
                             "--rustix-source", str(c.given("performance_release", "rustix_source")),
-                            *[item for report in _reports(c) for item in ("--allocator-report", report)],
                             "--output", c.template("{work}/out/performance-release")],
                  (Output("receipt", fixed="{work}/out/performance-release/receipt.json"),),
                  needs_input="performance_release", publishes=("performance.release", "performance-release")),
@@ -431,15 +430,6 @@ def _plan(profile: str = "full") -> tuple[Step, ...]:
                       lambda c: ["python3", "compat/x86_64/validate_parity_ledger.py",
                                  "--require-receipts"]))
     return tuple(_with_publications(steps))
-
-
-def _reports(c: Context) -> list[str]:
-    value = c.given("performance_release", "allocator_reports")
-    if isinstance(value, str):
-        return [value]
-    require(isinstance(value, list) and value and all(isinstance(item, str) for item in value),
-            "candidate input performance_release.allocator_reports must be a list of paths")
-    return value
 
 
 def _with_publications(steps: list[Step]) -> list[Step]:

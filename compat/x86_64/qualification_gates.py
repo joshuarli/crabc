@@ -216,8 +216,7 @@ def _validate_performance_release(path: Path) -> Mapping[str, Any]:
 
 PERFORMANCE_RELEASE_COMMAND = (
     "python3 compat/x86_64/performance_release_gate.py evaluate --runtime-c-collector COLLECTOR.json "
-    "--native-facade-report REPORT.json --rustybench-source DIR --rustix-source DIR "
-    "--allocator-report REPORT.json --allocator-report REPORT.json --allocator-report REPORT.json --output NEW_DIR"
+    "--native-facade-report REPORT.json --rustybench-source DIR --rustix-source DIR --output NEW_DIR"
 )
 
 

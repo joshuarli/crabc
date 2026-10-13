@@ -68,10 +68,11 @@ def promotion_benchmark_engine() -> Any:
 
 
 def promotion_benchmark_minimum() -> float:
-    release = checkout_reader(
-        "crabc_architecture_performance_release", ROOT / "compat/x86_64/performance_release_gate.py"
-    )
-    return release.ALLOCATOR_CRITICAL_THROUGHPUT_LOWER_MIN
+    allocator = ROOT / "compat/allocator"
+    if str(allocator) not in sys.path:
+        sys.path.insert(0, str(allocator))
+    m9 = checkout_reader("crabc_architecture_m9_gate", allocator / "x86_64_m9_gate.py")
+    return m9.CRITICAL_THROUGHPUT_LOWER_MIN
 
 
 PHASE_EF_PRODUCTION_SYMBOL_SHAPES = {

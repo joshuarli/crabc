@@ -44,6 +44,28 @@ from test_perf_engine_x86_64 import (  # noqa: E402,F401
 ROSTER = ["alloc_free_64", "remote_free_1"]
 
 
+class PromotionThresholdTests(unittest.TestCase):
+    def metrics(self) -> dict:
+        return {
+            "throughput": {
+                "suite_geometric_mean_lower_95": 0.95,
+                "critical_lower_95": {name: 0.90 for name in ROSTER},
+            },
+            "tail_latency": {"critical_p99_upper_95": {name: 1.10 for name in ROSTER}},
+            "memory": {
+                "geometric_mean_peak_upper": {"rss": 1.05, "pss": 1.05},
+                "critical_peak_upper": {name: {"rss": 1.10, "pss": 1.10} for name in ROSTER},
+            },
+        }
+
+    def test_allocator_report_is_checked_at_and_below_each_promotion_bound(self) -> None:
+        self.assertEqual(gate.allocator_metric_unmet("report", self.metrics()), [])
+        metrics = self.metrics()
+        metrics["throughput"]["suite_geometric_mean_lower_95"] = 0.949
+        self.assertTrue(any("suite geometric-mean throughput" in item
+                            for item in gate.allocator_metric_unmet("report", metrics)))
+
+
 def integrated_reading() -> dict:
     names = gate.integrated.row_names(gate.integrated.load_manifest())
     metrics = {name: {key: 1.0 for key in ("throughput_lower_95", "p99_upper_95",
@@ -183,6 +205,29 @@ class AgreementTests(GateFixture):
         self.assertEqual(result["overall_status"], "unmet")
         self.assertEqual([row["id"] for row in result["conditions"]], list(gate.CONDITION_IDS))
 
+    def test_qualified_reader_applies_allocator_promotion_thresholds(self) -> None:
+        below = accepted()
+        below["metrics"]["throughput"]["suite_geometric_mean_lower_95"] = 0.949
+        rejected_path = self.report_file("below-threshold", below)
+        rejected = gate.read_reports([rejected_path], self.inspect)
+        self.assertTrue(any("suite geometric-mean throughput" in item for item in rejected[0]["unmet"]))
+        self.assertFalse(gate.report_conditions(rejected)[0]["met"])
+
+        at_table = accepted()
+        metrics = at_table["metrics"]
+        metrics["throughput"]["suite_geometric_mean_lower_95"] = 0.95
+        metrics["throughput"]["critical_lower_95"] = {name: 0.90 for name in ROSTER}
+        metrics["tail_latency"]["critical_p99_upper_95"] = {name: 1.10 for name in ROSTER}
+        metrics["memory"]["geometric_mean_peak_upper"] = {"rss": 1.05, "pss": 1.05}
+        metrics["memory"]["critical_peak_upper"] = {
+            name: {"rss": 1.10, "pss": 1.10} for name in ROSTER}
+        passing_path = self.report_file("at-threshold", at_table)
+        passing_paths = [passing_path, self.report_file("at-threshold-2", at_table),
+                         self.report_file("at-threshold-3", at_table)]
+        passing = gate.read_reports(passing_paths, self.inspect)
+        self.assertTrue(all(record["unmet"] == [] for record in passing), passing)
+        self.assertTrue(gate.report_conditions(passing)[0]["met"])
+
     def test_repeating_one_report_path_does_not_make_three_attempts(self) -> None:
         path = self.report_file("one", accepted())
         result = self.evaluate([path, path, path])
@@ -262,7 +307,8 @@ class AgreementTests(GateFixture):
         paths = [self.report_file("a", accepted()), self.report_file("b", narrow), self.report_file("c", uncovered)]
         detail = self.condition(self.evaluate(paths), "m9.agreement")["detail"]
         self.assertTrue(any("b.json critical roster differs" in item for item in detail), detail)
-        self.assertTrue(any("c.json metrics do not cover exactly its critical roster" in item for item in detail), detail)
+        qualified = self.condition(self.evaluate(paths), "m9.qualified-reports")["detail"]
+        self.assertTrue(any("c.json: " in item and "critical roster" in item for item in qualified), qualified)
 
     def test_convergence_reads_current_evidence_and_integrated_reports(self) -> None:
         result = self.evaluate([])
