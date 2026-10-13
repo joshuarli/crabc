@@ -842,10 +842,17 @@ try:
     lines = resolv.read_text(encoding="ascii").splitlines()
 except UnicodeDecodeError as error:
     raise SystemExit(f"{label} resolver configuration is not ASCII") from error
-if len(lines) != 3 or lines[1:] != [
+expected_remaining_lines = [
+    "nameserver ::1",
+    "nameserver 127.0.0.1",
+    "nameserver 127.0.0.2",
     "search fixture.test",
     "options ndots:1 timeout:1 attempts:1",
-]:
+]
+if (
+    len(lines) != len(expected_remaining_lines) + 1
+    or lines[1:] != expected_remaining_lines
+):
     raise SystemExit(f"{label} resolver configuration drifted: {lines!r}")
 fields = lines[0].split()
 if len(fields) != 2 or fields[0] != "nameserver":
