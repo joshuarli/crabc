@@ -70,7 +70,6 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
 
     def test_current_image_manifest_tracks_the_repository_toolchain_and_exact_roster(self) -> None:
         manifest = self.reader.trusted_image_manifest(ROOT)
-        self.assertEqual(manifest['image'], self.reader.PINNED_IMAGE.removeprefix('crabc-core-evidence@'))
         self.assertEqual(set(manifest['files']), {
             '/usr/local/bin/crabc-x86_64-musl-gcc', '/usr/bin/python3', '/usr/bin/readelf', '/usr/sbin/chroot',
             *(str(path) for path in self.reader.COMPILER_ORACLE_INPUTS.values()),
@@ -115,7 +114,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
 
     def test_historical_image_receipt_is_rejected_without_changing_its_identity(self) -> None:
         historical = {"image": {
-            "id": "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+            "id": "crabc-core-evidence@sha256:0000000000000000000000000000000000000000000000000000000000000000",
             "manifest": {},
         }}
         before = json.dumps(historical, sort_keys=True)

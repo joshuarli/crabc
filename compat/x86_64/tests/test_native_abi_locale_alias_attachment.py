@@ -100,7 +100,6 @@ class _FakeLocaleReader:
 
     __file__ = locale_reader.__file__
     SCHEMA = locale_reader.SCHEMA
-    CURRENT_SCHEMA = locale_reader.CURRENT_SCHEMA
     STATUS = locale_reader.STATUS
     CONTRACT_PATH = locale_reader.CONTRACT_PATH
     STATIC_PRODUCT_DIRECTORY = locale_reader.STATIC_PRODUCT_DIRECTORY
@@ -108,7 +107,6 @@ class _FakeLocaleReader:
     RUNNER_STEMS = locale_reader.RUNNER_STEMS
     RUNNER_ARTIFACTS = locale_reader.RUNNER_ARTIFACTS
     SELECTED_SOURCES = locale_reader.SELECTED_SOURCES
-    CURRENT_SELECTED_SOURCES = locale_reader.CURRENT_SELECTED_SOURCES
     LocaleAliasReceiptError = locale_reader.LocaleAliasReceiptError
 
     def __init__(self, validated: dict[str, object]):
@@ -212,7 +210,7 @@ class LocaleAliasAdapterTests(unittest.TestCase):
             'mode': selected['mode'],
         }
 
-    def _receipt(self, schema: str = locale_reader.CURRENT_SCHEMA) -> tuple[Path, _FakeLocaleReader]:
+    def _receipt(self, schema: str = locale_reader.SCHEMA) -> tuple[Path, _FakeLocaleReader]:
         static_tree = selection._locale_alias_tree(self.static, 'test static product')
         dynamic_tree = selection._locale_alias_tree(self.dynamic, 'test dynamic product')
         source = {
@@ -300,7 +298,7 @@ class LocaleAliasAdapterTests(unittest.TestCase):
             self.assertEqual(set(companion['products'][name]), {'path', 'sha256', 'size', 'mode'})
 
     def test_adapter_admits_only_the_current_collector_schema_and_binds_its_roster(self) -> None:
-        """The current collector writes v4; its source roster is the one bound."""
+        """Only the collector's own schema is admitted and its source roster is the one bound."""
 
         report, reader = self._receipt()
         with mock.patch.object(selection, '_locale_alias_reader', return_value=reader):
@@ -308,17 +306,17 @@ class LocaleAliasAdapterTests(unittest.TestCase):
                 report, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
             )
         assert companion is not None
-        self.assertEqual(set(companion['source_inputs']) - set(locale_reader.CURRENT_SELECTED_SOURCES),
+        self.assertEqual(set(companion['source_inputs']) - set(locale_reader.SELECTED_SOURCES),
                          {'compat/x86_64/native_abi_selection.py', 'compat/x86_64/native-abi-selection.toml',
                           'compat/x86_64/native-abi-selection.md',
                           'compat/x86_64/tests/test_native_abi_locale_alias_attachment.py'})
         self.assertIn('rust-toolchain.toml', companion['source_inputs'])
         self.assertNotIn('compat/x86_64/owned_utmpx_receipt.py', companion['source_inputs'])
-        historical, reader = self._receipt(schema=locale_reader.SCHEMA)
+        foreign, reader = self._receipt(schema=locale_reader.SCHEMA + '-foreign')
         with mock.patch.object(selection, '_locale_alias_reader', return_value=reader):
             with self.assertRaisesRegex(selection.SelectionError, 'schema or status differs'):
                 selection.native_locale_alias_adapter(
-                    historical, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
+                    foreign, facts=self.facts, measurement=self.measurement, paths=self.paths, source=self.source,
                 )
 
     def test_adapter_rejects_receipt_product_file_identity_mismatches(self) -> None:

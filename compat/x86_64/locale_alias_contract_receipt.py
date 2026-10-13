@@ -33,15 +33,12 @@ import core_image
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_MOUNT = "/workspace"
-SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v3"
+SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v4"
 COMMAND_SCHEMA = "crabc.x86_64-locale-alias-contract-command/v2"
-IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs.json"
-PINNED_IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
-CURRENT_SCHEMA = "crabc.x86_64-locale-alias-contract-receipt/v4"
-CURRENT_PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
-CURRENT_IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs-v2.json"
-CURRENT_TOOLCHAIN = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
-CURRENT_TOOLCHAIN_ROOT = f"/opt/rustup/toolchains/{CURRENT_TOOLCHAIN}-x86_64-unknown-linux-musl"
+PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
+IMAGE_MANIFEST_PATH = "compat/x86_64/locale-alias-contract-image-inputs-v2.json"
+TOOLCHAIN = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+TOOLCHAIN_ROOT = f"/opt/rustup/toolchains/{TOOLCHAIN}-x86_64-unknown-linux-musl"
 COMMAND_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 COMMAND_ENVIRONMENT = {"LC_ALL": "C", "PATH": COMMAND_PATH}
 # The product builders re-open the mounted Git checkout after the collector
@@ -60,19 +57,15 @@ RUNNER_LAUNCHER = [*COMMAND_LAUNCHER_PREFIX, "LC_ALL=C", f"PATH={COMMAND_PATH}",
 IMAGE_INPUTS = (
     "/bin/bash", "/bin/chmod", "/bin/cp", "/bin/grep", "/bin/ln", "/bin/mkdir", "/bin/mktemp", "/bin/sh", "/bin/uname",
     "/opt/cargo/bin/rustup", "/opt/musl-1.2.6/lib/libc.a", "/opt/musl-1.2.6/lib/libc.so", "/opt/musl-1.2.6/lib/musl-gcc.specs",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-nm",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump",
-    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+    f"{TOOLCHAIN_ROOT}/bin/rustc",
+    f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-ar",
+    f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-nm",
+    f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/llvm-objdump",
+    f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
     "/usr/bin/as", "/usr/bin/cmp", "/usr/bin/env", "/usr/bin/gcc", "/usr/bin/git", "/usr/bin/ld", "/usr/bin/python3", "/usr/bin/readelf",
     "/usr/bin/realpath", "/usr/bin/sha256sum", "/usr/bin/timeout",
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/cc1", "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/collect2",
     "/usr/libexec/gcc/x86_64-alpine-linux-musl/15.2.0/liblto_plugin.so", "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/sbin/chroot",
-)
-_HISTORICAL_TOOLCHAIN_ROOT = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl"
-CURRENT_IMAGE_INPUTS = tuple(
-    path.replace(_HISTORICAL_TOOLCHAIN_ROOT, CURRENT_TOOLCHAIN_ROOT) for path in IMAGE_INPUTS
 )
 
 # Every retained regular file carries its observed permissions.  Source modes
@@ -88,35 +81,11 @@ MODE_POLICY = {
 }
 
 
-def _image_profile(image_id: object) -> dict[str, object]:
-    """Select immutable image authority for a historical or current receipt."""
-
-    if image_id == PINNED_IMAGE:
-        return {
-            "id": PINNED_IMAGE,
-            "manifest_path": IMAGE_MANIFEST_PATH,
-            "files": IMAGE_INPUTS,
-            "producer_tools": PRODUCER_TOOL_PATHS,
-            "linker": DYNAMIC_LINKER_PATH,
-            "schema": SCHEMA,
-        }
-    if image_id == CURRENT_PINNED_IMAGE:
-        return {
-            "id": CURRENT_PINNED_IMAGE,
-            "manifest_path": CURRENT_IMAGE_MANIFEST_PATH,
-            "files": CURRENT_IMAGE_INPUTS,
-            "producer_tools": CURRENT_PRODUCER_TOOL_PATHS,
-            "linker": CURRENT_DYNAMIC_LINKER_PATH,
-            "schema": CURRENT_SCHEMA,
-        }
-    _fail("locale alias receipt names an unsupported image")
-
-
-def current_image_input_manifest() -> dict[str, object]:
+def image_input_manifest() -> dict[str, object]:
     """Capture the exact finite current image inputs from inside that image."""
 
     records: dict[str, object] = {}
-    for invocation in sorted(CURRENT_IMAGE_INPUTS):
+    for invocation in sorted(IMAGE_INPUTS):
         path = Path(invocation).resolve(strict=True)
         records[invocation] = {
             "path": str(path),
@@ -126,7 +95,6 @@ def current_image_input_manifest() -> dict[str, object]:
         }
     return {
         "schema": "crabc.x86_64-locale-alias-image-inputs/v1",
-        "image": CURRENT_PINNED_IMAGE.removeprefix("crabc-core-evidence@"),
         "path": COMMAND_PATH,
         "files": records,
     }
@@ -160,17 +128,10 @@ STATIC_PREPARATION_DIRECTORY = "static-preparation"
 STATIC_PRODUCT_DIRECTORY = f"{STATIC_PREPARATION_DIRECTORY}/products/primary"
 DYNAMIC_PRODUCT_DIRECTORY = "products/dynamic"
 PRODUCER_TOOL_PATHS = {
-    name: "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/"
-          "lib/rustlib/x86_64-unknown-linux-musl/bin/" + name
+    name: f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/{name}"
     for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
 }
-DYNAMIC_LINKER_PATH = "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/" \
-                      "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
-CURRENT_PRODUCER_TOOL_PATHS = {
-    name: f"{CURRENT_TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/{name}"
-    for name in ("llvm-ar", "llvm-nm", "llvm-objdump")
-}
-CURRENT_DYNAMIC_LINKER_PATH = f"{CURRENT_TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+DYNAMIC_LINKER_PATH = f"{TOOLCHAIN_ROOT}/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
 IMPLEMENTATION_SOURCES = (
     "libc/src/c_abi/x86_64/locale_narrow.rs",
     "libc/src/c_abi/x86_64/locale_objects.rs",
@@ -195,7 +156,6 @@ SELECTED_SOURCES = (
     STATIC_PREPARATION_OWNER_PATH,
     STATIC_PACKAGE_OWNER_PATH,
     "compat/x86_64/owned_syscall_alias_authority.py",
-    "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/crabc_cc_owned_dynamic.py",
     "compat/x86_64/owned_dynamic_qualification.py",
@@ -204,10 +164,8 @@ SELECTED_SOURCES = (
     "compat/upstreams.toml",
     "docker/Dockerfile.x86_64",
     "docker/x86_64-musl-oracle-gcc",
+    "rust-toolchain.toml",
 )
-CURRENT_SELECTED_SOURCES = tuple(
-    source for source in SELECTED_SOURCES if source != "compat/x86_64/owned_utmpx_receipt.py"
-) + (CURRENT_IMAGE_MANIFEST_PATH, "rust-toolchain.toml")
 
 # The runner produces one stream set for each external command.  Snapshots are
 # separate input seals, not command records; the collector runner invocation is
@@ -779,8 +737,7 @@ def _validate_dynamic_executable_link_sidecars(
     files = image.get("files")
     if not isinstance(files, Mapping):
         _fail("retained image linker authority is absent")
-    linker_path = _image_profile(image.get("id", PINNED_IMAGE))["linker"]
-    assert isinstance(linker_path, str)
+    linker_path = DYNAMIC_LINKER_PATH
     image_entry = files.get(linker_path)
     if not isinstance(image_entry, Mapping):
         _fail("retained image linker authority is absent")
@@ -1051,9 +1008,7 @@ def _validate_producer_tools(
     if set(tools) != expected_fields or tools.get("schema") != 1 or tools.get("target") != "x86_64-unknown-linux-musl":
         _fail(f"{name} product producer tool record changed")
     llvm = tools.get("llvm_target_tools")
-    profile = _image_profile(image.get("id", PINNED_IMAGE))
-    producer_tool_paths = profile["producer_tools"]
-    assert isinstance(producer_tool_paths, Mapping)
+    producer_tool_paths = PRODUCER_TOOL_PATHS
     if not isinstance(llvm, Mapping) or set(llvm) != set(producer_tool_paths):
         _fail(f"{name} product LLVM tool roster changed")
     files = image.get("files")
@@ -1141,19 +1096,16 @@ def _hex(value: object, length: int, label: str) -> str:
     return value
 
 
-def _trusted_image_manifest(image_id: str = PINNED_IMAGE) -> dict[str, object]:
+def _trusted_image_manifest() -> dict[str, object]:
     """Read the finite checked-in image input authority without probing a host."""
 
-    profile = _image_profile(image_id)
-    manifest_path = profile["manifest_path"]
-    image_inputs = profile["files"]
-    assert isinstance(manifest_path, str) and isinstance(image_inputs, tuple)
-    value = _strict_json(ROOT / manifest_path, "trusted locale image input manifest")
-    manifest = _exact_mapping(value, {"schema", "image", "path", "files"}, "trusted locale image input manifest")
+    image_inputs = IMAGE_INPUTS
+    value = _strict_json(ROOT / IMAGE_MANIFEST_PATH, "trusted locale image input manifest")
+    manifest = _exact_mapping(value, {"schema", "path", "files"}, "trusted locale image input manifest")
     if manifest["schema"] != "crabc.x86_64-locale-alias-image-inputs/v1":
         _fail("trusted locale image manifest schema changed")
-    if manifest["image"] != image_id.removeprefix("crabc-core-evidence@") or manifest["path"] != COMMAND_PATH:
-        _fail("trusted locale image identity changed")
+    if manifest["path"] != COMMAND_PATH:
+        _fail("trusted locale image command path changed")
     files = manifest["files"]
     if not isinstance(files, Mapping) or not files:
         _fail("trusted locale image input roster is empty")
@@ -1171,13 +1123,11 @@ def _trusted_image_manifest(image_id: str = PINNED_IMAGE) -> dict[str, object]:
     return dict(manifest)
 
 
-def _copy_image_inputs(root: Path, receipt_root: Path, image_id: str = CURRENT_PINNED_IMAGE) -> dict[str, object]:
+def _copy_image_inputs(root: Path, receipt_root: Path) -> dict[str, object]:
     """Copy each manifest-selected physical image input before any producer runs."""
 
-    profile = _image_profile(image_id)
-    manifest_path = profile["manifest_path"]
-    assert isinstance(manifest_path, str)
-    manifest = _trusted_image_manifest(image_id)
+    manifest_path = IMAGE_MANIFEST_PATH
+    manifest = _trusted_image_manifest()
     files = manifest["files"]
     assert isinstance(files, Mapping)
     records: dict[str, object] = {}
@@ -1196,21 +1146,20 @@ def _copy_image_inputs(root: Path, receipt_root: Path, image_id: str = CURRENT_P
         destination = receipt_root / "inputs/image" / f"{index:02d}-{expected['sha256']}"
         _copy_regular(source, destination)
         records[invocation] = {"image": dict(expected), "retained": _identity(receipt_root, destination)}
-    return {"id": image_id,
+    return {"id": PINNED_IMAGE,
             "manifest": _identity(receipt_root, receipt_root / "inputs/source" / manifest_path),
             "files": records}
 
 
 def _validate_image_inputs(root: Path, value: object) -> dict[str, object]:
     record = _exact_mapping(value, {"id", "manifest", "files"}, "retained locale image inputs")
-    profile = _image_profile(record["id"])
-    manifest_path = profile["manifest_path"]
-    assert isinstance(manifest_path, str)
+    if record["id"] != PINNED_IMAGE:
+        _fail("retained locale image inputs name another image")
     manifest_record = _file_record(root, record["manifest"], "retained locale image manifest")
-    if manifest_record != _identity(root, root / "inputs/source" / manifest_path):
+    if manifest_record != _identity(root, root / "inputs/source" / IMAGE_MANIFEST_PATH):
         _fail("retained locale image manifest is not the copied selected source")
     retained_manifest = _strict_json(root / manifest_record["path"], "retained locale image manifest")
-    trusted = _trusted_image_manifest(str(record["id"]))
+    trusted = _trusted_image_manifest()
     if retained_manifest != trusted:
         _fail("retained locale image manifest differs from trusted source")
     entries = record["files"]
@@ -1607,14 +1556,8 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     image_record = record["image_inputs"]
     if not isinstance(image_record, Mapping):
         _fail("retained locale image inputs are malformed")
-    # Older replay tests replace image validation with a sentinel record. Use
-    # the receipt schema to retain their historical authority boundary; the
-    # real image validator below still checks the exact image identity.
-    profile = _image_profile(
-        image_record.get("id", PINNED_IMAGE if record["schema"] == SCHEMA else CURRENT_PINNED_IMAGE)
-    )
-    selected_sources = CURRENT_SELECTED_SOURCES if profile["schema"] == CURRENT_SCHEMA else SELECTED_SOURCES
-    if (record["schema"] != profile["schema"] or record["status"] != STATUS or record["mode_policy"] != MODE_POLICY
+    selected_sources = SELECTED_SOURCES
+    if (record["schema"] != SCHEMA or record["status"] != STATUS or record["mode_policy"] != MODE_POLICY
             or record["nonclaims"] != list(NONCLAIMS)):
         _fail("locale alias receipt status changed")
     if record["source_before"] != record["source_after"]:
@@ -1861,7 +1804,7 @@ def collect(root: Path, output: Path, *, static_product: Path | None = None,
     # carry the ordinary product modes the selector's supplied cohort has.
     os.chmod(output, 0o755)
     try:
-        before = _capture_source_phase(root, output, "inputs/source", selected_sources=CURRENT_SELECTED_SOURCES)
+        before = _capture_source_phase(root, output, "inputs/source", selected_sources=SELECTED_SOURCES)
         source_state = _source_state(before)
         supplied = (_admit_supplied_products(root, output, static_product, dynamic_product, source_state)
                     if static_product is not None and dynamic_product is not None else None)
@@ -1883,7 +1826,7 @@ def collect(root: Path, output: Path, *, static_product: Path | None = None,
             collector_commands.append(_run(root, output, role, argv, env=env))
         if supplied:
             _recheck_supplied_products(root, output, supplied)
-        after = _capture_source_phase(root, output, "source-after/inputs/source", source_state, CURRENT_SELECTED_SOURCES)
+        after = _capture_source_phase(root, output, "source-after/inputs/source", source_state, SELECTED_SOURCES)
         if before != after:
             _fail("source changed during locale alias collection")
         raw_commands = _raw_runner_records(output, output_relative)
@@ -1915,7 +1858,7 @@ def collect(root: Path, output: Path, *, static_product: Path | None = None,
         dynamic_state = dynamic_product / "share/crabc/dynamic-product-state.json"
         product_records["dynamic"]["state"] = _identity(output, dynamic_state)
         report = {
-            "schema": CURRENT_SCHEMA,
+            "schema": SCHEMA,
             "status": STATUS,
             "mode_policy": MODE_POLICY,
             "image_inputs": image_inputs,
@@ -1957,7 +1900,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         if arguments.action == "image-input-manifest":
-            result = current_image_input_manifest()
+            result = image_input_manifest()
         elif arguments.action == "collect":
             result = collect(ROOT, arguments.output, static_product=arguments.static_product,
                              dynamic_product=arguments.dynamic_product)

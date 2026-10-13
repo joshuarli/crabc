@@ -27,7 +27,6 @@ QUALIFICATION = ROOT / "compat" / "x86_64" / "owned_dynamic_qualification.py"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_posix_filesystem.sh"
 PROBE = ROOT / "compat" / "x86_64" / "owned_posix_filesystem_probe.c"
 AUDITOR = ROOT / "compat" / "x86_64" / "owned_posix_filesystem_audit.py"
-DOCUMENT = ROOT / "compat" / "x86_64" / "owned-posix-filesystem.md"
 
 
 def load_auditor():
@@ -497,23 +496,6 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             '"posix-filesystem": ("run_owned_posix_filesystem.sh", None)',
             source,
         )
-
-    def test_contract_documents_the_closed_receipt_and_allowed_walk_orders(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
-        for required in (
-            "complete manifest payload",
-            "single workload object and hash",
-            "linker\ntrace",
-            "two raw\nroot-sibling orders",
-            "caller-owned,\nnon-null variable-sized storage",
-            "raw return and `errno`",
-            "canonical duplicate static/dynamic paths",
-            "does not build or run a static product",
-            "invokes neither producer",
-            "process exit status",
-        ):
-            self.assertIn(required, document)
-        self.assertNotIn("null-pointer", document)
 
     def test_supplied_product_escape_is_rejected_before_building(self) -> None:
         scratch_root = ROOT / ".work/x86_64/tmp"

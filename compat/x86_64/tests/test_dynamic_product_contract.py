@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Focused contracts for the planned x86 owned-dynamic product seed."""
+"""Focused contracts for the x86 owned-dynamic product contract and state."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "dynamic-product.toml"
 STATE_PATH = ROOT / "compat" / "x86_64" / "dynamic-product-state.json"
 VALIDATOR_PATH = ROOT / "compat" / "x86_64" / "dynamic_product_contract.py"
-DRIVER_PATH = ROOT / "compat" / "x86_64" / "crabc_cc_dynamic.py"
 RUNNER_PATH = ROOT / "compat" / "x86_64" / "run_owned_dynamic_sysroot.sh"
 
 
@@ -35,7 +34,6 @@ def load_module(name: str, path: Path):
 
 
 PRODUCT = load_module("dynamic_product_contract_test", VALIDATOR_PATH)
-DRIVER = load_module("dynamic_product_driver_test", DRIVER_PATH)
 
 
 class DynamicProductContractTests(unittest.TestCase):
@@ -52,17 +50,6 @@ class DynamicProductContractTests(unittest.TestCase):
 
     def state_data(self) -> dict[str, object]:
         return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-
-    def install_planned_dynamic_state(self, root: Path) -> Path:
-        """Install the checked-in, explicitly non-materialized seed receipt."""
-
-        destination = root / "share" / "crabc" / "dynamic-product-state.json"
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        state = self.state_data()
-        state["status"] = "not-materialized"
-        state["contract_sha256"] = DRIVER.PLANNED_PRODUCT_CONTRACT_SHA256
-        destination.write_text(json.dumps(state))
-        return destination
 
     def test_checked_in_seed_is_planned_and_non_promoting(self) -> None:
         contract = self.contract_data()
@@ -240,186 +227,6 @@ class DynamicProductContractTests(unittest.TestCase):
         state["promotion"]["public_support"] = True
         with self.assertRaisesRegex(PRODUCT.ProductContractError, "non-promoting"):
             PRODUCT.validate_dynamic_product_state(contract, state)
-
-    def test_contract_binds_the_driver_to_its_plan_only_seed(self) -> None:
-        contract = self.contract_data()
-        state = self.state_data()
-        plan = PRODUCT.dynamic_driver.parse_invocation(
-            ("--print-link-plan", "--dynamic-pie")
-        )
-
-        with mock.patch.object(
-            PRODUCT.dynamic_driver,
-            "parse_invocation",
-            side_effect=(plan, plan),
-        ):
-            with self.assertRaisesRegex(PRODUCT.ProductContractError, "driver seed"):
-                PRODUCT.validate_plan_only_driver_seed(contract)
-
-    def test_dynamic_driver_seed_has_no_translation_or_link_execution_surface(self) -> None:
-        execution_surface = (
-            PRODUCT.PLAN_ONLY_EXECUTION_HELPERS | PRODUCT.PLAN_ONLY_EXECUTION_MODULES
-        ).intersection(vars(DRIVER))
-        self.assertFalse(execution_surface)
-
-        with mock.patch.object(PRODUCT.dynamic_driver, "compile_source", object(), create=True):
-            with self.assertRaisesRegex(PRODUCT.ProductContractError, "executable helper surface"):
-                PRODUCT.validate_plan_only_driver_seed(self.contract_data())
-
-    def test_dynamic_driver_plans_owned_pie_non_pie_and_shared_inputs(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "sysroot"
-            (root / "bin").mkdir(parents=True)
-            (root / "usr" / "include").mkdir(parents=True)
-            (root / "usr" / "include" / "stdint.h").write_text("\n", encoding="utf-8")
-            library = root / "usr" / "lib"
-            library.mkdir()
-            for relative in DRIVER.REQUIRED_RUNTIME_PATHS:
-                artifact = root / relative
-                artifact.parent.mkdir(parents=True, exist_ok=True)
-                artifact.write_bytes(b"owned\n")
-            alias = root / DRIVER.COMPATIBILITY_INTERPRETER_RELATIVE_PATH
-            alias.parent.mkdir(parents=True, exist_ok=True)
-            alias.symlink_to(Path(DRIVER.CANONICAL_INTERPRETER).name)
-            self.install_planned_dynamic_state(root)
-            installed = root / "bin" / "crabc-cc-dynamic"
-            shutil.copyfile(DRIVER_PATH, installed)
-            installed.chmod(0o755)
-
-            expected = {
-                "--dynamic-pie": ("ET_DYN", "Scrt1.o", DRIVER.CANONICAL_INTERPRETER),
-                "--dynamic-non-pie": ("ET_EXEC", "crt1.o", DRIVER.CANONICAL_INTERPRETER),
-                "--dynamic-shared-object": ("ET_DYN", None, "absent"),
-            }
-            for mode, (elf_type, crt, interpreter) in expected.items():
-                with self.subTest(mode=mode):
-                    completed = subprocess.run(
-                        [str(installed), "--print-link-plan", mode],
-                        check=False,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                    )
-                    self.assertEqual(completed.returncode, 0, completed.stderr)
-                    plan = json.loads(completed.stdout)
-                    self.assertEqual(plan["mode"]["elf_type"], elf_type)
-                    self.assertEqual(plan["mode"]["crt_object"], crt)
-                    self.assertEqual(plan["mode"]["interpreter"], interpreter)
-                    self.assertEqual(plan["headers"], str(root / "usr" / "include"))
-                    self.assertIn(str(root / "usr" / "lib" / "libc.so"), plan["linker"])
-                    self.assertIn(
-                        str(root / "usr" / "lib" / "libcrabc-builtins.a"), plan["linker"]
-                    )
-                    self.assertIn(DRIVER.APPLICATION_DSOS, plan["linker"])
-                    if crt is not None:
-                        self.assertIn(str(root / "usr" / "lib" / crt), plan["linker"])
-                    else:
-                        self.assertNotIn("--dynamic-linker", plan["linker"])
-                    for item in plan["linker"]:
-                        if isinstance(item, str) and item.startswith("/"):
-                            self.assertTrue(item.startswith(str(root)) or item == DRIVER.CANONICAL_INTERPRETER)
-
-    def test_dynamic_driver_rejects_ambient_runtime_injection_and_bad_alias(self) -> None:
-        for arguments in (
-            ("--dynamic-pie", "-I", "/ambient/headers", "application.c"),
-            ("--dynamic-pie", "-L/ambient/lib", "application.c"),
-            ("--dynamic-pie", "-l:libc.so", "application.c"),
-            ("--dynamic-pie", "-Wl,--dynamic-linker,/ambient/loader", "application.c"),
-            ("--dynamic-pie", "-static", "application.c"),
-            ("--dynamic-pie", "--dynamic-non-pie", "application.c"),
-            ("--dynamic-pie", "/ambient/crt1.o"),
-            ("--dynamic-pie", "/ambient/libgcc.o"),
-        ):
-            with self.subTest(arguments=arguments):
-                with self.assertRaisesRegex(DRIVER.DriverError, "rejected|exactly one"):
-                    DRIVER.parse_invocation(arguments)
-
-        with self.assertRaisesRegex(DRIVER.DriverError, "plan-only"):
-            DRIVER.parse_invocation(
-                ("--dynamic-pie", "--application-dso", "fixture-dependency.so", "application.o")
-            )
-        with self.assertRaisesRegex(DRIVER.DriverError, "DSO is rejected"):
-            DRIVER.parse_invocation(
-                ("--dynamic-pie", "--application-dso", "libc.so", "application.o")
-            )
-
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "sysroot"
-            (root / "usr" / "include").mkdir(parents=True)
-            for relative in DRIVER.REQUIRED_RUNTIME_PATHS:
-                artifact = root / relative
-                artifact.parent.mkdir(parents=True, exist_ok=True)
-                artifact.write_bytes(b"owned\n")
-            alias = root / DRIVER.COMPATIBILITY_INTERPRETER_RELATIVE_PATH
-            alias.parent.mkdir(parents=True, exist_ok=True)
-            alias.symlink_to("/ambient/ld-musl-x86_64.so.1")
-            self.install_planned_dynamic_state(root)
-            with self.assertRaisesRegex(DRIVER.DriverError, "compatibility interpreter alias"):
-                DRIVER.validate_installed_runtime(root)
-
-    def test_dynamic_driver_seed_requires_a_checked_nonmaterialized_state_and_is_plan_only(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary) / "sysroot"
-            (root / "bin").mkdir(parents=True)
-            (root / "usr" / "include").mkdir(parents=True)
-            (root / "usr" / "include" / "stdint.h").write_text("\n", encoding="utf-8")
-            for relative in DRIVER.REQUIRED_RUNTIME_PATHS:
-                artifact = root / relative
-                artifact.parent.mkdir(parents=True, exist_ok=True)
-                artifact.write_bytes(b"owned\n")
-            alias = root / DRIVER.COMPATIBILITY_INTERPRETER_RELATIVE_PATH
-            alias.parent.mkdir(parents=True, exist_ok=True)
-            alias.symlink_to(Path(DRIVER.CANONICAL_INTERPRETER).name)
-            installed = root / "bin" / "crabc-cc-dynamic"
-            shutil.copyfile(DRIVER_PATH, installed)
-            installed.chmod(0o755)
-
-            missing_state = subprocess.run(
-                [str(installed), "--print-link-plan", "--dynamic-pie"],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            self.assertEqual(missing_state.returncode, 1)
-            self.assertIn("dynamic product state", missing_state.stderr)
-
-            state_path = self.install_planned_dynamic_state(root)
-            plan = subprocess.run(
-                [str(installed), "--print-link-plan", "--dynamic-pie"],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            self.assertEqual(plan.returncode, 0, plan.stderr)
-
-            source = Path(temporary) / "application.c"
-            output = Path(temporary) / "application.o"
-            source.write_text("int application(void) { return 0; }\n", encoding="utf-8")
-            attempted_translation = subprocess.run(
-                [str(installed), "--dynamic-pie", "-c", str(source), "-o", str(output)],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            self.assertEqual(attempted_translation.returncode, 1)
-            self.assertIn("plan-only", attempted_translation.stderr)
-            self.assertFalse(output.exists())
-
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            state["status"] = "materialized"
-            state_path.write_text(json.dumps(state), encoding="utf-8")
-            materialized_claim = subprocess.run(
-                [str(installed), "--print-link-plan", "--dynamic-pie"],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            )
-            self.assertEqual(materialized_claim.returncode, 1)
-            self.assertIn("not-materialized", materialized_claim.stderr)
 
     def test_runner_contract_check_is_unqualified_and_default_routes_to_product_gate(self) -> None:
         syntax = subprocess.run(

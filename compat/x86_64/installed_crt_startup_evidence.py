@@ -291,8 +291,6 @@ def descriptor_runtime_source_order(sources):
     attachment=_runtime_source_text(sources,'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs')
     consumer=_runtime_source_text(sources,'libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs')
     _runtime_order(builder,('LOADER_FEATURE = "x86_64-owned-dynamic-runtime"',
-                            'str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs")',
-                            'str(library / "crabc-dynamic-attach.o")',
                             '"--features",\n                      LOADER_FEATURE'), 'dynamic builder')
     attachment_compile=_runtime_region(
         builder,
@@ -305,6 +303,7 @@ def descriptor_runtime_source_order(sources):
         '"--emit=obj"', '"-C", "opt-level=2"',
         '"-C", "relocation-model=pic"',
         'str(ROOT / "libc/src/c_abi/x86_64/owned_dynamic_attachment.rs")',
+        '"-o", str(attachment_parts / "libc-attachment.o")',
         '"-o", str(library / "crabc-dynamic-attach.o")',
     ), 'selected attachment compile route')
     require(cargo.count('x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]')==1,
@@ -328,7 +327,7 @@ def descriptor_runtime_source_order(sources):
     _runtime_order(compile_loop,('["--cfg", "crabc_dynamic_main_thread_runtime_v1"]',
                                  'or (args.dynamic_main_thread_runtime_v1 and spec.name == "Scrt1.o")',
                                  'str(source)'), 'dynamic CRT compile')
-    startup=_runtime_region(crt,'pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(','\n\n#[no_mangle]\npub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init','dynamic CRT startup')
+    startup=_runtime_region(crt,'pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(','\n#[no_mangle]\npub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init','dynamic CRT startup')
     _runtime_order(startup,('if unsafe { __crabc_x86_loader_tls_runtime_v1_attach() } != 0',
                             'startup_reject();','__libc_start_main('), 'dynamic CRT attachment')
     publisher=_runtime_region(tls,'unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls) {','\n\nimpl GeneralInitialTlsState {','RuntimeV1 publisher')

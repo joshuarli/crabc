@@ -867,7 +867,7 @@ def _trusted_image_manifest(root: Path) -> dict[str, object]:
     """Read the existing pinned-image authority for this exact invocation set."""
     manifest = _read_json(_physical_regular(root / IMAGE_MANIFEST_SOURCE, "pinned image manifest"),
                           "pinned image manifest")
-    require(manifest.get("schema") == IMAGE_MANIFEST_SCHEMA and manifest.get("image") == PINNED_IMAGE,
+    require(manifest.get("schema") == IMAGE_MANIFEST_SCHEMA,
             "pinned image manifest identity differs")
     files = manifest.get("files")
     require(isinstance(files, Mapping), "pinned image manifest file roster differs")

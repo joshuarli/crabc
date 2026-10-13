@@ -33,6 +33,7 @@ class PromotionClosureTests(unittest.TestCase):
         capabilities = copy.deepcopy(closure.inventory.build_inventory())
         upstream = (closure.ROOT / 'crabc-mimalloc/UPSTREAM.md').read_bytes()
         prefix.ChainReceiptRoundTripTests.setUp(self)
+        data['completion'] = {'qualification_profile': 'correctness', 'deferred_families': ['performance.release']}
         for family in data['family']:
             if family['id'] != 'performance.release':
                 family['status'] = 'foundation-verified'

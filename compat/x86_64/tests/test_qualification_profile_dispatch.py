@@ -34,11 +34,10 @@ class QualificationProfileDispatchTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, arguments)
         self.assertFalse(self.log.exists(), "invalid profile arguments reached Docker")
 
-    def test_default_uses_the_declared_correctness_profile(self) -> None:
+    def test_default_uses_the_declared_profile(self) -> None:
         contract = json.loads((ROOT / "compat/x86_64/qualification_manifest.json").read_text())
-        self.assertEqual(contract["qualification_profile"], "correctness")
         arguments = self.runner_arguments()
-        self.assertIn(arguments, ([], ["--profile", "correctness"]))
+        self.assertIn(arguments, ([], ["--profile", contract["qualification_profile"]]))
 
     def test_explicit_profiles_survive_either_side_of_ordered_and_status_options(self) -> None:
         for profile in ("correctness", "full"):

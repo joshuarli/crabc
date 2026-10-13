@@ -2201,32 +2201,34 @@ class CampaignCompletionScopeTests(unittest.TestCase):
         cls.parity = selection.tomllib.loads(selection.source_path(cls.contract['inputs']['parity']).read_text())
         cls.active = parity_ledger.completion_family_ids(cls.parity)
 
-    def test_actual_source_selects_correctness_without_removing_frozen_inventory(self):
+    def test_actual_source_selects_its_declared_scope_without_removing_frozen_inventory(self):
         self.assertEqual(len(self.families), 26)
         scope = self.inputs['completion_scope']
-        self.assertEqual(scope, {'qualification_profile': 'correctness',
+        declared = self.parity['completion']
+        self.assertEqual(scope, {'qualification_profile': declared['qualification_profile'],
                                 'required_families': self.active,
-                                'deferred_families': ['performance.release']})
+                                'deferred_families': declared['deferred_families']})
         blockers, _ = selection.family_semantic_evidence(
             self.families, headers_layouts_companion=None, text_family_companion=None,
             required_families=scope['required_families'])
         self.assertEqual({row['family'] for row in blockers}, set(self.active))
-        self.assertNotIn('performance.release', {row['family'] for row in blockers})
+        self.assertFalse({row['family'] for row in blockers} & set(declared['deferred_families']))
 
     def test_complete_functional_join_still_refuses_strict_full_scope(self):
         # The join fixture keeps the actual frozen identity/order. Its admitted
         # statuses model independently replayed family receipts; the public
         # selector obtains those statuses only from the validated ledger.
-        families = [dict(row, status='foundation-verified' if row['id'] in self.active else 'planned')
+        functional = [name for name in self.active if name != 'performance.release']
+        families = [dict(row, status='foundation-verified' if row['id'] in functional else 'planned')
                     for row in self.families]
         admissions = [{'family': row['id'], 'status': selection.LEDGER_FAMILY_ADMISSION_STATUS,
                        'ledger_status': 'foundation-verified'}
-                      for row in families if row['id'] in self.active]
+                      for row in families if row['id'] in functional]
         blockers, evidence = selection.family_semantic_evidence(
             families, headers_layouts_companion=None, text_family_companion=None,
-            ledger_admissions=admissions, required_families=self.active)
+            ledger_admissions=admissions, required_families=functional)
         self.assertEqual(blockers, [])
-        self.assertEqual({row['family'] for row in evidence}, set(self.active))
+        self.assertEqual({row['family'] for row in evidence}, set(functional))
         full, _ = selection.family_semantic_evidence(
             families, headers_layouts_companion=None, text_family_companion=None,
             ledger_admissions=admissions)
@@ -2275,9 +2277,11 @@ class CampaignCompletionScopeTests(unittest.TestCase):
             with mock.patch.object(selection, 'validate_measurement_paths', return_value={}), \
                     mock.patch.object(selection, '_build_report', return_value=expected):
                 self.assertEqual(selection.validate_report(report), expected)
-                for field, value in (('qualification_profile', 'full'),
-                                     ('required_families', self.active[:-1]),
-                                     ('deferred_families', [])):
+                scope = expected['source_inputs']['completion_scope']
+                for field, value in (
+                        ('qualification_profile', 'correctness' if scope['qualification_profile'] == 'full' else 'full'),
+                        ('required_families', self.active[:-1]),
+                        ('deferred_families', [] if scope['deferred_families'] else ['performance.release'])):
                     changed = copy.deepcopy(expected)
                     changed['source_inputs']['completion_scope'][field] = value
                     report.write_text(json.dumps(changed))

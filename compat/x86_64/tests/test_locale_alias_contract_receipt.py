@@ -59,16 +59,11 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             "launcher_stream": self.write("raw/compile.launcher.json", b'["/usr/bin/env","-i","LC_ALL=C","PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","/usr/bin/timeout","20"]\n'),
         }
 
-    def public_entry_fixture(self, *, tracked_unselected: bool = False,
-                             current: bool = False) -> tuple[Path, Path, dict[str, object]]:
-        """Build a copied receipt whose source admission remains real on replay.
+    def public_entry_fixture(self, *, tracked_unselected: bool = False) -> tuple[Path, Path, dict[str, object]]:
+        """Build a copied receipt whose source admission remains real on replay."""
 
-        ``current`` selects the v4 schema and its own retained source roster,
-        which differs from the historical v3 roster used by default.
-        """
-
-        schema = receipt.CURRENT_SCHEMA if current else receipt.SCHEMA
-        selected_sources = receipt.CURRENT_SELECTED_SOURCES if current else receipt.SELECTED_SOURCES
+        schema = receipt.SCHEMA
+        selected_sources = receipt.SELECTED_SOURCES
         trusted = self.root / "trusted"
         for relative in selected_sources:
             source = ROOT / relative
@@ -620,41 +615,34 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "unexpected oracle or tool roster"):
                 receipt._trusted_image_manifest()
 
-    def test_current_manifest_uses_manifest_selected_toolchain_and_keeps_v3_authority(self) -> None:
-        historical = receipt._trusted_image_manifest(receipt.PINNED_IMAGE)
-        current = receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)
-        current_path = ROOT / receipt.CURRENT_IMAGE_MANIFEST_PATH
-        self.assertEqual(historical["image"], receipt.PINNED_IMAGE.removeprefix("crabc-core-evidence@"))
-        self.assertEqual(current["image"], receipt.CURRENT_PINNED_IMAGE.removeprefix("crabc-core-evidence@"))
+    def test_manifest_uses_the_repository_selected_toolchain(self) -> None:
+        current = receipt._trusted_image_manifest()
+        self.assertNotIn("image", current)
         self.assertEqual(current["path"], receipt.COMMAND_PATH)
-        self.assertEqual(set(current["files"]), set(receipt.CURRENT_IMAGE_INPUTS))
+        self.assertEqual(set(current["files"]), set(receipt.IMAGE_INPUTS))
         self.assertEqual(
-            receipt.CURRENT_TOOLCHAIN_ROOT,
-            f"/opt/rustup/toolchains/{receipt.CURRENT_TOOLCHAIN}-x86_64-unknown-linux-musl",
+            receipt.TOOLCHAIN_ROOT,
+            f"/opt/rustup/toolchains/{receipt.TOOLCHAIN}-x86_64-unknown-linux-musl",
         )
-        self.assertIn(f"{receipt.CURRENT_TOOLCHAIN_ROOT}/bin/rustc", current["files"])
-        self.assertIn(receipt.CURRENT_DYNAMIC_LINKER_PATH, current["files"])
-        self.assertEqual(receipt._image_profile(receipt.PINNED_IMAGE)["schema"], receipt.SCHEMA)
-        self.assertEqual(receipt._image_profile(receipt.CURRENT_PINNED_IMAGE)["schema"], receipt.CURRENT_SCHEMA)
-        self.assertIn(receipt.CURRENT_IMAGE_MANIFEST_PATH, receipt.CURRENT_SELECTED_SOURCES)
-        self.assertIn("rust-toolchain.toml", receipt.CURRENT_SELECTED_SOURCES)
-        self.assertNotIn("compat/x86_64/owned_utmpx_receipt.py", receipt.CURRENT_SELECTED_SOURCES)
-        self.assertTrue(current_path.is_file())
+        self.assertIn(f"{receipt.TOOLCHAIN_ROOT}/bin/rustc", current["files"])
+        self.assertIn(receipt.DYNAMIC_LINKER_PATH, current["files"])
+        self.assertIn(receipt.IMAGE_MANIFEST_PATH, receipt.SELECTED_SOURCES)
+        self.assertIn("rust-toolchain.toml", receipt.SELECTED_SOURCES)
 
-    def test_current_manifest_cannot_omit_a_required_image_input(self) -> None:
+    def test_manifest_cannot_omit_a_required_image_input(self) -> None:
         forged_root = self.root / "forged-current-root"
-        manifest_path = forged_root / receipt.CURRENT_IMAGE_MANIFEST_PATH
+        manifest_path = forged_root / receipt.IMAGE_MANIFEST_PATH
         manifest_path.parent.mkdir(parents=True)
-        manifest = json.loads((ROOT / receipt.CURRENT_IMAGE_MANIFEST_PATH).read_text(encoding="utf-8"))
-        manifest["files"].pop(receipt.CURRENT_DYNAMIC_LINKER_PATH)
+        manifest = json.loads((ROOT / receipt.IMAGE_MANIFEST_PATH).read_text(encoding="utf-8"))
+        manifest["files"].pop(receipt.DYNAMIC_LINKER_PATH)
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
         with mock.patch.object(receipt, "ROOT", forged_root):
             with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "unexpected oracle or tool roster"):
-                receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)
+                receipt._trusted_image_manifest()
 
-    def test_current_image_input_replay_selects_its_own_manifest_and_paths(self) -> None:
-        manifest_path = receipt.CURRENT_IMAGE_MANIFEST_PATH
-        trusted = json.loads(json.dumps(receipt._trusted_image_manifest(receipt.CURRENT_PINNED_IMAGE)))
+    def test_image_input_replay_selects_its_own_manifest_and_paths(self) -> None:
+        manifest_path = receipt.IMAGE_MANIFEST_PATH
+        trusted = json.loads(json.dumps(receipt._trusted_image_manifest()))
         for index, (invocation, image_record) in enumerate(sorted(trusted["files"].items())):
             contents = invocation.encode()
             image_record.update({
@@ -669,10 +657,10 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         for index, (invocation, image_record) in enumerate(sorted(trusted["files"].items())):
             retained = self.write(f"inputs/image/{index:02d}", invocation.encode())
             records[invocation] = {"image": image_record, "retained": retained}
-        report = {"id": receipt.CURRENT_PINNED_IMAGE, "manifest": manifest_record, "files": records}
+        report = {"id": receipt.PINNED_IMAGE, "manifest": manifest_record, "files": records}
         with mock.patch.object(receipt, "_trusted_image_manifest", return_value=trusted):
             observed = receipt._validate_image_inputs(self.root, report)
-        self.assertEqual(observed["id"], receipt.CURRENT_PINNED_IMAGE)
+        self.assertEqual(observed["id"], receipt.PINNED_IMAGE)
         self.assertEqual(observed["manifest"]["path"], manifest_record["path"])
     def test_product_tree_retains_directory_file_and_symlink_modes(self) -> None:
         product = self.root / "products/static"
@@ -822,15 +810,12 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         admitted = self.admit_public_entry(trusted, report_path)
         self.assertEqual(admitted["source"], report["source_before"])
 
-    def test_validate_report_public_exit_replays_the_current_schema_source_roster(self) -> None:
-        """The v4 exit recheck must reuse the v4 roster, not the historical one."""
-
-        trusted, report_path, report = self.public_entry_fixture(current=True)
-        self.assertNotEqual(set(receipt.CURRENT_SELECTED_SOURCES), set(receipt.SELECTED_SOURCES))
+    def test_validate_report_public_exit_replays_the_selected_source_roster(self) -> None:
+        trusted, report_path, report = self.public_entry_fixture()
         admitted = self.admit_public_entry(trusted, report_path)
         self.assertEqual(admitted["source"], report["source_before"])
         self.assertEqual([row["path"] for row in admitted["source"]["paths"]],
-                         list(receipt.CURRENT_SELECTED_SOURCES))
+                         list(receipt.SELECTED_SOURCES))
 
     def test_validate_report_rejects_a_forged_selected_source_path_identity(self) -> None:
         """The source seal includes its path records, not only its Git digest."""

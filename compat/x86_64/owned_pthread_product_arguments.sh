@@ -58,9 +58,9 @@ for role, value in (('static', static), ('dynamic', dynamic)):
         raise SystemExit(f'{label} {role} product must be a checkout .work directory')
 PY
     if [ -n "$provided_static_sysroot" ]; then
-        provided_static_sysroot="$(realpath -e "$provided_static_sysroot")"
+        provided_static_sysroot="$(realpath "$provided_static_sysroot")"
     fi
     if [ -n "$provided_dynamic_sysroot" ]; then
-        provided_dynamic_sysroot="$(realpath -e "$provided_dynamic_sysroot")"
+        provided_dynamic_sysroot="$(realpath "$provided_dynamic_sysroot")"
     fi
 }

@@ -10,7 +10,6 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DOCUMENT = ROOT / "compat/x86_64/owned-posix-composition.md"
 RUNNER = ROOT / "compat/x86_64/run_owned_posix_composition.sh"
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 MANIFEST = ROOT / "libc/Cargo.toml"
@@ -62,7 +61,6 @@ class OwnedPosixCompositionTests(unittest.TestCase):
     def test_static_replay_keeps_the_single_object_and_sealed_raw_matrix(
         self,
     ) -> None:
-        document = " ".join(DOCUMENT.read_text(encoding="utf-8").split())
         runner = RUNNER.read_text(encoding="utf-8")
         dispatcher = DISPATCHER.read_text(encoding="utf-8")
 
@@ -96,16 +94,6 @@ class OwnedPosixCompositionTests(unittest.TestCase):
             runner.index('audit_link "$provided_dynamic"'),
             runner.index('run_in_root "$execution_root" "$work/$mode-$entry.stdout"'),
         )
-        for required in (
-            "[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]",
-            "positional dynamic product",
-            "only argument",
-            "neither producer",
-            "same installed-driver object",
-            "static/static-PIE",
-            "dynamic PIE/non-PIE",
-        ):
-            self.assertIn(required, document)
         self.assertIn(
             "owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]",
             dispatcher,
@@ -149,15 +137,6 @@ class OwnedPosixCompositionTests(unittest.TestCase):
             "end_host == end_net",
         ):
             self.assertIn(required, probe)
-
-        document = " ".join(DOCUMENT.read_text(encoding="utf-8").split())
-        for required in (
-            "`x86-sched-rr-interval`",
-            "`x86-netdb-setent`",
-            "does not select scheduler policy mutation",
-            "netdb enumeration",
-        ):
-            self.assertIn(required, document)
 
 
 if __name__ == "__main__":

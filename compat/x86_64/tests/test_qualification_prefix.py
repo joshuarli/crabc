@@ -505,6 +505,9 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
         self.gate_runner = self.root / 'compat/x86_64/gate_fixture.py'
         self.gate_runner.write_text(GATE_FIXTURE, encoding='utf-8')
         document = json.loads(manifest.CONTRACT_PATH.read_text(encoding='utf-8'))
+        # The fixture contract models the correctness scope whatever profile the
+        # checked-in manifest declares; the full scope is selected explicitly.
+        document['qualification_profile'] = 'correctness'
         for gate in document['promotion_chain']:
             relative = f"compat/x86_64/qualification-gates/{gate['id']}.json"
             path = self.root / relative
@@ -548,19 +551,21 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
     def run_chain(self, through=manifest.CHAIN[-1]):
         return runner.run_chain(manifest.load_contract(), through, profile="full")
 
-    def test_default_dispatch_executes_correctness_profile(self):
+    def test_default_dispatch_executes_the_declared_profile(self):
+        declared = manifest.load_contract()['qualification_profile']
         with patch.object(manifest, 'write_or_check'):
             self.assertEqual(runner.main([]), 0)
         paths = list(self.receipts.glob('*/receipt.json'))
         self.assertEqual(len(paths), 1)
         receipt = runner.validate_chain_receipt(paths[0])
-        self.assertEqual(receipt['through'], 'capability.accounting')
+        self.assertEqual(receipt['qualification_profile'], declared)
+        self.assertEqual(receipt['through'], manifest.active_chain(declared)[-1])
         self.assertTrue(receipt['complete_profile'])
-        self.assertFalse(receipt['complete_chain'])
-        self.assertNotIn('performance.release', receipt['qualified_gates'])
+        self.assertEqual(receipt['complete_chain'], declared == 'full')
+        self.assertEqual('performance.release' in receipt['qualified_gates'], declared == 'full')
 
     def test_correctness_executes_functional_cases_and_replays_without_performance(self):
-        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting')
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting', profile='correctness')
         self.assertEqual(receipt['qualification_profile'], 'correctness')
         self.assertTrue(receipt['complete_profile'])
         self.assertFalse(receipt['complete_chain'])
@@ -570,7 +575,7 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
 
     def test_correctness_failure_cannot_complete_profile(self):
         self.environment['QUALIFICATION_FIXTURE_FAIL'] = 'capability.accounting'
-        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting')
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting', profile='correctness')
         self.assertEqual(receipt['outcome'], 'failed')
         self.assertFalse(receipt['complete_profile'])
         self.assertNotIn('performance.release', receipt['qualified_gates'])
@@ -588,8 +593,8 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
     def test_correctness_cannot_select_deferred_performance_or_forge_scope(self):
         report = manifest.load_contract()
         with self.assertRaisesRegex(runner.QualificationRunError, 'outside correctness'):
-            runner.run_chain(report, 'performance.release')
-        path, receipt = runner.run_chain(report, 'capability.accounting')
+            runner.run_chain(report, 'performance.release', profile='correctness')
+        path, receipt = runner.run_chain(report, 'capability.accounting', profile='correctness')
         receipt['deferred_gate_ids'] = []
         path.chmod(0o644)
         path.write_text(json.dumps(receipt))

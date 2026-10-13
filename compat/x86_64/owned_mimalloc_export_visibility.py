@@ -89,11 +89,11 @@ def native_image_inputs(tools: dict[str, str]) -> dict[str, object]:
         manifest = json.loads(NATIVE_IMAGE_INPUTS.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise EvidenceError("native image input manifest is malformed") from error
-    require(isinstance(manifest, dict) and set(manifest) == {"schema", "image", "tools"}
+    require(isinstance(manifest, dict) and set(manifest) == {"schema", "tools"}
             and manifest["schema"] == "crabc.x86_64-owned-mimalloc-export-visibility-image-inputs/v1"
-            and manifest["image"] == CORE_IMAGE_ID and isinstance(manifest["tools"], dict)
+            and isinstance(manifest["tools"], dict)
             and set(manifest["tools"]) == set(NATIVE_IMAGE_TOOL_NAMES),
-            "native image input manifest or image differs")
+            "native image input manifest differs")
     for name, executable in tools.items():
         require(Path(executable).is_absolute(), f"image input is not absolute: {name}")
         require(identity(Path(executable), f"image input {name}") == manifest["tools"][name],

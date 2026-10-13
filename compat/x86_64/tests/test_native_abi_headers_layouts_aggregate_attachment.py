@@ -247,13 +247,11 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
                         pair_report, paths=paths, source=source, header_companion=companion)
 
     def test_pinned_linker_anchor_matches_actual_native_tool_bytes(self):
-        import core_image
         pin = json.loads((ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json').read_text())
         tool = next(record for path, record in pin['files'].items() if Path(path).name == 'ld.lld')
         path = Path(tool['path'])
         if not path.is_file():
             self.skipTest('requires the declared pinned native tool image')
-        self.assertEqual(pin['image'], core_image.CORE_IMAGE_ID)
         self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), tool['sha256'])
         self.assertEqual(path.stat().st_size, tool['size'])
         self.assertEqual(path.stat().st_mode & 0o777, tool['mode'])

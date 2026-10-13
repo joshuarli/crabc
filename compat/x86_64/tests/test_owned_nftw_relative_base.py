@@ -15,7 +15,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 PROBE = ROOT / "compat/x86_64/owned_nftw_relative_base_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_owned_nftw_relative_base.sh"
-DOCUMENT = ROOT / "compat/x86_64/owned-nftw-relative-base.md"
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 TRAVERSAL = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "filesystem_traversal.rs"
 
@@ -143,18 +142,6 @@ class OwnedNftwRelativeBaseTests(unittest.TestCase):
             '(*history).child_base',
             'let child_base = (last + 1) as c_int;',
             'child_base,',
-        ):
-            self.assertIn(required, source)
-
-    def test_document_names_the_history_base_boundary(self) -> None:
-        source = DOCUMENT.read_text(encoding="utf-8")
-        for required in (
-            'src/misc/nftw.c',
-            '`lev.base`',
-            '`new.base`',
-            '`filesystem_traversal.rs`',
-            'kernel interpreter',
-            'direct `/lib/ld-crabc-x86_64.so.1`',
         ):
             self.assertIn(required, source)
 

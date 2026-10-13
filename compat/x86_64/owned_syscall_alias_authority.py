@@ -381,7 +381,7 @@ IMAGE_PATH = '/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:
 
 
 def image_input_manifest():
-    """Regenerate inside IMAGE_ID; the committed result is replay's image anchor."""
+    """Regenerate inside the pinned image; the committed result is replay's tool anchor."""
     import shutil
     paths = [shutil.which(name, path=IMAGE_PATH) for name in IMAGE_COMMANDS]
     require(all(paths), 'pinned image lacks a required command')
@@ -393,7 +393,7 @@ def image_input_manifest():
         path = Path(invocation).resolve(strict=True)
         records[invocation] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                                'size': path.stat().st_size, 'mode': stat.S_IMODE(path.stat().st_mode)}
-    return {'image': IMAGE_ID, 'path': IMAGE_PATH, 'files': records}
+    return {'path': IMAGE_PATH, 'files': records}
 
 
 if __name__ == '__main__':

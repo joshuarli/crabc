@@ -12,7 +12,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 VALIDATOR_PATH = ROOT / "compat" / "x86_64" / "validate_loader_libc_tls_runtime_v1.py"
-DOCUMENT_PATH = ROOT / "docs" / "evidence" / "x86-loader-libc-tls-runtime-v1.md"
 LOADER_SOURCE_PATH = ROOT / "ldso" / "src" / "x86_64_initial_graph.rs"
 REGISTRY_SOURCE_PATH = ROOT / "ldso" / "src" / "x86_64_initial_tls_registry.rs"
 CONSUMER_SOURCE_PATH = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "loader_tls_runtime_v1.rs"
@@ -53,7 +52,6 @@ DYNAMIC_MAIN_THREAD_LIBC_PATH = (
 )
 DYNAMIC_MAIN_THREAD_CRT_PATH = ROOT / "crt" / "src" / "x86_64_dynamic_startup.rs"
 DISPATCHER_PATH = ROOT / "scripts" / "dev-x86_64.sh"
-STRUCTURE_PATH = ROOT / "scripts" / "check_structure.py"
 
 
 def load_module(name: str, path: Path):
@@ -307,23 +305,6 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, "future-integration"):
             runtime_v1.validate_contract(contract)
 
-    def test_evidence_document_explains_the_checked_mode_and_rejection_boundaries(self) -> None:
-        document = DOCUMENT_PATH.read_text(encoding="utf-8")
-        for phrase in (
-            "loader-libc-tls-runtime-v1.toml",
-            "PT_INTERP",
-            "ET_DYN",
-            "Variant II",
-            "%fs:0",
-            "%fs:8",
-            "must fail before mapping, relocation, constructors",
-            "not RuntimeV1 producers",
-            "Implemented private general initial-TLS RuntimeV1 wire",
-            "Implemented private dynamic main-thread RuntimeV1 bridge",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, document)
-
     def test_private_runtime_v1_foundation_validates_before_tls_access(self) -> None:
         """The first producer/consumer seam remains private and fail-closed.
 
@@ -398,7 +379,6 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         runner = REGISTRY_RUNNER_PATH.read_text(encoding="utf-8")
         loader = LOADER_SOURCE_PATH.read_text(encoding="utf-8")
         dispatcher = DISPATCHER_PATH.read_text(encoding="utf-8")
-        structure = STRUCTURE_PATH.read_text(encoding="utf-8")
 
         for phrase in (
             "TlsModuleId",
@@ -422,8 +402,6 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         self.assertIn("x86_64_initial_tls_registry.rs", runner)
         self.assertIn("rustc --edition=2021 --test", runner)
         self.assertIn("loader-libc-tls-runtime-v1-registry", dispatcher)
-        self.assertIn("X86_RUNTIME_FOUNDATION_LOADER_LIBC_SOURCES", structure)
-        self.assertIn("ldso/src/x86_64_initial_tls_registry.rs", structure)
 
     def test_general_initial_tls_materialization_is_private_and_transactional(self) -> None:
         contract = self.contract()

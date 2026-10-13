@@ -16,7 +16,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_signal_process.sh"
 EVIDENCE = ROOT / "compat/x86_64/owned_signal_process_evidence.py"
-DOCUMENT = ROOT / "compat/x86_64/owned-signal-process.md"
 SOURCE = ROOT / "compat/signal-process/tests/signal_process.c"
 SUBCASES = (
     "siginfo", "nodefer", "mask-pending", "sa-restart", "altstack",
@@ -209,14 +208,6 @@ class OwnedSignalProcessTests(unittest.TestCase):
                 (execution_root / "consumer-pie").write_bytes(b"tampered\n")
                 with self.assertRaisesRegex(evidence.SignalProcessEvidenceError, "execution consumer drifted"):
                     evidence.audit_execution_payload(work, product)
-
-    def test_document_names_the_frozen_source_and_non_promotion_boundary(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
-        self.assertIn("`compat/signal-process/tests/signal_process.c`", document)
-        self.assertIn("fresh process group", document)
-        self.assertIn("does not promote", document)
-        for subcase in SUBCASES:
-            self.assertIn(f"`{subcase}`", document)
 
 
 if __name__ == "__main__":

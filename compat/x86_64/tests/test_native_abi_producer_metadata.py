@@ -317,7 +317,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
 
     def test_owned_helpers_keep_both_archive_roles_and_select_the_private_libc_copy(self):
         group = next(row for row in self.contract['owner_groups'] if row['id'] == 'owned-compiler-helper-archive')
-        self.assertEqual(len(group['members']), 23)
+        self.assertEqual(group['members'], list(helpers.helper_names(helpers.load_contract(ROOT))))
         for name in group['members']:
             with self.subTest(name=name):
                 self.assertEqual(self.records[name]['selection']['owner'], 'builtins')
@@ -349,7 +349,7 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
             selection.attach_compiler_helper_shared_placement(expanded, companion, self.contract, self.inputs)
 
     def test_owned_helpers_preserve_the_reader_projection_for_each_selected_copy(self):
-        self.assertEqual(len(self.helper_pending), 23)
+        self.assertEqual(len(self.helper_pending), len(helpers.helper_names(helpers.load_contract(ROOT))))
         for index, row in enumerate(self.helper_pending):
             with self.subTest(name=row['identity']['name']):
                 self.assertEqual(row['artifact_key'], 'candidate-shared')

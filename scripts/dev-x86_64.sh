@@ -332,7 +332,6 @@ Native Linux/x86-64 staged-foundation evidence commands:
   aio-error-header-abi  verify x86 <aio.h> aio_error C/C++ declaration and layout
   byte-strings-header-abi  compile the staged x86 C/C++ string.h byte-string declarations
   memory-search-header-abi  compile the staged x86 C/C++ memory-search declarations
-  memccpy-header-abi  compile the staged x86 C/C++ string.h memccpy declaration
   mempcpy-header-abi  compile the staged x86 C/C++ string.h mempcpy declaration
   strsep-header-abi  compile the staged x86 C/C++ string.h strsep declaration
   strtok-header-abi  verify staged x86 C/C++ string.h strtok declaration and linkage
@@ -903,7 +902,6 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-aio-error  run the archive-free static x86 crabc-libc aio_error slice
   libc-byte-strings  run the static x86 crabc-libc byte-string slice
   libc-legacy-memory  run the static x86 crabc-libc bcopy/bzero adapter slice
-  libc-memccpy  run the static x86 crabc-libc memccpy slice
   libc-mempcpy  run the static x86 crabc-libc mempcpy slice
   libc-strsep  run the static x86 crabc-libc strsep slice
   libc-strtok  run the static x86 crabc-libc strtok slice
@@ -933,7 +931,6 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-memory-search  run the static x86 crabc-libc memory-search slice
   libc-string-copy  run the static x86 crabc-libc C-string-copy slice
   libc-error-strings  run the static x86 crabc-libc error-string slice
-  string-duplication-header-abi  run the C/C++ x86 string-duplication declaration gate
   libc-strsignal  run the static x86 crabc-libc strsignal slice
   libc-socket-transport  run the static x86 crabc-libc base socket transport slice
   libc-socket-messages  run the static x86 crabc-libc socket-message/options slice
@@ -2672,7 +2669,6 @@ general facade admission, or C ABI support claim.
   protocol-database-header-abi  compile the staged x86 C/C++ musl proto.c declarations
   libc-protocol-database  run the static x86 crabc-libc musl proto.c provider slice
   libc-posix-spawn-file-actions-init  run the static x86 crabc-libc POSIX spawn file-actions init slice
-  libc-posix-spawn-file-actions  run the opt-in mixed-runtime x86 POSIX spawn file-actions lifecycle
   libc-posix-spawnattr-destroy  run the static x86 crabc-libc POSIX spawn-attribute destroy slice
   libc-posix-spawnattr-getflags  run the static x86 crabc-libc POSIX spawn-attribute getflags slice
   libc-posix-spawnattr-setpgroup  run the static x86 crabc-libc POSIX spawn-attribute setpgroup slice
@@ -2680,7 +2676,6 @@ general facade admission, or C ABI support claim.
   libc-posix-spawnattr-setschedpolicy  run the static x86 crabc-libc POSIX spawn-attribute setschedpolicy slice
   libc-res-init  run the static x86 crabc-libc legacy resolver-initializer slice
   posix-spawn-file-actions-init-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions init declaration
-  posix-spawn-file-actions-header-abi  compile the staged x86 C/C++ POSIX spawn file-actions declarations
   posix-spawnattr-destroy-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute destroy declaration
   posix-spawnattr-getflags-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute getflags declaration
   posix-spawnattr-setpgroup-header-abi  compile the staged x86 C/C++ POSIX spawn-attribute setpgroup declaration
@@ -2696,9 +2691,7 @@ general facade admission, or C ABI support claim.
   libc-uchar-stateful  run the static x86 crabc-libc stateful uchar conversion block
   libc-chown  run the static x86 crabc-libc chown leaf
   libc-sync  run the static x86 crabc-libc void sync leaf
-  libc-sync-file-range  run the static x86 crabc-libc GNU sync_file_range leaf
   libc-unlinkat  run the static x86 crabc-libc unlinkat leaf
-  sync-file-range-header-abi  verify selected x86 GNU sync_file_range C/C++ declarations
   sync-header-abi  verify selected x86 X/Open/GNU/BSD sync C/C++ declarations
   unlinkat-header-abi  verify selected x86 POSIX unlinkat C/C++ declarations
   libc-math-asinh  run the static x86 asinh/asinhf scalar slice
@@ -2756,6 +2749,50 @@ general facade admission, or C ABI support claim.
   libc-lrand48  run the static x86 crabc-libc legacy rand48 provider slice
   libc-rand-r  run the static x86 crabc-libc caller-state rand_r slice
   libc-bsd-random [--expect-missing]  run the static x86 BSD random-state provider slice
+  confstr-header-abi  verify selected x86 C/C++ declarations for confstr
+  fchdir-header-abi  verify selected x86 C/C++ declarations for fchdir
+  fpathconf-header-abi  verify selected x86 C/C++ declarations for fpathconf
+  getdtablesize-header-abi  verify selected x86 C/C++ declarations for getdtablesize
+  libc-confstr  run the static x86 crabc-libc confstr leaf
+  libc-fpathconf  run the static x86 crabc-libc fpathconf leaf
+  libc-getdtablesize  run the static x86 crabc-libc getdtablesize leaf
+  libc-math-acosh  run the static x86 acosh scalar slice
+  libc-math-atanh  run the static x86 atanh scalar slice
+  libc-math-exp10  run the static x86 exp10 scalar slice
+  libc-math-pow  run the static x86 pow scalar slice
+  libc-math-sincos  run the static x86 sincos scalar slice
+  libc-math-tanh  run the static x86 tanh scalar slice
+  libc-membarrier  run the static x86 crabc-libc membarrier leaf
+  libc-pathconf  run the static x86 crabc-libc pathconf leaf
+  libc-stdio-permanent-byte-io  run the opt-in permanent-stream byte-io slice
+  libc-stdio-permanent-fbufsize-stderr  run the opt-in permanent-stream fbufsize-stderr slice
+  libc-stdio-permanent-feof-unlocked  run the opt-in permanent-stream feof-unlocked slice
+  libc-stdio-permanent-ferror-unlocked  run the opt-in permanent-stream ferror-unlocked slice
+  libc-stdio-permanent-fileno  run the opt-in permanent-stream fileno slice
+  libc-stdio-permanent-fileno-unlocked  run the opt-in permanent-stream fileno-unlocked slice
+  libc-stdio-permanent-flbf-stderr  run the opt-in permanent-stream flbf-stderr slice
+  libc-stdio-permanent-freadable-stdin  run the opt-in permanent-stream freadable-stdin slice
+  libc-stdio-permanent-freading-stdin  run the opt-in permanent-stream freading-stdin slice
+  libc-stdio-permanent-fseterr-stdin  run the opt-in permanent-stream fseterr-stdin slice
+  libc-stdio-permanent-fsetlocking-stdin  run the opt-in permanent-stream fsetlocking-stdin slice
+  libc-stdio-permanent-fwritable-stderr  run the opt-in permanent-stream fwritable-stderr slice
+  libc-stdio-permanent-line-io  run the opt-in permanent-stream line-io slice
+  libc-stdio-permanent-status  run the opt-in permanent-stream status slice
+  libc-syncfs  run the static x86 crabc-libc syncfs leaf
+  libc-sysconf  run the static x86 crabc-libc sysconf leaf
+  libc-umask  run the static x86 crabc-libc umask leaf
+  math-acosh-header-abi  verify selected x86 math C/C++ declarations for acosh
+  math-atanh-header-abi  verify selected x86 math C/C++ declarations for atanh
+  math-exp10-header-abi  verify selected x86 math C/C++ declarations for exp10
+  math-pow-header-abi  verify selected x86 math C/C++ declarations for pow
+  math-sincos-header-abi  verify selected x86 math C/C++ declarations for sincos
+  math-tanh-header-abi  verify selected x86 math C/C++ declarations for tanh
+  membarrier-header-abi  verify selected x86 C/C++ declarations for membarrier
+  pathconf-header-abi  verify selected x86 C/C++ declarations for pathconf
+  syncfs-header-abi  verify selected x86 C/C++ declarations for syncfs
+  sysconf-header-abi  verify selected x86 C/C++ declarations for sysconf
+  ulimit-header-abi  verify selected x86 C/C++ declarations for ulimit
+  umask-header-abi  verify selected x86 C/C++ declarations for umask
 EOF
 }
 

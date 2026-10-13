@@ -485,10 +485,10 @@ def _locale_alias_reader():
 def _locale_alias_source_files(reader: Any) -> tuple[str, ...]:
     """Return the exact current files that define the locale attachment.
 
-    Only the current collector schema is admitted, so bind that schema's
-    source roster rather than the historical v3 one.
+    The reader admits one receipt schema, so its source roster is the one
+    the collector copies.
     """
-    selected = getattr(reader, 'CURRENT_SELECTED_SOURCES', None)
+    selected = getattr(reader, 'SELECTED_SOURCES', None)
     require(isinstance(selected, tuple) and selected and all(isinstance(name, str) for name in selected),
             'locale alias reader source roster differs')
     names = (
@@ -1157,12 +1157,11 @@ def headers_layouts_product_pair_adapter(
     # This source-qualified image pin supplies an external tool identity. A
     # matching before/after roster and matching application receipts alone
     # could all contain the same invented linker digest.
-    import core_image
     anchor_path = ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json'
     anchor_identity = selecting_source_file_identity(anchor_path)
     anchor = read_json(anchor_path)
     require(anchor.get('schema') == 'crabc.x86_64-owned-resolver-network-image-inputs/v1'
-            and anchor.get('image') == core_image.CORE_IMAGE_ID and type(anchor.get('files')) is dict,
+            and type(anchor.get('files')) is dict,
             'header product pair pinned linker image anchor differs')
     linker_pins = [record for path, record in anchor['files'].items() if Path(path).name == 'ld.lld']
     require(len(linker_pins) == 1 and type(linker_pins[0]) is dict
@@ -12273,9 +12272,7 @@ def native_locale_alias_adapter(report_path: Path | None, *, facts: Mapping[str,
         'schema', 'status', 'mode_policy', 'image_inputs', 'source_before', 'source_after', 'source_contract',
         'products', 'collector_commands', 'runner_commands', 'snapshots', 'artifacts', 'runtime', 'symbols', 'nonclaims',
     }, 'locale alias receipt')
-    # The current collector writes only CURRENT_SCHEMA; the reader's older
-    # pinned-image profile remains replayable history, not current evidence.
-    require(raw['schema'] == reader.CURRENT_SCHEMA and raw['status'] == reader.STATUS,
+    require(raw['schema'] == reader.SCHEMA and raw['status'] == reader.STATUS,
             'locale alias receipt schema or status differs')
     receipt_source = exact(validated.get('source'), {'revision', 'tree', 'content_sha256', 'clean', 'paths'},
                            'locale reader source')

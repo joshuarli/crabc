@@ -13,7 +13,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = ROOT / "compat" / "x86_64" / "header_callable_extension_contract.py"
-README = ROOT / "compat" / "x86_64" / "README.md"
 
 
 def load_module(name: str, path: Path):
@@ -94,7 +93,6 @@ class HeaderCallableExtensionContractTests(unittest.TestCase):
             extension.abi_signature_for("cxx17-gnu"),
             "int (int, int, int)|mangled=tgkill",
         )
-        self.assertIn("_GNU_SOURCE", README.read_text(encoding="utf-8"))
 
     def test_contract_rejects_numeric_policy_values(self) -> None:
         """A TOML integer must not impersonate an exact policy Boolean."""

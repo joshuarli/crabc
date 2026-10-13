@@ -380,9 +380,8 @@ def trusted_image_manifest(root: Path) -> Mapping[str, object]:
         "/usr/local/bin/crabc-x86_64-musl-gcc", "/usr/bin/python3", "/usr/bin/readelf", "/usr/sbin/chroot",
         *(str(path) for path in COMPILER_ORACLE_INPUTS.values()), str(RUSTC), str(LLD),
     }
-    require(isinstance(value, dict) and set(value) == {"schema", "image", "path", "files"} and
+    require(isinstance(value, dict) and set(value) == {"schema", "path", "files"} and
             value.get("schema") == "crabc.x86_64-owned-resolver-network-image-inputs/v1" and
-            value.get("image") == PINNED_IMAGE.removeprefix("crabc-core-evidence@") and
             value.get("path") == "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" and
             isinstance(value.get("files"), dict), "pinned resolver-network image manifest differs")
     files = value["files"]

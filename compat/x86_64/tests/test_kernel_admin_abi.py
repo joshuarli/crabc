@@ -27,7 +27,6 @@ STATIC_PROVIDER_READER = (
     ROOT / "compat" / "x86_64" / "kernel_admin_static_provider_reader.py"
 )
 DOCUMENT = ROOT / "compat" / "x86_64" / "kernel-admin-abi.md"
-README = ROOT / "compat" / "x86_64" / "README.md"
 
 
 def load_static_provider_reader():
@@ -71,8 +70,6 @@ class KernelAdminAbiTests(unittest.TestCase):
         io_source = IO_SOURCE.read_text(encoding="utf-8")
         probe = PROBE.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
-        readme = README.read_text(encoding="utf-8")
 
         self.assertIn('x86-kernel-admin = ["x86-io-permissions"]', manifest)
         owned_start = manifest.index("x86-owned-static-runtime = [")
@@ -146,18 +143,6 @@ class KernelAdminAbiTests(unittest.TestCase):
         for forbidden in ("--cap-add", "seccomp=", "--privileged", "inb", "outb"):
             self.assertNotIn(forbidden, runner)
         self.assertNotIn('"T", "W"', runner)
-
-        for marker in (
-            "private native Linux/x86-64 foundation evidence",
-            "x86-kernel-admin",
-            "src/linux/arch_prctl.c::arch_prctl",
-            "ARCH_GET_FS",
-            "ARCH_GET_GS",
-            "EINVAL`/`EPERM",
-            "does not complete `system.kernel-admin`",
-        ):
-            self.assertIn(marker, document)
-        self.assertIn("[kernel-admin-abi.md](kernel-admin-abi.md)", readme)
 
     def test_supplied_or_invalid_products_never_trigger_builders(self) -> None:
         scratch = ROOT / '.work/x86_64/tmp/kernel-admin-invocation-tests'

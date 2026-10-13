@@ -209,12 +209,11 @@ def read_json(path: Path, description: str) -> Any:
 
 
 def trusted_image_manifest(root: Path) -> dict[str, Any]:
-    """Validate the current image inputs captured from the pinned core image."""
+    """Validate the tool and toolchain roster expected inside the pinned core image."""
     value = read_json(root / 'compat/x86_64/owned_resolver_alias_image_inputs.json', 'resolver image manifest')
     expected_inputs = set(IMAGE_INPUTS.values()) | TOOLCHAIN_INPUTS
-    exact(value, {'schema', 'image', 'files'}, 'resolver current image manifest')
+    exact(value, {'schema', 'files'}, 'resolver current image manifest')
     require(value['schema'] == 'crabc.x86_64-owned-resolver-alias-image-inputs/v1'
-            and value['image'] == IMAGE.removeprefix('crabc-core-evidence@')
             and type(value['files']) is dict and set(value['files']) == expected_inputs,
             'resolver current image manifest differs')
     for invocation, record in value['files'].items():
@@ -981,7 +980,8 @@ def _validate_probe_loopback_source(receipt_root: Path, inputs: Mapping[str, Any
     source = _retained_record(receipt_root, inputs['legacy_probe'], 'resolver normal runtime probe').read_text(encoding='utf-8')
     for text in (
         'loopback.s_addr = htonl(0x7f800000u | (unsigned)process);',
-        '"nameserver %s\\nsearch fixture.test\\noptions ndots:1 timeout:1 attempts:1\\n",',
+        '"nameserver %s\\nnameserver ::1\\nnameserver 127.0.0.1\\n"',
+        '"nameserver 127.0.0.2\\nsearch fixture.test\\noptions ndots:1 timeout:1 attempts:1\\n",',
         'open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_TRUNC, 0600)',
     ):
         require(text in source, 'resolver normal runtime fixture transition source differs')
@@ -997,6 +997,7 @@ def _validate_generated_resolv_conf(path: Path) -> None:
     require(stat.S_IMODE(status.st_mode) == 0o644, 'resolver generated resolv.conf mode differs')
     match = re.fullmatch(
         rb'nameserver 127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\n'
+        rb'nameserver ::1\nnameserver 127\.0\.0\.1\nnameserver 127\.0\.0\.2\n'
         rb'search fixture\.test\noptions ndots:1 timeout:1 attempts:1\n', path.read_bytes())
     require(match is not None, 'resolver generated resolv.conf differs')
     second, third, fourth = (int(value) for value in match.groups())

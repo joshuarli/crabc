@@ -20,7 +20,6 @@ PROBE = ROOT / "compat/x86_64/owned_rand_probe.c"
 HEADER_C = ROOT / "compat/x86_64/owned_rand_header_abi_probe.c"
 HEADER_CXX = ROOT / "compat/x86_64/owned_rand_header_abi_probe.cpp"
 RUNNER = ROOT / "compat/x86_64/run_owned_rand.sh"
-DOCUMENT = ROOT / "compat/x86_64/owned-rand.md"
 SYMBOLS = ("rand", "srand")
 
 
@@ -171,17 +170,6 @@ class OwnedRandContracts(unittest.TestCase):
         ):
             self.assertIn(boundary, source)
         self.assertNotIn("candidate-concurrency oracle", source)
-
-    def test_document_records_dependency_and_scope_limits(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
-        for boundary in (
-            "83ac507f40f71ce90477290ca255dffb91e4256226616e46fa044ad1b136c24d",
-            "caa0f4137e1c0a72f4c651489402276c8e8e1cf081f3b0ba156d2cbeef09e86a",
-            "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69",
-            "no_std", "fat LTO", "racy", "candidate-only", "pre-provider",
-            "BSD `random`", "mimalloc", "AArch64", "no `rand` or\n`srand` definition",
-        ):
-            self.assertIn(boundary, document)
 
 
 if __name__ == "__main__":

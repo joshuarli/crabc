@@ -16,7 +16,6 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_crypt_runtime.sh"
-DOCUMENT = ROOT / "compat" / "x86_64" / "owned-crypt-runtime.md"
 EVIDENCE = ROOT / "compat" / "x86_64" / "owned_crypt_runtime_evidence.py"
 
 
@@ -121,7 +120,6 @@ class OwnedCryptRuntimeTests(unittest.TestCase):
 
     def test_one_installed_fixture_object_and_all_product_boundaries_are_explicit(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
         self.assertIn('readonly PROBE="$ROOT/compat/x86_64/libc_crypt_probe.c"', runner)
         self.assertIn("-DCRABC_X86_CRYPT_CANDIDATE", runner)
         self.assertIn('"$installed/bin/crabc-cc-dynamic" --dynamic-pie', runner)
@@ -144,11 +142,6 @@ class OwnedCryptRuntimeTests(unittest.TestCase):
         self.assertIn('assert_dynamic_provider', runner)
         self.assertIn('"crypt_r": "WEAK"', runner)
         self.assertIn('caller/shared-buffer overlap', runner)
-        self.assertIn("functional/crypt", document)
-        self.assertIn("not an upstream libc-test pass", document)
-        self.assertIn("one installed-header fixture object", document)
-        self.assertIn("every manifest symbolic-link alias", document)
-        self.assertIn("candidate macro disabled", document)
 
     def test_compile_receipt_revalidates_the_installed_header_and_object(self) -> None:
         """The receipt binds inputs after sealing, rather than only recording them."""

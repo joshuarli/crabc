@@ -17,7 +17,6 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_posix_static_fork.sh"
 EVIDENCE = ROOT / "compat/x86_64/owned_static_fork_evidence.py"
-DOCUMENT = ROOT / "compat/x86_64/owned-posix-static-fork.md"
 STATIC_DRIVER = ROOT / "compat/x86_64/crabc_cc_static.py"
 
 spec = importlib.util.spec_from_file_location("owned_static_fork_evidence", EVIDENCE)
@@ -75,7 +74,6 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
 
     def test_runner_keeps_two_immutable_static_only_roles(self):
         runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
         helper = EVIDENCE.read_text(encoding="utf-8")
         for required in (
             "for role in atfork-registry static-posix-forkexec",
@@ -112,15 +110,6 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
             "executed consumer differs from its original candidate",
         ):
             self.assertIn(required, helper)
-        for required in (
-            "required",
-            "never built by this runner",
-            "no positional dynamic-product argument",
-            "does not rerun or subsume the dynamic `fork` case",
-            "ordinary.{stdout,stderr,status}",
-            "copied consumer",
-        ):
-            self.assertIn(required, document)
 
     @staticmethod
     def _digest(path):
@@ -444,7 +433,6 @@ class OwnedPosixStaticForkTests(unittest.TestCase):
                                     role_directory,
                                     product,
                                 )
-
 
 
 if __name__ == "__main__":

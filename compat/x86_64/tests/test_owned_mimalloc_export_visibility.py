@@ -36,18 +36,17 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
             tool.write_bytes(b"pinned inspection tool")
             tool.chmod(0o755)
             expected = {"schema": "crabc.x86_64-owned-mimalloc-export-visibility-image-inputs/v1",
-                        "image": "image-id", "tools": {"readelf": {
+                        "tools": {"readelf": {
                 "path": str(tool), "sha256": hashlib.sha256(tool.read_bytes()).hexdigest(),
                 "size": tool.stat().st_size, "mode": 0o755,
             }}}
             with mock.patch.object(evidence, "NATIVE_IMAGE_INPUTS", Path(scratch) / "inputs.json"), \
-                 mock.patch.object(evidence, "CORE_IMAGE_ID", "image-id"), \
                  mock.patch.object(evidence, "NATIVE_IMAGE_TOOL_NAMES", ("readelf",)):
                 evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(expected), encoding="utf-8")
                 self.assertEqual(evidence.native_image_inputs({"readelf": str(tool)})["tools"], expected["tools"])
-                retired = {**expected, "image": "retired-image-id"}
-                evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(retired), encoding="utf-8")
-                with self.assertRaisesRegex(evidence.EvidenceError, "manifest or image differs"):
+                changed = {**expected, "schema": "unrelated"}
+                evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "manifest differs"):
                     evidence.native_image_inputs({"readelf": str(tool)})
                 evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(expected), encoding="utf-8")
                 tool.write_bytes(b"tampered inspection tool")

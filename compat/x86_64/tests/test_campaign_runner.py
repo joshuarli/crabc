@@ -53,12 +53,14 @@ class CampaignRunnerTests(unittest.TestCase):
         # Every active gate names its own unmet conditions.
         self.assertEqual(
             [row["gate"] for row in payload["chain_conditions"]],
-            list(campaign_report.qualification_manifest.active_chain("correctness")),
+            list(campaign_report.qualification_manifest.active_chain(
+                campaign_report.qualification_manifest.load_contract()["qualification_profile"])),
         )
         for row in payload["chain_conditions"]:
             self.assertIn("prerequisite-families", [condition["id"] for condition in row["unmet"]])
 
     def test_ready_qualification_runs_only_the_pinned_ordered_chain(self) -> None:
+        manifest = campaign_report.qualification_manifest.load_contract()
         report = {
             "families": [
                 {
@@ -71,7 +73,7 @@ class CampaignRunnerTests(unittest.TestCase):
                     "pass": True,
                     "required_families": ["complete"],
                     "machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND,
-                    "manifest": campaign_report.qualification_manifest.load_contract(),
+                    "manifest": manifest,
                 }
             },
         }
@@ -80,15 +82,16 @@ class CampaignRunnerTests(unittest.TestCase):
             self.assertEqual(campaign_runner.execute_gate(report, "qualification"), 0)
         self.assertEqual(
             [call.args[0] for call in run.call_args_list],
-            [["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", "correctness"]],
+            [["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", manifest["qualification_profile"]]],
         )
 
     def test_qualification_machine_gate_is_closed_to_its_pinned_runner(self) -> None:
+        manifest = campaign_report.qualification_manifest.load_contract()
         self.assertEqual(
             campaign_runner.qualification_machine_gate_command(
-                {"machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND, "manifest": campaign_report.qualification_manifest.load_contract()}
+                {"machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND, "manifest": manifest}
             ),
-            ["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", "correctness"],
+            ["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", manifest["qualification_profile"]],
         )
         with self.assertRaisesRegex(
             campaign_runner.CampaignRunnerError, "pinned qualification runner"

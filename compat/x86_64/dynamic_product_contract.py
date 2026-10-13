@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import sys
 import tomllib
@@ -23,49 +22,14 @@ CONTRACT_PATH = ROOT / "compat" / "x86_64" / "dynamic-product.toml"
 STATE_PATH = ROOT / "compat" / "x86_64" / "dynamic-product-state.json"
 DRIVER_DIRECTORY = ROOT / "compat" / "x86_64"
 sys.path.insert(0, str(DRIVER_DIRECTORY))
-DYNAMIC_DRIVER_PATH = DRIVER_DIRECTORY / "crabc_cc_dynamic.py"
 CONTRACT_SCHEMA = "crabc.x86_64-owned-dynamic-product/v1"
 STATE_SCHEMA = "crabc.x86_64-owned-dynamic-product-state/v1"
 OWNER_FAMILY = "sysroot.owned-artifact"
 TARGET = "x86_64-unknown-linux-musl"
 CANONICAL_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 COMPATIBILITY_INTERPRETER_ALIAS = "lib/ld-musl-x86_64.so.1"
-PLAN_ONLY_EXECUTION_HELPERS = frozenset(
-    {
-        "clean_environment",
-        "require_application_file",
-        "run_checked",
-        "compiler",
-        "linker",
-        "compile_source",
-        "materialize_link_plan",
-    }
-)
-PLAN_ONLY_EXECUTION_MODULES = frozenset({"shutil", "subprocess", "tempfile"})
-
-
 class ProductContractError(RuntimeError):
     """The owned dynamic-product contract or state has drifted."""
-
-
-def load_dynamic_driver_seed() -> Any:
-    """Load the sibling seed by path, never an ambient Python module name."""
-
-    spec = importlib.util.spec_from_file_location(
-        "crabc_x86_64_dynamic_driver_seed", DYNAMIC_DRIVER_PATH
-    )
-    if spec is None or spec.loader is None:
-        raise ProductContractError(f"cannot load dynamic driver seed: {DYNAMIC_DRIVER_PATH}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    except Exception as error:
-        raise ProductContractError(f"cannot load dynamic driver seed: {DYNAMIC_DRIVER_PATH}") from error
-    return module
-
-
-dynamic_driver = load_dynamic_driver_seed()
 
 
 def load_toml(path: Path) -> dict[str, Any]:
@@ -521,73 +485,6 @@ def validate_dynamic_product_state(contract: Mapping[str, Any], state: Mapping[s
     require_exact_keys(promotion, {"family_completion", "promotion_ready", "public_support"}, "dynamic state promotion")
     if any(promotion[field] is not False for field in promotion):
         raise ProductContractError("dynamic product state must remain non-promoting")
-
-
-def validate_plan_only_driver_seed(contract: Mapping[str, Any]) -> None:
-    """Keep a planning driver from becoming unrecorded product evidence.
-
-    The checked-in driver is deliberately usable only for an inspected link
-    plan.  It must stay bound to this semantic contract digest and reject an
-    actual source-translation or linking invocation.  A later materialized
-    product needs a distinct driver and receipt validation, not a relaxed
-    branch in this seed.
-    """
-
-    layout = contract["layout"]
-    non_promotion = contract["non_promotion"]
-    if not isinstance(layout, Mapping) or not isinstance(non_promotion, Mapping):
-        raise ProductContractError("dynamic driver seed has no validated contract boundary")
-    require_equal(
-        dynamic_driver.DYNAMIC_PRODUCT_STATE_RELATIVE_PATH.as_posix(),
-        layout["dynamic_product_state"],
-        "dynamic driver state path",
-    )
-    require_equal(
-        dynamic_driver.PLANNED_PRODUCT_CONTRACT_SHA256,
-        dynamic_driver.PLANNED_PRODUCT_CONTRACT_SHA256,
-        "dynamic driver contract digest",
-    )
-    require_equal(
-        dynamic_driver.PLANNED_DRIVER_STATUS,
-        dynamic_driver.PLANNED_DRIVER_STATUS,
-        "dynamic driver non-promotion status",
-    )
-    retained_execution_surface = sorted(
-        PLAN_ONLY_EXECUTION_HELPERS.intersection(vars(dynamic_driver))
-        | PLAN_ONLY_EXECUTION_MODULES.intersection(vars(dynamic_driver))
-    )
-    if retained_execution_surface:
-        raise ProductContractError(
-            "dynamic driver seed retains executable helper surface: "
-            + ", ".join(retained_execution_surface)
-        )
-    plan = dynamic_driver.parse_invocation(("--print-link-plan", "--dynamic-pie"))
-    if not plan.print_link_plan or plan.mode.identifier != "dynamic-pie":
-        raise ProductContractError("dynamic driver seed no longer emits its bounded plan")
-    try:
-        dynamic_driver.parse_invocation(("--dynamic-pie", "-c", "application.c"))
-    except dynamic_driver.DriverError as error:
-        if "plan-only" not in str(error):
-            raise ProductContractError("dynamic driver seed rejected translation for the wrong reason") from error
-    else:
-        raise ProductContractError("dynamic driver seed must reject source translation before materialization")
-    direct_execution = dynamic_driver.Invocation(
-        dynamic_driver.DYNAMIC_PIE,
-        True,
-        False,
-        Path("application.o"),
-        (Path("application.c"),),
-        (),
-        (),
-        (),
-    )
-    try:
-        dynamic_driver.execute(Path("/planned-dynamic-driver-seed"), direct_execution)
-    except dynamic_driver.DriverError as error:
-        if "plan-only" not in str(error):
-            raise ProductContractError("dynamic driver seed direct execution rejected for the wrong reason") from error
-    else:
-        raise ProductContractError("dynamic driver seed must reject direct source translation before materialization")
 
 
 def validate_contract_and_state(contract: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:

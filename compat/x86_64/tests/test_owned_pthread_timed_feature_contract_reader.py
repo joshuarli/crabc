@@ -58,14 +58,11 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             with self.assertRaises(reader.ReceiptError):
                 reader._static_provider_owners(symbols, archive.with_name("other.a"), admitted)
 
-    def test_current_image_manifest_uses_selected_toolchain_and_keeps_old_manifest(self) -> None:
+    def test_current_image_manifest_uses_selected_toolchain(self) -> None:
         reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
         toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
         current = reader.trusted_image_manifest()
-        legacy = json.loads((ROOT / "compat/x86_64/owned_pthread_timed_feature_image_inputs.json").read_text())
 
-        self.assertEqual(reader.PINNED_IMAGE, current["image"])
-        self.assertEqual(legacy["image"], "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d")
         self.assertIn(f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc", current["files"])
         self.assertNotIn("nightly-2026-07-24", "\n".join(current["files"]))
         self.assertEqual(reader.IMAGE_FIXED_PATHS[-2:], (
@@ -223,7 +220,6 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             payload = b"trusted-lld-bytes"
             manifest = {
                 "schema": "crabc.x86_64-owned-pthread-timed-feature-image-inputs/v1",
-                "image": reader.PINNED_IMAGE,
                 "path": reader.IMAGE_PATH,
                 "files": {
                     invocation: {

@@ -96,10 +96,6 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
 
     def test_current_image_manifest_binds_the_selected_toolchain_and_exact_files(self) -> None:
         manifest = self.receipt.trusted_image_manifest(ROOT)
-        self.assertEqual(
-            manifest["image"],
-            self.receipt.PINNED_IMAGE.removeprefix("crabc-core-evidence@"),
-        )
         files = manifest["files"]
         self.assertEqual(
             files[str(self.receipt.TOOLCHAIN_ROOT / "bin/rustc")]["sha256"],
@@ -127,13 +123,6 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
              mock.patch.object(producer, "fixture_module", side_effect=AssertionError("fixture accessed")):
             with self.assertRaisesRegex(RuntimeError, "not bound to the pinned core evidence image"):
                 producer.run(ROOT / ".work/absent-work", None, ROOT / ".work/absent-product")
-
-    def test_historical_image_manifest_is_rejected(self) -> None:
-        manifest = json.loads((ROOT / self.receipt.IMAGE_MANIFEST).read_text())
-        manifest["image"] = "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
-        with mock.patch.object(self.receipt, "read_json", return_value=manifest):
-            with self.assertRaisesRegex(self.receipt.ReceiptError, "current image manifest differs"):
-                self.receipt.trusted_image_manifest(ROOT)
 
     def test_symbol_claims_replay_the_elf_not_retained_symbol_text(self) -> None:
         output = b"""Symbol table '.dynsym' contains 2 entries:\n   Num:    Value          Size Type    Bind   Vis      Ndx Name\n     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND gethostbyname\n     2: 0000000000001000    10 FUNC    GLOBAL DEFAULT   12 gethostbyname\n"""

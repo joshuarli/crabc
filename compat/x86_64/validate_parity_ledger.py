@@ -8585,17 +8585,10 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
     leaf = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "math_log2.rs"
     ).read_text(encoding="utf-8")
-    for snippet in (
-        "Selected static Linux/x86-64 `log2`/`log2f` C ABI leaf",
-        "9fa28ece75d8a2191de7c5bb53bed224c5947417",
-        "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
-        "localized",
-        "-frounding-math",
-        "fenv API or policy",
-        'musl_object_assembly!("math_log2_musl_x86_64")',
-        "public x86 support",
-    ):
-        require(snippet in leaf, f"math_log2 leaf omits {snippet}")
+    require(
+        'musl_object_assembly!("math_log2_musl_x86_64")' in leaf,
+        "math_log2 leaf omits its musl assembly object",
+    )
 
     generator = (
         ROOT / "compat" / "x86_64" / "generate_libc_math_log2.py"

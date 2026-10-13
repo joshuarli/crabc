@@ -76,7 +76,6 @@ SOURCE_FILES = (
     "compat/x86_64/owned_dynamic_qualification.py",
     "compat/x86_64/crabc_cc_owned_dynamic.py",
     "compat/x86_64/crabc_cc_static.py",
-    "compat/x86_64/crabc_cc_dynamic.py",
     "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/owned_dynamic_elf.py",
     "compat/x86_64/dynamic_product_contract.py",

@@ -23,13 +23,17 @@ class PthreadTimedDynamicAuthorityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         value = os.environ.get("CRABC_PTHREAD_DYNAMIC_AUTHORITY_FIXTURE")
-        if not value:
-            raise unittest.SkipTest("requires retained pthread dynamic authority fixture")
-        cls.fixture = Path(value).resolve(strict=True)
+        cls.fixture = Path(value).resolve(strict=True) if value else None
+        if cls.fixture is None:
+            return
         cls.scratch = ROOT / ".work/x86_64/pthread-dynamic-authority-tests"
         cls.scratch.mkdir(parents=True, exist_ok=True)
 
     def setUp(self):
+        # Skip per test, not in setUpClass, so an unsupplied fixture is a
+        # visible skip rather than a module that ran nothing.
+        if self.fixture is None:
+            self.skipTest("set CRABC_PTHREAD_DYNAMIC_AUTHORITY_FIXTURE to a retained fixture directory")
         self.temporary = tempfile.TemporaryDirectory(dir=self.scratch)
         self.addCleanup(self.temporary.cleanup)
         self.work = Path(self.temporary.name)

@@ -9,7 +9,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_dynamic_spawn.sh"
-DOCUMENT = ROOT / "compat/x86_64/dynamic-product-qualification.md"
 
 
 class OwnedDynamicSpawnTests(unittest.TestCase):
@@ -102,7 +101,6 @@ class OwnedDynamicSpawnTests(unittest.TestCase):
 
     def test_compile_receipt_binds_the_installed_driver_headers_and_immutable_object(self):
         runner = RUNNER.read_text()
-        document = DOCUMENT.read_text()
 
         for required in (
             "compile.json", "workload.d", "actual_command", "dependency_audit_command",
@@ -130,11 +128,6 @@ class OwnedDynamicSpawnTests(unittest.TestCase):
             runner.index('"$oracle_cc" -static'),
         )
         self.assertGreaterEqual(runner.count("assert_compile_receipt"), 7)
-        for required in (
-            "`compile.json`", "installed shared compiler helper", "exact `/consumer` compile command",
-            "records every installed header", "before and after every oracle, static, and",
-        ):
-            self.assertIn(required, document)
 
 
 if __name__ == "__main__":

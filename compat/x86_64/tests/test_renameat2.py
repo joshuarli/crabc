@@ -70,9 +70,6 @@ class Renameat2Tests(unittest.TestCase):
             '#[path = "renameat2.rs"]\nmod renameat2;', static_root
         )
         for required in (
-            "Pinned musl 1.2.6",
-            "src/linux/renameat2.c",
-            "if (!flags) return syscall(SYS_renameat, oldfd, old, newfd, new);",
             "fn renameat2",
             "raw_syscall::SYS_RENAMEAT",
             "raw_syscall::SYS_RENAMEAT2",

@@ -2,7 +2,8 @@
 """Execute the ordered x86 qualification chain as a source-bound receipt.
 
 Ready declarations pin case manifests and runner bytes. The no-argument form
-executes the correctness profile; ``--profile full`` includes performance.
+executes the profile the manifest declares; ``--profile correctness`` excludes
+the deferred performance gate and ``--profile full`` includes it.
 ``--through GATE`` executes the contiguous prefix
 ending at that gate. Every selected predecessor runs again in the same
 invocation, execution stops at the first failing case, and a receipt binding

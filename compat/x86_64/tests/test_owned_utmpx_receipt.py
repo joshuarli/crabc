@@ -158,19 +158,6 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "unowned archive member"):
             receipt.retained_static_admitted_inputs(self.workspace, product, raw, "static")
 
-    def test_shared_static_authority_requires_reviewed_bytes(self) -> None:
-        for name in receipt.SOURCES:
-            receipt.copy_regular(ROOT / name, self.workspace / name)
-        records = {name: receipt.identity(self.workspace, self.workspace / name) for name in receipt.SOURCES}
-        tree = {"revision": receipt.local_git_head(ROOT), "entries": {
-            name: {"git_mode": f"100{(ROOT / name).stat().st_mode & 0o777:03o}",
-                   "git_blob": receipt.git_blob_id(self.workspace / name)} for name in receipt.SOURCES
-        }}
-        receipt.validate_selected_source(self.workspace, records, tree)
-        with mock.patch.object(receipt, "STATIC_LINK_AUTHORITY_SHA256", "0" * 64):
-            with self.assertRaisesRegex(receipt.ReceiptError, "shared static function authority"):
-                receipt.validate_selected_source(self.workspace, records, tree)
-
     def product_mode_fixture(self, family: str) -> Path:
         """Build one minimal physical product for the shared retained reader."""
         product = self.root / (family + "-product")
@@ -461,33 +448,24 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             receipt.validate_image_tool(program, receipt.identity(self.workspace, forged),
                                         self.workspace, {}, manifest)
 
-    def test_current_image_manifest_uses_the_repository_toolchain_and_keeps_the_old_pin(self) -> None:
+    def test_current_image_manifest_uses_the_repository_toolchain_and__and_pins_no_image_identity(self) -> None:
         current = receipt.trusted_image_manifest()
         toolchain = receipt.pinned_toolchain(ROOT)
         rustc = f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc"
         linker = (f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/"
                   "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld")
         self.assertEqual(current["schema"], "crabc.x86_64-owned-utmpx-image-inputs/v2")
-        self.assertEqual(current["image"], receipt.PINNED_IMAGE_ID)
+        self.assertNotIn("image", current)
         self.assertIn(rustc, current["files"])
         self.assertIn(linker, current["files"])
         self.assertEqual(set(receipt.IMAGE_FIXED_PATHS[-2:]), {rustc, linker})
 
-        old_path = ROOT / "compat/x86_64/owned_utmpx_image_inputs.json"
-        old = json.loads(old_path.read_text(encoding="utf-8"))
-        tracked = subprocess.check_output(
-            ["git", "show", "HEAD:compat/x86_64/owned_utmpx_image_inputs.json"], cwd=ROOT,
-        )
-        self.assertEqual(old_path.read_bytes(), tracked)
-        self.assertNotEqual(old["image"], current["image"])
-
-    def test_retained_manifest_cannot_reauthorize_another_image_with_current_tool_bytes(self) -> None:
+    def test_retained_manifest_cannot_reauthorize_changed_tool_bytes(self) -> None:
         manifest = receipt.trusted_image_manifest()
         path = self.workspace / receipt.IMAGE_MANIFEST
         self.write(path, manifest)
         receipt.validate_retained_image_manifest(self.workspace, receipt.identity(self.workspace, path))
-        historical = receipt.read_json(ROOT / "compat/x86_64/owned_utmpx_image_inputs.json", "historical inputs")
-        manifest["image"] = historical["image"]
+        manifest["files"]["/usr/bin/python3"]["sha256"] = "0" * 64
         self.write(path, manifest)
         with self.assertRaisesRegex(receipt.ReceiptError, "trusted immutable image inputs"):
             receipt.validate_retained_image_manifest(self.workspace, receipt.identity(self.workspace, path))

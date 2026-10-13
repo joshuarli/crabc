@@ -177,11 +177,9 @@ class SuppliedProductModeTests(unittest.TestCase):
             evidence.main()
         collector.assert_called_once_with(self.root / 'output', self.static, self.dynamic)
 
-    def test_documented_pinned_wrapper_contract_names_both_supplied_roots(self):
+    def test_pinned_wrapper_forwards_its_arguments(self):
         wrapper = (ROOT / 'compat/x86_64/run_loader_debug_abi.sh').read_text(encoding='utf-8')
-        document = (ROOT / 'compat/x86_64/loader-debug-crt-abi.md').read_text(encoding='utf-8')
         self.assertIn('"$@"', wrapper)
-        self.assertIn('--static-product STATIC_PRODUCT --dynamic-product DYNAMIC_PRODUCT', document)
 
 
 if __name__ == '__main__':

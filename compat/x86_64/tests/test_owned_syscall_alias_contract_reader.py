@@ -63,19 +63,14 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
             self.assertNotIn(section, stream.read_text())
             authority.require_symbol_stream(stream, work / "long.o", "/candidate", {".symtab"})
 
-    def test_current_image_manifest_uses_the_selected_toolchain_and_preserves_legacy_manifest(self) -> None:
+    def test_current_image_manifest_uses_the_selected_toolchain(self) -> None:
         toolchain = tomllib.loads((syscall_reader.ROOT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
         current = json.loads(syscall_reader.IMAGE_MANIFEST.read_text())
-        legacy_path = syscall_reader.MODULE_DIR / "owned-syscall-alias-image-inputs.json"
-        legacy = json.loads(legacy_path.read_text())
 
         self.assertEqual(authority.IMAGE_ID, syscall_reader.IMAGE.removeprefix("crabc-core-evidence@"))
-        self.assertEqual(current["image"], authority.IMAGE_ID)
-        self.assertEqual(legacy["image"], "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d")
         self.assertIn(f"/opt/rustup/toolchains/{toolchain}-x86_64-unknown-linux-musl/bin/rustc", current["files"])
         self.assertNotIn("nightly-2026-07-24", "\n".join(current["files"]))
         self.assertIn("compat/x86_64/owned-syscall-alias-image-inputs-current.json", syscall_reader.COLLECTOR_SOURCES)
-        self.assertNotIn("compat/x86_64/owned-syscall-alias-image-inputs.json", syscall_reader.COLLECTOR_SOURCES)
         self.assertIn("rust-toolchain.toml", syscall_reader.COLLECTOR_SOURCES)
 
     def test_historical_image_report_cannot_be_admitted_as_current(self) -> None:
@@ -85,7 +80,7 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
             path = Path(temporary) / "report.json"
             report = {"schema": syscall_reader.SCHEMA, "status": syscall_reader.STATUS,
                       "musl_source_commit": syscall_reader.MUSL_SOURCE_COMMIT,
-                      "image": "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"}
+                      "image": "crabc-core-evidence@sha256:0000000000000000000000000000000000000000000000000000000000000000"}
             path.write_text(json.dumps(report))
             with mock.patch.object(subprocess, "run", side_effect=AssertionError("replay executed a tool")), \
                  mock.patch.object(subprocess, "check_output", side_effect=AssertionError("replay executed a tool")):

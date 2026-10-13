@@ -245,7 +245,8 @@ class OwnedResolverDispatchTests(unittest.TestCase):
             def role(invocation):
                 for program in (
                     "owned_resolver_family.py", "run_x86_64.py", "owned_classic_netdb.py",
-                    "owned_resolver_cancellation.py", "owned_protocol_database.py", "run_loader_debug_abi.sh",
+                    "owned_resolver_cancellation.py", "owned_resolver_cancellation_network.py",
+                    "owned_protocol_database.py", "run_loader_debug_abi.sh",
                     "native_abi_inventory.py", "native_abi_elf_facts.py", "run_owned_resolver_alias_contract.sh",
                 ):
                     for value in invocation:
@@ -257,7 +258,7 @@ class OwnedResolverDispatchTests(unittest.TestCase):
 
             self.assertEqual([role(run) for run in runs], [
                 "plan", "run_x86_64.py", "owned_classic_netdb.py", "owned_resolver_cancellation.py",
-                "owned_protocol_database.py", "run_loader_debug_abi.sh", "native_abi_inventory.py",
+                "owned_resolver_cancellation_network.py", "owned_protocol_database.py", "run_loader_debug_abi.sh", "native_abi_inventory.py",
                 "native_abi_elf_facts.py", "run_owned_resolver_alias_contract.sh", "write-assessment", "validate",
             ])
             primary_static = "/workspace/.work/x86_64/cohort/primary-static"
@@ -270,28 +271,28 @@ class OwnedResolverDispatchTests(unittest.TestCase):
             self.assertEqual(network[network.index("--work-root") + 1], family_root + "/network")
             self.assertEqual(network[network.index("--report") + 1],
                              "/workspace/compat/reports/resolver-network/x86_64/family-family.json")
-            protocol = runs[4]
+            protocol = runs[5]
             self.assertEqual(protocol[protocol.index("--reproduction-static-sysroot") + 1],
                              "/workspace/.work/x86_64/cohort/reproduction-static")
-            for run in runs[1:6] + [runs[8]]:
+            for run in runs[1:7] + [runs[9]]:
                 self.assertEqual(run[run.index("--network") + 1], "none")
                 self.assertIn("--cap-add=SYS_CHROOT", run)
                 self.assertNotIn("--cap-add=SYS_ADMIN", run)
                 self.assertNotIn("--privileged", run)
                 self.assertIn("ulimit -c 0 && exec \"$@\"", run)
-            self.assertIn("CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@sha256:" + "a" * 64, runs[5])
-            self.assertIn("CRABC_RESOLVER_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:" + "a" * 64, runs[8])
-            for run in runs[6:8]:
+            self.assertIn("CRABC_LOADER_DEBUG_IMAGE_ID=crabc-core-evidence@sha256:" + "a" * 64, runs[6])
+            self.assertIn("CRABC_RESOLVER_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:" + "a" * 64, runs[9])
+            for run in runs[7:9]:
                 self.assertIn("/inputs/static-product", run)
                 self.assertIn(f"{cohort / 'primary-static'}:/inputs/static-product:ro", run)
-            alias = runs[8]
+            alias = runs[9]
             self.assertEqual(alias[alias.index("--dynamic-product") + 1], primary_dynamic)
             self.assertEqual(alias[alias.index("--product-report") + 1], family_root + "/loader-debug/report.json")
             self.assertEqual(alias[alias.index("--elf-facts") + 1], family_root + "/native-abi-elf-facts/report.json")
             self.assertEqual(alias[alias.index("--receipt-dir") + 1], family_root + "/alias")
-            self.assertEqual(runs[9][-4:], ["--request", ".work/x86_64/family/request.json",
+            self.assertEqual(runs[10][-4:], ["--request", ".work/x86_64/family/request.json",
                                             "--output", ".work/x86_64/family/assessment.json"])
-            self.assertEqual(runs[10][-2:], ["--assessment", ".work/x86_64/family/assessment.json"])
+            self.assertEqual(runs[11][-2:], ["--assessment", ".work/x86_64/family/assessment.json"])
 
 
 if __name__ == "__main__":

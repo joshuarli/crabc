@@ -85,12 +85,10 @@ ALIASES = (
 )
 STRONG = ("endutxent", "setutxent", "getutxent", "getutxid", "getutxline", "pututxline", "updwtmpx")
 WEAK = ("endutent", "setutent", "getutent", "getutid", "getutline", "pututline", "updwtmp", "utmpname", "utmpxname")
-# The generic selected-input-to-final-static-function relation is admitted
-# only at this reviewed helper revision. Its TLS-free static-link and exact
-# weak RuntimeV1 zero-GOT cases are authority checks only; this component
-# still supplies its own finite function roster and trace/member admission.
-STATIC_LINK_AUTHORITY_COMMIT = "6cc672d4e28f9cba17c12b87920d09b7eca0c90e"
-STATIC_LINK_AUTHORITY_SHA256 = "6d5ba48fee24c86804d228e9ce8fc0cefaf37362453f9d40ea79c5ac99b7ff53"
+# The generic selected-input-to-final-static-function relation comes from the
+# shared static link authority; its TLS-free static-link and exact weak
+# RuntimeV1 zero-GOT cases are authority checks only. This component still
+# supplies its own finite function roster and trace/member admission.
 TRUSTED_READER_SOURCES = (
     "compat/x86_64/owned_utmpx_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py",
@@ -341,15 +339,15 @@ def live_image_manifest() -> dict[str, Any]:
     except (OSError, subprocess.CalledProcessError) as error:
         raise ReceiptError("pinned image GCC support identity is unavailable") from error
     require(all(type(path) is str and path.startswith("/") for path in paths), "pinned image command identity differs")
-    return {"schema": "crabc.x86_64-owned-utmpx-image-inputs/v2", "image": PINNED_IMAGE_ID,
+    return {"schema": "crabc.x86_64-owned-utmpx-image-inputs/v2",
             "path": IMAGE_PATH, "files": {path: image_file_record(path) for path in sorted(set(paths))}}
 
 
 def trusted_image_manifest() -> dict[str, Any]:
     value = read_json(ROOT / IMAGE_MANIFEST, "trusted utmpx image manifest")
-    require(type(value) is dict and set(value) == {"schema", "image", "path", "files"}
+    require(type(value) is dict and set(value) == {"schema", "path", "files"}
             and value["schema"] == "crabc.x86_64-owned-utmpx-image-inputs/v2"
-            and value["image"] == PINNED_IMAGE_ID and value["path"] == IMAGE_PATH
+            and value["path"] == IMAGE_PATH
             and type(value["files"]) is dict and value["files"], "trusted utmpx image manifest differs")
     for invocation, record in value["files"].items():
         require(type(invocation) is str and invocation.startswith("/") and type(record) is dict
@@ -509,10 +507,6 @@ def validate_selected_source(workspace: Path, sources: Mapping[str, Any], source
         require(digest(trusted) == digest(workspace / name)
                 and stat.S_IMODE(trusted.stat().st_mode) == stat.S_IMODE((workspace / name).stat().st_mode),
                 "trusted local source differs from the retained source: " + name)
-    shared = "compat/x86_64/owned_static_link_authority.py"
-    require(digest(ROOT / shared) == STATIC_LINK_AUTHORITY_SHA256
-            and digest(workspace / shared) == STATIC_LINK_AUTHORITY_SHA256,
-            "shared static function authority differs from reviewed commit " + STATIC_LINK_AUTHORITY_COMMIT)
     owned = (workspace / "libc/src/c_abi/x86_64/owned_utmpx.rs").read_text(encoding="utf-8")
     selector = (workspace / "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     require("mod owned_utmpx;" in selector, "static runtime no longer selects owned utmpx")

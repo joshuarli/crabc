@@ -11,7 +11,6 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
-DOCUMENT = ROOT / "compat" / "x86_64" / "owned-process-trio.md"
 PRODUCT_EVIDENCE = ROOT / "compat" / "x86_64" / "owned_posix_product_evidence.py"
 PROBE = ROOT / "compat" / "x86_64" / "owned_process_trio_probe.c"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_process_trio.sh"
@@ -76,7 +75,6 @@ class OwnedProcessTrioTests(unittest.TestCase):
             )
 
     def test_one_installed_object_runs_the_full_sealed_product_matrix(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
         probe = PROBE.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
 
@@ -118,17 +116,6 @@ class OwnedProcessTrioTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
-        for required in (
-            "`--static-sysroot`",
-            "one installed-driver workload object",
-            "static/static-PIE",
-            "dynamic PIE/non-PIE",
-            "status/stdout/stderr",
-            "dynamic-only replay",
-            "neither producer",
-            "`owned_posix_product_evidence.validate_link`",
-        ):
-            self.assertIn(required, document)
         self.assertIn("def validate_link(", PRODUCT_EVIDENCE.read_text(encoding="utf-8"))
 
     def test_each_link_is_audited_before_its_raw_process_result_is_compared(self) -> None:
@@ -150,7 +137,6 @@ class OwnedProcessTrioTests(unittest.TestCase):
             self.assertIn(comparison, runner)
 
     def test_installed_driver_compile_provenance_rejects_foreign_headers(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
 
         for required in (
@@ -181,7 +167,6 @@ class OwnedProcessTrioTests(unittest.TestCase):
             runner.index("dependency_command = [compiler_contract.compiler()"),
             runner.index('"$oracle_cc" -static'),
         )
-        self.assertIn("installed-header dependency audit", document)
 
     def test_retained_link_identities_match_the_selected_product_matrix(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")

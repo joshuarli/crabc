@@ -14,7 +14,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_syslog.sh"
-DOCUMENT = ROOT / "compat" / "x86_64" / "owned-syslog.md"
 EVIDENCE_MODULE = ROOT / "compat" / "x86_64" / "owned_syslog_evidence.py"
 
 
@@ -63,7 +62,6 @@ class OwnedSyslogTests(unittest.TestCase):
 
     def test_one_installed_driver_object_binds_every_link_receipt(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
         evidence = EVIDENCE_MODULE.read_text(encoding="utf-8")
         link_product = runner.split("link_product() {", 1)[1].split("\n}\n", 1)[0]
 
@@ -82,7 +80,6 @@ class OwnedSyslogTests(unittest.TestCase):
         self.assertIn("workload-object-binding.json", runner)
         self.assertIn("oracle-kernel-$scenario.status", runner)
         self.assertIn("provided static/static-PIE plus provided dynamic", runner)
-        self.assertIn("single installed-header workload object", document)
 
     def test_relocation_audit_captures_before_matching_to_survive_sigpipe(self) -> None:
         """A matching grep can close a pipe before a large readelf stream ends."""

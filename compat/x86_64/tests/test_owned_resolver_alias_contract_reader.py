@@ -318,13 +318,6 @@ class ResolverAliasRunnerSourceTests(unittest.TestCase):
         self.assertNotIn('int main(', override)
         self.assertIn('int main(void)', caller)
 
-    def test_component_document_keeps_legacy_standalone_and_selected_product_boundaries_distinct(self) -> None:
-        document = (ROOT / 'compat/x86_64/owned-resolver-alias-contract.md').read_text(encoding='utf-8')
-        for phrase in ('custom `_start`', 'no-allocator/no-dynamic-TLS', 'product authority',
-                       '`lookup_dns_records`', 'legacy-source observation'):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, document)
-
 class ResolverAliasRunnerRuntimeModeTests(unittest.TestCase):
     def test_runtime_setup_clears_inherited_setgid_bits_from_every_execution_directory(self) -> None:
         runner = (ROOT / 'compat/x86_64/run_owned_resolver_alias_contract.sh').read_text(encoding='utf-8')
@@ -551,6 +544,7 @@ class ResolverAliasRuntimeRootTransitionTests(unittest.TestCase):
 
     def _generated_resolv(self, identity: int = 42) -> bytes:
         return (f'nameserver 127.{128 + (identity >> 16)}.{(identity >> 8) & 0xff}.{identity & 0xff}\n'
+                'nameserver ::1\nnameserver 127.0.0.1\nnameserver 127.0.0.2\n'
                 'search fixture.test\noptions ndots:1 timeout:1 attempts:1\n').encode('ascii')
 
     def _probe_truncate_resolv(self, path: Path, contents: bytes) -> None:
@@ -734,21 +728,12 @@ class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
                 _capture_input_identities(root / 'unknown-receipt', paths, manifest,
                                           image_inputs={'timeout': '/usr/bin/unknown'})
 
-    def test_historical_image_manifest_is_rejected(self) -> None:
-        manifest = json.loads(resolver_reader.IMAGE_MANIFEST.read_text())
-        manifest['image'] = 'sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d'
-        with mock.patch.object(resolver_reader, 'read_json', return_value=manifest):
-            with self.assertRaisesRegex(ReceiptError, 'current image manifest differs'):
-                resolver_reader.trusted_image_manifest(ROOT)
-
     def test_image_manifest_covers_each_declared_image_input(self) -> None:
         manifest = resolver_reader.trusted_image_manifest(ROOT)
         self.assertTrue(set(IMAGE_INPUTS.values()).issubset(manifest['files']))
         self.assertEqual(manifest['files']['/usr/bin/timeout']['path'], '/bin/coreutils')
         self.assertEqual(manifest['files']['/usr/sbin/chroot']['path'], '/bin/coreutils')
-        self.assertEqual(manifest['image'], resolver_reader.IMAGE.removeprefix('crabc-core-evidence@'))
         self.assertTrue(resolver_reader.TOOLCHAIN_INPUTS.issubset(manifest['files']))
-        self.assertTrue((ROOT / 'compat/x86_64/owned-resolver-alias-image-inputs.json').is_file())
 
 
 class ResolverAliasCollectionLifecycleTests(unittest.TestCase):
@@ -768,7 +753,6 @@ class ResolverAliasCollectionLifecycleTests(unittest.TestCase):
                  mock.patch.dict(resolver_reader.IMAGE_INPUTS, {}, clear=True), \
                  mock.patch.object(resolver_reader, 'trusted_image_manifest', return_value={
                      'schema': 'crabc.x86_64-owned-resolver-alias-image-inputs/v1',
-                     'image': resolver_reader.IMAGE.removeprefix('crabc-core-evidence@'),
                      'files': {},
                  }), \
                  mock.patch.dict(os.environ, {resolver_reader.IMAGE_MARKER: resolver_reader.IMAGE}):

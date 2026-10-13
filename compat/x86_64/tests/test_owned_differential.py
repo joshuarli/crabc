@@ -15,7 +15,6 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_differential.sh"
 HELPER = ROOT / "compat/x86_64/owned_differential_evidence.py"
-DOCUMENT = ROOT / "compat/x86_64/owned-differential.md"
 DIFFERENTIAL_RUNNER = ROOT / "compat/differential/run.py"
 
 
@@ -248,7 +247,6 @@ class OwnedDifferentialTests(unittest.TestCase):
 
     def test_runner_is_a_consumer_only_non_promoting_component(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
-        document = " ".join(DOCUMENT.read_text(encoding="utf-8").split())
         for required in (
             "provided_dynamic", "--static-sysroot", "record-compile", "record-oracle-link",
             "validate-link", "record-product-copy", "attest-file-root", "attest-dynamic-root",
@@ -258,12 +256,6 @@ class OwnedDifferentialTests(unittest.TestCase):
             self.assertIn(required, runner)
         self.assertNotIn("build_x86_64_owned_dynamic_sysroot.py", runner)
         self.assertNotIn("build_x86_64_owned_sysroot.py", runner)
-        for required in (
-            "one unchanged object", "pinned musl", "static/static-PIE", "dynamic PIE/non-PIE",
-            "kernel and direct interpreter", "full raw status, stdout, stderr, and errno", "does not build",
-            "does not qualify", "does not claim",
-        ):
-            self.assertIn(required, document)
 
 
 if __name__ == "__main__":

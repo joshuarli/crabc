@@ -48,6 +48,8 @@ class AArch64ParityInventoryTests(unittest.TestCase):
     def completed(self):
         data = inventory.load_toml(inventory.X86_LEDGER_PATH)
         data["policy"]["public_support"] = True
+        # Correctness completion is the scope that may leave performance open.
+        data["completion"] = {"qualification_profile": "correctness", "deferred_families": ["performance.release"]}
         for family in data["family"]:
             if family["id"] != "performance.release":
                 family["status"] = "foundation-verified"

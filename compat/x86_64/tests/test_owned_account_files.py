@@ -11,7 +11,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_account_files.sh"
-DOCUMENT = ROOT / "compat/x86_64/owned-account-files.md"
 HEADER_C = ROOT / "compat/x86_64/owned_account_files_header_abi_probe.c"
 HEADER_CXX = ROOT / "compat/x86_64/owned_account_files_header_abi_probe.cpp"
 SYMBOLS = (
@@ -115,10 +114,7 @@ class OwnedAccountFilesTests(unittest.TestCase):
             symbols.unlink(missing_ok=True)
 
     def test_source_and_installed_header_witnesses_keep_workload_receipt_distinct(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
-        self.assertIn("source-and-installed-header witness objects", document)
-        self.assertIn("installed-header dependency receipt", document)
         self.assertIn('compile_header_witnesses source "$ROOT/include"', runner)
         self.assertIn('compile_header_witnesses installed "$installed/usr/include"', runner)
         self.assertIn("Source-and-installed-header C ABI witness", HEADER_C.read_text(encoding="utf-8"))

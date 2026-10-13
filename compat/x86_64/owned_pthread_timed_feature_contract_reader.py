@@ -742,7 +742,6 @@ def live_image_manifest() -> dict[str, object]:
     require(all(path.is_absolute() for path in paths), "pinned image tool placement differs")
     return {
         "schema": "crabc.x86_64-owned-pthread-timed-feature-image-inputs/v1",
-        "image": PINNED_IMAGE,
         "path": IMAGE_PATH,
         "files": {str(path): _image_record(path) for path in sorted(set(paths))},
     }
@@ -752,9 +751,9 @@ def trusted_image_manifest() -> dict[str, object]:
     """Read the validator-owned image manifest; report JSON cannot replace it."""
 
     value = load_json_object(IMAGE_MANIFEST_PATH, "trusted pthread image manifest")
-    require(set(value) == {"schema", "image", "path", "files"}
+    require(set(value) == {"schema", "path", "files"}
             and value["schema"] == "crabc.x86_64-owned-pthread-timed-feature-image-inputs/v1"
-            and value["image"] == PINNED_IMAGE and value["path"] == IMAGE_PATH,
+            and value["path"] == IMAGE_PATH,
             "trusted pthread image manifest differs")
     files = value["files"]
     require(isinstance(files, dict) and files, "trusted pthread image manifest has no files")

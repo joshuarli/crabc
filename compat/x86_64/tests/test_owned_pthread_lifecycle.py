@@ -18,14 +18,20 @@ class InstalledSmallStackAttachmentTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         supplied = os.environ.get("CRABC_X86_64_PTHREAD_LIFECYCLE_TEST_SYSROOT")
-        if not supplied:
-            raise unittest.SkipTest("requires an installed owned sysroot in the pinned image")
-        cls.sysroot = Path(supplied)
+        cls.sysroot = Path(supplied) if supplied else None
+        if cls.sysroot is None:
+            return
         if not cls.sysroot.is_absolute() or not (cls.sysroot / "bin/crabc-cc").is_file():
             raise AssertionError("requires an absolute installed owned driver")
         scratch = ROOT / ".work/x86_64/pthread-small-stack-tests"
         scratch.mkdir(parents=True, exist_ok=True)
         cls.work = Path(tempfile.mkdtemp(prefix="attach-", dir=scratch))
+
+    def setUp(self):
+        # Skip per test, not in setUpClass, so an unsupplied sysroot is a
+        # visible skip rather than a module that ran nothing.
+        if self.sysroot is None:
+            self.skipTest("set CRABC_X86_64_PTHREAD_LIFECYCLE_TEST_SYSROOT to an installed owned sysroot")
 
     def test_retained_lifecycle_captures_the_installed_drivers_linker_without_caller_path(self):
         result = subprocess.run(

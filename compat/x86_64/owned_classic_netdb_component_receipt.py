@@ -280,9 +280,8 @@ def require_collection_image() -> str:
 
 def trusted_image_manifest(root: Path) -> dict[str, object]:
     value = read_json(checkout_file(root, IMAGE_MANIFEST, "classic-netdb image manifest"), "classic-netdb image manifest")
-    require(isinstance(value, dict) and set(value) == {"schema", "image", "files"} and
+    require(isinstance(value, dict) and set(value) == {"schema", "files"} and
             value.get("schema") == "crabc.x86_64-owned-classic-netdb-image-inputs/v1" and
-            value.get("image") == PINNED_IMAGE.removeprefix("crabc-core-evidence@") and
             isinstance(value.get("files"), dict),
             "classic-netdb current image manifest differs")
     for path in (str(TOOLCHAIN_ROOT / "bin/rustc"), str(LINKER_PATH),

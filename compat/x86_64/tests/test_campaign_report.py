@@ -18,6 +18,21 @@ import owned_dynamic_qualification as qualification
 import validate_parity_ledger as ledger
 
 
+def correctness_inputs() -> list:
+    """Validated campaign inputs restated in the correctness scope.
+
+    The checked-in default is the full scope; these tests state their scope
+    explicitly instead of depending on that default.
+    """
+    with mock.patch.object(qualification, "load_publication", return_value=None):
+        inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
+    inputs[1]["completion"] = {"qualification_profile": "correctness", "deferred_families": ["performance.release"]}
+    document = report.qualification_manifest.load_json(report.qualification_manifest.CONTRACT_PATH, "fixture")
+    document["qualification_profile"] = "correctness"
+    inputs[6] = report.qualification_manifest.validate_contract(document)
+    return inputs
+
+
 class CampaignReportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -26,9 +41,12 @@ class CampaignReportTests(unittest.TestCase):
         # inspect the one generated value in the remaining shape tests.
         with mock.patch.object(qualification, "load_publication", return_value=None):
             cls.value = report.build_report()
+        with mock.patch.object(report, "load_validated_campaign_inputs", return_value=correctness_inputs()):
+            cls.correctness_value = report.build_report()
 
     def test_report_is_derived_from_current_validated_contract(self) -> None:
         value = self.value
+        profile = value["campaign"]["qualification_profile"]
 
         self.assertEqual(value["schema"], report.SCHEMA)
         self.assertIn("frozen_baseline", value)
@@ -43,7 +61,7 @@ class CampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             value["validation"]["qualification_manifest_check"]["incomplete_gates"],
-            list(report.qualification_manifest.active_chain("correctness")),
+            list(report.qualification_manifest.active_chain(profile)),
         )
         self.assertEqual(
             value["validation"]["loader_libc_tls_runtime_v1_check"]["command"],
@@ -87,7 +105,7 @@ class CampaignReportTests(unittest.TestCase):
         self.assertEqual(qualification_gate["state"], "blocked")
         self.assertEqual(
             qualification_gate["manifest"]["ready_gate_count"],
-            len(report.qualification_manifest.active_chain("correctness")),
+            len(report.qualification_manifest.active_chain(profile)),
         )
         self.assertEqual(
             qualification_gate["machine_gate_command"],
@@ -99,7 +117,7 @@ class CampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             qualification_gate["manifest"]["incomplete_gates"],
-            list(report.qualification_manifest.active_chain("correctness")),
+            list(report.qualification_manifest.active_chain(profile)),
         )
         self.assertFalse(qualification_gate["pass"])
         self.assertEqual(
@@ -133,12 +151,13 @@ class CampaignReportTests(unittest.TestCase):
             [
                 family
                 for family in value["families"]
-                if family["readiness"]["state"] == "ready" and family["id"] != "performance.release"
+                if family["readiness"]["state"] == "ready"
+                and family["id"] not in value["campaign"]["deferred_families"]
             ],
         )
 
     def test_correctness_defers_performance_without_completing_functional_families(self):
-        value = self.value
+        value = self.correctness_value
         self.assertEqual(value['campaign']['qualification_profile'], 'correctness')
         self.assertEqual(value['campaign']['deferred_families'], ['performance.release'])
         self.assertFalse(value['campaign']['performance_qualified'])
@@ -164,8 +183,7 @@ class CampaignReportTests(unittest.TestCase):
         self.assertFalse(value['campaign']['performance_qualified'])
 
     def test_deferred_performance_cannot_block_ready_functional_chain_or_hide_failure(self):
-        with mock.patch.object(qualification, 'load_publication', return_value=None):
-            inputs = copy.deepcopy(report.load_validated_campaign_inputs())
+        inputs = correctness_inputs()
         for family in inputs[1]['family']:
             if family['id'] != 'performance.release':
                 family['status'] = report.COMPLETED_STATUS
@@ -196,8 +214,7 @@ class CampaignReportTests(unittest.TestCase):
     def test_physical_terminal_closure_drives_readiness_independently_of_structural_policy(self):
         import test_campaign_promotion_closure as closure_tests
 
-        with mock.patch.object(qualification, 'load_publication', return_value=None):
-            inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
+        inputs = correctness_inputs()
         fixture = closure_tests.PromotionClosureTests(methodName='runTest')
         try:
             fixture.setUp()
@@ -237,8 +254,7 @@ class CampaignReportTests(unittest.TestCase):
             fixture.doCleanups()
 
     def test_scope_mismatch_and_forged_active_gate_ids_fail_closed(self):
-        with mock.patch.object(qualification, 'load_publication', return_value=None):
-            inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
+        inputs = correctness_inputs()
         inputs[6]['qualification_profile'] = 'full'
         with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
             with self.assertRaises(report.CampaignReportError):

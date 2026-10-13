@@ -51,6 +51,8 @@ class PublicSupportDeclarationTests(unittest.TestCase):
     def completed(self):
         data = ledger.load_toml(ledger.LEDGER_PATH)
         data["policy"]["public_support"] = True
+        # Correctness completion is the scope that may leave performance open.
+        data["completion"] = {"qualification_profile": "correctness", "deferred_families": ["performance.release"]}
         for family in data["family"]:
             if family["id"] != "performance.release":
                 family["status"] = "foundation-verified"
@@ -5738,7 +5740,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/libc_memory_sync_probe.c",
             "compat/x86_64/libc_memory_sync_start.S",
             "compat/x86_64/run_libc_memory_sync.sh",
-            "compat/x86_64/tests/test_memory_sync.py",
         ):
             self.assertIn(owner, memory_sync["source_owners"])
         self.assertEqual(
@@ -5785,7 +5786,6 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/libc_memfd_create_probe.c",
             "compat/x86_64/libc_memfd_create_start.S",
             "compat/x86_64/run_libc_memfd_create.sh",
-            "compat/x86_64/tests/test_memfd_create_c_abi.py",
         ):
             self.assertIn(owner, memfd_create["source_owners"])
         self.assertEqual(

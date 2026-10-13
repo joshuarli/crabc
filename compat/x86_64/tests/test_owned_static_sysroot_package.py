@@ -16,10 +16,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
 from compat.x86_64 import static_product_contract
 
-
-ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "compat" / "x86_64" / "owned_static_sysroot_package.py"
 SPEC = importlib.util.spec_from_file_location("owned_static_sysroot_package", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None

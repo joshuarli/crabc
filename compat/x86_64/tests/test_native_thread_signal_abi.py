@@ -25,7 +25,6 @@ CONTRACT = ROOT / "compat" / "x86_64" / "native_thread_signal_abi.json"
 READER = ROOT / "compat" / "x86_64" / "native_thread_signal_abi_symbols.py"
 RUNNER = ROOT / "compat" / "x86_64" / "run_native_thread_signal_abi.sh"
 DOCUMENT = ROOT / "compat" / "x86_64" / "native-thread-signal-abi.md"
-README = ROOT / "compat" / "x86_64" / "README.md"
 
 
 spec = importlib.util.spec_from_file_location("native_thread_signal_abi_symbols", READER)
@@ -188,8 +187,6 @@ class NativeThreadSignalAbiTests(unittest.TestCase):
         cpp_gnu_probe = CPP_GNU_PROBE.read_text(encoding="utf-8")
         cpp_strict_probe = CPP_STRICT_PROBE.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
-        readme = README.read_text(encoding="utf-8")
 
         self.assertIn("#include <signal.h>", probe)
         self.assertIn("tgkill(child, child, 0)", probe)
@@ -240,9 +237,6 @@ class NativeThreadSignalAbiTests(unittest.TestCase):
             "caller-selected-child:signal0:delivery:ESRCH:EINVAL",
         ):
             self.assertIn(marker, runner)
-        self.assertIn("one installed-header object", document)
-        self.assertIn("not a musl public `tgkill` ABI", document)
-        self.assertIn("[native-thread-signal-abi.md](native-thread-signal-abi.md)", readme)
 
 
 if __name__ == "__main__":

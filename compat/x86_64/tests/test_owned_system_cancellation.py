@@ -15,7 +15,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_system_cancellation.sh"
-DOCUMENT = ROOT / "compat/x86_64/owned-system-cancellation.md"
 
 
 class OwnedSystemCancellationTests(unittest.TestCase):
@@ -342,7 +341,6 @@ class OwnedSystemCancellationTests(unittest.TestCase):
         self,
     ) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
-        document = " ".join(DOCUMENT.read_text(encoding="utf-8").split())
 
         for required in (
             "provided_static=''",
@@ -378,28 +376,9 @@ class OwnedSystemCancellationTests(unittest.TestCase):
             runner.index('audit_canonical_objects "$installed_dynamic"'),
             runner.index("\naudit_musl_links\n"),
         )
-        for required in (
-            "two distinct installed-header objects",
-            "consumer",
-            "child",
-            "-fPIE",
-            "-fPIC",
-            "pinned musl",
-            "static/static-PIE",
-            "dynamic PIE/non-PIE",
-            "kernel and direct interpreter",
-            "--static-sysroot STATIC_SYSROOT",
-            "neither producer",
-            "stdout, stderr, and status",
-            "system(3)",
-            "pclose(3)",
-            "supervisor",
-        ):
-            self.assertIn(required, document)
 
     def test_compile_receipt_binds_each_actual_translation_and_rechecks_all_inputs(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
 
         for required in (
             "crabc.system-cancellation-compile/v2",
@@ -419,10 +398,6 @@ class OwnedSystemCancellationTests(unittest.TestCase):
         self.assertGreaterEqual(
             runner.count('assert_canonical_compile_receipt "$installed_dynamic"'), 4,
         )
-        for required in (
-            "actual installed-driver command", "installed helper and compiler", "after every link matrix",
-        ):
-            self.assertIn(required, document)
 
 
 if __name__ == "__main__":

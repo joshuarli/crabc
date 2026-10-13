@@ -25,12 +25,27 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def elf(kind: int, interpreter: str | None = None) -> bytes:
-    data = bytearray(256)
+MAIN_ADDRESS, MAIN_SIZE = 0x401000, 0x10
+
+
+def elf(kind: int, interpreter: str | None = None, tag: bytes = b"") -> bytes:
+    """A minimal ELF64 x86-64 file with one defined global ``main`` function.
+
+    ``tag`` makes otherwise identical files distinct by content.
+    """
+    data = bytearray(512)
     data[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<HH", data, 16, kind, 62)
     struct.pack_into("<Q", data, 32, 64)
     struct.pack_into("<HH", data, 54, 56, 1)
+    # Section table: null, one static symbol table, its string table.
+    struct.pack_into("<Q", data, 40, 256)
+    struct.pack_into("<HH", data, 58, 64, 3)
+    data[192:198] = b"\0main\0"
+    struct.pack_into("<IBBHQQ", data, 224, 1, 0x12, 0, 1, MAIN_ADDRESS, MAIN_SIZE)
+    struct.pack_into("<IIQQQQIIQQ", data, 256 + 64, 0, 2, 0, 0, 200, 48, 2, 0, 8, 24)
+    struct.pack_into("<IIQQQQIIQQ", data, 256 + 128, 0, 3, 0, 0, 192, 6, 0, 0, 1, 0)
+    data[480:480 + len(tag)] = tag
     if interpreter:
         encoded = interpreter.encode() + b"\0"
         struct.pack_into("<I", data, 64, 3)
@@ -38,6 +53,12 @@ def elf(kind: int, interpreter: str | None = None) -> bytes:
         struct.pack_into("<Q", data, 96, len(encoded))
         data[128:128 + len(encoded)] = encoded
     return bytes(data)
+
+
+def link_map(name: str) -> bytes:
+    """An LLD map placing the application object's ``main`` at the ELF symbol."""
+    return (f"{MAIN_ADDRESS:x} {MAIN_ADDRESS:x} 20 16 /work/object-{name}.o:(.text)\n"
+            f"{MAIN_ADDRESS:x} {MAIN_ADDRESS:x} {MAIN_SIZE:x} 1 main\n").encode()
 
 
 class PolicyReceiptTests(unittest.TestCase):
@@ -148,7 +169,8 @@ class PolicyReceiptTests(unittest.TestCase):
             }
             for mode in policy.COMPILE_MODES:
                 object_name = f"object-{mode}-{program}"
-                product(object_name, object_name.encode())
+                product(object_name, elf(1, tag=object_name.encode()) if mode != "oracle"
+                        else object_name.encode())
                 compiler = ("oracle-wrapper" if mode == "oracle" else
                             "dynamic-driver" if mode.startswith("dynamic-") else "static-driver")
                 selection = (["-static", "-fno-pie", "-no-pie"] if mode == "oracle" else
@@ -202,7 +224,7 @@ class PolicyReceiptTests(unittest.TestCase):
             })
             for mode in ("static", "static-pie"):
                 name = f"{mode}-{program}"
-                product(f"map-{name}", b"link map\n")
+                product(f"map-{name}", link_map(name))
                 product(f"trace-{name}", b"link trace\n")
                 runtime = [
                     ("crt-entry", "static-crt1" if mode == "static" else "static-rcrt1",
@@ -232,7 +254,7 @@ class PolicyReceiptTests(unittest.TestCase):
                 })
             for mode in ("pie", "non-pie"):
                 name = f"dynamic-{mode}-{program}"
-                product(f"map-{name}", b"dynamic link map\n")
+                product(f"map-{name}", link_map(name))
                 runtime = {
                     "crti.o": "dynamic-crti", "libc.so": "dynamic-libc", "crtn.o": "dynamic-crtn",
                     "Scrt1.o" if mode == "pie" else "crt1.o":

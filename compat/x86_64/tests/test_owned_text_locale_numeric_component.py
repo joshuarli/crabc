@@ -22,7 +22,6 @@ import owned_text_locale_numeric_component_receipt as receipt
 RUNNER = ROOT / "compat/x86_64/run_owned_text_locale_numeric_component.sh"
 DRIVER = ROOT / "compat/x86_64/owned_text_locale_numeric_component_driver.c"
 SOURCE_SPECIFIC_DRIVER = ROOT / "compat/x86_64/owned_text_locale_numeric_source_specific_driver.c"
-DOCUMENT = ROOT / "compat/x86_64/owned-text-locale-numeric-component.md"
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 
 
@@ -227,14 +226,6 @@ class OwnedTextLocaleNumericComponentTests(unittest.TestCase):
                         "dispatcher lacks the component command")
         self.assertTrue("run_owned_text_locale_numeric_component.sh" in dispatcher,
                         "dispatcher lacks the component runner")
-
-    def test_document_states_the_remaining_wide_stdio_and_locale_gaps(self) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
-        self.assertIn("stream engine", document)
-        self.assertIn("does not complete", document)
-        self.assertIn("general locale database", document)
-        self.assertIn("source-specific", document)
-        self.assertIn("unclosed family/parity gap", document)
 
 
 if __name__ == "__main__":

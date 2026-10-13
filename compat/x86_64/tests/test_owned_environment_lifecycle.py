@@ -10,7 +10,6 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
-DOCUMENT = ROOT / "compat/x86_64/owned-environment-lifecycle.md"
 PROBE = ROOT / "compat/x86_64/owned_environment_lifecycle_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_owned_environment_lifecycle.sh"
 RUNTIME = ROOT / "libc/src/c_abi/x86_64/environment_runtime.rs"
@@ -52,7 +51,6 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
     def test_installed_lifecycle_matrix_is_musl_shaped_and_caller_serialized(
         self,
     ) -> None:
-        document = DOCUMENT.read_text(encoding="utf-8")
         probe = PROBE.read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
         runtime = RUNTIME.read_text(encoding="utf-8")
@@ -66,20 +64,7 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
             "src/env/unsetenv.c",
             "src/env/clearenv.c",
         ):
-            self.assertIn(source, document)
             self.assertIn(source, runtime)
-        for phrase in (
-            "oldenv",
-            "__env_rm_add",
-            "caller-owned `putenv`",
-            "borrowed",
-            "fork",
-            "exec",
-            "posix_spawn",
-            "concurrent mutation",
-            "global-state-composition",
-        ):
-            self.assertIn(phrase, document)
         for required in (
             "check_replacement_removal_clear",
             "check_direct_environ_and_borrowed_value",
