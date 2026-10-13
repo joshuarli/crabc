@@ -29,8 +29,7 @@ python3 compat/x86_64/validate_parity_ledger.py
 ./scripts/dev-x86_64.sh --help
 ```
 
-Measured timings and the fast allocator test route are in
-[docs/lanes.md](docs/lanes.md).
+Measured timings are in [docs/lanes.md](docs/lanes.md).
 
 ## Invariants
 

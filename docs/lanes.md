@@ -78,8 +78,7 @@ aggregates and qualification gates belong to the coordinator, after the merge.
 | --- | --- | --- |
 | Type-check one crate | `scripts/lanes/rust-check.sh cargo check -q --locked -p <crate>` | 2 s warm |
 | Type-check every runtime feature profile (before each handoff) | `scripts/lanes/rust-check.sh` | 98 s cold, 10 s warm |
-| One allocator unit test | `scripts/lanes/rust-check.sh env CARGO_PROFILE_DEV_OPT_LEVEL=0 CARGO_PROFILE_TEST_OPT_LEVEL=0 cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc --lib --no-default-features <module::tests::name> -- --exact --test-threads=1` | 52 s cold |
-| The same through the allocator launcher (workspace `opt-level = 2`) | `./compat/allocator/run-x86_64.sh allocator-unit --filter <module::tests::name>` | 299 s cold, 3 s unchanged |
+| One allocator unit test (built unoptimized) | `./compat/allocator/run-x86_64.sh allocator-unit --filter <module::tests::name>` | 52 s cold, 9 s after an edit |
 | One host-side reader or validator test | `python3 -B scripts/test_python.py --module <path/to/test_file.py>` | under 1 s to 30 s |
 | Ledger structure | `python3 compat/x86_64/validate_parity_ledger.py` | 1 s |
 | Family and gate state | `./scripts/dev-x86_64.sh campaign-status` | 2 s |
@@ -99,11 +98,19 @@ Other narrow routes are in the harness guides:
   before rebasing. Never push, and write no ref other than the lane's branch.
 - Reproduce a bug with a failing regression before fixing it, and keep the
   regression.
-- Shared tooling has one owner at a time: `scripts/dev-x86_64.sh`,
-  `compat/allocator/run.py`, the shared receipt readers, and family status in
-  `compat/x86_64/parity.toml`. Other lanes may only append a new command or
-  their own `[[family.verified_slice]]` entry, one entry per line group, with
-  no reordering or reformatting.
+- Three files have one writer, the tooling lane: `scripts/dev-x86_64.sh`,
+  `compat/x86_64/parity.toml` and `compat/x86_64/validate_parity_ledger.py`.
+  A lane that needs a change there reports it. `compat/allocator/run.py` and
+  the shared receipt readers likewise have one owner at a time.
+- No lane changes ledger state. A family or capability becomes verified only
+  in a qualification commit, proven by a cohort run at that exact commit, as
+  `plan.md` describes.
+- Never change the frozen AArch64 inputs:
+  `compat/x86_64/aarch64_frozen_baseline.json` and the three files it
+  digests (`compat/crabc-rs/coverage.toml` and the two files under
+  `compat/abi/musl-1.2.6/aarch64/`).
+- Never rebuild a pinned image. A rebuild changes its ID, and every receipt
+  made in the old one stops counting.
 - Do not record qualifying performance numbers from a lane, and do not
   throttle builds; retry one killed by memory pressure and report it.
 - Every commit is a Conventional Commit with the workstream as scope.
@@ -119,10 +126,11 @@ One lane at a time, as each reports:
 3. Verify the merged commit from a scratch worktree (`.work/wt/verify`), never
    in the integration tree: `python3 compat/x86_64/validate_parity_ledger.py`,
    `python3 compat/x86_64/aarch64_parity_inventory.py`,
-   `scripts/lanes/rust-check.sh`, the test files the commits touch, and the
-   lane's native command when it claims new evidence.
-4. Never merge a lane's family admission. Rerun the family aggregate on merged
-   `main`.
+   `python3 scripts/check_structure.py`, `scripts/lanes/rust-check.sh`, the
+   test files the commits touch, and the lane's native command.
+4. A receipt a lane produced proves the lane's commit, not `main`. Rerun the
+   cohort steps the lane claims to have fixed in the cohort worktree at the
+   merged commit.
 5. Remove the worktree and delete the branch. A parked lane keeps its
    committed branch and is named in `plan.md`.
 
