@@ -537,53 +537,6 @@ where
     unsafe { push_live_allocation_parts(page, producer, block, page_state) }
 }
 
-/// Publishes a PageMap observation that was already classified as abandoned.
-///
-/// This is the source `mi_free_block_mt(..., allow_collect=true)` front edge
-/// for a coherent [`LiveAllocationPointer`] whose captured identity is
-/// [`LiveAllocationPageState::Abandoned`] or
-/// [`LiveAllocationPageState::AbandonedMapped`].  It deliberately performs
-/// no second identity read before the CAS: a concurrent source reclaim may
-/// already have made the page live again, in which case the same CAS publishes
-/// to that owner and returns [`LiveRemoteFreePublish::PublishedToOwner`].  If
-/// the CAS instead changes an unowned head to owned, its exact non-copyable
-/// [`ClaimedAbandonedRemoteFree`] must move into the post-owner-exit source
-/// continuation.
-///
-/// A caller with a captured live-owner identity must use
-/// [`push_live_allocation`] instead.  A detached observation has no valid
-/// source producer route here.
-///
-/// # Safety
-///
-/// `allocation` must be one current PageMap-derived native allocation whose
-/// page metadata, registration, and canonical block remain live through this
-/// consuming publication. The caller must not access the client or canonical
-/// block after a successful result. A claimed result owns the source low bit
-/// and must be continued rather than re-published or dropped.
-pub(crate) unsafe fn push_abandoned_live_allocation(
-    allocation: LiveAllocationPointer,
-) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
-    // SAFETY: the checked PageMap observation keeps its exact source page and
-    // canonical block alive through the state-qualified source CAS below.
-    let (page, producer, block, page_state) =
-        unsafe { page_map_live_allocation_parts(&allocation) };
-    if !matches!(
-        page_state,
-        LiveAllocationPageState::Abandoned | LiveAllocationPageState::AbandonedMapped
-    ) {
-        return Err(RemoteFreeError::NotOwnerAssociated);
-    }
-    // SAFETY: `allocation` is the one coherent PageMap observation. The
-    // source CAS decides against its current head; do not re-read identity
-    // after the snapshot because a reclaimed live owner is a legal winner.
-    let publication = unsafe { publish_canonical_source_block(page, producer, block) }?;
-    Ok(retain_checked_observation_until_claim_tail(
-        allocation,
-        publication,
-    ))
-}
-
 /// Publishes one checked pointer after owner-exit dispatch without
 /// reconstructing a page/block claim.
 ///
