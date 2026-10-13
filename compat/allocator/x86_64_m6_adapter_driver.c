@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <pthread.h>
+#include <signal.h>
 #include <sched.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -36,6 +37,15 @@ static void capture(const char* message, void* argument) {
   if (message == NULL || message[0] == 0) return;
   if (message_count < MAX_MESSAGES) snprintf(messages[message_count], MAX_MESSAGE_BYTES, "%s", message);
   message_count++;
+}
+
+static void capture_precondition(const char* message, void* argument) {
+  static const char assertion_prefix[] = "mimalloc: assertion failed:";
+  if (message != NULL && strncmp(message, assertion_prefix, sizeof(assertion_prefix) - 1) == 0) {
+    fputs(message, stderr);
+  } else {
+    capture(message, argument);
+  }
 }
 
 static char thread_text[40];
@@ -98,6 +108,38 @@ static mi_stats_t stats_now(void) {
   mi_stats_t_decl(stats);
   mi_stats_get(&stats);
   return stats;
+}
+
+static void singleton_unabandon_section(void) {
+  mi_heap_t* heap = mi_heap_new();
+  mi_stats_t before = stats_now();
+  void* block = mi_heap_malloc(heap, 5 * MIB);
+  mi_stats_t allocated = stats_now();
+  mi_free(block);
+  mi_stats_t released = stats_now();
+  printf("unabandon.pages=%lld,%lld\n",
+         (long long)(allocated.pages.current - before.pages.current),
+         (long long)(released.pages.current - before.pages.current));
+  printf("unabandon.pages_abandoned=%lld,%lld\n",
+         (long long)(allocated.pages_abandoned.current - before.pages_abandoned.current),
+         (long long)(released.pages_abandoned.current - before.pages_abandoned.current));
+  mi_heap_destroy(heap);
+
+  mi_option_enable(mi_option_disallow_arena_alloc);
+  heap = mi_heap_new();
+  before = stats_now();
+  block = mi_heap_malloc(heap, 5 * MIB);
+  allocated = stats_now();
+  mi_option_disable(mi_option_disallow_arena_alloc);
+  mi_free(block);
+  released = stats_now();
+  printf("unabandon.os.pages=%lld,%lld\n",
+         (long long)(allocated.pages.current - before.pages.current),
+         (long long)(released.pages.current - before.pages.current));
+  printf("unabandon.os.pages_abandoned=%lld,%lld\n",
+         (long long)(allocated.pages_abandoned.current - before.pages_abandoned.current),
+         (long long)(released.pages_abandoned.current - before.pages_abandoned.current));
+  mi_heap_destroy(heap);
 }
 
 static void reserve_section(void) {
@@ -274,6 +316,55 @@ static bool filled(const unsigned char* p, size_t size, unsigned char value) {
   return true;
 }
 
+/* Isolate the debug-only source assertion from the valid Heap trace. */
+static int run_precondition_control(const char* name) {
+  if (strcmp(name, "realloc-aligned-invalid") != 0) return 2;
+  mi_register_output(&capture_precondition, NULL);
+  message_count = 0;
+  error_count = 0;
+  mi_register_error(&record_error, NULL);
+  snprintf(thread_text, sizeof(thread_text), "0x%02lX", (unsigned long)(uintptr_t)pthread_self());
+  mi_option_enable(mi_option_show_errors);
+  mi_heap_t* heap = mi_heap_new();
+  if (heap == NULL) return 3;
+  unsigned char* p = (unsigned char*)mi_heap_malloc_aligned(heap, 100, 64);
+  if (p == NULL) return 3;
+  memset(p, 0x5a, 100);
+  printf("CRABC_MI_M6_ADAPTER_TRACE_BEGIN\n");
+  printf("control.input=100,64;200,24\n");
+#if MI_DEBUG > 0 && !defined(CRABC_NATIVE_MI_ADAPTER)
+  pid_t child = fork();
+  if (child < 0) return 3;
+  if (child == 0) {
+    void* result = mi_heap_realloc_aligned_at(heap, p, 200, 24, 0);
+    if (result != NULL) mi_free(result);
+    _exit(4);
+  }
+  int status = 0;
+  bool joined = waitpid(child, &status, 0) == child;
+  const bool source_abort = joined && WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT;
+  printf("control.source_abort=%d,%d\n", source_abort ? 1 : 0,
+         joined && WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+  mi_free(p);
+  mi_heap_destroy(heap);
+  printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
+  return source_abort ? 0 : 1;
+#else
+  errno = 0;
+  void* q = mi_heap_realloc_aligned_at(heap, p, 200, 24, 0);
+  const int error = errno;
+  const bool retained = q == NULL && filled(p, 100, 0x5a);
+  const bool error_recorded = error_count == 1 && error_codes[0] == EINVAL;
+  printf("control.outcome=%d,%d,%d\n", q == NULL ? 1 : 0, error, retained ? 1 : 0);
+  print_errors("control.codes");
+  print_messages("control.messages");
+  mi_free(q == NULL ? p : q);
+  mi_heap_destroy(heap);
+  printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
+  return q == NULL && error == 0 && retained && error_recorded ? 0 : 1;
+#endif
+}
+
 static void realloc_section(void) {
   mi_heap_t* h = mi_heap_new();
   unsigned char* p = (unsigned char*)mi_heap_malloc(h, 100);
@@ -326,11 +417,6 @@ static void realloc_section(void) {
   unsigned char* a7 = (unsigned char*)mi_heap_recalloc_aligned_at(h, NULL, 20, 20, 32, 4);
   printf("realloc.heap.recalloc_aligned=%d,%d\n", ((uintptr_t)a6 % 32) == 0 && zeroed(a6, 400) ? 1 : 0,
          (((uintptr_t)a7 + 4) % 32) == 0 && zeroed(a7, 400) ? 1 : 0);
-  errno = 0;
-  void* bad = mi_heap_realloc_aligned_at(h, a6, 100, 24, 0);
-  printf("realloc.heap.bad_alignment=%d,%d\n", bad == NULL ? 1 : 0, errno);
-  print_errors("realloc.heap.bad_alignment.codes");
-  print_messages("realloc.heap.bad_alignment.messages");
   void* main_block = mi_heap_realloc(mi_heap_main(), NULL, 70);
   main_block = mi_heap_realloc(mi_heap_main(), main_block, 60);
   printf("realloc.main=%zu\n", mi_usable_size(main_block));
@@ -1113,9 +1199,13 @@ static void utilization_section(void) {
   mi_heap_destroy(heap);
 }
 
-int main(void) {
+int main(int argc, char** argv) {
   /* Unbuffered, so a failing side's trace ends at its failing step. */
   setvbuf(stdout, NULL, _IONBF, 0);
+  if (argc == 2 && strncmp(argv[1], "precondition:", 13) == 0) {
+    return run_precondition_control(argv[1] + 13);
+  }
+  if (argc != 1) return 2;
   mi_register_output(&capture, NULL);
   message_count = 0;
   mi_register_error(&record_error, NULL);
@@ -1129,6 +1219,7 @@ int main(void) {
   int visitor_status = -1;
   bool visitor_joined = visitor_child > 0 && waitpid(visitor_child, &visitor_status, 0) == visitor_child;
   printf("visit.main.child=%d\n", visitor_joined && WIFEXITED(visitor_status) && WEXITSTATUS(visitor_status) == 0);
+  singleton_unabandon_section();
   /* The reservation section keeps show_errors off: the OS-layer warnings of
      a failed reservation are not all rendered by the port yet. */
   reserve_section();

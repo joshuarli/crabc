@@ -22,7 +22,7 @@ from x86_64_m6_upstream_heap_stress import load_module, stress
 receipts = load_module("public_adapter_receipts", harness.ROOT / "compat/x86_64/native_shadow_receipt.py")
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
 RUNNER = "allocator-public-heap-subprocess"
-CONTRACT = "public_heap_visitation_tracks_live_population_early_stop_and_collection"
+CONTRACT = "public_heap_and_theap_visitation_preserve_live_population_after_prior_heap_history"
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_adapter_driver.c"
 TRACE_BEGIN = "CRABC_MI_M6_ADAPTER_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M6_ADAPTER_TRACE_END"
@@ -63,6 +63,10 @@ heap.small
 heap.too_large
 heap.too_large.codes
 heap.too_large.messages
+unabandon.pages
+unabandon.pages_abandoned
+unabandon.os.pages
+unabandon.os.pages_abandoned
 heap.zalloc
 heap.zalloc_aligned
 heap.zalloc_aligned_at
@@ -79,9 +83,6 @@ new.heap
 realloc.default.same_size
 realloc.heap.aligned_at
 realloc.heap.aligned_fit
-realloc.heap.bad_alignment
-realloc.heap.bad_alignment.codes
-realloc.heap.bad_alignment.messages
 realloc.heap.foreign
 realloc.heap.foreign_aligned_theap
 realloc.heap.grow
@@ -181,10 +182,47 @@ def compare_runs(c_run, native_run, profile):
             raise harness.HarnessError(f"{profile} {side} original public workload fields differ: "
                 f"missing={sorted(EXPECTED_KEYS-set(trace))} extra={sorted(set(trace)-EXPECTED_KEYS)}")
     m7.compare_options_traces(traces["c"], traces["native"])
+    for key in ("unabandon.pages_abandoned", "unabandon.os.pages_abandoned"):
+        if traces["c"][key] != "1,0":
+            raise harness.HarnessError(f"{profile} {key} did not return to its pre-allocation count: "
+                f"{traces['c'][key]}")
     for stream in ("stdout", "stderr"):
         if c_run[stream] != native_run[stream]:
             raise harness.HarnessError(f"{profile} complete public adapter {stream} differs")
     return len(traces["c"])
+
+
+def compare_precondition_control(profile, c_run, native_run):
+    arguments = "100,64;200,24"
+    expected = {"control.input": arguments, "control.outcome": "1,0,1", "control.codes": "22"}
+    if native_run["status"] != 0:
+        raise harness.HarnessError(f"{profile} native invalid-alignment control did not return normally")
+    native_trace = m7.parse_options_trace(native_run["stdout"], "native invalid-alignment control",
+        TRACE_BEGIN, TRACE_END)
+    if (set(native_trace) != {*expected, "control.messages"}
+            or any(native_trace.get(key) != value for key, value in expected.items())
+            or not native_trace["control.messages"]):
+        raise harness.HarnessError(f"{profile} native invalid-alignment control differs: {native_trace}")
+    if profile == "debug-1":
+        if c_run["status"] != 0:
+            raise harness.HarnessError("debug-1 C invalid-alignment control did not contain its source assertion")
+        c_trace = m7.parse_options_trace(c_run["stdout"], "debug-1 C invalid-alignment control",
+            TRACE_BEGIN, TRACE_END)
+        diagnostic = c_run["stderr"]
+        if (set(c_trace) != {"control.input", "control.source_abort"}
+                or c_trace != {"control.input": arguments, "control.source_abort": "1,6"}
+                or 'assertion: "mi_alignment_is_valid(alignment)"' not in diagnostic
+                or "mi_theap_realloc_zero_aligned_at" not in diagnostic):
+            raise harness.HarnessError("debug-1 C invalid-alignment control missed the pinned source assertion")
+    else:
+        if c_run["status"] != 0:
+            raise harness.HarnessError(f"{profile} C invalid-alignment control did not return normally")
+        c_trace = m7.parse_options_trace(c_run["stdout"], "C invalid-alignment control",
+            TRACE_BEGIN, TRACE_END)
+        if (set(c_trace) != {*expected, "control.messages"}
+                or any(c_trace.get(key) != value for key, value in expected.items())):
+            raise harness.HarnessError(f"{profile} C invalid-alignment control differs: {c_trace}")
+        m7.compare_options_traces(c_trace, native_trace)
 
 def record(output, name, argv, cwd, *, runtime=False, timeout=None):
     result = stress.command_record(argv, cwd=cwd,
@@ -230,7 +268,8 @@ def run_profiles(profiles, output=ARTIFACTS):
         shutil.copy2(original, retained)
         products[retained.name] = retained
     inputs = output / "inputs.json"
-    scope = {profile: "full original public Heap and subprocess workload" for profile in profiles}
+    scope = {profile: "full public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses plus an isolated invalid-alignment control"
+             for profile in profiles}
     inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
         "profiles": profiles, "scope": scope,
         "boundary": "public native-mi-adapter over pinned musl; native Rust Heap contract"}, indent=2) + "\n")
@@ -246,7 +285,6 @@ def run_profiles(profiles, output=ARTIFACTS):
             if status != 0:
                 raise harness.HarnessError(f"{profile}-{name} failed; see {logs[0]}")
             return result
-        client_flags = ()
         common = ["-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
                   *m4.api_profile_flags(profile), "-I", str(source / "include"), "-I", str(source / "src")]
         oracle = directory / "oracle.o"
@@ -261,6 +299,7 @@ def run_profiles(profiles, output=ARTIFACTS):
         products[f"{profile}-oracle.o"] = oracle
         results, runtime_logs = {}, {}
         for backend, allocator in (("c", oracle), ("native", library)):
+            client_flags = ("-DCRABC_NATIVE_MI_ADAPTER=1",) if backend == "native" else ()
             binary = directory / backend
             caller = directory / f"{backend}.o"
             passed(f"{backend}-compile", [compiler, "-std=c11", *common, *client_flags,
@@ -283,6 +322,21 @@ def run_profiles(profiles, output=ARTIFACTS):
         else:
             cases.append((f"{profile}-comparison", 0, runtime_logs["c"] + runtime_logs["native"]))
             print(f"Public Heap/subprocess adapter {profile} ({scope[profile]}): {count} actual C/native observations match", flush=True)
+        control_results, control_logs = {}, []
+        for backend in ("c", "native"):
+            result, logs = record(output, f"{profile}-{backend}-precondition-aligned-invalid-run",
+                [str(directory / backend), "precondition:realloc-aligned-invalid"], directory, runtime=True)
+            status = result.get("status", 1) if result["kind"] == "process" else 1
+            cases.append((f"{profile}-{backend}-precondition-aligned-invalid-run", status, logs))
+            control_results[backend] = decoded(result)
+            control_logs.extend(logs)
+        try:
+            compare_precondition_control(profile, control_results["c"], control_results["native"])
+        except (harness.HarnessError, UnicodeError) as error:
+            failures.append(f"{profile}: {error}; raw in {output}")
+            cases.append((f"{profile}-precondition-aligned-invalid-comparison", 1, control_logs))
+        else:
+            cases.append((f"{profile}-precondition-aligned-invalid-comparison", 0, control_logs))
         contract_build = passed("native-contract-build", [harness.require_tool("cargo"), "test",
             "--locked", "--offline", "--no-run", "--message-format=json", "--target", m4.RUST_TARGET,
             "--target-dir", str(target), "-p", "crabc-mimalloc", "--no-default-features",
@@ -339,7 +393,11 @@ def read_and_replay(profiles, replay=False):
         expected_cases.extend(f"{profile}-{phase}" for phase in ("oracle-build", "native-build"))
         for backend in ("c", "native"):
             expected_cases.extend(f"{profile}-{backend}-{phase}" for phase in ("compile", "imports", "link", "run"))
-        expected_cases.extend(f"{profile}-{phase}" for phase in ("comparison", "native-contract-build", "native-contract-run"))
+        expected_cases.extend((f"{profile}-comparison",
+            f"{profile}-c-precondition-aligned-invalid-run",
+            f"{profile}-native-precondition-aligned-invalid-run",
+            f"{profile}-precondition-aligned-invalid-comparison",
+            f"{profile}-native-contract-build", f"{profile}-native-contract-run"))
         expected_products.update(f"{profile}-{suffix}" for suffix in
             ("native-adapter.a", "oracle.o", "c", "native", "c.o", "native.o", "native-contract"))
     if receipt.case_ids() != expected_cases or set(receipt.products) != expected_products:
@@ -374,9 +432,26 @@ def read_and_replay(profiles, replay=False):
                 if backend != "native-contract" and stress.byte_record_payload(result["stdout"], name) != (receipt.path.parent / "logs" / previous).read_bytes():
                     raise harness.HarnessError(f"retained {name} observations differ; see {scratch}")
             count = compare_runs(results["c"], results["native"], profile)
+            controls = {}
+            for backend in ("c", "native"):
+                control_name = f"{profile}-{backend}-precondition-aligned-invalid-run"
+                binary = scratch / f"{profile}-{backend}"
+                result, _ = record(scratch, control_name,
+                    [str(binary), "precondition:realloc-aligned-invalid"], scratch, runtime=True)
+                controls[backend] = decoded(result)
+                retained = next(case for case in receipt.cases if case["id"] == control_name)
+                retained_stdout = next(log for log in retained["logs"] if log.endswith(".stdout"))
+                retained_stderr = next(log for log in retained["logs"] if log.endswith(".stderr"))
+                if (result["kind"] != "process" or result["status"] != retained["status"]
+                        or stress.byte_record_payload(result["stdout"], control_name)
+                            != (receipt.path.parent / "logs" / retained_stdout).read_bytes()
+                        or stress.byte_record_payload(result["stderr"], control_name)
+                            != (receipt.path.parent / "logs" / retained_stderr).read_bytes()):
+                    raise harness.HarnessError(f"retained {control_name} differs; see {scratch}")
+            compare_precondition_control(profile, controls["c"], controls["native"])
             if harness.parse_rust_test_count(results["native-contract"]["stdout"] + results["native-contract"]["stderr"]) != 1:
                 raise harness.HarnessError(f"retained {profile} native Heap contract did not execute exactly one test")
-            scope = "full original public Heap and subprocess workload"
+            scope = "full public Heap and subprocess workload with arena and OS abandoned-singleton release witnesses plus an isolated invalid-alignment control"
             print(f"Public Heap/subprocess adapter retained {profile} ({scope}) replay PASS")
     case = next(case for case in receipt.cases if case["id"] == profiles[0] + "-c-run")
     log = next(log for log in case["logs"] if log.endswith(".stdout"))

@@ -12,6 +12,8 @@ import x86_64_m6_adapter as adapter
 
 def trace_stdout(values=None):
     trace = {key: "1" for key in sorted(adapter.EXPECTED_KEYS)}
+    trace["unabandon.pages_abandoned"] = "1,0"
+    trace["unabandon.os.pages_abandoned"] = "1,0"
     trace.update(values or {})
     return adapter.TRACE_BEGIN + "\n" + "".join(f"{key}={value}\n" for key,value in trace.items()) + adapter.TRACE_END + "\n"
 
@@ -33,6 +35,23 @@ class PublicAdapterObservationTests(unittest.TestCase):
     def test_source_refusal_errno_is_compared(self):
         with self.assertRaises(adapter.harness.HarnessError):
             adapter.compare_runs(self.run_result(),self.run_result(trace_stdout({"reserve.too_large.errno":"12"})), "stat-2")
+
+    def test_abandoned_singleton_release_returns_heap_count_to_baseline(self):
+        for key in ("unabandon.pages_abandoned", "unabandon.os.pages_abandoned"):
+            output = trace_stdout({key: "1,1"})
+            with self.subTest(key=key), self.assertRaises(adapter.harness.HarnessError):
+                adapter.compare_runs(self.run_result(output), self.run_result(output), "release")
+
+    def test_debug_source_assertion_is_a_controlled_success(self):
+        c_stdout = (adapter.TRACE_BEGIN + "\ncontrol.input=100,64;200,24\n"
+                    "control.source_abort=1,6\n" + adapter.TRACE_END + "\n")
+        native_stdout = (adapter.TRACE_BEGIN + "\ncontrol.input=100,64;200,24\n"
+                         "control.outcome=1,0,1\ncontrol.codes=22\ncontrol.messages=74657374\n"
+                         + adapter.TRACE_END + "\n")
+        c = {"status": 0, "stdout": c_stdout,
+             "stderr": 'assertion: "mi_alignment_is_valid(alignment)" mi_theap_realloc_zero_aligned_at'}
+        native = {"status": 0, "stdout": native_stdout, "stderr": ""}
+        adapter.compare_precondition_control("debug-1", c, native)
 
     def test_callback_warning_payload_is_compared(self):
         with self.assertRaises(adapter.harness.HarnessError):
@@ -73,6 +92,9 @@ class PublicAdapterReceiptRosterTests(unittest.TestCase):
                 for phase in ("compile", "imports", "link", "run"):
                     self.cases.append((f"{profile}-{backend}-{phase}", 0, [log]))
             self.cases.append((f"{profile}-comparison", 0, [log]))
+            self.cases.append((f"{profile}-c-precondition-aligned-invalid-run", 0, [log]))
+            self.cases.append((f"{profile}-native-precondition-aligned-invalid-run", 0, [log]))
+            self.cases.append((f"{profile}-precondition-aligned-invalid-comparison", 0, [log]))
             self.cases.append((f"{profile}-native-contract-build", 0, [log]))
             self.cases.append((f"{profile}-native-contract-run", 0, [log]))
             for suffix in ("oracle.o", "native-adapter.a", "c", "native", "c.o", "native.o", "native-contract"):
