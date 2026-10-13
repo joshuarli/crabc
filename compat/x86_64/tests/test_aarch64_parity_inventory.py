@@ -103,7 +103,9 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
 
     def test_frozen_baseline_rejects_changed_live_aarch64_input(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+        scratch = ROOT / ".work" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
             changed_ledger = Path(directory) / "coverage.toml"
             changed_ledger.write_bytes(
                 inventory.BASELINE_CAPABILITIES_PATH.read_bytes() + b"\n# drift\n"
@@ -134,7 +136,9 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         self.assertIn("unrecognized arguments: --write", result.stderr)
 
     def test_inventory_rejects_frozen_required_family_count_drift(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+        scratch = ROOT / ".work" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
             changed_record = Path(directory) / "frozen-baseline.json"
             record = json.loads(inventory.FROZEN_BASELINE_PATH.read_text(encoding="utf-8"))
             record["required_family_count"] = 25
