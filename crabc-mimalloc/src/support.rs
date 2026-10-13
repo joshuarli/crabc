@@ -9,6 +9,7 @@
 // in `include/mimalloc/internal.h`.
 
 /// Port of `_mi_toupper` for the byte-oriented C strings used by mimalloc.
+#[cfg(test)]
 #[inline]
 pub(crate) const fn ascii_uppercase(byte: u8) -> u8 {
     if byte >= b'a' && byte <= b'z' {
@@ -26,6 +27,7 @@ pub(crate) const fn ascii_uppercase(byte: u8) -> u8 {
 /// each must point to initialized bytes through the first NUL or
 /// `maximum_length` bytes, whichever occurs first. The bytes must not be
 /// concurrently mutated without synchronization for the duration of the call.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_strnicmp(left: *const u8, right: *const u8, maximum_length: usize) -> i32 {
     if maximum_length == 0 {
@@ -71,6 +73,7 @@ pub(crate) unsafe fn c_strnicmp(left: *const u8, right: *const u8, maximum_lengt
 /// Each non-null pointer must point to an initialized NUL-terminated byte
 /// string. Neither string may be concurrently mutated without synchronization
 /// for the duration of the comparison.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_str_eq(left: *const u8, right: *const u8) -> bool {
     if left.is_null() || right.is_null() {
@@ -107,6 +110,7 @@ pub(crate) unsafe fn c_str_eq(left: *const u8, right: *const u8) -> bool {
 /// the source's first byte must be readable when `source` is non-null. The
 /// caller must synchronize any concurrent access. Raw-pointer use deliberately
 /// permits the source and destination to overlap, matching the source loop.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_strlcpy(
     destination: *mut u8,
@@ -153,6 +157,7 @@ pub(crate) unsafe fn c_strlcpy(
 /// readable when `source` is non-null. The caller must synchronize concurrent
 /// access. Source and destination may overlap because the source loop permits
 /// that raw-memory behavior.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_strlcat(
     destination: *mut u8,
@@ -188,6 +193,7 @@ pub(crate) unsafe fn c_strlcat(
 /// initialized bytes through the first NUL or `maximum_length` bytes,
 /// whichever occurs first. The bytes must not be concurrently mutated without
 /// synchronization for the duration of the call.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_strnlen(source: *const u8, maximum_length: usize) -> usize {
     if source.is_null() {
@@ -215,6 +221,7 @@ pub(crate) unsafe fn c_strnlen(source: *const u8, maximum_length: usize) -> usiz
 /// first NUL or `isize::MAX` bytes, whichever occurs first. The bytes must not
 /// be concurrently mutated without synchronization for the duration of the
 /// call.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_strlen(source: *const u8) -> usize {
     // `PTRDIFF_MAX` is `isize::MAX` on both fixed Linux 64-bit profiles.
@@ -232,6 +239,7 @@ pub(crate) unsafe fn c_strlen(source: *const u8) -> usize {
 /// concurrently mutated without synchronization for the duration of the
 /// search. The returned pointer, if non-null, has `haystack` provenance and
 /// is valid only while that underlying storage remains valid.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn c_strnstr(
     haystack: *mut u8,
