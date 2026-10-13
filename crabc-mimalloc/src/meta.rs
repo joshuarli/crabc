@@ -4227,6 +4227,11 @@ pub(crate) enum ChildMainHeapReleaseStage {
     Context,
 }
 
+enum ChildArenaReleaseDestination<'destination, 'tracking> {
+    Retained(&'destination mut Option<crate::arena::DestroyedArenas<'tracking>>),
+    EmptyRegistry,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ChildMainHeapReleaseError {
     InvalidTransition,
@@ -5755,15 +5760,55 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// tracking storage live outside every retiring child arena and remain
     /// allocated alongside this child owner until raw retries complete.
     pub(crate) unsafe fn release_after_empty_heap_teardown_with_into<'tracking>(
-        mut self,
+        self,
         tracking: &'tracking mut [usize],
         release: ChildHeapRelease<'_, 'heap>,
         destination: &mut Option<crate::arena::DestroyedArenas<'tracking>>,
     ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
+        // SAFETY: forwarded teardown and exact release-route obligations.
+        unsafe {
+            self.release_after_empty_heap_teardown_with_destination(
+                tracking,
+                release,
+                ChildArenaReleaseDestination::Retained(destination),
+            )
+        }
+    }
+
+    /// Completes child teardown after proving that no arena release storage
+    /// is required. This route never constructs
+    /// `DestroyedArenas`, whose fixed failure array is intentionally large.
+    ///
+    /// # Safety
+    /// The caller meets `release_after_empty_heap_teardown_with_into`'s
+    /// obligations and has established that the child arena registry is empty.
+    pub(crate) unsafe fn release_after_empty_heap_teardown_with_empty_arena_registry<'tracking>(
+        self,
+        tracking: &'tracking mut [usize],
+        release: ChildHeapRelease<'_, 'heap>,
+    ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
+        // SAFETY: forwarded teardown and the empty-registry proof.
+        unsafe {
+            self.release_after_empty_heap_teardown_with_destination(
+                tracking,
+                release,
+                ChildArenaReleaseDestination::EmptyRegistry,
+            )
+        }
+    }
+
+    unsafe fn release_after_empty_heap_teardown_with_destination<'tracking>(
+        mut self,
+        tracking: &'tracking mut [usize],
+        release: ChildHeapRelease<'_, 'heap>,
+        mut destination: ChildArenaReleaseDestination<'_, 'tracking>,
+    ) -> Result<(), ChildMainHeapReleaseFailure<'heap, 'tracking>> {
         let retained = |owner, stage, error| {
             Err(ChildMainHeapReleaseFailure::Retained { owner, stage, error })
         };
-        if destination.is_some() || self.pending_os_release.is_some() || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
+        if matches!(&destination, ChildArenaReleaseDestination::Retained(slot) if slot.is_some())
+            || self.pending_os_release.is_some()
+            || (self.pending_fresh_initialization.is_some() || self.pending_live_page_validity.is_some())
             || self.metadata_pages_may_exist
             || !self.page_engine.permits_teardown()
             || !matches!(
@@ -5777,6 +5822,15 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 ChildMainHeapReleaseError::InvalidTransition);
         }
         if self.stage == ChildMainHeapStage::HeapListRemoved {
+            if matches!(&destination, ChildArenaReleaseDestination::EmptyRegistry) {
+                let arena_preflight = self.context.with_image(|child| unsafe {
+                    child.identity().arena_backing().validate_empty_retained_child()
+                }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
+                if let Err(error) = arena_preflight {
+                    return retained(self, ChildMainHeapReleaseStage::Validate,
+                        ChildMainHeapReleaseError::ArenaDestroy(error));
+                }
+            }
             let heap_pointer = self.heap_storage.as_ref()
                 .map(ChildHeapStorage::pointer_for_identity);
             let matches = self.context.with_image(|child| {
@@ -5840,29 +5894,44 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             self.stage = ChildMainHeapStage::HeapStorageReleased;
         }
         if self.stage == ChildMainHeapStage::HeapStorageReleased {
-            let destroyed = self.context.with_image(|child| unsafe {
-                // This exact context stays retained until every raw retry
-                // finishes; the caller's destination grants no lifetime to
-                // the reclaimable child identity or its selected VM policy.
-                child.identity().arena_backing().destroy_all_retained_child_into(tracking, destination)
-            }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
-            match destroyed {
-                Err(error) => {
-                    if destination.is_some() {
-                        // The registry pass committed but did not finish.
-                        // Recorded raw retries cannot account for unvisited
-                        // entries, even when the failure array is empty.
-                        self.stage = ChildMainHeapStage::Terminal;
+            match &mut destination {
+                ChildArenaReleaseDestination::Retained(destination) => {
+                    let destroyed = self.context.with_image(|child| unsafe {
+                        // This exact context stays retained until every raw retry
+                        // finishes; the caller's destination grants no lifetime to
+                        // the reclaimable child identity or its selected VM policy.
+                        child.identity().arena_backing()
+                            .destroy_all_retained_child_into(tracking, destination)
+                    }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
+                    match destroyed {
+                        Err(error) => {
+                            if destination.is_some() {
+                                // The registry pass committed but did not finish.
+                                // Recorded raw retries cannot account for unvisited
+                                // entries, even when the failure array is empty.
+                                self.stage = ChildMainHeapStage::Terminal;
+                            }
+                            return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
+                                ChildMainHeapReleaseError::ArenaDestroy(error));
+                        }
+                        Ok(()) if !destination.as_ref().expect("committed child arena releases").is_released() => {
+                            return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
+                                ChildMainHeapReleaseError::ArenaReleaseRetained);
+                        }
+                        Ok(()) => {
+                            drop(destination.take());
+                            self.stage = ChildMainHeapStage::ArenaBackingDestroyed;
+                        }
                     }
-                    return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
-                        ChildMainHeapReleaseError::ArenaDestroy(error));
                 }
-                Ok(()) if !destination.as_ref().expect("committed child arena releases").is_released() => {
-                    return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
-                        ChildMainHeapReleaseError::ArenaReleaseRetained);
-                }
-                Ok(()) => {
-                    drop(destination.take());
+                ChildArenaReleaseDestination::EmptyRegistry => {
+                    let destroyed = self.context.with_image(|child| unsafe {
+                        child.identity().arena_backing().destroy_empty_retained_child()
+                    }).unwrap_or(Err(crate::arena::ArenaDestroyError::InvalidOwnership));
+                    if let Err(error) = destroyed {
+                        return retained(self, ChildMainHeapReleaseStage::ArenaBacking,
+                            ChildMainHeapReleaseError::ArenaDestroy(error));
+                    }
                     self.stage = ChildMainHeapStage::ArenaBackingDestroyed;
                 }
             }

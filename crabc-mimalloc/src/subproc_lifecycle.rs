@@ -318,6 +318,12 @@ pub(crate) enum ChildSubprocessDestroyFailure<'main, 'tracking> {
     Release(ChildMainHeapReleaseFailure<'main, 'tracking>),
 }
 
+enum ChildArenaDestroyDestination<'destination, 'tracking> {
+    ReturnOwned,
+    Retained(&'destination mut Option<crate::arena::DestroyedArenas<'tracking>>),
+    EmptyRegistry,
+}
+
 impl core::fmt::Debug for ChildSubprocessDestroyFailure<'_, '_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -373,7 +379,8 @@ pub(crate) unsafe fn destroy_child<'main, 'tracking>(
     unsafe {
         destroy_child_with(
             child, registry, binding, tracking, metadata, config,
-            ChildHeapRelease::Parent { heap_owner, attachment }, false, None,
+            ChildHeapRelease::Parent { heap_owner, attachment }, false,
+            ChildArenaDestroyDestination::ReturnOwned,
         )
     }
 }
@@ -394,7 +401,7 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
     config: crate::os::MemoryConfig,
     release: ChildHeapRelease<'_, 'heap>,
     under_threads: bool,
-    arena_destination: Option<&mut Option<crate::arena::DestroyedArenas<'tracking>>>,
+    arena_destination: ChildArenaDestroyDestination<'_, 'tracking>,
 ) -> Result<(), ChildSubprocessDestroyFailure<'heap, 'tracking>> {
     // Process destruction, and `mi_subproc_destroy` of a child that threads
     // still belong to, destroy the child under those threads.
@@ -478,9 +485,18 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
                 return match arena_destination {
                     // SAFETY: the retained destination is disjoint from the
                     // supplied tracking tail and outlives child raw retries.
-                    Some(destination) => unsafe { child.release_after_empty_heap_teardown_with_into(tracking, release, destination) },
+                    ChildArenaDestroyDestination::Retained(destination) => unsafe {
+                        child.release_after_empty_heap_teardown_with_into(tracking, release, destination)
+                    },
+                    // SAFETY: the native caller observed this child's empty
+                    // arena registry before selecting the stackless route.
+                    ChildArenaDestroyDestination::EmptyRegistry => unsafe {
+                        child.release_after_empty_heap_teardown_with_empty_arena_registry(tracking, release)
+                    },
                     // SAFETY: forwarded exact release-route obligations.
-                    None => unsafe { child.release_after_empty_heap_teardown_with(tracking, release) },
+                    ChildArenaDestroyDestination::ReturnOwned => unsafe {
+                        child.release_after_empty_heap_teardown_with(tracking, release)
+                    },
                 }
                     .map_err(ChildSubprocessDestroyFailure::Release);
             }
@@ -3723,7 +3739,25 @@ unsafe fn destroy_record(
                 }
             }
             #[cfg(target_arch = "x86_64")]
+            let empty_registry = if retained_state.is_none() {
+                match child.with_child_image(|image| {
+                    image.get_ref().identity().arena_backing().registry().count() == 0
+                }) {
+                    Some(empty) => empty,
+                    None => {
+                        *owner = Some(child);
+                        return Err(NativeSubprocessError::Retained);
+                    }
+                }
+            } else {
+                false
+            };
+            #[cfg(target_arch = "x86_64")]
+            let no_arena_tracking = empty_registry;
+            #[cfg(target_arch = "x86_64")]
             let tracking = if child.stage() == ChildMainHeapStage::ArenaBackingDestroyed {
+                &mut []
+            } else if no_arena_tracking {
                 &mut []
             } else {
                 match unsafe { native_child_destroy_tracking(id.0, &mut child) } {
@@ -3735,14 +3769,20 @@ unsafe fn destroy_record(
             let tracking = &mut [];
             #[cfg(target_arch = "x86_64")]
             let arena_destination = unsafe {
-                let allocation = (*record.destroy_state.get()).as_ref()
-                    .expect("native destruction issued its retained header");
-                // The retained header and the tracking slice above are
-                // disjoint projections of this same live allocation.
-                Some(&mut (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending)
+                if no_arena_tracking {
+                    ChildArenaDestroyDestination::EmptyRegistry
+                } else {
+                    let allocation = (*record.destroy_state.get()).as_ref()
+                        .expect("native destruction issued its retained header");
+                    // The retained header and the tracking slice above are
+                    // disjoint projections of this same live allocation.
+                    ChildArenaDestroyDestination::Retained(
+                        &mut (*allocation.pointer().cast::<NativeChildArenaDestroyState>().as_ptr()).pending,
+                    )
+                }
             };
             #[cfg(not(target_arch = "x86_64"))]
-            let arena_destination = None;
+            let arena_destination = ChildArenaDestroyDestination::ReturnOwned;
             // Source destroys a child under its permanently quiescent
             // threads. Rust TLS can still retain a member after the source
             // registration ended, so actual tokens retain this control record.
@@ -4284,6 +4324,64 @@ pub(crate) mod tests {
                     assert_eq!(metadata.test_allocation_audit().live_capability_count, capabilities,
                         "complete retry releases its enclosing control exactly once");
                 }
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_empty_child_destroy_needs_no_arena_failure_storage() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_empty_child_destroy_needs_no_arena_failure_storage",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let metadata = crate::meta::MetaAllocator::global();
+                let capabilities = metadata.test_allocation_audit().live_capability_count;
+                // SAFETY: the process main subprocess and its metadata Theap
+                // are initialized and no child destruction is in progress.
+                let metadata_before = unsafe {
+                    MainSubprocess::global().identity().metadata_statistics_for_print()
+                }.expect("process metadata Theap is published");
+                let child = native_subproc_new().expect("empty child creation");
+                let arena_count = unsafe { child.with_owner(|owner| {
+                    owner.as_mut().expect("live child").with_child_image(|image| {
+                        image.identity().arena_backing().registry().count()
+                    })
+                }) }.expect("child owner remains live").expect("child image remains live");
+                assert_eq!(arena_count, 0, "the child has no arena release to retain");
+                assert_eq!(metadata.test_allocation_audit().live_capability_count, capabilities + 2,
+                    "child creation retains only its context and metadata Theap");
+                // SAFETY: the process main subprocess and its metadata Theap
+                // are initialized and no child destruction is in progress.
+                let metadata_after_create = unsafe {
+                    MainSubprocess::global().identity().metadata_statistics_for_print()
+                }.expect("process metadata Theap is published");
+                assert_eq!(metadata_after_create.pages_extended, metadata_before.pages_extended,
+                    "child creation fits in the existing parent metadata pages");
+                assert_eq!(metadata_after_create.pages_retire, metadata_before.pages_retire,
+                    "creating an empty child retires no parent metadata page");
+
+                let tracking_request = NativeChildArenaDestroyState::tracking_offset();
+                metadata.test_fail_next_direct_zeroed_size(tracking_request);
+                // SAFETY: the child has no members, clients, callback, or arena
+                // backing, and is consumed only by this terminal destruction.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()),
+                    "an empty arena registry needs no parent metadata tracking block");
+                let audit = metadata.test_allocation_audit();
+                assert_eq!(audit.live_capability_count, capabilities,
+                    "child destruction returns its exact context capabilities");
+                // SAFETY: the published process metadata Theap remains live;
+                // the child teardown completed and no update races this read.
+                let metadata_after = unsafe {
+                    MainSubprocess::global().identity().metadata_statistics_for_print()
+                }.expect("process metadata Theap remains published");
+                assert_eq!(metadata_after.pages_extended, metadata_after_create.pages_extended,
+                    "empty child destruction allocates no parent metadata pages");
+                assert_eq!(metadata_after.pages_retire, metadata_after_create.pages_retire + 1,
+                    "empty child destruction retires only the page held by its larger control image");
             },
         );
     }

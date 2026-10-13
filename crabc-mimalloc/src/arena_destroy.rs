@@ -70,6 +70,55 @@ impl DestroyedArenas<'_> {
 }
 
 impl ProcessArenaBacking {
+    /// Validates a retained child arena group with no published arenas.
+    ///
+    /// # Safety
+    /// The caller has the same child-quiescence authority required by
+    /// `destroy_all_retained_child`, and no arena publication or cleanup can
+    /// race this call.
+    pub(crate) unsafe fn validate_empty_retained_child(
+        &self,
+    ) -> Result<(), ArenaDestroyError> {
+        if self.destroyed.load(Ordering::Acquire)
+            || self.huge_cleanup_retained.load(Ordering::Acquire)
+            || self.preparing.load(Ordering::Acquire) != 0
+            || self.preparation_retained.load(Ordering::Acquire)
+            || self.registry.count() != 0
+        {
+            return Err(ArenaDestroyError::InvalidOwnership);
+        }
+        if self.registry.arenas.iter().any(|arena| {
+            !arena.load(Ordering::Acquire).is_null()
+        }) {
+            return Err(ArenaDestroyError::InvalidOwnership);
+        }
+        if let Some(binding) = unsafe { *self.binding.get() } {
+            if binding.process.main_subprocess.is_some()
+                || !core::ptr::eq(
+                    unsafe { binding.process.subprocess.as_ref() }.arena_backing(),
+                    self,
+                )
+            {
+                return Err(ArenaDestroyError::InvalidOwnership);
+            }
+        }
+        Ok(())
+    }
+
+    /// Retires an empty retained child arena group without constructing the
+    /// large per-arena failure owner used by `destroy_all`.
+    ///
+    /// # Safety
+    /// The caller meets `validate_empty_retained_child`'s obligations and no
+    /// arena publication or cleanup can race this call.
+    pub(crate) unsafe fn destroy_empty_retained_child(
+        &self,
+    ) -> Result<(), ArenaDestroyError> {
+        unsafe { self.validate_empty_retained_child() }?;
+        self.destroyed.store(true, Ordering::Release);
+        Ok(())
+    }
+
     /// Sizes external huge-release ownership bits before destructive work.
     /// Only published source owners contribute; the consuming pass still
     /// validates complete registry/owner correspondence before any mutation.
