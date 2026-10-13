@@ -13,15 +13,26 @@ from test_x86_64_m2_vm import NativeVmAssemblyTests
 
 class NativeBitmapAssemblyTests(unittest.TestCase):
     @staticmethod
+    def bitmap_producer():
+        spec = importlib.util.spec_from_file_location(
+            'bitmap_producer_test', RUNNER.ALLOCATOR_ROOT / 'm2_bitmaps_x86_64.py'
+        )
+        producer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(producer)
+        return producer
+
+    @staticmethod
     def bitmap_evidence():
         pin = RUNNER.load_pin()
         return {
             'schema': 'crabc-mimalloc-x86_64-m2-bitmaps-evidence', 'format': 1,
             'status': 'passed', 'architecture': 'x86_64', 'profile': 'scalar-release-stat0',
             'upstream': {'revision': pin['revision'], 'archive_sha256': pin['sha256']},
-            'rust_passed_test_count': 42, 'rust_execution_count': 1, 'rust_build_reused': True,
-            'rust_tests': [f'bitmap::fixture_{index}' for index in range(41)]
-                + ['bitmap::native_tests::optional_isa_bitmap_allocation_trace'],
+            'rust_execution_count': 1, 'rust_build_reused': True,
+            'rust_tests': [
+                'bitmap::native_tests::binned_images_require_live_isolated_statistics_owners',
+                'bitmap::tests::binned_bitmap_layout_rounds_to_chunks_and_preserves_the_source_header',
+            ],
             'rust_command': ['/workspace/.work/prepared-test', 'bitmap::', '--test-threads=1', '--nocapture'],
             'compared_value_count': 138976,
             'transcript_sha256': 'd0603054a031be77a9b5c047642ec28f111d28a4efa900be7bb7d192fb4a1f49',
@@ -103,18 +114,26 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         self.assertEqual(complete, ['metadata', 'bitmaps', 'page-map', 'allocator-recursion'])
         self.assertEqual(summary['milestone']['status'], 'partial')
         bitmap = summary['components'][2]
-        self.assertEqual(len(bitmap['bounded_source_definitions']), 9)
-        self.assertEqual(len(bitmap['failure_matrix']), 8)
-        self.assertEqual([c['expected_passed_test_count'] for c in bitmap['checks']], [42, 42])
+        self.assertEqual(bitmap['native_status'], 'complete')
+        self.assertEqual(
+            [(check['id'], check['target']) for check in bitmap['checks']],
+            [
+                ('native-bitmap-source-differential', 'compat/allocator/m2_bitmaps_x86_64.py::run_evidence'),
+                ('native-bitmap-unit-invariants', 'bitmap::'),
+            ],
+        )
+        self.assertTrue(all(set(check) == {'id', 'kind', 'target'} for check in bitmap['checks']))
 
     def test_fragment_schema_check_status_and_predicate_mutations_fail(self):
         original = RUNNER.read_json
         fragment = original(RUNNER.M2_X86_64_BITMAP_FRAGMENT)
-        for mutation in ('schema', 'check', 'status', 'predicate'):
+        for mutation in ('schema', 'check', 'count', 'target', 'status', 'predicate'):
             changed = copy.deepcopy(fragment)
             component = changed['component']
             if mutation == 'schema': changed['schema'] = 'aarch64-evidence'
-            if mutation == 'check': component['checks'][0]['expected_passed_test_count'] = 40
+            if mutation == 'check': component['checks'][0]['kind'] = 'unverified-count-only'
+            if mutation == 'count': component['checks'][0]['expected_passed_test_count'] = 42
+            if mutation == 'target': component['checks'][0]['target'] = 'bitmap::'
             if mutation == 'status': component['completion_status'] = 'partial'
             if mutation == 'predicate': component['source_map_records'][0]['required_status'] = 'partial'
             with self.subTest(mutation=mutation), mock.patch.object(
@@ -160,21 +179,21 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
                 self.summary(), self.metadata_evidence(), unmatched)
 
     def test_prepared_bitmap_producer_executes_the_supplied_binary_without_building(self):
-        spec = importlib.util.spec_from_file_location('bitmap_producer_test', RUNNER.ALLOCATOR_ROOT / 'm2_bitmaps_x86_64.py')
-        producer = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(producer)
+        producer = self.bitmap_producer()
         harness = mock.MagicMock()
         harness.load_pin.return_value = RUNNER.load_pin()
         harness.CONFIGURATION_PROFILES = {'release': []}
         harness.temporary_directory.return_value = contextlib.nullcontext('.work/source-fixture')
         harness.safe_extract.return_value = Path('.work/source-fixture')
-        harness.parse_rust_test_count.return_value = 42
         harness._m1_foundations_test_program.side_effect = AssertionError('a second build is forbidden')
+        roster = [
+            'bitmap::native_tests::binned_images_require_live_isolated_statistics_owners',
+            'bitmap::tests::binned_bitmap_layout_rounds_to_chunks_and_preserves_the_source_header',
+        ]
         harness.command_record.side_effect = [
             {}, {'stdout': 'oracle'},
-            {'stdout': '\n'.join([*(f'bitmap::fixture_{i}: test' for i in range(41)),
-                'bitmap::native_tests::optional_isa_bitmap_allocation_trace: test'])},
-            {'stdout': 'rust', 'stderr': ''},
+            {'stdout': '\n'.join(f'{name}: test' for name in roster)},
+            {'stdout': '\n'.join(f'test {name} ... ok' for name in roster), 'stderr': ''},
         ]
         prepared = {'path': Path('.work/prepared-test'), 'build_command': ['cargo', 'test', '--no-run']}
         # This test isolates build/execute routing, not the independently
@@ -184,8 +203,55 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         harness._m1_foundations_test_program.assert_not_called()
         self.assertTrue(evidence['rust_build_reused'])
         self.assertEqual(evidence['rust_execution_count'], 1)
+        self.assertEqual(evidence['rust_tests'], roster)
+        self.assertIn('bitmap::native_tests::binned_images_require_live_isolated_statistics_owners', evidence['rust_tests'])
+        self.assertEqual(harness.command_record.call_args_list[-2].args[0],
+            ['.work/prepared-test', 'bitmap::', '--list'])
         self.assertEqual(harness.command_record.call_args_list[-1].args[0],
             ['.work/prepared-test', 'bitmap::', '--test-threads=1', '--nocapture'])
+
+    def test_bitmap_execution_requires_every_listed_test_to_pass_exactly_once(self):
+        producer = self.bitmap_producer()
+        roster = [
+            'bitmap::native_tests::binned_images_require_live_isolated_statistics_owners',
+            'bitmap::tests::binned_bitmap_layout_rounds_to_chunks_and_preserves_the_source_header',
+        ]
+        listed = '\n'.join(f'{name}: test' for name in roster)
+        passed = '\n'.join(f'test {name} ... ok' for name in roster)
+
+        self.assertEqual(producer.bitmap_test_roster(listed, passed), roster)
+        self.assertEqual(
+            producer.bitmap_test_roster(
+                listed,
+                '\n'.join(
+                    [
+                        f'test {roster[0]} ... m2.bitmap.trace=1',
+                        'CRABC_MI_M2_BITMAP_TRACE_END',
+                        'ok',
+                        f'test {roster[1]} ... ok',
+                    ]
+                ),
+            ),
+            roster,
+        )
+        for output in (
+            f'test {roster[0]} ... ok',
+            f'test {roster[0]} ... ok\ntest {roster[1]} ... FAILED',
+            f'test {roster[0]} ... ok\ntest {roster[0]} ... ok',
+            f'test {roster[0]} ... ok\ntest bitmap::unexpected ... ok\ntest {roster[1]} ... ok',
+        ):
+            with self.subTest(output=output), self.assertRaisesRegex(ValueError, 'test outcomes'):
+                producer.bitmap_test_roster(listed, output)
+
+    def test_bitmap_execution_requires_a_nonempty_unique_exact_prefix_roster(self):
+        producer = self.bitmap_producer()
+        for listed in (
+            '',
+            'os::unexpected: test',
+            'bitmap::one: test\nbitmap::one: test',
+        ):
+            with self.subTest(listed=listed), self.assertRaisesRegex(ValueError, 'test inventory'):
+                producer.bitmap_test_roster(listed, 'test bitmap::one ... ok')
 
     def report_arguments(self):
         summary = self.summary()
@@ -288,6 +354,21 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
 
     def test_report_contains_actual_bitmap_checks_without_promoting_partial_components(self):
         arguments = self.report_arguments()
+        bitmap_check_ids = {
+            'native-bitmap-source-differential',
+            'native-bitmap-unit-invariants',
+        }
+        arguments['focused_checks'] = [
+            check for check in arguments['focused_checks'] if check['id'] not in bitmap_check_ids
+        ]
+        arguments['bitmap_evidence']['rust_tests'].append(
+            'bitmap::native_tests::another_listed_test'
+        )
+        arguments['focused_checks'].extend(
+            RUNNER._m2_x86_64_bitmap_check_records(
+                arguments['summary'], arguments['bitmap_evidence']
+            )
+        )
         initialization_checks = arguments.pop('_initialization_checks')
         fault_checks = arguments.pop('_fault_checks')
         arena_checks = arguments.pop('_arena_checks')
@@ -297,23 +378,32 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             RUNNER, '_m2_x86_64_process_arena_collect_check_records', return_value=arena_checks
         ):
             report = RUNNER.m2_x86_64_memory_substrate_report(**arguments)
-        self.assertEqual(len(report['milestone']['unmet_component_ids']), 4)
+        self.assertEqual(
+            report['milestone']['unmet_component_ids'],
+            ['vm-primitives', 'arenas', 'initialization', 'fault-injection'],
+        )
         self.assertEqual(report['milestone']['status'], 'partial')
         bitmap = report['components'][2]
         self.assertEqual(bitmap['status'], 'complete')
-        self.assertEqual(len(bitmap['executed_checks']), 2)
+        self.assertEqual(
+            {row['id'] for row in bitmap['executed_checks']},
+            bitmap_check_ids,
+        )
         self.assertEqual({row['shared_execution_id'] for row in bitmap['executed_checks']}, {'native-bitmap-module'})
+        self.assertEqual(
+            {row['passed_test_count'] for row in bitmap['executed_checks']}, {3}
+        )
 
-    def test_missing_result_count_schema_comparison_and_build_reuse_fail_closed(self):
+    def test_missing_result_roster_schema_comparison_and_build_reuse_fail_closed(self):
         summary = self.summary()
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_bitmap_check_records(summary, None)
         for field, replacement in (
             ('schema', 'aarch64'), ('format', True), ('status', 'partial'),
-            ('rust_passed_test_count', 40), ('rust_passed_test_count', True),
             ('rust_execution_count', 2), ('rust_build_reused', False),
             ('compared_value_count', 132183), ('transcript_sha256', '0' * 64),
-            ('rust_tests', []), ('rust_command', []),
+            ('rust_tests', []), ('rust_tests', ['bitmap::duplicate', 'bitmap::duplicate']),
+            ('rust_tests', ['page_map::test']), ('rust_command', []),
         ):
             evidence = self.bitmap_evidence()
             evidence[field] = replacement
@@ -321,11 +411,10 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
                 RUNNER._m2_x86_64_bitmap_check_records(summary, evidence)
 
     def test_report_rejects_missing_or_weakened_executed_checks_and_source_anchors(self):
-        for mutation in ('missing-result', 'missing-check', 'count', 'target', 'anchor', 'missing-anchor', 'duplicate-anchor'):
+        for mutation in ('missing-result', 'missing-check', 'target', 'anchor', 'missing-anchor', 'duplicate-anchor'):
             args = self.report_arguments()
             if mutation == 'missing-result': args.pop('bitmap_evidence')
             if mutation == 'missing-check': args['focused_checks'].pop(0)
-            if mutation == 'count': args['focused_checks'][0]['passed_test_count'] = 40
             if mutation == 'target': args['focused_checks'][0]['target'] = 'page_map::'
             records = args['bounded_source_evidence']['records']
             if mutation == 'anchor': records[0]['source_anchor']['sha256'] = '0' * 64

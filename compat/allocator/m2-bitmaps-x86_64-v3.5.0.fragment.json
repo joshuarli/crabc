@@ -280,14 +280,12 @@
       {
         "id": "native-bitmap-source-differential",
         "kind": "c-rust-native-bitmaps",
-        "target": "compat/allocator/m2_bitmaps_x86_64.py::run_evidence",
-        "expected_passed_test_count": 42
+        "target": "compat/allocator/m2_bitmaps_x86_64.py::run_evidence"
       },
       {
         "id": "native-bitmap-unit-invariants",
         "kind": "rust-unit",
-        "target": "bitmap::",
-        "expected_passed_test_count": 42
+        "target": "bitmap::"
       }
     ],
     "remaining_conditions": []

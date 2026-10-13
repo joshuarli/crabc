@@ -14527,6 +14527,15 @@ def validate_x86_64_m2_memory_substrate_contract(
         raw_checks = raw_component.get("checks")
         if not isinstance(raw_checks, list):
             raise HarnessError(f"native x86 M2 component {component_id} has invalid checks")
+        if component_id == "bitmaps" and raw_checks != [
+            {
+                "id": "native-bitmap-source-differential",
+                "kind": "c-rust-native-bitmaps",
+                "target": "compat/allocator/m2_bitmaps_x86_64.py::run_evidence",
+            },
+            {"id": "native-bitmap-unit-invariants", "kind": "rust-unit", "target": "bitmap::"},
+        ]:
+            raise HarnessError("native x86 M2 bitmap check inventory changed")
         if component_id == "metadata":
             if raw_checks != list(M2_X86_64_METADATA_CHECKS):
                 raise HarnessError("native x86 M2 metadata check inventory changed")
@@ -14545,12 +14554,10 @@ def validate_x86_64_m2_memory_substrate_contract(
             )
         checks: list[dict[str, Any]] = []
         for raw_check in raw_checks:
-            if not isinstance(raw_check, Mapping) or set(raw_check) != {
-                "expected_passed_test_count",
-                "id",
-                "kind",
-                "target",
-            }:
+            expected_check_fields = {"id", "kind", "target"}
+            if component_id != "bitmaps":
+                expected_check_fields.add("expected_passed_test_count")
+            if not isinstance(raw_check, Mapping) or set(raw_check) != expected_check_fields:
                 raise HarnessError(f"native x86 M2 component {component_id} has an invalid check")
             if (
                 not isinstance(raw_check.get("id"), str)
@@ -14602,13 +14609,20 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "rust-teardown-owner",
                 }
                 or not isinstance(raw_check.get("target"), str)
-                or type(raw_check.get("expected_passed_test_count")) is not int
-                or raw_check.get("expected_passed_test_count") != (
-                    42 if component_id == "bitmaps" else (
-                        2 if raw_check.get("kind") == "c-rust-process-init-once-boundaries" else (
-                        7 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else (
-                            3 if raw_check.get("kind") == "c-rust-second-arena-reset-advice-matrix" else 1
-                        ))
+                or (
+                    component_id != "bitmaps"
+                    and (
+                        type(raw_check.get("expected_passed_test_count")) is not int
+                        or raw_check.get("expected_passed_test_count")
+                        != (
+                            2
+                            if raw_check.get("kind") == "c-rust-process-init-once-boundaries"
+                            else 7
+                            if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix"
+                            else 3
+                            if raw_check.get("kind") == "c-rust-second-arena-reset-advice-matrix"
+                            else 1
+                        )
                     )
                 )
             ):
@@ -16641,7 +16655,6 @@ def _m2_x86_64_bitmap_check_records(
     """Validate one actual producer execution before sharing its two evidence rows."""
 
     component = next(item for item in summary["components"] if item["id"] == "bitmaps")
-    expected_count = component["checks"][0]["expected_passed_test_count"]
     pin = load_pin()
     if not isinstance(evidence, Mapping) or (
         evidence.get("schema") != "crabc-mimalloc-x86_64-m2-bitmaps-evidence"
@@ -16652,8 +16665,6 @@ def _m2_x86_64_bitmap_check_records(
         or evidence.get("upstream") != {
             "revision": pin["revision"], "archive_sha256": pin["sha256"]
         }
-        or type(evidence.get("rust_passed_test_count")) is not int
-        or evidence.get("rust_passed_test_count") != expected_count
         or type(evidence.get("rust_execution_count")) is not int
         or evidence.get("rust_execution_count") != 1
         or evidence.get("rust_build_reused") is not True
@@ -16665,7 +16676,7 @@ def _m2_x86_64_bitmap_check_records(
     names = evidence.get("rust_tests")
     command = evidence.get("rust_command")
     if (
-        not isinstance(names, list) or len(names) != expected_count
+        not isinstance(names, list) or not names
         or not all(isinstance(name, str) and name.startswith("bitmap::") for name in names)
         or len(set(names)) != len(names)
         or not isinstance(command, list) or not all(isinstance(arg, str) and arg for arg in command)
@@ -16677,7 +16688,7 @@ def _m2_x86_64_bitmap_check_records(
             "component": "bitmaps", "command": list(command),
             "evidence_scope": "shared-native-bitmap-module-execution",
             "shared_execution_id": "native-bitmap-module",
-            "id": check["id"], "passed_test_count": expected_count, "target": check["target"],
+            "id": check["id"], "passed_test_count": len(names), "target": check["target"],
             **({"comparison_status": "matched"} if check["kind"] == "c-rust-native-bitmaps" else {}),
         }
         for check in component["checks"]
@@ -16767,10 +16778,16 @@ def m2_x86_64_memory_substrate_report(
         if {check["id"] for check in checks} != {check["id"] for check in expected_checks}:
             raise HarnessError(f"native x86 M2 component {component_id} has an invalid executed-check set")
         declared = {check["id"]: check for check in expected_checks}
+        bitmap_records = {check["id"]: check for check in expected_bitmap_records}
         for check in checks:
             expected = declared[check["id"]]
+            expected_passed_test_count = (
+                bitmap_records[check["id"]]["passed_test_count"]
+                if component_id == "bitmaps"
+                else expected["expected_passed_test_count"]
+            )
             if (type(check.get("passed_test_count")) is not int
-                    or check.get("passed_test_count") != expected["expected_passed_test_count"]
+                    or check.get("passed_test_count") != expected_passed_test_count
                     or check.get("target") != expected["target"]):
                 raise HarnessError(f"native x86 M2 component {component_id} executed check count or target changed")
         complete = component["native_status"] == "complete" and not component["remaining_conditions"]

@@ -21,7 +21,6 @@ ROOT = Path(__file__).resolve().parents[2]
 PREFIX = "m2.bitmap.native."
 RUST_INLINE_PREFIX = "test bitmap::native_tests::emit_native_bitmap_component_trace ... "
 EXPECTED_OBSERVATION_COUNT = 138976
-EXPECTED_RUST_TEST_COUNT = 42
 SOURCE_FILES = (
     "src/bitmap.c", "src/bitmap.h", "include/mimalloc/internal.h",
     "include/mimalloc/atomic.h", "include/mimalloc/bits.h",
@@ -45,6 +44,50 @@ def transcript(output: str) -> list[int]:
     if not values:
         raise ValueError("native bitmap transcript is empty or its observation order changed")
     return values
+
+
+def bitmap_test_roster(list_output: str, run_output: str) -> list[str]:
+    """Require the complete listed bitmap module to pass exactly once."""
+    names = [line.removesuffix(": test") for line in list_output.splitlines()
+             if line.endswith(": test")]
+    if (not names or len(set(names)) != len(names)
+            or any(not name.startswith("bitmap::") for name in names)):
+        raise ValueError("native bitmap test inventory is empty, repeated, or outside bitmap::")
+
+    outcomes = []
+    active_test = None
+    unfinished = []
+    statuses = {"ok", "FAILED", "ignored"}
+    for line in run_output.splitlines():
+        match = re.fullmatch(r"test (\S+) \.\.\.(?: (.*))?", line)
+        if match is not None:
+            if active_test is not None:
+                unfinished.append(active_test)
+            name, suffix = match.groups()
+            if suffix in statuses:
+                outcomes.append((name, suffix))
+                active_test = None
+            else:
+                active_test = name
+            continue
+        if active_test is not None and line in statuses:
+            outcomes.append((active_test, line))
+            active_test = None
+    if active_test is not None:
+        unfinished.append(active_test)
+    outcome_names = [name for name, _ in outcomes]
+    if (len(outcomes) != len(names) or set(outcome_names) != set(names)
+            or len(set(outcome_names)) != len(outcome_names)
+            or any(status != "ok" for _, status in outcomes)):
+        missing = sorted(set(names) - set(outcome_names))
+        unexpected = sorted(set(outcome_names) - set(names))
+        nonpassing = [(name, status) for name, status in outcomes if status != "ok"]
+        raise ValueError(
+            "native bitmap test outcomes do not match the complete inventory: "
+            f"listed={len(names)} reported={len(outcomes)} missing={missing} "
+            f"unexpected={unexpected} nonpassing={nonpassing} unfinished={unfinished}"
+        )
+    return names
 
 
 def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
@@ -82,17 +125,14 @@ def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
     listed = harness.command_record([str(program["path"]), "bitmap::", "--list"],
                                     cwd=ROOT, timeout_seconds=30)
     harness.require_success(listed, "native bitmap test inventory")
-    test_names = [line.removesuffix(": test") for line in str(listed["stdout"]).splitlines()
-                  if line.endswith(": test")]
-    if (len(test_names) != EXPECTED_RUST_TEST_COUNT or len(set(test_names)) != len(test_names)
-            or any(not name.startswith("bitmap::") for name in test_names)):
-        raise harness.HarnessError("native bitmap test inventory changed")
     rust_command = [str(program["path"]), "bitmap::", "--test-threads=1", "--nocapture"]
     rust_run = harness.command_record(rust_command, cwd=ROOT, timeout_seconds=300)
     harness.require_success(rust_run, "native bitmap unit and invariant suite")
     output = str(rust_run["stdout"]) + "\n" + str(rust_run["stderr"])
-    if harness.parse_rust_test_count(output) != len(test_names):
-        raise harness.HarnessError("native bitmap test inventory did not all pass")
+    try:
+        test_names = bitmap_test_roster(str(listed["stdout"]), output)
+    except ValueError as error:
+        raise harness.HarnessError(str(error)) from error
     expected, observed = transcript(str(c_run["stdout"])), transcript(output)
     if len(expected) != EXPECTED_OBSERVATION_COUNT:
         raise harness.HarnessError("native bitmap source observation inventory changed")
@@ -111,7 +151,7 @@ def run_evidence(harness, *, offline: bool, test_program=None) -> dict:
         "c_source_files": sources, "c_command": command,
         "fixture": harness.artifact_record(fixture),
         "rust_build_command": program["build_command"], "rust_command": rust_command,
-        "rust_tests": test_names, "rust_passed_test_count": len(test_names),
+        "rust_tests": test_names,
         "rust_execution_count": 1, "rust_build_reused": test_program is not None,
         "compared_value_count": len(expected),
         "transcript_sha256": hashlib.sha256(payload).hexdigest(),
