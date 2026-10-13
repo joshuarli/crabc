@@ -68,8 +68,11 @@ The numeric bounds are owned by code, not restated here:
   `HOST_LOAD_POLICY`) and `compat/x86_64/performance_release_gate.py`
   (`RUNTIME_CPU_UPPER_MAX`, `RUNTIME_MEMORY_UPPER_MAX`,
   `RUNTIME_SYSCALL_FACTOR`).
-- Allocator promotion bounds: `compat/x86_64/performance_release_gate.py`
-  (`ALLOCATOR_*`) and `compat/allocator/perf_engine_x86_64.py`.
+- Allocator promotion bounds: `compat/allocator/x86_64_m9_gate.py`
+  (`SUITE_THROUGHPUT_LOWER_MIN`, `CRITICAL_THROUGHPUT_LOWER_MIN`,
+  `CRITICAL_P99_UPPER_MAX`, `MEMORY_GEOMEAN_UPPER_MAX`,
+  `CRITICAL_MEMORY_UPPER_MAX`). Sample comparison and bootstrap methodology:
+  `compat/allocator/perf_engine_x86_64.py`.
 
 For the active x86-64 C scorecard, CPU, PSS, and `memory.peak` one-sided 95%
 upper bounds gate at `1.00` for every row. Each row reports `0.90` as a target;

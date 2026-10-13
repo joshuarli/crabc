@@ -98,12 +98,14 @@ budget, and each of its three attempts must use that budget, every canonical
 row, and syscall diagnostics.
 
 `perf-c collect --attempt-roster ROSTER --work-dir NEW` replays the three
-attempts from raw evidence and writes `collector.json` with the per-workload
-scorecard: for each row and attempt, the CPU median ratio and upper bound,
-maximum-checkpoint PSS and `memory.peak` against their row-specific limits, marked
-and whole-process syscall totals, and wall/fault/context-switch/RSS medians.
-A row passes only if all four gates pass in all three attempts; no row or
-attempt compensates for another. `perf-c check REPORT` independently replays a
+attempts from raw evidence and writes `collector.json` with a per-workload
+scorecard. Each attempt records the CPU median ratio and upper bound, raw PSS
+and `memory.peak` totals, marked and whole-process syscall totals, and
+wall/fault/context-switch/RSS medians. The collector derives paired PSS and
+`memory.peak` median ratios and one-sided 95% upper bounds from the three
+attempt totals. A row passes only if its per-attempt CPU and syscall gates all
+pass and both memory upper bounds meet the release limit; no row or attempt
+compensates for another. `perf-c check REPORT` independently replays a
 collector or a single attempt, recomputes the scorecard, and prints it with
 every release blocker. Qualification is exactly an empty blocker list.
 

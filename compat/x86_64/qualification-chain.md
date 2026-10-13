@@ -135,9 +135,10 @@ one:
 
 `performance-release` never measures. `performance_release_gate.py evaluate`
 reads the three-attempt runtime C collector through the `perf-c check` reader,
-rechecks every row against the 1.00 CPU/PSS/`memory.peak` and 2R syscall rules,
-and replays one `perf-native --mode full` report. Both retained reports must
-carry an `uncontended_host` record. Allocator promotion has its own M9 gate in
+rechecks each attempt's CPU and syscall gates and each row's three-attempt PSS
+and `memory.peak` one-sided 95% upper bounds at 1.00, and replays one
+`perf-native --mode full` report. Both retained reports must carry an
+`uncontended_host` record. Allocator promotion has its own M9 gate in
 `compat/allocator/x86_64_m9_gate.py`. The receipt names every unmet condition;
 publication reruns that evaluation and admits only a pass.
 
