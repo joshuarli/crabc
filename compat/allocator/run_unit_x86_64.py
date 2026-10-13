@@ -4,10 +4,15 @@
 Cargo succeeds when a filter selects zero tests. This development helper
 requires one executed, passing libtest case; it produces no milestone receipt.
 The host launcher owns target admission and checkout-local mutable state.
+
+The test crate is built unoptimized: one test is an edit-and-rerun loop, and
+the workspace's optimized dev profile makes that build several times slower.
+The unfiltered suite keeps the workspace profile.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -31,7 +36,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "-p", "crabc-mimalloc", "--lib", "--no-default-features", arguments[0],
         "--", "--exact", "--nocapture", "--test-threads=1",
     ]
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    environment = {**os.environ, "CARGO_PROFILE_DEV_OPT_LEVEL": "0", "CARGO_PROFILE_TEST_OPT_LEVEL": "0"}
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=environment)
     sys.stdout.write(result.stdout)
     if result.returncode != 0:
         return result.returncode if result.returncode > 0 else 128 - result.returncode
