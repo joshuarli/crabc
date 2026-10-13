@@ -1,11 +1,13 @@
 """Family execution retains failed commands and seals physical fixture trees."""
 
 import json
+import hashlib
 from dataclasses import dataclass
 import os
 from pathlib import Path
 import socket
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -124,6 +126,48 @@ class FamilyExecutionTests(unittest.TestCase):
         self.assertNotIn('sha256', snapshot['fifo'])
         (fixture / 'regular').write_bytes(b'changed')
         self.assertNotEqual(execution.snapshot(fixture), snapshot)
+
+    def test_snapshot_keeps_nested_names_order_and_complete_node_identity(self):
+        fixture = self.work / 'nested fixture'
+        fixture.mkdir()
+        (fixture / 'z-directory').mkdir()
+        (fixture / 'a-directory').mkdir()
+        (fixture / 'a-file').write_bytes(b'payload\x00\xff')
+        (fixture / 'a-file').chmod(0o705)
+        (fixture / 'a-directory/empty').write_bytes(b'')
+        (fixture / 'a-directory/empty').chmod(0o400)
+        (fixture / 'z-directory/space name').write_bytes(b'nested')
+        (fixture / 'z-directory').chmod(0o711)
+        os.link(fixture / 'a-file', fixture / 'hard-link')
+        outside = self.work / 'unrelated'
+        outside.mkdir()
+        (outside / 'untracked').write_bytes(b'never included')
+        (fixture / 'directory-link').symlink_to(outside, target_is_directory=True)
+        (fixture / 'dangling').symlink_to('missing')
+        expected_names = ('a-directory', 'a-file', 'dangling', 'directory-link',
+                          'hard-link', 'z-directory', 'z-directory/space name', 'a-directory/empty')
+        expected = {}
+        for name in expected_names:
+            path = fixture / name
+            metadata = path.lstat()
+            entry = {'mode': stat.S_IMODE(metadata.st_mode), 'uid': metadata.st_uid,
+                     'gid': metadata.st_gid, 'links': metadata.st_nlink}
+            if path.is_symlink():
+                entry.update(kind='symlink', target=os.readlink(path))
+            elif path.is_dir():
+                entry['kind'] = 'directory'
+            else:
+                entry.update(kind='file', size=metadata.st_size,
+                             sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+            expected[name] = entry
+        observed = execution.snapshot(fixture)
+        self.assertEqual(list(observed), list(expected))
+        self.assertEqual(observed, expected)
+        self.assertEqual(json.dumps(observed), json.dumps(expected))
+        (fixture / 'a-file').write_bytes(b'changed')
+        self.assertNotEqual(execution.snapshot(fixture), observed)
+        (fixture / 'z-directory').chmod(0o755)
+        self.assertNotEqual(execution.snapshot(fixture)['z-directory'], observed['z-directory'])
 
     def test_declared_leaf_must_be_unique_and_inside_exact_step_scratch(self):
         step = self.work / 'leaf'

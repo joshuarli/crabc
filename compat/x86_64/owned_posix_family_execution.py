@@ -85,17 +85,18 @@ def snapshot(directory: Path) -> dict:
     """
     require(directory.is_dir() and not directory.is_symlink(), 'snapshot needs a physical directory')
     result = {}
-    pending = [directory]
+    pending = [(directory, '')]
     while pending:
-        parent = pending.pop()
+        parent, prefix = pending.pop()
         for path in sorted(parent.iterdir()):
+            relative = path.name if not prefix else prefix + '/' + path.name
             metadata = path.lstat()
             mode = metadata.st_mode
             entry = {'mode': stat.S_IMODE(mode), 'uid': metadata.st_uid,
                      'gid': metadata.st_gid, 'links': metadata.st_nlink}
             if stat.S_ISDIR(mode):
                 entry['kind'] = 'directory'
-                pending.append(path)
+                pending.append((path, relative))
             elif stat.S_ISREG(mode):
                 entry.update(kind='file', size=metadata.st_size, sha256=digest(path))
             elif stat.S_ISLNK(mode):
@@ -109,7 +110,7 @@ def snapshot(directory: Path) -> dict:
                              major=os.major(metadata.st_rdev), minor=os.minor(metadata.st_rdev))
             else:
                 raise ExecutionError(f'unsupported fixture node: {path}')
-            result[path.relative_to(directory).as_posix()] = entry
+            result[relative] = entry
     return result
 
 
