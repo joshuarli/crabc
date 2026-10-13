@@ -1,11 +1,12 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: running unattended 2026-10-13.** The coordinator launched every
-initially ready lane in priority order: Corpus, Ledger tooling, R1–R5 and
-R7, Allocator failures, Allocator discovery, Seeds, Performance tooling,
-Reconnaissance, M10 tooling, and Dead-code inventory. R6 waits for G1b;
-R8 waits for G1a, G1b and R7. Nothing has been qualified: 0 of 8 gates,
-9 of 26 families. Earlier receipts were deleted with `.work/` on 2026-10-07.
+**Status: running unattended 2026-10-13.** Ground tooling and pinned inputs
+have merged; all runtime lanes have run their independent checks. H0 is
+qualifying the third dynamic product after the installed and second products
+passed. Allocator M1/M2/M5/M6 discovery, source convergence, focused defect
+fixes, cleanup and campaign review continue in separate worktrees. Nothing
+has been qualified on main: 0 of 8 gates, 9 of 26 families. Earlier receipts
+were deleted with `.work/` on 2026-10-07.
 
 - **Resume:** "Read `plan.md` and `docs/lanes.md`, then run the campaign in
   `plan.md` as coordinator, unattended, launching every ready lane in the
@@ -518,6 +519,14 @@ Made so far, each with its commit, for the owner:
 - `d7ec2008f` (T4): M10 accepts `--qualification-receipt` and requires a
   passing full-profile chain bound to the current revision for its rerun
   condition; native and native-shadow both receive the ELF ownership audit.
+- `e01831558`, `88adf84c1` (A5): the hidden native adapter exposes the source
+  threadpool setter; an attached TLD's threadpool bit is mutable policy,
+  rather than part of its owner identity. Existing Theap retention stays
+  frozen and subsequent Theaps apply the source quarter-retention policy.
+  The unsafe observer states concrete pointer and exclusion obligations.
+- `78efb9cd5`, `fc736a86b`: wordexp offers a diagnostic single-cell replay
+  with full input validation and physical checks before and after hashing;
+  it cannot publish a qualification receipt.
 
 - `de3a8e968`: the core image identity in `compat/x86_64/core_image.py` is
   the image rebuilt on 2026-10-13 from the unchanged recipe.
@@ -656,6 +665,41 @@ Append one line per merge batch, per parked item, and per contract change.
   a named assertion. M7's first statistics discovery remains running;
   host memory stays above the 12-GiB reserve. Performance reconnaissance
   under load remains diagnostic and has made no product changes.
+- 2026-10-13: third integration batch through `0e44d7ccf`: aggregate-memory
+  release consumers, allocator source-map corrections, M6 matrix dispatch,
+  wordexp single-cell diagnostic and post-hash physical checks, source
+  threadpool policy and its 113-key release comparison, and three host-test
+  fixture races. The preceding frozen batch passed all nine Rust profiles,
+  ledger/structure/inventory checks and host directories except those three
+  races; the corrected frozen tip is being verified. `567d5e675` adds the
+  exact threadpool and selected page-map boundary mappings; source
+  convergence now has 164 unmet rows and 24 transitional rows.
+- 2026-10-13: P0 produced six alternating diagnostic C/R pairs on one commit
+  and image. Largest median CPU ratios: batch 4096x256 3.47, remote-free four
+  workers 3.19, batch 64x1024 3.09. Host load overlaps these measurements;
+  they qualify nothing. Sampled profiling is parked: the pinned image lacks
+  `perf`, and changing the image or host permissions is forbidden. The image
+  also lacks the requested `kache` wrapper; no image was rebuilt.
+- 2026-10-13: C0 found 19 unused-function leads, 1,021 allocator warnings
+  and 125 libc warnings in each native-shadow profile. Of 38 scripts without
+  production textual references, seven have test callers and 31 remain
+  unproven standalone tools. C1 is deleting only individually proven leaves;
+  no script or oracle fixture has been deleted. C2 found a child-destroy
+  regression expecting scratch after its successful early release; its
+  exact test and fault boundary are being corrected.
+- 2026-10-13: M5 selected discovery passes pointer dispatch, generic exit,
+  abandon/reclaim/release and the architecture check. Remote publication's
+  two Cargo-cache misses pass after seeding the actual producer cache; its
+  failed aggregate is retained. State auditing fails in a shared test
+  process even serially, while the second test alone passes; its owner is
+  isolating leftover state. Churn passes its native test but lacks the
+  canonical stress receipt, whose producer is now routed.
+- 2026-10-13: M6 adapter matrix at fixed `0e44d7ccf` fails collection page
+  counts, the C debug trace and four native Heap contract checks. Raw output
+  is retained and narrow root-cause checks are routed. An earlier matrix
+  was stopped after the coordinator moved its checkout; it is invalid and
+  cannot count as evidence. M7's 34 differential entries pass in discovery,
+  but required metadata, arena-commit and bin/owner coverage remains open.
 
 ## For the owner afterwards
 
