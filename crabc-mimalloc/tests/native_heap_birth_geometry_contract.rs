@@ -49,15 +49,10 @@ fn observe_birth() {
     }
 }
 
+// The process retains its initial TLS owner for its lifetime, so both main-Heap
+// observations must stay on the thread that starts this test process.
 #[test]
-fn main_heap_birth_uses_source_sized_request_and_retains_aligned_image() {
-    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
-    assert!(native_runtime_test_support::initialize(page_size));
-    observe_birth();
-}
-
-#[test]
-fn heap_birth_uses_source_sized_request_and_retains_aligned_image() {
+fn main_and_child_heap_birth_use_source_sized_requests_and_retain_aligned_images() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
     assert!(native_runtime_test_support::initialize(page_size));
     observe_birth();
@@ -79,4 +74,6 @@ fn heap_birth_uses_source_sized_request_and_retains_aligned_image() {
     }).join().unwrap();
     // SAFETY: the joined worker freed its only client and auxiliary Heap.
     assert!(unsafe { heaps::subproc_destroy(child as *mut core::ffi::c_void) });
+    // Child teardown must leave the process main Theap able to create a Heap.
+    observe_birth();
 }
