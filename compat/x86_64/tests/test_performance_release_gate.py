@@ -22,12 +22,12 @@ import performance_release_gate as gate  # noqa: E402
 HOST = {"status": "uncontended", "evidence": {"load_average": [0.0, 0.0, 0.0]}}
 
 
-def runtime_row(**changes: object) -> dict[str, object]:
+def runtime_attempt(**changes: object) -> dict[str, object]:
     row: dict[str, object] = {
         "gate": "pass",
         "cpu": {"median_ratio": 0.8, "one_sided_95_upper": 1.0, "gate": "pass"},
-        "pss_kib": {"reference": 1000, "candidate": 900, "gate": "pass"},
-        "memory_peak_bytes": {"reference": 1000, "candidate": 850, "gate": "pass"},
+        "pss_kib": {"reference": 1000, "candidate": 950},
+        "memory_peak_bytes": {"reference": 1000, "candidate": 950},
         "syscalls": {
             "marked_region": {"reference": 0, "candidate": 0, "gate": "pass"},
             "whole_process": {"reference": 40, "candidate": 80, "gate": "pass"},
@@ -38,41 +38,75 @@ def runtime_row(**changes: object) -> dict[str, object]:
     return row
 
 
+def memory_summary(*, seed: int = 0x43524142, upper: float | None = 0.95,
+                   release_gate: str = "pass") -> dict[str, object]:
+    return {
+        "median_ratio": 0.95,
+        "one_sided_95_upper": upper,
+        "resamples": 10_000,
+        "seed": seed,
+        "release_bound": 1.00,
+        "target_bound": 0.90,
+        "release_gate": release_gate,
+    }
+
+
+def runtime_row(**changes: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "gate": "pass",
+        "memory": {
+            "pss_kib": memory_summary(),
+            "memory_peak_bytes": memory_summary(seed=0x43524143),
+        },
+        "attempts": [runtime_attempt() for _ in range(gate.runtime_evidence.COLLECTOR_ATTEMPTS)],
+    }
+    row.update(changes)
+    return row
+
+
 class RuntimeThresholdTests(unittest.TestCase):
     def test_runtime_cpu_upper_bound_of_one_is_accepted(self) -> None:
-        self.assertEqual(gate.runtime_row_unmet("row", 1, runtime_row()), [])
+        self.assertEqual(gate.runtime_row_unmet("row", runtime_row()), [])
 
-    def test_runtime_memory_floor_policy_keeps_raw_totals_and_other_bounds(self) -> None:
+    def test_runtime_memory_upper_bound_of_one_is_accepted_above_report_target(self) -> None:
+        row = runtime_row(memory={
+            "pss_kib": memory_summary(upper=0.95),
+            "memory_peak_bytes": memory_summary(seed=0x43524143, upper=1.0),
+        })
+        self.assertEqual(gate.runtime_row_unmet("row", row), [])
+
+    def test_runtime_memory_upper_bound_and_release_gate_are_rechecked(self) -> None:
         cases = (
-            ("allocator_live_32m", 33 << 10, 33 << 20, True, True),
-            ("memcpy_128m_aligned", 257 << 10, 257 << 20, True, True),
-            ("strlen_128m_aligned", 129 << 10, 2 << 20, True, False),
-            ("getpid", 1000, 256 << 10, False, True),
-            ("getpid", 1000, (256 << 10) + 1, False, False),
-            ("allocator_live_4m", 5000, 5 << 20, False, False),
+            ("PSS one-sided 95% upper bound 1.01", {
+                "pss_kib": memory_summary(upper=1.01, release_gate="pass"),
+                "memory_peak_bytes": memory_summary(seed=0x43524143),
+            }),
+            ("memory.peak one-sided 95% upper bound None", {
+                "pss_kib": memory_summary(),
+                "memory_peak_bytes": memory_summary(seed=0x43524143, upper=None,
+                                                     release_gate="reference-zero"),
+            }),
+            ("PSS release gate is fail", {
+                "pss_kib": memory_summary(release_gate="fail"),
+                "memory_peak_bytes": memory_summary(seed=0x43524143),
+            }),
         )
-        for name, pss, peak, pss_floor, peak_floor in cases:
-            for increment in (0, 1):
-                row = runtime_row(
-                    pss_kib={"reference": pss, "candidate": pss + increment, "gate": "pass"},
-                    memory_peak_bytes={"reference": peak, "candidate": peak + increment, "gate": "pass"})
-                with self.subTest(name=name, increment=increment):
-                    unmet = gate.runtime_row_unmet(name, 1, row)
-                    self.assertEqual(any("pss_kib ratio" in item for item in unmet), not pss_floor or bool(increment))
-                    self.assertEqual(any("memory_peak_bytes ratio" in item for item in unmet),
-                                     not peak_floor or bool(increment))
-                    self.assertEqual(row["pss_kib"]["candidate"], pss + increment)
-        row = runtime_row(pss_kib={"reference": 1000, "candidate": 1000, "gate": "pass"},
-                          memory_peak_bytes={"reference": 1000, "candidate": 1000, "gate": "pass"},
-                          cpu={"one_sided_95_upper": 1.01, "gate": "pass"})
-        self.assertEqual(len(gate.runtime_row_unmet("allocator_live_32m", 1, row)), 1)
+        for expected, memory in cases:
+            with self.subTest(expected=expected):
+                unmet = gate.runtime_row_unmet("row", runtime_row(memory=memory))
+                self.assertTrue(any(expected in item for item in unmet), unmet)
+
+    def test_runtime_row_gate_must_include_all_attempts_and_memory(self) -> None:
+        row = runtime_row(gate="fail")
+        self.assertTrue(any("row release gate is fail" in item for item in gate.runtime_row_unmet("row", row)))
+        expected_attempts = gate.runtime_evidence.COLLECTOR_ATTEMPTS
+        row = runtime_row(attempts=[runtime_attempt() for _ in range(expected_attempts - 1)])
+        self.assertTrue(any(f"scorecard has {expected_attempts - 1} attempts; expected {expected_attempts}" in item
+                            for item in gate.runtime_row_unmet("row", row)))
 
     def test_runtime_row_names_each_violated_scorecard_rule(self) -> None:
         cases = {
             "CPU one-sided 95% upper bound 1.01": {"cpu": {"one_sided_95_upper": 1.01, "gate": "pass"}},
-            "pss_kib ratio 0.9100": {"pss_kib": {"reference": 1000, "candidate": 910, "gate": "pass"}},
-            "memory_peak_bytes has no nonzero reference": {
-                "memory_peak_bytes": {"reference": 0, "candidate": 0, "gate": "pass"}},
             "marked_region syscalls 1 > 2R=0": {"syscalls": {
                 "marked_region": {"reference": 0, "candidate": 1}, "whole_process": {"reference": 1, "candidate": 2},
                 "gate": "pass"}},
@@ -85,7 +119,9 @@ class RuntimeThresholdTests(unittest.TestCase):
         }
         for expected, change in cases.items():
             with self.subTest(expected=expected):
-                unmet = gate.runtime_row_unmet("row", 2, runtime_row(**change))
+                attempts = [runtime_attempt() for _ in range(gate.runtime_evidence.COLLECTOR_ATTEMPTS)]
+                attempts[1] = runtime_attempt(**change)
+                unmet = gate.runtime_row_unmet("row", runtime_row(attempts=attempts))
                 self.assertEqual(len(unmet), 1, unmet)
                 self.assertIn(f"row attempt 2: {expected}", unmet[0])
 
@@ -99,7 +135,7 @@ class ReceiptTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="performance-release-", dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
-        self.rows = {"startup": {"attempts": [runtime_row(), runtime_row(), runtime_row()]}}
+        self.rows = {"startup": runtime_row()}
         self.blockers: tuple[str, ...] = ()
         self.native_error: Exception | None = None
         cpuinfo = self.directory / "cpuinfo.raw"

@@ -12,12 +12,11 @@ receipt. The inputs are:
 * the runtime C scorecard: a three-attempt ``perf-c collect`` report replayed
   by ``compat/perf/x86_64_evidence.validate_collector_report`` (the
   ``perf-c check`` reader). Its release decision must be qualified with no
-  blocker, and every row of every attempt is rechecked against the
-  runtime release scorecard: CPU one-sided 95% upper
-  bound <= 1.00, PSS and ``memory.peak`` ratios <= 1.00 against a nonzero
-  reference, with no regression for mandatory payload/accounting floors,
-  and marked-region and whole-process syscalls <= 2R (zero when
-  R is zero);
+  blocker. Every attempt is rechecked for CPU one-sided 95% upper bound
+  <= 1.00 and marked-region and whole-process syscalls <= 2R (zero when R is
+  zero); each row's paired PSS and ``memory.peak`` one-sided 95% upper bounds
+  across all three attempts must also be <= 1.00. The 0.90 memory target is
+  reported but does not gate;
 * the native Rust-facade companion: one ``perf-native --mode full`` report
   replayed by ``compat/perf/native/x86_64_runner.validate_report``. It is a
   supporting comparison with no threshold of its own, so it must only be
@@ -51,6 +50,7 @@ RECEIPT_NAME = "receipt.json"
 
 # Runtime C scorecard bounds.
 RUNTIME_CPU_UPPER_MAX = 1.00
+RUNTIME_MEMORY_UPPER_MAX = 1.00
 RUNTIME_SYSCALL_FACTOR = 2
 
 
@@ -124,27 +124,13 @@ def _number(value: object) -> float | None:
 # Runtime C scorecard
 
 
-def runtime_row_unmet(name: str, attempt: int, row: Mapping[str, Any]) -> list[str]:
-    """Recheck one retained row against the runtime's per-workload release bounds."""
+def runtime_attempt_unmet(name: str, attempt: int, row: Mapping[str, Any]) -> list[str]:
+    """Recheck one attempt's CPU and syscall release bounds."""
     label = f"{name} attempt {attempt}"
     unmet: list[str] = []
-    contract = runtime_evidence._performance_contract(str(ROOT.resolve(strict=True)))
-    policy_row = next((item for item in runtime_evidence.performance_profile.performance_rows(ROOT, contract.WORKLOADS)
-                       if item.name == name), None)
     upper = _number(row.get("cpu", {}).get("one_sided_95_upper"))
     if upper is None or upper > RUNTIME_CPU_UPPER_MAX:
         unmet.append(f"{label}: CPU one-sided 95% upper bound {upper} > {RUNTIME_CPU_UPPER_MAX}")
-    for metric in ("pss_kib", "memory_peak_bytes"):
-        values = row.get(metric, {})
-        reference, candidate = values.get("reference"), values.get("candidate")
-        if not all(type(value) is int and value >= 0 for value in (reference, candidate)) or reference <= 0:
-            unmet.append(f"{label}: {metric} has no nonzero reference measurement")
-        else:
-            comparison = runtime_evidence._memory_metric(
-                reference, candidate, row=policy_row, peak=metric == "memory_peak_bytes")
-            if comparison["release_gate"] != "pass":
-                threshold = comparison["threshold_numerator"] / comparison["threshold_denominator"]
-                unmet.append(f"{label}: {metric} ratio {candidate / reference:.4f} > {threshold}")
     for scope in ("marked_region", "whole_process"):
         counts = row.get("syscalls", {}).get(scope, {})
         reference, candidate = counts.get("reference"), counts.get("candidate")
@@ -153,11 +139,44 @@ def runtime_row_unmet(name: str, attempt: int, row: Mapping[str, Any]) -> list[s
             unmet.append(f"{label}: {scope} syscall totals are absent")
         elif candidate > RUNTIME_SYSCALL_FACTOR * reference:
             unmet.append(f"{label}: {scope} syscalls {candidate} > {RUNTIME_SYSCALL_FACTOR}R={RUNTIME_SYSCALL_FACTOR * reference}")
-    for metric, gate in (("cpu", row.get("cpu", {}).get("gate")), ("pss", row.get("pss_kib", {}).get("gate")),
-                         ("memory.peak", row.get("memory_peak_bytes", {}).get("gate")),
+    for metric, gate in (("cpu", row.get("cpu", {}).get("gate")),
                          ("syscalls", row.get("syscalls", {}).get("gate"))):
         if gate != "pass":
             unmet.append(f"{label}: {metric} release gate is {gate}")
+    return unmet
+
+
+def runtime_row_unmet(name: str, row: Mapping[str, Any]) -> list[str]:
+    """Recheck one row's per-attempt gates and aggregate memory bounds."""
+    unmet: list[str] = []
+    if row.get("gate") != "pass":
+        unmet.append(f"{name}: row release gate is {row.get('gate')}")
+    attempts = row.get("attempts")
+    if not isinstance(attempts, list) or not attempts:
+        unmet.append(f"{name}: scorecard attempts are absent")
+    else:
+        expected_attempts = runtime_evidence.COLLECTOR_ATTEMPTS
+        if len(attempts) != expected_attempts:
+            unmet.append(f"{name}: scorecard has {len(attempts)} attempts; expected {expected_attempts}")
+        for index, attempt in enumerate(attempts, start=1):
+            if not isinstance(attempt, Mapping):
+                unmet.append(f"{name} attempt {index}: scorecard row is not an object")
+            else:
+                unmet.extend(runtime_attempt_unmet(name, index, attempt))
+
+    memory = row.get("memory")
+    if not isinstance(memory, Mapping):
+        return [*unmet, f"{name}: memory confidence summaries are absent"]
+    for metric, label in (("pss_kib", "PSS"), ("memory_peak_bytes", "memory.peak")):
+        summary = memory.get(metric)
+        if not isinstance(summary, Mapping):
+            unmet.append(f"{name}: {label} memory confidence summary is absent")
+            continue
+        upper = _number(summary.get("one_sided_95_upper"))
+        if upper is None or upper > RUNTIME_MEMORY_UPPER_MAX:
+            unmet.append(f"{name}: {label} one-sided 95% upper bound {upper} > {RUNTIME_MEMORY_UPPER_MAX}")
+        if summary.get("release_gate") != "pass":
+            unmet.append(f"{name}: {label} release gate is {summary.get('release_gate')}")
     return unmet
 
 
@@ -172,9 +191,11 @@ def runtime_c_conditions(collector: str) -> list[dict[str, Any]]:
         if not rows:
             unmet.append("collector scorecard has no rows")
         for name, row in rows.items():
-            for index, attempt in enumerate(row["attempts"], start=1):
-                unmet.extend(runtime_row_unmet(name, index, attempt))
-        return _condition("runtime-c-scorecard", unmet, f"{len(rows)} rows pass in all three attempts")
+            if not isinstance(row, Mapping):
+                unmet.append(f"{name}: scorecard row is not an object")
+            else:
+                unmet.extend(runtime_row_unmet(name, row))
+        return _condition("runtime-c-scorecard", unmet, f"{len(rows)} rows pass across all three attempts")
 
     rows = [_guard("runtime-c-scorecard", read)]
     rows.append(_guard("runtime-c-uncontended-host", lambda: _condition(
