@@ -66,7 +66,8 @@ The numeric bounds are owned by code, not restated here:
   `CPU_TARGET_BOUND`, `MEMORY_RELEASE_BOUND`, `MEMORY_TARGET_BOUND`,
   `CPU_RESAMPLES`, `FULL_SAMPLE_COUNT`, `COLLECTOR_ATTEMPTS`,
   `HOST_LOAD_POLICY`) and `compat/x86_64/performance_release_gate.py`
-  (`RUNTIME_CPU_UPPER_MAX`, `RUNTIME_SYSCALL_FACTOR`).
+  (`RUNTIME_CPU_UPPER_MAX`, `RUNTIME_MEMORY_UPPER_MAX`,
+  `RUNTIME_SYSCALL_FACTOR`).
 - Allocator promotion bounds: `compat/x86_64/performance_release_gate.py`
   (`ALLOCATOR_*`) and `compat/allocator/perf_engine_x86_64.py`.
 
