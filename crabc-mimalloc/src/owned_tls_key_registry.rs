@@ -9,9 +9,9 @@
 
 //! Allocator-owned process-global dynamic TLS-key registry.
 //!
-//! This is intentionally distinct from `thread_local::ThreadLocalKeyRegistry`:
-//! that earlier type remains a bounded caller-storage substrate. This owner
-//! retains the source bitmap as one linear `MetaAllocation` capability and
+//! The caller-owned `thread_local::ThreadLocalKeyRegistry` is retained only
+//! as a test model. This owner retains the source bitmap as one linear
+//! `MetaAllocation` capability and
 //! projects a `BitmapView` only inside its locked operations. The lock order
 //! is always this registry's `PrivateLock` followed by `MetaAllocator`; no
 //! caller may enter this registry while holding the metadata allocator lock.

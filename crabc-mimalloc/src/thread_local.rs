@@ -6,14 +6,14 @@
 //
 // Source map: pinned mimalloc v3.5.0 `src/threadlocal.c:23-315` and
 // `include/mimalloc/prim-tls.h:41-50,193-229`. This slice preserves the
-// 64-bit Linux key encoding, caller-owned slot semantics, and the global
-// free-index claim/release protocol. A current-thread lifecycle owner now
-// uses the process-static metadata allocator for the source-shaped regular
-// flexible backing, exact expansion, root publication, and bounded regular
-// teardown. The registry here remains caller-owned substrate; the distinct
-// process-global allocator-owned source bitmap and linear lease live in
-// `owned_tls_key_registry`. Process initialization, TLD/theap attachment, and
-// actual libc/pthread lifecycle hooks remain separate work.
+// 64-bit Linux key encoding and caller-owned slot semantics. The source-shaped
+// caller-owned free-index registry remains only as a test model. Production
+// global key ownership uses the distinct process-global allocator-owned
+// bitmap and linear lease in `owned_tls_key_registry`. A current-thread
+// lifecycle owner uses process-static metadata for regular flexible backing,
+// exact expansion, root publication, and bounded regular teardown. Process
+// initialization, TLD/theap attachment, and actual libc/pthread lifecycle
+// hooks remain separate work.
 
 //! Dynamic versioned-thread-local slot and global-key substrate.
 
@@ -170,16 +170,22 @@ impl ThreadLocalKeyVersions {
 // bits at a time. The bitmap itself uses 512-bit cache-aligned chunks, so one
 // expansion has sixteen 64-bit fields and spans two source bitmap chunks.
 pub(crate) const TLS_REGISTRY_EXPANSION_BITS: usize = 1024;
+#[cfg(test)]
 const TLS_REGISTRY_WORD_BITS: usize = usize::BITS as usize;
+#[cfg(test)]
 const TLS_REGISTRY_WORDS_PER_BLOCK: usize =
     TLS_REGISTRY_EXPANSION_BITS / TLS_REGISTRY_WORD_BITS;
 // The source rejects a 64th expansion because 64 * 1024 is greater than the
 // 16-bit `MI_TLS_IDX_MAX` (65,535). Its largest reachable bitmap is 64,512.
+#[cfg(test)]
 pub(crate) const TLS_REGISTRY_MAX_BLOCKS: usize =
     TLS_INDEX_MASK as usize / TLS_REGISTRY_EXPANSION_BITS;
 
+#[cfg(test)]
 const _: [(); 64] = [(); TLS_REGISTRY_WORD_BITS];
+#[cfg(test)]
 const _: [(); 16] = [(); TLS_REGISTRY_WORDS_PER_BLOCK];
+#[cfg(test)]
 const _: [(); 63] = [(); TLS_REGISTRY_MAX_BLOCKS];
 
 /// One caller-owned source-sized free-index bitmap growth block.
@@ -190,10 +196,12 @@ const _: [(); 63] = [(); TLS_REGISTRY_MAX_BLOCKS];
 /// all-free image when it reaches that source growth edge.
 #[repr(C, align(64))]
 #[derive(Clone, Copy)]
+#[cfg(test)]
 pub(crate) struct ThreadLocalKeyRegistryBlock {
     free: [usize; TLS_REGISTRY_WORDS_PER_BLOCK],
 }
 
+#[cfg(test)]
 impl ThreadLocalKeyRegistryBlock {
     /// Caller-owned storage before registry initialization.
     pub(crate) const EMPTY: Self = Self {
@@ -215,12 +223,14 @@ impl ThreadLocalKeyRegistryBlock {
 /// the non-atomic bit fields retain the source's locked-bitmap representation
 /// without creating a public pthread dependency or pretending they are an
 /// independently lock-free allocator structure.
+#[cfg(test)]
 struct ThreadLocalKeyRegistryState<'storage> {
     blocks: &'storage mut [ThreadLocalKeyRegistryBlock],
     active_block_count: usize,
     versions: ThreadLocalKeyVersions,
 }
 
+#[cfg(test)]
 impl ThreadLocalKeyRegistryState<'_> {
     #[inline]
     fn claim(&mut self) -> Option<ThreadLocalKey> {
@@ -305,6 +315,7 @@ impl ThreadLocalKeyRegistryState<'_> {
 /// an explicitly released index. This is global key bookkeeping only; it does
 /// not install compiler TLS, allocate per-thread slots, initialize a process,
 /// or tear a thread down.
+#[cfg(test)]
 pub(crate) struct ThreadLocalKeyRegistry<'storage> {
     lock: PrivateLock,
     state: UnsafeCell<ThreadLocalKeyRegistryState<'storage>>,
@@ -314,9 +325,12 @@ pub(crate) struct ThreadLocalKeyRegistry<'storage> {
 // access to the non-atomic state occurs while `lock` is held. The returned
 // key leases retain a shared reference to the registry, so the registry and
 // its metadata cannot be dropped while a live lease could release an index.
+#[cfg(test)]
 unsafe impl Send for ThreadLocalKeyRegistry<'_> {}
+#[cfg(test)]
 unsafe impl Sync for ThreadLocalKeyRegistry<'_> {}
 
+#[cfg(test)]
 impl<'storage> ThreadLocalKeyRegistry<'storage> {
     /// Initializes one bounded global registry over caller-owned metadata.
     ///
@@ -394,11 +408,13 @@ impl<'storage> ThreadLocalKeyRegistry<'storage> {
 /// intentionally leaves the index claimed, matching a missed source free;
 /// callers must not rely on drop for process or thread teardown.
 #[must_use = "a claimed TLS key must be explicitly released or remains globally claimed"]
+#[cfg(test)]
 pub(crate) struct ThreadLocalKeyLease<'registry, 'storage> {
     registry: &'registry ThreadLocalKeyRegistry<'storage>,
     key: ThreadLocalKey,
 }
 
+#[cfg(test)]
 impl ThreadLocalKeyLease<'_, '_> {
     /// Returns the packed key for regular caller-owned per-thread slots.
     #[inline]
