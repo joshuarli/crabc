@@ -8,17 +8,19 @@
 // padding), `src/free.c:618-742` (padding decode and free check),
 // `include/mimalloc/internal.h:1226-1242` (canary encoding),
 // `src/alloc.c:364-377` (`mi_expand`), and `src/alloc.c:379-439`
-// (`mi_theap_realloc_zero_ex`). This module owns the block-local padding and
-// address-independent expansion/reallocation decisions and copy/zero extents.
-// Allocation, byte access, old block release, and failure preservation stay in
-// the live allocator owner.
+// (`mi_theap_realloc_zero_ex`). This module owns block-local padding,
+// expansion, and ordinary-reallocation size/zero-extent kernels. The generic
+// pointer-facts replacement model is compiled only for unit tests; live
+// allocation owners perform allocation, copy, and release.
 
 use core::mem::size_of;
 use core::ops::Range;
 use core::ptr::NonNull;
 
 use crate::invariants;
+#[cfg(test)]
 use crate::process_page_map::LiveAllocationPointer;
+#[cfg(test)]
 use crate::types::Heap;
 
 /// Source `mi_padding_t` at the end of each padding-enabled block.
@@ -340,13 +342,13 @@ pub(crate) const fn replacement_zeros_first_byte(new_size: usize, zero: bool) ->
     new_size == 0 && !zero
 }
 
-/// The immutable pointer facts consumed by usable-size and realloc.
+/// Immutable pointer facts used to exercise the source realloc model.
 ///
-/// The production implementation is the operation-scoped result of
-/// [`crate::process_page_map::ProcessPageMapRoot::lookup_live_allocation`].
-/// Keeping this interface limited to source geometry prevents realloc from
-/// treating a PageMap observation as page ownership. In particular, ordinary
-/// in-place reuse requires a separate [`CurrentTargetHeapAllocation`] proof.
+/// The production owner keeps its operation-scoped live pointer directly;
+/// this test interface prevents the model from treating PageMap geometry as
+/// proof of page ownership. Ordinary in-place reuse still requires a separate
+/// [`CurrentTargetHeapAllocation`] proof.
+#[cfg(test)]
 pub(crate) trait AllocationPointerFacts {
     /// Returns the exact client address supplied to the PageMap lookup.
     fn client_address(&self) -> usize;
@@ -361,6 +363,7 @@ pub(crate) trait AllocationPointerFacts {
     fn usable_size(&self) -> usize;
 }
 
+#[cfg(test)]
 impl AllocationPointerFacts for LiveAllocationPointer {
     #[inline]
     fn client_address(&self) -> usize { self.client().as_ptr().addr() }
@@ -381,11 +384,13 @@ impl AllocationPointerFacts for LiveAllocationPointer {
 /// after comparing `mi_page_heap(page)` with `_mi_theap_heap(theap)`. The
 /// PageMap pointer facts intentionally cannot manufacture this proof: reading
 /// the page's non-atomic Heap field requires current local-page authority.
+#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct CurrentTargetHeapAllocation<P> {
     pointer: P,
 }
 
+#[cfg(test)]
 impl<P: AllocationPointerFacts> CurrentTargetHeapAllocation<P> {
     /// Returns the exact pointer facts covered by this target-Heap proof.
     #[inline]
@@ -395,6 +400,7 @@ impl<P: AllocationPointerFacts> CurrentTargetHeapAllocation<P> {
     fn into_pointer(self) -> P { self.pointer }
 }
 
+#[cfg(test)]
 enum OrdinaryReallocationSourceState<P> {
     Null,
     CurrentTargetHeap(CurrentTargetHeapAllocation<P>),
@@ -407,8 +413,10 @@ enum OrdinaryReallocationSourceState<P> {
 /// [`prove_current_target_heap`]. A caller that lacks local-page authority can
 /// still preserve its operation-scoped pointer facts by selecting the public
 /// replacement-required constructor.
+#[cfg(test)]
 pub(crate) struct OrdinaryReallocationSource<P>(OrdinaryReallocationSourceState<P>);
 
+#[cfg(test)]
 impl<P: AllocationPointerFacts> OrdinaryReallocationSource<P> {
     #[inline]
     pub(crate) const fn null() -> Self {
@@ -420,7 +428,6 @@ impl<P: AllocationPointerFacts> OrdinaryReallocationSource<P> {
         Self(OrdinaryReallocationSourceState::ReplacementRequired(pointer))
     }
 
-    #[cfg(test)]
     #[inline]
     pub(crate) const fn current_target_for_test(pointer: P) -> Self {
         Self(OrdinaryReallocationSourceState::CurrentTargetHeap(
@@ -468,6 +475,7 @@ impl<P: AllocationPointerFacts> OrdinaryReallocationSource<P> {
 /// function returns. A returned current-target classification must be consumed
 /// before that local authority ends; a mismatch preserves the pointer facts in
 /// the replacement-required classification.
+#[cfg(test)]
 #[inline]
 pub(crate) unsafe fn prove_current_target_heap(
     pointer: LiveAllocationPointer,
@@ -491,11 +499,13 @@ pub(crate) unsafe fn prove_current_target_heap(
 /// This performs no owner, client-ledger, or route lookup. Interior-pointer
 /// adjustment has already been derived from the page's immutable geometry by
 /// the PageMap pointer-facts boundary.
+#[cfg(test)]
 #[inline]
 pub(crate) fn malloc_usable_size<P: AllocationPointerFacts>(pointer: &P) -> usize {
     pointer.usable_size()
 }
 
+#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct PointerReplacement<P> {
     source: Option<P>,
@@ -506,6 +516,7 @@ pub(crate) struct PointerReplacement<P> {
     zeros_first_byte: bool,
 }
 
+#[cfg(test)]
 impl<P: AllocationPointerFacts> PointerReplacement<P> {
     #[inline]
     pub(crate) const fn source(&self) -> Option<&P> { self.source.as_ref() }
@@ -521,6 +532,7 @@ impl<P: AllocationPointerFacts> PointerReplacement<P> {
 }
 
 /// Pointer-centered result of the pinned realloc selection phase.
+#[cfg(test)]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum PointerReallocationDecision<P> {
     /// The old allocation satisfies every source in-place condition.
@@ -529,6 +541,7 @@ pub(crate) enum PointerReallocationDecision<P> {
     Replace(PointerReplacement<P>),
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PointerReplacementWork {
     copy_size: usize,
@@ -536,6 +549,7 @@ pub(crate) struct PointerReplacementWork {
     zeros_first_byte: bool,
 }
 
+#[cfg(test)]
 impl PointerReplacementWork {
     #[inline]
     pub(crate) const fn copy_size(&self) -> usize { self.copy_size }
@@ -559,6 +573,7 @@ impl PointerReplacementWork {
 /// `zero_start` is computed differently by ordinary and aligned realloc. The
 /// ordinary source rounds down to a word boundary; aligned realloc preserves
 /// an arbitrary offset and subtracts one word without rounding.
+#[cfg(test)]
 #[inline]
 pub(crate) fn pointer_replacement_decision<P: AllocationPointerFacts>(
     source: Option<P>,
@@ -585,6 +600,7 @@ pub(crate) fn pointer_replacement_decision<P: AllocationPointerFacts>(
 /// of a boolean or caller identity. A foreign, abandoned, or
 /// same-thread/different-Heap page therefore selects replacement even when its
 /// usable extent would fit.
+#[cfg(test)]
 #[inline]
 pub(crate) fn ordinary_reallocation_decision<P: AllocationPointerFacts>(
     source: OrdinaryReallocationSource<P>,
@@ -624,6 +640,7 @@ pub(crate) fn ordinary_reallocation_decision<P: AllocationPointerFacts>(
 
 /// Computes initialization and copy extents after ordinary replacement
 /// allocation succeeds.
+#[cfg(test)]
 #[inline]
 pub(crate) fn ordinary_replacement_work<P: AllocationPointerFacts>(
     replacement: &P,
@@ -649,6 +666,7 @@ pub(crate) fn ordinary_replacement_work<P: AllocationPointerFacts>(
 /// a non-Copy source token must not be dropped while its allocation stays
 /// live. After success the old pointer is released only through the supplied
 /// general pointer-centered free callback.
+#[cfg(test)]
 #[inline]
 pub(crate) fn execute_pointer_reallocation<P, Allocate, ReplacementWork, Initialize, Copy, Free>(
     decision: PointerReallocationDecision<P>,

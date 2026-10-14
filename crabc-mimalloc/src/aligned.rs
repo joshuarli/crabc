@@ -9,18 +9,22 @@
 // pointer adjustment, and aligned realloc reuse) and `src/free.c:104-114,
 // 522-542` (interior-pointer recovery and aligned usable size).
 //
-// These are address-independent selection, checked pointer-arithmetic, and
-// aligned-reallocation extent kernels. Live page flags, allocation, copying,
-// zeroing, and release stay in the owning allocator lifecycle.
+// Production kernels select aligned allocation shape, adjust and recover
+// pointers, and compute reuse and zeroing extents. The pointer-facts aligned-
+// reallocation model is test-only; allocation, copying, zeroing, and release
+// stay in the owning allocator lifecycle.
 
 use core::mem::size_of;
 use core::ops::Range;
 
 use crate::config::{
-    MAX_ALIGN_SIZE, MAX_ALLOC_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
+    MAX_ALIGN_SIZE, PAGE_MAX_OVERALLOC_ALIGN,
     PAGE_MAX_START_BLOCK_ALIGN2, PAGE_META_ALIGNMENT, PAGE_OSPAGE_BLOCK_ALIGN2,
     SMALL_SIZE_MAX,
 };
+#[cfg(test)]
+use crate::config::MAX_ALLOC_SIZE;
+#[cfg(test)]
 use crate::alloc::{
     AllocationPointerFacts, OrdinaryReallocationSource, PointerReallocationDecision,
     PointerReplacement, PointerReplacementWork, ordinary_reallocation_decision,
@@ -203,6 +207,7 @@ pub(crate) const fn replacement_zero_range(
 /// ordinary realloc, including its exact source-page/target-Heap reuse proof.
 /// Only the over-aligned path omits that Heap comparison and uses the source's
 /// exact usable-size, ceil-half, and pointer-plus-offset alignment predicate.
+#[cfg(test)]
 #[inline]
 pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
     source: OrdinaryReallocationSource<P>,
@@ -259,6 +264,7 @@ pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
 /// The encoded plan carries the selected branch's initialization policy:
 /// natural alignment retains ordinary realloc's zero-size compatibility
 /// clear, while the over-aligned branch uses its unrounded zero start.
+#[cfg(test)]
 #[inline]
 pub(crate) fn aligned_replacement_work<P: AllocationPointerFacts>(
     replacement: &P,
