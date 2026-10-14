@@ -150,6 +150,7 @@ use crate::bootstrap::{
     BootstrapError, ExclusiveTheapBootstrap, ExclusiveTheapSession, TheapPageSession,
     theap_page_session_sealed,
 };
+#[cfg(test)]
 use crate::dynamic_theap::{
     DynamicPostExitArenaOwner, DynamicPostExitArenaOwnerFinishFailure,
     DynamicPostExitArenaOwnerTransitionState, DynamicTheapError,
@@ -4622,6 +4623,7 @@ impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
 }
 
 /// Private dynamic attachment specialization of the same page engine.
+#[cfg(test)]
 pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>;
 
@@ -5919,6 +5921,7 @@ unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
 /// direct-small handoffs, and one exact distinct-bin mapped-medium-pair route,
 /// needed to prove that later remote frees cannot reclaim the departed Theap.
 #[must_use = "a dynamic thread-exit drain must release or retain its page before attachment teardown"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map> {
     engine: PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>,
 }
@@ -5930,6 +5933,7 @@ pub(crate) struct DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map> {
 /// implementation. An OS singleton stays linked in its dynamic Heap's
 /// private list between abandonment and final release.
 #[must_use = "an owner-exit singleton handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -5948,6 +5952,7 @@ pub(crate) struct DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map
 /// cached root, and key before this type exists. Its receiver may only free
 /// the one exact singleton client and finish the paired dynamic arena image.
 #[must_use = "a detached dynamic singleton route must consume its exact client free or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map> {
     owner: Option<DynamicPostExitArenaOwner<'heap>>,
     arena: ArenaView<'arena>,
@@ -5970,6 +5975,7 @@ pub(crate) struct DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'm
 // that API's separate whole-PageMap exclusion contract. Moving it to a
 // joined/scoped receiver therefore transfers one linear post-exit owner, not
 // shared allocator, requeue, or concurrent-free authority.
+#[cfg(test)]
 unsafe impl Send for DynamicThreadExitArenaSingletonPostExitRoute<'_, '_, '_> {}
 
 /// A retry-only source record after the detached arena-singleton transition
@@ -5980,6 +5986,7 @@ unsafe impl Send for DynamicThreadExitArenaSingletonPostExitRoute<'_, '_, '_> {}
 /// Keeping that handoff private makes the one permitted continuation explicit:
 /// retry the source-current key release and detached-owner conversion.
 #[must_use = "a retained dynamic detached-singleton source must retry conversion or remain retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitArenaSingletonPostExitRouteSource<
     'attach,
     'heap,
@@ -5994,6 +6001,7 @@ pub(crate) struct DynamicThreadExitArenaSingletonPostExitRouteSource<
 /// the original handoff only to preserve every linked resource; it deliberately
 /// exposes no remote-free, allocation, or retry operation.
 #[must_use = "a terminal dynamic source teardown record must remain retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitArenaSingletonPostExitRouteTerminal<
     'attach,
     'heap,
@@ -6014,6 +6022,7 @@ pub(crate) struct DynamicThreadExitArenaSingletonPostExitRouteTerminal<
 /// pair, OS-list member, allocation-time claim/requeue, or concurrent-free
 /// authority.
 #[must_use = "a dynamic full singleton aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullSingletonPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6034,6 +6043,7 @@ pub(crate) struct DynamicThreadExitFullSingletonPagesRoute<'attach, 'heap, 'aren
 /// no raw page list, arena bitmap/count pair, list traversal, allocation-time
 /// claim/requeue, or concurrent-free authority.
 #[must_use = "a dynamic full OS-singleton aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6051,6 +6061,7 @@ pub(crate) struct DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'ar
 /// has no raw page list, allocation-time claim/requeue, producer, or
 /// concurrent-free authority.
 #[must_use = "a dynamic full medium aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullMediumPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6069,6 +6080,7 @@ pub(crate) struct DynamicThreadExitFullMediumPagesRoute<'attach, 'heap, 'arena, 
 /// prepass, full/direct-small/same-bin member, nonterminal free, adoption,
 /// requeue, allocation scan, producer, or concurrent-free authority.
 #[must_use = "a dynamic distinct-bin nonfull-medium aggregate must release both members or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitNonfullMediumPagesDistinctBinsRoute<
     'attach,
     'heap,
@@ -6097,6 +6109,7 @@ pub(crate) struct DynamicThreadExitNonfullMediumPagesDistinctBinsRoute<
 /// abandoned-map capability. It has no raw page list, allocation-time
 /// claim/requeue, producer, or concurrent-free authority.
 #[must_use = "a dynamic full large aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullLargePagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6115,6 +6128,7 @@ pub(crate) struct DynamicThreadExitFullLargePagesRoute<'attach, 'heap, 'arena, '
 /// It has no raw member list, allocation-time claim/requeue, producer, or
 /// concurrent-free authority.
 #[must_use = "a dynamic mixed full medium/large aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullMediumOrLargePagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6134,6 +6148,7 @@ pub(crate) struct DynamicThreadExitFullMediumOrLargePagesRoute<'attach, 'heap, '
 /// It has no raw member list, allocation-time claim/requeue, producer, or
 /// concurrent-free authority.
 #[must_use = "a dynamic mixed full singleton/regular aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullSingletonOrRegularPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6152,6 +6167,7 @@ pub(crate) struct DynamicThreadExitFullSingletonOrRegularPagesRoute<'attach, 'he
 /// has no raw page list, direct-cache image, allocation-time claim/requeue,
 /// producer, or concurrent-free authority.
 #[must_use = "a dynamic full non-direct-small aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullNonDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6171,6 +6187,7 @@ pub(crate) struct DynamicThreadExitFullNonDirectSmallPagesRoute<'attach, 'heap, 
 /// direct-cache image, allocation-time claim/requeue, producer, or concurrent-
 /// free authority.
 #[must_use = "a dynamic full direct-small aggregate route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6188,6 +6205,7 @@ pub(crate) struct DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'ar
 /// client allocation until its final free releases the complete arena span or
 /// terminally retains the state.
 #[must_use = "a dynamic full-medium owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullMediumHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6206,6 +6224,7 @@ pub(crate) struct DynamicThreadExitFullMediumHandoff<'attach, 'heap, 'arena, 'ma
 /// live client allocation until its final free releases the complete 64-slice
 /// arena span or terminally retains the state.
 #[must_use = "a dynamic full-large owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullLargeHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6225,6 +6244,7 @@ pub(crate) struct DynamicThreadExitFullLargeHandoff<'attach, 'heap, 'arena, 'map
 /// Heap, PageMap, arena image, and every live client allocation until its final
 /// free releases the complete arena span or terminally retains the state.
 #[must_use = "a dynamic full non-direct-small owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullNonDirectSmallHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6246,6 +6266,7 @@ pub(crate) struct DynamicThreadExitFullNonDirectSmallHandoff<'attach, 'heap, 'ar
 /// every live client allocation until its final free releases the complete
 /// arena span or terminally retains the state.
 #[must_use = "a dynamic full direct-small owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitFullDirectSmallHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6261,6 +6282,7 @@ pub(crate) struct DynamicThreadExitFullDirectSmallHandoff<'attach, 'heap, 'arena
 /// already bitmap-published page. The surrounding concrete handoff types keep
 /// medium/large and small entry/collector contracts distinct.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DynamicThreadExitFullRegularState {
     Unmapped,
     Mapped,
@@ -6276,6 +6298,7 @@ enum DynamicThreadExitFullRegularState {
 /// keeps the large span geometry and direct-small partial collector/rounded
 /// cache contract distinct from the normal-collector siblings.
 #[must_use = "a dynamic mapped one-block owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6296,6 +6319,7 @@ pub(crate) struct DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena,
 /// an empty member immediately. It stores no raw page pointer, bin, bitmap,
 /// client list, reclaim/requeue, producer, or concurrent-free authority.
 #[must_use = "a dynamic mapped medium-pair route must release every member or remain terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitMappedMediumPairRoute<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     remaining_pages: usize,
@@ -6311,6 +6335,7 @@ pub(crate) struct DynamicThreadExitMappedMediumPairRoute<'attach, 'heap, 'arena,
 /// stores client pointers nor permits reclaim, requeue, scanning, allocation,
 /// or a third client free.
 #[must_use = "a dynamic mapped two-block medium owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitMappedTwoBlockMediumHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6325,6 +6350,7 @@ pub(crate) struct DynamicThreadExitMappedTwoBlockMediumHandoff<'attach, 'heap, '
 /// free's preserve/unown result distinct from the final empty/release result
 /// and prevents a generic multi-free route from being inferred.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DynamicThreadExitMappedTwoBlockMediumState {
     FirstFreePending,
     FinalFreePending,
@@ -6338,6 +6364,7 @@ enum DynamicThreadExitMappedTwoBlockMediumState {
 /// source class keeps the required complete 64-slice arena span visible while
 /// the first normal collector free leaves the mapped identity live.
 #[must_use = "a dynamic mapped two-block large owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitMappedTwoBlockLargeHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6353,6 +6380,7 @@ pub(crate) struct DynamicThreadExitMappedTwoBlockLargeHandoff<'attach, 'heap, 'a
 /// result and prevents a generic multi-free or partial-collector route from
 /// being inferred across the large-page geometry boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DynamicThreadExitMappedTwoBlockLargeState {
     FirstFreePending,
     FinalFreePending,
@@ -6367,6 +6395,7 @@ enum DynamicThreadExitMappedTwoBlockLargeState {
 /// geometry: direct-small's cache-range collector and medium's distinct page
 /// geometry remain separate source contracts.
 #[must_use = "a dynamic mapped two-block non-direct-small owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitMappedTwoBlockNonDirectSmallHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6382,6 +6411,7 @@ pub(crate) struct DynamicThreadExitMappedTwoBlockNonDirectSmallHandoff<'attach, 
 /// empty/release result and prevents a generic multi-free route from being
 /// inferred across the normal small collector boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DynamicThreadExitMappedTwoBlockNonDirectSmallState {
     FirstFreePending,
     FinalFreePending,
@@ -6396,6 +6426,7 @@ enum DynamicThreadExitMappedTwoBlockNonDirectSmallState {
 /// the exact rounded direct-cache range that named its sole queue member;
 /// non-direct-small's normal collector remains a separate source contract.
 #[must_use = "a dynamic mapped two-block direct-small owner-exit handoff must be consumed or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicThreadExitMappedTwoBlockDirectSmallHandoff<'attach, 'heap, 'arena, 'map> {
     drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -6412,6 +6443,7 @@ pub(crate) struct DynamicThreadExitMappedTwoBlockDirectSmallHandoff<'attach, 'he
 /// Keeping this private prevents a normal `2 -> 1` state model from being
 /// inferred across the direct-small source boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DynamicThreadExitMappedTwoBlockDirectSmallState {
     FirstFreePending,
     FinalFreePending,
@@ -6422,6 +6454,7 @@ enum DynamicThreadExitMappedTwoBlockDirectSmallState {
 /// from treating direct-small geometry as its non-direct sibling merely
 /// because both are `PageKind::Small`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum DynamicThreadExitMappedOneBlockClass {
     Medium,
     Large,
@@ -6429,6 +6462,7 @@ enum DynamicThreadExitMappedOneBlockClass {
     DirectSmall,
 }
 
+#[cfg(test)]
 impl DynamicThreadExitMappedOneBlockClass {
     #[inline]
     fn matches(self, page: &Page) -> bool {
@@ -8437,6 +8471,7 @@ pub(crate) enum ThreadExitMappedOneBlockRemoteFreeFailure<'arena, 'map, Session:
 /// The original engine stays retained because a post-slot-clear failure may
 /// already have changed root or backing ownership.
 #[must_use = "a failed dynamic thread-exit drain retains its page engine"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitDrainFailure<'attach, 'heap, 'arena, 'map> {
     Retained {
         engine: DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
@@ -8449,6 +8484,7 @@ pub(crate) enum DynamicThreadExitDrainFailure<'attach, 'heap, 'arena, 'map> {
 /// `RetainedDrain` has already poisoned a false-force collection, while
 /// `Terminal` retains a page that crossed queue/identity ownership.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitSingletonAbandonError {
     Collection,
     Unmapped,
@@ -8466,6 +8502,7 @@ pub(crate) enum DynamicThreadExitSingletonAbandonError {
 }
 
 #[must_use = "a failed owner-exit singleton abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         drain: DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>,
@@ -8485,6 +8522,7 @@ pub(crate) enum DynamicThreadExitSingletonAbandonFailure<'attach, 'heap, 'arena,
 /// its final free after the regular TLS slot made the upstream reclaim attempt
 /// impossible.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitSingletonRemoteFreeError {
     Terminal,
     Unmapped,
@@ -8496,6 +8534,7 @@ pub(crate) enum DynamicThreadExitSingletonRemoteFreeError {
 }
 
 #[must_use = "a failed owner-exit singleton free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitSingletonRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         handoff: DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>,
@@ -8510,6 +8549,7 @@ pub(crate) enum DynamicThreadExitSingletonRemoteFreeFailure<'attach, 'heap, 'are
 /// A refusal or retained source failure while a dynamic arena singleton moves
 /// from the source-current drain into the detached post-exit owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteBeginError {
     Terminal,
     NotArenaSingleton,
@@ -8524,6 +8564,7 @@ pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteBeginError {
 /// teardown that changed state returns the opaque `Terminal` record instead,
 /// so an invalid old handoff can never resume a drain operation.
 #[must_use = "a failed dynamic detached-singleton conversion retains its source handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteBeginFailure<
     'attach,
     'heap,
@@ -8558,6 +8599,7 @@ pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteBeginFailure<
 /// `InvalidBlock` occur before the atomic failed-reclaim tail; every other
 /// outcome retains a terminal route because source ownership may have changed.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteFreeError {
     Terminal,
     Unmapped,
@@ -8569,6 +8611,7 @@ pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteFreeError {
 
 /// A failed detached singleton client-free retains its one post-exit owner.
 #[must_use = "a failed dynamic detached-singleton free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteFreeFailure<'heap, 'arena, 'map> {
     Rejected {
         route: DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>,
@@ -8585,6 +8628,7 @@ pub(crate) enum DynamicThreadExitArenaSingletonPostExitRouteFreeFailure<'heap, '
 /// complete queue/direct preflight left source state untouched; once force
 /// collection begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonPagesAbandonError {
     Collection,
     ForeignPage,
@@ -8601,6 +8645,7 @@ pub(crate) enum DynamicThreadExitFullSingletonPagesAbandonError {
 /// The retained source drain after one dynamic full arena-singleton aggregate
 /// owner-exit traversal attempt.
 #[must_use = "a failed dynamic full singleton aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonPagesAbandonFailure<
     'attach,
     'heap,
@@ -8623,6 +8668,7 @@ pub(crate) enum DynamicThreadExitFullSingletonPagesAbandonFailure<
 /// One result while the dynamic full arena-singleton aggregate route handles
 /// one canonical client free.
 #[must_use = "a nonterminal dynamic full singleton aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonPagesFreeResult<
     'attach,
     'heap,
@@ -8641,6 +8687,7 @@ pub(crate) enum DynamicThreadExitFullSingletonPagesFreeResult<
 /// pre-mutation observations; every other result may have acquired a source
 /// low owner bit or completed part of terminal release.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonPagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -8654,6 +8701,7 @@ pub(crate) enum DynamicThreadExitFullSingletonPagesRemoteFreeError {
 /// A retained dynamic full singleton aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed dynamic full singleton aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonPagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -8680,6 +8728,7 @@ pub(crate) enum DynamicThreadExitFullSingletonPagesRemoteFreeFailure<
 /// once source collection or list insertion begins, the drain remains the
 /// only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullOsSingletonPagesAbandonError {
     Collection,
     ForeignPage,
@@ -8698,6 +8747,7 @@ pub(crate) enum DynamicThreadExitFullOsSingletonPagesAbandonError {
 /// The retained source drain after one dynamic full OS-aligned singleton
 /// aggregate owner-exit traversal attempt.
 #[must_use = "a failed dynamic full OS singleton aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullOsSingletonPagesAbandonFailure<
     'attach,
     'heap,
@@ -8722,6 +8772,7 @@ pub(crate) enum DynamicThreadExitFullOsSingletonPagesAbandonFailure<
 /// One result while the dynamic full OS-aligned singleton aggregate route
 /// handles one canonical client free.
 #[must_use = "a nonterminal dynamic full OS singleton aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullOsSingletonPagesFreeResult<
     'attach,
     'heap,
@@ -8742,6 +8793,7 @@ pub(crate) enum DynamicThreadExitFullOsSingletonPagesFreeResult<
 /// result may have acquired a source low owner bit or changed terminal
 /// release state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -8756,6 +8808,7 @@ pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeError {
 /// A retained dynamic full OS-aligned singleton aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed dynamic full OS singleton aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -8782,6 +8835,7 @@ pub(crate) enum DynamicThreadExitFullOsSingletonPagesRemoteFreeFailure<
 /// queue/direct preflight left source state untouched; once force collection
 /// begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumPagesAbandonError {
     Collection,
     ForeignPage,
@@ -8799,6 +8853,7 @@ pub(crate) enum DynamicThreadExitFullMediumPagesAbandonError {
 /// The retained source drain after one dynamic full-medium aggregate
 /// owner-exit traversal attempt.
 #[must_use = "a failed dynamic full medium aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumPagesAbandonFailure<
     'attach,
     'heap,
@@ -8821,6 +8876,7 @@ pub(crate) enum DynamicThreadExitFullMediumPagesAbandonFailure<
 /// One result while the dynamic full-medium aggregate route handles one
 /// canonical client free.
 #[must_use = "a nonterminal dynamic full medium aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumPagesFreeResult<
     'attach,
     'heap,
@@ -8842,6 +8898,7 @@ pub(crate) enum DynamicThreadExitFullMediumPagesFreeResult<
 /// pre-mutation observations; every other result may have acquired a source
 /// low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumPagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -8854,6 +8911,7 @@ pub(crate) enum DynamicThreadExitFullMediumPagesRemoteFreeError {
 /// A retained dynamic full-medium aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed dynamic full medium aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumPagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -8879,6 +8937,7 @@ pub(crate) enum DynamicThreadExitFullMediumPagesRemoteFreeFailure<
 /// queue/direct/span preflight left source state untouched; once force
 /// collection begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargePagesAbandonError {
     Collection,
     ForeignPage,
@@ -8896,6 +8955,7 @@ pub(crate) enum DynamicThreadExitFullLargePagesAbandonError {
 /// The retained source drain after one dynamic full-large aggregate owner-exit
 /// traversal attempt.
 #[must_use = "a failed dynamic full large aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargePagesAbandonFailure<
     'attach,
     'heap,
@@ -8918,6 +8978,7 @@ pub(crate) enum DynamicThreadExitFullLargePagesAbandonFailure<
 /// One result while the dynamic full-large aggregate route handles one
 /// canonical client free.
 #[must_use = "a nonterminal dynamic full large aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargePagesFreeResult<
     'attach,
     'heap,
@@ -8939,6 +9000,7 @@ pub(crate) enum DynamicThreadExitFullLargePagesFreeResult<
 /// pre-mutation observations; every other result may have acquired a source
 /// low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargePagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -8951,6 +9013,7 @@ pub(crate) enum DynamicThreadExitFullLargePagesRemoteFreeError {
 /// A retained dynamic full-large aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed dynamic full large aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargePagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -8976,6 +9039,7 @@ pub(crate) enum DynamicThreadExitFullLargePagesRemoteFreeFailure<
 /// the complete queue/direct/span preflight left source state untouched; once
 /// force collection begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumOrLargePagesAbandonError {
     Collection,
     ForeignPage,
@@ -8993,6 +9057,7 @@ pub(crate) enum DynamicThreadExitFullMediumOrLargePagesAbandonError {
 /// The retained source drain after one dynamic mixed full-medium/full-large
 /// aggregate owner-exit traversal attempt.
 #[must_use = "a failed dynamic mixed full medium/large aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumOrLargePagesAbandonFailure<
     'attach,
     'heap,
@@ -9015,6 +9080,7 @@ pub(crate) enum DynamicThreadExitFullMediumOrLargePagesAbandonFailure<
 /// One result while the dynamic mixed full-medium/full-large aggregate route
 /// handles one canonical client free.
 #[must_use = "a nonterminal dynamic mixed full medium/large aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumOrLargePagesFreeResult<
     'attach,
     'heap,
@@ -9035,6 +9101,7 @@ pub(crate) enum DynamicThreadExitFullMediumOrLargePagesFreeResult<
 /// pre-mutation observations; every other result may have acquired a source
 /// low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumOrLargePagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9047,6 +9114,7 @@ pub(crate) enum DynamicThreadExitFullMediumOrLargePagesRemoteFreeError {
 /// A retained dynamic mixed full-medium/full-large aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed dynamic mixed full medium/large aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumOrLargePagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -9072,6 +9140,7 @@ pub(crate) enum DynamicThreadExitFullMediumOrLargePagesRemoteFreeFailure<
 /// means the complete queue/direct/span preflight left source state untouched;
 /// once force collection begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesAbandonError {
     Collection,
     ForeignPage,
@@ -9089,6 +9158,7 @@ pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesAbandonError {
 /// The retained source drain after one dynamic mixed full-singleton/full-
 /// regular aggregate owner-exit traversal attempt.
 #[must_use = "a failed dynamic mixed full singleton/regular aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesAbandonFailure<
     'attach,
     'heap,
@@ -9111,6 +9181,7 @@ pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesAbandonFailure<
 /// One result while the dynamic mixed full-singleton/full-regular aggregate
 /// route handles one canonical client free.
 #[must_use = "a nonterminal dynamic mixed full singleton/regular aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesFreeResult<
     'attach,
     'heap,
@@ -9133,6 +9204,7 @@ pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesFreeResult<
 /// `InvalidBlock` are pre-mutation observations; every other result may have
 /// acquired a source low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9146,6 +9218,7 @@ pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesRemoteFreeError {
 /// A retained dynamic mixed full-singleton/full-regular aggregate route after
 /// one client-free attempt.
 #[must_use = "a failed dynamic mixed full singleton/regular aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -9172,6 +9245,7 @@ pub(crate) enum DynamicThreadExitFullSingletonOrRegularPagesRemoteFreeFailure<
 /// untouched; once force collection begins, the drain remains the only
 /// terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesAbandonError {
     Collection,
     ForeignPage,
@@ -9189,6 +9263,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesAbandonError {
 /// The retained source drain after one dynamic full non-direct-small aggregate
 /// owner-exit traversal attempt.
 #[must_use = "a failed dynamic full non-direct-small aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesAbandonFailure<
     'attach,
     'heap,
@@ -9211,6 +9286,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesAbandonFailure<
 /// One result while the dynamic full non-direct-small aggregate route handles
 /// one canonical client free.
 #[must_use = "a nonterminal dynamic full non-direct-small aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesFreeResult<
     'attach,
     'heap,
@@ -9233,6 +9309,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesFreeResult<
 /// observations; every other result may have acquired a source low owner bit
 /// or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9246,6 +9323,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesRemoteFreeError {
 /// A retained dynamic full non-direct-small aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed dynamic full non-direct-small aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -9273,6 +9351,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallPagesRemoteFreeFailure<
 /// removal, or mapped-abandon transition runs, the drain remains the only
 /// terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonError {
     Collection,
     /// The route requires the ordinary source owner-exit option image:
@@ -9293,6 +9372,7 @@ pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonError {
 }
 
 #[must_use = "a failed dynamic distinct-bin nonfull-medium aggregate retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonFailure<
     'attach,
     'heap,
@@ -9310,6 +9390,7 @@ pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsAbandonFailure<
 }
 
 #[must_use = "a nonfinal dynamic distinct-bin nonfull-medium result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult<
     'attach,
     'heap,
@@ -9321,6 +9402,7 @@ pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsFreeResult<
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9333,6 +9415,7 @@ pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeError {
 }
 
 #[must_use = "a failed dynamic distinct-bin nonfull-medium aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure<
     'attach,
     'heap,
@@ -9355,6 +9438,7 @@ pub(crate) enum DynamicThreadExitNonfullMediumPagesDistinctBinsRemoteFreeFailure
 /// untouched; once force collection begins, the drain remains the only
 /// terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallPagesAbandonError {
     Collection,
     ForeignPage,
@@ -9372,6 +9456,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallPagesAbandonError {
 /// The retained source drain after one dynamic full direct-small aggregate
 /// owner-exit traversal attempt.
 #[must_use = "a failed dynamic full direct-small aggregate transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallPagesAbandonFailure<
     'attach,
     'heap,
@@ -9395,6 +9480,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallPagesAbandonFailure<
 /// One result while the dynamic full direct-small aggregate route handles one
 /// canonical client free.
 #[must_use = "a nonterminal dynamic full direct-small aggregate result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallPagesFreeResult<
     'attach,
     'heap,
@@ -9417,6 +9503,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallPagesFreeResult<
 /// observations; every other result may have acquired a source low owner bit
 /// or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallPagesRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9430,6 +9517,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallPagesRemoteFreeError {
 /// A retained dynamic full direct-small aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed dynamic full direct-small aggregate free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallPagesRemoteFreeFailure<
     'attach,
     'heap,
@@ -9457,6 +9545,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallPagesRemoteFreeFailure<
 /// owner, while `Terminal` retains the page after ownership crossed the queue
 /// or abandoned-identity boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumAbandonError {
     Collection,
     Unmapped,
@@ -9476,6 +9565,7 @@ pub(crate) enum DynamicThreadExitFullMediumAbandonError {
 
 /// The retained source owner after a dynamic full-medium abandon attempt.
 #[must_use = "a failed dynamic full-medium abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumAbandonFailure<'attach, 'heap, 'arena, 'map> {
     /// Every check was pre-detach, so the dynamic drain remains available for
     /// an explicit later source decision.
@@ -9502,6 +9592,7 @@ pub(crate) enum DynamicThreadExitFullMediumAbandonFailure<'attach, 'heap, 'arena
 /// unmapped identity or its subsequent mapped identity; `Released` completes
 /// the terminal PageMap -> dynamic arena image -> metadata -> slice order.
 #[must_use = "a still-live full-medium free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumFreeResult<'attach, 'heap, 'arena, 'map> {
     StillLive(DynamicThreadExitFullMediumHandoff<'attach, 'heap, 'arena, 'map>),
     Released(DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>),
@@ -9510,6 +9601,7 @@ pub(crate) enum DynamicThreadExitFullMediumFreeResult<'attach, 'heap, 'arena, 'm
 /// One source-boundary failure while a dynamic full-medium handoff receives
 /// one sequential client free after its regular TLS slot cleared.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9523,6 +9615,7 @@ pub(crate) enum DynamicThreadExitFullMediumRemoteFreeError {
 /// The exact retained dynamic full-medium handoff after one sequential free
 /// cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic full-medium free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullMediumRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         handoff: DynamicThreadExitFullMediumHandoff<'attach, 'heap, 'arena, 'map>,
@@ -9540,6 +9633,7 @@ pub(crate) enum DynamicThreadExitFullMediumRemoteFreeFailure<'attach, 'heap, 'ar
 /// owner, while `Terminal` retains the page after ownership crossed the queue
 /// or abandoned-identity boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargeAbandonError {
     Collection,
     Unmapped,
@@ -9559,6 +9653,7 @@ pub(crate) enum DynamicThreadExitFullLargeAbandonError {
 
 /// The retained source owner after a dynamic full-large abandon attempt.
 #[must_use = "a failed dynamic full-large abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargeAbandonFailure<'attach, 'heap, 'arena, 'map> {
     /// Every check was pre-detach, so the dynamic drain remains available for
     /// an explicit later source decision.
@@ -9586,6 +9681,7 @@ pub(crate) enum DynamicThreadExitFullLargeAbandonFailure<'attach, 'heap, 'arena,
 /// PageMap -> dynamic arena image -> metadata -> complete 64-slice release
 /// order.
 #[must_use = "a still-live full-large free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargeFreeResult<'attach, 'heap, 'arena, 'map> {
     StillLive(DynamicThreadExitFullLargeHandoff<'attach, 'heap, 'arena, 'map>),
     Released(DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>),
@@ -9594,6 +9690,7 @@ pub(crate) enum DynamicThreadExitFullLargeFreeResult<'attach, 'heap, 'arena, 'ma
 /// One source-boundary failure while a dynamic full-large handoff receives one
 /// sequential client free after its regular TLS slot cleared.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargeRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9607,6 +9704,7 @@ pub(crate) enum DynamicThreadExitFullLargeRemoteFreeError {
 /// The exact retained dynamic full-large handoff after one sequential free
 /// cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic full-large free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullLargeRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         handoff: DynamicThreadExitFullLargeHandoff<'attach, 'heap, 'arena, 'map>,
@@ -9624,6 +9722,7 @@ pub(crate) enum DynamicThreadExitFullLargeRemoteFreeFailure<'attach, 'heap, 'are
 /// collection-poisoned source owner, while `Terminal` retains the page after
 /// ownership crossed the queue or abandoned-identity boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallAbandonError {
     Collection,
     Unmapped,
@@ -9645,6 +9744,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallAbandonError {
 /// The retained source owner after a dynamic full non-direct-small abandon
 /// attempt.
 #[must_use = "a failed dynamic full non-direct-small abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallAbandonFailure<'attach, 'heap, 'arena, 'map> {
     /// Every check was pre-detach, so the dynamic drain remains available for
     /// an explicit later source decision.
@@ -9672,6 +9772,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallAbandonFailure<'attach, 'heap
 /// completes the terminal PageMap -> dynamic arena image -> metadata -> slice
 /// order.
 #[must_use = "a still-live full non-direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallFreeResult<'attach, 'heap, 'arena, 'map> {
     StillLive(DynamicThreadExitFullNonDirectSmallHandoff<'attach, 'heap, 'arena, 'map>),
     Released(DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>),
@@ -9680,6 +9781,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallFreeResult<'attach, 'heap, 'a
 /// One source-boundary failure while a dynamic full non-direct-small handoff
 /// receives one sequential client free after its regular TLS slot cleared.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9693,6 +9795,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallRemoteFreeError {
 /// The exact retained dynamic full non-direct-small handoff after one
 /// sequential free cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic full non-direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullNonDirectSmallRemoteFreeFailure<
     'attach,
     'heap,
@@ -9715,6 +9818,7 @@ pub(crate) enum DynamicThreadExitFullNonDirectSmallRemoteFreeFailure<
 /// collection-poisoned source owner, while `Terminal` retains the page after
 /// ownership crossed the queue or abandoned-identity boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallAbandonError {
     Collection,
     Unmapped,
@@ -9736,6 +9840,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallAbandonError {
 /// The retained source owner after a dynamic full direct-small abandon
 /// attempt.
 #[must_use = "a failed dynamic full direct-small abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallAbandonFailure<'attach, 'heap, 'arena, 'map> {
     /// Every check was pre-detach, so the dynamic drain remains available for
     /// an explicit later source decision.
@@ -9763,6 +9868,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallAbandonFailure<'attach, 'heap, '
 /// completes the terminal PageMap -> dynamic arena image -> metadata -> slice
 /// order.
 #[must_use = "a still-live full direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallFreeResult<'attach, 'heap, 'arena, 'map> {
     StillLive(DynamicThreadExitFullDirectSmallHandoff<'attach, 'heap, 'arena, 'map>),
     Released(DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>),
@@ -9771,6 +9877,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallFreeResult<'attach, 'heap, 'aren
 /// One source-boundary failure while a dynamic full direct-small handoff
 /// receives one sequential client free after its regular TLS slot cleared.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9784,6 +9891,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallRemoteFreeError {
 /// The exact retained dynamic full direct-small handoff after one sequential
 /// free cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic full direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitFullDirectSmallRemoteFreeFailure<
     'attach,
     'heap,
@@ -9804,6 +9912,7 @@ pub(crate) enum DynamicThreadExitFullDirectSmallRemoteFreeFailure<
 /// nonfull medium page with exactly one current client block. Every error is
 /// named against the dynamic arena-image owner, never the later-main image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedOneBlockAbandonError {
     Collection,
     Unmapped,
@@ -9823,6 +9932,7 @@ pub(crate) enum DynamicThreadExitMappedOneBlockAbandonError {
 
 /// The retained source owner after a dynamic mapped-one-block abandon attempt.
 #[must_use = "a failed dynamic mapped one-block abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'arena, 'map> {
     /// Every check was pre-detach, so the dynamic drain remains available for
     /// an explicit later source decision.
@@ -9848,6 +9958,7 @@ pub(crate) enum DynamicThreadExitMappedOneBlockAbandonFailure<'attach, 'heap, 'a
 /// receives its final client free after the regular TLS slot made reclamation
 /// of the departed Theap impossible.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedOneBlockRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9861,6 +9972,7 @@ pub(crate) enum DynamicThreadExitMappedOneBlockRemoteFreeError {
 /// The exact retained dynamic mapped-one-block handoff after its final-free
 /// attempt.
 #[must_use = "a failed dynamic mapped one-block free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedOneBlockRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         handoff: DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>,
@@ -9877,6 +9989,7 @@ pub(crate) enum DynamicThreadExitMappedOneBlockRemoteFreeFailure<'attach, 'heap,
 /// queue/direct preflight left source state untouched; once source collection
 /// begins, the drain remains the only terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedMediumPairAbandonError {
     Collection,
     ForeignPage,
@@ -9893,6 +10006,7 @@ pub(crate) enum DynamicThreadExitMappedMediumPairAbandonError {
 /// The retained source drain after one dynamic mapped-medium-pair owner-exit
 /// traversal attempt.
 #[must_use = "a failed dynamic mapped medium-pair transition retains its draining owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedMediumPairAbandonFailure<
     'attach,
     'heap,
@@ -9915,6 +10029,7 @@ pub(crate) enum DynamicThreadExitMappedMediumPairAbandonFailure<
 /// One result while the bounded dynamic mapped-medium-pair route handles one
 /// canonical client free.
 #[must_use = "a nonterminal dynamic mapped medium-pair result retains the only route owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedMediumPairFreeResult<
     'attach,
     'heap,
@@ -9935,6 +10050,7 @@ pub(crate) enum DynamicThreadExitMappedMediumPairFreeResult<
 /// observation: map selection deliberately occurs only after the source low
 /// owner-bit claim, so every later error may have changed source state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedMediumPairRemoteFreeError {
     Terminal,
     Unmapped,
@@ -9946,6 +10062,7 @@ pub(crate) enum DynamicThreadExitMappedMediumPairRemoteFreeError {
 
 /// A retained dynamic mapped-medium-pair route after one client-free attempt.
 #[must_use = "a failed dynamic mapped medium-pair free retains its route"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedMediumPairRemoteFreeFailure<
     'attach,
     'heap,
@@ -9970,6 +10087,7 @@ pub(crate) enum DynamicThreadExitMappedMediumPairRemoteFreeFailure<
 /// nonfull medium page with exactly two current client blocks. Every error is
 /// named against the dynamic arena-image owner, never the later-main image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockMediumAbandonError {
     Collection,
     Unmapped,
@@ -9990,6 +10108,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockMediumAbandonError {
 /// The retained source owner after a dynamic mapped-two-block-medium abandon
 /// attempt.
 #[must_use = "a failed dynamic mapped two-block medium abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockMediumAbandonFailure<
     'attach,
     'heap,
@@ -10020,6 +10139,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockMediumAbandonFailure<
 /// sequential client free after the regular TLS slot made reclamation of the
 /// departed Theap impossible.
 #[must_use = "a nonterminal dynamic mapped two-block medium free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockMediumFreeResult<
     'attach,
     'heap,
@@ -10039,6 +10159,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockMediumFreeResult<
 /// `MissingDynamicArenaPages` are pre-mutation observations; every other
 /// result may have acquired a source low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockMediumRemoteFreeError {
     Terminal,
     Unmapped,
@@ -10053,6 +10174,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockMediumRemoteFreeError {
 /// The exact retained dynamic mapped two-block medium handoff after one
 /// sequential free cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic mapped two-block medium free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure<
     'attach,
     'heap,
@@ -10073,6 +10195,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockMediumRemoteFreeFailure<
 /// nonfull large page with exactly two current client blocks. Every error is
 /// named against the dynamic arena-image owner, never the later-main image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockLargeAbandonError {
     Collection,
     Unmapped,
@@ -10093,6 +10216,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockLargeAbandonError {
 /// The retained source owner after a dynamic mapped-two-block-large abandon
 /// attempt.
 #[must_use = "a failed dynamic mapped two-block large abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockLargeAbandonFailure<
     'attach,
     'heap,
@@ -10123,6 +10247,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockLargeAbandonFailure<
 /// sequential client free after the regular TLS slot made reclamation of the
 /// departed Theap impossible.
 #[must_use = "a nonterminal dynamic mapped two-block large free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockLargeFreeResult<
     'attach,
     'heap,
@@ -10144,6 +10269,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockLargeFreeResult<
 /// `MissingDynamicArenaPages` are pre-mutation observations; every other
 /// result may have acquired a source low owner bit or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockLargeRemoteFreeError {
     Terminal,
     Unmapped,
@@ -10158,6 +10284,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockLargeRemoteFreeError {
 /// The exact retained dynamic mapped two-block large handoff after one
 /// sequential free cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic mapped two-block large free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockLargeRemoteFreeFailure<
     'attach,
     'heap,
@@ -10179,6 +10306,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockLargeRemoteFreeFailure<
 /// error is named against the dynamic arena-image owner, never the later-main
 /// image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallAbandonError {
     Collection,
     Unmapped,
@@ -10199,6 +10327,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallAbandonError {
 /// The retained source owner after a dynamic mapped-two-block-non-direct-small
 /// abandon attempt.
 #[must_use = "a failed dynamic mapped two-block non-direct-small abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallAbandonFailure<
     'attach,
     'heap,
@@ -10229,6 +10358,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallAbandonFailure<
 /// receives a sequential client free after the regular TLS slot made
 /// reclamation of the departed Theap impossible.
 #[must_use = "a nonterminal dynamic mapped two-block non-direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallFreeResult<
     'attach,
     'heap,
@@ -10249,6 +10379,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallFreeResult<
 /// observations; every other result may have acquired a source low owner bit
 /// or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallRemoteFreeError {
     Terminal,
     Unmapped,
@@ -10263,6 +10394,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallRemoteFreeError {
 /// The exact retained dynamic mapped two-block non-direct-small handoff after
 /// one sequential free cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic mapped two-block non-direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallRemoteFreeFailure<
     'attach,
     'heap,
@@ -10284,6 +10416,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockNonDirectSmallRemoteFreeFailure<
 /// error is named against the dynamic arena-image owner, never the later-main
 /// image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallAbandonError {
     Collection,
     Unmapped,
@@ -10305,6 +10438,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallAbandonError {
 /// The retained source owner after a dynamic mapped-two-block-direct-small
 /// abandon attempt.
 #[must_use = "a failed dynamic mapped two-block direct-small abandonment retains its source owner"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallAbandonFailure<
     'attach,
     'heap,
@@ -10337,6 +10471,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallAbandonFailure<
 /// state: it intentionally retains the observed `used == 2` until the final
 /// free joins and consumes the predecessor head.
 #[must_use = "a nonterminal dynamic mapped two-block direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallFreeResult<
     'attach,
     'heap,
@@ -10355,6 +10490,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallFreeResult<
 /// observations; every other result may have acquired a source low owner bit
 /// or changed map state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallRemoteFreeError {
     Terminal,
     Unmapped,
@@ -10369,6 +10505,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallRemoteFreeError {
 /// The exact retained dynamic mapped two-block direct-small handoff after one
 /// sequential free cannot complete its source failed-reclaim transition.
 #[must_use = "a failed dynamic mapped two-block direct-small free retains its handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallRemoteFreeFailure<
     'attach,
     'heap,
@@ -10388,6 +10525,7 @@ pub(crate) enum DynamicThreadExitMappedTwoBlockDirectSmallRemoteFreeFailure<
 /// One rejected pre-handoff observation. Every variant is checked before the
 /// source queue detach; the returned engine has not entered abandoned state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicMappedAbandonError {
     Collection,
     Unmapped,
@@ -10405,6 +10543,7 @@ pub(crate) enum DynamicMappedAbandonError {
 /// failure instead retains the engine inside [`Self::Terminal`] so normal
 /// allocation/free/finish cannot resume across an ambiguous owner boundary.
 #[must_use = "a mapped-abandon failure retains either the engine or a terminal handoff"]
+#[cfg(test)]
 pub(crate) enum DynamicMappedAbandonFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         engine: DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
@@ -10421,6 +10560,7 @@ pub(crate) enum DynamicMappedAbandonFailure<'attach, 'heap, 'arena, 'map> {
 /// attachment, page map, arena image, bitmap bit, and page; it cannot reveal a
 /// normal allocator able to free or reuse abandoned state.
 #[must_use = "a mapped-abandoned page must be adopted or terminally retained"]
+#[cfg(test)]
 pub(crate) struct DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map> {
     engine: DynamicTheapAllocator<'attach, 'heap, 'arena, 'map>,
     page: NonNull<Page>,
@@ -10433,6 +10573,7 @@ pub(crate) struct DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map> {
 /// hold the low owner bit and no bitmap bit, so only retained terminal storage
 /// is sound in this bounded slice.
 #[must_use = "a mapped-adoption failure retains the handoff capability"]
+#[cfg(test)]
 pub(crate) enum DynamicMappedAdoptFailure<'attach, 'heap, 'arena, 'map> {
     /// The map contained no currently claimable exact page. Ownership remains
     /// mapped/unowned and the caller may retry only through this token.
@@ -10450,6 +10591,7 @@ pub(crate) enum DynamicMappedAdoptFailure<'attach, 'heap, 'arena, 'map> {
 /// One source-boundary outcome while a mapped-abandoned dynamic page receives
 /// an `allow_collect=true` remote free.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum DynamicMappedRemoteFreeError {
     Terminal,
     InvalidBlock,
@@ -10472,6 +10614,7 @@ pub(crate) enum DynamicMappedRemoteFreeError {
 /// permitted source claim without reopening the former owner. Every other
 /// source ownership transition retains the handoff terminally.
 #[must_use = "a mapped remote-free failure retains its handoff capability"]
+#[cfg(test)]
 pub(crate) enum DynamicMappedRemoteFreeFailure<'attach, 'heap, 'arena, 'map> {
     Rejected {
         handoff: DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>,
@@ -10655,6 +10798,7 @@ impl<'bootstrap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageSession<'attach, 'heap>>
 {
@@ -22886,6 +23030,7 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     PageAllocatorEngine<'arena, 'map, DynamicTheapPageDrainSession<'attach, 'heap>>
 {
@@ -22948,6 +23093,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitDrain<'attach, 'heap, 'arena, 'map>
 {
@@ -32025,6 +32171,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullSingletonPagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -32237,6 +32384,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullOsSingletonPagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -32432,6 +32580,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedMediumPairRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -32658,6 +32807,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullMediumPagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -32934,6 +33084,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullLargePagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -33244,6 +33395,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullMediumOrLargePagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -33512,6 +33664,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullSingletonOrRegularPagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -33857,6 +34010,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitNonfullMediumPagesDistinctBinsRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -34240,6 +34394,7 @@ impl<'attach, 'heap, 'arena, 'map>
         self.drain.test_dynamic_regular_slot_is_clear()
     }
 }
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullNonDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -34546,6 +34701,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullDirectSmallPagesRoute<'attach, 'heap, 'arena, 'map>
 {
@@ -34816,6 +34972,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitSingletonHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -35147,6 +35304,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitArenaSingletonPostExitRouteSource<'attach, 'heap, 'arena, 'map>
 {
@@ -35175,6 +35333,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'heap, 'arena, 'map>
     DynamicThreadExitArenaSingletonPostExitRoute<'heap, 'arena, 'map>
 {
@@ -35423,6 +35582,7 @@ impl<'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullMediumHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -35715,6 +35875,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullLargeHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -36006,6 +36167,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullNonDirectSmallHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -36304,6 +36466,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitFullDirectSmallHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -36613,6 +36776,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedTwoBlockMediumHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -36831,6 +36995,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedTwoBlockLargeHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -37111,6 +37276,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedTwoBlockNonDirectSmallHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -37354,6 +37520,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedTwoBlockDirectSmallHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -37604,6 +37771,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicThreadExitMappedOneBlockHandoff<'attach, 'heap, 'arena, 'map>
 {
@@ -37809,6 +37977,7 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
+#[cfg(test)]
 impl<'attach, 'heap, 'arena, 'map>
     DynamicMappedPageHandoff<'attach, 'heap, 'arena, 'map>
 {
