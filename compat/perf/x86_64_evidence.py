@@ -28,10 +28,11 @@ import stat
 import struct
 import subprocess
 import sys
+from contextlib import contextmanager
 from functools import lru_cache
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
 HERE = Path(__file__).resolve().parent
@@ -476,6 +477,32 @@ def _x86_module(checkout: Path, name: str) -> Any:
     return importlib.import_module(name)
 
 
+@contextmanager
+def _defer_pinned_reader_interrupt() -> Iterator[None]:
+    """Deliver SIGINT only after the spawned reader handle has an owner."""
+
+    previous = signal.getsignal(signal.SIGINT)
+    # Preserve explicitly ignored or default OS signal dispositions. Python's
+    # interrupt handler and other callable handlers can unwind the spawn owner.
+    if not callable(previous):
+        yield
+        return
+    pending: tuple[int, Any] | None = None
+
+    def defer(signum: int, frame: Any) -> None:
+        nonlocal pending
+        if pending is None:
+            pending = (signum, frame)
+
+    signal.signal(signal.SIGINT, defer)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        if pending is not None:
+            previous(*pending)
+
+
 def _run_pinned_receipt_validator(checkout: Path, receipt_path: Path) -> dict[str, Any]:
     """Ask the checked-in dispatcher to return a receipt validated in-image."""
 
@@ -493,16 +520,18 @@ def _run_pinned_receipt_validator(checkout: Path, receipt_path: Path) -> dict[st
     ]
     environment = os.environ.copy()
     environment.pop("BASH_ENV", None)
-    process = subprocess.Popen(
-        command,
-        cwd=checkout,
-        env=environment,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
+    process: subprocess.Popen[bytes] | None = None
     try:
+        with _defer_pinned_reader_interrupt():
+            process = subprocess.Popen(
+                command,
+                cwd=checkout,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
         stdout, stderr = process.communicate(timeout=PINNED_RECEIPT_VALIDATION_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired as error:
         try:
@@ -511,10 +540,11 @@ def _run_pinned_receipt_validator(checkout: Path, receipt_path: Path) -> dict[st
             error.add_note(f"could not stop pinned receipt reader process group: {cleanup_error}")
         raise EvidenceError("pinned qualification receipt validation timed out") from error
     except BaseException as error:
-        try:
-            _terminate_pinned_reader(process)
-        except OSError as cleanup_error:
-            error.add_note(f"could not stop pinned receipt reader process group: {cleanup_error}")
+        if process is not None:
+            try:
+                _terminate_pinned_reader(process)
+            except OSError as cleanup_error:
+                error.add_note(f"could not stop pinned receipt reader process group: {cleanup_error}")
         raise
     if process.returncode != 0:
         detail = stderr.decode("utf-8", errors="replace").strip()

@@ -976,6 +976,81 @@ class CorrectnessAdmissionTests(unittest.TestCase):
                 evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
         kill_group.assert_called_once_with(2744, signal.SIGTERM)
 
+    def test_host_spawn_return_cancellation_stops_and_reaps_reader_group(self) -> None:
+        process = Mock()
+        process.pid = 2745
+        process.communicate.return_value = (b"", b"")
+        previous = signal.getsignal(signal.SIGINT)
+
+        def spawn(*args: object, **kwargs: object) -> Mock:
+            # The child already exists, but its handle has not reached the owner.
+            signal.raise_signal(signal.SIGINT)
+            return process
+
+        with patch.object(evidence.subprocess, "Popen", side_effect=spawn), patch.object(
+            evidence.os, "killpg"
+        ) as kill_group:
+            with self.assertRaises(KeyboardInterrupt):
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+        kill_group.assert_called_once_with(2745, signal.SIGTERM)
+        process.communicate.assert_called_once_with(timeout=5)
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
+
+    def test_host_spawn_failure_restores_interrupt_handler_without_group_cleanup(self) -> None:
+        previous = signal.getsignal(signal.SIGINT)
+        failure = OSError("reader could not spawn")
+        with patch.object(evidence.subprocess, "Popen", side_effect=failure), patch.object(
+            evidence.os, "killpg"
+        ) as kill_group:
+            with self.assertRaises(OSError) as caught:
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+        self.assertIs(caught.exception, failure)
+        kill_group.assert_not_called()
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
+
+    def test_host_spawn_return_interrupt_reaps_a_real_child(self) -> None:
+        real_spawn = subprocess.Popen
+        children: list[subprocess.Popen[bytes]] = []
+
+        def spawn(*args: object, **kwargs: object) -> subprocess.Popen[bytes]:
+            child = real_spawn(
+                [sys.executable, "-B", "-c", "import signal; signal.pause()"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            children.append(child)
+            signal.raise_signal(signal.SIGINT)
+            return child
+
+        try:
+            with patch.object(evidence.subprocess, "Popen", side_effect=spawn):
+                with self.assertRaises(KeyboardInterrupt):
+                    evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+            self.assertEqual(len(children), 1)
+            self.assertEqual(children[0].returncode, -signal.SIGTERM)
+            self.assertTrue(children[0].stdout.closed)
+            self.assertTrue(children[0].stderr.closed)
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    os.killpg(child.pid, signal.SIGKILL)
+                child.communicate()
+
+    def test_host_spawn_cancellation_preserves_primary_error_when_cleanup_fails(self) -> None:
+        process = Mock()
+        process.pid = 2746
+
+        def spawn(*args: object, **kwargs: object) -> Mock:
+            signal.raise_signal(signal.SIGINT)
+            return process
+
+        with patch.object(evidence.subprocess, "Popen", side_effect=spawn), patch.object(
+            evidence.os, "killpg", side_effect=OSError("group cleanup failed")
+        ):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+        self.assertTrue(any("group cleanup failed" in note for note in caught.exception.__notes__))
+
     def test_manifest_declarations_cannot_claim_execution_admission(self) -> None:
         owner = evidence._x86_module(ROOT, "generate_qualification_manifest")
         contract = owner.load_contract()
