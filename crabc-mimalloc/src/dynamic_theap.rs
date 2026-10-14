@@ -10,7 +10,11 @@
 // `src/init.c:236-360,377-421,448-481`, `src/theap.c:228-306,357-369,414-449`,
 // `src/heap.c:60-100`, and `src/prim/prim-tls.c:211-229`.
 
-//! Private current-thread dynamic Theap attachment.
+// Production code does not construct this attachment; these transitions serve
+// isolated source-behavior fixtures.
+#![cfg(test)]
+
+//! Isolated model of the private current-thread dynamic Theap attachment.
 //!
 //! This is a deliberately narrow first-class-heap binding: a caller provides
 //! one address-stable `Heap::bootstrap_empty()` image, this owner claims one
@@ -23,14 +27,15 @@
 //! Release heap publication; its exclusive borrowed `DynamicTheapPageSession`
 //! alone reaches the shared private page engine. Its first dynamic arena page
 //! lazily receives one exact heap-local `mi_arena_pages_t` metadata image;
-//! fresh/rollback/release use that image rather than `Arena::pages_main`. Its
-//! post-TLS `DynamicTheapPageDrainSession` first force-collects already-retired
-//! all-free pages, then has one further source-shaped live owner exit: a full
-//! one-block arena or OS-aligned singleton can be queue-detached, abandoned,
-//! and released only when its later client free sees the cleared regular slot
-//! and takes the failed-reclaim all-free tail. The OS branch links the exact
-//! page through this dynamic Heap's private `os_abandoned_pages` list before
-//! common unown, then removes it before clipped map/metadata/mapping release.
+//! fresh/rollback/release use that image rather than `Arena::pages_main`.
+//! The test-only `DynamicTheapPageDrainSession` first force-collects
+//! already-retired all-free pages, then models one source-shaped live owner
+//! exit in which a full one-block arena or OS-aligned singleton can be
+//! queue-detached, abandoned, and released only when its later client free
+//! sees the cleared regular slot and takes the failed-reclaim all-free tail.
+//! The OS branch links the exact page through this dynamic Heap's private
+//! `os_abandoned_pages` list before common unown, then removes it before
+//! clipped map/metadata/mapping release.
 //! Four separate full regular handoffs remain initially unmapped after source
 //! force then false collection: medium and large detach from `BIN_FULL`;
 //! non-direct small requires `SMALL_SIZE_MAX < block_size <= SMALL_MAX_OBJ_SIZE`
