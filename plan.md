@@ -1,14 +1,18 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: running unattended 2026-10-13.** Ground tooling and pinned inputs
+**Status: running unattended 2026-10-14.** Ground tooling and pinned inputs
 have merged; all runtime lanes have run their independent checks. All three
 H0 dynamic products passed and were published after retained validation;
-POSIX-family, crypt, atomic and wordexp steps passed. POSIX-native continues.
+POSIX-family, crypt, atomic and wordexp steps passed. POSIX-native passed its
+differential, os-test, signal/process and pthread-stress components, then
+stopped at the existing finite-identity `pow` correction's raw flag mismatch.
+That step is parked; remaining independent rehearsal steps continue.
 M1's layout prerequisite is parked after three narrow experiments failed to
 reproduce its aggregate failure. M2 has no failing executed check but remains
-partial. M3's Miri matrices pass; its native batch has five stale refused-free
-assertions under correction. M4 retains one address-reuse mismatch. M5's native
-runner corrections remain under review. M6's four-profile adapter matrix and
+partial. M3's Miri matrices pass; its five stale refused-free assertions are
+corrected and pass individually. M4's address-reuse mismatch is parked. M5's
+reviewed native runner and all three previously failing target rosters pass.
+M6's four-profile adapter matrix and
 retained replay pass; the complete baseline gate is running. Source convergence,
 focused defect fixes, cleanup and campaign review continue. Nothing
 has been qualified on main: 0 of 8 gates, 9 of 26 families. Earlier receipts
@@ -832,6 +836,44 @@ Append one line per merge batch, per parked item, and per contract change.
 - 2026-10-13: `perf-gate-ready` exits 75 after its three load checks:
   perf gate deferred: host busy. No qualifying timing was collected; no
   performance-dependent promotion is claimed.
+
+- 2026-10-14: `5e39edf1e` fixes M5 per-target feature selection, final parent
+  summaries, incremental raw output and cancellation ownership, including
+  the spawn-to-handle publication race found by C2. At that frozen revision
+  and the pinned allocator image, pointer-dispatch passes 14 targets in 15
+  feature runs, abandon/reclaim/release passes 11 and churn passes seven.
+  All three exit zero. Earlier full M5 reports and canonical stress receipts
+  remain bound to their original revisions; no full current M5 pass is claimed.
+- 2026-10-14: `56a84ee6a` corrects five source-Page owner tests that wrongly
+  expected retry custody after refused unmap. Each proves cleared PageMap,
+  a still-mapped exact span and no source retry; the separate native child
+  arena-failure custody control passes. No product behavior changed.
+- 2026-10-14: `f0e060068` removes repeated relative-path reconstruction
+  from family snapshots. Old and new snapshots of the retained OS-test leaf
+  match every field and insertion order across 326,644 nodes and 63,023,555
+  JSON bytes. No timing claim is made. `06dde3628` removes two unused private
+  regex declarations and scopes a locale mask to its actual caller; three
+  libc profiles pass. `9f4794ad4` fixes the discovered root-level temporary
+  inventory-fixture race without weakening source-digest validation.
+- 2026-10-14: `f528c7e16` adds the raw `getcpu` failure source comparison:
+  one EIO attempt returns NUMA node zero; its lane matches 144 VM fields.
+  `03aeaa583` adds a distinctly named cold-arena page-prefix commitment
+  witness with working marker/reader dispatch; merged native verification
+  is running. It does not prove whole arena-slice commit rollback. Source
+  accounting retains bounded NUMA, PageMap, metadata, external-arena and
+  version proofs while leaving broader units and nested-child C/R proof open.
+- 2026-10-14: H0 `21e9a89cf` stops in POSIX-native's libc-test collector
+  at `math/pow`. The raw pinned-musl stream has 24 diagnostics versus the
+  candidate's ten; all 14 differences are finite subnormal `x^1` cases.
+  The existing narrow probe passes 72 identities and 40 unchanged controls:
+  for `pow(0x1p-1074, 1)` both return bits 1, while musl sets raw flags 0x32
+  and the candidate sets none. The unchanged upstream test makes those
+  diagnostics nonfatal, explaining both zero exits. The current production
+  correction is identical in H0 and main. Three bounded checks establish a
+  semantic contract conflict, not a reader bug; that step is parked under
+  the prohibition on reclassifying failures to pass a gate. No new oracle
+  disposition is added and no qualification claim changes. Independent
+  remaining cohort commands continue from the frozen inputs.
 
 ## For the owner afterwards
 
