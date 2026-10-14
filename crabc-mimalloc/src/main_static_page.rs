@@ -27,10 +27,10 @@ use crate::arena::ArenaId;
 use crate::config::{
     ARENA_SLICE_SIZE, BIN_HUGE, SMALL_PAGE_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
-use crate::main_theap::{
-    MainStaticPageSessionError, MainStaticProcessPageSession, MainStaticTheapAttachment,
-    MainStaticTheapError,
-};
+use crate::main_theap::MainStaticProcessPageSession;
+use crate::main_theap::MainStaticTheapError;
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::main_theap::{MainStaticPageSessionError, MainStaticTheapAttachment};
 use crate::os::MemoryConfig;
 use crate::page;
 use crate::page_backing::RuntimeFirstRegularPageBacking;
@@ -46,10 +46,11 @@ use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
 use crate::size_class;
 use crate::single_thread::{
     DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
-    DeferredFreeAlignedAdmission, DeferredFreeAlignedPlainAllocation,
+    DeferredFreeAlignedPlainAllocation,
     GenericAllocationCollection, FreeError, PageAllocatorEngine,
-    RemoteFreePreparationError, RemoteFreeProducer,
 };
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::single_thread::{RemoteFreePreparationError, RemoteFreeProducer};
 #[cfg(test)]
 use crate::single_thread::PageAllocatorEngineState;
 use crate::types::PageKind;
@@ -81,6 +82,7 @@ pub(crate) fn native_process_backing_first_arena_audit() -> usize {
 /// map mutation lease poisons its root before releasing the private lock. A
 /// successful [`Self::finish`] is the only path that leaves either owner ready
 /// for a later bounded session.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[must_use = "a main-static process page allocator must finish or retain its owner explicitly"]
 pub(crate) struct MainStaticProcessPageAllocator<'main> {
     engine: PageAllocatorEngine<'static, 'static, crate::main_theap::MainStaticPageSession<'main>>,
@@ -130,15 +132,8 @@ fn initial_guarded_canonical_phase(
     })
 }
 
-/// An initial-owner aligned request before its ordinary base allocator
-/// runs. Plain continuations retain no engine projection across sampling.
-#[must_use = "an initial aligned admission must complete or resume its plain allocation"]
-pub(crate) enum MainStaticDeferredFreeAlignedAdmission {
-    Engine(MainStaticDeferredFreeAllocationPhase),
-    Plain(DeferredFreeAlignedPlainAllocation),
-}
-
 /// A pre-publication refusal while opening the bounded static page allocator.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticProcessPageAllocatorBeginError {
     #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
@@ -152,6 +147,7 @@ pub(crate) enum MainStaticProcessPageAllocatorBeginError {
 }
 
 /// The only failure outcomes while consuming a bounded static page engine.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[must_use = "a retained main-static page allocator still owns live page state"]
 pub(crate) enum MainStaticProcessPageAllocatorFinishError<'main> {
     /// One page, queue, producer, or OS-release owner remains live. The exact
@@ -166,6 +162,7 @@ pub(crate) enum MainStaticProcessPageAllocatorFinishError<'main> {
     PageMap(ProcessPageMapError),
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainStaticProcessPageAllocator<'main> {
     /// Starts one source-shaped page lifecycle for the ticket-zero attachment.
     ///
@@ -319,11 +316,13 @@ impl<'main> MainStaticProcessPageAllocator<'main> {
 /// the first ordinary request that needs a page. Once active it delegates to
 /// the already-bounded [`MainStaticProcessPageAllocator`]; exhaustion of that
 /// one arena does not manufacture later arena-count scaling or a second route.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[must_use = "a first-arena static page owner must finish or retain its ticket-zero attachment explicitly"]
 pub(crate) struct MainStaticFirstArenaPageAllocator<'main> {
     state: MainStaticFirstArenaPageAllocatorState<'main>,
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 enum MainStaticFirstArenaPageAllocatorState<'main> {
     AwaitingFreshPage {
         attachment: &'main mut MainStaticTheapAttachment,
@@ -346,6 +345,7 @@ pub(crate) enum MainStaticFirstArenaPageAllocatorBeginError {
 }
 
 /// A free attempted before the lazy owner activated its source page engine.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MainStaticFirstArenaPageAllocatorFreeError {
     NotActive,
@@ -353,6 +353,7 @@ pub(crate) enum MainStaticFirstArenaPageAllocatorFreeError {
 }
 
 /// The result of finishing one lazy ticket-zero page owner.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[must_use = "a retained first-arena page owner still owns its ticket-zero attachment or page engine"]
 pub(crate) enum MainStaticFirstArenaPageAllocatorFinishError<'main> {
     Retained(MainStaticFirstArenaPageAllocator<'main>),
@@ -1393,7 +1394,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 reservation: MainStaticRuntimeFirstArenaReservation::Process { .. },
                 ..
             } => {
-                let (mut session, backing, arena_storage) = match core::mem::replace(
+                let (session, backing, arena_storage) = match core::mem::replace(
                     &mut self.state,
                     MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
                 ) {
@@ -1441,6 +1442,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 };
                 true
             }
+            #[cfg(any(test, not(target_arch = "x86_64")))]
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { .. } => {
                 let Some(block) = self.allocate(WORD_SIZE, false) else {
                     return false;
@@ -3059,51 +3061,6 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             active.engine.resume_guarded_canonical_frequency_checked(request, frequency, continuation)
         };
         Some(initial_guarded_canonical_phase(source, phase))
-    }
-
-    /// Selects an aligned cached head before the caller can disable guarded
-    /// sampling for an ordinary base request. An empty permanent session
-    /// returns its plain continuation before creating an arena or engine.
-    pub(crate) fn begin_deferred_free_aligned_admission_current_initial_thread_local(
-        &mut self, size: usize, alignment: usize, offset: usize, zero: bool,
-    ) -> Option<MainStaticDeferredFreeAlignedAdmission> {
-        let empty_page_map = match &self.state {
-            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage { reservation, .. } => Some(reservation.page_map()),
-            MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena { page_map, .. } => Some(*page_map),
-            _ => None,
-        };
-        if let Some(page_map) = empty_page_map {
-            let page_size = page_map.memory_config().ok()?.page_size().bytes();
-            if let Some(plain) = DeferredFreeAlignedPlainAllocation::for_empty_cache(size, alignment, offset, zero, page_size) {
-                return Some(MainStaticDeferredFreeAlignedAdmission::Plain(plain));
-            }
-        }
-        self.allocate_with(size, |engine| {
-            match engine.begin_deferred_free_aligned_admission(size, alignment, offset, zero) {
-                DeferredFreeAlignedAdmission::Plain(plain) => Some(MainStaticDeferredFreeAlignedAdmission::Plain(plain)),
-                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::FreshInitialization(task)) => {
-                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::FreshInitialization(task)))
-                }
-                #[cfg(target_arch = "x86_64")]
-                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::LiveValidity(task)) => {
-                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::LiveValidity(task)))
-                }
-                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Complete(block)) => {
-                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Complete(block)))
-                }
-                #[cfg(target_arch = "x86_64")]
-                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::GenericFrequency { request, continuation }) => {
-                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::GenericFrequency {
-                        source: engine.deferred_free_source()?, request, continuation,
-                    }))
-                }
-                DeferredFreeAlignedAdmission::Engine(DeferredFreeAllocationPhase::Collect { collection, continuation }) => {
-                    Some(MainStaticDeferredFreeAlignedAdmission::Engine(MainStaticDeferredFreeAllocationPhase::Collect {
-                        source: engine.deferred_free_source()?, collection, continuation,
-                    }))
-                }
-            }
-        })
     }
 
     /// Resumes the selected ordinary base after sampling has completed with
