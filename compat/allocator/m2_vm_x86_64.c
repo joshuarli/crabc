@@ -100,6 +100,18 @@ static size_t m2_os_numa_node_count_primitive(void);
 static size_t m2_os_numa_node_primitive(void);
 static long m2_os_numa_option_get(mi_option_t option);
 
+typedef struct m2_os_reuse_capture_s {
+  bool active;
+  bool overflow;
+  size_t calls;
+  void* addresses[2];
+  size_t lengths[2];
+  int results[2];
+} m2_os_reuse_capture_t;
+
+static m2_os_reuse_capture_t m2_os_reuse_capture = {0};
+static int m2_os_prim_reuse(void* start, size_t size);
+
 #if !defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
 typedef struct m2_getcpu_failure_record_s {
   bool active;
@@ -129,9 +141,11 @@ static long m2_numa_getcpu_syscall(unsigned int* cpu, unsigned int* node, void* 
   m2_aligned_hint_compare_exchange((p), (expected), (desired))
 #define _mi_prim_numa_node_count m2_os_numa_node_count_primitive
 #define _mi_prim_numa_node m2_os_numa_node_primitive
+#define _mi_prim_reuse m2_os_prim_reuse
 #define mi_option_get m2_os_numa_option_get
 #include "os.c"
 #undef mi_option_get
+#undef _mi_prim_reuse
 #undef _mi_prim_numa_node
 #undef _mi_prim_numa_node_count
 #undef mi_atomic_add_acq_rel
@@ -263,6 +277,23 @@ static int m2_detection_sysinfo(struct sysinfo* info);
 #undef M2_VM_PRIM_RAW_SYS_getcpu
 #undef M2_VM_PRIM_RAW_SYS_getrandom
 #endif
+
+/* Observe the source `_mi_os_reuse` handoff while delegating to the unchanged
+ * pinned Linux primitive, whose selected body returns zero without a syscall. */
+static int m2_os_prim_reuse(void* start, size_t size) {
+  const int result = _mi_prim_reuse(start, size);
+  if (m2_os_reuse_capture.active) {
+    const size_t index = m2_os_reuse_capture.calls++;
+    if (index < sizeof(m2_os_reuse_capture.addresses) / sizeof(void*)) {
+      m2_os_reuse_capture.addresses[index] = start;
+      m2_os_reuse_capture.lengths[index] = size;
+      m2_os_reuse_capture.results[index] = result;
+    } else {
+      m2_os_reuse_capture.overflow = true;
+    }
+  }
+  return result;
+}
 
 /* The fixed no-option NUMA witness exercises the literal `os.c` wrappers with
  * controlled raw primitive answers. These aliases apply to `os.c` only; every
@@ -706,6 +737,8 @@ static bool fail_next_madvise_dontneed = false;
 static bool fail_next_madvise_free_einval = false;
 static bool capture_transition_mprotect = false;
 static size_t captured_transition_mprotect_calls = 0;
+static void* captured_transition_mprotect_addresses[4];
+static size_t captured_transition_mprotect_lengths[4];
 static int captured_transition_protections[4];
 /* The selected `mi_page_extend_free` source body owns this separate record.
  * It captures the raw direct `_mi_os_commit` primitive and never substitutes
@@ -1541,8 +1574,10 @@ int __wrap_mprotect(void* address, size_t length, int protection) {
   }
 #endif
   if (capture_transition_mprotect && captured_transition_mprotect_calls < 4) {
-    captured_transition_protections[captured_transition_mprotect_calls] = protection;
-    captured_transition_mprotect_calls++;
+    const size_t index = captured_transition_mprotect_calls++;
+    captured_transition_mprotect_addresses[index] = address;
+    captured_transition_mprotect_lengths[index] = length;
+    captured_transition_protections[index] = protection;
   }
   if (capture_page_extension_mprotect
       && captured_page_extension_mprotect_calls < 2) {
@@ -5995,7 +6030,25 @@ int main(void) {
   _mi_os_free(subproc, purge_matrix_mapping, page * 3, purge_matrix_id);
   if (!normal_no_callback_purge_matrix) return 31;
 
+  memset(&m2_os_reuse_capture, 0, sizeof(m2_os_reuse_capture));
+  m2_os_reuse_capture.active = true;
+  _mi_os_reuse(subproc, (uint8_t*)reserved + 1, page - 1);
+  const bool reuse_empty_range_skips_primitive =
+      m2_os_reuse_capture.calls == 0 && !m2_os_reuse_capture.overflow;
   _mi_os_reuse(subproc, reserved, page);
+  m2_os_reuse_capture.active = false;
+  const bool reuse_range_matches = m2_os_reuse_capture.calls == 1
+      && !m2_os_reuse_capture.overflow
+      && m2_os_reuse_capture.addresses[0] == reserved
+      && m2_os_reuse_capture.lengths[0] == page;
+  const bool reuse_linux_noop = reuse_range_matches
+      && m2_os_reuse_capture.results[0] == 0;
+  const size_t reuse_normalized_offset_pages = reuse_range_matches
+      ? (size_t)(((uintptr_t)m2_os_reuse_capture.addresses[0] - (uintptr_t)reserved) / page)
+      : SIZE_MAX;
+  const size_t reuse_normalized_length_pages = reuse_range_matches
+      ? m2_os_reuse_capture.lengths[0] / page
+      : SIZE_MAX;
   captured_transition_mprotect_calls = 0;
   capture_transition_mprotect = true;
   fail_next_mprotect = true;
@@ -6199,6 +6252,61 @@ int main(void) {
   const size_t numa_getcpu_failure_error = (size_t)m2_getcpu_failure_record.error;
   if (numa_getcpu_failure_calls != 1 || numa_getcpu_failure_error != EIO
       || numa_node_after_getcpu_failure != 0) return 31;
+
+  const size_t protection_range_size = page * 3;
+  mi_memid_t protection_range_id = _mi_memid_none();
+  void* const protection_range = _mi_os_alloc_aligned(
+      subproc, protection_range_size, page, true /* commit */, false /* allow_large */,
+      &protection_range_id);
+  if (protection_range == NULL || protection_range_id.mem.os.base != protection_range
+      || protection_range_id.mem.os.size != protection_range_size) return 38;
+  volatile uint8_t* const protected_byte = (volatile uint8_t*)protection_range + page;
+  *protected_byte = 0x5a;
+  captured_transition_mprotect_calls = 0;
+  capture_transition_mprotect = true;
+  const bool protection_empty_protect_returns_false =
+      !_mi_os_protect((uint8_t*)protection_range + page / 2, page);
+  const size_t mprotect_calls_after_empty_protect = captured_transition_mprotect_calls;
+  const bool protection_empty_unprotect_returns_false =
+      !_mi_os_unprotect((uint8_t*)protection_range + page / 2, page);
+  const bool protection_empty_ranges_skip_mprotect =
+      mprotect_calls_after_empty_protect == 0 && captured_transition_mprotect_calls == 0;
+  const bool protection_protect_success =
+      _mi_os_protect((uint8_t*)protection_range + page / 2, page * 2);
+  const bool protection_unprotect_success =
+      _mi_os_unprotect((uint8_t*)protection_range + page / 2, page * 2);
+  capture_transition_mprotect = false;
+  const bool protection_mprotect_calls_exact = captured_transition_mprotect_calls == 2;
+  const size_t protection_protect_offset_pages =
+      protection_mprotect_calls_exact
+          && (uintptr_t)captured_transition_mprotect_addresses[0] >= (uintptr_t)protection_range
+      ? (size_t)(((uintptr_t)captured_transition_mprotect_addresses[0]
+                  - (uintptr_t)protection_range) / page)
+      : SIZE_MAX;
+  const size_t protection_protect_length_pages =
+      protection_mprotect_calls_exact && captured_transition_mprotect_lengths[0] % page == 0
+          ? captured_transition_mprotect_lengths[0] / page
+          : SIZE_MAX;
+  const size_t protection_unprotect_offset_pages =
+      protection_mprotect_calls_exact
+          && (uintptr_t)captured_transition_mprotect_addresses[1] >= (uintptr_t)protection_range
+      ? (size_t)(((uintptr_t)captured_transition_mprotect_addresses[1]
+                  - (uintptr_t)protection_range) / page)
+      : SIZE_MAX;
+  const size_t protection_unprotect_length_pages =
+      protection_mprotect_calls_exact && captured_transition_mprotect_lengths[1] % page == 0
+          ? captured_transition_mprotect_lengths[1] / page
+          : SIZE_MAX;
+  const int protection_protect_flags = protection_mprotect_calls_exact
+      ? captured_transition_protections[0]
+      : -1;
+  const int protection_unprotect_flags = protection_mprotect_calls_exact
+      ? captured_transition_protections[1]
+      : -1;
+  const bool protection_contents_preserved = protection_unprotect_success
+      && *protected_byte == 0x5a;
+  _mi_os_free(subproc, protection_range, protection_range_size, protection_range_id);
+
   const m2_numa_controlled_trace_t numa_controlled = m2_capture_controlled_numa_trace();
   const m2_numa_verbose_controlled_trace_t numa_verbose_controlled =
       m2_capture_controlled_numa_verbose_trace();
@@ -6269,7 +6377,26 @@ int main(void) {
       purge_reset_eagain_then_error_is_consumed_and_owner_retained);
   U("m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
       normal_no_callback_purge_matrix);
-  U("m2.vm.reserved.reuse_linux_noop", 1);
+  U("m2.vm.reserved.reuse_linux_noop", reuse_linux_noop);
+  U("m2.vm.reuse.empty_range_skips_primitive", reuse_empty_range_skips_primitive);
+  U("m2.vm.reuse.normalized_offset_pages", reuse_normalized_offset_pages);
+  U("m2.vm.reuse.normalized_length_pages", reuse_normalized_length_pages);
+  U("m2.vm.protection.empty_protect_returns_false",
+      protection_empty_protect_returns_false);
+  U("m2.vm.protection.empty_unprotect_returns_false",
+      protection_empty_unprotect_returns_false);
+  U("m2.vm.protection.empty_ranges_skip_mprotect",
+      protection_empty_ranges_skip_mprotect);
+  U("m2.vm.protection.mprotect_calls", captured_transition_mprotect_calls);
+  U("m2.vm.protection.protect_success", protection_protect_success);
+  U("m2.vm.protection.protect_offset_pages", protection_protect_offset_pages);
+  U("m2.vm.protection.protect_length_pages", protection_protect_length_pages);
+  U("m2.vm.protection.protect_flags", protection_protect_flags);
+  U("m2.vm.protection.unprotect_success", protection_unprotect_success);
+  U("m2.vm.protection.unprotect_offset_pages", protection_unprotect_offset_pages);
+  U("m2.vm.protection.unprotect_length_pages", protection_unprotect_length_pages);
+  U("m2.vm.protection.unprotect_flags", protection_unprotect_flags);
+  U("m2.vm.protection.contents_preserved", protection_contents_preserved);
   U("m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
       protect_failure_returns_false && protect_failure_is_one_source_attempt);
   U("m2.vm.reserved.protect.retry.one_additional_source_attempt",

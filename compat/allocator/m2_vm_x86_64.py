@@ -428,6 +428,22 @@ TRACE_KEYS = (
     "m2.vm.reserved.purge.reset_eagain_then_error_is_consumed_and_owner_retained",
     "m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
     "m2.vm.reserved.reuse_linux_noop",
+    "m2.vm.reuse.empty_range_skips_primitive",
+    "m2.vm.reuse.normalized_offset_pages",
+    "m2.vm.reuse.normalized_length_pages",
+    "m2.vm.protection.empty_protect_returns_false",
+    "m2.vm.protection.empty_unprotect_returns_false",
+    "m2.vm.protection.empty_ranges_skip_mprotect",
+    "m2.vm.protection.mprotect_calls",
+    "m2.vm.protection.protect_success",
+    "m2.vm.protection.protect_offset_pages",
+    "m2.vm.protection.protect_length_pages",
+    "m2.vm.protection.protect_flags",
+    "m2.vm.protection.unprotect_success",
+    "m2.vm.protection.unprotect_offset_pages",
+    "m2.vm.protection.unprotect_length_pages",
+    "m2.vm.protection.unprotect_flags",
+    "m2.vm.protection.contents_preserved",
     "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
     "m2.vm.reserved.protect.retry.one_additional_source_attempt",
     "m2.vm.reserved.protect_success",
@@ -575,6 +591,24 @@ RAW_GETCPU_FAILURE_EXPECTED_VALUES = {
     "m2.vm.numa.raw_getcpu_failure.error": 5,
     "m2.vm.numa.raw_getcpu_failure.node": 0,
 }
+SOURCE_PAGE_RANGE_EXPECTED_VALUES = {
+    "m2.vm.reuse.empty_range_skips_primitive": 1,
+    "m2.vm.reuse.normalized_offset_pages": 0,
+    "m2.vm.reuse.normalized_length_pages": 1,
+    "m2.vm.protection.empty_protect_returns_false": 1,
+    "m2.vm.protection.empty_unprotect_returns_false": 1,
+    "m2.vm.protection.empty_ranges_skip_mprotect": 1,
+    "m2.vm.protection.mprotect_calls": 2,
+    "m2.vm.protection.protect_success": 1,
+    "m2.vm.protection.protect_offset_pages": 1,
+    "m2.vm.protection.protect_length_pages": 1,
+    "m2.vm.protection.protect_flags": 0,
+    "m2.vm.protection.unprotect_success": 1,
+    "m2.vm.protection.unprotect_offset_pages": 1,
+    "m2.vm.protection.unprotect_length_pages": 1,
+    "m2.vm.protection.unprotect_flags": 3,
+    "m2.vm.protection.contents_preserved": 1,
+}
 
 TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     {
@@ -595,7 +629,7 @@ TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     }
 ).difference(CONTROLLED_NUMA_EXPECTED_VALUES).difference(
     RAW_GETCPU_FAILURE_EXPECTED_VALUES
-)
+).difference(SOURCE_PAGE_RANGE_EXPECTED_VALUES)
 TRACE_FALSE_KEYS = frozenset(
     {
         "m2.vm.config.has_transparent_huge_pages",
@@ -1311,6 +1345,11 @@ def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
         if trace[key] != expected:
             raise ValueError(
                 f"{source} M2 VM raw getcpu failure relation changed: {key}={trace[key]}, expected {expected}"
+            )
+    for key, expected in SOURCE_PAGE_RANGE_EXPECTED_VALUES.items():
+        if trace[key] != expected:
+            raise ValueError(
+                f"{source} M2 VM source page-range relation changed: {key}={trace[key]}, expected {expected}"
             )
 
 

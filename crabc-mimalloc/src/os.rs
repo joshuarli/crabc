@@ -15852,10 +15852,25 @@ mod tests {
                 && fault.observed() == 1
                 && reserved.base() == Ok(reserved_base);
         fault.set(fault::Plan::disabled());
+        let reuse_empty_range_skips_primitive = matches!(
+            reserved.reuse(1, page - 1),
+            Ok(None)
+        );
         let reuse_linux_noop = matches!(
             reserved.reuse(0, page),
             Ok(Some(ReuseOutcome::NoOp))
         );
+        let reuse_normalized_range = reserved
+            .page_range(0, page, PageAlignment::Contained)
+            .expect("the exact source page is contained by its mapping")
+            .expect("one complete source page remains reusable");
+        let reuse_normalized_offset_pages = reuse_normalized_range
+            .address
+            .addr()
+            .checked_sub(reserved_base.addr())
+            .map(|offset| offset / page)
+            .unwrap_or(usize::MAX);
+        let reuse_normalized_length_pages = reuse_normalized_range.length / page;
         assert!(
             reuse_linux_noop,
             "Linux reuse has no VM syscall after conservative page normalization"
@@ -16152,6 +16167,93 @@ mod tests {
         assert_eq!(numa_raw_getcpu_failure_calls, 1, "one raw CPU observation fails");
         assert_eq!(numa_raw_getcpu_failure_node, 0, "the source fallback is node zero");
 
+        let protection_range_size = page.checked_mul(3).expect("the fixed protection mapping fits");
+        let mut protection_mapping = Mapping::map_for_process(
+            transition_process,
+            config,
+            protection_range_size,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the source page-range witness owns three committed pages");
+        let protection_base = protection_mapping.base().expect("the range mapping starts live");
+        let protected_byte = protection_base.wrapping_add(page);
+        unsafe { protected_byte.write_volatile(0x5a) };
+        let protection_capture = fault.capture_protection_ranges();
+        let protection_empty_protect_returns_false = !protection_mapping
+            .protect_for_process(transition_process, page / 2, page)
+            .expect("an empty conservative protect range has no primitive error");
+        let protection_attempts_after_empty_protect = protection_capture
+            .attempts()
+            .expect("the protection capture remains within its fixed capacity")
+            .1;
+        let protection_empty_unprotect_returns_false = !protection_mapping
+            .unprotect_for_process(transition_process, page / 2, page)
+            .expect("an empty conservative unprotect range has no primitive error");
+        let protection_empty_ranges_skip_mprotect =
+            protection_attempts_after_empty_protect == 0
+                && protection_capture
+                    .attempts()
+                    .expect("the protection capture remains within its fixed capacity")
+                    .1
+                    == 0;
+        let protection_protect_success = protection_mapping
+            .protect_for_process(transition_process, page / 2, page * 2)
+            .expect("the complete interior page can be protected");
+        let protection_unprotect_success = protection_mapping
+            .unprotect_for_process(transition_process, page / 2, page * 2)
+            .expect("the complete interior page can be made readable again");
+        let (protection_attempts, protection_mprotect_calls) = protection_capture
+            .attempts()
+            .expect("the protection capture remains within its fixed capacity");
+        drop(protection_capture);
+        let protection_mprotect_calls_exact = protection_mprotect_calls == 2;
+        let protection_protect_offset_pages = if protection_mprotect_calls_exact {
+            protection_attempts[0]
+                .0
+                .checked_sub(protection_base.addr())
+                .map(|offset| offset / page)
+                .unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+        let protection_protect_length_pages = if protection_mprotect_calls_exact {
+            protection_attempts[0].1 / page
+        } else {
+            usize::MAX
+        };
+        let protection_protect_flags = if protection_mprotect_calls_exact {
+            protection_attempts[0].2 as usize
+        } else {
+            usize::MAX
+        };
+        let protection_unprotect_offset_pages = if protection_mprotect_calls_exact {
+            protection_attempts[1]
+                .0
+                .checked_sub(protection_base.addr())
+                .map(|offset| offset / page)
+                .unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+        let protection_unprotect_length_pages = if protection_mprotect_calls_exact {
+            protection_attempts[1].1 / page
+        } else {
+            usize::MAX
+        };
+        let protection_unprotect_flags = if protection_mprotect_calls_exact {
+            protection_attempts[1].2 as usize
+        } else {
+            usize::MAX
+        };
+        let protection_contents_preserved = protection_unprotect_success
+            && unsafe { protected_byte.read_volatile() == 0x5a };
+        protection_mapping
+            .unmap_for_process(transition_process, protection_range_size, false)
+            .expect("the source page-range witness releases its full mapping");
+
         // The release record used the serial injection guard above. Its exact
         // full-range capture is complete now; release it before the separate
         // policy witness takes the same serial source-fault boundary.
@@ -16287,6 +16389,61 @@ mod tests {
             u8::from(normal_no_callback_purge_matrix)
         );
         emit!("m2.vm.reserved.reuse_linux_noop", u8::from(reuse_linux_noop));
+        emit!(
+            "m2.vm.reuse.empty_range_skips_primitive",
+            u8::from(reuse_empty_range_skips_primitive)
+        );
+        emit!(
+            "m2.vm.reuse.normalized_offset_pages",
+            reuse_normalized_offset_pages
+        );
+        emit!(
+            "m2.vm.reuse.normalized_length_pages",
+            reuse_normalized_length_pages
+        );
+        emit!(
+            "m2.vm.protection.empty_protect_returns_false",
+            u8::from(protection_empty_protect_returns_false)
+        );
+        emit!(
+            "m2.vm.protection.empty_unprotect_returns_false",
+            u8::from(protection_empty_unprotect_returns_false)
+        );
+        emit!(
+            "m2.vm.protection.empty_ranges_skip_mprotect",
+            u8::from(protection_empty_ranges_skip_mprotect)
+        );
+        emit!("m2.vm.protection.mprotect_calls", protection_mprotect_calls);
+        emit!(
+            "m2.vm.protection.protect_success",
+            u8::from(protection_protect_success)
+        );
+        emit!(
+            "m2.vm.protection.protect_offset_pages",
+            protection_protect_offset_pages
+        );
+        emit!(
+            "m2.vm.protection.protect_length_pages",
+            protection_protect_length_pages
+        );
+        emit!("m2.vm.protection.protect_flags", protection_protect_flags);
+        emit!(
+            "m2.vm.protection.unprotect_success",
+            u8::from(protection_unprotect_success)
+        );
+        emit!(
+            "m2.vm.protection.unprotect_offset_pages",
+            protection_unprotect_offset_pages
+        );
+        emit!(
+            "m2.vm.protection.unprotect_length_pages",
+            protection_unprotect_length_pages
+        );
+        emit!("m2.vm.protection.unprotect_flags", protection_unprotect_flags);
+        emit!(
+            "m2.vm.protection.contents_preserved",
+            u8::from(protection_contents_preserved)
+        );
         emit!(
             "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
             u8::from(protect_failure_returns_false_and_one_source_attempt)

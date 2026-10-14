@@ -471,6 +471,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
                 **producer.CONTROLLED_NUMA_EXPECTED_VALUES,
                 **producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES,
+                **producer.SOURCE_PAGE_RANGE_EXPECTED_VALUES,
             }
         )
         trace = "\n".join(
@@ -503,6 +504,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
                 **expected,
                 **producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES,
+                **producer.SOURCE_PAGE_RANGE_EXPECTED_VALUES,
             }
         )
         producer._validate_trace_values(values, source="test")
@@ -533,6 +535,36 @@ class NativeVmAssemblyTests(unittest.TestCase):
 
         values["m2.vm.numa.controlled.verbose.fragments_at_current"] = 2
         for key, expected_value in producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES.items():
+            values[key] = expected_value + 1
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                producer._validate_trace_values(values, source="test")
+            values[key] = expected_value
+
+    def test_source_page_ranges_require_noop_empty_and_normalized_live_transitions(self):
+        producer = RUNNER._m2_x86_64_vm_producer()
+        expected = producer.SOURCE_PAGE_RANGE_EXPECTED_VALUES
+        self.assertTrue(set(expected).issubset(producer.TRACE_KEYS))
+        values = {key: 1 for key in producer.TRACE_KEYS}
+        values.update(
+            {
+                "m2.vm.config.page_size": 4096,
+                "m2.vm.config.large_page_size": 2 * 1024 * 1024,
+                "m2.vm.config.alloc_granularity": 4096,
+                "m2.vm.config.has_transparent_huge_pages": 0,
+                "m2.vm.reserved.initially_committed": 0,
+                "m2.vm.normal.good_size": 4096,
+                "m2.vm.aligned.alignment": 64 * 1024,
+                "m2.vm.aligned.good_size": 4096,
+                "m2.vm.offset.good_size": 17 * 4096,
+                "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
+                **producer.CONTROLLED_NUMA_EXPECTED_VALUES,
+                **producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES,
+                **expected,
+            }
+        )
+        producer._validate_trace_values(values, source="test")
+
+        for key, expected_value in expected.items():
             values[key] = expected_value + 1
             with self.subTest(key=key), self.assertRaises(ValueError):
                 producer._validate_trace_values(values, source="test")
