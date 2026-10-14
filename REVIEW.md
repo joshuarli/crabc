@@ -1,6 +1,6 @@
 # Review: crabc
 
-Scope: the campaign changes through `45ff6332c`, excluding unchanged code and the unmerged promotion bridge. Checks run: independent caller and retained-product review; focused cancellation, engine-reader and arena regressions; merged Rust profiles, host tests and native comparisons recorded in `plan.md`. Closing merged-tree checks are in progress. Not covered: a passing qualification cohort, native promotion, qualifying performance, or the paused AArch64 target.
+Scope: the campaign changes through `d5e83b329`, excluding unchanged code and the unmerged promotion bridge. Checks run: independent caller and retained-product review; focused cancellation, engine-reader and arena regressions; all nine merged Rust profiles, structure/ledger/inventory and architecture checks. All 23 host directories ran at `45ff6332c`; the accounting failure is corrected and its 198-test runner and 57 mapping tests pass at `d5e83b329`. A process-cleanup test hit a transient procfs disappearance; its 24-test module replay passed, with the flake retained in the handoff. Native comparisons and their revisions are recorded in `plan.md`. Not covered: a passing qualification cohort, native promotion, qualifying performance, or the paused AArch64 target.
 
 ## Summary
 
