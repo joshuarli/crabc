@@ -861,7 +861,7 @@ facts common to both are compared.
   and public allocation routing are proved. It is a test-only private owner and
   not a default allocator backend.
 
-### `CRABC-MI-LATER-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted bounded page-owner slice
+### `CRABC-MI-LATER-MAIN-PROCESS-PAGE-LIFECYCLE` — test/audit page-owner adapter
 
 - **Port map:** `src/arena.c:later-main-process-page-map-arena-lifecycle`
 - **Upstream/Rust:** later-thread `_mi_thread_init_with_heap(mi_heap_main())`
@@ -882,22 +882,29 @@ facts common to both are compared.
   the `single_thread::ThreadExit*` handoff and post-exit types,
   `process_arena::ProcessPageArenaLease` and
   `process_page_map::{ProcessPageMapMutationLease, ProcessPageMapPostExitAccess}`.
-- **Scope:** crate-private, one sequential later-thread page owner; no C ABI
-  surface.
-- **Difference:** C permits concurrent page-map consumers and later threads
-  enter through its complete process initializer. Rust's later page owner needs
-  one current later metadata TLD/Theap and an independently published matching
-  map/arena pair; it validates the exact subprocess and frozen configuration
-  before taking the map lifecycle, takes short serialized projections of the
-  shared static Heap only where it needs a mutable Heap address, and installs
-  the arena's embedded `pages_main` (never a dynamic `mi_arena_pages_t`). One
-  map lifecycle covers fresh allocation, local free/collection and one joined
-  scoped producer. Normal finish returns only an empty owner. The consuming
-  exit drain clears the fixed fast slot, visits every queue (including full),
-  detaches joined remote frees and force-appends `local_free` before deciding
-  all-free; an all-free page is released PageMap removal, main bitmap clear,
-  metadata retirement, slice release. The pass continues past a live page and
-  then retains that page rather than queue-detaching or abandoning it.
+- **Scope:** crate-private test, native-audit, and non-x86 process-PageMap
+  adapter; no C ABI or selected x86 production lifecycle.
+- **Difference:** the detailed `MainHeapThreadProcessPageAllocator` and
+  `MainHeapThreadProcessPageExit*` shapes below are compiled only for tests,
+  the native audit feature, or non-x86 targets. They preserve source-shaped
+  process-PageMap lifecycle and exit cases for focused evidence; they are not
+  the fixed x86-64 runtime route. The selected production x86 owner is
+  `MainHeapThreadOwnerLocalPageEngine` inside `NativePersistentThreadOwner`.
+  It keeps its page state in the owner and does not use this adapter's long
+  PageMap mutation lease, suspension tokens, or post-exit route families.
+  Within the adapter, the source fixture requires one current later metadata
+  TLD/Theap and an independently published matching map/arena pair; it
+  validates the exact subprocess and frozen configuration before taking the
+  map lifecycle, takes short serialized projections of the shared static Heap
+  only where it needs a mutable Heap address, and installs the arena's embedded
+  `pages_main` (never a dynamic `mi_arena_pages_t`). One map lifecycle covers
+  fresh allocation, local free/collection and one joined scoped producer.
+  Normal finish returns only an empty owner. The consuming exit drain clears
+  the fixed fast slot, visits every queue (including full), detaches joined
+  remote frees and force-appends `local_free` before deciding all-free; an
+  all-free page is released PageMap removal, main bitmap clear, metadata
+  retirement, slice release. The pass continues past a live page and then
+  retains that page rather than queue-detaching or abandoning it.
   Supported owner-exit shapes are exactly these routes; every other shape,
   including allocation-time adoption beyond those named, scanning and
   concurrent routing, is absent:
@@ -945,7 +952,7 @@ facts common to both are compared.
     drops only after full PageMap, bitmap, metadata, slice release; a retired
     or force-empty traversal returns the ordinary drain, and a traversal that
     leaves one immediate-head nonfull medium returns the one-page handoff.
-    The runtime continuations enter `_mi_deferred_free` before their first
+    The adapter continuations enter `_mi_deferred_free` before their first
     retirement or queue work. One synchronous same-page remote exception exists
     (`mi_free_block_mt` to `mi_free_try_collect_mt`): after B claims the low
     owner bit, a joined C appends exactly one distinct client to the remote
@@ -995,9 +1002,8 @@ facts common to both are compared.
   the `runtime_lifecycle::tests` regressions; the prefixed C
   `allocator --churn` lane (128 cycles) and opt-in `allocator --soak` lane
   (1,024 cycles); `unfinished_later_page_engine_poison_retains_the_attachment_and_process_map`.
-- **Removal:** when the PageMap supports its concurrent consumers, automatic
-  reservation and multi-arena routing exist, and the remaining owner-exit
-  traversal and page-bearing pthread/TLS integration are proved. It does not
+- **Removal:** when evidence no longer needs the process-PageMap adapter's
+  test/audit/non-x86 cases. Its absence from the selected x86 runtime does not
   authorize concurrent later-thread allocation routing, a public thread
   attachment API, process shutdown or default backend use.
 
