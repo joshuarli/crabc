@@ -13,7 +13,8 @@ partial. M3's Miri matrices pass; its five stale refused-free assertions are
 corrected and pass individually. M4's address-reuse mismatch is parked. M5's
 reviewed native runner and all three previously failing target rosters pass.
 M6's four-profile adapter matrix and
-retained replay pass; the complete baseline gate is running. Source convergence,
+retained replay pass; its complete baseline run is unmet, with three Heap-delete
+differentials failing in debug/statistics modes. Focused triage is running. Source convergence,
 focused defect fixes, cleanup and campaign review continue. Nothing
 has been qualified on main: 0 of 8 gates, 9 of 26 families. Earlier receipts
 were deleted with `.work/` on 2026-10-07.
@@ -552,6 +553,14 @@ Made so far, each with its commit, for the owner:
   source startup obligation: automatic startup, including delayed-output
   post-initialization, must finish before registering a public handler.
   The NUMA startup witness observes READY and a live TLD before delivery.
+- `d08ec74cf`: the M5 early engine proof uses the qualified physical reader,
+  binds the current source, allocator image, tools, exact compiler/link inputs
+  and retained Rust archive, and applies the selected local throughput floor.
+  Historical reports without the retained Cargo output cannot qualify. This
+  adds no receipt schema and makes no measured throughput claim.
+- `e87d40f85`: fresh page selection excludes pinned arenas at secure level 5,
+  while abandoned-page reclamation retains the pinned source's eligibility.
+  The private search purpose is explicit; public ABI and default are unchanged.
 
 ## Non-goals
 
@@ -897,6 +906,34 @@ Append one line per merge batch, per parked item, and per contract change.
   composition and all three lifecycle products at frozen `21e9a89cf`.
   Independent text and consumer steps continue; the parked POSIX-native
   `pow` mismatch still blocks qualification.
+- 2026-10-14: frozen `4bf95d807` passes all 23 host test directories (the
+  builtins directory runs inside the pinned core image), all nine Rust profiles
+  and structure/ledger/inventory checks. Its actual M7 remote and aligned
+  traces match 90 and 54 C/R fields; the two selected natural/guarded owner
+  regressions pass. Frozen `5ff246ea9` also passes all 23 directories and nine
+  profiles, the same structural checks, and the executed 160-field VM trace.
+- 2026-10-14: `67245886c` and `eb0fa57f2` close receipt-reader cancellation
+  at child-handle publication and repeated interruption during cleanup. All 45
+  reader tests pass, including real child termination and reaping. C2's actual
+  Cargo-output-layout finding is fixed in `d08ec74cf`; its lane reader checks
+  and independent retained-product review pass. The native promotion closure's
+  cross-image authority gap is being fixed; no native-default claim is made.
+- 2026-10-14: `d3bd1af9b`, `442b2e9dc`, `5ff246ea9`, `727a18d68`,
+  `2bb14835a`, `fe3509ea0` and `6a92e5875` remove or scope unreachable private
+  models after following construction and caller roots. Live native owner
+  collection and terminal custody remain. `d467fd49b` updates source accounting:
+  152 implementation rows, 24 transitional routes, five algorithmic differences
+  and two register conditions remain unmet. Latest merged verification is
+  running at frozen `6a92e5875`.
+- 2026-10-14: the complete M6 baseline at frozen `e8d4deedb` is unmet.
+  Eight of ten required execution groups passed; heap lifecycle and destruction
+  lifetime failed because `deleted-heap-remote-exit`,
+  `heap-delete-after-owner-exit` and `heap-delete-with-attached-worker` fail in
+  debug/statistics modes. Release executions passed; retained logs include
+  pinned C crashes as well as observation mismatches. Each failing step is
+  assigned bounded root-cause triage. Broad statistics, visitation, failure and
+  concurrency conditions remain explicit blockers even when selected evidence
+  passes. Qualifying performance remains deferred: host busy.
 
 ## For the owner afterwards
 
