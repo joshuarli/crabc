@@ -1,33 +1,88 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: winding down 2026-10-14.** Ground tooling and pinned inputs
-have merged; all runtime lanes have run their independent checks. All three
-H0 dynamic products passed and were published after retained validation;
-POSIX-family, crypt, atomic and wordexp steps passed. POSIX-native passed its
-differential, os-test, signal/process and pthread-stress components, then
-stopped at the existing finite-identity `pow` correction's raw flag mismatch.
-That step is parked; remaining independent rehearsal steps continue.
-M1's layout prerequisite is parked after three narrow experiments failed to
-reproduce its aggregate failure. M2 has no failing executed check but remains
-partial. M3's Miri matrices pass; its five stale refused-free assertions are
-corrected and pass individually. M4's address-reuse mismatch is parked. M5's
-reviewed native runner and all three previously failing target rosters pass.
-M6's four-profile adapter matrix and
-retained replay pass; its complete baseline run is unmet, with three Heap-delete
-differentials failing in debug/statistics modes. Focused triage is running. Source convergence,
-focused defect fixes, cleanup and campaign review continue. Nothing
-has been qualified on main: 0 of 8 gates, 9 of 26 families. Earlier receipts
-were deleted with `.work/` on 2026-10-07.
+**Status: paused 2026-10-14.** Winddown requested by the owner. All lanes and
+campaign commands have stopped; select no further work until resumed. The
+accepted C allocator remains the default. Public x86 support remains false:
+180 of 223 capabilities, nine of 26 families, zero of eight gates.
 
-- **Resume:** "Read `plan.md` and `docs/lanes.md`, then run the campaign in
-  `plan.md` as coordinator, unattended, launching every ready lane in the
-  plan's priority order." First command:
+- **Resume:** "Read plan.md and docs/lanes.md, then resume the paused campaign
+  as coordinator, unattended, launching every ready lane in the plan's priority
+  order." First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
-- **State:** branch `main`. The pinned images exist locally and
-  `compat/x86_64/core_image.py` names the core image. Do not rebuild an image:
-  a rebuild changes its ID and voids every receipt made in it.
-- **Open branches:** 62 besides `main`, none needed to resume; see
-  [Baseline](#baseline).
+- **State:** `main`. The latest integrated code is `d5e83b329`; later commits
+  record the review and this handoff. Ground tooling, pinned inputs and the
+  runtime's independent repairs are integrated. The latest allocator tranche
+  binds the M5 engine proof to actual current products, fixes receipt-reader
+  interruption, corrects secure-5 fresh arena selection, extends VM/statistics
+  evidence, and scopes unused dynamic, TLS and realloc models to their evidence
+  configurations. Source accounting keeps aggregate units partial and finite
+  source-foundation proofs separate from shipping lifecycle claims.
+- **Known red:** H0 POSIX-native's raw `pow` flags still conflict with the
+  existing valid-result correction. M6 at `e8d4deedb` has two passing groups,
+  six blocked groups and two failed groups; three delete differentials fail in
+  debug/statistics modes. The attached-worker pinned C crash is localized to
+  `src/free.c:751` in `mi_stat_free`, reading `page->heap->subproc` at
+  address zero after join and the owner block's free. Two offset-11 fixtures
+  omit the already-admitted, source-proved C valid-client profile; reuse the
+  existing M6 adapter profile and retain option-0 controls on resumption.
+  The native promotion closure still has C2 finding R1 in [REVIEW.md](REVIEW.md).
+  A closing process-cleanup test observed procfs ESRCH; its replay passed, but
+  the flake is not fixed.
+- **Open lanes:** all committed and stopped. The three retained worktrees
+  are clean under `.work/wt/`; they may be recreated from their branches.
+  No resume step depends on an ignored receipt or scratch file: regenerate
+  execution evidence from the tracked producers if it is gone.
+
+| Branch | Item and state | Next step |
+| --- | --- | --- |
+| `lane/source-closure` at `b59925281` | C2/T1/O4 WIP, explicitly unqualified; do not integrate | Prove host phase/source/input mutation and direct partial-readiness refusal, installed native audit source/payload custody, and producer readability after its UID/GID change. Review its proposed canonical-work-directory restriction before landing. A real CORE M10 baseline negative check reached the report with honest unmet prerequisites; no native qualification passed. |
+| `cohort/rehearsal` at `21e9a89cf` | H0 parked, never merge | POSIX-native `pow` is parked after its bounded investigation. Independent pthread products and all text leaf products/seals passed. Text-family aggregate was stopped after about 62 minutes without a final receipt; narrow its real collector loop before rerunning. Then run remaining independent resolver, loader, product and consumer steps on a fresh rehearsal of main. |
+| `lane/allocator-options` at `814ed8a2e` | A3 parked cold-arena experiment | The intended prefix-commit fault hit PageMap commitment instead. Three checks did not establish the required fault ordinal. Its landed M7 statistics work is already on main; do not reapply the reverted cold witness blindly. |
+
+All following older branches are **parked under C0**, retained as history, not
+queued lanes. Inspect their diff against main before reusing anything.
+`lane/tooling` holds earlier M5 wiring superseded by the stricter integrated
+proof; it is not the current single-writer lane. The five historical branches
+with source work main lacks are named in Baseline; none is a prerequisite to
+resume the current campaign.
+
+- `archive/source-accounting-pre-2811b`.
+- `integration/os82`.
+- `lane/adapter116`, `lane/allocator_m7_failures9`, `lane/bootstrap71`, `lane/child107`, `lane/childlayout71`, `lane/childlife72`, `lane/childownership41`, `lane/childsourceclosure41`, `lane/claimcustody57`, `lane/engine104-retained-7ca7de021`, `lane/facadenet21`, `lane/guardedengine55`, `lane/guardedfrontend54`, `lane/guardedfrontend55`, `lane/guardedruntime54`, `lane/guardedruntime55`, `lane/guardedsnapshot53`, `lane/guardedsnapshot54`, `lane/guardedsource54`, `lane/heapalloc33`, `lane/init78`, `lane/init78-prior-source-assertion`, `lane/libc-dynsym-footprint`, `lane/libc_termios4`, `lane/loader`, `lane/loader-dtv-bounds-audit`, `lane/loader-tls-v2-audit`, `lane/m2-init-fault`, `lane/m2pagemap20`, `lane/m5-exit`, `lane/m5-stress`, `lane/miristartup40`, `lane/page73`, `lane/pagefatal56`, `lane/posix`, `lane/runtimeclosure60`, `lane/secure71-driver-qualified-b07`, `lane/secureforkruntime56`, `lane/securegrowth56`, `lane/snapshot74`, `lane/stdio111`, `lane/subprocfootprint38`, `lane/terminalmodel43`, `lane/theapmetasnapshot54`, `lane/timer-v2-cleanup-order-audit`, `lane/tooling`, `lane/vm104`.
+- `parked/childlayout-footprint-f472721dd`, `parked/childlayout-footprint-fd38882c6`, `parked/childlife72-before-integration-413938fac`, `parked/init78-before-cleanup-50a8ba443`, `parked/init80-before-integration-847a548fc`, `parked/runtime104-qualified-609a7092e`, `parked/secure72-before-integration-45be54377`.
+- `recovery/work-20261007/scratch`, `recovery/work-20261007/snapshot-12bca3460148`, `recovery/work-20261007/snapshot-389213e5177b`, `recovery/work-20261007/snapshot-6956122ee74c`, `recovery/work-20261007/snapshot-a560d634628e`, `recovery/work-20261007/snapshot-b0073bd2ddda`.
+- `review/composedownership41-655-455`, `review/composedownership41-fbc-455`.
+
+- **Not started:** finish the unqualified C2 bridge before the future default
+  switch; resume the ready independent runtime rehearsal steps in the priority
+  table; correct the two M6 producer profiles and investigate the separate
+  pinned C ordinary-block crash; refresh the stale scheduled-expiry EIO arena
+  contract clause from the existing 28-field proof; continue A5 and C1 from
+  proven production roots. H1 and O1/O2 remain blocked by H0; A4 and O3/O4 remain
+  blocked by allocator parity/source completion. No performance optimization
+  starts before its correctness prerequisites. The owner still owes the
+  `pow` correction versus raw-oracle contract decision, and any decision to
+  redesign the parked numeric child-metadata footprint difference.
+- **Verified:** closing checks at frozen `45ff6332c` passed all nine Rust
+  profiles, structure, ledger, inventory and architecture ratchet. All 23 host
+  directories ran: 21 passed initially; the accounting runner and native
+  process reader modules failed. At `d5e83b329`, the corrected runner passes
+  198 tests and both mapping modules pass 57; the unchanged native reader's
+  24-test replay passes. Nine focused native TLS/realloc controls pass at
+  `330972ba6`. Earlier executed evidence at `6a92e5875` matches 160 VM
+  fields and 184391 arena fields, with secure-5 and ordinary fresh-page
+  controls passing. These are scoped checks, not qualification receipts.
+- **Reboot audit:** finished lane worktrees and integrated branches were
+  removed; each remaining checkout is clean and each unmerged branch is named
+  here as parked or WIP. `.work/` is ignored through `.git/info/exclude`
+  and lives on ext4. The resume command, committed paths and branch refs were
+  checked from a clean environment. No campaign process or scheduled job
+  remains. Host scheduler inventory is unavailable (`systemctl` absent,
+  no crontab account); the campaign created no scheduled jobs.
+- **Not verified:** no complete current correctness cohort, full current M5
+  or M6 pass, native promotion or fresh final memory/performance qualification.
+  **Perf gate deferred: host busy.** Pinned images were not rebuilt, AArch64
+  was not run or emulated, and nothing was pushed.
 
 ## Goal
 
@@ -91,7 +146,7 @@ Deliverables:
   `crabc-mimalloc` tests; read peak memory of the first launches and keep
   12 GiB available.
 - Lane worktrees live at `.work/wt/<lane>` on branch `lane/<id>`; all scratch
-  stays under `.work/`, never `/tmp`. The coordinator removes a lane's
+  stays under `.work/`. The coordinator removes a lane's
   worktree and branch once its workstream has nothing ready. A parked lane keeps its
   branch and is named in the [campaign log](#campaign-log).
 - **Three files have one writer.** Only the tooling lane edits
@@ -926,14 +981,29 @@ Append one line per merge batch, per parked item, and per contract change.
   and two register conditions remain unmet. Latest merged verification is
   running at frozen `6a92e5875`.
 - 2026-10-14: the complete M6 baseline at frozen `e8d4deedb` is unmet.
-  Eight of ten required execution groups passed; heap lifecycle and destruction
-  lifetime failed because `deleted-heap-remote-exit`,
+  Two of ten required groups passed, six remain blocked by explicit partial
+  conditions, and heap lifecycle and destruction lifetime failed because
+  `deleted-heap-remote-exit`,
   `heap-delete-after-owner-exit` and `heap-delete-with-attached-worker` fail in
   debug/statistics modes. Release executions passed; retained logs include
   pinned C crashes as well as observation mismatches. Each failing step is
   assigned bounded root-cause triage. Broad statistics, visitation, failure and
   concurrency conditions remain explicit blockers even when selected evidence
   passes. Qualifying performance remains deferred: host busy.
+
+- 2026-10-14: owner-requested winddown completed. `330972ba6` and
+  `f30507e1b` scope unused realloc and caller-owned TLS models; `ce53a15d6`,
+  `45ff6332c` and `d5e83b329` make their source accounting explicit while
+  preserving valid finite source-foundation status relationships. Closing
+  checks and the procfs flake are recorded in the handoff. M6 raw triage
+  localizes the separate C attached-worker crash and identifies existing
+  valid-client profile reuse for the offset fixtures. H0 text aggregation was
+  stopped incomplete. C2's native-promotion bridge is saved unqualified at
+  `lane/source-closure`/`b59925281`; its remaining controls and custody
+  checks are required before integration. All campaign work stopped, finished
+  worktrees were removed, retained branches were audited, and resume was
+  rehearsed without relying on scratch authority. No default, support or
+  qualification claim changed.
 
 ## For the owner afterwards
 
