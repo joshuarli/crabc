@@ -105,17 +105,19 @@ use crate::bootstrap::TheapPageSession;
 use crate::page_backing::RuntimeFirstRegularPageBacking;
 use crate::process_init::ProcessMainBackingBinding;
 use crate::main_heap_thread::{
-    MainHeapThreadAttachment, MainHeapThreadAttachmentError, MainHeapThreadPageDrainSession,
-    MainHeapThreadOwnerLocalPageEngineLease, MainHeapThreadPageSession,
-    MainHeapThreadPageSessionError,
+    MainHeapThreadAttachment, MainHeapThreadAttachmentError,
+    MainHeapThreadOwnerLocalPageEngineLease, MainHeapThreadPageSessionError,
 };
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::main_heap_thread::{MainHeapThreadPageDrainSession, MainHeapThreadPageSession};
 use crate::main_theap::MainStaticHeapLease;
 #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
-use crate::process_page_map::{
-    LiveAllocationPointer, ProcessPageMapError, ProcessPageMapMutationLease,
-    ProcessPageMapSuspendedEngineAccess,
-};
+use crate::process_page_map::{LiveAllocationPointer, ProcessPageMapError};
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::process_page_map::ProcessPageMapMutationLease;
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
 #[cfg(any(test, not(target_arch = "x86_64")))]
 use crate::process_page_map::ProcessPageMapPostExitAccess;
 use crate::single_thread::{
@@ -124,11 +126,11 @@ use crate::single_thread::{
     OwnerLocalMainHeapPageSessionBindError,
     StaticMainMappedRegularClaimSelector,
     PageAllocatorEngine,
-    PageAllocatorEngineState,
-    RemoteFreePreparationError,
-    RemoteFreeProducer,
-    RemoteFreeProducerPair,
 };
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::single_thread::{RemoteFreePreparationError, RemoteFreeProducerPair};
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::single_thread::{PageAllocatorEngineState, RemoteFreeProducer};
 #[cfg(any(test, not(target_arch = "x86_64")))]
 use crate::single_thread::{
     ThreadExitMappedRegularPostExitAdoptOutcome,
@@ -497,6 +499,7 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
 /// process PageMap lifecycle lease, which poisons rather than reopens a root
 /// that may retain live entries or a producer relation.
 #[must_use = "a later main-heap process page allocator must finish or retain its owner explicitly"]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageAllocator<'attachment, 'main> {
     engine: PageAllocatorEngine<'static, 'static, MainHeapThreadPageSession<'attachment, 'main>>,
     page_map_lifecycle: ProcessPageMapMutationLease,
@@ -513,6 +516,7 @@ pub(crate) struct MainHeapThreadProcessPageAllocator<'attachment, 'main> {
 /// reference nor an allocation API; [`Self::resume`] is the only route back to
 /// the matching live engine.
 #[must_use = "a suspended later-main page engine must resume, finish, or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadPausedProcessPageAllocator {
     engine_state: Option<PageAllocatorEngineState<'static, 'static>>,
     page_map_access: Option<ProcessPageMapSuspendedEngineAccess>,
@@ -531,6 +535,7 @@ pub(crate) struct MainHeapThreadPausedProcessPageAllocator {
 /// not resumable or a no-page finalizer. Its only behavior is conservative
 /// terminal retention on drop.
 #[must_use = "a terminal persistent page-engine state retains source ownership permanently"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadPersistentPageEngineTerminal {
     engine_state: Option<PageAllocatorEngineState<'static, 'static>>,
     // Retained normal-engine state still belongs to its current-thread
@@ -539,6 +544,7 @@ pub(crate) struct MainHeapThreadPersistentPageEngineTerminal {
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl MainHeapThreadPersistentPageEngineTerminal {
     #[inline]
     fn new(engine_state: PageAllocatorEngineState<'static, 'static>) -> Self {
@@ -549,6 +555,7 @@ impl MainHeapThreadPersistentPageEngineTerminal {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl Drop for MainHeapThreadPersistentPageEngineTerminal {
     fn drop(&mut self) {
         if let Some(state) = self.engine_state.take() {
@@ -565,6 +572,7 @@ impl Drop for MainHeapThreadPersistentPageEngineTerminal {
 /// A rejected or terminally retained attempt to suspend one later-main page
 /// engine into persistent storage.
 #[must_use = "a failed persistent-engine suspension retains its exact owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageAllocatorSuspendFailure<'attachment, 'main> {
     /// The attachment could not record its suspended-session marker. The
     /// unchanged live allocator still owns the long PageMap mutation lease.
@@ -583,6 +591,7 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorSuspendFailure<'attachment, 'm
 /// A rejected, contended, or terminally retained attempt to resume one
 /// suspended later-main page engine.
 #[must_use = "a failed persistent-engine resume retains its exact state token"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadPausedProcessPageAllocatorResumeFailure {
     /// The target attachment did not hold the matching suspended-session
     /// marker, or its current-thread/source-root preflight failed before the
@@ -606,6 +615,7 @@ pub(crate) enum MainHeapThreadPausedProcessPageAllocatorResumeFailure {
     },
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl Drop for MainHeapThreadPausedProcessPageAllocator {
     fn drop(&mut self) {
         if let Some(state) = self.engine_state.take() {
@@ -1060,6 +1070,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitMappedRegularPagesRoute<'_> {}
 
 /// A pre-publication refusal while opening a later-thread process page owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
     #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     Pair(ProcessPageArenaLeaseError),
@@ -1148,6 +1159,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachme
 
 /// The outcomes while consuming a later-thread shared process page engine.
 #[must_use = "a retained later-thread page allocator still owns live page state"]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageAllocatorFinishError<'attachment, 'main> {
     /// Pages, queues, a scoped producer, or a detached OS-release owner
     /// remain. The engine and process map mutation lease remain coupled for
@@ -1161,6 +1173,7 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorFinishError<'attachment, 'main
 /// A consuming transition that could not enter the post-fast-slot all-free
 /// drain without retaining its original normal page engine.
 #[must_use = "a failed later-main thread-exit transition retains its page allocator"]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitDrainFailure<'attachment, 'main> {
     Retained {
         allocator: MainHeapThreadProcessPageAllocator<'attachment, 'main>,
@@ -3457,6 +3470,7 @@ impl MainHeapThreadOwnerLocalAllocator<'_> {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> {
     /// Starts one source-shaped page lifecycle for a later main-heap thread.
     ///
@@ -3537,6 +3551,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// source-required over-aligned singleton retains its own OS mapping
     /// lifecycle. The caller still owns the returned current block through
     /// this exact allocator or one typed post-exit route.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) fn allocate_aligned(
         &mut self,
@@ -3552,6 +3567,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// This is kept beside [`Self::allocate_aligned`] rather than making the
     /// runtime emulate zeroing after allocation: the lower engine owns the
     /// source distinction between normal and over-aligned singleton paths.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) fn allocate_aligned_zeroed(
         &mut self,
@@ -3569,6 +3585,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// When present, `block` must be one current allocation from this exact
     /// owner, with no aliased access during this operation. A failed
     /// replacement leaves that allocation current and unchanged.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) unsafe fn reallocate(
         &mut self,
@@ -3585,6 +3602,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// `block` must remain a current allocation of this exact live engine.
     /// The caller must exclude a remote producer and any aliased allocator
     /// operation for the duration of this query.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) unsafe fn usable_size(&self, block: NonNull<u8>) -> Option<usize> {
         // SAFETY: forwarded unchanged from this method's exact-current block
@@ -3607,6 +3625,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
 
     /// Runs the bounded local retired-page collector after every scoped
     /// producer has joined.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) fn collect_retired(&mut self, force: bool) -> bool {
         self.engine.collect_retired(force)
@@ -3619,6 +3638,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// `block` must be a current allocation in this engine. The producer must
     /// publish or cancel before this owner resumes allocation, collection,
     /// finish, or drop.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) unsafe fn begin_remote_free<'owner>(
         &'owner mut self,
@@ -3674,6 +3694,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     ///
     /// `block` must be a current allocation in this exact engine. No remote
     /// producer may be in flight while this observation runs.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) unsafe fn current_allocation_page_reserved(
         &self,
@@ -3694,6 +3715,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     ///
     /// `block` must be current in this exact engine. No remote producer may
     /// be in flight while this observation runs.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     #[inline]
     pub(crate) unsafe fn current_allocation_page_has_owner_exit_collectable_local_free(
         &self,
@@ -3719,6 +3741,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// neither token exposes a raw map reference or a client-free route.
     /// Rust's borrow checker ensures no scoped remote producer can still exist
     /// when this consuming transition runs.
+    #[cfg(any(test, not(target_arch = "x86_64")))]
     pub(crate) fn suspend_persistent(
         self,
     ) -> Result<
@@ -3876,6 +3899,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl MainHeapThreadPausedProcessPageAllocator {
     #[inline]
     fn terminal_from_parts(

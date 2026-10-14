@@ -52,26 +52,37 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use crate::compiler_tls::default_theap;
 use crate::compiler_tls::{current_thread_identity, set_cached_theap};
 use crate::bootstrap::empty_default_theap;
+use crate::config::SMALL_SIZE_MAX;
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
 use crate::config::{
     LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, MEDIUM_PAGE_SIZE, SMALL_MAX_OBJ_SIZE,
-    SMALL_PAGE_SIZE, SMALL_SIZE_MAX, VmOptions,
+    SMALL_PAGE_SIZE,
 };
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::config::VmOptions;
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::config::{ARENA_SLICE_SIZE, BIN_FULL, VmOption};
-use crate::main_heap_thread::{
-    MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
-    MainHeapThreadAttachmentError, MainHeapThreadPageSessionError,
-};
+use crate::main_heap_thread::{MainHeapThreadAttachment, MainHeapThreadAttachmentError};
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::main_heap_thread::MainHeapThreadAttachmentBeginError;
+#[cfg(test)]
+use crate::main_heap_thread::MainHeapThreadPageSessionError;
 use crate::main_heap_page::{
     MainHeapThreadOwnerLocalAllocator, MainHeapThreadOwnerLocalPageEngine,
     MainHeapThreadOwnerLocalPageEngineBeginError,
+};
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+use crate::main_heap_page::{
+    MainHeapThreadProcessPageAllocator,
+    MainHeapThreadProcessPageAllocatorBeginError,
+    MainHeapThreadProcessPageAllocatorFinishError,
+    MainHeapThreadProcessPageExitDrainFailure,
+};
+#[cfg(test)]
+use crate::main_heap_page::{
     MainHeapThreadPausedProcessPageAllocator,
     MainHeapThreadPausedProcessPageAllocatorResumeFailure,
     MainHeapThreadPersistentPageEngineTerminal,
-    MainHeapThreadProcessPageAllocator,
-    MainHeapThreadProcessPageAllocatorBeginError,
-    MainHeapThreadProcessPageExitDrainFailure,
-    MainHeapThreadProcessPageAllocatorFinishError,
     MainHeapThreadProcessPageAllocatorSuspendFailure,
 };
 #[cfg(test)]
@@ -131,9 +142,12 @@ use crate::single_thread::{
     DeferredFreeAllocationContinuation, DeferredFreeAllocationPhase,
     GenericAllocationCollection,
     ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
-    RemoteFreeProducer, RemoteFreeProducerPair, SourceRetainedTheapSession,
-    SourceRetainedTheapSessionError,
 };
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+use crate::single_thread::{RemoteFreeProducer, RemoteFreeProducerPair};
+use crate::single_thread::SourceRetainedTheapSession;
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::single_thread::SourceRetainedTheapSessionError;
 #[cfg(feature = "native-runtime-test-audit")]
 use crate::arena::ArenaView;
 #[cfg(feature = "native-runtime-test-audit")]
