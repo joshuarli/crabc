@@ -861,7 +861,7 @@ facts common to both are compared.
   and public allocation routing are proved. It is a test-only private owner and
   not a default allocator backend.
 
-### `CRABC-MI-LATER-MAIN-PROCESS-PAGE-LIFECYCLE` — test/audit page-owner adapter
+### `CRABC-MI-LATER-MAIN-PROCESS-PAGE-LIFECYCLE` — accepted test/audit page-owner adapter
 
 - **Port map:** `src/arena.c:later-main-process-page-map-arena-lifecycle`
 - **Upstream/Rust:** later-thread `_mi_thread_init_with_heap(mi_heap_main())`
