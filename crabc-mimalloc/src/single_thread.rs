@@ -1147,8 +1147,8 @@ enum ProcessPostOwnerExitRemoteClaimResult {
     },
     Singleton(abandoned::ClaimedPostOwnerExitSingletonFreeResult),
     /// The OS or external terminal tail crossed an irreversible source
-    /// boundary. The returned owner carries the terminal wrapper plus the exact
-    /// non-arena backing facts and last completed stage.
+    /// boundary. The returned owner carries the terminal wrapper and exact
+    /// non-arena backing facts.
     SingletonNonArenaTerminalRetained {
         owner: ProcessPostOwnerExitNonArenaTerminalOwner,
         mutation: Option<ProcessPageMapMutationLease>,
@@ -1207,12 +1207,6 @@ impl ProcessPostOwnerExitNonArenaTerminalStage {
 struct ProcessPostOwnerExitNonArenaTerminalOwner<R = abandoned::ClaimedPostOwnerExitSingletonRelease> {
     release: R,
     backing: ProcessPostOwnerExitNonArenaTerminalBacking,
-    stage: ProcessPostOwnerExitNonArenaTerminalStage,
-}
-
-impl<R> ProcessPostOwnerExitNonArenaTerminalOwner<R> {
-    #[inline]
-    const fn stage(&self) -> ProcessPostOwnerExitNonArenaTerminalStage { self.stage }
 }
 
 /// Exact non-arena terminal backing retained with one opaque terminal wrapper.
@@ -1241,8 +1235,9 @@ struct ExternalPostOwnerExitTerminalFacts {
 
 /// One pre-terminal failure while continuing an exact remote-free claim.
 ///
-/// The claim is deliberately private until [`Self::into_parts`] consumes this
-/// error.  No failure branch exposes a raw `(Page, canonical_block)` pair.
+/// The claim and disposition stay together while a failure branch preserves
+/// the exact owner. No failure branch exposes a raw `(Page, canonical_block)`
+/// pair.
 #[must_use = "a post-owner-exit claim failure still owns the source low bit"]
 struct ProcessPostOwnerExitRemoteClaimFailure {
     claim: remote_free::ClaimedAbandonedRemoteFree,
@@ -1887,7 +1882,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                 match failed_non_arena_release {
                     Some(retained) => Ok(ProcessPostOwnerExitRemoteClaimResult::RegularNonArenaTerminalRetained {
                         owner: ProcessPostOwnerExitNonArenaTerminalOwner {
-                            release, backing: retained.backing, stage: retained.stage,
+                            release, backing: retained.backing,
                         },
                         mutation: retained_mutation,
                     }),
@@ -2046,7 +2041,6 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                     owner: ProcessPostOwnerExitNonArenaTerminalOwner {
                         release,
                         backing: backing.backing,
-                        stage: backing.stage,
                     },
                     mutation: retained_mutation,
                 },
