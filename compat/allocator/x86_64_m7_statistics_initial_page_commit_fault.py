@@ -25,7 +25,11 @@ PROFILES = {"guarded-stat-0": (0, False), "guarded-stat-1": (1, False),
 
 
 def require_commit_failure_shape(trace: dict[str, str], side: str, *,
-                                 profile: str | None = None, faulted: bool = True) -> None:
+                                 profile: str | None = None, faulted: bool = True,
+                                 cold_arena_prefix: bool = False) -> None:
+    if cold_arena_prefix:
+        m7.require_statistics_cold_arena_page_prefix_fault(trace, side)
+        return
     if profile is not None:
         level, debug = PROFILES[profile]
         expected = {"profile.level": str(level), "profile.debug": str(int(debug)),
@@ -90,19 +94,33 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--profile", choices=PROFILES)
+    parser.add_argument("--cold-arena-page-prefix", action="store_true",
+                        help="reject the first large-allocation page-prefix commit before arena warmup")
     args = parser.parse_args()
+    if args.profile and args.cold_arena_page_prefix:
+        raise harness.HarnessError("cold-arena page-prefix fault uses one fixed MI_STAT=2 profile")
     level, debug = PROFILES[args.profile] if args.profile else (2, False)
+    driver = (m7.STATISTICS_COLD_ARENA_PAGE_PREFIX_DRIVER
+              if args.cold_arena_page_prefix else DRIVER)
+    test = ("page::tests::failed_cold_arena_page_prefix_commit_recovers_source_statistics"
+            if args.cold_arena_page_prefix else TEST)
+    begin = (m7.STATISTICS_COLD_ARENA_PAGE_PREFIX_TRACE_BEGIN
+             if args.cold_arena_page_prefix else BEGIN)
+    end = (m7.STATISTICS_COLD_ARENA_PAGE_PREFIX_TRACE_END
+           if args.cold_arena_page_prefix else END)
+    report_file = (m7.ARTIFACTS / "statistics-cold-arena-page-prefix-fault.json"
+                   if args.cold_arena_page_prefix else REPORT)
     execution_before = harness.require_native_x86_64(require_image_identity=True)
     source_before = m7.integrated.source_seal()
     git_before = m7.engine.git_provenance()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, args.offline)
-    artifacts = REPORT.with_suffix("")
+    artifacts = report_file.with_suffix("")
     if args.profile:
         artifacts = artifacts / "matrix" / args.profile
     artifacts.mkdir(parents=True, exist_ok=True)
     compiled_input = artifacts / "compiled-input.c"
-    shutil.copy2(DRIVER, compiled_input)
+    shutil.copy2(driver, compiled_input)
     retained_archive = artifacts / "upstream.tar.gz"
     shutil.copy2(archive, retained_archive)
     with harness.temporary_directory("crabc-m7-statistics-initial-page-commit-fault-") as name:
@@ -114,7 +132,7 @@ def main() -> int:
                  "-DMI_GUARDED=1" if args.profile and flag == "-DMI_GUARDED=0" else flag
                  for flag in harness.CONFIGURATION_PROFILES["release"]
                  if not (debug and flag == "-DNDEBUG")]
-        if args.profile:
+        if args.profile or args.cold_arena_page_prefix:
             flags.append("-DCRABC_STATISTICS_MATRIX=1")
         c_binary = artifacts / "oracle"
         c_build = harness.command_record([
@@ -128,7 +146,7 @@ def main() -> int:
         first_case = artifacts / "fault" if args.profile else artifacts
         first_case.mkdir(exist_ok=True)
         first_environment = {"CRABC_MI_STATISTICS_MATRIX": "1",
-                             "CRABC_MI_STATISTICS_FAULT_CONTROL": "fault"} if args.profile else {}
+                             "CRABC_MI_STATISTICS_FAULT_CONTROL": "fault"} if (args.profile or args.cold_arena_page_prefix) else {}
         first_c_run = harness.command_record([str(c_binary)], cwd=temporary, env=first_environment, timeout_seconds=60)
         harness.write_json(first_case / "c-execute.json", first_c_run)
         harness.require_success(first_c_run, "pinned initial-page commit fault C execution")
@@ -180,20 +198,23 @@ def main() -> int:
         for control in controls:
             case = artifacts / control if args.profile else artifacts
             case.mkdir(exist_ok=True)
-            report_path = case / "report.json" if args.profile else REPORT
+            report_path = case / "report.json" if args.profile else report_file
             environment = {"CRABC_MI_STATISTICS_MATRIX": "1",
-                           "CRABC_MI_STATISTICS_FAULT_CONTROL": control} if args.profile else {}
+                           "CRABC_MI_STATISTICS_FAULT_CONTROL": control} if (args.profile or args.cold_arena_page_prefix) else {}
             c_run = first_c_run if control == "fault" else harness.command_record([str(c_binary)], cwd=temporary, env=environment, timeout_seconds=60)
             harness.write_json(case / "c-execute.json", c_run)
             harness.require_success(c_run, "pinned initial-page commit fault C execution")
             rust_run = harness.command_record(harness._x86_64_program_check_command(
-                program, TEST, nocapture=True, gate_name="initial-page commit fault"),
+                program, test, nocapture=True,
+                gate_name="cold-arena page-prefix fault" if args.cold_arena_page_prefix else "initial-page commit fault"),
                 cwd=harness.ROOT, env={**os.environ, **environment}, timeout_seconds=m7.EVIDENCE_TIMEOUT_SECONDS)
             harness.write_json(case / "rust-execute.json", rust_run)
             report = {
                 "status": "failed", "c_build": c_build, "c_run": c_run,
                 "rust_test": rust_run,
-                "fault_placement": "one failed initial page write-enable after arena warmup; subsequent page commits reach the kernel",
+                "fault_placement": ("one refused 114688-byte page-prefix commit during the initial large allocation before arena warmup"
+                                    if args.cold_arena_page_prefix else
+                                    "one failed initial page write-enable after arena warmup; subsequent page commits reach the kernel"),
                 "physical_inputs": {
                     "unit_program": unit_program,
                     "c_program": harness.artifact_record(c_binary),
@@ -211,7 +232,7 @@ def main() -> int:
                     "git": git_before,
                     "source_seal": source_before,
                     "files": {name: m7.engine.file_record(path) for name, path in (
-                        ("c_driver", DRIVER), ("rust_page", harness.ROOT / "crabc-mimalloc/src/page.rs"),
+                        ("c_driver", driver), ("rust_page", harness.ROOT / "crabc-mimalloc/src/page.rs"),
                         ("reader", Path(__file__)),
                     )},
                 },
@@ -225,18 +246,21 @@ def main() -> int:
             if harness.parse_rust_test_count(str(rust_run["stdout"]) + str(rust_run["stderr"])) != 1:
                 raise harness.HarnessError("initial-page commit selection did not execute one passing test")
             traces = {
-                "c": m7.parse_options_trace(str(c_run["stdout"]), "pinned initial-page commit fault", BEGIN, END),
-                "rust": m7.parse_options_trace(str(rust_run["stdout"]), "native initial-page commit fault", BEGIN, END),
+                "c": m7.parse_options_trace(str(c_run["stdout"]), "pinned initial-page commit fault", begin, end),
+                "rust": m7.parse_options_trace(str(rust_run["stdout"]), "native initial-page commit fault", begin, end),
             }
             report.update(c_trace=traces["c"], rust_trace=traces["rust"])
             harness.write_json(report_path, report)
             for side in ("c", "rust"):
-                require_commit_failure_shape(traces[side], side, profile=args.profile, faulted=control == "fault")
+                require_commit_failure_shape(traces[side], side, profile=args.profile,
+                                             faulted=control == "fault",
+                                             cold_arena_prefix=args.cold_arena_page_prefix)
             m7.compare_options_traces(traces["c"], traces["rust"])
             report["compared_key_count"] = len(traces["c"])
             report["status"] = "passed"
             harness.write_json(report_path, report)
-            print(f"Initial-page commit {args.profile or 'stat-2'}/{control}: passed ({report['compared_key_count']} exact keys)")
+            case_name = "Cold-arena page-prefix" if args.cold_arena_page_prefix else "Initial-page"
+            print(f"{case_name} commit {args.profile or 'stat-2'}/{control}: passed ({report['compared_key_count']} exact keys)")
             print(report_path)
     return 0
 
