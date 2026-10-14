@@ -1598,6 +1598,9 @@ STATISTICS_FAST_ALLOCATION_TRACE_END = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_T
 STATISTICS_REMOTE_BIN_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_bin_driver.c"
 STATISTICS_REMOTE_BIN_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_BEGIN"
 STATISTICS_REMOTE_BIN_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END"
+STATISTICS_ALIGNED_DEBUG_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_aligned_debug_driver.c"
+STATISTICS_ALIGNED_DEBUG_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_ALIGNED_DEBUG_TRACE_BEGIN"
+STATISTICS_ALIGNED_DEBUG_TRACE_END = "CRABC_MI_M7_STATISTICS_ALIGNED_DEBUG_TRACE_END"
 
 
 def require_statistics_huge_page_bin(
@@ -1687,6 +1690,32 @@ def require_statistics_remote_bin(trace: Mapping[str, str], description: str) ->
         "medium.terminal.page_bin": "2,2,0",
         "worker.medium.bin.hex": trace.get("worker.medium.bin.hex"),
         "worker.medium.requested.hex": trace.get("worker.medium.requested.hex"),
+        "small8k.warm.usable": "8192", "small8k.target.usable": "8192",
+        "small8k.target.bin": "36", "small8k.disallow_os_alloc": "1",
+        "small8k.page_block_size": trace.get("small8k.page_block_size"),
+        "small8k.padding_size": trace.get("small8k.padding_size"),
+        "small8k.disallow_arena_alloc": "0", "small8k.target.mapped": "1",
+        "small8k.survivor.mapped": "1", "small8k.survivor.data": "1",
+        "small8k.before.arena": trace.get("small8k.before.arena"),
+        "small8k.allocated.arena": trace.get("small8k.allocated.arena"),
+        "small8k.terminal.arena": trace.get("small8k.terminal.arena"),
+        "small8k.allocated.bin": "2,2,2", "small8k.allocated.requested": "16384,16384,16384",
+        "small8k.allocated.normal": "16384,0,16384", "small8k.allocated.normal_count": "2",
+        "small8k.allocated.page_bin": "1,1,1",
+        "small8k.merged.bin": "2,2,2", "small8k.merged.requested": "16384,16384,16384",
+        "small8k.merged.normal": "16384,0,16384", "small8k.merged.normal_count": "2",
+        "small8k.merged.page_bin": "1,1,1",
+        "small8k.freed.bin": "3,3,1", "small8k.freed.requested": "24576,24576,24576",
+        "small8k.freed.normal": "24576,0,8192", "small8k.freed.normal_count": "3",
+        "small8k.freed.page_bin": "2,2,1",
+        "small8k.collected.bin": "3,3,1", "small8k.collected.requested": "24576,24576,24576",
+        "small8k.collected.normal": "24576,0,8192", "small8k.collected.normal_count": "3",
+        "small8k.collected.page_bin": "2,2,1",
+        "small8k.terminal.bin": "3,3,0", "small8k.terminal.requested": "24576,24576,24576",
+        "small8k.terminal.normal": "24576,0,0", "small8k.terminal.normal_count": "3",
+        "small8k.terminal.page_bin": "2,2,0",
+        "worker.small8k.bin.hex": trace.get("worker.small8k.bin.hex"),
+        "worker.small8k.requested.hex": trace.get("worker.small8k.requested.hex"),
     }
     if dict(trace) != expected:
         raise harness.HarnessError(f"{description} lost the remote bin merge or requested-size record: {trace}")
@@ -1698,12 +1727,31 @@ def require_statistics_remote_bin(trace: Mapping[str, str], description: str) ->
         requested_row = bytes.fromhex(trace["worker.requested.hex"]).decode("ascii")
         medium_bin_row = bytes.fromhex(trace["worker.medium.bin.hex"]).decode("ascii")
         medium_requested_row = bytes.fromhex(trace["worker.medium.requested.hex"]).decode("ascii")
+        small8k_bin_row = bytes.fromhex(trace["worker.small8k.bin.hex"]).decode("ascii")
+        small8k_requested_row = bytes.fromhex(trace["worker.small8k.requested.hex"]).decode("ascii")
     except (ValueError, UnicodeDecodeError) as error:
         raise harness.HarnessError(f"{description} has invalid worker statistics text") from error
     if (len(arena_before) != 3 or arena_before[0] <= 0 or arena_before[1] <= 0
             or arena_before[2] < 1 or arena_allocated != arena_before
             or arena_terminal != arena_before):
         raise harness.HarnessError(f"{description} lost arena-only medium-page allocation: {trace}")
+    try:
+        small8k_arena_before = [int(value) for value in trace["small8k.before.arena"].split(",")]
+        small8k_arena_allocated = [int(value) for value in trace["small8k.allocated.arena"].split(",")]
+        small8k_arena_terminal = [int(value) for value in trace["small8k.terminal.arena"].split(",")]
+        small8k_usable = int(trace["small8k.target.usable"])
+        small8k_block_size = int(trace["small8k.page_block_size"])
+        small8k_padding_size = int(trace["small8k.padding_size"])
+    except ValueError as error:
+        raise harness.HarnessError(f"{description} has invalid 8 KiB arena statistics") from error
+    if (len(small8k_arena_before) != 3 or small8k_arena_before[0] <= 0
+            or small8k_arena_before[1] <= 0 or small8k_arena_before[2] < 1
+            or small8k_arena_allocated != small8k_arena_before
+            or small8k_arena_terminal != small8k_arena_before):
+        raise harness.HarnessError(f"{description} lost arena-only 8 KiB page allocation: {trace}")
+    if (small8k_padding_size not in (0, 8)
+            or small8k_block_size - small8k_padding_size != small8k_usable):
+        raise harness.HarnessError(f"{description} lost the actual 8 KiB source block size: {trace}")
     if (bin_row.split() != ["bin", "S", "8:", "64", "B", "64", "B", "-64", "B",
                              "64", "B", "1", "not", "all", "freed"]
             or requested_row.split() != ["malloc", "req:", "64", "B"]
@@ -1711,6 +1759,111 @@ def require_statistics_remote_bin(trace: Mapping[str, str], description: str) ->
                                           "-32.1", "KiB", "32.1", "KiB", "1", "not", "all", "freed"]
             or medium_requested_row.split() != ["malloc", "req:", "32.1", "KiB"]):
         raise harness.HarnessError(f"{description} lost the freeing Theap's bin/requested rows: {trace}")
+    small8k_bin_fields = small8k_bin_row.split()
+    small8k_requested_fields = small8k_requested_row.split()
+    if (small8k_bin_fields[:3] != ["bin", "S", "36:"]
+            or not any(field.startswith("-") for field in small8k_bin_fields[3:])
+            or "not all freed" not in small8k_bin_row
+            or small8k_requested_fields[:2] != ["malloc", "req:"]):
+        raise harness.HarnessError(f"{description} lost the freeing Theap's 8 KiB bin/requested rows: {trace}")
+
+
+def parse_statistics_bin_rows(value: str, description: str) -> dict[int, tuple[int, int, int]]:
+    rows: dict[int, tuple[int, int, int]] = {}
+    for raw in value.split(";"):
+        if not raw:
+            continue
+        try:
+            index, total, peak, current = (int(part) for part in raw.split(":"))
+        except ValueError as error:
+            raise harness.HarnessError(f"{description} has an invalid bin record") from error
+        if index < 0 or index in rows:
+            raise harness.HarnessError(f"{description} has a duplicate or negative bin index")
+        rows[index] = (total, peak, current)
+    return rows
+
+
+def require_statistics_aligned_debug(trace: Mapping[str, str], description: str) -> None:
+    """Require aligned normal-bin statistics through a debug-profile free."""
+
+    stages = ("allocated", "freed", "collected")
+    fields = ("normal", "huge", "requested", "page_committed", "pages", "committed",
+              "malloc_bins", "page_bins", "normal_count", "huge_count",
+              "pages_extended", "pages_retire")
+    expected = {"profile.level", "profile.debug", "allocation.request", "allocation.alignment",
+                "allocation.oversize_request", "allocation.page_block_size",
+                "allocation.padding_size", "allocation.normal_bin",
+                "allocation.usable", "allocation.aligned", "allocation.mapped",
+                "allocation.payload_intact", *(f"{stage}.{field}" for stage in stages for field in fields),
+                *(f"{stage}.{field}.hex" for stage in ("live_output", "final_output")
+                  for field in ("binned", "huge", "requested"))}
+    if set(trace) != expected or trace["profile.level"] != "2" or trace["profile.debug"] != "1":
+        raise harness.HarnessError(f"{description} lacks the MI_DEBUG=1/MI_STAT=2 aligned trace: {trace}")
+    try:
+        usable = int(trace["allocation.usable"])
+        request = int(trace["allocation.request"])
+        alignment = int(trace["allocation.alignment"])
+        oversize_request = int(trace["allocation.oversize_request"])
+        page_block_size = int(trace["allocation.page_block_size"])
+        padding_size = int(trace["allocation.padding_size"])
+        normal_bin = int(trace["allocation.normal_bin"])
+        counts = {
+            stage: {
+                field: tuple(int(part) for part in trace[f"{stage}.{field}"].split(","))
+                for field in ("normal", "huge", "requested", "page_committed", "pages", "committed")
+            }
+            for stage in stages
+        }
+        bin_rows = {stage: parse_statistics_bin_rows(trace[f"{stage}.malloc_bins"],
+                                                    f"{description} {stage} malloc bins")
+                    for stage in stages}
+        page_bin_rows = {stage: parse_statistics_bin_rows(trace[f"{stage}.page_bins"],
+                                                          f"{description} {stage} page bins")
+                         for stage in stages}
+        counters = {stage: {field: int(trace[f"{stage}.{field}"])
+                            for field in ("normal_count", "huge_count", "pages_extended", "pages_retire")}
+                    for stage in stages}
+        live_rows = {field: bytes.fromhex(trace[f"live_output.{field}.hex"]).decode("ascii")
+                     for field in ("binned", "huge", "requested")}
+        final_rows = {field: bytes.fromhex(trace[f"final_output.{field}.hex"]).decode("ascii")
+                      for field in ("binned", "huge", "requested")}
+    except (KeyError, ValueError, UnicodeDecodeError) as error:
+        raise harness.HarnessError(f"{description} has malformed aligned statistics") from error
+    if (request != 8193 or alignment != 4096 or oversize_request != request + alignment - 1
+            or padding_size != 8 or page_block_size < oversize_request + padding_size
+            or usable < request
+            or trace["allocation.aligned"] != "1" or trace["allocation.mapped"] != "1"
+            or trace["allocation.payload_intact"] != "1"):
+        raise harness.HarnessError(f"{description} lost aligned allocation ownership or payload: {trace}")
+    if (counts["allocated"]["requested"] != (oversize_request,)*3
+            or counts["freed"]["requested"] != counts["allocated"]["requested"]
+            or counts["collected"]["requested"] != counts["allocated"]["requested"]
+            or counts["allocated"]["normal"] != (page_block_size - padding_size,)*3
+            or counts["allocated"]["huge"] != (0, 0, 0)
+            or counts["freed"]["normal"][:2] != counts["allocated"]["normal"][:2]
+            or counts["freed"]["normal"][2] != 0
+            or counts["collected"]["normal"] != counts["freed"]["normal"]
+            or any(counters[stage]["normal_count"] != 1 or counters[stage]["huge_count"] != 0
+                   for stage in stages)):
+        raise harness.HarnessError(f"{description} lost aligned normal/requested statistics: {trace}")
+    allocated_bins = bin_rows["allocated"]
+    if (len(allocated_bins) != 1 or set(allocated_bins) != {normal_bin}
+            or sum(row[0] for row in allocated_bins.values()) != 1
+            or sum(row[2] for row in allocated_bins.values()) != 1
+            or set(bin_rows["freed"]) != set(allocated_bins)
+            or set(bin_rows["collected"]) != set(allocated_bins)
+            or any(bin_rows[stage][bin][0:2] != allocated_bins[bin][0:2]
+                   or bin_rows[stage][bin][2] != 0 for stage in ("freed", "collected")
+                   for bin in allocated_bins)):
+        raise harness.HarnessError(f"{description} lost the aligned block's normal-bin lifetime: {trace}")
+    if (not page_bin_rows["allocated"] or counters["allocated"]["pages_extended"] <= 0
+            or not live_rows["binned"].startswith("  binned")
+            or "not all freed" not in live_rows["binned"]
+            or not live_rows["requested"].startswith("  malloc req")
+            or not final_rows["binned"].startswith("  binned")
+            or not final_rows["binned"].rstrip().endswith("ok")
+            or not final_rows["requested"].startswith("  malloc req")):
+        raise harness.HarnessError(f"{description} lost aligned page or public output statistics: {trace}")
 
 
 def require_statistics_fast_allocation(trace: Mapping[str, str], description: str) -> None:
@@ -2322,6 +2475,7 @@ def run_statistics_json_differential(offline: bool) -> dict[str, Any]:
 def run_public_statistics_differential(
     offline: bool, *, subject: str, driver: Path, begin: str, end: str,
     report_name: str, require_complete: Any | None = None, stat_level: int = 1,
+    profile: str | None = None,
     comparison_excluded_keys: frozenset[str] = frozenset(),
     driver_defines: tuple[str, ...] = (),
     retain_artifacts: bool = False,
@@ -2333,6 +2487,16 @@ def run_public_statistics_differential(
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
+    if profile is None:
+        profile_flags = (*harness.CONFIGURATION_PROFILES["release"], f"-DMI_STAT={stat_level}")
+        adapter_features = (f"crabc-mimalloc/mi-stat-{stat_level}",) if stat_level else ()
+    else:
+        profile_flags, selected_features = configuration_profile(profile)
+        selected_profile = profile.removeprefix("guarded-")
+        selected_stat_level = 2 if selected_profile.startswith("debug-") else int(selected_profile[-1]) if selected_profile.startswith("stat-") else 0
+        if selected_stat_level != stat_level:
+            raise harness.HarnessError(f"M7 {subject} profile {profile} does not select MI_STAT={stat_level}")
+        adapter_features = tuple(f"crabc-mimalloc/{feature}" for feature in selected_features)
     with harness.temporary_directory(f"crabc-mimalloc-x86_64-m7-statistics-{subject}-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
@@ -2340,8 +2504,7 @@ def run_public_statistics_differential(
         c_binary = temporary / f"{subject}-c"
         c_build = harness.command_record(
             [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-             *harness.CONFIGURATION_PROFILES["release"], f"-DMI_STAT={stat_level}",
-             *driver_defines,
+             *profile_flags, *driver_defines,
              "-I", str(source / "include"), str(driver),
              str(source / "src/static.c"), "-pthread", "-o", str(c_binary)], cwd=source,
         )
@@ -2350,14 +2513,14 @@ def run_public_statistics_differential(
         rust_build = harness.command_record(
             [harness.require_tool("cargo"), "build", "--locked", "--release", "--target",
              RUST_TARGET, "-p", m4.ADAPTER_PACKAGE,
-             *(("--features", f"crabc-mimalloc/mi-stat-{stat_level}") if stat_level else ()),
+             *(("--features", ",".join(adapter_features)) if adapter_features else ()),
              "--target-dir", str(target)], cwd=harness.ROOT, env=dict(os.environ),
              timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
         harness.require_success(rust_build, f"M7 {subject} Rust adapter build")
         rust_binary = temporary / f"{subject}-rust"
         rust_link = harness.command_record(
-            [compiler, "-std=c11", "-O2", *driver_defines, "-I", str(source / "include"),
+            [compiler, "-std=c11", *profile_flags, *driver_defines, "-I", str(source / "include"),
              str(driver),
              str(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB),
              "-pthread", "-o", str(rust_binary)], cwd=source,
@@ -2391,6 +2554,7 @@ def run_public_statistics_differential(
               "comparison_excluded_keys": sorted(comparison_excluded_keys)}
     if retain_artifacts:
         report.update({"artifacts": artifacts, "executions": executions, "stat_level": stat_level,
+                       "profile": profile or f"stat-{stat_level}",
                        "pin": pin, "rust_link": rust_link["command"],
                        "builds": {"c": c_build, "rust": rust_build, "rust_link": rust_link}})
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
@@ -2539,6 +2703,15 @@ def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def run_statistics_aligned_debug_differential(offline: bool) -> dict[str, Any]:
+    return run_public_statistics_differential(
+        offline, subject="aligned-debug", driver=STATISTICS_ALIGNED_DEBUG_DRIVER,
+        begin=STATISTICS_ALIGNED_DEBUG_TRACE_BEGIN, end=STATISTICS_ALIGNED_DEBUG_TRACE_END,
+        report_name="statistics-aligned-debug.json", stat_level=2, profile="debug-1",
+        require_complete=require_statistics_aligned_debug, retain_artifacts=True,
+    )
+
+
 def run_statistics_requested_production_differential(offline: bool) -> dict[str, Any]:
     return run_public_statistics_differential(
         offline, subject="requested-production", driver=STATISTICS_REQUESTED_PRODUCTION_DRIVER,
@@ -2570,14 +2743,16 @@ def run_statistics_fast_allocation_differential(offline: bool) -> dict[str, Any]
 
 def run_statistics_remote_bin_differential(offline: bool) -> dict[str, Any]:
     # Worker setup can change the absolute mmap count. Keep those raw images
-    # and require no arena or OS-mapping growth within the medium transition.
+    # and require no arena or OS-mapping growth within each size transition.
     return run_public_statistics_differential(
         offline, subject="remote-bin", driver=STATISTICS_REMOTE_BIN_DRIVER,
         begin=STATISTICS_REMOTE_BIN_TRACE_BEGIN, end=STATISTICS_REMOTE_BIN_TRACE_END,
         report_name="statistics-remote-bin.json", stat_level=2,
         require_complete=require_statistics_remote_bin,
         comparison_excluded_keys=frozenset({"medium.before.arena", "medium.allocated.arena",
-                                            "medium.terminal.arena"}),
+                                            "medium.terminal.arena", "small8k.before.arena",
+                                            "small8k.allocated.arena", "small8k.terminal.arena"}),
+        retain_artifacts=True,
     )
 
 
@@ -2753,6 +2928,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare a fresh worker's usable-size query before cross-thread medium free")
     mode.add_argument("--statistics-aligned-huge-differential", action="store_true",
         help="compare pinned-C/Rust OS-aligned huge statistics under MI_STAT=1")
+    mode.add_argument("--statistics-aligned-debug-differential", action="store_true",
+        help="compare a debug-profile aligned regular-page statistics shape under MI_DEBUG=1/MI_STAT=2")
     mode.add_argument("--statistics-requested-production-differential", action="store_true",
         help="compare pinned-C/Rust ordinary and OS-aligned requested-size producers under MI_STAT=2")
     mode.add_argument("--statistics-fast-allocation-differential", action="store_true",
@@ -2940,6 +3117,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_aligned_huge_differential:
         report = run_statistics_aligned_huge_differential(arguments.offline)
         print(f"M7 aligned huge statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_aligned_debug_differential:
+        report = run_statistics_aligned_debug_differential(arguments.offline)
+        print(f"M7 aligned debug statistics differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.statistics_requested_production_differential:
         report = run_statistics_requested_production_differential(arguments.offline)

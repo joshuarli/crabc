@@ -219,11 +219,15 @@
     },
     "differential:statistics-remote-bin": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-remote-bin-differential"],
-      "scope": "Pinned C MI_STAT=2 and the Rust native adapter remotely free 64-byte small-page and 32 KiB medium-page blocks from worker Theaps after the initial owner merges. The medium case disallows OS allocation while allowing an existing arena; its raw absolute arena snapshots are retained, and its reserved, mmap-call, and arena-count changes must all stay zero. Public process snapshots compare bin, requested, normal, allocation-count, and medium page-bin records before and after owner merges. The medium survivor stays mapped with intact bytes through remote free and collection; its final local free releases the page bin. Worker output carries negative size-bin current before merge. Metadata-Theap fallback and other remote sizes remain outside this fixture."
+      "scope": "Pinned C MI_STAT=2 and the Rust native adapter remotely free 64-byte bin 8, 8 KiB bin 36, and arena-backed 32 KiB bin 44 blocks from worker Theaps after the initial owner merges. The 8 KiB and medium cases disallow OS allocation while allowing an existing arena; each raw arena snapshot is retained and reserved, mmap-call, and arena-count changes must stay zero. Public process snapshots compare bin, requested, normal, allocation-count, and page-bin records before and after owner merges. The survivor remains mapped with intact bytes through remote free and collection; its final local free releases the page bin. Each worker output carries negative size-bin current before merge. Metadata-Theap fallback and other remote sizes remain outside this fixture."
     },
     "differential:statistics-aligned-huge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-aligned-huge-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate one 512 KiB+1 object aligned to 1 MiB, forcing the OS-backed huge singleton branch. They compare 589824 physical page bytes and one huge allocation before/after Theap-to-Heap merge, the exact live `578.2 KiB` printed huge row, zero current after free, pointer alignment, and zero warning deliveries. Other aligned sizes and metadata-Theap fallback remain outside this fixture."
+    },
+    "differential:statistics-aligned-debug": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-aligned-debug-differential"],
+      "scope": "Pinned C and the Rust native adapter compare an 8193-byte allocation aligned to 4096 bytes under MI_DEBUG=1 and MI_STAT=2. The source fallback uses a 12,288-byte internal over-allocation request and a 14,336-byte regular-page block with 8-byte debug padding; the trace checks the selected normal bin and page bin, pointer alignment, PageMap membership, payload integrity, and requested/normal statistics through free and collection. Live and final public process-output rows are retained."
     },
     "differential:statistics-requested-production": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-requested-production-differential"],
@@ -519,6 +523,7 @@
         "differential:statistics-remote-normal-fresh-usable",
         "differential:statistics-remote-bin",
         "differential:statistics-aligned-huge",
+        "differential:statistics-aligned-debug",
         "differential:statistics-requested-production",
         "differential:statistics-fast-allocation",
         "differential:statistics-os-large-stage-accounted",

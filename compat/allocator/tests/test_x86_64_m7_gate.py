@@ -675,6 +675,8 @@ class M7GateContractTests(unittest.TestCase):
         worker_requested = "  malloc req:    64   B"
         medium_worker_bin = "  bin M   44:    32.1 KiB    32.1 KiB   -32.1 KiB    32.1 KiB      1        not all freed"
         medium_worker_requested = "  malloc req:    32.1 KiB"
+        small8k_worker_bin = "  bin S   36:     8.0 KiB     8.0 KiB    -8.0 KiB     8.0 KiB      1        not all freed"
+        small8k_worker_requested = "  malloc req:     8.0 KiB"
         trace = {
             "profile.level": "2", "warm.usable": "64", "target.usable": "64", "target.bin": "8",
             "allocated.bin": "1,1,1", "allocated.requested": "64,64,64",
@@ -709,6 +711,31 @@ class M7GateContractTests(unittest.TestCase):
             "medium.terminal.page_bin": "2,2,0",
             "worker.medium.bin.hex": medium_worker_bin.encode("ascii").hex(),
             "worker.medium.requested.hex": medium_worker_requested.encode("ascii").hex(),
+            "small8k.warm.usable": "8192", "small8k.target.usable": "8192",
+            "small8k.target.bin": "36", "small8k.disallow_os_alloc": "1",
+            "small8k.page_block_size": "8192", "small8k.padding_size": "0",
+            "small8k.disallow_arena_alloc": "0", "small8k.target.mapped": "1",
+            "small8k.survivor.mapped": "1", "small8k.survivor.data": "1",
+            "small8k.before.arena": "1076166656,4,1",
+            "small8k.allocated.arena": "1076166656,4,1",
+            "small8k.terminal.arena": "1076166656,4,1",
+            "small8k.allocated.bin": "2,2,2", "small8k.allocated.requested": "16384,16384,16384",
+            "small8k.allocated.normal": "16384,0,16384", "small8k.allocated.normal_count": "2",
+            "small8k.allocated.page_bin": "1,1,1",
+            "small8k.merged.bin": "2,2,2", "small8k.merged.requested": "16384,16384,16384",
+            "small8k.merged.normal": "16384,0,16384", "small8k.merged.normal_count": "2",
+            "small8k.merged.page_bin": "1,1,1",
+            "small8k.freed.bin": "3,3,1", "small8k.freed.requested": "24576,24576,24576",
+            "small8k.freed.normal": "24576,0,8192", "small8k.freed.normal_count": "3",
+            "small8k.freed.page_bin": "2,2,1",
+            "small8k.collected.bin": "3,3,1", "small8k.collected.requested": "24576,24576,24576",
+            "small8k.collected.normal": "24576,0,8192", "small8k.collected.normal_count": "3",
+            "small8k.collected.page_bin": "2,2,1",
+            "small8k.terminal.bin": "3,3,0", "small8k.terminal.requested": "24576,24576,24576",
+            "small8k.terminal.normal": "24576,0,0", "small8k.terminal.normal_count": "3",
+            "small8k.terminal.page_bin": "2,2,0",
+            "worker.small8k.bin.hex": small8k_worker_bin.encode("ascii").hex(),
+            "worker.small8k.requested.hex": small8k_worker_requested.encode("ascii").hex(),
         }
         gate.require_statistics_remote_bin(trace, "complete")
         gate.require_statistics_remote_bin({**trace,
@@ -734,12 +761,72 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_bin({**trace, "medium.disallow_os_alloc": "0"},
                                                "arena policy not selected")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "small8k.target.bin": "44"},
+                                               "wrong 8 KiB bin")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "small8k.page_block_size": "8193"},
+                                               "wrong 8 KiB source block size")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace,
+                "worker.small8k.bin.hex": small8k_worker_bin.replace("-8.0", " 0.0").encode("ascii").hex()},
+                                               "lost 8 KiB worker free")
 
     def test_statistics_aligned_huge_requires_source_built_producer(self) -> None:
         summary = self.validate()
         statistics = self.gate_record(self.contract, "m7.statistics")
         self.assertIn("differential:statistics-aligned-huge", statistics["evidence"])
         self.assertIn("differential:statistics-aligned-huge", summary["runnable_evidence"])
+
+    def test_statistics_aligned_debug_requires_its_source_profile_and_shape(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        evidence = "differential:statistics-aligned-debug"
+        self.assertIn(evidence, statistics["evidence"])
+        self.assertIn(evidence, summary["runnable_evidence"])
+        with mock.patch.object(gate, "run_public_statistics_differential", return_value={"status": "passed"}) as run:
+            self.assertEqual(gate.run_statistics_aligned_debug_differential(False), {"status": "passed"})
+        self.assertEqual(run.call_args.kwargs["profile"], "debug-1")
+        self.assertEqual(run.call_args.kwargs["stat_level"], 2)
+        self.assertEqual(run.call_args.kwargs["driver"], gate.STATISTICS_ALIGNED_DEBUG_DRIVER)
+
+        trace = {
+            "profile.level": "2", "profile.debug": "1", "allocation.request": "8193",
+            "allocation.alignment": "4096", "allocation.oversize_request": "12288",
+            "allocation.page_block_size": "14336", "allocation.padding_size": "8",
+            "allocation.normal_bin": "39", "allocation.usable": "8193",
+            "allocation.aligned": "1", "allocation.mapped": "1", "allocation.payload_intact": "1",
+        }
+        for stage in ("allocated", "freed", "collected"):
+            trace.update({
+                f"{stage}.normal": "14328,14328,14328" if stage == "allocated" else "14328,14328,0",
+                f"{stage}.huge": "0,0,0", f"{stage}.requested": "12288,12288,12288",
+                f"{stage}.page_committed": "524288,524288,524288", f"{stage}.pages": "1,1,1",
+                f"{stage}.committed": "524288,524288,524288",
+                f"{stage}.malloc_bins": "39:1:1:1;" if stage == "allocated" else "39:1:1:0;",
+                f"{stage}.page_bins": "39:1:1:1;", f"{stage}.normal_count": "1",
+                f"{stage}.huge_count": "0", f"{stage}.pages_extended": "1", f"{stage}.pages_retire": "0",
+            })
+        trace.update({
+            "live_output.binned.hex": "  binned: 14.0 KiB not all freed".encode("ascii").hex(),
+            "live_output.huge.hex": "", "live_output.requested.hex": "  malloc req: 12.0 KiB".encode("ascii").hex(),
+            "final_output.binned.hex": "  binned: 14.0 KiB ok".encode("ascii").hex(),
+            "final_output.huge.hex": "", "final_output.requested.hex": "  malloc req: 12.0 KiB".encode("ascii").hex(),
+        })
+        gate.require_statistics_aligned_debug(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_debug({**trace, "allocation.aligned": "0"}, "lost alignment")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_debug({**trace, "allocation.padding_size": "0"},
+                                                  "lost debug padding")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_debug({**trace, "allocation.normal_bin": "40"},
+                                                  "wrong source bin")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_debug({**trace, "allocated.requested": "8193,8193,8193"},
+                                                  "lost source over-allocation request")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_debug({**trace, "freed.malloc_bins": "39:1:1:1;"}, "lost free")
 
     def test_statistics_requested_production_requires_source_built_profile(self) -> None:
         summary = self.validate()

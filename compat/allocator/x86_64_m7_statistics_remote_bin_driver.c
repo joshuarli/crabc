@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "mimalloc.h"
+#include "mimalloc/internal.h"
 #include "mimalloc-stats.h"
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -35,7 +36,8 @@ static void read_stats(mi_stats_t* stats) {
 
 static size_t bin_for_size(size_t size) {
   for (size_t bin = 1; bin < MI_BIN_HUGE; bin++) {
-    if (mi_stats_get_bin_size(bin) == size) return bin;
+    const size_t block_size = mi_stats_get_bin_size(bin);
+    if (block_size >= MI_PADDING_SIZE && block_size - MI_PADDING_SIZE == size) return bin;
   }
   abort();
 }
@@ -62,8 +64,8 @@ static void show_page_bin(const char* name, const mi_stats_t* after,
   show_count(name, "page_bin", &after->page_bins[bin], &before->page_bins[bin]);
 }
 
-static void show_arena(const char* name, const mi_stats_t* stats) {
-  printf("medium.%s.arena=%lld,%lld,%lld\n", name,
+static void show_arena(const char* scenario, const char* name, const mi_stats_t* stats) {
+  printf("%s.%s.arena=%lld,%lld,%lld\n", scenario, name,
          (long long)stats->reserved.total, (long long)stats->mmap_calls.total,
          (long long)stats->arena_count.total);
 }
@@ -203,9 +205,9 @@ int main(void) {
   printf("medium.target.mapped=%d\n", medium_target_mapped);
   printf("medium.survivor.mapped=%d\n", medium_survivor_mapped);
   printf("medium.survivor.data=%d\n", medium_survivor_data);
-  show_arena("before", &medium_before);
-  show_arena("allocated", &medium_allocated);
-  show_arena("terminal", &medium_terminal);
+  show_arena("medium", "before", &medium_before);
+  show_arena("medium", "allocated", &medium_allocated);
+  show_arena("medium", "terminal", &medium_terminal);
   show_stage("medium.allocated", &medium_allocated, &medium_before, medium_bin);
   show_page_bin("medium.allocated", &medium_allocated, &medium_before, medium_bin);
   show_stage("medium.merged", &medium_merged, &medium_before, medium_bin);
@@ -218,6 +220,85 @@ int main(void) {
   show_page_bin("medium.terminal", &medium_terminal, &medium_before, medium_bin);
   show_worker_row("medium.bin", bin_label);
   show_worker_row("medium.requested", "  malloc req:");
+
+  worker_request = 8192;
+  ready = 0;
+  release_worker = 0;
+  remote_block = NULL;
+  worker_output_length = 0;
+  worker_output[0] = '\0';
+  if (pthread_create(&thread, NULL, &worker, NULL) != 0) abort();
+  if (pthread_mutex_lock(&lock) != 0) abort();
+  while (!ready) {
+    if (pthread_cond_wait(&changed, &lock) != 0) abort();
+  }
+  if (pthread_mutex_unlock(&lock) != 0) abort();
+
+  mi_stats_t_decl(small_before);
+  mi_stats_t_decl(small_allocated);
+  mi_stats_t_decl(small_merged);
+  mi_stats_t_decl(small_freed);
+  mi_stats_t_decl(small_collected);
+  mi_stats_t_decl(small_terminal);
+  read_stats(&small_before);
+  void* small_survivor = mi_malloc(8192);
+  void* small_target = mi_malloc(8192);
+  if (small_survivor == NULL || small_target == NULL) abort();
+  memset(small_survivor, 0x6b, 8192);
+  memset(small_target, 0x5a, 8192);
+  const size_t small_usable = mi_usable_size(small_target);
+  const size_t small_bin = bin_for_size(small_usable);
+  const size_t small_block_size = mi_stats_get_bin_size(small_bin);
+  if (small_block_size - MI_PADDING_SIZE != small_usable) abort();
+  const int small_target_mapped = mi_is_in_heap_region(small_target);
+  read_stats(&small_allocated);
+  mi_thread_stats_print_out(&discard, NULL);
+  read_stats(&small_merged);
+
+  if (pthread_mutex_lock(&lock) != 0) abort();
+  remote_block = small_target;
+  release_worker = 1;
+  if (pthread_cond_broadcast(&changed) != 0) abort();
+  if (pthread_mutex_unlock(&lock) != 0) abort();
+  if (pthread_join(thread, NULL) != 0) abort();
+  read_stats(&small_freed);
+  const int small_survivor_mapped = mi_is_in_heap_region(small_survivor);
+  int small_survivor_data = 1;
+  for (size_t index = 0; index < 8192; index++) {
+    if (((const unsigned char*)small_survivor)[index] != 0x6b) small_survivor_data = 0;
+  }
+  mi_collect(true);
+  read_stats(&small_collected);
+  mi_free(small_survivor);
+  mi_collect(true);
+  read_stats(&small_terminal);
+
+  snprintf(bin_label, sizeof(bin_label), "  bin%2s  %3zu:", "S", small_bin);
+  printf("small8k.warm.usable=%zu\n", warm_usable);
+  printf("small8k.target.usable=%zu\n", small_usable);
+  printf("small8k.target.bin=%zu\n", small_bin);
+  printf("small8k.page_block_size=%zu\n", small_block_size);
+  printf("small8k.padding_size=%zu\n", (size_t)MI_PADDING_SIZE);
+  printf("small8k.disallow_os_alloc=%ld\n", mi_option_get(mi_option_disallow_os_alloc));
+  printf("small8k.disallow_arena_alloc=%ld\n", mi_option_get(mi_option_disallow_arena_alloc));
+  printf("small8k.target.mapped=%d\n", small_target_mapped);
+  printf("small8k.survivor.mapped=%d\n", small_survivor_mapped);
+  printf("small8k.survivor.data=%d\n", small_survivor_data);
+  show_arena("small8k", "before", &small_before);
+  show_arena("small8k", "allocated", &small_allocated);
+  show_arena("small8k", "terminal", &small_terminal);
+  show_stage("small8k.allocated", &small_allocated, &small_before, small_bin);
+  show_page_bin("small8k.allocated", &small_allocated, &small_before, small_bin);
+  show_stage("small8k.merged", &small_merged, &small_before, small_bin);
+  show_page_bin("small8k.merged", &small_merged, &small_before, small_bin);
+  show_stage("small8k.freed", &small_freed, &small_before, small_bin);
+  show_page_bin("small8k.freed", &small_freed, &small_before, small_bin);
+  show_stage("small8k.collected", &small_collected, &small_before, small_bin);
+  show_page_bin("small8k.collected", &small_collected, &small_before, small_bin);
+  show_stage("small8k.terminal", &small_terminal, &small_before, small_bin);
+  show_page_bin("small8k.terminal", &small_terminal, &small_before, small_bin);
+  show_worker_row("small8k.bin", bin_label);
+  show_worker_row("small8k.requested", "  malloc req:");
   printf("CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END\n");
   return 0;
 }
