@@ -1,6 +1,6 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: running unattended 2026-10-14.** Ground tooling and pinned inputs
+**Status: winding down 2026-10-14.** Ground tooling and pinned inputs
 have merged; all runtime lanes have run their independent checks. All three
 H0 dynamic products passed and were published after retained validation;
 POSIX-family, crypt, atomic and wordexp steps passed. POSIX-native passed its
