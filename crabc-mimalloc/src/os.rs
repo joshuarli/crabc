@@ -16140,6 +16140,18 @@ mod tests {
         assert!(numa_count >= 1, "the allocator-facing NUMA cache normalizes to one");
         assert!(numa_current < numa_count, "the source current-node route normalizes modulo count");
 
+        fault.set(fault::Plan::at(fault::Point::Cpu, 1, Errno::IO));
+        let numa_raw_getcpu_failure_node = numa_node();
+        let numa_raw_getcpu_failure_calls = fault.observed();
+        let numa_raw_getcpu_failure_error = if numa_raw_getcpu_failure_calls == 1 {
+            Errno::IO.raw() as usize
+        } else {
+            0
+        };
+        fault.set(fault::Plan::disabled());
+        assert_eq!(numa_raw_getcpu_failure_calls, 1, "one raw CPU observation fails");
+        assert_eq!(numa_raw_getcpu_failure_node, 0, "the source fallback is node zero");
+
         // The release record used the serial injection guard above. Its exact
         // full-range capture is complete now; release it before the separate
         // policy witness takes the same serial source-fault boundary.
@@ -16372,6 +16384,9 @@ mod tests {
         );
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
+        emit!("m2.vm.numa.raw_getcpu_failure.calls", numa_raw_getcpu_failure_calls);
+        emit!("m2.vm.numa.raw_getcpu_failure.error", numa_raw_getcpu_failure_error);
+        emit!("m2.vm.numa.raw_getcpu_failure.node", numa_raw_getcpu_failure_node);
         emit!("m2.vm.numa.controlled.multi.count", numa_controlled.multi_count);
         emit!("m2.vm.numa.controlled.multi.cached_count", numa_controlled.multi_cached_count);
         emit!("m2.vm.numa.controlled.multi.current", numa_controlled.multi_current);

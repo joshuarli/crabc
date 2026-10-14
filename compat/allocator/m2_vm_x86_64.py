@@ -477,6 +477,9 @@ TRACE_KEYS = (
     "m2.vm.external.page_extension.retry_commits_without_callback",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
+    "m2.vm.numa.raw_getcpu_failure.calls",
+    "m2.vm.numa.raw_getcpu_failure.error",
+    "m2.vm.numa.raw_getcpu_failure.node",
     "m2.vm.numa.controlled.multi.count",
     "m2.vm.numa.controlled.multi.cached_count",
     "m2.vm.numa.controlled.multi.current",
@@ -567,6 +570,11 @@ CONTROLLED_NUMA_EXPECTED_VALUES = {
     "m2.vm.numa.controlled.verbose.prefix_matches": 1,
     "m2.vm.numa.controlled.verbose.body_matches": 1,
 }
+RAW_GETCPU_FAILURE_EXPECTED_VALUES = {
+    "m2.vm.numa.raw_getcpu_failure.calls": 1,
+    "m2.vm.numa.raw_getcpu_failure.error": 5,
+    "m2.vm.numa.raw_getcpu_failure.node": 0,
+}
 
 TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     {
@@ -585,7 +593,9 @@ TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
         "m2.vm.offset.good_size",
         "m2.vm.policy.first_arena_size",
     }
-).difference(CONTROLLED_NUMA_EXPECTED_VALUES)
+).difference(CONTROLLED_NUMA_EXPECTED_VALUES).difference(
+    RAW_GETCPU_FAILURE_EXPECTED_VALUES
+)
 TRACE_FALSE_KEYS = frozenset(
     {
         "m2.vm.config.has_transparent_huge_pages",
@@ -1296,6 +1306,11 @@ def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
         if trace[key] != expected:
             raise ValueError(
                 f"{source} M2 VM controlled NUMA relation changed: {key}={trace[key]}, expected {expected}"
+            )
+    for key, expected in RAW_GETCPU_FAILURE_EXPECTED_VALUES.items():
+        if trace[key] != expected:
+            raise ValueError(
+                f"{source} M2 VM raw getcpu failure relation changed: {key}={trace[key]}, expected {expected}"
             )
 
 

@@ -470,6 +470,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "m2.vm.offset.good_size": 17 * 4096,
                 "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
                 **producer.CONTROLLED_NUMA_EXPECTED_VALUES,
+                **producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES,
             }
         )
         trace = "\n".join(
@@ -501,6 +502,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "m2.vm.offset.good_size": 17 * 4096,
                 "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
                 **expected,
+                **producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES,
             }
         )
         producer._validate_trace_values(values, source="test")
@@ -528,6 +530,13 @@ class NativeVmAssemblyTests(unittest.TestCase):
         values["m2.vm.numa.controlled.verbose.fragments_at_current"] = 1
         with self.assertRaises(ValueError):
             producer._validate_trace_values(values, source="test")
+
+        values["m2.vm.numa.controlled.verbose.fragments_at_current"] = 2
+        for key, expected_value in producer.RAW_GETCPU_FAILURE_EXPECTED_VALUES.items():
+            values[key] = expected_value + 1
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                producer._validate_trace_values(values, source="test")
+            values[key] = expected_value
 
     def test_policy_trace_schema_requires_the_bounded_option_hint_large_and_thp_relations(self):
         """Keep the coherent policy slice explicit in the C/Rust record."""

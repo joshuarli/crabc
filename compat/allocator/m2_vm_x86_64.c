@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <pthread.h>
@@ -98,6 +99,28 @@ static m2_numa_raw_answers_t m2_numa_raw_answers = {0};
 static size_t m2_os_numa_node_count_primitive(void);
 static size_t m2_os_numa_node_primitive(void);
 static long m2_os_numa_option_get(mi_option_t option);
+
+#if !defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+typedef struct m2_getcpu_failure_record_s {
+  bool active;
+  size_t calls;
+  int error;
+} m2_getcpu_failure_record_t;
+
+static m2_getcpu_failure_record_t m2_getcpu_failure_record = {0};
+
+/* The probe fails only the raw getcpu import used by the unchanged pinned
+ * primitive. When inactive, the same typed argument tuple reaches the kernel. */
+static long m2_numa_getcpu_syscall(unsigned int* cpu, unsigned int* node, void* cache) {
+  if (m2_getcpu_failure_record.active) {
+    m2_getcpu_failure_record.calls++;
+    m2_getcpu_failure_record.error = EIO;
+    errno = EIO;
+    return -1;
+  }
+  return syscall(SYS_getcpu, cpu, node, cache);
+}
+#endif
 
 #undef mi_atomic_add_acq_rel
 #undef mi_atomic_cas_strong_acq_rel
@@ -221,7 +244,24 @@ static int m2_detection_sysinfo(struct sysinfo* info);
 #undef M2_RAW_SYS_getcpu
 #undef M2_RAW_SYS_getrandom
 #else
+#define syscall(number, ...) M2_VM_PRIM_RAW_##number(__VA_ARGS__)
+#define M2_VM_PRIM_RAW_SYS_open(path, flags, mode) syscall(SYS_open, path, flags, mode)
+#define M2_VM_PRIM_RAW_SYS_read(fd, buffer, length) syscall(SYS_read, fd, buffer, length)
+#define M2_VM_PRIM_RAW_SYS_close(fd) syscall(SYS_close, fd)
+#define M2_VM_PRIM_RAW_SYS_access(path, mode) syscall(SYS_access, path, mode)
+#define M2_VM_PRIM_RAW_SYS_mbind(...) syscall(SYS_mbind, __VA_ARGS__)
+#define M2_VM_PRIM_RAW_SYS_getcpu(cpu, node, cache) \
+  m2_numa_getcpu_syscall(cpu, node, cache)
+#define M2_VM_PRIM_RAW_SYS_getrandom(...) syscall(SYS_getrandom, __VA_ARGS__)
 #include "prim/prim.c"
+#undef syscall
+#undef M2_VM_PRIM_RAW_SYS_open
+#undef M2_VM_PRIM_RAW_SYS_read
+#undef M2_VM_PRIM_RAW_SYS_close
+#undef M2_VM_PRIM_RAW_SYS_access
+#undef M2_VM_PRIM_RAW_SYS_mbind
+#undef M2_VM_PRIM_RAW_SYS_getcpu
+#undef M2_VM_PRIM_RAW_SYS_getrandom
 #endif
 
 /* The fixed no-option NUMA witness exercises the literal `os.c` wrappers with
@@ -6152,6 +6192,13 @@ int main(void) {
   const int numa_count = _mi_os_numa_node_count();
   const int numa_current = _mi_os_numa_node();
   if (numa_count < 1 || numa_current < 0 || numa_current >= numa_count) return 30;
+  m2_getcpu_failure_record = (m2_getcpu_failure_record_t){.active = true};
+  const size_t numa_node_after_getcpu_failure = _mi_prim_numa_node();
+  m2_getcpu_failure_record.active = false;
+  const size_t numa_getcpu_failure_calls = m2_getcpu_failure_record.calls;
+  const size_t numa_getcpu_failure_error = (size_t)m2_getcpu_failure_record.error;
+  if (numa_getcpu_failure_calls != 1 || numa_getcpu_failure_error != EIO
+      || numa_node_after_getcpu_failure != 0) return 31;
   const m2_numa_controlled_trace_t numa_controlled = m2_capture_controlled_numa_trace();
   const m2_numa_verbose_controlled_trace_t numa_verbose_controlled =
       m2_capture_controlled_numa_verbose_trace();
@@ -6293,6 +6340,9 @@ int main(void) {
       external_callback.page_extension_retry_commits_without_callback);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
+  U("m2.vm.numa.raw_getcpu_failure.calls", numa_getcpu_failure_calls);
+  U("m2.vm.numa.raw_getcpu_failure.error", numa_getcpu_failure_error);
+  U("m2.vm.numa.raw_getcpu_failure.node", numa_node_after_getcpu_failure);
   U("m2.vm.numa.controlled.multi.count", numa_controlled.multi_count);
   U("m2.vm.numa.controlled.multi.cached_count", numa_controlled.multi_cached_count);
   U("m2.vm.numa.controlled.multi.current", numa_controlled.multi_current);
