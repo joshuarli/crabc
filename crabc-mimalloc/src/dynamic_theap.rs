@@ -75,7 +75,10 @@
 extern crate std;
 
 use core::cell::Cell;
-use core::marker::{PhantomData, PhantomPinned};
+use core::marker::PhantomData;
+#[cfg(test)]
+use core::marker::PhantomPinned;
+#[cfg(test)]
 use core::mem::{size_of, MaybeUninit};
 use core::pin::Pin;
 use core::ptr::NonNull;
@@ -91,9 +94,9 @@ use crate::arena::{
 };
 use crate::bootstrap::{TheapPageSession, theap_page_session_sealed};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError};
-use crate::owned_tls_key_registry::{
-    OwnedThreadLocalKeyError, OwnedThreadLocalKeyLease, OwnedThreadLocalKeyRegistry,
-};
+use crate::owned_tls_key_registry::{OwnedThreadLocalKeyError, OwnedThreadLocalKeyLease};
+#[cfg(test)]
+use crate::owned_tls_key_registry::OwnedThreadLocalKeyRegistry;
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
 use crate::subproc::MainSubprocess;
@@ -101,12 +104,16 @@ use crate::thread_local::{
     ThreadLocalBackingError, ThreadLocalBackingOwner, ThreadLocalBackingTeardownFailure,
     ThreadLocalKey,
 };
-use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError, ThreadLocalDataOwner};
+use crate::tld::{DynamicAttachedThreadLocalData, ThreadLocalDataError};
+#[cfg(test)]
+use crate::tld::ThreadLocalDataOwner;
 use crate::types::{
     TheapPageMode, Heap, HeapOsAbandonedPageListError, MemoryId, Page, PageQueue,
-    LiveThreadId, Theap, TheapDynamicInitError, TheapOwner, ThreadLocalData,
+    Theap, TheapDynamicInitError, TheapOwner,
     ThreadLocalTheapListError,
 };
+#[cfg(test)]
+use crate::types::{LiveThreadId, ThreadLocalData};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DynamicAttachmentState {
@@ -173,6 +180,7 @@ pub(crate) enum DynamicTheapPageSessionError {
 /// the one pre-mutation key-release lock failure; this code intentionally
 /// invents no rollback after Theap/list publication.
 #[must_use = "a retained dynamic attachment error carries live ownership that must be handled explicitly"]
+#[cfg(test)]
 pub(crate) enum DynamicTheapBeginError<'heap> {
     Rejected(DynamicTheapError),
     Retained {
@@ -350,6 +358,7 @@ impl DynamicTheapStorage<'_> {
 /// A publication failure while the constructor still borrows its partial
 /// owner. Retention keeps the exact source state, including a pending key
 /// release, for the constructor's one final ownership transfer.
+#[cfg(test)]
 enum DynamicTheapPublicationError {
     Rejected(DynamicTheapError),
     Retained(DynamicTheapError),
@@ -388,10 +397,12 @@ pub(crate) struct DynamicTheapAttachment<'heap> {
 /// Owns the initialized constructor image until its one result transfer.
 /// Dropping before that transfer preserves ordinary Rust field destruction;
 /// it does not perform source lifecycle teardown or discard retained state.
+#[cfg(test)]
 struct DynamicAttachmentConstruction<'storage, 'heap> {
     storage: Option<&'storage mut MaybeUninit<DynamicTheapAttachment<'heap>>>,
 }
 
+#[cfg(test)]
 impl Drop for DynamicAttachmentConstruction<'_, '_> {
     fn drop(&mut self) {
         if let Some(storage) = self.storage.as_mut() {
@@ -404,20 +415,10 @@ impl Drop for DynamicAttachmentConstruction<'_, '_> {
 
 /// In-place, later-worker storage for one persistent source TLD/Theap pair.
 ///
-/// Pinned `mi_thread_init_with_heap` creates its TLD and Theap once, publishes
-/// the Theap through the regular TLS slot, and then leaves that source image
-/// installed for arbitrary local allocator work.  This storage is the narrow
-/// Rust owner for that same shape: it pins the lifecycle authority in the
-/// worker-owned runtime record while [`DynamicTheapAttachment`] keeps the
-/// actual metadata-backed TLD/Theap and regular compiler-TLS slot alive.
-///
-/// It deliberately does not discover a worker through a process registry or
-/// resume/park an allocation engine around [`Self::with_local`].  A runtime
-/// that owns thread creation must allocate this storage before entering the
-/// worker, pin it for the worker's complete allocator lifetime, and call
-/// [`Self::teardown`] after user destructors.  The only integration seam is
-/// that runtime-owned pinned storage plus the pinned local `Heap` image; no
-/// global owner table is involved.
+/// Tests use this storage to exercise the pinned worker-local shape while
+/// [`DynamicTheapAttachment`] keeps the metadata-backed TLD/Theap and regular
+/// compiler-TLS slot alive. It has no production caller.
+#[cfg(test)]
 #[must_use = "a persistent worker TLD/Theap storage must be explicitly torn down or retained"]
 pub(crate) struct PersistentWorkerTheapStorage<'heap> {
     attachment: Option<DynamicTheapAttachment<'heap>>,
@@ -428,6 +429,7 @@ pub(crate) struct PersistentWorkerTheapStorage<'heap> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 enum PersistentWorkerTheapStorageState {
     Vacant,
     Attached,
@@ -440,6 +442,7 @@ enum PersistentWorkerTheapStorageState {
 /// One refusal or retained-source-state result from the persistent worker
 /// attachment boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(test)]
 pub(crate) enum PersistentWorkerTheapStorageError {
     InvalidCurrentThread,
     NotAttached,
@@ -456,8 +459,9 @@ pub(crate) enum PersistentWorkerTheapStorageError {
 /// This carries only the source-local Heap, TLD, and Theap. It cannot detach
 /// either list, clear the regular TLS slot, or release metadata; those
 /// transitions remain exclusive to [`PersistentWorkerTheapStorage::teardown`].
-/// A future allocator hot path can operate through this projection without
-/// moving a session out of TLS or acquiring a process-wide lifecycle lock.
+/// It cannot move a session out of TLS or acquire a process-wide lifecycle
+/// lock.
+#[cfg(test)]
 pub(crate) struct PersistentWorkerTheapLocal<'local> {
     heap: &'local mut Heap,
     tld: &'local mut ThreadLocalData,
@@ -473,6 +477,7 @@ pub(crate) struct PersistentWorkerTheapLocal<'local> {
 /// attached on its originating worker. A later `teardown` removes the source
 /// regular TLS slot and releases these metadata images, so no address may be
 /// retained or dereferenced beyond that boundary.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PersistentWorkerTheapAddresses {
     heap: usize,
@@ -480,6 +485,7 @@ pub(crate) struct PersistentWorkerTheapAddresses {
     theap: usize,
 }
 
+#[cfg(test)]
 impl PersistentWorkerTheapAddresses {
     #[inline]
     pub(crate) const fn heap(self) -> usize {
@@ -497,6 +503,7 @@ impl PersistentWorkerTheapAddresses {
     }
 }
 
+#[cfg(test)]
 impl PersistentWorkerTheapLocal<'_> {
     #[inline]
     pub(crate) const fn thread(&self) -> LiveThreadId {
@@ -519,9 +526,9 @@ impl PersistentWorkerTheapLocal<'_> {
     }
 }
 
+#[cfg(test)]
 impl<'heap> PersistentWorkerTheapStorage<'heap> {
-    /// Creates vacant worker-owned storage. It becomes address-stable only
-    /// after the caller pins it and passes it to [`Self::attach_in_place`].
+    /// Creates vacant worker-owned storage for an isolated lifecycle fixture.
     #[inline]
     pub(crate) const fn new() -> Self {
         Self {
@@ -531,31 +538,6 @@ impl<'heap> PersistentWorkerTheapStorage<'heap> {
             _pinned: PhantomPinned,
             _not_send_or_sync: PhantomData,
         }
-    }
-
-    /// Attaches one later worker to a caller-pinned source Heap and stores the
-    /// resulting TLD/Theap authority in this exact pinned worker record.
-    ///
-    /// # Safety
-    ///
-    /// The caller owns the current worker's complete allocator lifecycle.
-    /// `self` and `heap` must remain pinned and live until successful
-    /// [`Self::teardown`], or until an incomplete source owner is deliberately
-    /// retained. The process must already have selected ticket-zero through
-    /// the main-thread path. No competing owner may mutate this worker's
-    /// compiler-TLS roots, regular key, TLD, or Theap.
-    pub(crate) unsafe fn attach_in_place(
-        self: Pin<&mut Self>,
-        config: MemoryConfig,
-        heap: Pin<&'heap mut Heap>,
-    ) -> Result<(), PersistentWorkerTheapStorageError> {
-        self.as_ref().get_ref().ensure_vacant()?;
-        // SAFETY: the caller forwards the exact exclusive worker/heap proof
-        // required by the source-shaped dynamic attachment constructor.
-        let attachment = unsafe { DynamicTheapAttachment::begin(config, heap) };
-        // SAFETY: `self` remains pinned for this call and every stored
-        // attachment borrows only the separately pinned Heap image.
-        unsafe { self.install_attachment(attachment) }
     }
 
     /// Projects the same persistent TLD/Theap for one direct local operation.
@@ -645,9 +627,7 @@ impl<'heap> PersistentWorkerTheapStorage<'heap> {
             .ok_or(PersistentWorkerTheapStorageError::Retained)
     }
 
-    /// Test-only isolated-component constructor. It keeps the production seam
-    /// at [`Self::attach_in_place`] while allowing focused tests to prove the
-    /// persistent worker shape without using any process-global registry.
+    /// Isolated-component constructor for focused worker-storage fixtures.
     #[cfg(test)]
     unsafe fn attach_in_place_with_components(
         self: Pin<&mut Self>,
@@ -847,85 +827,18 @@ impl<'heap> DynamicPostExitArenaOwner<'heap> {
 }
 
 impl<'heap> DynamicTheapAttachment<'heap> {
-    /// Begins one later-ticket dynamic Theap binding using the process-global
-    /// regular-key registry and metadata owner.
-    ///
-    /// # Safety
-    ///
-    /// The caller must exclusively own this exact current thread's allocator
-    /// lifecycle and process-selection decision. `heap` must be the unique,
-    /// address-stable `Heap::bootstrap_empty()` caller image with no aliases,
-    /// private-lock guards/waiters, pages, or prior binding. The caller must
-    /// not create a second TLD/backing owner, mutate compiler-TLS roots, move
-    /// this `!Send` owner to another thread, or release the regular key outside
-    /// this capability. It must drive a returned attachment through successful
-    /// teardown before allowing it to drop or reusing `heap`. A retained
-    /// terminal owner that cannot finish teardown must stay alive (or be
-    /// deliberately leaked) for as long as its thread/TLS/process state and
-    /// heap storage can be observed; dropping it must not manufacture cleanup.
-    /// Process initialization must already have bound and published the global
-    /// metadata image; this later-ticket path never performs that preparation.
-    /// Ticket zero is explicitly reserved for `MainStaticTheapAttachment`;
-    /// this method returns `FirstTicketReserved` without consuming it.
-    pub(crate) unsafe fn begin(
-        config: MemoryConfig,
-        heap: Pin<&'heap mut Heap>,
-    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        // SAFETY: the process-global identity/capabilities have process
-        // lifetime, and the caller upholds the documented current-thread
-        // ownership condition.
-        unsafe {
-            Self::begin_with_components_mode(
-                config,
-                heap,
-                MainSubprocess::global(),
-                MetaAllocator::global(),
-                OwnedThreadLocalKeyRegistry::global(),
-                TheapPageMode::OrdinaryAbandoning,
-            )
-        }
-    }
-
-    /// Begins the one private production-shaped dynamic attachment whose
-    /// Theap option image disables abandonment before its Release heap
-    /// publication. This is the only dynamic mode that can borrow the shared
-    /// bounded page engine; callers may never toggle an already live Theap.
-    ///
-    /// # Safety
-    ///
-    /// The caller upholds every [`Self::begin`] ownership and current-thread
-    /// obligation, and additionally retains the returned attachment until a
-    /// page engine has either consumed `finish` successfully or latched a
-    /// terminal retained owner. This is crate-private integration structure,
-    /// not a public first-class heap constructor.
-    pub(crate) unsafe fn begin_non_abandoning(
-        config: MemoryConfig,
-        heap: Pin<&'heap mut Heap>,
-    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        // SAFETY: as `begin`, with the source-reachable non-abandoning option
-        // selected before `_mi_theap_init` publishes `heap`.
-        unsafe {
-            Self::begin_with_components_mode(
-                config,
-                heap,
-                MainSubprocess::global(),
-                MetaAllocator::global(),
-                OwnedThreadLocalKeyRegistry::global(),
-                TheapPageMode::NonAbandoningPageSession,
-            )
-        }
-    }
-
     /// Builds the same private owner over explicit process-lived components.
     /// This supports isolated lifecycle tests without creating a second public
     /// attachment API.
     ///
     /// # Safety
     ///
-    /// The obligations are identical to [`Self::begin`], and all components
-    /// must name the same selected main-subprocess identity. `metadata` and
-    /// `subprocess` must already have completed
+    /// The caller must own this thread's allocator lifecycle and provide the
+    /// unique pinned bootstrap Heap with no aliases, locks, pages, or prior
+    /// binding. All components must name the same selected main-subprocess
+    /// identity. `metadata` and `subprocess` must already have completed
     /// [`MetaAllocator::prepare_for_main_subprocess`].
+    #[cfg(test)]
     unsafe fn begin_with_components(
         config: MemoryConfig,
         heap: Pin<&'heap mut Heap>,
@@ -968,6 +881,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         }
     }
 
+    #[cfg(test)]
     unsafe fn begin_with_components_mode(
         config: MemoryConfig,
         heap: Pin<&'heap mut Heap>,
@@ -979,28 +893,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         unsafe { Self::begin_with_components_arena(config, heap, subprocess, metadata, registry, page_mode, None, true) }
     }
 
-    /// Begins a real dynamic attachment in a caller-retained exclusive arena.
-    ///
-    /// # Safety
-    /// All `begin_non_abandoning` obligations apply. `arena` must be registered
-    /// to this process and remain live through final Theap/page release; its
-    /// underlying storage must not be destroyed while the attachment exists.
-    /// `process`, the global metadata owner and global key registry must name
-    /// this same subprocess; its immutable policy governs arena admission.
-    pub(crate) unsafe fn begin_in_arena_non_abandoning(
-        config: MemoryConfig, heap: Pin<&'heap mut Heap>, arena: ArenaView<'heap>,
-        process: crate::os::VmProcess<'static>,
-    ) -> Result<Self, DynamicTheapBeginError<'heap>> {
-        let Some(subprocess) = process.main_subprocess() else {
-            return Err(DynamicTheapBeginError::Rejected(DynamicTheapError::RootOwnership));
-        };
-        unsafe { Self::begin_with_components_arena(config, heap,
-            subprocess,
-            MetaAllocator::global(), OwnedThreadLocalKeyRegistry::global(),
-            TheapPageMode::NonAbandoningPageSession, Some(arena),
-            !process.policy().disallow_arena_alloc()) }
-    }
-
+    #[cfg(test)]
     unsafe fn begin_with_components_arena(
         config: MemoryConfig, heap: Pin<&'heap mut Heap>,
         subprocess: &'static MainSubprocess, metadata: Pin<&'static MetaAllocator>,
@@ -1055,6 +948,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// `tld` is this thread's registered no-Theap owner for `subprocess`, and
     /// `roots` is the unchanged compiler-TLS image captured before its demand.
     #[inline(never)]
+    #[cfg(test)]
     unsafe fn begin_with_thread_local_data(
         config: MemoryConfig, heap: Pin<&'heap mut Heap>,
         subprocess: &'static MainSubprocess, metadata: Pin<&'static MetaAllocator>,
@@ -1114,6 +1008,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// TLD, pristine pinned Heap and process-lived metadata/key identities.
     /// Failure decisions stay small until the constructor makes its single
     /// final transfer of the complete source attachment.
+    #[cfg(test)]
     fn allocate_and_publish_theap(
         &mut self, config: MemoryConfig, subprocess: &'static MainSubprocess,
         metadata: Pin<&'static MetaAllocator>, registry: &'static OwnedThreadLocalKeyRegistry,
@@ -1211,14 +1106,10 @@ impl<'heap> DynamicTheapAttachment<'heap> {
             .ok_or(DynamicTheapError::Poisoned)
     }
 
-    /// Borrows the source-local state already retained by this live later
-    /// worker. This is the direct hot-path seam: it validates the exact
-    /// regular TLS slot, cached root/reference, intrusive memberships, and
-    /// current identity, then returns only the local Heap/TLD/Theap image.
-    ///
-    /// No page-map mutation lease, process scheduler, registry lookup, or
-    /// session transition occurs here. The caller may perform local source
-    /// work and must return before attachment teardown can begin.
+    /// Borrows source-local state for the isolated persistent-worker fixture.
+    /// It validates the regular TLS slot, cached root/reference, intrusive
+    /// memberships, and current identity before returning Heap/TLD/Theap.
+    #[cfg(test)]
     fn local_parts(
         &mut self,
     ) -> Result<PersistentWorkerTheapLocal<'_>, DynamicTheapError> {
@@ -1236,10 +1127,9 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         })
     }
 
-    /// Observes the source-local address triple only after the same complete
-    /// attached-state validation as a direct local operation. The values are
-    /// never inserted into a registry and this method does not lend mutable
-    /// access through them.
+    /// Observes source-local addresses for the isolated persistent-worker
+    /// fixture after the same attached-state validation as `local_parts`.
+    #[cfg(test)]
     fn local_addresses(
         &mut self,
     ) -> Result<PersistentWorkerTheapAddresses, DynamicTheapError> {
@@ -1745,6 +1635,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
         })
     }
 
+    #[cfg(test)]
     fn initialize_and_publish_theap(&mut self) -> Result<(), DynamicTheapError> {
         let key = self.binding()?.key();
         let page_mode = self.page_mode;
@@ -2140,6 +2031,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// allocation failure after a later TLD ticket has activated its live
     /// registration: successful cleanup must not manufacture a retained live
     /// owner merely because its source sequence was consumed.
+    #[cfg(test)]
     fn cancel_before_heap_binding(&mut self) -> Result<(), DynamicTheapError> {
         if let Some(backing) = self.backing.as_mut() {
             backing.teardown().map_err(DynamicTheapError::Backing)?;
@@ -2159,6 +2051,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// intermediate error for a branch that never transfers an owner.
     #[cold]
     #[inline(never)]
+    #[cfg(test)]
     fn rejected_begin_result(error: DynamicTheapError) -> Result<Self, DynamicTheapBeginError<'heap>> {
         Err(DynamicTheapBeginError::Rejected(error))
     }
@@ -2168,6 +2061,7 @@ impl<'heap> DynamicTheapAttachment<'heap> {
     /// copy in the publication frame. The helper consumes that image once.
     #[cold]
     #[inline(never)]
+    #[cfg(test)]
     fn retained_begin_result_at(
         construction: &mut DynamicAttachmentConstruction<'_, 'heap>,
         error: DynamicTheapError,
@@ -3919,7 +3813,6 @@ mod tests {
     /// until all client blocks and foreign atomic projections have quiesced.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     pub(crate) fn managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
-        use core::sync::atomic::Ordering;
         for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
             for blocked in [false, true] {
                 let (send, receive) = mpsc::channel();
@@ -4380,7 +4273,7 @@ mod tests {
             control.origin_release.wait();
         });
         let mut origin = ParkedOrigin { control, worker: Some(origin), ready_observed: false };
-        let (heap_address, first_address, survivor_address, original_thread) = origin.wait_ready()
+        let (heap_address, first_address, survivor_address, _) = origin.wait_ready()
             .expect("regular-arena owner publishes live clients");
         let target = scope.spawn(move || {
             let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
@@ -4544,8 +4437,8 @@ mod tests {
                     };
                     let process = child_process.process();
                     let config = binding.page_map().memory_config().unwrap();
-                    unsafe { child_process.identity().arena_backing()
-                        .collect_purge(process, config, false, true, 0) }
+                    child_process.identity().arena_backing()
+                        .collect_purge(process, config, false, true, 0)
                 }).unwrap_or(false)
             }) }.unwrap();
             assert!(collected, "expired regular-arena purge traversal completes");
