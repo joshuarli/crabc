@@ -16210,6 +16210,16 @@ mod tests {
             .expect("the protection capture remains within its fixed capacity");
         drop(protection_capture);
         let protection_mprotect_calls_exact = protection_mprotect_calls == 2;
+        if protection_mprotect_calls_exact {
+            let expected_protection_address = protection_base
+                .addr()
+                .checked_add(page)
+                .expect("the captured interior page stays within its mapping");
+            assert_eq!(protection_attempts[0].0, expected_protection_address);
+            assert_eq!(protection_attempts[0].1, page);
+            assert_eq!(protection_attempts[1].0, expected_protection_address);
+            assert_eq!(protection_attempts[1].1, page);
+        }
         let protection_protect_offset_pages = if protection_mprotect_calls_exact {
             protection_attempts[0]
                 .0
