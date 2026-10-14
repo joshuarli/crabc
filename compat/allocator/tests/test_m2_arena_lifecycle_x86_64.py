@@ -116,7 +116,7 @@ class ArenaLifecycleProfiles(unittest.TestCase):
         self.assertEqual(rows[-1]["classification"]["unexplained_bytes"], 4096)
 
     def test_selected_statistics_caller_uses_matching_native_features(self):
-        trace = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
+        trace = [-1001, -1023, -1026, 37, 1, 1, 1, -1027]
         output = "\n".join(f"m2.arena.lifecycle.{i}={value}" for i, value in enumerate(trace))
         record = {"status": 0, "stdout": output + "\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s\n", "stderr": ""}
         with mock.patch.object(lifecycle, "run_oracle", return_value=([], trace)) as oracle, mock.patch.object(harness, "require_native_x86_64"), mock.patch.object(lifecycle, "native_program", return_value={"path": Path(__file__), "execution": {"test_threads": 1}}) as product, mock.patch.object(harness, "command_record", return_value=record) as native, mock.patch.object(harness, "write_json"), mock.patch.object(lifecycle.Path, "write_text"):
@@ -127,7 +127,7 @@ class ArenaLifecycleProfiles(unittest.TestCase):
         self.assertIn("--exact", command)
 
     def test_zero_selected_native_tests_cannot_complete_configuration(self):
-        trace = [-1001, -1023, -1027, -1026]
+        trace = [-1001, -1023, -1026, -1027]
         output = "\n".join(f"m2.arena.lifecycle.{i}={value}" for i, value in enumerate(trace))
         record = {"status": 0, "stdout": output + "\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s\n", "stderr": ""}
         with mock.patch.object(lifecycle, "run_oracle", return_value=([], trace)), mock.patch.object(harness, "require_native_x86_64"), mock.patch.object(lifecycle, "native_program", return_value={"path": Path(__file__), "execution": {"test_threads": 1}}), mock.patch.object(harness, "command_record", return_value=record), mock.patch.object(harness, "write_json"), mock.patch.object(lifecycle.Path, "write_text"):
@@ -160,7 +160,7 @@ class ArenaLifecycleProfiles(unittest.TestCase):
                     lifecycle.native_program(harness, "stat-2", artifacts)
 
     def test_all_profiles_preserves_failure_and_executes_other_configurations(self):
-        trace = [-1001, -1023, -1027, -1026]
+        trace = [-1001, -1023, -1026, -1027]
         output = "\n".join(f"m2.arena.lifecycle.{i}={value}" for i, value in enumerate(trace))
         record = {"status": 0, "stdout": output + "\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.01s\n", "stderr": ""}
         seen = []
