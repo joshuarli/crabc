@@ -144,18 +144,18 @@ non-null requested arena, which forbids both fresh-arena reservation and OS
 fallback (`src/arena.c:549,578`), so the result is Arena or failure. OS,
 huge-OS and remapped-OS metadata release is not reachable in this profile.
 
-`DynamicTheapAttachment::begin_in_arena_non_abandoning` retains that exact arena
-and process policy. `DynamicTheapStorage` owns either the ordinary Malloc
-capability or `ExclusiveArenaTheapStorage`; both use the regular TLS key,
-cached reference, TLD/Heap lists, heap-local arena-page image and
-`DynamicTheapPageSession`. The page engine derives the required arena from the
-session. Constructor failure after arena exhaustion or disabled arena
-allocation releases the already-created TLD/TLS/key state without publishing a
-Theap or substituting another arena or OS allocation. A nonnegative NUMA
-observation admits the source second requested-parent search pass. Teardown
-removes roots and lists before clearing and releasing the exact Arena Theap
-slice; a failed final release retains terminal provenance rather than granting
-a second release.
+The isolated `cfg(test)` dynamic attachment model retains that exact arena
+and process policy. It has no production caller in the fixed x86-64 profile.
+`DynamicTheapStorage` owns either the ordinary Malloc capability or
+`ExclusiveArenaTheapStorage`; both use the regular TLS key, cached reference,
+TLD/Heap lists, heap-local arena-page image and `DynamicTheapPageSession`. The
+page engine derives the required arena from the session. Constructor failure
+after arena exhaustion or disabled arena allocation releases the already-created
+TLD/TLS/key state without publishing a Theap or substituting another arena or
+OS allocation. A nonnegative NUMA observation admits the source second
+requested-parent search pass. Teardown removes roots and lists before clearing
+and releasing the exact Arena Theap slice; a failed final release retains
+terminal provenance rather than granting a second release.
 
 Ordinary dynamic abandonment, concurrent heap force-destruction and public
 heap APIs are outside this entry.
@@ -740,7 +740,7 @@ facts common to both are compared.
   (`mi_arena_reserve` and its retry point, `mi_arenas_add`,
   `mi_arena_initialize`, `mi_manage_os_memory_ex2`, the regular-map part of
   `mi_reserve_os_memory_ex2`); `process_arena::ProcessSharedArenaStorage`,
-  `main_static_page::MainStaticFirstArenaPageAllocator`,
+  `main_static_page::MainStaticRuntimeFirstArenaPageAllocator`,
   `process_owned_mapping_commit` and `ProcessPageArenaLease` over
   `ArenaRegistry`, `ManagedExternalRegion`, `Mapping` and `ProcessPageMapRoot`.
 - **Scope:** private incomplete process-arena ownership; no C ABI effect.
@@ -833,14 +833,16 @@ facts common to both are compared.
 - **Port map:** `src/arena.c:main-static-process-page-map-arena-lifecycle`
 - **Upstream/Rust:** `src/init.c:181-224,305-360`, `src/arena.c:674-723`
   (`pages_main` selection), `:781-821,951-1114` (fresh page publication),
-  `:1240-1282` (all-free release); `main_static_page::MainStaticProcessPageAllocator`,
-  `main_theap::MainStaticPageSession`, `process_arena::ProcessPageArenaLease`,
-  `process_page_map::ProcessPageMapMutationLease`.
-- **Scope:** crate-private single ticket-zero page owner; no C ABI surface.
+  `:1240-1282` (all-free release); the cfg(test) sidecar
+  `main_static_page::MainStaticProcessPageAllocator`, `main_theap::MainStaticPageSession`,
+  `process_arena::ProcessPageArenaLease`, `process_page_map::ProcessPageMapMutationLease`.
+- **Scope:** cfg(test) isolated x86-64 sidecar page-owner model; no C ABI surface.
 - **Difference:** the coordinator establishes static Heap, detached metadata,
-  global PageMap, then ticket-zero roots in source order, but this page slice
-  receives an explicit matching one-arena map/root/configuration/subprocess
-  pair rather than choosing or reserving an arena. The session rejects a
+  global PageMap, then ticket-zero roots in source order. This historical test
+  slice receives an explicit matching one-arena map/root/configuration/subprocess
+  pair rather than choosing or reserving an arena; the production x86-64 path
+  uses `MainStaticRuntimeFirstArenaPageAllocator` with its process backing and
+  owned PageMap ranges. The session rejects a
   foreign subprocess before static-image, map or arena mutation, rejects any
   linked later shared-main Theap, and installs only that arena's in-place
   `pages_main`, never a dynamic `mi_arena_pages_t`. It holds the sole map
@@ -1343,8 +1345,10 @@ facts common to both are compared.
   `src/theap.c:228-306,357-369,414-449`, `src/heap.c:60-100`;
   `dynamic_theap::DynamicTheapAttachment`, `DynamicTheapPageSession` and
   `single_thread::PageAllocatorEngine`.
-- **Scope:** private invalid-owner and incomplete dynamic-thread lifecycle
-  handling; no C ABI surface or valid allocation-trace differential.
+- **Scope:** cfg(test) isolated dynamic-owner model for private invalid-owner
+  and incomplete dynamic-thread lifecycle handling; fixed x86-64 has no
+  production caller for these paths. No C ABI surface or valid allocation-trace
+  differential.
 - **Difference (ownership and errors):** the bounded owner uses fallible Rust
   private locks and typed metadata capabilities where valid C initialization
   has uncontended locks and no capability errors.
@@ -1374,13 +1378,13 @@ facts common to both are compared.
     until its pre-mutation final regular-key release succeeds. Every other
     Malloc terminal, impossible-owner mismatch or later teardown/page/list error
     is terminal; a wrong-thread call is rejected.
-  - Released capabilities cannot project typed images. Ordinary dynamic begin
-    stores the source abandoning `true`/`2` profile and rejects page-session
-    construction; the crate-private unsafe non-abandoning begin stores the
-    `false`/`-1` profile before Release heap publication and is the only
-    dynamic instantiation of the shared page engine (a `cfg(test)` fixture
-    validates the `true`/`2` image to build `MI_ABANDON` aggregate shapes;
-    production ordinary attachments still reject the page session). An
+  - Released capabilities cannot project typed images. The test-only ordinary
+    constructor stores the source abandoning `true`/`2` profile and rejects
+    page-session construction; the test-only non-abandoning constructor stores
+    the `false`/`-1` profile before Release heap publication and instantiates
+    the shared page engine (a separate ordinary fixture validates the `true`/`2`
+    image to build `MI_ABANDON` aggregate shapes). None of these dynamic
+    attachment paths has a production caller in the fixed x86-64 profile. An
     unfinished engine drop, retained collection poison or pending OS unmap
     failure latches the attachment terminally and keeps the page/map/resource
     state.
