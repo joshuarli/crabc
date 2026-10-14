@@ -805,8 +805,10 @@ Append one line per merge batch, per parked item, and per contract change.
   output after cache publication and before the current-node primitive;
   `e8d4deedb` proves early output stays buffered until post-initialization,
   then children reuse the process cache after option mutation. In frozen
-  `e8d4deedb`, the 141-field C/R VM comparison, exact startup regression and
-  all nine Rust profiles pass. Physical NUMA remains unqualified.
+  `e8d4deedb`, the exact startup regression and all nine Rust profiles pass.
+  The 141-field VM pass belongs to the lane; the coordinator's command only
+  imported the helper. Actual merged-tree VM execution is recorded below.
+  Physical NUMA remains unqualified.
 - 2026-10-13: actual M3 at `8c7abf176` passes all four Miri profiles and
   its 458,179-observation C/R traces, but exits unmet: prerequisites and five
   native refused-unmap assertions fail. Source page free consumes its
@@ -857,9 +859,11 @@ Append one line per merge batch, per parked item, and per contract change.
   inventory-fixture race without weakening source-digest validation.
 - 2026-10-14: `f528c7e16` adds the raw `getcpu` failure source comparison:
   one EIO attempt returns NUMA node zero; its lane matches 144 VM fields.
-  `03aeaa583` adds a distinctly named cold-arena page-prefix commitment
-  witness with working marker/reader dispatch; merged native verification
-  is running. It does not prove whole arena-slice commit rollback. Source
+  `03aeaa583` added a cold-arena page-prefix commitment witness; its actual
+  merged native check failed and `131a29a48` reverted it. The fault hit
+  PageMap commitment rather than the intended page prefix. Three bounded
+  checks did not establish that prefix's fault ordinal, so the experiment
+  remains parked on `lane/allocator-options`. Source
   accounting retains bounded NUMA, PageMap, metadata, external-arena and
   version proofs while leaving broader units and nested-child C/R proof open.
 - 2026-10-14: H0 `21e9a89cf` stops in POSIX-native's libc-test collector
@@ -874,6 +878,25 @@ Append one line per merge batch, per parked item, and per contract change.
   the prohibition on reclassifying failures to pass a gate. No new oracle
   disposition is added and no qualification claim changes. Independent
   remaining cohort commands continue from the frozen inputs.
+
+- 2026-10-14: frozen `60cccc44c` passes all 23 host-side test directories,
+  all nine Rust profiles, ledger/structure/inventory checks, and six focused
+  source-Page owner and child-arena custody tests. The corrected coordinator
+  VM entrypoint actually executes the existing producer and matches all
+  144 C/R fields; earlier import-only commands are not execution evidence.
+  `5e39edf1e` also passes the fresh static codegen audit's 15 scenarios;
+  qualifying throughput remains deferred while the host is busy.
+- 2026-10-14: `0c8237140` removes unreachable private deferred-free paths
+  after checking their callers and construction sites. `4bf95d807` extends
+  M7's remote-bin trace to 8192 bytes and adds debug-padded aligned allocation
+  statistics, retaining raw executions and linked products. Merged-tree
+  verification is running. C2 found a receipt-reader spawn cancellation gap;
+  its focused fix is assigned. M5's early throughput consumer is held for
+  stricter qualification binding; no throughput or milestone pass is claimed.
+- 2026-10-14: H0's independent pthread-family step passes all three
+  composition and all three lifecycle products at frozen `21e9a89cf`.
+  Independent text and consumer steps continue; the parked POSIX-native
+  `pow` mismatch still blocks qualification.
 
 ## For the owner afterwards
 
