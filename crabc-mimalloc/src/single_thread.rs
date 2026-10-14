@@ -484,7 +484,6 @@ pub(crate) struct GenericAllocationContinuation {
 pub(crate) enum DeferredFreeAlignedCompletion {
     Natural { alignment: usize },
     Overallocate { alignment: usize, offset: usize },
-    HugeSingleton,
 }
 
 /// Value-only work which resumes after a selected deferred-free callback.
@@ -1007,6 +1006,7 @@ impl DeferredFreeAlignedPlainAllocation {
     pub(crate) fn requested_size(self) -> usize { self.request }
 
     /// Guarded small malloc normalizes zero to one word before sampling.
+    #[cfg(test)]
     pub(crate) fn sampling_size(self) -> usize {
         if self.request == 0 { WORD_SIZE } else { self.request }
     }
@@ -1247,20 +1247,6 @@ struct ExternalPostOwnerExitTerminalFacts {
 struct ProcessPostOwnerExitRemoteClaimFailure {
     claim: remote_free::ClaimedAbandonedRemoteFree,
     error: ProcessPostOwnerExitRemoteClaimError,
-}
-
-impl ProcessPostOwnerExitRemoteClaimFailure {
-    /// Returns the exact source owner and the boundary that stopped before a
-    /// legal unown, reabandon, or terminal release could complete.
-    #[inline]
-    fn into_parts(
-        self,
-    ) -> (
-        remote_free::ClaimedAbandonedRemoteFree,
-        ProcessPostOwnerExitRemoteClaimError,
-    ) {
-        (self.claim, self.error)
-    }
 }
 
 /// Scalar disposition of one pointer-derived owner-exit free.
@@ -4220,13 +4206,6 @@ impl<'session, 'child, 'map> ChildMetadataPageAllocator<'session, 'child, 'map> 
     pub(crate) fn finish_pages_in_place(&mut self) -> bool {
         self.finish_quiescent_in_place()
     }
-
-    /// Force-collects this child's now-all-free metadata pages before child
-    /// Theap/Heap teardown. Failure returns the exact engine for terminal
-    /// latching by its external child owner.
-    pub(crate) fn finish_pages(self) -> Result<(), Self> {
-        self.finish_quiescent().map(|_| ())
-    }
 }
 
 /// Page teardown shared by the child metadata and ordinary child-thread
@@ -6796,26 +6775,6 @@ pub(crate) struct ThreadExitKnownPostExitOsAbandonedList {
     // This proof is meaningful only while the current thread owns its source
     // drain. It must not become a cross-worker list capability.
     _not_send_or_sync: PhantomData<*mut ()>,
-}
-
-impl ThreadExitKnownPostExitOsAbandonedList {
-    /// Creates the one-shot source preflight proof for the higher-level
-    /// native post-exit registry.
-    ///
-    /// # Safety
-    ///
-    /// Every current private OS-list member must remain owned by one active
-    /// typed post-exit route whose exact terminal free will unlink that same
-    /// member before its mapping release. The caller must also hold a bounded
-    /// registry admission for the source traversal that consumes this proof.
-    /// This does not authorize a list walk, foreign-member removal, a normal
-    /// allocator engine, or a no-page finalizer after source abandonment.
-    #[inline]
-    pub(crate) unsafe fn from_native_post_exit_route_registry() -> Self {
-        Self {
-            _not_send_or_sync: PhantomData,
-        }
-    }
 }
 
 /// One source-local witness that a completed aggregate traversal has exactly
@@ -39562,7 +39521,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 unsafe { Self::publish_ordinary_aligned_interior(page, base, adjustment) };
                 Some(block)
             }
-            DeferredFreeAlignedCompletion::HugeSingleton => Some(base),
         }
     }
 
