@@ -1666,6 +1666,7 @@ class ArchitectureBenchmarkEvidenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
         self.engine = self.fixtures.engine
+        self.fixtures.install_qualification_environment(self, (self.engine,))
         bootstrap = mock.patch.object(self.engine, "BOOTSTRAP_RESAMPLES", 24)
         bootstrap.start()
         self.addCleanup(bootstrap.stop)

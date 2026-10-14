@@ -927,25 +927,36 @@ class CorrectnessTests(GateFixture):
         import x86_64_m5_gate as producer
 
         contract = gate.harness.read_json(producer.CONTRACT)
-        path = self.root / "gates/m5-gate/report.json"
+        summary = producer.validate_contract(contract, gate.harness.load_pin(), producer.native_test_targets())
+        path = self.root / "x86_64/m5-correctness-gate/report.json"
         path.parent.mkdir(parents=True)
         evidence = {}
-        for name in contract["evidence"]:
+        for name in producer.active_evidence(contract, "correctness"):
+            command = summary["runnable_evidence"][name]
             log = path.parent / f"{name.replace(':', '-')}.log"
             log.write_text("passed\n", encoding="utf-8")
-            evidence[name] = {"log": gate.harness.relative(log), "status": "passed"}
-        summary = producer.validate_contract(contract, gate.harness.load_pin(), producer.native_test_targets())
-        report = producer.gate_report(contract, summary, evidence)
-        report["overall_status"] = "passed"
-        report["unmet_required"] = []
-        for row in report["gates"]:
-            row["status"] = "passed"
-            row["blocked_by"] = []
-            row["missing_evidence"] = []
-        with patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True}):
+            entry = {"log": gate.harness.relative(log), "status": "passed"}
+            if isinstance(command, dict):
+                entry["receipt"] = command
+            else:
+                entry["command"] = [argument.replace(producer.SCRATCH_PLACEHOLDER,
+                                                     str(path.parent / name.replace(':', '-')))
+                                    for argument in command]
+            evidence[name] = entry
+        missing = "differential:live-owner-small-remote-collect-race"
+        executed_command = evidence[missing]["command"]
+        del evidence[missing]["command"]
+        report = producer.gate_report(contract, summary, evidence, qualification_profile="correctness")
+        with patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True}), \
+                patch.object(gate.harness, "ARTIFACT_ROOT", self.root):
             report["provenance"] = producer.report_provenance(report)
-            unmet = gate.correctness_evidence_unmet("m5", report, path.parent, None)
-        self.assertTrue(any("executed producers" in reason for reason in unmet), unmet)
+            complete = copy.deepcopy(report)
+            complete["evidence"][missing]["command"] = executed_command
+            self.assertEqual(gate.correctness_evidence_unmet(
+                "m5", complete, path.parent, None, qualification_profile="correctness"), [])
+            unmet = gate.correctness_evidence_unmet(
+                "m5", report, path.parent, None, qualification_profile="correctness")
+        self.assertIn(f"evidence {missing} lacks its executed producer", unmet)
 
     def test_m5_functional_profile_authenticates_active_logs_without_deferred_inputs(self) -> None:
         import x86_64_m5_gate as producer
