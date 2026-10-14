@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import select
 import shutil
 import signal
 import struct
@@ -1050,6 +1051,84 @@ class CorrectnessAdmissionTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt) as caught:
                 evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
         self.assertTrue(any("group cleanup failed" in note for note in caught.exception.__notes__))
+
+    def test_host_repeated_interrupt_finishes_cleanup_and_preserves_primary_error(self) -> None:
+        child_code = (
+            "import signal\n"
+            "signal.signal(signal.SIGTERM, lambda *_: print('term', flush=True))\n"
+            "print('ready', flush=True)\n"
+            "while True: signal.pause()\n"
+        )
+        for primary in (KeyboardInterrupt(), OSError("reader failed"),
+                        subprocess.TimeoutExpired("qualification-manifest", timeout=120)):
+            with self.subTest(primary=type(primary).__name__):
+                child = subprocess.Popen(
+                    [sys.executable, "-B", "-c", child_code],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    start_new_session=True,
+                )
+                communicate = child.communicate
+                previous = signal.getsignal(signal.SIGINT)
+                calls = 0
+
+                def interrupted_communication(*args: object, **kwargs: object) -> tuple[bytes, bytes]:
+                    nonlocal calls
+                    calls += 1
+                    if calls == 1:
+                        raise primary
+                    if calls == 2:
+                        self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+                        self.assertEqual(child.stdout.readline(), b"term\n")
+                        self.assertIsNone(child.poll())
+                        signal.raise_signal(signal.SIGINT)
+                        # Exercise escalation without waiting out the grace period.
+                        raise subprocess.TimeoutExpired("qualification-manifest", timeout=5)
+                    signal.raise_signal(signal.SIGINT)
+                    result = communicate(*args, **kwargs)
+                    signal.raise_signal(signal.SIGINT)
+                    return result
+
+                try:
+                    self.assertTrue(select.select([child.stdout], [], [], 5)[0])
+                    self.assertEqual(child.stdout.readline(), b"ready\n")
+                    with patch.object(evidence.subprocess, "Popen", return_value=child), patch.object(
+                        child, "communicate", side_effect=interrupted_communication
+                    ):
+                        with self.assertRaises(BaseException) as caught:
+                            evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+                    self.assertEqual(child.returncode, -signal.SIGKILL)
+                    if isinstance(primary, subprocess.TimeoutExpired):
+                        self.assertIsInstance(caught.exception, evidence.EvidenceError)
+                        self.assertIs(caught.exception.__cause__, primary)
+                    else:
+                        self.assertIs(caught.exception, primary)
+                    self.assertTrue(child.stdout.closed)
+                    self.assertTrue(child.stderr.closed)
+                    self.assertIs(signal.getsignal(signal.SIGINT), previous)
+                finally:
+                    if child.poll() is None:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    communicate()
+
+    def test_host_cleanup_interrupt_cannot_replace_primary_error_or_cleanup_note(self) -> None:
+        primary = OSError("reader failed")
+        process = Mock()
+        process.pid = 2747
+        process.communicate.side_effect = primary
+        previous = signal.getsignal(signal.SIGINT)
+
+        def cleanup_failure(*args: object) -> None:
+            signal.raise_signal(signal.SIGINT)
+            raise OSError("group cleanup failed")
+
+        with patch.object(evidence.subprocess, "Popen", return_value=process), patch.object(
+            evidence.os, "killpg", side_effect=cleanup_failure
+        ):
+            with self.assertRaises(OSError) as caught:
+                evidence._run_pinned_receipt_validator(ROOT, WORK_ROOT / "receipt.json")
+        self.assertIs(caught.exception, primary)
+        self.assertTrue(any("group cleanup failed" in note for note in primary.__notes__))
+        self.assertIs(signal.getsignal(signal.SIGINT), previous)
 
     def test_manifest_declarations_cannot_claim_execution_admission(self) -> None:
         owner = evidence._x86_module(ROOT, "generate_qualification_manifest")

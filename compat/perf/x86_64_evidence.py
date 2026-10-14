@@ -563,19 +563,29 @@ def _run_pinned_receipt_validator(checkout: Path, receipt_path: Path) -> dict[st
 def _terminate_pinned_reader(process: subprocess.Popen[bytes]) -> None:
     """Stop the dispatcher and its local Docker client on cancellation."""
 
+    previous = signal.getsignal(signal.SIGINT)
+    # Cleanup already has a primary error to propagate. Further interrupts
+    # must not abandon the group or replace that error after reaping.
+    ignore_interrupt = callable(previous)
+    if ignore_interrupt:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        process.communicate()
-        return
-    try:
-        process.communicate(timeout=PINNED_RECEIPT_TERMINATION_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, signal.SIGTERM)
         except ProcessLookupError:
-            pass
-        process.communicate()
+            process.communicate()
+            return
+        try:
+            process.communicate(timeout=PINNED_RECEIPT_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+    finally:
+        if ignore_interrupt:
+            signal.signal(signal.SIGINT, previous)
 
 
 def _read_physical_receipt(checkout: Path, receipt_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
