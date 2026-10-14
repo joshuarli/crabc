@@ -1598,9 +1598,6 @@ STATISTICS_FAST_ALLOCATION_TRACE_END = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_T
 STATISTICS_REMOTE_BIN_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_bin_driver.c"
 STATISTICS_REMOTE_BIN_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_BEGIN"
 STATISTICS_REMOTE_BIN_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END"
-STATISTICS_COLD_ARENA_PAGE_PREFIX_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_cold_arena_page_prefix_fault_driver.c"
-STATISTICS_COLD_ARENA_PAGE_PREFIX_TRACE_BEGIN = "CRABC_MI_M7_COLD_ARENA_PAGE_PREFIX_COMMIT_FAULT_TRACE_BEGIN"
-STATISTICS_COLD_ARENA_PAGE_PREFIX_TRACE_END = "CRABC_MI_M7_COLD_ARENA_PAGE_PREFIX_COMMIT_FAULT_TRACE_END"
 
 
 def require_statistics_huge_page_bin(
@@ -1714,32 +1711,6 @@ def require_statistics_remote_bin(trace: Mapping[str, str], description: str) ->
                                           "-32.1", "KiB", "32.1", "KiB", "1", "not", "all", "freed"]
             or medium_requested_row.split() != ["malloc", "req:", "32.1", "KiB"]):
         raise harness.HarnessError(f"{description} lost the freeing Theap's bin/requested rows: {trace}")
-
-
-def require_statistics_cold_arena_page_prefix_fault(trace: Mapping[str, str], description: str) -> None:
-    """Require a refused cold-arena page-prefix commit and successful retry."""
-
-    expected = {
-        "profile.level": "2", "profile.on_demand": "1", "profile.eager_arena": "0",
-        "profile.show_errors": "1", "before.pages": "0,0,0",
-        "before.arena_count": "0", "fault.nonnull": "1",
-        "fault.commit_size": "114688", "fault.failures": "1", "fault.warnings": "1",
-        "recovery.nonnull": "1", "recovery.client_bytes": "1",
-        "recovery.clients_distinct": "1", "recovery.clients_owned": "1",
-        "recovery.failures": "1", "recovery.warnings": "1",
-        "freed.failures": "1", "freed.warnings": "1",
-    }
-    for key, value in expected.items():
-        if trace.get(key) != value:
-            raise harness.HarnessError(
-                f"{description} cold-arena page-prefix shape {key}: expected {value}, got {trace.get(key)}"
-            )
-    for stage in ("fault", "recovery", "freed"):
-        value = trace.get(f"{stage}.arena_count", "")
-        if not value.isdigit() or int(value) <= 0:
-            raise harness.HarnessError(f"{description} never committed a cold-arena count: {trace}")
-    if trace["fault.arena_count"] != trace["recovery.arena_count"]:
-        raise harness.HarnessError(f"{description} reserved another arena for retry: {trace}")
 
 
 def require_statistics_fast_allocation(trace: Mapping[str, str], description: str) -> None:

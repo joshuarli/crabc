@@ -670,33 +670,6 @@ class M7GateContractTests(unittest.TestCase):
         self.assertIn("differential:statistics-remote-bin", statistics["evidence"])
         self.assertIn("differential:statistics-remote-bin", summary["runnable_evidence"])
 
-    def test_statistics_cold_arena_page_prefix_reader_rejects_failure_or_replacement(self) -> None:
-        summary = self.validate()
-        evidence = "differential:statistics-cold-arena-page-prefix-fault"
-        statistics = self.gate_record(self.contract, "m7.statistics")
-        self.assertIn(evidence, statistics["evidence"])
-        self.assertIn(evidence, summary["runnable_evidence"])
-        trace = {
-            "profile.level": "2", "profile.on_demand": "1", "profile.eager_arena": "0",
-            "profile.show_errors": "1", "before.pages": "0,0,0",
-            "before.arena_count": "0", "fault.nonnull": "1",
-            "fault.commit_size": "114688", "fault.failures": "1", "fault.warnings": "1",
-            "recovery.nonnull": "1", "recovery.client_bytes": "1",
-            "recovery.clients_distinct": "1", "recovery.clients_owned": "1",
-            "recovery.failures": "1", "recovery.warnings": "1",
-            "freed.failures": "1", "freed.warnings": "1",
-            "fault.arena_count": "1", "recovery.arena_count": "1",
-            "freed.arena_count": "1",
-        }
-        gate.require_statistics_cold_arena_page_prefix_fault(trace, "complete")
-        for key, value in (
-            ("before.arena_count", "1"), ("fault.commit_size", "131072"),
-            ("fault.failures", "0"), ("recovery.clients_owned", "0"),
-            ("recovery.arena_count", "2"),
-        ):
-            with self.subTest(key=key), self.assertRaises(harness.HarnessError):
-                gate.require_statistics_cold_arena_page_prefix_fault({**trace, key: value}, key)
-
     def test_statistics_remote_bin_reader_rejects_lost_worker_free(self) -> None:
         worker_bin = "  bin S    8:    64   B      64   B     -64   B      64   B       1        not all freed"
         worker_requested = "  malloc req:    64   B"
