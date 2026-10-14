@@ -113,16 +113,25 @@ use crate::main_theap::MainStaticHeapLease;
 #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 use crate::process_arena::{ProcessPageArenaLease, ProcessPageArenaLeaseError};
 use crate::process_page_map::{
-    LiveAllocationPointer, ProcessPageMapError, ProcessPageMapMutationLease, ProcessPageMapPostExitAccess,
+    LiveAllocationPointer, ProcessPageMapError, ProcessPageMapMutationLease,
     ProcessPageMapSuspendedEngineAccess,
 };
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
-use crate::single_thread::ThreadExitMappedRegularPostExitAdoptOutcome;
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::process_page_map::ProcessPageMapPostExitAccess;
 use crate::single_thread::{
-    FreeError, OwnerLocalMainHeapPageAllocator, OwnerLocalMainHeapPageSessionBindError,
+    FreeError,
+    OwnerLocalMainHeapPageAllocator,
+    OwnerLocalMainHeapPageSessionBindError,
     StaticMainMappedRegularClaimSelector,
-    PageAllocatorEngine, PageAllocatorEngineState, RemoteFreePreparationError, RemoteFreeProducer,
+    PageAllocatorEngine,
+    PageAllocatorEngineState,
+    RemoteFreePreparationError,
+    RemoteFreeProducer,
     RemoteFreeProducerPair,
+};
+#[cfg(any(test, not(target_arch = "x86_64")))]
+use crate::single_thread::{
+    ThreadExitMappedRegularPostExitAdoptOutcome,
     ThreadExitMappedRegularPostExitAdoptError,
     ThreadExitMappedRegularPostExitAbandonError,
     ThreadExitMappedRegularPostExitAbandonFailure,
@@ -212,8 +221,10 @@ use crate::single_thread::{
     ThreadExitMappedRegularPagesPostExitParts,
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair,
     ThreadExitMappedRegularPagesPostExitTeardownTerminal,
-    ThreadExitSingletonAbandonError, ThreadExitSingletonAbandonFailure,
-    ThreadExitSingletonHandoff, ThreadExitSingletonRemoteFreeError,
+    ThreadExitSingletonAbandonError,
+    ThreadExitSingletonAbandonFailure,
+    ThreadExitSingletonHandoff,
+    ThreadExitSingletonRemoteFreeError,
     ThreadExitSingletonRemoteFreeFailure,
 };
 use crate::types::{Heap, MemoryId};
@@ -615,6 +626,7 @@ impl Drop for MainHeapThreadPausedProcessPageAllocator {
 /// every page release is complete or the exact draining attachment is kept
 /// terminally retained.
 #[must_use = "a later main-heap thread-exit drain must finish or remain retained"]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitDrain<'attachment, 'main> {
     engine: PageAllocatorEngine<'static, 'static, MainHeapThreadPageDrainSession<'attachment, 'main>>,
     page_map_lifecycle: ProcessPageMapMutationLease,
@@ -625,6 +637,7 @@ pub(crate) struct MainHeapThreadProcessPageExitDrain<'attachment, 'main> {
 /// PageMap lifecycle lease until its exact final client free has released the
 /// registered span or the source state is terminally retained.
 #[must_use = "a later-main singleton handoff must release or retain its page explicitly"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main> {
     handoff: ThreadExitSingletonHandoff<
         'static,
@@ -656,6 +669,7 @@ pub(crate) struct MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'ma
 /// when the completed source traversal proved one immediate survivor before a
 /// registry was constructed.
 #[must_use = "a post-exit mapped regular route must release every client block or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     parts: ThreadExitMappedRegularPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -667,6 +681,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
 // projection by `MainStaticHeapLease`, and the consuming free API preserves
 // one route owner at a time. Sending it is therefore the intended client-free
 // handoff after thread exit, not permission to share it concurrently.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitMappedRegularRoute<'_> {}
 
 /// A target later-main owner retained after it consumed a mapped regular
@@ -679,6 +694,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitMappedRegularRoute<'_> {}
 /// reassociation boundary. `parts` preserves the exact source span and page
 /// identity for terminal evidence; it offers no second adoption path.
 #[must_use = "a failed mapped-regular adoption retains its target owner terminally"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment, 'main> {
     engine: PageAllocatorEngine<'static, 'static, MainHeapThreadPageSession<'attachment, 'main>>,
     page_map_lifecycle: ProcessPageMapMutationLease,
@@ -693,7 +709,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularAdoption<'attachment
 /// while the registered page remains live. Its one consuming retry starts
 /// from the source-restored bitmap/count pair and may reclaim only the same
 /// retained `parts.page` candidate.
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 #[must_use = "a reabandoned mapped-regular owner must retry its exact candidate or remain terminally retained"]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<
     'attachment,
@@ -715,6 +731,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<
 /// not grant reclaim, requeue, allocation-time adoption, or concurrent
 /// client-free authority.
 #[must_use = "a post-exit full-medium route must release every client block or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullMediumRoute<'main> {
     parts: ThreadExitFullMediumPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -725,6 +742,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullMediumRoute<'main> {
 // is serialized by `ProcessPageMapPostExitAccess`, and its consuming API
 // keeps the source failed-reclaim owner decision linear. Sending moves that
 // one owner; it does not authorize concurrent frees or allocation-time use.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullMediumRoute<'_> {}
 
 /// One bounded aggregate of two-or-more full arena singleton pages that
@@ -738,6 +756,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullMediumRoute<'_> {}
 /// release. The route keeps no raw page list and gives no OS-list,
 /// allocation-time claim/requeue, or concurrent-free authority.
 #[must_use = "a full singleton aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
     parts: ThreadExitFullSingletonPagesPostExitParts<'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -748,6 +767,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
 // PageMap access. Its consuming API transfers one sequential failed-reclaim
 // decision at a time; sending moves that owner but never permits concurrent
 // frees, allocation-time use, OS-list routing, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullSingletonPagesRoute<'_> {}
 
 /// One bounded homogeneous aggregate of two-or-more full OS-aligned singleton
@@ -761,6 +781,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullSingletonPagesRoute<'_> {}
 /// list and grants no list traversal, allocation-time claim/requeue, or
 /// concurrent-free authority.
 #[must_use = "a full OS singleton aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main> {
     parts: ThreadExitFullOsSingletonPagesPostExitParts<'main>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -770,6 +791,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main> 
 // serialized short PageMap access. Its consuming API moves one source
 // failed-reclaim decision at a time; it neither shares the route nor grants
 // private-list traversal, allocation-time, or concurrent-free authority.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'_> {}
 
 /// One bounded aggregate of two-or-more full medium pages that begins post-exit
@@ -782,6 +804,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'_> 
 /// access. It remains client-free-only and provides neither allocation-time
 /// claim/requeue nor a full-queue scan.
 #[must_use = "a full-medium aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullMediumPagesRoute<'main> {
     parts: ThreadExitFullMediumPagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -791,6 +814,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullMediumPagesRoute<'main> {
 // serialized short PageMap access. Its consuming API transfers one sequential
 // source failed-reclaim decision at a time; sending moves that owner but never
 // permits concurrent frees, allocation-time use, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullMediumPagesRoute<'_> {}
 
 /// One bounded aggregate of full medium and large pages that begins post-exit
@@ -804,6 +828,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullMediumPagesRoute<'_> {}
 /// allocation-time claim/requeue, full-queue scan, or concurrent-free
 /// authority.
 #[must_use = "a mixed full medium/large aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main> {
     parts: ThreadExitFullMediumOrLargePagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -813,6 +838,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main
 // serialized short PageMap access. Its consuming API transfers one sequential
 // source failed-reclaim decision at a time; sending moves that owner but never
 // permits concurrent frees, allocation-time use, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'_> {}
 
 /// One bounded aggregate of full arena singletons and regular Medium/Large
@@ -826,6 +852,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'_
 /// list and grants no allocation-time claim/requeue, full-queue scan, or
 /// concurrent-free authority.
 #[must_use = "a mixed full singleton/regular aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<'main> {
     parts: ThreadExitFullSingletonOrRegularPagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -835,6 +862,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<
 // serialized short PageMap access. Its consuming API transfers one sequential
 // source failed-reclaim decision at a time; sending moves that owner but never
 // permits concurrent frees, allocation-time use, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<'_> {}
 
 /// One bounded per-member aggregate of two-or-more full non-direct-small
@@ -847,6 +875,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRou
 /// mostly-used boundary. This route keeps no raw page list and gives no
 /// direct-small, allocation-time claim/requeue, or concurrent-free authority.
 #[must_use = "a full non-direct-small aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main> {
     parts: ThreadExitFullNonDirectSmallPagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -857,6 +886,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'mai
 // normal-collector failed-reclaim decision at a time; sending moves that owner
 // but never permits direct-small semantics, concurrent frees, allocation-time
 // use, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'_> {}
 
 /// One bounded per-member aggregate of two-or-more full direct-small pages
@@ -871,6 +901,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'
 /// raw page list and gives no allocation-time claim/requeue or concurrent-free
 /// authority.
 #[must_use = "a full direct-small aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main> {
     parts: ThreadExitFullDirectSmallPagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -880,6 +911,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main> 
 // serialized short PageMap access. Its consuming API transfers one sequential
 // partial-collector failed-reclaim decision at a time; sending moves that owner
 // but never permits concurrent frees, allocation-time use, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'_> {}
 
 /// One bounded aggregate of two-or-more full large pages that begins post-exit
@@ -892,6 +924,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'_> 
 /// 64-slice span. It remains client-free-only and provides neither
 /// allocation-time claim/requeue nor a heterogeneous/full-queue scan.
 #[must_use = "a full-large aggregate route must release every member or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
     parts: ThreadExitFullLargePagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -901,6 +934,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
 // serialized short PageMap access. Its consuming API transfers one sequential
 // source failed-reclaim decision at a time; sending moves that owner but never
 // permits concurrent frees, allocation-time use, or requeue.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullLargePagesRoute<'_> {}
 
 /// One sole full large page that begins post-exit life as source-unmapped
@@ -912,6 +946,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullLargePagesRoute<'_> {}
 /// route remains sequential and exposes no allocation-time reclaim, requeue,
 /// adoption, or concurrent client-free capability.
 #[must_use = "a post-exit full-large route must release every client block or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullLargeRoute<'main> {
     parts: ThreadExitFullLargePostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -921,6 +956,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullLargeRoute<'main> {
 // arena/static-Heap facts and short PageMap access. Its consuming API keeps
 // the source failed-reclaim owner decision linear; sending transfers one owner
 // and never permits shared frees or allocation-time use.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullLargeRoute<'_> {}
 
 /// One sole full direct small page that begins post-exit life as source-
@@ -933,6 +969,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullLargeRoute<'_> {}
 /// the old Theap/TLD is removed. The route remains sequential and provides no
 /// allocation-time claim, reclaim, requeue, adoption, or concurrent free.
 #[must_use = "a post-exit full direct small route must release every client block or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullDirectSmallRoute<'main> {
     parts: ThreadExitFullDirectSmallPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -941,6 +978,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullDirectSmallRoute<'main> {
 // SAFETY: this holds only process-stable arena/static-Heap facts and serialized
 // short PageMap access. Its consuming API transfers one failed-reclaim owner
 // decision and cannot overlap frees or allocation-time use.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullDirectSmallRoute<'_> {}
 
 /// One sole full non-direct small page that begins post-exit life as
@@ -954,6 +992,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullDirectSmallRoute<'_> {}
 /// The route stays sequential and offers no
 /// allocation-time reclaim, requeue, adoption, or concurrent free authority.
 #[must_use = "a post-exit full non-direct small route must release every client block or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
     parts: ThreadExitFullNonDirectSmallPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -963,6 +1002,7 @@ pub(crate) struct MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
 // arena/static-Heap facts and serialized short PageMap access. Its consuming
 // API transfers one failed-reclaim owner decision; it never permits shared
 // frees or allocation-time use.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'_> {}
 
 /// One aggregate process route for every regular small, medium, or large arena
@@ -984,6 +1024,7 @@ unsafe impl Send for MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'_> {}
 /// authority across live members, and it still exposes no concurrent
 /// claim/reclaim/requeue capability.
 #[must_use = "an aggregate post-exit mapped regular-pages route must release every registered page or remain terminally retained"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main> {
     parts: ThreadExitMappedRegularPagesPostExitParts<'main, 'static>,
     page_map_access: ProcessPageMapPostExitAccess,
@@ -998,6 +1039,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main> {
 /// this point: it may already have cleared a bitmap bit, claimed a low owner
 /// bit, or changed the selected page's Theap association.
 #[must_use = "a failed aggregate mapped-regular adoption retains its target owner terminally"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) struct MainHeapThreadProcessPageExitMappedRegularPagesAdoption<
     'attachment,
     'main,
@@ -1013,6 +1055,7 @@ pub(crate) struct MainHeapThreadProcessPageExitMappedRegularPagesAdoption<
 // map access permit one route owner at a time. Sending it transfers that
 // owner; it does not permit concurrent frees or a split allocation-time
 // reclaim/requeue capability.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 unsafe impl Send for MainHeapThreadProcessPageExitMappedRegularPagesRoute<'_> {}
 
 /// A pre-publication refusal while opening a later-thread process page owner.
@@ -1035,6 +1078,7 @@ pub(crate) enum MainHeapThreadProcessPageAllocatorBeginError {
 /// post-exit route attempts one supported fresh later-main initially-nonfull
 /// adoption.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
     /// Only a source-initially-nonfull medium or direct-small page with an
     /// immediate local free block, exact fully committed scalar-extension
@@ -1073,6 +1117,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptError {
 /// carries its own PageMap error state: only a ready route can continue its
 /// normal client-free tail.
 #[must_use = "a failed mapped-regular adoption retains its original or target owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularAdoptFailure<'attachment, 'main> {
     /// No target engine was created, so the caller retains this exact route.
     /// A ready route may continue its client-free tail; a reported PageMap
@@ -1125,6 +1170,7 @@ pub(crate) enum MainHeapThreadProcessPageExitDrainFailure<'attachment, 'main> {
 
 /// The outcomes while finishing the bounded all-free later-main exit drain.
 #[must_use = "a retained later-main thread-exit drain still owns live source state"]
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitDrainFinishError<'attachment, 'main> {
     /// A live page, failed force collection, or pending OS release remains.
     /// The attachment is already post-fast-slot, so only this retained drain
@@ -1139,11 +1185,13 @@ pub(crate) enum MainHeapThreadProcessPageExitDrainFinishError<'attachment, 'main
 
 /// The source-state reason one later-main full singleton could not cross from
 /// its post-fast-slot drain into the final-free handoff.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) type MainHeapThreadProcessPageExitSingletonAbandonError =
     ThreadExitSingletonAbandonError;
 
 /// The retained later-main owner after a full-singleton handoff attempt.
 #[must_use = "a failed later-main singleton abandonment retains its source owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitSingletonAbandonFailure<'attachment, 'main> {
     /// No queue or page identity changed, so the drain stays available for an
     /// explicit later decision.
@@ -1167,11 +1215,13 @@ pub(crate) enum MainHeapThreadProcessPageExitSingletonAbandonFailure<'attachment
 
 /// The source-state reason the detached later-main singleton's final free
 /// could not complete its failed-reclaim release.
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) type MainHeapThreadProcessPageExitSingletonRemoteFreeError =
     ThreadExitSingletonRemoteFreeError;
 
 /// The retained later-main singleton handoff after a final-free attempt.
 #[must_use = "a failed later-main singleton free retains its handoff"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitSingletonRemoteFreeFailure<'attachment, 'main> {
     Rejected {
         handoff: MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main>,
@@ -1186,6 +1236,7 @@ pub(crate) enum MainHeapThreadProcessPageExitSingletonRemoteFreeFailure<'attachm
 /// The result of handling one client free through the post-exit mapped
 /// regular route.
 #[must_use = "a still-live mapped regular route remains responsible for later client frees"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitMappedRegularRoute<'main>),
     Released,
@@ -1194,6 +1245,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularFreeResult<'main> {
 /// A process-map or source-route reason one post-exit client free could not
 /// finish normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitMappedRegularPostExitFreeError),
@@ -1201,6 +1253,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularFreeError {
 
 /// A retained post-exit route after one client-free attempt.
 #[must_use = "a failed post-exit client free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularFreeFailure<'main> {
     /// The supplied block had no current PageMap entry, so no source page
     /// state changed and the route can be used with its actual client block.
@@ -1226,6 +1279,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularFreeFailure<'main> {
 /// medium `BIN_FULL` member into the sequential unmapped-to-mapped process
 /// route.
 #[must_use = "a failed full-medium process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumRouteBeginFailure<'attachment, 'main> {
     /// The preflight rejected before source collection or queue detachment.
     Rejected {
@@ -1254,6 +1308,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumRouteBeginFailure<'attach
 
 /// The result of one sequential client free through the full-medium route.
 #[must_use = "a still-live full-medium route remains responsible for later client frees"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullMediumRoute<'main>),
     Released,
@@ -1262,6 +1317,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumFreeResult<'main> {
 /// A process-map or source-route reason one full-medium client free could not
 /// finish normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullMediumPostExitFreeError),
@@ -1269,6 +1325,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumFreeError {
 
 /// A retained full-medium route after one client-free attempt.
 #[must_use = "a failed full-medium post-exit free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumFreeFailure<'main> {
     /// No PageMap entry existed for the supplied block, so no source owner
     /// state changed and the route can still receive its actual client block.
@@ -1292,6 +1349,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumFreeFailure<'main> {
 /// A failure while crossing a later-main post-fast-slot drain from a complete
 /// full arena-singleton `BIN_FULL` queue into its sequential process route.
 #[must_use = "a failed full singleton aggregate process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesRouteBeginFailure<
     'attachment,
     'main,
@@ -1330,6 +1388,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesRouteBeginFailure
 /// The result of one client free through the full arena-singleton aggregate
 /// route.
 #[must_use = "a nonterminal full singleton aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeResult<'main> {
     ReleasedPage(MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main>),
     ReleasedAll,
@@ -1338,6 +1397,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeResult<'main>
 /// A process-map or source-route reason one full arena-singleton aggregate
 /// client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullSingletonPagesPostExitFreeError),
@@ -1346,6 +1406,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeError {
 /// A retained full arena-singleton aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed full singleton aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, or did not
     /// name the selected member's canonical singleton allocation, so no source
@@ -1371,6 +1432,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonPagesFreeFailure<'main
 /// full OS-singleton `BIN_FULL` queue into its sequential process
 /// route.
 #[must_use = "a failed full OS singleton aggregate process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailure<
     'attachment,
     'main,
@@ -1406,6 +1468,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesRouteBeginFailu
 /// The result of one client free through the full OS-singleton
 /// aggregate route.
 #[must_use = "a nonterminal full OS singleton aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult<'main> {
     ReleasedPage(MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main>),
     ReleasedAll,
@@ -1414,6 +1477,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeResult<'mai
 /// A process-map or source-route reason one full OS-singleton
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullOsSingletonPagesPostExitFreeError),
@@ -1422,6 +1486,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeError {
 /// A retained full OS-singleton aggregate route after one client
 /// free attempt.
 #[must_use = "a failed full OS singleton aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, or did not name
     /// the selected member's canonical singleton allocation, so no source
@@ -1448,6 +1513,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullOsSingletonPagesFreeFailure<'ma
 /// full-medium `BIN_FULL` queue into its sequential aggregate
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full-medium aggregate process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesRouteBeginFailure<'attachment, 'main> {
     /// The complete queue/direct/page preflight rejected before source
     /// collection or detachment.
@@ -1479,6 +1545,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesRouteBeginFailure<'a
 /// The result of one client free through the bounded full-medium aggregate
 /// route.
 #[must_use = "a nonterminal full-medium aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullMediumPagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitFullMediumPagesRoute<'main>),
@@ -1488,6 +1555,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeResult<'main> {
 /// A process-map or source-route reason one bounded full-medium aggregate
 /// client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullMediumPagesPostExitFreeError),
@@ -1496,6 +1564,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeError {
 /// A retained bounded full-medium aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed full-medium aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, so no source
     /// owner bit changed and the route can still receive an actual member.
@@ -1519,6 +1588,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumPagesFreeFailure<'main> {
 /// A failure while crossing a later-main post-fast-slot drain from a complete
 /// mixed medium/large `BIN_FULL` queue into its sequential process route.
 #[must_use = "a failed mixed full medium/large process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFailure<
     'attachment,
     'main,
@@ -1557,6 +1627,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesRouteBeginFai
 /// The result of one client free through the bounded mixed medium/large
 /// aggregate route.
 #[must_use = "a nonterminal mixed full medium/large aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main>),
@@ -1566,6 +1637,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeResult<'m
 /// A process-map or source-route reason one bounded mixed medium/large
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullMediumOrLargePagesPostExitFreeError),
@@ -1574,6 +1646,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeError {
 /// A retained bounded mixed medium/large aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed mixed full medium/large aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, so no source
     /// owner bit changed and the route can still receive an actual member.
@@ -1598,6 +1671,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullMediumOrLargePagesFreeFailure<'
 /// complete heterogeneous singleton/regular `BIN_FULL` queue into its
 /// sequential process route.
 #[must_use = "a failed mixed full singleton/regular process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRouteBeginFailure<
     'attachment,
     'main,
@@ -1636,6 +1710,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRouteBeg
 /// The result of one client free through the bounded mixed
 /// singleton/regular aggregate route.
 #[must_use = "a nonterminal mixed full singleton/regular aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<'main>),
@@ -1645,6 +1720,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesFreeResu
 /// A process-map or source-route reason one bounded mixed
 /// singleton/regular aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullSingletonOrRegularPagesPostExitFreeError),
@@ -1653,6 +1729,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesFreeErro
 /// A retained bounded mixed singleton/regular aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed mixed full singleton/regular aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, or failed the
     /// selected source tail's pre-mutation canonical-block validation.
@@ -1678,6 +1755,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullSingletonOrRegularPagesFreeFail
 /// complete ordinary non-direct-small bin into a sequential aggregate
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full non-direct-small aggregate process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesRouteBeginFailure<
     'attachment,
     'main,
@@ -1716,6 +1794,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesRouteBeginFa
 /// The result of one client free through the per-member full non-direct-small
 /// aggregate route.
 #[must_use = "a nonterminal full non-direct-small aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main>),
@@ -1725,6 +1804,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeResult<'
 /// A process-map or source-route reason one per-member full non-direct-small
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullNonDirectSmallPagesPostExitFreeError),
@@ -1733,6 +1813,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeError {
 /// A retained per-member full non-direct-small aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed full non-direct-small aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, so no source
     /// owner bit changed and the route can still receive an actual member.
@@ -1757,6 +1838,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallPagesFreeFailure<
 /// complete ordinary direct-small bin into a sequential aggregate
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full direct-small aggregate process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesRouteBeginFailure<
     'attachment,
     'main,
@@ -1795,6 +1877,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesRouteBeginFailu
 /// The result of one client free through the per-member full direct-small
 /// aggregate route.
 #[must_use = "a nonterminal full direct-small aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main>),
@@ -1804,6 +1887,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeResult<'mai
 /// A process-map or source-route reason one per-member full direct-small
 /// aggregate client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullDirectSmallPagesPostExitFreeError),
@@ -1812,6 +1896,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeError {
 /// A retained per-member full direct-small aggregate route after one
 /// client-free attempt.
 #[must_use = "a failed full direct-small aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, so no source
     /// owner bit changed and the route can still receive an actual member.
@@ -1836,6 +1921,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallPagesFreeFailure<'ma
 /// full-large `BIN_FULL` queue into its sequential aggregate
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full-large aggregate process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesRouteBeginFailure<'attachment, 'main> {
     /// The complete queue/direct/page preflight rejected before source
     /// collection or detachment.
@@ -1867,6 +1953,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesRouteBeginFailure<'at
 /// The result of one client free through the bounded full-large
 /// aggregate route.
 #[must_use = "a nonterminal full-large aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullLargePagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitFullLargePagesRoute<'main>),
@@ -1876,6 +1963,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeResult<'main> {
 /// A process-map or source-route reason one bounded full-large aggregate
 /// client free could not complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullLargePagesPostExitFreeError),
@@ -1884,6 +1972,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeError {
 /// A retained bounded full-large aggregate route after one client-free
 /// attempt.
 #[must_use = "a failed full-large aggregate free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, so no source
     /// owner bit changed and the route can still receive an actual member.
@@ -1908,6 +1997,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargePagesFreeFailure<'main> {
 /// large `BIN_FULL` member into the sequential unmapped-to-mapped process
 /// route.
 #[must_use = "a failed full-large process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargeRouteBeginFailure<'attachment, 'main> {
     /// The preflight rejected before source collection or queue detachment.
     Rejected {
@@ -1936,6 +2026,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargeRouteBeginFailure<'attachm
 
 /// The result of one sequential client free through the full-large route.
 #[must_use = "a still-live full-large route remains responsible for later client frees"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargeFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullLargeRoute<'main>),
     Released,
@@ -1944,6 +2035,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargeFreeResult<'main> {
 /// A process-map or source-route reason one full-large client free could not
 /// finish normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargeFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullLargePostExitFreeError),
@@ -1951,6 +2043,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargeFreeError {
 
 /// A retained full-large route after one client-free attempt.
 #[must_use = "a failed full-large post-exit free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullLargeFreeFailure<'main> {
     /// No PageMap entry existed for the supplied block, so no source owner
     /// state changed and the route can still receive its actual client block.
@@ -1975,6 +2068,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullLargeFreeFailure<'main> {
 /// direct small member in its ordinary size bin into the sequential
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full direct small process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallRouteBeginFailure<'attachment, 'main> {
     /// The preflight rejected before source collection, direct-cache update,
     /// or queue detachment.
@@ -2006,6 +2100,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallRouteBeginFailure<'a
 /// The result of one sequential client free through the full direct small
 /// route.
 #[must_use = "a still-live full direct small route remains responsible for later client frees"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullDirectSmallRoute<'main>),
     Released,
@@ -2014,6 +2109,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallFreeResult<'main> {
 /// A process-map or source-route reason one full direct small client free
 /// could not finish normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullDirectSmallPostExitFreeError),
@@ -2021,6 +2117,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallFreeError {
 
 /// A retained full direct small route after one client-free attempt.
 #[must_use = "a failed full direct small post-exit free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallFreeFailure<'main> {
     /// No PageMap entry existed for the supplied block, so no source owner
     /// state changed and the route can still receive its actual client block.
@@ -2045,6 +2142,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullDirectSmallFreeFailure<'main> {
 /// non-direct small member in its ordinary size bin into the sequential
 /// unmapped-to-mapped process route.
 #[must_use = "a failed full non-direct small process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallRouteBeginFailure<'attachment, 'main> {
     /// The preflight rejected before source collection or queue detachment.
     Rejected {
@@ -2078,6 +2176,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallRouteBeginFailure
 /// The result of one sequential client free through the full non-direct small
 /// route.
 #[must_use = "a still-live full non-direct small route remains responsible for later client frees"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main>),
     Released,
@@ -2086,6 +2185,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallFreeResult<'main>
 /// A process-map or source-route reason one full non-direct small client free
 /// could not finish normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitFullNonDirectSmallPostExitFreeError),
@@ -2093,6 +2193,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallFreeError {
 
 /// A retained full non-direct small route after one client-free attempt.
 #[must_use = "a failed full non-direct small post-exit free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallFreeFailure<'main> {
     /// No PageMap entry existed for the supplied block, so no source owner
     /// state changed and the route can still receive its actual client block.
@@ -2116,6 +2217,7 @@ pub(crate) enum MainHeapThreadProcessPageExitFullNonDirectSmallFreeFailure<'main
 /// A failure while crossing a later-main drain from its old Theap/TLD into
 /// the first actual process-owned mapped regular route.
 #[must_use = "a failed mapped regular process-route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure<'attachment, 'main> {
     Rejected {
         drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
@@ -2146,6 +2248,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularRouteBeginFailure<'att
 /// live PageMap registration and must still use the normal drain/attachment
 /// finish boundary.
 #[must_use = "the aggregate traversal outcome retains either its process route or empty drain"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin<'attachment, 'main> {
     Route(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
     /// The completed aggregate traversal itself left exactly one
@@ -2159,6 +2262,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesRouteBegin<'attac
 /// process route. The preflight refusal leaves the drain intact; every later
 /// source transition retains it terminally until a broader lifecycle exists.
 #[must_use = "a failed aggregate regular-pages route transition retains its exact source state"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure<'attachment, 'main> {
     Rejected {
         drain: MainHeapThreadProcessPageExitDrain<'attachment, 'main>,
@@ -2199,6 +2303,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesRouteBeginFailure
 
 /// The result of one client free through the aggregate post-exit registry.
 #[must_use = "a nonterminal aggregate result retains the only route owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesFreeResult<'main> {
     StillLive(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
     ReleasedPage(MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main>),
@@ -2208,6 +2313,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesFreeResult<'main>
 /// A process-map or source-route reason one aggregate client free could not
 /// complete normally.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesFreeError {
     PageMap(ProcessPageMapError),
     Route(ThreadExitMappedRegularPagesPostExitFreeError),
@@ -2215,6 +2321,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesFreeError {
 
 /// A retained aggregate route after one client-free attempt.
 #[must_use = "a failed aggregate post-exit free must retain or terminally record its route"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure<'main> {
     /// The supplied block was absent from the current PageMap, so the route
     /// did not acquire a source owner bit and can be used with a valid block.
@@ -2240,6 +2347,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesFreeFailure<'main
 /// member of an aggregate post-exit route attempts source-shaped adoption into
 /// a fresh later-main owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptError {
     /// A general aggregate may transfer only after all source-distinct
     /// singleton/unmapped/mapped siblings have completed terminal release.
@@ -2273,6 +2381,7 @@ pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptError {
 /// route before a target engine exists, or the terminal target owner after
 /// short PageMap access crossed into one long lifecycle.
 #[must_use = "a failed aggregate mapped-regular adoption retains its original or target owner"]
+#[cfg(any(test, not(target_arch = "x86_64")))]
 pub(crate) enum MainHeapThreadProcessPageExitMappedRegularPagesAdoptFailure<
     'attachment,
     'main,
@@ -3658,6 +3767,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageAllocator<'attachment, 'main> 
     /// no allocate/free/producer APIs: the fixed fast TLS slot is already
     /// clear, so it may only force-collect and release all-free pages before
     /// the attachment's final root/list/TLD teardown.
+    #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
     pub(crate) fn begin_thread_exit_drain(
         self,
     ) -> Result<
@@ -3869,6 +3979,39 @@ impl MainHeapThreadPausedProcessPageAllocator {
     }
 }
 
+#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> {
+    /// Finishes the all-free half of source `_mi_theap_collect_abandon` and
+    /// then releases the paired process PageMap lifecycle. A successful return
+    /// leaves the borrowed attachment in `DrainingPages`; callers must finish
+    /// its explicit root/list/TLD boundary with
+    /// [`MainHeapThreadAttachment::finish_after_page_drain`].
+    pub(crate) fn finish(
+        self,
+    ) -> Result<(), MainHeapThreadProcessPageExitDrainFinishError<'attachment, 'main>> {
+        let Self {
+            engine,
+            page_map_lifecycle,
+        } = self;
+        if engine.thread_exit_route_is_terminal() {
+            return Err(MainHeapThreadProcessPageExitDrainFinishError::Retained(Self {
+                engine,
+                page_map_lifecycle,
+            }));
+        }
+        match engine.finish_after_all_free_thread_exit() {
+            Ok(()) => page_map_lifecycle
+                .finish()
+                .map_err(MainHeapThreadProcessPageExitDrainFinishError::PageMap),
+            Err(engine) => Err(MainHeapThreadProcessPageExitDrainFinishError::Retained(Self {
+                engine,
+                page_map_lifecycle,
+            })),
+        }
+    }
+}
+
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> {
     /// Couples a source-mutated post-exit engine back to its long process
     /// PageMap lifecycle as a terminal retained drain.
@@ -5907,35 +6050,6 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
         }
     }
 
-    /// Finishes the all-free half of source `_mi_theap_collect_abandon` and
-    /// then releases the paired process PageMap lifecycle. A successful return
-    /// leaves the borrowed attachment in `DrainingPages`; callers must finish
-    /// its explicit root/list/TLD boundary with
-    /// [`MainHeapThreadAttachment::finish_after_page_drain`].
-    pub(crate) fn finish(
-        self,
-    ) -> Result<(), MainHeapThreadProcessPageExitDrainFinishError<'attachment, 'main>> {
-        let Self {
-            engine,
-            page_map_lifecycle,
-        } = self;
-        if engine.thread_exit_route_is_terminal() {
-            return Err(MainHeapThreadProcessPageExitDrainFinishError::Retained(Self {
-                engine,
-                page_map_lifecycle,
-            }));
-        }
-        match engine.finish_after_all_free_thread_exit() {
-            Ok(()) => page_map_lifecycle
-                .finish()
-                .map_err(MainHeapThreadProcessPageExitDrainFinishError::PageMap),
-            Err(engine) => Err(MainHeapThreadProcessPageExitDrainFinishError::Retained(Self {
-                engine,
-                page_map_lifecycle,
-            })),
-        }
-    }
-
     #[cfg(test)]
     #[inline]
     fn test_direct_page(&self, index: usize) -> Option<*mut Page> {
@@ -5949,6 +6063,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitDrain<'attachment, 'main> 
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'attachment, 'main> MainHeapThreadProcessPageExitSingletonHandoff<'attachment, 'main> {
     #[cfg(test)]
     #[inline]
@@ -6005,6 +6120,7 @@ impl<'attachment, 'main> MainHeapThreadProcessPageExitSingletonHandoff<'attachme
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullMediumRoute<'main> {
     /// Routes one exact client free after the originating later Theap/TLD has
     /// completed source teardown. A full medium page starts unmapped and may
@@ -6116,6 +6232,7 @@ impl<'main> MainHeapThreadProcessPageExitFullMediumRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
     /// Routes one exact client free through the bounded homogeneous full arena
     /// singleton aggregate after the originating later Theap/TLD has torn
@@ -6225,6 +6342,7 @@ impl<'main> MainHeapThreadProcessPageExitFullSingletonPagesRoute<'main> {
 
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main> {
     /// Routes one exact client free through the bounded homogeneous full
     /// OS-aligned singleton aggregate after the originating later Theap/TLD
@@ -6337,6 +6455,7 @@ impl<'main> MainHeapThreadProcessPageExitFullOsSingletonPagesRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullMediumPagesRoute<'main> {
     /// Routes one exact client free through the bounded full-medium aggregate
     /// after the originating later Theap/TLD has torn down.
@@ -6449,6 +6568,7 @@ impl<'main> MainHeapThreadProcessPageExitFullMediumPagesRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main> {
     /// Routes one exact client free through the bounded mixed medium/large
     /// aggregate after the originating later Theap/TLD has torn down.
@@ -6563,6 +6683,7 @@ impl<'main> MainHeapThreadProcessPageExitFullMediumOrLargePagesRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<'main> {
     /// Routes one exact client free through the bounded mixed
     /// singleton/regular aggregate after the originating later Theap/TLD has
@@ -6691,6 +6812,7 @@ impl<'main> MainHeapThreadProcessPageExitFullSingletonOrRegularPagesRoute<'main>
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main> {
     /// Routes one exact client free through the bounded per-member full
     /// non-direct-small aggregate after the originating later Theap/TLD has
@@ -6808,6 +6930,7 @@ impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallPagesRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main> {
     /// Routes one exact client free through the bounded homogeneous full
     /// direct-small aggregate after the originating later Theap/TLD has torn
@@ -6925,6 +7048,7 @@ impl<'main> MainHeapThreadProcessPageExitFullDirectSmallPagesRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
     /// Routes one exact client free through the bounded full-large aggregate
     /// after the originating later Theap/TLD has torn down.
@@ -7038,6 +7162,7 @@ impl<'main> MainHeapThreadProcessPageExitFullLargePagesRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullLargeRoute<'main> {
     /// Routes one exact client free after the originating later Theap/TLD has
     /// completed source teardown. A full large page starts unmapped and may
@@ -7137,6 +7262,7 @@ impl<'main> MainHeapThreadProcessPageExitFullLargeRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullDirectSmallRoute<'main> {
     /// Routes one exact client free after the originating later Theap/TLD has
     /// completed source teardown. This full direct small page starts unmapped
@@ -7239,6 +7365,7 @@ impl<'main> MainHeapThreadProcessPageExitFullDirectSmallRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
     /// Routes one exact client free after the originating later Theap/TLD has
     /// completed source teardown. This full non-direct small page starts
@@ -7340,6 +7467,7 @@ impl<'main> MainHeapThreadProcessPageExitFullNonDirectSmallRoute<'main> {
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     /// Consumes this one mapped regular post-exit route into a fresh
     /// later-main page engine when it has a completed initially-nonfull
@@ -7713,7 +7841,7 @@ impl<'main> MainHeapThreadProcessPageExitMappedRegularRoute<'main> {
     }
 }
 
-#[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
+#[cfg(test)]
 impl<'attachment, 'main>
     MainHeapThreadProcessPageExitMappedRegularReabandonedAdoption<'attachment, 'main>
 {
@@ -7782,6 +7910,7 @@ impl<'attachment, 'main>
     }
 }
 
+#[cfg(any(test, not(target_arch = "x86_64")))]
 impl<'main> MainHeapThreadProcessPageExitMappedRegularPagesRoute<'main> {
     /// Consumes this aggregate route into a fresh later-main page engine after
     /// every source-distinct member but one has completed terminal release.
