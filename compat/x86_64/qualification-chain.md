@@ -142,6 +142,22 @@ and `memory.peak` one-sided 95% upper bounds at 1.00, and replays one
 `compat/allocator/x86_64_m9_gate.py`. The receipt names every unmet condition;
 publication reruns that evaluation and admits only a pass.
 
+The staged native promotion path separates the CORE runtime/M10 reader from
+the ALLOC source/M9 reader. Runtime qualification still requires the complete
+full chain. Allocator qualification retains its selected baseline or full
+profile; baseline keeps physical NUMA and 2-MiB/1-GiB pages explicitly
+unqualified. `allocator-m9 --validate-retained` rereads the canonical report
+without publishing or measuring, while ordinary M9 production remains writable.
+M10 qualification uses the canonical allocator work directory and the CORE
+tool environment; terminal qualification rejects custom work descendants.
+Direct CORE native closure remains partial and exits 3. The host composition
+must join both readers while source and concrete inputs remain unchanged.
+
+This native bridge is unqualified work in progress. Its host mutation and
+partial-readiness controls, installed native audit source/payload custody, and
+producer readability replay remain unfinished. It does not authorize changing
+the accepted-C default or claiming native promotion readiness.
+
 ## Running the chain
 
 ```sh

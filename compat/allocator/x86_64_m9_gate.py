@@ -358,8 +358,6 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
     if set(report["scenarios"]) != {scenario.name for scenario in codegen.SCENARIOS}:
         unmet.append("codegen audit scenario roster differs from the complete audit")
         return unmet
-    scratch_root = harness.ROOT / ".work"
-    scratch_root.mkdir(exist_ok=True)
     cpu = min(os.sched_getaffinity(0))
     for scenario in codegen.SCENARIOS:
         record = report["scenarios"][scenario.name]
@@ -368,7 +366,7 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
                 or set(record.get("comparison", {})) != set(scenario.regions)):
             unmet.append(f"codegen {scenario.name} does not describe the selected trace")
             continue
-        with tempfile.TemporaryDirectory(prefix="codegen-replay-", dir=scratch_root) as temporary:
+        with harness.temporary_directory(prefix="codegen-replay-") as temporary:
             observed = {lane: codegen.trace_scenario(artifacts / names[lane], images[lane], scenario,
                                                       Path(temporary), cpu) for lane in names}
         for region_index, region in enumerate(scenario.regions):
@@ -1029,16 +1027,56 @@ def evaluate(
     }
 
 
+def validate_retained(*, profile: str) -> dict[str, Any]:
+    """Requalify canonical retained inputs in the allocator producer image."""
+    if profile not in {'baseline', 'full'}:
+        raise harness.HarnessError('retained allocator qualification requires baseline or full')
+    head = engine.git_provenance()
+    if not head['clean']:
+        raise harness.HarnessError('retained allocator qualification requires clean source')
+    path = harness.ROOT / '.work/allocator-x86_64/target/compat/allocator/x86_64/m9-gate/report.json'
+    before = engine.file_record(path)
+    retained = harness.read_json(path)
+    if retained.get('qualification_profile') != profile:
+        raise harness.HarnessError('retained allocator profile differs')
+    m0 = harness.run_milestone0(offline=True, generate_contracts=False, check_only=True,
+                               architecture='x86_64', write_report=False)
+    if m0.get('status') != 'checked':
+        raise harness.HarnessError('allocator source contract check did not pass')
+    for contract, validate in (
+        (harness.M1_X86_64_FOUNDATIONS_CONTRACT, harness.validate_x86_64_m1_foundations_contract),
+        (harness.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT, harness.validate_x86_64_m2_memory_substrate_contract),
+    ):
+        validate(harness.read_json(contract), harness.load_pin())
+    reports = [harness.ROOT / row['path'] for row in retained['reports']]
+    codegen = retained['codegen_report']
+    fresh = evaluate(reports, harness.ROOT / codegen if codegen else None, profile=profile)
+    if fresh != retained or fresh['overall_status'] != 'passed':
+        raise harness.HarnessError('retained M9 differs from current qualified evidence')
+    if engine.file_record(path) != before or engine.git_provenance() != head:
+        raise harness.HarnessError('allocator source or retained report changed during validation')
+    return {'qualification_profile': profile, 'report': path.relative_to(harness.ROOT).as_posix(),
+            'report_sha256': before['sha256'], 'source': head, 'm0': 'checked'}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true",
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true",
                         help="validate the matrix manifest and critical roster without reading reports")
+    mode.add_argument('--validate-retained', action='store_true',
+                      help='requalify the canonical retained report without writing or measuring')
     parser.add_argument("--report", type=Path, action="append", default=None,
                         help="engine report to read (default: every --full report under the engine report directory)")
     parser.add_argument("--codegen-report", type=Path, default=None,
                         help="codegen audit report (default: the newest one)")
     parser.add_argument("--profile", choices=("full", "baseline"), default="full")
     arguments = parser.parse_args(argv)
+    if arguments.validate_retained:
+        if arguments.report is not None or arguments.codegen_report is not None:
+            raise harness.HarnessError('retained qualification selects canonical report inputs')
+        print(json.dumps(validate_retained(profile=arguments.profile), sort_keys=True))
+        return 0
     if arguments.check:
         manifest = engine.load_manifest()
         timed, memory = engine.selected_rows(manifest, engine.QUALIFIED_ROW_SET)

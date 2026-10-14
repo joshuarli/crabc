@@ -29,7 +29,8 @@ import run as harness
 
 
 ROOT = harness.ROOT
-ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m10-gate"
+ALLOCATOR_WORK = ROOT / '.work/allocator-x86_64'
+ARTIFACTS = ALLOCATOR_WORK / 'target/compat/allocator/x86_64/m10-gate'
 AUDIT_REPORT = ARTIFACTS / "native-artifact-audit.json"
 PRODUCTS = ROOT / ".work/allocator-x86_64/m10-native"
 BUILDERS = {"static": ROOT / "scripts/build_x86_64_owned_sysroot.py",
@@ -42,15 +43,15 @@ C_MEMBER = re.compile(r"^(?!.*\.rcgu\.o$)(?:[0-9a-f]+-static\.o|.*mimalloc.*)$")
 C_PROVENANCE_TOKENS = ("libmimalloc", "c_src/mimalloc", "/mimalloc.h", "pinned-mimalloc", "mimalloc-3.5.0/")
 C_DEPENDENCY = "libmimalloc-sys"
 PRIOR_REPORTS = {
-    "M1": harness.REPORT_ROOT / "x86_64/m1-foundations-latest.json",
-    "M2": harness.REPORT_ROOT / "x86_64/m2-memory-substrate-latest.json",
-    "M3": harness.REPORT_ROOT / "x86_64/m3-local-engine-latest.json",
-    "M4": harness.ARTIFACT_ROOT / "x86_64/m4-gate/report.json",
-    "M5": harness.ARTIFACT_ROOT / "x86_64/m5-gate/report.json",
-    "M6": harness.ARTIFACT_ROOT / "x86_64/m6-gate/report.json",
-    "M7": harness.ARTIFACT_ROOT / "x86_64/m7-gate/report.json",
-    "M8": harness.REPORT_ROOT / "x86_64/m8-gate/report.json",
-    "M9": harness.ARTIFACT_ROOT / "x86_64/m9-gate/report.json",
+    "M1": ALLOCATOR_WORK / "reports/allocator/x86_64/m1-foundations-latest.json",
+    "M2": ALLOCATOR_WORK / "reports/allocator/x86_64/m2-memory-substrate-latest.json",
+    "M3": ALLOCATOR_WORK / "reports/allocator/x86_64/m3-local-engine-latest.json",
+    "M4": ALLOCATOR_WORK / "target/compat/allocator/x86_64/m4-gate/report.json",
+    "M5": ALLOCATOR_WORK / "target/compat/allocator/x86_64/m5-gate/report.json",
+    "M6": ALLOCATOR_WORK / "target/compat/allocator/x86_64/m6-gate/report.json",
+    "M7": ALLOCATOR_WORK / "target/compat/allocator/x86_64/m7-gate/report.json",
+    "M8": ALLOCATOR_WORK / "reports/allocator/x86_64/m8-gate/report.json",
+    "M9": ALLOCATOR_WORK / "target/compat/allocator/x86_64/m9-gate/report.json",
 }
 ORACLE_INPUTS = ("compat/upstreams.toml", "crabc-mimalloc/UPSTREAM.md", "compat/allocator/x86_64-source-map-v3.5.0.json",
                  "compat/allocator/perf-x86_64/engine-c-backend.c")
@@ -189,11 +190,12 @@ def report_passed(path: Path, *, profile: str = "full") -> str | None:
     return None if status in {"passed", "complete"} else f"report status is {status!r}"
 
 
-def prior_milestones(m0: Mapping[str, Any], *, profile: str = "full") -> dict[str, Any]:
+def prior_milestones(m0: Mapping[str, Any], *, profile: str = "full",
+                     reports: Mapping[str, Path] | None = None) -> dict[str, Any]:
     unmet = [] if m0.get("status") == 0 else [f"M0: run.py --check exited {m0.get('status')}"]
     if profile == "correctness":
         return functional_milestones(m0)
-    for milestone, path in PRIOR_REPORTS.items():
+    for milestone, path in (PRIOR_REPORTS if reports is None else reports).items():
         reason = (report_passed(path, profile="baseline")
                   if profile == "baseline" and milestone in {"M6", "M7", "M9"} else report_passed(path))
         if reason:
@@ -352,16 +354,24 @@ def switch_condition(record: Mapping[str, Any], others_met: bool) -> dict[str, A
 
 def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, Any],
              qualification_receipt: Path | None = None,
-             profile: str = "full") -> dict[str, Any]:
+             profile: str = "full", prior_reports: Mapping[str, Path] | None = None,
+             native_artifact_audit: Path | None = None) -> dict[str, Any]:
     if profile not in {"full", "correctness", "baseline"}:
         raise harness.HarnessError(f"unknown M10 profile: {profile!r}")
     if profile == "correctness" and receipt is not None:
         raise harness.HarnessError("correctness profile does not consume performance receipts")
-    prerequisites = ([(prior_milestones(m0, profile="baseline") if profile == "baseline" else prior_milestones(m0)),
+    prior_arguments = {'profile': profile}
+    if prior_reports is not None:
+        if set(prior_reports) != set(PRIOR_REPORTS):
+            raise harness.HarnessError('explicit prior reports must retain every allocator milestone')
+        prior_arguments['reports'] = prior_reports
+    prerequisites = ([(prior_milestones(m0, **prior_arguments)),
                       promotion_gates(receipt)] if profile in {"full", "baseline"} else
                      [prior_milestones(m0, profile="correctness"), functional_convergence(),
                       _condition("m10.performance-deferred", [], "performance qualification is outside this profile")])
-    preconditions = [*prerequisites, native_artifacts(head), oracle_retained()]
+    artifacts = (native_artifacts(head) if native_artifact_audit is None
+                 else native_artifacts(head, native_artifact_audit))
+    preconditions = [*prerequisites, artifacts, oracle_retained()]
     ready = all(row["met"] for row in preconditions)
     conditions = [*preconditions, promotion_rerun(head, qualification_receipt)]
     record = switch_record()

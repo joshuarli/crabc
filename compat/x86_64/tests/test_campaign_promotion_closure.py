@@ -22,9 +22,18 @@ import test_qualification_prefix as prefix
 manifest, runner = prefix.manifest, prefix.runner
 import test_owned_static_sysroot_package as package_tests
 package = package_tests.package
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'compat/allocator/tests'))
+from test_perf_engine_x86_64 import fixture_elf
 import campaign_promotion_closure as closure
 from scripts import build_x86_64_owned_sysroot as static_builder
 from scripts import build_x86_64_owned_dynamic_sysroot as dynamic_builder
+
+
+def symbol_archive(definitions, *, undefined=()):
+    """Physical inspection fixture; no compiler or native execution."""
+    body = fixture_elf(definitions, executable=False, undefined=undefined)
+    header = f"{'symbols.o/':<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(body):<10}`\n".encode()
+    return b'!<arch>\n' + header + body + (b'\n' if len(body) % 2 else b'')
 
 
 class PromotionClosureTests(unittest.TestCase):
@@ -60,15 +69,11 @@ class PromotionClosureTests(unittest.TestCase):
         graph = {'edges': ['normal', 'build'], 'packages': ['libmimalloc-sys v0.1.49'],
                  'c_allocator_selected': True, 'native_allocator_selected': False}
         object_path = self.root / 'symbols.o'
-        source = self.root / 'symbols.S'
-        source.write_text('.text\n.globl malloc,free,mi_malloc,mi_free\n.hidden mi_malloc,mi_free\n'
-                          'malloc:\nfree:\nmi_malloc:\nmi_free:\nret\n.section .note.GNU-stack,"",@progbits\n')
-        subprocess.run(['gcc', '-c', str(source), '-o', str(object_path)], check=True)
+        self.accepted_symbols = {'malloc', 'free', 'mi_malloc', 'mi_free'}
+        object_path.write_bytes(fixture_elf(self.accepted_symbols, executable=False))
         tree = self.root / '.work/static-tree'
         package_tests.OwnedStaticSysrootPackageTests.populate_tree(self, tree)
-        subprocess.run(['ar', 'rcs', str(tree / 'usr/lib/native.a'), str(object_path)], check=True)
-        (tree / 'usr/lib/libc.a').write_bytes((tree / 'usr/lib/native.a').read_bytes())
-        (tree / 'usr/lib/native.a').unlink()
+        (tree / 'usr/lib/libc.a').write_bytes(symbol_archive(self.accepted_symbols))
         allocator_sources = {'libmimalloc-sys/c_src/mimalloc/v3/src/static.c': allocator_hash,
                              'include/crabc/stdlib.h': allocator_hash}
         self.static_provenance = {'dependency_graph': graph, 'allocator_lifecycle_test_audit': False,
@@ -95,8 +100,6 @@ class PromotionClosureTests(unittest.TestCase):
         self.dynamic_receipt = {'work': '.work/dynamic', 'source_sha256': self.source['content_sha256']}
         self.static_reader = self.start(patch.object(closure.static, 'load_publication', return_value=self.static_receipt))
         self.dynamic_reader = self.start(patch.object(closure.dynamic, 'load_publication', return_value=self.dynamic_receipt))
-        loader = self.root / 'loader.S'
-        loader.write_text('.text\n.globl loader_anchor\nloader_anchor: ret\n.section .note.GNU-stack,"",@progbits\n')
         self.provenance_paths = []
         for name in ('installed', 'second', 'extracted'):
             tree = self.root / '.work/dynamic' / name
@@ -119,8 +122,8 @@ class PromotionClosureTests(unittest.TestCase):
             path = tree / 'share/crabc/libc-shared.provenance.json'
             path.write_text(json.dumps(provenance))
             self.provenance_paths.append(path)
-            subprocess.run(['gcc', '-shared', '-nostdlib', str(object_path), '-o', str(tree / 'usr/lib/libc.so')], check=True)
-            subprocess.run(['gcc', '-shared', '-nostdlib', str(loader), '-o', str(tree / 'lib/ld-crabc-x86_64.so.1')], check=True)
+            (tree / 'usr/lib/libc.so').write_bytes(fixture_elf(self.accepted_symbols))
+            (tree / 'lib/ld-crabc-x86_64.so.1').write_bytes(fixture_elf({'loader_anchor'}))
 
     def start(self, patcher):
         value = patcher.start()
@@ -130,6 +133,56 @@ class PromotionClosureTests(unittest.TestCase):
     def complete(self, profile='correctness'):
         report = manifest.load_contract()
         return runner.run_chain(report, manifest.active_chain(profile)[-1], profile=profile)[0]
+
+    def native_product(self, kind):
+        tree = self.root / '.work' / f'native-{kind}'
+        (tree / 'usr/lib').mkdir(parents=True)
+        (tree / 'share/crabc').mkdir(parents=True)
+        (tree / 'lib').mkdir()
+        upstream = Path(closure.__file__).resolve().parents[2] / 'crabc-mimalloc/UPSTREAM.md'
+        target = self.root / 'crabc-mimalloc/UPSTREAM.md'
+        target.parent.mkdir(exist_ok=True)
+        target.write_bytes(upstream.read_bytes())
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        graph = {'target': static_builder.TARGET, 'features': [f'x86-owned-{kind}-native-shadow'],
+                 'edges': ['normal', 'build'], 'packages': ['crabc-mimalloc v0.3.0'],
+                 'c_allocator_selected': False, 'native_allocator_selected': True}
+        symbols = {'malloc', 'calloc', 'realloc', 'free', 'aligned_alloc', 'posix_memalign', 'malloc_usable_size'}
+        provenance = {'dependency_graph': graph, 'allocator_lifecycle_test_audit': False}
+        if kind == 'static':
+            provenance['allocator_backend'] = {'implementation': 'native Rust; production-shaped selection',
+                                               'upstream_sha256': digest, 'crate': None, 'compiler': None,
+                                               'source_and_header_sha256': None}
+            (tree / 'usr/lib/libc.a').write_bytes(symbol_archive(symbols))
+        else:
+            provenance.update(allocator_backend='native',
+                              native_allocator={'path': 'crabc-mimalloc/UPSTREAM.md', 'sha256': digest},
+                              accepted_allocator=None, allocator_headers=None, allocator_compiler=None,
+                              excluded_c_allocator=None)
+            (tree / 'usr/lib/libc.so').write_bytes(fixture_elf(
+                symbols | {'__crabc_x86_native_mimalloc_process_finalizer'}))
+            (tree / 'lib/ld-crabc-x86_64.so.1').write_bytes(fixture_elf({'loader_anchor'}))
+        (tree / 'share/crabc/manifest.json').write_text(json.dumps({'allocator_backend': 'native'}))
+        name = 'libc-static.provenance.json' if kind == 'static' else 'libc-shared.provenance.json'
+        (tree / 'share/crabc' / name).write_text(json.dumps(provenance))
+        return tree, provenance
+
+    def test_native_physical_products_require_owned_graphs_provenance_and_symbols(self):
+        for kind in ('static', 'dynamic'):
+            with self.subTest(kind=kind):
+                tree, provenance = self.native_product(kind)
+                closure.validate_native_product(tree, kind, provenance, ar=shutil.which('ar'), nm=shutil.which('nm'))
+                foreign = copy.deepcopy(provenance)
+                foreign['dependency_graph']['packages'].append('libmimalloc-sys v0.1.49')
+                with self.assertRaisesRegex(closure.PromotionClosureError, 'native dependency ownership'):
+                    closure.validate_native_product(tree, kind, foreign, ar=shutil.which('ar'), nm=shutil.which('nm'))
+                if kind == 'static':
+                    (tree / 'usr/lib/libc.a').write_bytes(symbol_archive(
+                        {'malloc', 'free'}, undefined={'mi_foreign'}))
+                else:
+                    (tree / 'lib/ld-crabc-x86_64.so.1').write_bytes(fixture_elf({'malloc'}))
+                with self.assertRaisesRegex(dynamic_builder.common.BuildError, 'native allocator ownership'):
+                    closure.validate_native_product(tree, kind, provenance, ar=shutil.which('ar'), nm=shutil.which('nm'))
 
     def test_current_complete_profile_and_accepted_c_physical_ownership_pass_before_public_policy(self):
         result = closure.validate_promotion_closure(self.complete())
@@ -161,7 +214,7 @@ class PromotionClosureTests(unittest.TestCase):
     def test_native_default_c_dependency_and_missing_reviewed_product_are_rejected(self):
         path = self.complete()
         with patch.object(static_builder, 'DEFAULT_ALLOCATOR_BACKEND', 'native'):
-            with self.assertRaisesRegex(closure.PromotionClosureError, 'accepted-C allocator default'):
+            with self.assertRaisesRegex(closure.PromotionClosureError, 'mixed or unqualified allocator defaults'):
                 closure.validate_promotion_closure(path)
         with patch.object(closure.static, 'load_publication', return_value=None):
             with self.assertRaisesRegex(closure.PromotionClosureError, 'publications are required'):
@@ -181,26 +234,17 @@ class PromotionClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(closure.PromotionClosureError, 'product source differs'):
             closure.validate_promotion_closure(path)
         self.dynamic_receipt['source_sha256'] = self.source['content_sha256']
-        foreign = self.root / 'foreign.S'
-        foreign.write_text('.text\n.globl _mi_foreign\n_mi_foreign: ret\n.section .note.GNU-stack,"",@progbits\n')
         product = self.provenance_paths[-1].parents[2]
-        subprocess.run(['gcc', '-shared', '-nostdlib', str(self.root / 'symbols.o'), str(foreign),
-                        '-o', str(product / 'usr/lib/libc.so')], check=True)
+        (product / 'usr/lib/libc.so').write_bytes(fixture_elf(self.accepted_symbols | {'_mi_foreign'}))
         with self.assertRaisesRegex(closure.PromotionClosureError, 'accepted-C allocator symbol ownership'):
             closure.validate_promotion_closure(path)
 
     def test_unowned_static_c_allocator_import_is_rejected(self):
         path = self.complete()
         tree = self.root / '.work/static-tree'
-        assembly = self.root / 'dormant.S'
-        object_path = self.root / 'dormant.o'
         symbol = 'mi_foreign'
-        assembly.write_text('.text\n.globl dormant_c_member\n'
-                            f'dormant_c_member: call {symbol}; ret\n'
-                            '.section .note.GNU-stack,"",@progbits\n')
-        subprocess.run(['gcc', '-c', str(assembly), '-o', str(object_path)], check=True)
         archive = tree / 'usr/lib/libc.a'
-        subprocess.run(['ar', 'rcs', str(archive), str(object_path)], check=True)
+        archive.write_bytes(symbol_archive(self.accepted_symbols | {'dormant_c_member'}, undefined={symbol}))
         imports = subprocess.check_output(['nm', '--undefined-only', str(archive)]).decode()
         self.assertIn(symbol, imports)
         manifest_path = tree / 'share/crabc/manifest.json'

@@ -11,7 +11,9 @@ Docker merely to discover that the runtime is not ready.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -23,6 +25,7 @@ import campaign_report
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 GATE_BY_COMMAND = {
     "static": "static_product",
     "dynamic": "dynamic_product",
@@ -187,6 +190,112 @@ def product_machine_gate_command(gate_name: str, gate: Mapping[str, Any]) -> lis
     return verified_command_tokens(expected)
 
 
+def promotion_input_snapshot(receipt: Path) -> dict:
+    """Freeze concrete inputs across the two image-owned validation phases."""
+    import campaign_promotion_closure as closure
+
+    def work_path(value):
+        path = Path(value)
+        if str(path).startswith('/workspace/'):
+            path = ROOT / path.relative_to('/workspace')
+        elif not path.is_absolute():
+            path = ROOT / path
+        require('..' not in path.parts and path.is_relative_to(ROOT / '.work')
+                and path.resolve() == path and path.exists(), 'promotion input is not a physical checkout work path')
+        return path
+
+    allocator = ROOT / '.work/allocator-x86_64'
+    roots = {work_path(receipt).parent,
+             work_path(allocator / 'reports/allocator/x86_64'),
+             work_path(allocator / 'target/compat/allocator/x86_64'),
+             work_path(allocator / 'integrated'), work_path(allocator / 'm10-native'),
+             work_path(allocator / 'allocator-cache')}
+    for pointer in (ROOT / '.work/x86_64/owned-static-qualification.json',
+                    ROOT / '.work/x86_64/owned-dynamic-qualification.json',
+                    ROOT / '.work/x86_64/qualification-evidence/performance.release/performance-release.json'):
+        roots.add(work_path(pointer))
+        selection = json.loads(pointer.read_text())
+        selected = work_path(selection['receipt'])
+        roots.add(selected.parent)
+        document = json.loads(selected.read_text())
+        if 'work' in document:
+            roots.add(work_path(document['work']))
+        # Performance receipts identify the concrete upstream input files.
+        # Current owning readers still validate each record, not this traversal.
+        def inputs(value):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if key == 'path' and isinstance(item, str) and (
+                            item.startswith(('.work/', '/workspace/.work/', str(ROOT / '.work') + '/'))):
+                        roots.add(work_path(item))
+                    else:
+                        inputs(item)
+            elif isinstance(value, list):
+                for item in value:
+                    inputs(item)
+        inputs(document.get('inputs', {}))
+    sealed = {}
+    for root in sorted(roots):
+        digest = hashlib.sha256()
+        for path in [root, *sorted(root.rglob('*'))] if root.is_dir() else [root]:
+            stat = path.lstat()
+            digest.update(path.relative_to(ROOT).as_posix().encode() + b'\0')
+            digest.update(f'{stat.st_mode}:{stat.st_mtime_ns}:{stat.st_ctime_ns}'.encode() + b'\0')
+            if path.is_symlink():
+                require(path.resolve().is_relative_to(ROOT / '.work'), 'promotion input link escapes work storage')
+                digest.update(os.readlink(path).encode() + b'\0')
+                if path.resolve().is_file():
+                    digest.update(hashlib.sha256(path.read_bytes()).digest())
+            elif path.is_file():
+                with path.open('rb') as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+            else:
+                require(path.is_dir(), 'promotion input contains a special file')
+        sealed[root.relative_to(ROOT).as_posix()] = digest.hexdigest()
+    return {'source': closure.qualification.source_identity(), 'inputs': sealed}
+
+
+def execute_native_promotion(core_command: list[str], receipt: Path) -> int:
+    """Join image-owned readers only while their concrete inputs stay unchanged."""
+    before = promotion_input_snapshot(receipt)
+    core = subprocess.run(core_command, cwd=ROOT, check=False, capture_output=True, text=True)
+    if core.returncode != 3:
+        print(core.stdout, end='')
+        print(core.stderr, end='', file=sys.stderr)
+        require(False, 'native CORE phase did not return its pending allocator result')
+    partial = json.loads(core.stdout)
+    require(set(partial) == {'qualification_profile', 'source', 'qualification_receipt',
+                            'functional_readiness', 'native_allocator_pending',
+                            'allocator_qualification_profile', 'public_support'}
+            and partial['qualification_profile'] == 'full'
+            and partial['functional_readiness'] is False and partial['native_allocator_pending'] is True
+            and partial['source'] == before['source']
+            and partial['qualification_receipt'] == '/workspace/' + receipt.relative_to(ROOT).as_posix()
+            and partial['allocator_qualification_profile'] in {'baseline', 'full'}
+            and type(partial['public_support']) is bool,
+            'native CORE phase result differs from its expected partial contract')
+    require(promotion_input_snapshot(receipt) == before, 'promotion inputs changed after CORE validation')
+    profile = partial['allocator_qualification_profile']
+    command = ['./compat/allocator/run-x86_64.sh', 'allocator-m9', '--profile', profile, '--validate-retained']
+    allocator = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
+    if allocator.returncode != 0:
+        print(allocator.stdout, end='')
+        print(allocator.stderr, end='', file=sys.stderr)
+        return allocator.returncode
+    result = json.loads(allocator.stdout)
+    report = ROOT / '.work/allocator-x86_64/target/compat/allocator/x86_64/m9-gate/report.json'
+    require(set(result) == {'qualification_profile', 'report', 'report_sha256', 'source', 'm0'}
+            and result['qualification_profile'] == profile and result['m0'] == 'checked'
+            and result['report'] == report.relative_to(ROOT).as_posix()
+            and result['report_sha256'] == hashlib.sha256(report.read_bytes()).hexdigest()
+            and result['source'] == {'head': before['source']['revision'], 'clean': True, 'dirty_paths': []},
+            'native allocator phase result lacks its current report and source binding')
+    require(promotion_input_snapshot(receipt) == before, 'promotion source or inputs changed across image validation')
+    print('x86 campaign promotion closure: PASS (CORE runtime and ALLOC allocator readers)')
+    return 0
+
+
 def execute_terminal_machine_gate(gate_name: str, gate: Mapping[str, Any], qualification_receipt: Path | None = None) -> int:
     """Run the one explicitly registered terminal boundary for a passed gate."""
     if gate_name == "qualification":
@@ -197,6 +306,9 @@ def execute_terminal_machine_gate(gate_name: str, gate: Mapping[str, Any], quali
                 "promotion machine gate is not the pinned closure reader")
         require(qualification_receipt is not None, "promotion requires an explicit qualification receipt")
         command = verified_command_tokens(campaign_report.PROMOTION_RUNNER_COMMAND) + ["--qualification-receipt", str(qualification_receipt)]
+        from scripts import build_x86_64_owned_sysroot as builder
+        if builder.DEFAULT_ALLOCATOR_BACKEND == 'native':
+            return execute_native_promotion(command, qualification_receipt)
         label = "source-bound promotion closure reader"
     elif gate_name in PRODUCT_MACHINE_GATE_COMMANDS:
         command = product_machine_gate_command(gate_name, gate)

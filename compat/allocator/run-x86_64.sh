@@ -37,7 +37,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
   allocator-m7 [--qualification-profile baseline|full] [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
-  allocator-m9 [--profile baseline|full] [--check|--reader-tests|--report PATH...]
+  allocator-m9 [--profile baseline|full] [--check|--reader-tests|--validate-retained|--report PATH...]
   allocator-divergence-evidence [--profile correctness|full] [--check|--reader-tests]
   allocator-m10 [--profile correctness|baseline|full] [--check [--performance-receipt PATH] [--qualification-receipt PATH]|--build-audit|--reader-tests]
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-concurrent-init | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
@@ -378,6 +378,12 @@ run_in_container() {
     fi
     local -a capability_args=()
     local execution_image="$ALLOCATOR_IMAGE_ID"
+    local qualification_context=false
+    if [ "${1:-}" = --with-pinned-core-qualification ]; then
+        qualification_context=true
+        shift
+        set -- --with-pinned-core-image "$@"
+    fi
     if [ "${1:-}" = --with-pinned-core-image ]; then
         shift
         local core_image_id
@@ -409,15 +415,31 @@ run_in_container() {
     # Receipts and executions must name the same inspected bytes even if the
     # development tag changes between inspection and container creation.
     execution_image="$image_id"
+    local -a context_args=(
+        --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo
+        --env CARGO_TARGET_DIR=/workspace/.work/allocator-x86_64/target
+        --env CRABC_WORK_DIR=/workspace/.work/allocator-x86_64
+        --env TMPDIR=/workspace/.work/allocator-x86_64/tmp
+    )
+    if [ "$qualification_context" = true ]; then
+        local core_work="$ROOT_DIR/.work/x86_64"
+        mkdir -p "$core_work/cargo" "$core_work/tmp"
+        context_args=(
+            --user "$(id -u):$(id -g)"
+            --env CARGO_HOME=/workspace/.work/x86_64/cargo
+            --env CRABC_WORK_DIR=/workspace/.work/x86_64
+            --env TMPDIR=/workspace/.work/x86_64/tmp
+            --env RUSTUP_HOME=/opt/rustup
+            --env PATH=/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin
+            --volume "$WORK_DIR/allocator-cache:/workspace/.work/x86_64/allocator-cache:ro"
+        )
+    fi
     # Keep allocator aborts from creating core files in the shared checkout.
     docker run --rm --init "${reader_args[@]}" "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
         --ulimit core=0:0 \
         --platform "$PLATFORM" \
         --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo \
-        --env CARGO_TARGET_DIR=/workspace/.work/allocator-x86_64/target \
-        --env CRABC_WORK_DIR=/workspace/.work/allocator-x86_64 \
-        --env TMPDIR=/workspace/.work/allocator-x86_64/tmp \
+        "${context_args[@]}" \
         --env CRABC_ALLOCATOR_EVIDENCE_ARCH=x86_64 \
         --env CRABC_EXECUTION_MODE=native \
         --env CRABC_HOST_ARCH=x86_64 \
@@ -612,8 +634,13 @@ case "$command" in
         set -- "${hardware_qualification_arguments[@]}"
         # Qualification rereads retained measurements without measuring.
         m9_physical_reader=false
+        m9_retained_reader=false
         if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
             m9_command=(python3 compat/allocator/x86_64_m9_gate.py --check)
+        elif [ "$#" -eq 1 ] && [ "$1" = --validate-retained ]; then
+            m9_physical_reader=true
+            m9_retained_reader=true
+            m9_command=(python3 compat/allocator/x86_64_m9_gate.py --validate-retained)
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             [ "$hardware_qualification_selected" = false ] || fail "reader-tests does not select a qualification profile"
             m9_command=(python3 compat/allocator/tests/test_x86_64_m9_gate.py)
@@ -632,7 +659,16 @@ case "$command" in
         fi
         ensure_image
         if [ "$m9_physical_reader" = true ]; then
-            run_in_container --with-pinned-core-image "${m9_command[@]}"
+            # Engine reports require their allocator producer's tool/image
+            # identity. Integrated reports retain their separate core-product
+            # provenance and are inspected here without building those products.
+            if [ "$m9_retained_reader" = true ]; then
+                [ "$WORK_DIR" = "$WORK_BOUNDARY" ] \
+                    || fail "retained M9 qualification requires the canonical allocator work directory"
+                run_in_container --read-only-retained-inputs "${m9_command[@]}"
+            else
+                run_in_container "${m9_command[@]}"
+            fi
         else
             run_in_container "${m9_command[@]}"
         fi
@@ -672,7 +708,21 @@ case "$command" in
             m10_command+=(--profile "$m10_profile")
         fi
         ensure_image
-        run_in_container "${m10_command[@]}"
+        if [ "${1:-}" != --reader-tests ]; then
+            [ "$WORK_DIR" = "$WORK_BOUNDARY" ] \
+                || fail "M10 qualification requires the canonical allocator work directory"
+            mkdir -p "$WORK_DIR/target/compat/allocator/x86_64/m10-gate"
+            [ -w "$WORK_DIR/target/compat/allocator/x86_64/m10-gate" ] \
+                || fail "canonical M10 output directory is not writable by the invoking user"
+        fi
+        if { [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; } \
+            || { [ "$m10_profile" = correctness ] && [ "${1:-}" = --check ]; }; then
+            run_in_container "${m10_command[@]}"
+        else
+            # The full runtime chain and release reader own the core image's
+            # tools and environment; allocator evidence keeps its own paths.
+            run_in_container --with-pinned-core-qualification "${m10_command[@]}"
+        fi
         ;;
     allocator-divergence-evidence)
         divergence_profile=correctness

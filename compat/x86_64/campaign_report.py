@@ -647,7 +647,8 @@ def build_report(qualification_receipt: Path | None = None) -> dict[str, Any]:
         import campaign_promotion_closure
         try:
             closure = campaign_promotion_closure.validate_promotion_closure(qualification_receipt)
-            closure_error = None
+            closure_error = (None if closure.get('functional_readiness') is True else
+                             'native allocator validation awaits the host promotion check')
         except (RuntimeError, OSError, KeyError, ValueError, TypeError) as error:
             closure_error = str(error)
 
@@ -699,7 +700,8 @@ def build_report(qualification_receipt: Path | None = None) -> dict[str, Any]:
             completion_ids,
             families,
             has_machine_gate=True,
-            contract_status=(promotion_product_contract_status if closure is not None else "planned"),
+            contract_status=(promotion_product_contract_status
+                             if closure is not None and closure.get('functional_readiness') is True else "planned"),
         ),
     }
     gates["promotion"].update(machine_gate_command=PROMOTION_RUNNER_COMMAND, closure=closure, closure_error=closure_error)

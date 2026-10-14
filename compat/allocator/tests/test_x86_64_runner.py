@@ -225,7 +225,7 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PYTHONDONTWRITEBYTECODE=1", self.capture.read_bytes().split(b"\0"))
 
-    def test_m9_physical_reader_uses_the_pinned_core_image(self):
+    def test_m9_physical_readers_use_allocator_image_and_only_retained_is_read_only(self):
         import sys
 
         sys.path.insert(0, str(ROOT / "compat/x86_64"))
@@ -236,13 +236,37 @@ fi
                 result = self.launch("allocator-m9", *arguments)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = self.capture.read_bytes().split(b"\0")
-                self.assertEqual(args[args.index(b"python3") - 1], core_image.CORE_IMAGE_ID.encode())
+                self.assertEqual(args[args.index(b"python3") - 1], b"sha256:" + b"4" * 64)
+                self.assertNotIn(b"--read-only", args)
+        result = self.launch("allocator-m9", "--profile", "baseline", "--validate-retained")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertEqual(args[args.index(b"python3") - 1], b"sha256:" + b"4" * 64)
+        self.assertIn(b"--read-only", args)
+        self.assertIn(b"--validate-retained", args)
         for option in ("--check", "--reader-tests"):
             with self.subTest(option=option):
                 result = self.launch("allocator-m9", option)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = self.capture.read_bytes().split(b"\0")
                 self.assertEqual(args[args.index(b"python3") - 1], b"sha256:4444444444444444444444444444444444444444444444444444444444444444")
+
+    def test_m10_qualified_check_uses_core_environment_and_rejects_work_override(self):
+        import sys
+        sys.path.insert(0, str(ROOT / "compat/x86_64"))
+        import core_image
+        result = self.launch("allocator-m10", "--profile", "baseline", "--check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertEqual(args[args.index(b"python3") - 1], core_image.CORE_IMAGE_ID.encode())
+        for item in (b"CRABC_WORK_DIR=/workspace/.work/x86_64", b"CARGO_HOME=/workspace/.work/x86_64/cargo",
+                     b"RUSTUP_HOME=/opt/rustup", b"PATH=/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin"):
+            self.assertIn(item, args)
+        self.assertIn(b"--user", args)
+        self.assertIn(str(self.boundary).encode() + b"/allocator-cache:/workspace/.work/x86_64/allocator-cache:ro", args)
+        result = self.launch("allocator-m10", "--profile", "baseline", "--check", work=str(self.boundary / "nested"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("canonical allocator work directory", result.stderr)
 
     def test_opt_in_allocator_budget_forwards_cargo_and_caps_the_container(self):
         result = self.launch(
