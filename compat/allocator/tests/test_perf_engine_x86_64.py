@@ -13,6 +13,7 @@ import json
 import sys
 import tempfile
 import os
+import struct
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -31,6 +32,78 @@ C_LINK_MAP = ("Linker script and memory map\n"
 RUST_LINK_MAP = ("Linker script and memory map\n"
                  " .text.engine 0x0000000000401000 0x40 /b/libcrabc_allocator_engine_rust_backend.a(core.o)\n"
                  " .rodata.engine 0x0000000000402000 0x8 /b/libcrabc_allocator_engine_rust_backend.a(core.o)\n")
+
+TEST_EXECUTION = {"execution_mode": "native", "host_architecture": "x86_64", "image_id": "sha256:" + "1" * 64}
+TEST_GIT = {"head": "0" * 40, "clean": True, "dirty_paths": []}
+TEST_TOOLS = {"rustc": "rustc synthetic", "cargo": "cargo synthetic", "musl-gcc": "gcc synthetic",
+              "readelf": "readelf synthetic"}
+
+
+def test_host(cpus):
+    return {"allowed_cpus": list(range(32)), "cpu_model": "synthetic", "kernel_release": "6.1",
+            "logical_cpus": 32, "measurement_cpus": list(cpus), "scaling_governors": {"0": "performance"},
+            "transparent_hugepage": "always [madvise] never"}
+
+
+def install_qualification_environment(test, modules):
+    """Supply external image/tool/Git/host facts while exercising the actual reader."""
+    for module in modules:
+        original_tool = module.require_tool
+        for name, value in (("git_provenance", lambda: copy.deepcopy(TEST_GIT)),
+                            ("tool_versions", lambda: dict(TEST_TOOLS)),
+                            ("host_provenance", test_host),
+                            ("require_tool", lambda name, original=original_tool:
+                             "/usr/bin/musl-gcc" if name == "musl-gcc" else original(name))):
+            patcher = patch.object(module, name, value)
+            patcher.start()
+            test.addCleanup(patcher.stop)
+        patcher = patch.object(module.native, "require_native_x86_64", return_value=dict(TEST_EXECUTION))
+        patcher.start()
+        test.addCleanup(patcher.stop)
+
+
+def fixture_elf(symbols, *, executable=True, undefined=()):
+    """Construct a real x86-64 ELF symbol table without compiling or executing native code."""
+    text_offset = 120 if executable else 64
+    text_address = 0x400000 + text_offset if executable else 0
+    names = b"\0"
+    entries = [bytes(24)]
+    for symbol in sorted(set(symbols) | set(undefined)):
+        offset = len(names)
+        names += symbol.encode() + b"\0"
+        defined = symbol not in undefined
+        entries.append(struct.pack("<IBBHQQ", offset, 0x12, 0, int(defined), text_address if defined else 0, 1))
+    section_names = b"\0.text\0.strtab\0.symtab\0.shstrtab\0"
+    body = b"\xc3" + names + b"".join(entries) + section_names
+    section_offset = (text_offset + len(body) + 7) & ~7
+    ident = b"\x7fELF\x02\x01\x01" + bytes(9)
+    header = ident + struct.pack("<HHIQQQIHHHHHH", 2 if executable else 1, 62, 1,
+                                text_address, 64 if executable else 0, section_offset, 0, 64,
+                                56 if executable else 0, 1 if executable else 0, 64, 5, 4)
+    sections = [bytes(64),
+                struct.pack("<IIQQQQIIQQ", 1, 1, 6, text_address, text_offset, 1, 0, 0, 1, 0),
+                struct.pack("<IIQQQQIIQQ", 7, 3, 0, 0, text_offset + 1, len(names), 0, 0, 1, 0),
+                struct.pack("<IIQQQQIIQQ", 15, 2, 0, 0, text_offset + 1 + len(names), 24 * len(entries), 2, 1, 8, 24),
+                struct.pack("<IIQQQQIIQQ", 23, 3, 0, 0, text_offset + 1 + len(names) + 24 * len(entries),
+                            len(section_names), 0, 0, 1, 0)]
+    size = section_offset + 64 * len(sections)
+    segment = struct.pack("<IIQQQQQQ", 1, 5, 0, 0x400000, 0x400000, size, size, 4096) if executable else b""
+    return header + segment + body + bytes(section_offset - text_offset - len(body)) + b"".join(sections)
+
+
+TEST_ENGINE_SYMBOLS = frozenset(f"crabc_allocator_engine_{name}" for name in (
+    "process_init", "thread_init", "thread_done", "malloc", "calloc", "realloc", "free", "aligned",
+    "usable_size", "heap_new", "heap_malloc", "heap_destroy", "subproc_new", "subproc_add_current_thread",
+    "subproc_destroy"))
+TEST_C_SYMBOLS = frozenset(("mi_malloc", "mi_malloc_aligned", "mi_calloc", "mi_calloc_aligned",
+                           "mi_realloc", "mi_free", "mi_usable_size"))
+TEST_C_ELF = fixture_elf(TEST_ENGINE_SYMBOLS | TEST_C_SYMBOLS)
+TEST_RUST_ELF = fixture_elf(TEST_ENGINE_SYMBOLS)
+TEST_RUST_OBJECT = fixture_elf(TEST_ENGINE_SYMBOLS, executable=False)
+TEST_FIXTURE_OBJECT = fixture_elf({"main"}, executable=False, undefined=TEST_ENGINE_SYMBOLS)
+_member = ("backend.o/".ljust(16) + "0".ljust(12) + "0".ljust(6) + "0".ljust(6)
+           + "644".ljust(8) + str(len(TEST_RUST_OBJECT)).ljust(10) + "`\n").encode()
+TEST_RUST_ARCHIVE = b"!<arch>\n" + _member + TEST_RUST_OBJECT + (b"\n" if len(TEST_RUST_OBJECT) % 2 else b"")
 
 
 def proc_snapshot(rss_kib: int, pss_kib: int, *, maps: bool = True) -> dict[str, object]:
@@ -298,6 +371,11 @@ class LinkMapTests(unittest.TestCase):
 
 
 class CargoMessageTests(unittest.TestCase):
+    def test_encoded_flags_cannot_override_the_selected_engine_configuration(self) -> None:
+        with patch.dict(os.environ, {"CARGO_ENCODED_RUSTFLAGS": "-Copt-level=0"}):
+            with self.assertRaisesRegex(engine.HarnessError, "CARGO_ENCODED_RUSTFLAGS"):
+                engine.rust_engine_cargo_command(engine.load_manifest(), engine.ROOT / ".work/target")
+
     def test_reports_each_library_rlib_once(self) -> None:
         lines = [
             json.dumps({"reason": "compiler-artifact", "target": {"name": "crabc-core"}, "filenames": ["/t/libcrabc_core-1.rlib", "/t/libcrabc_core-1.rmeta"]}),
@@ -351,29 +429,29 @@ def synthetic_report(rust_cost_factor: float = 1.0, peak_hook: bool = True) -> d
     report: dict[str, object] = {
         "schema": engine.SCHEMA, "kind": engine.KIND, "label": "synthetic", "mode": "full", "row_set": "matrix",
         "peak_hook": peak_hook, "status": "ok", "failed_rows": [],
-        "native_execution_provenance": {"execution_mode": "native", "host_architecture": "x86_64"},
+        "native_execution_provenance": dict(TEST_EXECUTION),
         "provenance": {
-            "git": {"head": "0" * 40, "clean": True, "dirty_paths": []},
-            "host": {"allowed_cpus": list(range(32)), "cpu_model": "synthetic", "kernel_release": "6.1",
-                     "logical_cpus": 32, "measurement_cpus": cpus, "scaling_governors": {"0": "performance"},
-                     "transparent_hugepage": "always [madvise] never"},
-            "tools": {"rustc": "rustc synthetic", "musl-gcc": "gcc synthetic"},
+            "git": copy.deepcopy(TEST_GIT),
+            "host": test_host(cpus),
+            "tools": dict(TEST_TOOLS),
             "inputs": {**engine.sealed_inputs(), "mimalloc": {
                 "archive": {"path": "archive", "bytes": 1, "sha256": pin["sha256"]},
                 **{key: pin[key] for key in ("version", "tag", "revision")}}},
         },
         "rows": {}, "memory_rows": {},
     }
-    fixture_hash = hashlib.sha256(b"shared fixture object").hexdigest()
+    fixture_hash = hashlib.sha256(TEST_FIXTURE_OBJECT).hexdigest()
     report["lanes"] = {
         "shared_fixture_object_sha256": fixture_hash,
-        "pinned_c": {"executable": {"artifact": {"filename": "engine-fixture-pinned-c", "bytes": 8,
-                                                  "sha256": hashlib.sha256(b"C binary").hexdigest()}},
+        "pinned_c": {"executable": {"artifact": {"filename": "engine-fixture-pinned-c", "bytes": len(TEST_C_ELF),
+                                                  "sha256": hashlib.sha256(TEST_C_ELF).hexdigest()},
+                                    "elf": dict(engine.shared.EXPECTED_ELF), "type": "static-non-pie-exec"},
                      "link_map": {"filename": "engine-fixture-pinned-c.map", "bytes": len(C_LINK_MAP.encode()),
                                   "sha256": hashlib.sha256(C_LINK_MAP.encode()).hexdigest()},
                      "size_attribution_bytes": {"allocator": {"text": 32, "rodata": 16, "data": 0}}},
-        "rust_engine": {"executable": {"artifact": {"filename": "engine-fixture-rust-engine", "bytes": 11,
-                                                     "sha256": hashlib.sha256(b"Rust binary").hexdigest()}},
+        "rust_engine": {"executable": {"artifact": {"filename": "engine-fixture-rust-engine", "bytes": len(TEST_RUST_ELF),
+                                                     "sha256": hashlib.sha256(TEST_RUST_ELF).hexdigest()},
+                                       "elf": dict(engine.shared.EXPECTED_ELF), "type": "static-non-pie-exec"},
                         "link_map": {"filename": "engine-fixture-rust-engine.map", "bytes": len(RUST_LINK_MAP.encode()),
                                      "sha256": hashlib.sha256(RUST_LINK_MAP.encode()).hexdigest()},
                         "size_attribution_bytes": {"allocator": {"text": 64, "rodata": 8, "data": 0}}},
@@ -425,7 +503,7 @@ def synthetic_report(rust_cost_factor: float = 1.0, peak_hook: bool = True) -> d
             "lanes": {lane: {"samples": samples} for lane, samples in lanes.items()},
             "comparison": engine.memory_comparison(lanes["pinned_c"], lanes["rust_engine"], seed=seed),
         }
-    report["uncontended_host"] = engine.uncontended_host_record(idle_host(cpus))
+    report["uncontended_host"] = engine.uncontended_host_record(idle_host(list(range(8))))
     return report
 
 
@@ -440,19 +518,55 @@ class QualifiedReportTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
+        install_qualification_environment(self, (engine,))
         self.report = synthetic_report()
 
-    def write(self, report: dict[str, object]) -> Path:
-        path = Path(self.directory.name) / "report.json"
+    def write(self, report: dict[str, object], *, filename="report.json") -> Path:
+        path = Path(self.directory.name) / filename
         artifacts = path.with_suffix(".artifacts")
         artifacts.mkdir(exist_ok=True)
-        for name, content in (("engine-fixture-c.o", b"shared fixture object"),
-                              ("engine-fixture-rust.o", b"shared fixture object"),
-                              ("engine-fixture-pinned-c", b"C binary"),
-                              ("engine-fixture-rust-engine", b"Rust binary"),
+        for name, content in (("engine-fixture-c.o", TEST_FIXTURE_OBJECT),
+                              ("engine-fixture-rust.o", TEST_FIXTURE_OBJECT),
+                              ("engine-fixture-pinned-c", TEST_C_ELF),
+                              ("engine-fixture-rust-engine", TEST_RUST_ELF),
+                              ("libcrabc_allocator_engine_rust_backend.a", TEST_RUST_ARCHIVE),
                               ("engine-fixture-pinned-c.map", C_LINK_MAP.encode()),
                               ("engine-fixture-rust-engine.map", RUST_LINK_MAP.encode())):
             (artifacts / name).write_bytes(content)
+        manifest = engine.load_manifest()
+        source = engine.ROOT / ".work/tmp/oracle-source"
+        compiler = "/usr/bin/musl-gcc"
+        record = lambda command: {"command": command, "status": 0, "stdout": "", "stderr": ""}
+        commands, _, _ = engine.c_lane_commands(compiler, manifest, source, artifacts)
+        c_lane, rust_lane = report["lanes"]["pinned_c"], report["lanes"]["rust_engine"]
+        c_lane.setdefault("build_commands", [record(command) for command in commands])
+        target = engine.ROOT / ".work/target/perf-engine"
+        command, environment = engine.rust_engine_cargo_command(manifest, target)
+        rlib = target / engine.RUST_TARGET / "release/deps/libcrabc_mimalloc-fixture.rlib"
+        cargo = record(command)
+        cargo.update(rustflags=environment["RUSTFLAGS"], full_stdout=json.dumps({
+            "reason": "compiler-artifact", "manifest_path": str(engine.ROOT / "crabc-mimalloc/Cargo.toml"),
+            "target": {"name": "crabc_mimalloc", "kind": ["lib"], "src_path": str(engine.ROOT / "crabc-mimalloc/src/lib.rs")},
+            "filenames": [str(rlib)],
+            "features": ["default"], "profile": {"test": False},
+        }))
+        rust_lane.setdefault("cargo", [cargo])
+        library = artifacts / "libcrabc_allocator_engine_rust_backend.a"
+        rustc = record(engine.rust_backend_rustc_command(manifest, {"crabc_mimalloc": rlib}, library))
+        rustc["stderr"] = "note: native-static-libs: -lc\n"
+        rust_lane.setdefault("rustc", [rustc])
+        rust_lane.setdefault("native_static_libraries", ["-lc"])
+        rust_lane.setdefault("static_library", engine.artifact_record(library))
+        fixture = artifacts / "engine-fixture-rust.o"
+        rust_lane.setdefault("fixture_link", [record([
+            compiler, *manifest["shared_build"]["fixture_flags"], "-I", str(engine.FIXTURE_ROOT),
+            "-c", str(engine.FIXTURE), "-o", str(fixture),
+        ]), record([
+            compiler, *manifest["shared_build"]["link_flags"], f"-Wl,-Map,{artifacts / 'engine-fixture-rust-engine.map'}",
+            str(fixture), str(library), "-lc", "-o", str(artifacts / "engine-fixture-rust-engine"),
+        ])])
+        for lane in engine.LANES:
+            report["lanes"][lane].setdefault("allocation_entries", manifest["lanes"][lane]["allocation_entries"])
         path.write_text(json.dumps(report), encoding="utf-8")
         return path
 
@@ -473,6 +587,182 @@ class QualifiedReportTests(unittest.TestCase):
         self.assertLess(abs(metrics["memory"]["geometric_mean_peak_upper"]["pss"] - 1.0), 0.1)
         self.assertLess(abs(metrics["memory"]["critical_peak_upper"][roster[0]]["pss"] - 1.0), 0.1)
         self.assertEqual(set(validated["identity"]), {"source", "configuration", "host"})
+
+    def test_qualified_reader_accepts_cargo_primary_and_build_output_layouts(self) -> None:
+        path = self.write(self.report)
+        lane = self.report["lanes"]["rust_engine"]
+        cargo = lane["cargo"][0]
+        target = engine.ROOT / ".work/allocator-x86_64/target/perf-engine"
+        cargo["command"], _ = engine.rust_engine_cargo_command(engine.load_manifest(), target)
+        release = target / engine.RUST_TARGET / "release"
+        # Retained Cargo output puts the primary rlib beside deps and emits
+        # build-directory metadata in the same event. Only relocate its root.
+        event = {
+            "reason": "compiler-artifact",
+            "package_id": f"path+file://{engine.ROOT}/crabc-mimalloc#0.3.0",
+            "manifest_path": str(engine.ROOT / "crabc-mimalloc/Cargo.toml"),
+            "target": {
+                "kind": ["lib"], "crate_types": ["lib"], "name": "crabc_mimalloc",
+                "src_path": str(engine.ROOT / "crabc-mimalloc/src/lib.rs"), "edition": "2021",
+                "doc": True, "doctest": True, "test": True,
+            },
+            "profile": {"opt_level": "3", "debuginfo": 0, "debug_assertions": False,
+                        "overflow_checks": False, "test": False},
+            "features": ["default"],
+            "filenames": [str(release / "libcrabc_mimalloc.rlib"), str(
+                release / "build/crabc-mimalloc/179cbc74d64d7564/out/libcrabc_mimalloc-179cbc74d64d7564.rmeta")],
+            "executable": None, "fresh": True,
+        }
+        cargo["full_stdout"] = json.dumps(event)
+        self.assertEqual(engine.cargo_rlibs(cargo["full_stdout"]),
+                         {"crabc_mimalloc": release / "libcrabc_mimalloc.rlib"})
+        lane["rustc"][0]["command"] = engine.rust_backend_rustc_command(
+            engine.load_manifest(), engine.cargo_rlibs(cargo["full_stdout"]),
+            path.with_suffix(".artifacts") / "libcrabc_allocator_engine_rust_backend.a",
+        )
+        path.write_text(json.dumps(self.report), encoding="utf-8")
+        self.assertEqual(engine.inspect_full_report(engine.ROOT, path)["unmet"], [])
+
+    def test_qualified_reader_rejects_cargo_artifacts_outside_selected_release(self) -> None:
+        with tempfile.TemporaryDirectory(dir=engine.ROOT / ".work/tmp") as scratch:
+            target = Path(scratch) / "target"
+            release = target / engine.RUST_TARGET / "release"
+            release.mkdir(parents=True)
+            outside = Path(scratch) / "outside"
+            outside.mkdir()
+            (release / "redirect").symlink_to(outside, target_is_directory=True)
+            for candidate in (
+                target / engine.RUST_TARGET / "debug/libcrabc_mimalloc.rlib",
+                target / engine.RUST_TARGET / "release-other/libcrabc_mimalloc.rlib",
+                release / "../release/libcrabc_mimalloc.rlib",
+                release / "redirect/libcrabc_mimalloc.rlib",
+            ):
+                with self.subTest(candidate=str(candidate)):
+                    report = copy.deepcopy(self.report)
+                    path = self.write(report)
+                    lane = report["lanes"]["rust_engine"]
+                    cargo = lane["cargo"][0]
+                    cargo["command"], _ = engine.rust_engine_cargo_command(engine.load_manifest(), target)
+                    event = json.loads(cargo["full_stdout"])
+                    event["filenames"] = [str(candidate)]
+                    cargo["full_stdout"] = json.dumps(event)
+                    lane["rustc"][0]["command"] = engine.rust_backend_rustc_command(
+                        engine.load_manifest(), engine.cargo_rlibs(cargo["full_stdout"]),
+                        path.with_suffix(".artifacts") / "libcrabc_allocator_engine_rust_backend.a",
+                    )
+                    path.write_text(json.dumps(report), encoding="utf-8")
+                    unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+                    self.assertTrue(any("Cargo library artifact escapes" in item for item in unmet), unmet)
+
+    def test_qualified_reader_rejects_current_git_tool_and_image_drift(self) -> None:
+        current_git = copy.deepcopy(self.report["provenance"]["git"])
+        current_tools = copy.deepcopy(self.report["provenance"]["tools"])
+        execution = {"execution_mode": "native", "host_architecture": "x86_64",
+                     "image_id": "sha256:" + "1" * 64}
+        self.report["native_execution_provenance"] = execution
+        with patch.object(engine, "git_provenance", return_value=current_git), \
+                patch.object(engine, "tool_versions", return_value=current_tools), \
+                patch.object(engine.native, "require_native_x86_64", return_value=execution):
+            for field, value, expected in (
+                ("git", {**current_git, "head": "9" * 40}, "Git"),
+                ("tools", {**current_tools, "rustc": "another compiler"}, "tools"),
+            ):
+                report = copy.deepcopy(self.report)
+                report["provenance"][field] = value
+                with self.subTest(field=field):
+                    self.assert_named(report, expected)
+            report = copy.deepcopy(self.report)
+            report["native_execution_provenance"]["image_id"] = "sha256:" + "2" * 64
+            self.assert_named(report, "image")
+
+    def test_qualified_reader_joins_contention_and_row_cpu_rosters(self) -> None:
+        report = copy.deepcopy(self.report)
+        report["uncontended_host"] = engine.uncontended_host_record(idle_host([0]))
+        self.assert_named(report, "CPU roster")
+
+    def test_qualified_reader_names_missing_current_image_admission(self) -> None:
+        with patch.object(engine.native, "require_native_x86_64",
+                          side_effect=engine.native.HarnessError("immutable image identity missing")):
+            self.assert_named(copy.deepcopy(self.report), "native image binding: immutable image identity missing")
+
+    def test_qualified_reader_rejects_rehashed_non_elf_product(self) -> None:
+        report = copy.deepcopy(self.report)
+        path = self.write(report)
+        binary = path.with_suffix(".artifacts") / "engine-fixture-rust-engine"
+        binary.write_bytes(b"not an ELF executable")
+        report["lanes"]["rust_engine"]["executable"]["artifact"] = engine.artifact_record(binary)
+        path.write_text(json.dumps(report), encoding="utf-8")
+        unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+        self.assertTrue(any("ELF" in item for item in unmet), unmet)
+
+    def test_qualified_reader_rejects_rehashed_shared_objects_without_engine_imports(self) -> None:
+        report = copy.deepcopy(self.report)
+        path = self.write(report)
+        content = fixture_elf({"main"}, executable=False)
+        for name in ("engine-fixture-c.o", "engine-fixture-rust.o"):
+            (path.with_suffix(".artifacts") / name).write_bytes(content)
+        report["lanes"]["shared_fixture_object_sha256"] = hashlib.sha256(content).hexdigest()
+        path.write_text(json.dumps(report), encoding="utf-8")
+        unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+        self.assertTrue(any("opaque engine entry imports" in item for item in unmet), unmet)
+
+    def test_qualified_reader_rejects_rehashed_foreign_engine_symbols_and_archive(self) -> None:
+        for name, content, expected in (
+            ("engine-fixture-rust-engine", fixture_elf(TEST_ENGINE_SYMBOLS | {"mi_malloc"}), "borrows a C"),
+            ("engine-fixture-rust-engine", fixture_elf({"main"}), "entry ownership"),
+            ("libcrabc_allocator_engine_rust_backend.a", b"not a static archive", "static-library ownership"),
+        ):
+            with self.subTest(name=name, expected=expected):
+                report = copy.deepcopy(self.report)
+                path = self.write(report)
+                product = path.with_suffix(".artifacts") / name
+                product.write_bytes(content)
+                lane = report["lanes"]["rust_engine"]
+                if name.endswith(".a"):
+                    lane["static_library"] = engine.artifact_record(product)
+                else:
+                    lane["executable"]["artifact"] = engine.artifact_record(product)
+                path.write_text(json.dumps(report), encoding="utf-8")
+                unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+                self.assertTrue(any(expected in item for item in unmet), unmet)
+
+    def test_qualified_reader_rejects_changed_source_build_arguments(self) -> None:
+        for field in ("build_commands", "cargo", "rustc", "fixture_link", "artifact_authority"):
+            with self.subTest(field=field):
+                report = copy.deepcopy(self.report)
+                path = self.write(report)
+                if field == "artifact_authority":
+                    event = json.loads(report["lanes"]["rust_engine"]["cargo"][0]["full_stdout"])
+                    event["manifest_path"] = str(engine.ROOT / "foreign/Cargo.toml")
+                    report["lanes"]["rust_engine"]["cargo"][0]["full_stdout"] = json.dumps(event)
+                else:
+                    lane = "pinned_c" if field == "build_commands" else "rust_engine"
+                    report["lanes"][lane][field][0]["command"].append("--foreign-build")
+                path.write_text(json.dumps(report), encoding="utf-8")
+                unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+                self.assertTrue(any("source build ownership" in item for item in unmet), unmet)
+
+    def test_qualified_reader_reads_the_current_fixture_bytes(self) -> None:
+        fixture = Path(self.directory.name) / "current-fixture.c"
+        fixture.write_bytes(engine.FIXTURE.read_bytes())
+        with patch.object(engine, "FIXTURE", fixture):
+            report = synthetic_report()
+            path = self.write(report)
+            fixture.write_bytes(fixture.read_bytes() + b"\n")
+            unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+        self.assertTrue(any("source seal: fixture differs" in item for item in unmet), unmet)
+
+    def test_qualified_reader_rejects_rows_outside_the_idle_cpu_roster(self) -> None:
+        report = copy.deepcopy(self.report)
+        entry = report["rows"]["local_scaling_1"]
+        entry["cpus"] = [31]
+        for lane in engine.LANES:
+            for sample in entry["lanes"][lane]["samples"]:
+                sample["cpus"] = [31]
+                sample["arguments"] = engine.fixture_arguments(
+                    engine.load_manifest()["rows"][0], batch_divisor=1, cpus=[31],
+                ) + ["ready_fd=3", "control_fd=4"]
+        self.assert_named(report, "CPU roster is outside contention evidence")
 
     def test_rejects_forged_size_attribution_and_code_size_with_retained_maps(self) -> None:
         report = copy.deepcopy(self.report)

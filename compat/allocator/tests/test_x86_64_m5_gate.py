@@ -6,6 +6,8 @@ from __future__ import annotations
 import copy
 import ctypes
 import importlib.util
+import io
+import json
 import os
 import select
 import signal
@@ -14,6 +16,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 from pathlib import Path
 
@@ -26,6 +29,13 @@ gate = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 harness = gate.harness
+ENGINE_FIXTURE_SPEC = importlib.util.spec_from_file_location(
+    "m5_engine_report_fixtures", ROOT / "compat/allocator/tests/test_perf_engine_x86_64.py",
+)
+assert ENGINE_FIXTURE_SPEC is not None and ENGINE_FIXTURE_SPEC.loader is not None
+engine_fixtures = importlib.util.module_from_spec(ENGINE_FIXTURE_SPEC)
+sys.modules[ENGINE_FIXTURE_SPEC.name] = engine_fixtures
+ENGINE_FIXTURE_SPEC.loader.exec_module(engine_fixtures)
 
 
 class M5GateContractTests(unittest.TestCase):
@@ -485,9 +495,32 @@ raise SystemExit(gate.run_native_test_helper(
 
     def test_missing_evidence_requires_a_reviewed_blocker(self) -> None:
         unblocked = copy.deepcopy(self.contract)
-        self.gate_record(unblocked, "m5.codegen-performance")["blocked_by"] = []
+        unblocked["evidence"]["differential:reclaim-on-free"]["command"] = None
         with self.assertRaisesRegex(harness.HarnessError, "missing evidence without a blocker"):
             self.validate(unblocked)
+
+    def test_early_engine_proof_uses_the_canonical_internal_reader(self) -> None:
+        summary = self.validate()
+        command = summary["runnable_evidence"]["perf:engine-early-proof"]
+        self.assertEqual(command, [
+            "python3", "compat/allocator/x86_64_m5_gate.py", "--internal-engine-proof",
+        ])
+        self.assertEqual(self.gate_record(self.contract, "m5.codegen-performance")["blocked_by"], [])
+
+    def test_early_engine_proof_uses_the_normal_executed_command_record(self) -> None:
+        command = self.validate()["runnable_evidence"]["perf:engine-early-proof"]
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            artifacts = Path(temporary)
+            result = {"command": command, "status": 0, "stdout": "qualified\n", "stderr": ""}
+            with mock.patch.object(gate.harness, "command_record", return_value=result) as execute:
+                records = gate.run_evidence({"perf:engine-early-proof": command}, artifacts)
+        execute.assert_called_once_with(
+            command, cwd=gate.harness.ROOT, timeout_seconds=gate.EVIDENCE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(records["perf:engine-early-proof"]["command"], command)
+        self.assertEqual(records["perf:engine-early-proof"]["status"], "passed")
 
     def test_malformed_evidence_or_gate_identity_is_rejected(self) -> None:
         both = copy.deepcopy(self.contract)
@@ -525,7 +558,7 @@ raise SystemExit(gate.run_native_test_helper(
         for entry in self.contract["gates"]:
             expected = "blocked" if entry["id"] in summary["blocked_gate_ids"] else "passed"
             self.assertEqual(by_id[entry["id"]], expected, entry["id"])
-        self.assertEqual(report["overall_status"], "unmet")
+        self.assertEqual(report["overall_status"], "passed")
 
         failed = dict(passed, **{"ratchet:architecture": {"status": "failed"}})
         report = gate.gate_report(self.contract, summary, failed)
@@ -589,6 +622,21 @@ raise SystemExit(gate.run_native_test_helper(
         with self.assertRaisesRegex(harness.HarnessError, "defer only"):
             self.validate(weakened)
 
+    def test_full_cli_executes_and_records_the_early_engine_reader(self) -> None:
+        summary = self.validate()
+        records = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        command = summary["runnable_evidence"]["perf:engine-early-proof"]
+        records["perf:engine-early-proof"]["command"] = command
+        with mock.patch.object(gate.harness, "require_native_x86_64"), \
+                mock.patch.object(gate.Path, "mkdir"), \
+                mock.patch.object(gate, "run_evidence", return_value=records) as execute, \
+                mock.patch.object(gate, "report_provenance", return_value={}), \
+                mock.patch.object(gate.harness, "write_json") as write:
+            self.assertEqual(gate.main([]), 0)
+        execute.assert_called_once_with(summary["runnable_evidence"], gate.ARTIFACTS)
+        report = write.call_args.args[1]
+        self.assertEqual(report["evidence"]["perf:engine-early-proof"]["command"], command)
+
     def test_correctness_cli_executes_only_functional_evidence_in_a_separate_report_directory(self) -> None:
         summary = self.validate()
         records = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
@@ -626,11 +674,13 @@ raise SystemExit(gate.run_native_test_helper(
             with mock.patch.object(gate, "ARTIFACTS", artifacts.with_name("m5-gate")), \
                     mock.patch.object(gate.harness, "read_json", side_effect=read) as read_json, \
                     mock.patch.object(audit_reader, "correctness_evidence_unmet", return_value=[]) as classify, \
+                    mock.patch.object(gate, "read_engine_early_proof") as engine_replay, \
                     mock.patch.object(audit_reader, "physical_codegen_unmet") as replay:
                 self.assertEqual(gate.read_report(profile="correctness"), report)
                 classify.assert_called_once_with("m5", report, artifacts, None, qualification_profile="correctness")
                 read_json.assert_called_once_with(report_path)
                 replay.assert_not_called()
+                engine_replay.assert_not_called()
                 classify.return_value = ["report lacks current clean source"]
                 with self.assertRaisesRegex(harness.HarnessError, "current clean source"):
                     gate.read_report(profile="correctness")
@@ -669,6 +719,100 @@ raise SystemExit(gate.run_native_test_helper(
             self.assertTrue(passed, message)
             passed, message = gate.check_receipt(dict(check, case_prefix="stress-"), root)
             self.assertFalse(passed)
+
+
+class M5EngineEarlyProofTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.directory = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(self.directory.cleanup)
+        self.report_root = Path(self.directory.name)
+        engine_fixtures.install_qualification_environment(self, (gate.engine, engine_fixtures.engine))
+        for engine_module in (gate.engine, engine_fixtures.engine):
+            patcher = mock.patch.object(engine_module, "BOOTSTRAP_RESAMPLES", 24)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        report_root_patcher = mock.patch.object(gate.engine, "REPORT_ROOT", self.report_root)
+        report_root_patcher.start()
+        self.addCleanup(report_root_patcher.stop)
+        self.fixture_writer = engine_fixtures.QualifiedReportTests(
+            "test_a_complete_uncontended_report_returns_the_release_gate_shape",
+        )
+        self.fixture_writer.directory = self.directory
+
+    def write_report(self, report: dict[str, object]) -> Path:
+        return self.fixture_writer.write(report, filename="engine.json")
+
+    def test_early_proof_accepts_a_qualified_full_matrix_and_reports_both_bounds(self) -> None:
+        report = engine_fixtures.synthetic_report()
+        path = self.write_report(report)
+        row_bounds = gate.read_engine_early_proof()
+        row_names = engine_fixtures.engine.load_manifest()["architecture_rows"]
+        self.assertEqual(set(row_bounds), {row_names["single_thread"], row_names["four_thread"]})
+        self.assertTrue(all(bound >= gate.EARLY_ENGINE_MINIMUM_LOWER_95 for bound in row_bounds.values()))
+
+        output = io.StringIO()
+        with mock.patch.object(gate.harness, "require_native_x86_64"), redirect_stdout(output):
+            self.assertEqual(gate.main(["--internal-engine-proof"]), 0)
+        self.assertIn("engine.json", output.getvalue())
+        self.assertIn("wall-throughput Rust/C one-sided 95% lower bound", output.getvalue())
+        self.assertIn(row_names["single_thread"], output.getvalue())
+        self.assertIn(row_names["four_thread"], output.getvalue())
+        self.assertTrue(path.is_file())
+
+    def test_early_proof_rejects_a_missing_engine_report(self) -> None:
+        with self.assertRaisesRegex(harness.HarnessError, "engine report is missing"):
+            gate.read_engine_early_proof()
+
+    def test_early_proof_uses_only_the_validated_report_snapshot(self) -> None:
+        path = self.write_report(engine_fixtures.synthetic_report(rust_cost_factor=5.0))
+        original_read = Path.read_text
+        replaced = False
+
+        def replace_after_read(current, *args, **kwargs):
+            nonlocal replaced
+            text = original_read(current, *args, **kwargs)
+            if current == path and not replaced:
+                replaced = True
+                unqualified = json.loads(text)
+                unqualified["mode"] = "smoke"
+                for row in unqualified["rows"].values():
+                    row["comparison"]["throughput_ratio_rust_over_c"]["bootstrap_5th_percentile"] = 1.0
+                path.write_text(json.dumps(unqualified), encoding="utf-8")
+            return text
+
+        with mock.patch.object(Path, "read_text", replace_after_read):
+            with self.assertRaisesRegex(harness.HarnessError, "below the M5 floor|changed"):
+                gate.read_engine_early_proof()
+
+    def test_early_proof_rejects_reports_without_the_full_qualified_matrix(self) -> None:
+        cases = []
+        smoke = engine_fixtures.synthetic_report()
+        smoke["mode"], smoke["row_set"] = "smoke", "architecture"
+        cases.append((smoke, "not --full --set matrix"))
+
+        stale = engine_fixtures.synthetic_report()
+        stale["provenance"]["inputs"]["fixture"]["sha256"] = "0" * 64
+        cases.append((stale, "source seal: fixture differs"))
+
+        contended = engine_fixtures.synthetic_report()
+        evidence = engine_fixtures.idle_host(list(range(8)))
+        evidence["windows"][0] = engine_fixtures.idle_window("start", list(range(8)), load1=37.3)
+        contended["uncontended_host"] = engine_fixtures.engine.uncontended_host_record(evidence)
+        cases.append((contended, "host is not uncontended"))
+
+        for report, expected in cases:
+            with self.subTest(expected=expected):
+                self.write_report(report)
+                with self.assertRaisesRegex(harness.HarnessError, expected):
+                    gate.read_engine_early_proof()
+
+    def test_early_proof_rejects_a_full_report_below_the_local_floor(self) -> None:
+        path = self.write_report(engine_fixtures.synthetic_report(rust_cost_factor=5.0))
+        gate.engine.validate_qualified_full_report(gate.engine.ROOT, path)
+        with self.assertRaisesRegex(harness.HarnessError, "below the M5 floor"):
+            gate.read_engine_early_proof()
 
 
 if __name__ == "__main__":

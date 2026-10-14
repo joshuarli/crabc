@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 from contextlib import contextmanager, nullcontext
+import math
 import os
 import re
 import shlex
@@ -90,6 +91,9 @@ ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m5-gate"
 QUALIFICATION_PROFILES = ("full", "correctness")
 CORRECTNESS_DEFERRED_GATE = "m5.codegen-performance"
 CORRECTNESS_DEFERRED_EVIDENCE = ["codegen:hot-path-audit", "perf:engine-early-proof"]
+EARLY_ENGINE_PROOF_EVIDENCE = "perf:engine-early-proof"
+EARLY_ENGINE_MINIMUM_LOWER_95 = 0.25
+INTERNAL_ENGINE_PROOF_MODE = "--internal-engine-proof"
 
 
 class NativeProcessCancelled(Exception):
@@ -340,6 +344,12 @@ def native_test_group_command(targets: Sequence[str]) -> list[str]:
     ]
 
 
+def engine_early_proof_command() -> list[str]:
+    """Read the canonical qualified engine report through this gate's CLI."""
+
+    return ["python3", harness.relative(Path(__file__)), INTERNAL_ENGINE_PROOF_MODE]
+
+
 def native_test_feature_profiles(target: str) -> tuple[tuple[str, ...], ...]:
     """Return every required audit-feature profile for one native target."""
 
@@ -547,6 +557,10 @@ def validate_contract(
             runnable[evidence_id] = native_test_group_command(targets)
         elif shape == {"command"}:
             command = record["command"]
+            if evidence_id == EARLY_ENGINE_PROOF_EVIDENCE and command != engine_early_proof_command():
+                raise harness.HarnessError(
+                    "M5 early engine proof must execute the canonical qualified-report reader"
+                )
             if command is None:
                 continue
             command = _string_list(command, f"evidence {evidence_id} command")
@@ -736,9 +750,31 @@ def read_report(path: Path | None = None, *, profile: str = "full") -> dict[str,
         }))
         if unmet:
             raise harness.HarnessError("M5 structural audit is unmet: " + "; ".join(unmet))
+        read_engine_early_proof()
         return report
     except (KeyError, TypeError, ValueError, OSError) as error:
         raise harness.HarnessError(f"M5 report lacks current physical evidence: {error}") from error
+
+
+def read_engine_early_proof() -> dict[str, float]:
+    """Require the canonical qualified full matrix and its local wall bounds."""
+
+    report_path = engine.REPORT_ROOT / "engine.json"
+    try:
+        bounds = engine.qualified_architecture_bounds(engine.ROOT, report_path)
+    except (harness.HarnessError, engine.shared.HarnessError) as error:
+        raise harness.HarnessError(f"M5 early engine proof report is invalid: {error}") from error
+    for row_name, bound in bounds.items():
+        if isinstance(bound, bool) or not isinstance(bound, (int, float)) or not math.isfinite(bound):
+            raise harness.HarnessError(
+                f"qualified engine row {row_name} has an invalid wall-throughput lower 95% bound"
+            )
+        if bound < EARLY_ENGINE_MINIMUM_LOWER_95:
+            raise harness.HarnessError(
+                f"qualified engine row {row_name} wall-throughput Rust/C lower 95% bound {bound:.6g} "
+                f"is below the M5 floor {EARLY_ENGINE_MINIMUM_LOWER_95:.2f}"
+            )
+    return bounds
 
 
 def check_receipt(check: Mapping[str, str], root: Path = harness.ROOT) -> tuple[bool, str]:
@@ -805,6 +841,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--gate", choices=GATE_IDS,
         help="execute and classify only the evidence of one gate")
     mode.add_argument(INTERNAL_NATIVE_TEST_MODE, nargs="+", metavar="TARGET", help=argparse.SUPPRESS)
+    mode.add_argument(INTERNAL_ENGINE_PROOF_MODE, action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--qualification-profile", choices=QUALIFICATION_PROFILES, default="full",
         help="correctness requires functional evidence and defers codegen optimization and throughput")
     arguments = parser.parse_args(argv)
@@ -829,6 +866,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if status != 0:
             print("M5 native target evidence failed", file=sys.stderr)
         return status
+    if arguments.internal_engine_proof:
+        bounds = read_engine_early_proof()
+        report_path = harness.relative(engine.REPORT_ROOT / "engine.json")
+        for row_name, bound in bounds.items():
+            print(
+                f"{report_path}: {row_name} wall-throughput Rust/C one-sided 95% lower bound "
+                f"{bound:.6g} >= {EARLY_ENGINE_MINIMUM_LOWER_95:.2f}"
+            )
+        return 0
     artifacts = ARTIFACTS if arguments.qualification_profile == "full" else ARTIFACTS.with_name("m5-correctness-gate")
     artifacts.mkdir(parents=True, exist_ok=True)
     selected = contract

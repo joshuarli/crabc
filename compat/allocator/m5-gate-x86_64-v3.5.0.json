@@ -331,8 +331,12 @@
       "scope": "Executed steady-state hot paths and static reachability of the Rust engine against pinned C: instruction counts, helper calls, atomics, divisions, and any syscall, panic, or formatting code on the traced paths."
     },
     "perf:engine-early-proof": {
-      "command": null,
-      "scope": "`./compat/allocator/run-x86_64.sh allocator-perf-engine`: native versus pinned-C local, four-thread, and cross-thread engine throughput on an uncontended host."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m5_gate.py",
+        "--internal-engine-proof"
+      ],
+      "scope": "Reads the canonical engine.json only through the qualified full-report reader, then checks the manifest's single-thread and four-thread local wall-throughput lower bounds against the M5 floor. The full matrix retains its cross-thread rows and requires current source, physical products, tools, host, and uncontended-host evidence."
     },
     "receipt:libc-shadow-pthread-teardown": {
       "receipt": {
@@ -465,14 +469,12 @@
     {
       "id": "m5.codegen-performance",
       "required": true,
-      "acceptance": "Active-target codegen of the hot paths is audited against pinned C and early engine throughput meets the plan's local-path structural gate.",
+      "acceptance": "Active-target codegen of the hot paths is audited against pinned C and the qualified engine matrix meets the executable M5 local wall-throughput floor.",
       "evidence": [
         "codegen:hot-path-audit",
         "perf:engine-early-proof"
       ],
-      "blocked_by": [
-        "Early performance proof needs the local-path structural gate of 0.25x pinned C; the engine measures about 0.04x (lane alloc-perf), and qualifying measurements need an uncontended host."
-      ]
+      "blocked_by": []
     }
   ],
   "native_tests_owned_elsewhere": {

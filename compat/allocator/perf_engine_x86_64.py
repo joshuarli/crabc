@@ -120,6 +120,12 @@ def _load_shared_helpers():
 
 
 shared = _load_shared_helpers()
+_native_spec = importlib.util.spec_from_file_location("crabc_allocator_engine_native_reader", ALLOCATOR_ROOT / "run.py")
+if _native_spec is None or _native_spec.loader is None:
+    raise RuntimeError("cannot load the allocator native provenance reader")
+native = importlib.util.module_from_spec(_native_spec)
+sys.modules[_native_spec.name] = native
+_native_spec.loader.exec_module(native)
 HarnessError = shared.HarnessError
 sha256_file = shared.sha256_file
 file_record = shared.file_record
@@ -920,6 +926,8 @@ def c_lane_commands(
 
 def rust_engine_cargo_command(manifest: Mapping[str, Any], target_directory: Path) -> tuple[list[str], dict[str, str]]:
     environment = dict(os.environ)
+    if environment.get("CARGO_ENCODED_RUSTFLAGS"):
+        raise HarnessError("engine configuration cannot be overridden by CARGO_ENCODED_RUSTFLAGS")
     # RUSTFLAGS replaces the checkout's `-C link-dead-code` build flag, which
     # affects only final links; the engine is linked by the rustc step below.
     environment["RUSTFLAGS"] = " ".join(manifest["lanes"]["rust_engine"]["engine_rustflags"])
@@ -1004,6 +1012,8 @@ def audit_static_executable(readelf: str, binary: Path) -> dict[str, Any]:
     require_success(headers, "fixture program header inspection")
     if "INTERP" in str(headers["stdout"]) or "DYNAMIC" in str(headers["stdout"]):
         raise HarnessError(f"engine fixture is not a static executable: {binary.name}")
+    if "LOAD" not in str(headers["stdout"]):
+        raise HarnessError(f"engine fixture ELF has no loadable segment: {binary.name}")
     elf_type = re.search(r"(?m)^\s*Type:\s*(\S+)", str(header["stdout"]))
     if elf_type is None or elf_type.group(1) != "EXEC":
         raise HarnessError(f"engine fixture is not a non-PIE executable: {binary.name}")
@@ -1083,7 +1093,7 @@ def build_lanes(manifest: Mapping[str, Any], source: Path, build: Path, *, compi
         [cargo_command], cwd=ROOT, description="crabc-mimalloc release rlib build",
         environment=cargo_environment, keep_stdout=True,
     )
-    rlibs = cargo_rlibs(cargo_records[0].pop("full_stdout"))
+    rlibs = cargo_rlibs(cargo_records[0]["full_stdout"])
     static_library = build / "libcrabc_allocator_engine_rust_backend.a"
     rustc_command = rust_backend_rustc_command(manifest, rlibs, static_library)
     rustc_records = run_build_commands([rustc_command], cwd=ROOT, description="Rust engine backend staticlib build")
@@ -1203,7 +1213,7 @@ def tool_versions(*, musl_compiler: str = "musl-gcc") -> dict[str, str]:
     return versions
 
 
-HARNESS_FILES = (ALLOCATOR_ROOT / "perf_engine_x86_64.py", ALLOCATOR_ROOT / "perf_x86_64.py")
+HARNESS_FILES = (ALLOCATOR_ROOT / "perf_engine_x86_64.py", ALLOCATOR_ROOT / "perf_x86_64.py", ALLOCATOR_ROOT / "run.py")
 ENGINE_MANIFESTS = (ROOT / "Cargo.toml", ROOT / "crabc-mimalloc/Cargo.toml", ROOT / "crabc-core/Cargo.toml")
 ENGINE_SOURCE_ROOTS = (ROOT / "crabc-mimalloc/src", ROOT / "crabc-core/src")
 
@@ -1533,6 +1543,45 @@ def source_seal_unmet(inputs: Mapping[str, Any]) -> list[str]:
     return unmet
 
 
+def qualification_binding_unmet(report: Mapping[str, Any]) -> list[str]:
+    """Join recorded source, tools, image and CPUs to the current reader's authority."""
+
+    provenance = report["provenance"]
+    unmet = []
+    current_git = git_provenance()
+    if current_git.get("clean") is not True or provenance.get("git") != current_git:
+        unmet.append("Git provenance differs from the current clean commit")
+    if provenance.get("tools") != tool_versions():
+        unmet.append("recorded tools differ from the current pinned tools")
+    try:
+        current_execution = native.require_native_x86_64(require_image_identity=True)
+        native.validate_native_execution_provenance(
+            report.get("native_execution_provenance"), expected_image_id=current_execution["image_id"],
+        )
+    except native.HarnessError as error:
+        unmet.append(f"native image binding: {error}")
+
+    host = provenance["host"]
+    cpus = host.get("measurement_cpus")
+    allowed = host.get("allowed_cpus")
+    evidence = report.get("uncontended_host", {}).get("evidence", {})
+    if (not isinstance(cpus, list) or not cpus or any(type(cpu) is not int or cpu < 0 for cpu in cpus)
+            or len(set(cpus)) != len(cpus) or not isinstance(allowed, list)
+            or any(type(cpu) is not int or cpu < 0 for cpu in allowed)
+            or len(set(allowed)) != len(allowed) or not set(cpus) <= set(allowed)
+            or evidence.get("measurement_cpus") != cpus):
+        unmet.append("host and contention CPU roster differ or lack allowed measurement CPUs")
+        return unmet
+    if host != host_provenance(cpus):
+        unmet.append("recorded host differs from the current measurement host")
+    for group in ("rows", "memory_rows"):
+        for name, row in report.get(group, {}).items():
+            row_cpus = row.get("cpus", [])
+            if not isinstance(row_cpus, list) or any(cpu not in cpus for cpu in row_cpus):
+                unmet.append(f"{group} row {name} CPU roster is outside contention evidence")
+    return unmet
+
+
 def snapshot_replay_unmet(snapshot: Any, context: str, *, maps: bool) -> list[str]:
     """Reparse the captured /proc input that supplied each memory metric."""
 
@@ -1636,6 +1685,7 @@ def qualification_unmet(report: Mapping[str, Any], manifest: Mapping[str, Any] |
     if git.get("clean") is not True:
         unmet.append(f"measured checkout was not a clean Git tree: {git.get('dirty_paths', git.get('status'))}")
     unmet.extend(source_seal_unmet(provenance.get("inputs", {})))
+    unmet.extend(qualification_binding_unmet(report))
     host = provenance.get("host", {})
     missing_host = [field for field in QUALIFIED_HOST_FIELDS if field not in host]
     if missing_host:
@@ -1741,6 +1791,7 @@ def _checked_report_path(root: Path, path: Path) -> Path:
     path = Path(path)
     if not path.is_file():
         raise HarnessError(f"engine report is missing: {path}")
+    _physical_product(path)
     return path
 
 
@@ -1753,20 +1804,23 @@ def physical_products_unmet(report: Mapping[str, Any], path: Path) -> list[str]:
     unmet = []
     for name in ("engine-fixture-c.o", "engine-fixture-rust.o"):
         physical = artifacts / name
-        if not physical.is_file() or sha256_file(physical) != shared_digest:
+        if (not physical.is_file() or physical.is_symlink() or physical.resolve() != physical.absolute()
+                or sha256_file(physical) != shared_digest):
             unmet.append(f"shared fixture object {name} differs from the recorded product identity")
     for lane, name in (("pinned_c", "engine-fixture-pinned-c"),
                        ("rust_engine", "engine-fixture-rust-engine")):
         physical = artifacts / name
         recorded = lanes.get(lane, {}).get("executable", {}).get("artifact")
-        if not physical.is_file() or recorded != artifact_record(physical):
+        if (not physical.is_file() or physical.is_symlink() or physical.resolve() != physical.absolute()
+                or recorded != artifact_record(physical)):
             unmet.append(f"{lane} executable differs from the recorded product identity")
     calculated: dict[str, Any] = {}
     for lane, name, owner in (("pinned_c", "engine-fixture-pinned-c.map", c_lane_owner),
                               ("rust_engine", "engine-fixture-rust-engine.map", rust_lane_owner)):
         physical = artifacts / name
         recorded = lanes.get(lane, {}).get("link_map")
-        if not physical.is_file() or recorded != artifact_record(physical):
+        if (not physical.is_file() or physical.is_symlink() or physical.resolve() != physical.absolute()
+                or recorded != artifact_record(physical)):
             unmet.append(f"{lane} final link map differs from the recorded product identity")
             continue
         attribution = link_map_attribution(physical, owner)
@@ -1784,6 +1838,149 @@ def physical_products_unmet(report: Mapping[str, Any], path: Path) -> list[str]:
     return unmet
 
 
+ENGINE_ENTRY_SYMBOLS = frozenset(f"crabc_allocator_engine_{entry}" for entry in (
+    "process_init", "thread_init", "thread_done", "malloc", "calloc", "realloc", "free",
+    "aligned", "usable_size",
+))
+C_ENTRY_SYMBOLS = frozenset(("mi_malloc", "mi_malloc_aligned", "mi_calloc", "mi_calloc_aligned",
+                             "mi_realloc", "mi_free", "mi_usable_size"))
+
+
+def _physical_product(path: Path) -> None:
+    if not path.is_file() or path.is_symlink() or path.resolve(strict=True) != path.absolute():
+        raise HarnessError(f"retained product is not a physical regular file: {path}")
+
+
+def _defined_symbols(path: Path) -> set[str]:
+    record = command_record((require_tool("nm"), "--defined-only", "--extern-only", str(path)), cwd=ROOT)
+    require_success(record, "retained engine symbol inspection")
+    return {parts[-1] for line in str(record["stdout"]).splitlines()
+            if len(parts := line.split()) >= 3}
+
+
+def build_ownership_unmet(report: Mapping[str, Any], path: Path, manifest: Mapping[str, Any]) -> list[str]:
+    """Replay retained product structure and the source-selected compiler/link argument graph."""
+
+    build = path.with_suffix(".artifacts")
+    lanes = report["lanes"]
+    compiler, readelf = require_tool("musl-gcc"), require_tool("readelf")
+    unmet = []
+    for name in ("engine-fixture-c.o", "engine-fixture-rust.o"):
+        try:
+            fixture = build / name
+            _physical_product(fixture)
+            header = command_record((readelf, "-h", str(fixture)), cwd=ROOT)
+            require_success(header, "shared fixture ELF inspection")
+            shared.parse_elf_identity(str(header["stdout"]))
+            if re.search(r"(?m)^\s*Type:\s+REL\b", str(header["stdout"])) is None:
+                raise HarnessError("shared fixture is not an ELF relocatable object")
+            if "main" not in _defined_symbols(fixture):
+                raise HarnessError("shared fixture does not own its main entry")
+            imports = command_record((require_tool("nm"), "--undefined-only", "--extern-only", str(fixture)), cwd=ROOT)
+            require_success(imports, "shared fixture engine entry inspection")
+            symbols = {parts[-1] for line in str(imports["stdout"]).splitlines() if len(parts := line.split()) >= 2}
+            if not ENGINE_ENTRY_SYMBOLS <= symbols:
+                raise HarnessError("shared fixture lacks the opaque engine entry imports")
+        except (HarnessError, OSError) as error:
+            unmet.append(f"shared fixture ELF ownership: {error}")
+    for lane, name in (("pinned_c", "engine-fixture-pinned-c"), ("rust_engine", "engine-fixture-rust-engine")):
+        binary = build / name
+        try:
+            _physical_product(binary)
+            if audit_static_executable(readelf, binary) != lanes[lane]["executable"]:
+                raise HarnessError("ELF audit differs from the retained executable record")
+            symbols = _defined_symbols(binary)
+            if not ENGINE_ENTRY_SYMBOLS <= symbols:
+                raise HarnessError("ELF lacks the declared engine entry ownership")
+            if lane == "pinned_c" and not C_ENTRY_SYMBOLS <= symbols:
+                raise HarnessError("ELF lacks the pinned-C allocator entry ownership")
+            if lane == "rust_engine" and any(symbol.startswith(("mi_", "_mi_")) for symbol in symbols):
+                raise HarnessError("Rust ELF borrows a C allocator entry")
+        except (HarnessError, OSError) as error:
+            unmet.append(f"{lane} ELF ownership: {error}")
+        if lanes[lane].get("allocation_entries") != manifest["lanes"][lane]["allocation_entries"]:
+            unmet.append(f"{lane} allocation entries differ from the manifest")
+
+    library = build / "libcrabc_allocator_engine_rust_backend.a"
+    try:
+        _physical_product(library)
+        if lanes["rust_engine"].get("static_library") != artifact_record(library):
+            raise HarnessError("static-library identity differs")
+        members = command_record((require_tool("ar"), "t", str(library)), cwd=ROOT)
+        require_success(members, "retained Rust archive inspection")
+        if not str(members["stdout"]).splitlines() or not ENGINE_ENTRY_SYMBOLS <= _defined_symbols(library):
+            raise HarnessError("static library lacks the Rust engine entry ownership")
+    except (HarnessError, OSError) as error:
+        unmet.append(f"Rust static-library ownership: {error}")
+
+    def commands(records: Any, expected: Sequence[Sequence[str]], label: str) -> None:
+        if (not isinstance(records, list) or len(records) != len(expected)
+                or any(not isinstance(record, Mapping) or record.get("command") != list(argv)
+                       or type(record.get("status")) is not int or record["status"] != 0
+                       for record, argv in zip(records, expected))):
+            raise HarnessError(f"{label} build arguments or outcomes differ")
+
+    try:
+        c_records = lanes["pinned_c"]["build_commands"]
+        first = c_records[0]["command"]
+        source_file = Path(first[first.index("-c") + 1])
+        source = source_file
+        for _ in Path(shared.ORACLE_SOURCES[0]).parts:
+            source = source.parent
+        if (source_file != source / shared.ORACLE_SOURCES[0] or not source.is_absolute()
+                or not source.is_relative_to(ROOT / ".work") or ".." in source.parts):
+            raise HarnessError("C source root differs")
+        expected, _, _ = c_lane_commands(compiler, manifest, source, build)
+        commands(c_records, expected, "pinned-C")
+
+        rust = lanes["rust_engine"]
+        cargo = rust["cargo"][0]
+        argv = cargo["command"]
+        target = Path(argv[argv.index("--target-dir") + 1])
+        if not target.is_absolute() or not target.is_relative_to(ROOT / ".work") or ".." in target.parts:
+            raise HarnessError("Cargo target directory escapes checkout work storage")
+        expected_cargo, environment = rust_engine_cargo_command(manifest, target)
+        commands(rust["cargo"], [expected_cargo], "Cargo")
+        if cargo.get("rustflags") != environment["RUSTFLAGS"]:
+            raise HarnessError("Cargo RUSTFLAGS differ from the manifest")
+        rlibs = cargo_rlibs(cargo["full_stdout"])
+        # Cargo reports the primary library directly under release and may
+        # place dependency artifacts in nested build output directories.
+        # Its artifact events select the inputs; the release tree confines them.
+        release = target / RUST_TARGET / "release"
+        if any(not file.is_relative_to(release) or ".." in file.parts
+               or not file.resolve().is_relative_to(release)
+               for file in rlibs.values()):
+            raise HarnessError("Cargo library artifact escapes its selected target")
+        owner_events = []
+        for line in cargo["full_stdout"].splitlines():
+            if not line.startswith("{"):
+                continue
+            event = json.loads(line)
+            if event.get("reason") == "compiler-artifact" and event.get("target", {}).get("name") == "crabc_mimalloc":
+                owner_events.append(event)
+        if (len(owner_events) != 1 or owner_events[0].get("manifest_path") != str(ROOT / "crabc-mimalloc/Cargo.toml")
+                or owner_events[0]["target"].get("src_path") != str(ROOT / "crabc-mimalloc/src/lib.rs")
+                or owner_events[0]["target"].get("kind") != ["lib"]
+                or owner_events[0].get("features") != ["default"]
+                or owner_events[0].get("profile", {}).get("test") is not False):
+            raise HarnessError("Cargo allocator artifact authority differs")
+        commands(rust["rustc"], [rust_backend_rustc_command(manifest, rlibs, library)], "Rust backend")
+        native = parse_native_static_libraries(rust["rustc"][0]["stdout"] + "\n" + rust["rustc"][0]["stderr"])
+        if native != rust["native_static_libraries"]:
+            raise HarnessError("native static libraries differ from rustc output")
+        fixture = build / "engine-fixture-rust.o"
+        commands(rust["fixture_link"], [
+            [compiler, *manifest["shared_build"]["fixture_flags"], "-I", str(FIXTURE_ROOT),
+             "-c", str(FIXTURE), "-o", str(fixture)],
+            [compiler, *manifest["shared_build"]["link_flags"], f"-Wl,-Map,{build / 'engine-fixture-rust-engine.map'}",
+             str(fixture), str(library), *native, "-o", str(build / "engine-fixture-rust-engine")],
+        ], "Rust fixture/link")
+    except (HarnessError, KeyError, ValueError, TypeError, IndexError, OSError, RuntimeError) as error:
+        unmet.append(f"source build ownership: {error}")
+    return unmet
+
+
 def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
     """Every unmet qualification condition of one report, plus its identity and metrics."""
 
@@ -1798,12 +1995,22 @@ def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
     try:
         unmet = qualification_unmet(report, manifest)
         unmet.extend(physical_products_unmet(report, path))
-    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
+        unmet.extend(build_ownership_unmet(report, path, manifest))
+        # External product inspection must not outlive the source and image
+        # authority that admitted the recorded measurements.
+        unmet.extend(source_seal_unmet(report["provenance"]["inputs"]))
+        unmet.extend(qualification_binding_unmet(report))
+    except (HarnessError, native.HarnessError, OSError, KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
         return {"unmet": [f"report is malformed: {type(error).__name__}: {error}"], "identity": None, "metrics": None}
-    identity = metrics = None
+    identity = metrics = architecture_bounds = None
     try:
         identity = report_identity(report, manifest)
         metrics = qualified_metrics(report, manifest)
+        row_names = manifest["architecture_rows"]
+        architecture_bounds = {
+            row_names[key]: report["rows"][row_names[key]]["comparison"]["throughput_ratio_rust_over_c"][
+                "bootstrap_5th_percentile"] for key in ("single_thread", "four_thread")
+        }
     except (HarnessError, KeyError, TypeError, ValueError, AttributeError, IndexError, statistics.StatisticsError):
         # The unmet conditions above already name the incomplete rows.
         if not unmet:
@@ -1813,7 +2020,7 @@ def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
     except (KeyError, TypeError, AttributeError):
         coverage = None
     return {"unmet": unmet, "identity": identity, "metrics": metrics, "critical_rows": critical_rows(manifest),
-            "coverage": coverage}
+            "coverage": coverage, "architecture_bounds": architecture_bounds}
 
 
 def validate_qualified_full_report(root: Path, path: Path) -> dict[str, Any]:
@@ -1829,6 +2036,15 @@ def validate_qualified_full_report(root: Path, path: Path) -> dict[str, Any]:
     if inspected["unmet"]:
         raise HarnessError(f"{path} is not a qualified full report: " + "; ".join(inspected["unmet"]))
     return {key: inspected[key] for key in ("identity", "metrics", "critical_rows")}
+
+
+def qualified_architecture_bounds(root: Path, path: Path) -> dict[str, float]:
+    """Return only bounds recomputed and admitted from one report snapshot."""
+
+    inspected = inspect_full_report(root, path)
+    if inspected["unmet"]:
+        raise HarnessError(f"{path} is not a qualified full report: " + "; ".join(inspected["unmet"]))
+    return inspected["architecture_bounds"]
 
 
 # ---- peak-hook A/B -----------------------------------------------------------
@@ -2040,7 +2256,8 @@ def parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run(arguments: argparse.Namespace) -> Path:
-    provenance_native = shared.require_native_x86_64()
+    provenance_native = (native.require_native_x86_64(require_image_identity=True)
+                         if arguments.full else shared.require_native_x86_64())
     manifest = load_manifest()
     mode_name = "full" if arguments.full else "smoke"
     mode = manifest["modes"][mode_name]
@@ -2113,6 +2330,13 @@ def run(arguments: argparse.Namespace) -> Path:
         report["host_load_average"] = {"before": load_before, "after": list(os.getloadavg())}
         report["uncontended_host"] = uncontended_host_record(host_record_finish(host_evidence))
     report["architecture"] = architecture_summary(manifest, report["rows"])
+    if arguments.full:
+        # Retain completed raw observations even when final image admission
+        # refuses them. Pending reports cannot qualify.
+        atomic_write_json(report_path, report)
+        report["native_execution_provenance"] = native.native_execution_attestation(
+            provenance_native, native.require_native_x86_64(require_image_identity=True),
+        )
     report["matrix"] = matrix_summary(report["rows"])
     failed = sorted(
         name for group in ("rows", "memory_rows") for name, row in report[group].items() if row["status"] == "failed"
@@ -2131,7 +2355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parse_arguments(argv)
     try:
         path = run(arguments)
-    except (HarnessError, OSError, tarfile.TarError, json.JSONDecodeError) as error:
+    except (HarnessError, native.HarnessError, OSError, tarfile.TarError, json.JSONDecodeError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
     print(path)
