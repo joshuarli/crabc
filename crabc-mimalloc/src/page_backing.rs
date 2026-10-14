@@ -68,18 +68,34 @@ pub(crate) unsafe fn reset_source_page_guard(
     0
 }
 
+#[derive(Clone, Copy)]
+enum PageArenaSearchPurpose {
+    FreshPage,
+    AbandonedPageReclaim,
+}
+
+impl PageArenaSearchPurpose {
+    const fn allows_pinned(self) -> bool {
+        match self {
+            Self::FreshPage => crate::config::SECURE_LEVEL < 5,
+            Self::AbandonedPageReclaim => true,
+        }
+    }
+}
+
 /// Copies immutable owner identity without retaining a reference to the
 /// mutable Heap across arena reservation callbacks.
 #[cfg(target_arch = "x86_64")]
 unsafe fn owner_arena_search(process: VmProcess<'_>, heap: core::ptr::NonNull<crate::types::Heap>,
-    requested: ArenaId, thread_sequence: usize, numa_node: i32) -> Option<ArenaSearch>
+    requested: ArenaId, thread_sequence: usize, numa_node: i32,
+    purpose: PageArenaSearchPurpose) -> Option<ArenaSearch>
 {
     // SAFETY: the caller's source session retains the Heap and subprocess;
     // these projections read immutable fields and create no Heap reference.
     let owner = unsafe { crate::types::Heap::source_snapshot_at(heap) };
     if owner.subprocess != core::ptr::from_ref(process.subprocess()).cast_mut() { return None; }
     Some(ArenaSearch { heap_sequence: unsafe { crate::types::Heap::heap_sequence_at(heap) },
-        heap_count: 0, thread_sequence, numa_node, requested, allow_pinned: true })
+        heap_count: 0, thread_sequence, numa_node, requested, allow_pinned: purpose.allows_pinned() })
 }
 
 mod sealed {
@@ -123,7 +139,8 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
         let Some(process) = self.process() else {
             return self.reclaim_arenas(requested, thread_sequence);
         };
-        let Some(search) = (unsafe { owner_arena_search(process, heap, requested, thread_sequence, -1) }) else {
+        let Some(search) = (unsafe { owner_arena_search(process, heap, requested,
+            thread_sequence, -1, PageArenaSearchPurpose::AbandonedPageReclaim) }) else {
             return PageArenaSearch::Selected(None);
         };
         // SAFETY: the session and backing retain this exact subprocess and
@@ -301,7 +318,8 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                 // Pinned arena.c:725-776 searches all NUMA nodes, allowing
                 // pinned arenas, in the same rotated source registry order.
                 let search = ArenaSearch { heap_sequence: 0, heap_count: 0,
-                    thread_sequence, numa_node: -1, requested, allow_pinned: true };
+                    thread_sequence, numa_node: -1, requested,
+                    allow_pinned: PageArenaSearchPurpose::AbandonedPageReclaim.allows_pinned() };
                 // SAFETY: this backing retains the process registry and every
                 // published arena; ordinary allocation cannot destroy them.
                 PageArenaSearch::Registry(unsafe {
@@ -382,7 +400,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                     thread_sequence,
                     numa_node: allocation_numa_node.unwrap_or(*numa_node),
                     requested,
-                    allow_pinned: true,
+                    allow_pinned: PageArenaSearchPurpose::FreshPage.allows_pinned(),
                 };
                 // SAFETY: this variant's construction proves the exact
                 // process-owned registry/policy remain live; the page engine
@@ -413,7 +431,8 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                     || slices > Self::max_process_arena_object_slices(process.policy().arena_max_object_size_bytes()) { return None; }
                 // SAFETY: forwarded session custody; identity is checked before search.
                 let search = unsafe { owner_arena_search(*process, heap, requested,
-                    thread_sequence, allocation_numa_node.unwrap_or(*numa_node)) }?;
+                    thread_sequence, allocation_numa_node.unwrap_or(*numa_node),
+                    PageArenaSearchPurpose::FreshPage) }?;
                 // SAFETY: the matching process and session retain the registry,
                 // live Heap list and returned claim through release.
                 unsafe { process.subprocess().arena_backing().try_allocate_slices_with_random_and_heap_list(
@@ -562,7 +581,7 @@ impl<'child> PageBacking<'child> for ChildMetadataArenaBacking<'child> {
         // SAFETY: forwarded session custody; the child wrapper validates its
         // registered parent chain and exact backing before allocation.
         let search = unsafe { owner_arena_search(self.process(), heap, requested,
-            thread_sequence, numa_node.unwrap_or(-1)) }?;
+            thread_sequence, numa_node.unwrap_or(-1), PageArenaSearchPurpose::FreshPage) }?;
         unsafe { self.pair.arena_backing().try_allocate_child_slices_with_random_and_heap_list(
             self.pair.child(), config, search, Some(self.process().subprocess().heap_list()),
             slices, ARENA_SLICE_SIZE, commit, random) }
@@ -626,7 +645,7 @@ impl<'child> ChildMetadataArenaBacking<'child> {
             thread_sequence,
             numa_node: allocation_numa_node.unwrap_or(-1),
             requested,
-            allow_pinned: true,
+            allow_pinned: PageArenaSearchPurpose::FreshPage.allows_pinned(),
         };
         // SAFETY: the pair retains the exact registered child, and the
         // caller retains the supplied random source for this operation. The
@@ -708,7 +727,8 @@ impl PageBacking<'static> for ProcessMetadataPageBacking {
         // Source hseq zero selects the thread-sequence branch before reading
         // heap_count. No dynamic heap-count authority is fabricated here.
         let search = ArenaSearch { heap_sequence: 0, heap_count: 0, thread_sequence,
-            numa_node: allocation_numa_node.unwrap_or(-1), requested, allow_pinned: true };
+            numa_node: allocation_numa_node.unwrap_or(-1), requested,
+            allow_pinned: PageArenaSearchPurpose::FreshPage.allows_pinned() };
         unsafe { self.backing().try_allocate_slices_with_random(self.process, config, search,
             slices, ARENA_SLICE_SIZE, commit, random) }
     }
@@ -800,6 +820,66 @@ mod tests {
                     block.as_ptr().write_bytes(0x5a, 32 * crate::config::KIB);
                     assert_eq!(crate::source_api::free(block.as_ptr()), crate::source_api::FreeOutcome::Freed);
                     assert!(crate::source_heap_api::heap_release(heap, false));
+                }
+            });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_fresh_page_policy_skips_pinned_arenas_at_secure_five() {
+        crate::test_process::run_in_fresh_process(
+            "page_backing::tests::native_fresh_page_policy_skips_pinned_arenas_at_secure_five", || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                let output = unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) };
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, output));
+                // SAFETY: this isolated process owns the source arenas and
+                // Heap through each claim; the test restores the simulated
+                // pinned classification before releasing their mappings.
+                unsafe {
+                    let mut arenas = [core::ptr::null_mut(); 2];
+                    for arena in &mut arenas {
+                        assert_eq!(crate::source_heap_api::reserve_os_memory_ex(
+                            64 * crate::config::MIB, true, false, false, arena).value, 0);
+                        assert!(!arena.is_null());
+                    }
+                    let pinned = arenas[0].cast::<crate::types::Arena>();
+                    (*pinned).memid.is_pinned = true;
+
+                    let heap = crate::source_heap_api::heap_new();
+                    let owner = core::ptr::NonNull::new(heap.cast::<crate::types::Heap>()).unwrap();
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().unwrap();
+                    let process = binding.process();
+                    let config = binding.page_map().memory_config().unwrap();
+                    let backing = RuntimeFirstRegularPageBacking::source_registry(process, -1);
+                    let regular_claim = backing.claim_for_heap(owner, config, ArenaId::none(),
+                        1, false, 0, None, None).expect("a regular registered arena can serve a fresh page");
+                    let regular_memory = regular_claim.memory_id();
+                    let regular_arena = regular_memory.arena_memory().unwrap().arena;
+                    assert!(arenas.iter().any(|arena| arena.cast::<crate::types::Arena>() == regular_arena));
+                    if crate::config::SECURE_LEVEL >= 5 {
+                        assert!(!regular_memory.is_pinned(),
+                            "secure-5 fresh page admission must skip a software-pinned arena");
+                    }
+                    assert!(regular_claim.release());
+
+                    let pinned_id = ArenaId::from_arena(pinned).unwrap();
+                    let requested_claim = backing.claim_for_heap(owner, config, pinned_id,
+                        1, false, 0, None, None);
+                    if crate::config::SECURE_LEVEL >= 5 {
+                        assert!(requested_claim.is_none(),
+                            "a secure-5 fresh page must refuse a pinned exclusive arena");
+                    } else {
+                        let requested_claim = requested_claim.expect(
+                            "ordinary fresh page admission permits a pinned requested arena");
+                        assert_eq!(requested_claim.memory_id().arena_memory().unwrap().arena, pinned);
+                        assert!(requested_claim.memory_id().is_pinned());
+                        assert!(requested_claim.release());
+                    }
+
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                    (*pinned).memid.is_pinned = false;
+                    assert!(process.subprocess().arena_backing().destroy_all(&mut []).unwrap().is_released());
                 }
             });
     }

@@ -1903,5 +1903,34 @@ int main(int argc, char** argv) {
   managed_abandoned_lifecycle();
   cross_thread_abandoned_lifecycle();
   emit_marker(26);
+  /* 27. A secure-5 fresh-page search skips a registered pinned arena, then
+         refuses an explicit request for that same arena. */
+  {
+    configure(true, 32 * 1024, 0, false);
+    lifecycle_owner_t* const owner = fresh_owner();
+    lifecycle_claim_t seed = claim(owner, 1, false, NULL, -1);
+    require(seed.start != NULL);
+    mi_arena_t* const pinned = seed.memid.mem.arena.arena;
+    release(owner, &seed);
+    pinned->memid.is_pinned = true;
+
+    mi_memid_t fresh_memid = _mi_memid_none();
+    void* const fresh = mi_arenas_try_alloc(&owner->heap, 1, MI_ARENA_SLICE_ALIGN,
+        false, false /* skip pinned arenas */, NULL, 0, -1, &fresh_memid);
+    emit(fresh != NULL);
+    emit(fresh != NULL && fresh_memid.is_pinned);
+    emit((int64_t)mi_arenas_get_count(&owner->subproc));
+    if (fresh != NULL) {
+      _mi_arenas_free(&owner->subproc, fresh, mi_size_of_slices(1), fresh_memid);
+    }
+
+    mi_memid_t requested_memid = _mi_memid_none();
+    void* const requested = mi_arenas_try_alloc(&owner->heap, 1, MI_ARENA_SLICE_ALIGN,
+        false, false /* skip pinned arenas */, pinned, 0, -1, &requested_memid);
+    emit(requested != NULL);
+    emit((int64_t)mi_arenas_get_count(&owner->subproc));
+    pinned->memid.is_pinned = false;
+  }
+  emit_marker(27);
   return 0;
 }

@@ -52,8 +52,8 @@ PROFILE_FEATURES = {"release": [], "debug-1": ["mi-debug-1", "mi-stat-1", "mi-st
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
-# Scenario markers are `-1000 - scenario`; the final marker is scenario 26.
-FINAL_MARKER = -1026
+# Scenario markers are `-1000 - scenario`; the final marker is scenario 27.
+FINAL_MARKER = -1027
 THP_SCENARIO = -1023
 # Scenario 23 cells: this sentinel, allow_thp, eager commit, advised, last
 # advice, and whether every advice call carried it.

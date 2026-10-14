@@ -7482,6 +7482,40 @@ mod tests {
             trace.marker(25);
             crate::dynamic_theap::managed_abandoned_lifecycle_trace(|value| trace.emit(value));
             trace.marker(26);
+
+            let owner = lifecycle_owner(true, 32 * 1024, 0, false);
+            let mut seed = lifecycle_claim(&mut trace, owner, owner.process, 1, false,
+                ArenaId::none(), -1);
+            assert!(seed.is_some());
+            let pinned = seed.arena();
+            lifecycle_release(&mut trace, owner, &mut seed);
+            unsafe { (*pinned.as_ptr()).memid.is_pinned = true; }
+
+            let fresh_search = ArenaSearch {
+                heap_sequence: 0, heap_count: 1, thread_sequence: 0, numa_node: -1,
+                requested: ArenaId::none(), allow_pinned: false,
+            };
+            // SAFETY: the fixture retains the process registry; the simulated
+            // pinned bit is restored before the test process exits.
+            let fresh = unsafe { owner.backing.try_allocate_slices(owner.process,
+                owner.config, fresh_search, 1, ARENA_SLICE_SIZE, false) };
+            trace.emit_bool(fresh.is_some());
+            trace.emit_bool(fresh.as_ref().is_some_and(|claim| claim.memory_id().is_pinned()));
+            trace.emit(owner.backing.registry().count() as i64);
+            if let Some(fresh) = fresh {
+                assert!(!fresh.memory_id().is_pinned());
+                assert!(fresh.release());
+            }
+
+            let requested_search = ArenaSearch { requested: pinned, ..fresh_search };
+            // SAFETY: the same process registry and pinned arena remain live.
+            let requested = unsafe { owner.backing.try_allocate_slices(owner.process,
+                owner.config, requested_search, 1, ARENA_SLICE_SIZE, false) };
+            trace.emit_bool(requested.is_some());
+            trace.emit(owner.backing.registry().count() as i64);
+            assert!(requested.is_none());
+            unsafe { (*pinned.as_ptr()).memid.is_pinned = false; }
+            trace.marker(27);
         }
         #[cfg(not(all(target_arch = "x86_64", not(miri))))]
         trace.marker(24);
