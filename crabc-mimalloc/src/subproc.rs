@@ -13,25 +13,24 @@
 // `_mi_heap_init` order, the detached metadata-Theap publication,
 // `_mi_subproc_heap_main`, `mi_tld_create`, and `mi_tld_free`).
 
-//! Bounded main-subprocess thread-registration ownership.
+//! Selected process and child subprocess identity, creation, and lifecycle.
 //!
-//! Upstream places a complete `mi_subproc_t` in static storage. This module
-//! intentionally represents only the process-main identity, the detached
-//! metadata-Theap identity needed before `_mi_meta_zalloc`, the source-owned
-//! direct-allocation lock beside that identity, its selected lock-free
-//! metadata-page equality query, and the two counters directly required by
-//! `mi_tld_create`/`mi_tld_free`: the relaxed total-thread sequence and the
-//! relaxed current-thread count. It is not a Rust layout claim for
-//! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
-//! identity/private-futex capabilities, not C byte-layout or normal C backing
-//! routes. Its `registry` child module owns source main-subprocess list
-//! publication and terminal unlink; non-main creation and a public subprocess
-//! API remain absent. It owns one source-shaped process arena-backing registry,
-//! one complete private `mi_stats_t` image, and the bitmap statistics that its
-//! staged source paths actually mutate.
-//! Its main-Heap slot retains only the canonical
-//! static identity publication from `mi_subproc_t::heap_main`; it is never a
-//! Rust heap accessor.
+//! The process-main identity is static and participates in the subprocess
+//! registry. The selected `mi_subproc_*` routes create root children under the
+//! process main subprocess and nested children under the current child, using
+//! the actual parent's metadata route. They admit fresh threads into a child,
+//! visit its Heap list with visitor early-stop behavior, and destroy children
+//! during ordinary or terminal teardown. Terminal process destruction walks
+//! children before the process main subprocess; retained child records let
+//! admitted threads finish without reading released child storage.
+//!
+//! These routes use typed Rust owners rather than claiming the C
+//! `mi_subproc_t` byte layout or its normal metadata-Theap backing. The
+//! selected metadata paths do not reproduce all source metadata statistics,
+//! and `_mi_meta_free` has selected typed release paths rather than general
+//! memory-ID dispatch. The main-Heap slot retains only the canonical static
+//! identity published in `mi_subproc_t::heap_main`; it is never a Rust Heap
+//! accessor.
 //!
 //! A [`ThreadRegistrationTicket`] is the old result of the source relaxed
 //! `thread_total_count` increment. Tickets are consumed even when a later
