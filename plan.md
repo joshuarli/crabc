@@ -13,29 +13,45 @@ Public x86 support remains false:
   `sha256:fc70049aacff79a3efe68d6d906f3a937705e3a7703d75bcf54ad44894b206c7`.
   Both tracked launcher builds passed. Evidence tied to the old images must be
   regenerated. The Rust nightly, source pins and AArch64 inputs stay fixed.
-- **Integrated:** `3d6a40fec` corrects stale scheduled-expiry arena EIO
-  accounting and links its existing 28-field producer. `8d6591a3c` restores
-  an unrelated JSON escape. All arena statuses stay partial. At the merged
-  correction, 95 host tests and ledger, inventory and structure checks pass.
-  The serialization follow-up preserves parsed data and its ratchet digest.
-- **Parked, not integrated:** `lane/m6-resume` at `0b447a3a8` fixes the two
-  offset-11 debug-client profiles, preserving option-0 controls. Its 29 host
-  tests pass; native compilation, execution and attached-worker crash triage
-  remain blocked. Its worktree was removed; the branch preserves the patch.
-- **Parked, not integrated:** `lane/source-closure` at `b7ca59c9b` adds
-  physical M10 installed-product source and payload replay to the rebased
-  bridge. Its 30 focused host tests pass, and independent review found no
-  P1/P2 in that slice. Remaining bridge defects are transitive performance
-  custody, cross-UID report readability, receipt-path normalization and the
-  correctness-only work-directory restriction. Host phase/mutation and direct
-  partial-readiness controls and actual native products remain unproved.
-  Keep `.work/wt/source-closure` as unqualified WIP.
-- **Other work:** H0 text replay and independent resolver, loader and consumer
-  steps need the core image. The historical text stack still only localizes
-  file hashing during pthread receipt replay; two existing host regressions
-  pass, and no speculative collector fix landed. Cleanup needs current pinned
-  warning discovery. The `pow` contract decision and earlier allocator
-  blockers remain open. No fresh performance or native qualification ran.
+- **Integrated through `284011169`:** the promotion bridge now retains physical
+  installed-product and selected M9 input custody, supports receipt path aliases,
+  and publishes reports readable across the producer's UID/GID change. Independent
+  review found no remaining P1/P2; native promotion remains unqualified. Fresh
+  worktree preparation seeds the allocator's offline registry. M6 owner-exit
+  profiles use the admitted aligned-client configuration. Pthread replay skips
+  nested evidence roots while retaining enclosing mutation checks. Two unused
+  private regex predicates were removed. Source accounting corrects scheduled
+  EIO and dynamic OS-singleton queue geometry without closing partial statuses.
+- **Verified:** all nine Rust feature profiles passed after the Rust cleanup.
+  Lane checks include 63 bridge host tests, 23 authenticated allocator reader
+  tests, four preparation tests and 145 native adapter observations. M6
+  delete-after-owner-exit collection/read/replay passed release, debug-1, stat-1
+  and stat-2; attached-worker release passed. Pthread and text readers passed
+  39 and 29 tests. The current-image dynamic OS-singleton differential matched
+  21 values. Merged-tree focused verification is running; lane receipts do not
+  qualify main.
+- **Accelerated unattended tranche:** seven lanes own disjoint workstreams:
+  native product/resolver/loader/consumer rehearsal (`cohort-native`), fresh
+  pthread/text evidence (`runtime-replay`), M6 failures (`m6-resume`), focused
+  allocator routes (`source-closure`), arena source parity (`source-current`),
+  production dynamic owner-exit integration (`dynamic-owner-root`), and the
+  focused verification loop (`verification-loop`). Worktrees are under
+  `.work/wt/`. The coordinator owns integration and image recovery. At launch,
+  the host had 53 GiB available, load 8.5 on 32 CPUs and no active swap-out;
+  preserve the 12-GiB free-memory margin and watch paging during cold builds.
+- **Current evidence:** rehearsal passed static products and the first installed
+  dynamic product, including resolver cancellation and the 59-archive corpus;
+  the remaining dynamic-product matrix is running. The focused 28-field EIO
+  C/Rust launcher route is being added; its Rust-only trace already passes.
+- **Named blockers:** H0 `pow` raw flags versus the documented identity correction
+  remains parked after three attempts. M6 pinned C debug/statistics crashes stay
+  failures pending concrete diagnosis. Dynamic OS-singleton evidence currently
+  exercises a test model; expert discovery found the existing production root in
+  `subproc_main_heaps.rs` and is tracing its post-join consumer release. The broad
+  claim that no production dynamic attachment exists needs narrowing against
+  that call graph.
+  Native promotion, H1 and performance qualification remain dependent on the
+  unmet correctness/source gates. No qualifying performance measurement ran.
 
 The following 2026-10-14 handoff records the paused baseline. Its old branch
 tips and execution evidence are historical; the refs above supersede them.
