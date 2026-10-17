@@ -42,9 +42,10 @@ git worktree add -b lane/<id> .work/wt/<id> main
 ```
 
 `prepare-worktree.sh` fetches and vendors the locked Cargo closure into the
-worktree's own `.work/x86_64/cargo`, seeds the verified mimalloc archive from
-the primary checkout, and materializes the pinned package-corpus input. It
-needs the core image and, the first time, the network.
+worktree's own `.work/x86_64/cargo`, copies that fetched Cargo registry into
+`.work/allocator-x86_64/cargo` for offline allocator builds, seeds the verified
+mimalloc archive from the primary checkout, and materializes the pinned
+package-corpus input. It needs the core image and, the first time, the network.
 
 Every worktree has its own `.work/` and therefore its own cold target
 directories. Containers write root-owned files there, so remove a worktree

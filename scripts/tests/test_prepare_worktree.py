@@ -57,6 +57,9 @@ class PrepareWorktreeTests(unittest.TestCase):
             "set -eu\n"
             "if [ \"$1\" = cargo ] && [ \"$2\" = fetch ]; then\n"
             "    mkdir -p .work/x86_64/cargo/native-static-source-runtime-vendor\n"
+            "    registry=.work/x86_64/cargo/registry/src/index.crates.io-fixture/base64ct-1.6.0\n"
+            "    mkdir -p \"$registry\"\n"
+            "    printf 'locked base64ct fixture\\n' > \"$registry/Cargo.toml\"\n"
             "    exit 0\n"
             "fi\n"
             "printf 'unexpected rust-check command: %s\\n' \"$*\" >&2\n"
@@ -160,6 +163,36 @@ class PrepareWorktreeTests(unittest.TestCase):
         self.assertEqual(seed_result.returncode, 2)
         self.assertIn("takes only explicit cohort flags", seed_result.stderr)
         self.assertNotIn("supplied POSIX product", seed_result.stderr)
+
+    def test_allocator_cargo_home_receives_the_fetched_registry(self) -> None:
+        prepared = subprocess.run(
+            ["sh", str(self.lane / "scripts/lanes/prepare-worktree.sh")],
+            cwd=self.lane, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+
+        allocator_manifest = (
+            self.lane / ".work/allocator-x86_64/cargo/registry/src/index.crates.io-fixture"
+            "/base64ct-1.6.0/Cargo.toml"
+        )
+        self.assertTrue(allocator_manifest.is_file(),
+                        "fetched core registry was not copied into allocator Cargo home")
+        self.assertEqual(allocator_manifest.read_text(encoding="utf-8"), "locked base64ct fixture\n")
+
+    def test_allocator_cargo_home_symlink_is_rejected_without_writing_through_it(self) -> None:
+        allocator_home = self.lane / ".work/allocator-x86_64"
+        allocator_home.mkdir(parents=True)
+        outside_cargo_home = self.scratch / "outside-cargo-home"
+        outside_cargo_home.mkdir()
+        (allocator_home / "cargo").symlink_to(outside_cargo_home, target_is_directory=True)
+
+        prepared = subprocess.run(
+            ["sh", str(self.lane / "scripts/lanes/prepare-worktree.sh")],
+            cwd=self.lane, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(prepared.returncode, 1)
+        self.assertIn("allocator Cargo home is a symlink", prepared.stderr)
+        self.assertFalse((outside_cargo_home / "registry").exists())
 
     def test_lua_seed_symlink_is_rejected_without_touching_its_target(self) -> None:
         seed_directory = self.lane / ".work/x86_64/lua-source-build-seed"

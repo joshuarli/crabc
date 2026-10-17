@@ -65,12 +65,12 @@ def physical_directory(path, label):
     require(path.resolve(strict=True) == path.absolute(), f"{label} traverses a symlink: {path}")
 
 
-def copy_missing_tree(source, destination, label):
+def copy_missing_tree(source, destination, label, source_description):
     if not source.exists() and not source.is_symlink():
         if destination.exists() or destination.is_symlink():
             physical_directory(destination, label)
         return
-    physical_directory(source, f"primary {label}")
+    physical_directory(source, source_description)
     for item in source.rglob("*"):
         mode = item.lstat().st_mode
         require(stat.S_ISDIR(mode) or stat.S_ISREG(mode),
@@ -145,6 +145,19 @@ def ensure_source(record, path, label):
         shutil.rmtree(staging)
 
 
+core_registry = root / ".work/x86_64/cargo/registry"
+require(core_registry.exists() or core_registry.is_symlink(),
+        "fetched core Cargo registry is missing")
+allocator_work = root / ".work/allocator-x86_64"
+allocator_cargo = allocator_work / "cargo"
+for directory, label in ((allocator_work, "allocator work directory"),
+                         (allocator_cargo, "allocator Cargo home")):
+    if not directory.exists() and not directory.is_symlink():
+        directory.mkdir()
+    physical_directory(directory, label)
+copy_missing_tree(core_registry, allocator_cargo / "registry", "allocator Cargo registry",
+                  "fetched core Cargo registry")
+
 pins = tomllib.loads((root / "compat/upstreams.toml").read_text(encoding="utf-8"))
 source_oracles = (
     (pins["os_test"], f".work/x86_64/source-oracles/os-test-{pins['os_test']['revision']}", "os-test oracle"),
@@ -159,7 +172,7 @@ for record, path, label in source_oracles:
 for relative, label in (("compat/lua/.cache", "Lua source cache"),
                         ("compat/corpus/.cache", "package corpus cache"),
                         (".work/x86_64/rust-std-lto", "Rust std/LTO vendors")):
-    copy_missing_tree(primary / relative, root / relative, label)
+    copy_missing_tree(primary / relative, root / relative, label, f"primary {label}")
 
 lua_manifest = tomllib.loads((root / "compat/lua/manifest.toml").read_text(encoding="utf-8"))["lua"]
 lua_archive = root / "compat/lua/.cache" / f"lua-{lua_manifest['version']}.tar.gz"
