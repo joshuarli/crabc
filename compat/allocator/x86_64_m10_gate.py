@@ -18,6 +18,7 @@ accepted-C selections, and rejects a switch before its prerequisites pass.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
@@ -129,6 +130,35 @@ def audit_product(product: Path, *, ar: str, nm: str, cargo_packages: Sequence[s
     return unmet
 
 
+def installed_product_identity(kind: str, product: Path) -> dict[str, Any]:
+    sys.path.insert(0, str(ROOT / "compat/x86_64"))
+    manifest_path = product / "share/crabc/manifest.json"
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+    if kind == "static":
+        import owned_static_sysroot_package as static_package
+
+        entries = static_package.source_entries(product)
+        static_package.validate_installed_tree(product, entries)
+        payload_files = static_package.manifest_payload_hashes(manifest)
+        source_sha256 = manifest["source_sha256"]
+    elif kind == "dynamic":
+        import owned_dynamic_qualification as dynamic_qualification
+
+        dynamic_qualification.product_identity(product)
+        payload_files = manifest["files"]
+        state = json.loads((product / "share/crabc/dynamic-product-state.json").read_text(encoding="utf-8"))
+        source_sha256 = state["source_sha256"]
+    else:
+        raise harness.HarnessError(f"unknown native product kind: {kind!r}")
+    if not isinstance(payload_files, Mapping) or not payload_files:
+        raise harness.HarnessError(f"{kind} installed product has no payload hash map")
+    if not isinstance(source_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", source_sha256) is None:
+        raise harness.HarnessError(f"{kind} installed product has no source digest")
+    return {"manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "source_sha256": source_sha256, "payload_files": dict(payload_files)}
+
+
 def build_and_audit() -> dict[str, Any]:
     sys.path.insert(0, str(ROOT / "scripts"))
     import build_x86_64_owned_sysroot as common
@@ -161,8 +191,15 @@ def build_and_audit() -> dict[str, Any]:
             unmet.append(f"{kind}: resolved Cargo graph refused: {error}")
         product_unmet = audit_product(output, ar=ar, nm=nm, cargo_packages=graph.get("packages", []))
         unmet.extend(product_unmet)
-        results[kind] = {"built": True, "path": harness.relative(output), "unmet": product_unmet,
-                         "cargo_packages": graph.get("packages", [])}
+        result = {"built": True, "path": harness.relative(output), "unmet": product_unmet,
+                  "cargo_packages": graph.get("packages", [])}
+        try:
+            result.update(installed_product_identity(kind, output))
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+            detail = f"{kind} installed product custody failed: {type(error).__name__}: {error}"
+            unmet.append(detail)
+            result["identity_error"] = detail
+        results[kind] = result
     return {"schema": "crabc-mimalloc-x86_64-m10-native-artifact-audit/v1", "git": head,
             "products": results, "unmet": unmet, "passed": not unmet and head["clean"]}
 
@@ -308,6 +345,22 @@ def native_artifacts(head: Mapping[str, Any], path: Path = AUDIT_REPORT) -> dict
                 unmet.append(f"native artifact audit {kind} product was not built")
             elif product.get("unmet") != []:
                 unmet.append(f"native artifact audit {kind} product purity did not pass")
+            else:
+                expected = PRODUCTS / kind
+                if product.get("path") != harness.relative(expected):
+                    unmet.append(f"native artifact audit {kind} product path differs from its owned output")
+                    continue
+                if expected.is_symlink() or not expected.is_dir() or expected.resolve() != expected:
+                    unmet.append(f"native artifact audit {kind} installed product is missing or unsafe")
+                    continue
+                try:
+                    current = installed_product_identity(kind, expected)
+                except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+                    unmet.append(f"native artifact audit {kind} installed custody failed: {type(error).__name__}: {error}")
+                    continue
+                for field in ("manifest_sha256", "source_sha256", "payload_files"):
+                    if product.get(field) != current[field]:
+                        unmet.append(f"native artifact audit {kind} installed {field} changed")
     if report.get("git", {}).get("head") != head.get("head"):
         unmet.append(f"native artifact audit is for {report.get('git', {}).get('head')}, not HEAD {head.get('head')}")
     if not report.get("git", {}).get("clean"):

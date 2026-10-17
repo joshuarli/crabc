@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -19,6 +20,12 @@ import x86_64_m10_gate as gate  # noqa: E402
 
 
 TOOLS = {name: shutil.which(name) for name in ("cc", "ar", "nm")}
+
+
+def temporary_directory() -> tempfile.TemporaryDirectory:
+    scratch = ROOT / ".work/tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    return tempfile.TemporaryDirectory(dir=scratch)
 
 
 @unittest.skipUnless(all(TOOLS.values()), "needs cc, ar and nm")
@@ -43,7 +50,7 @@ class ArtifactAuditTests(unittest.TestCase):
 
     def audit(self, **kwargs) -> list[str]:
         packages = kwargs.pop("packages", ["crabc-mimalloc v0.1.0"])
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             return gate.audit_product(self.product(Path(directory), **kwargs), ar=TOOLS["ar"], nm=TOOLS["nm"],
                                       cargo_packages=packages)
 
@@ -69,6 +76,163 @@ class ArtifactAuditTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 unmet = self.audit(**change)
                 self.assertTrue(any(expected in item for item in unmet), unmet)
+
+
+class NativeArtifactCustodyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = temporary_directory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.fixture_index = 0
+
+    def static_product(self, product: Path) -> None:
+        import owned_static_sysroot_package as package
+        import static_product_contract
+
+        (product / "bin").mkdir(parents=True)
+        (product / "usr/include").mkdir(parents=True)
+        (product / "usr/lib").mkdir(parents=True)
+        (product / "share/crabc").mkdir(parents=True)
+        driver = product / "bin/crabc-cc"
+        driver.write_text("#!/bin/sh\n", encoding="utf-8")
+        driver.chmod(0o755)
+        (product / "usr/include/stdint.h").write_text("\n", encoding="utf-8")
+        for name in package.REQUIRED_CRT_OBJECTS:
+            path = product / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+        (product / "usr/lib/libc.a").write_bytes(b"native libc archive\n")
+        (product / "usr/lib/libcrabc-builtins.a").write_bytes(b"owned builtins\n")
+        files = {path.relative_to(product).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in sorted(product.rglob("*")) if path.is_file()}
+        manifest = {
+            "format": package.SYSROOT_FORMAT,
+            "target": package.TARGET,
+            "source_sha256": static_product_contract.source_digest(),
+            "allocator_backend": "native",
+            "package": {"format": package.PACKAGE_FORMAT, "archive_root": package.ARCHIVE_ROOT},
+            "installed": {"headers": "usr/include", "crt_objects": list(package.REQUIRED_CRT_OBJECTS),
+                          "static_libc": "usr/lib/libc.a", "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
+                          "sealed_static_driver": "bin/crabc-cc", "files": files},
+            "sealed_static_driver": {"format": package.DRIVER_FORMAT, "path": "bin/crabc-cc"},
+        }
+        (product / "share/crabc/manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+
+    def dynamic_product(self, product: Path) -> None:
+        import crabc_cc_owned_dynamic as driver
+        import owned_dynamic_qualification as qualification
+
+        for relative in sorted(driver.REQUIRED):
+            path = product / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((relative + "\n").encode())
+        metadata = product / "share/crabc"
+        (metadata / "libc-shared.provenance.json").write_text(
+            json.dumps({"allocator_backend": "native-shadow"}) + "\n", encoding="utf-8")
+        payload_files = {path.relative_to(product).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                         for path in sorted(product.rglob("*")) if path.is_file()}
+        state = {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified",
+            "source_sha256": qualification.source_digest(),
+            "contracts": qualification.contract_digests(),
+            "payload_files": payload_files,
+            "allocator_backend": "native-shadow",
+            "allocator_lifecycle_test_audit": False,
+            "allocator_promoted": False,
+            "runtime_v1_published": False,
+            "campaign_complete": False,
+            "public_support": False,
+            "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+            "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+            "qualification": qualification.MATERIALIZATION_QUALIFICATION,
+        }
+        (metadata / "dynamic-product-state.json").write_text(json.dumps(state, sort_keys=True) + "\n")
+        payload_files["share/crabc/dynamic-product-state.json"] = hashlib.sha256(
+            (metadata / "dynamic-product-state.json").read_bytes()).hexdigest()
+        manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
+                    "toolchain": "pinned-test-toolchain", "build_profile": "debug",
+                    "source_sha256": qualification.source_digest(), "files": payload_files,
+                    "symlinks": driver.ALIASES}
+        (metadata / "manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+        (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+
+    def audit_fixture(self, mutation=None) -> tuple[Path, Path]:
+        self.fixture_index += 1
+        products = self.root / f"m10-native-{self.fixture_index}"
+        products.mkdir()
+        with mock.patch.object(gate, "PRODUCTS", products):
+            for kind, build in (("static", self.static_product), ("dynamic", self.dynamic_product)):
+                build(products / kind)
+            rows = {}
+            for kind in ("static", "dynamic"):
+                identity = gate.installed_product_identity(kind, products / kind)
+                rows[kind] = {"built": True, "path": (products / kind).relative_to(ROOT).as_posix(),
+                              "unmet": [], "cargo_packages": [], **identity}
+            if mutation is not None:
+                mutation(products, rows)
+            audit = self.root / "native-artifact-audit.json"
+            audit.write_text(json.dumps({"git": {"head": "a", "clean": True}, "passed": True,
+                                         "products": rows, "unmet": []}, sort_keys=True))
+        return products, audit
+
+    def test_native_artifact_replay_revalidates_both_installed_trees(self) -> None:
+        products, audit = self.audit_fixture()
+        with mock.patch.object(gate, "PRODUCTS", products):
+            self.assertTrue(gate.native_artifacts({"head": "a"}, audit)["met"])
+
+    def test_native_artifact_replay_rejects_stale_source_seals_and_payload_changes(self) -> None:
+        for kind, location, expected in (
+            ("static", "source", "source seal differs"),
+            ("dynamic", "source", "source is stale"),
+            ("static", "payload", "payload hash mismatch"),
+            ("dynamic", "payload", "payload hash mismatch"),
+            ("static", "manifest-map", "payload hash mismatch"),
+            ("dynamic", "manifest-map", "payload hash mismatch"),
+        ):
+            with self.subTest(kind=kind, location=location):
+                products, audit = self.audit_fixture()
+                product = products / kind
+                if location == "source" and kind == "static":
+                    manifest_path = product / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    manifest["source_sha256"] = "0" * 64
+                    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+                elif location == "source":
+                    state_path = product / "share/crabc/dynamic-product-state.json"
+                    state = json.loads(state_path.read_text())
+                    state["source_sha256"] = "0" * 64
+                    state_path.write_text(json.dumps(state, sort_keys=True) + "\n")
+                    manifest_path = product / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    manifest["files"]["share/crabc/dynamic-product-state.json"] = hashlib.sha256(
+                        state_path.read_bytes()).hexdigest()
+                    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+                elif location == "manifest-map":
+                    manifest_path = product / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    payloads = (manifest["installed"]["files"] if kind == "static" else manifest["files"])
+                    relative = "usr/lib/libc.a" if kind == "static" else "usr/lib/libc.so"
+                    payloads[relative] = "0" * 64
+                    manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+                else:
+                    payload = product / ("usr/lib/libc.a" if kind == "static" else "usr/lib/libc.so")
+                    payload.write_bytes(b"mutated installed payload\n")
+                with mock.patch.object(gate, "PRODUCTS", products):
+                    result = gate.native_artifacts({"head": "a"}, audit)
+                self.assertFalse(result["met"])
+                self.assertTrue(any(expected in detail for detail in result["detail"]), result["detail"])
+
+    def test_native_artifact_report_binds_the_replayed_manifest_and_payload_map(self) -> None:
+        def alter_report(products, rows):
+            rows["static"]["source_sha256"] = "0" * 64
+            rows["dynamic"]["payload_files"]["usr/lib/libc.so"] = "0" * 64
+
+        products, audit = self.audit_fixture(alter_report)
+        with mock.patch.object(gate, "PRODUCTS", products):
+            details = gate.native_artifacts({"head": "a"}, audit)["detail"]
+        self.assertIn("native artifact audit static installed source_sha256 changed", details)
+        self.assertIn("native artifact audit dynamic installed payload_files changed", details)
 
 
 class BackendSelectionTests(unittest.TestCase):
@@ -108,20 +272,20 @@ class ConditionTests(unittest.TestCase):
         self.assertTrue(gate.switch_condition(record, True)["met"])
 
     def test_the_audit_must_be_passing_clean_and_for_this_head(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             path = Path(directory) / "audit.json"
             path.write_text(json.dumps({"git": {"head": "a", "clean": True}, "unmet": [], "passed": True,
                                        "products": {kind: {"built": True, "unmet": []} for kind in ("static", "dynamic")}}), encoding="utf-8")
-            self.assertTrue(gate.native_artifacts({"head": "a"}, path)["met"])
+            self.assertFalse(gate.native_artifacts({"head": "a"}, path)["met"])
             detail = gate.native_artifacts({"head": "b"}, path)["detail"]
-            self.assertIn("not HEAD b", detail[0])
+            self.assertTrue(any("not HEAD b" in item for item in detail), detail)
             path.write_text(json.dumps({"git": {"head": "a", "clean": False}, "unmet": ["x"], "passed": True,
                                        "products": {kind: {"built": True, "unmet": []} for kind in ("static", "dynamic")}}), encoding="utf-8")
-            self.assertEqual(len(gate.native_artifacts({"head": "a"}, path)["detail"]), 2)
+            self.assertGreaterEqual(len(gate.native_artifacts({"head": "a"}, path)["detail"]), 2)
             self.assertIn("--build-audit", gate.native_artifacts({"head": "a"}, Path(directory) / "absent")["detail"][0])
 
     def test_artifact_audit_requires_both_actual_built_products_and_a_pass(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             path = Path(directory) / "audit.json"
             complete = {"git": {"head": "a", "clean": True}, "passed": True,
                         "products": {kind: {"built": True, "unmet": []} for kind in ("static", "dynamic")},
@@ -134,7 +298,7 @@ class ConditionTests(unittest.TestCase):
                     self.assertFalse(gate.native_artifacts({"head": "a"}, path)["met"])
 
     def test_milestone_reports_must_have_passed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             path = Path(directory) / "r.json"
             self.assertIn("no retained report", gate.report_passed(path))
             path.write_text(json.dumps({"overall_status": "unmet"}), encoding="utf-8")
@@ -148,7 +312,7 @@ class ConditionTests(unittest.TestCase):
 
     def test_prior_milestones_accept_a_passing_m8_gate_report(self) -> None:
         self.assertIn("M8", gate.PRIOR_REPORTS)
-        with tempfile.TemporaryDirectory() as directory:
+        with temporary_directory() as directory:
             report = Path(directory) / "report.json"
             report.write_text(json.dumps({"overall_status": "passed"}), encoding="utf-8")
             with mock.patch.object(gate, "PRIOR_REPORTS", {"M8": report}):
@@ -172,7 +336,7 @@ class ConditionTests(unittest.TestCase):
         self.assertEqual(result["unqualified_modes"], ["physical-numa", "2mib-pages", "1gib-pages"])
 
     def test_full_promotion_rejects_baseline_report_and_baseline_requires_explicit_nonclaims(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+        with temporary_directory() as directory:
             path = Path(directory) / "report.json"
             report = {"overall_status": "passed", "qualification_profile": "baseline",
                       "unqualified_modes": ["physical-numa", "2mib-pages", "1gib-pages"]}
