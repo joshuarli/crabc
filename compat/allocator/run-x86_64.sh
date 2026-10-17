@@ -88,7 +88,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-heap-destroy
   allocator-reclaim-on-free
   allocator-subprocess-lifecycle
-  allocator-heap-lifecycle | allocator-m6-adapter [--matrix]
+  allocator-heap-lifecycle [--faults] | allocator-m6-adapter [--matrix]
   allocator-m6-deleted-heap-remote-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--diagnose|--read|--replay] [--mode before|after|both]
   allocator-m6-heap-delete-after-owner-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--read|--replay]
   allocator-m6-heap-delete-with-attached-worker [--profile release|debug-1|stat-1|stat-2|--matrix] [--collect|--diagnose|--read|--replay]
@@ -1210,9 +1210,10 @@ case "$command" in
         run_in_container python3 compat/allocator/subprocess_lifecycle.py
         ;;
     allocator-heap-lifecycle)
-        [ "$#" -eq 0 ] || fail "allocator-heap-lifecycle takes no arguments"
+        [ "$#" -eq 0 ] || { [ "$#" -eq 1 ] && [ "$1" = --faults ]; } \
+            || fail "allocator-heap-lifecycle accepts only --faults"
         ensure_image
-        run_in_container python3 compat/allocator/heap_lifecycle.py
+        run_in_container python3 compat/allocator/heap_lifecycle.py "$@"
         ;;
     allocator-m6-adapter)
         m6_adapter_arguments=()

@@ -141,8 +141,9 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
 
 - Heap and arena lifecycle: `allocator-arena-destroy`, `allocator-heap-destroy`,
   `allocator-reclaim-on-free`, `allocator-subprocess-lifecycle`,
-  `allocator-heap-lifecycle`, `allocator-m2-arena-lifecycle [--profile
+  `allocator-heap-lifecycle [--faults]`, `allocator-m2-arena-lifecycle [--profile
   release|debug-1|stat-1|stat-2|all]`, `allocator-m2-metadata-ownership`.
+  `--faults` runs only the existing failure/retry group.
   Heap fault builds use the launcher's checkout-owned Cargo target, then copy
   each compiler-selected executable into the fixture before execution. Cargo
   owns source, feature and profile invalidation. Retained replay still checks

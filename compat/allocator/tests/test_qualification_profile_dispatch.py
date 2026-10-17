@@ -245,6 +245,16 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
             self.assert_rejected('allocator-m6-' + name, '--read', '--diagnose')
         self.assert_rejected('allocator-m6-heap-delete-after-owner-exit', '--diagnose')
 
+    def test_heap_fault_route_preserves_the_existing_bounded_producer_action(self):
+        self.assertEqual(self.runner_arguments('allocator-heap-lifecycle', '--faults'),
+                         ('compat/allocator/heap_lifecycle.py', ['--faults']))
+        for arguments in (['--faults', '--faults'], ['--replay'], ['--faults', '--profile', 'debug']):
+            self.assert_rejected('allocator-heap-lifecycle', *arguments)
+        result = self.invoke('compat/allocator/run-x86_64.sh', '--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('allocator-heap-lifecycle [--faults]', result.stdout)
+        self.assertFalse(self.log.exists())
+
     def test_m7_development_traces_are_bounded_and_unoptimized(self):
         for name in ('options-environment', 'option-effects', 'statistics-level-one-output-merge',
                      'statistics-level-two-requested', 'statistics-level-two-bins',
