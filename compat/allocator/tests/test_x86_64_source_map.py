@@ -1793,6 +1793,7 @@ class X86_64SourceMapTests(unittest.TestCase):
             "compat/allocator/tests/test_x86_64_dynamic_os_aligned_singleton_evidence.py",
             "compat/allocator/x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json",
             "compat/allocator/x86_64_dynamic_os_aligned_singleton_evidence.py",
+            "crabc-mimalloc/tests/native_dynamic_os_singleton_owner_exit.rs",
         }
         units = {unit["id"]: unit for unit in self.contract["units"]}
         self.assertEqual(
@@ -1810,6 +1811,9 @@ class X86_64SourceMapTests(unittest.TestCase):
                 self.assertIn("21-value native C/Rust differential", unit["difference"])
                 self.assertIn("semantically full", unit["difference"])
                 self.assertIn("`BIN_HUGE`", unit["difference"])
+                self.assertIn("production Heap attachment", unit["difference"])
+                self.assertIn("`native_thread_done`", unit["difference"])
+                self.assertIn("no-audit integration test", unit["difference"])
                 for evidence in lane_evidence:
                     self.assertIn(evidence, unit["evidence"])
 
