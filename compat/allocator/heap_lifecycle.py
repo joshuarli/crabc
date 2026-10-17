@@ -88,6 +88,8 @@ def compare(section: str, expected: list[int], observed: list[int]) -> None:
 
 def fault_product(artifacts: Path, *, integration: bool) -> Path:
     target = harness.WORK_ROOT / "target"
+    source_before = integrated.source_seal()
+    git_before = engine.git_provenance()
     command = ["cargo", "test", "--locked", "--offline", "--target",
                "x86_64-unknown-linux-musl", "--target-dir", str(target),
                "-p", "crabc-mimalloc", "--no-default-features"]
@@ -107,7 +109,14 @@ def fault_product(artifacts: Path, *, integration: bool) -> Path:
     if len(executables) != 1:
         raise harness.HarnessError(f"Heap fault {name} build did not name one executable")
     product = artifacts / f"heap-fault-{name}"
+    selected = engine.file_record(executables[0])
     shutil.copy2(executables[0], product)
+    retained = engine.file_record(product)
+    if (engine.file_record(executables[0]) != selected
+            or any(selected[key] != retained[key] for key in ('bytes', 'sha256'))):
+        raise harness.HarnessError(f"Heap fault {name} compiler product changed while retaining it")
+    if integrated.source_seal() != source_before or engine.git_provenance() != git_before:
+        raise harness.HarnessError(f"Heap fault {name} source changed while building or retaining it")
     return product
 
 

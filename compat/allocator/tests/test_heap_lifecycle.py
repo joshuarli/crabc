@@ -15,6 +15,30 @@ spec.loader.exec_module(producer)
 
 
 class HeapFaultReplayTests(unittest.TestCase):
+    def test_source_or_cargo_product_mutation_refuses_the_retained_candidate(self):
+        for mutation in ('source', 'product'):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory(dir=ROOT / '.work/tmp') as temporary:
+                root = Path(temporary)
+                executable = root / 'target/unit-program'
+                executable.parent.mkdir()
+                executable.write_bytes(b'current compiler product')
+                artifacts = root / 'retained'
+                artifacts.mkdir()
+                record = {'stdout': json.dumps({'reason': 'compiler-artifact', 'executable': str(executable)}),
+                          'stderr': '', 'status': 0}
+                copy_product = producer.shutil.copy2
+                def copy(source, destination):
+                    copy_product(source, destination)
+                    if mutation == 'product':
+                        executable.write_bytes(b'another compiler product')
+                with mock.patch.object(producer.harness, 'WORK_ROOT', root), \
+                        mock.patch.object(producer.harness, 'command_record', return_value=record), \
+                        mock.patch.object(producer.integrated, 'source_seal',
+                                          side_effect=[{}, {'changed': True}] if mutation == 'source' else [{}, {}]), \
+                        mock.patch.object(producer.shutil, 'copy2', side_effect=copy):
+                    with self.assertRaises(producer.harness.HarnessError):
+                        producer.fault_product(artifacts, integration=False)
+
     def test_build_reuses_cargo_target_but_retains_an_independent_fixture_product(self):
         with tempfile.TemporaryDirectory(dir=ROOT / '.work/tmp') as temporary:
             root = Path(temporary)
