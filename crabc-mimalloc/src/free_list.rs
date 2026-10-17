@@ -1307,6 +1307,102 @@ mod tests {
         assert!(list.pop(false).unwrap().is_none());
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-3"))]
+    #[test]
+    fn secure_page_extension_trace_matches_pinned_c_source() {
+        const BLOCK_SIZE: usize = 32;
+        const RESERVED: u16 = 65;
+        const PAGE_KEY: usize = 0x1020_3040_5060_7081;
+        const PAGE_KEY2: usize = 0x8899_aabb_ccdd_eeff;
+        const RANDOM_WORD: usize = 0x1122_3344_5566_7788;
+
+        assert!(crate::config::SECURE_LEVEL >= 3);
+        assert!(crate::config::ENCODE_FREELIST);
+
+        let mut storage = Page([0; BLOCK_SIZE * RESERVED as usize]);
+        let mut state = TestPageState::fresh(true);
+        let base = NonNull::new(storage.0.as_mut_ptr()).unwrap();
+        let page_address = core::ptr::from_ref(&state).addr();
+        let state = PageFreeListState {
+            area: base,
+            area_bytes: storage.0.len(),
+            block_size: BLOCK_SIZE,
+            page_address,
+            page_key: PAGE_KEY,
+            page_key2: PAGE_KEY2,
+            capacity: NonNull::from(&mut state.capacity),
+            reserved: RESERVED,
+            free: NonNull::from(&mut state.free),
+            local_free: NonNull::from(&mut state.local_free),
+            used: NonNull::from(&mut state.used),
+            free_is_zero: NonNull::from(&mut state.free_is_zero),
+        };
+        let mut list = unsafe { LocalFreeList::from_page_state(state) }.unwrap();
+        let mut random_draws = 0;
+        assert_eq!(list.extend_with_random(|| {
+            random_draws += 1;
+            Some(RANDOM_WORD)
+        }), Ok(RESERVED));
+
+        let mut offsets = std::vec::Vec::with_capacity(RESERVED as usize);
+        let mut seen = [false; RESERVED as usize];
+        let mut current = NonNull::new(list.free()).unwrap();
+        let mut encoded_head_link = false;
+        let mut tail_is_null = false;
+        loop {
+            let address = current.addr().get();
+            let base_address = list.base.as_ptr().addr();
+            assert!(address >= base_address);
+            let byte_offset = address - base_address;
+            assert_eq!(byte_offset % BLOCK_SIZE, 0);
+            let index = byte_offset / BLOCK_SIZE;
+            assert!(index < RESERVED as usize);
+            assert!(!core::mem::replace(&mut seen[index], true));
+            offsets.push(index);
+
+            let encoded = unsafe { ptr::read(current.as_ptr().cast::<usize>()) };
+            let next = list.checked_next(current).unwrap();
+            if offsets.len() == 1 {
+                assert!(!next.is_null());
+                assert_ne!(encoded, next.addr());
+                encoded_head_link = true;
+            }
+            let Some(next) = NonNull::new(next) else {
+                tail_is_null = true;
+                break;
+            };
+            current = next;
+        }
+
+        assert_eq!(offsets.len(), RESERVED as usize);
+        assert!(seen.into_iter().all(|initialized| initialized));
+        assert_eq!(list.capacity(), RESERVED);
+        assert_eq!(list.used(), 0);
+        assert_eq!(random_draws, 1);
+        assert!(encoded_head_link);
+        assert!(tail_is_null);
+        assert_ne!(offsets, (0..RESERVED as usize).collect::<std::vec::Vec<_>>());
+
+        let mut trace = std::string::String::new();
+        for (position, offset) in offsets.iter().enumerate() {
+            if position != 0 {
+                trace.push(',');
+            }
+            use std::fmt::Write as _;
+            write!(trace, "{offset}").unwrap();
+        }
+        std::println!("CRABC_MI_M7_SECURE_FREE_LIST_TRACE_BEGIN");
+        std::println!("profile.secure_level={}", crate::config::SECURE_LEVEL);
+        std::println!("profile.free_is_checked={}", usize::from(crate::config::FREE_IS_CHECKED));
+        std::println!("extension.capacity={}", list.capacity());
+        std::println!("extension.used={}", list.used());
+        std::println!("extension.random_draws={random_draws}");
+        std::println!("extension.encoded_head_link={}", usize::from(encoded_head_link));
+        std::println!("extension.tail_is_null={}", usize::from(tail_is_null));
+        std::println!("extension.free_offsets={trace}");
+        std::println!("CRABC_MI_M7_SECURE_FREE_LIST_TRACE_END");
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn secure_extension_refuses_missing_random_before_any_page_write() {
