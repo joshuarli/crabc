@@ -540,15 +540,15 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
     def _validate(self, record):
         record = dict(record)
         record["root"] = str(self.execution)
-        with unittest.mock.patch.object(self.module, "SOURCE_MOUNT", str(ROOT)), \
-             unittest.mock.patch.object(self.module.copies, "dynamic_product", return_value=(
-                 self.product, self.product / "share/crabc/manifest.json", {"runtime": "unused", "lib/keep": "unused"},
-                 {"lib/ld-musl-x86_64.so.1": "keep", "lib/keep-alias": "keep"},
-             )):
+        product_files = {name: self.module._sha(self.product / name)
+                         for name in ("share/crabc/manifest.json", "runtime", "lib/keep")}
+        product_aliases = {name: os.readlink(self.product / name)
+                           for name in ("lib/ld-musl-x86_64.so.1", "lib/keep-alias")}
+        with unittest.mock.patch.object(self.module, "SOURCE_MOUNT", str(ROOT)):
             return self.module._validate_execution_binding(
                 ROOT, self.work, "dynamic-pie-kernel-normal", "dynamic-pie-kernel", "normal", record,
                 self.product, self.work / "candidate", self.work / "oracle", self._fixture(),
-                ["lib/ld-musl-x86_64.so.1"],
+                ["lib/ld-musl-x86_64.so.1"], product_files, product_aliases,
             )
 
     def test_reconstructed_root_rejects_re_signed_consumer_runtime_fixture_and_alias(self) -> None:
@@ -602,6 +602,78 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
                 record[name] = self.module._checkout_identity(ROOT, path, name)
             with self.assertRaises(self.module.EvidenceError):
                 self.module._command_record(ROOT, self.work, "cell-candidate", record, ["/consumer"], {}, "candidate")
+
+
+class OwnedWordexpReplaySealTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.module = load_module()
+        self.root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.work = self.root / "work"
+        self.product = self.root / "product"
+        self.execution = self.work / "execution/dynamic-pie-kernel-normal"
+        for path, data, mode in (
+            (self.product / "share/crabc/manifest.json", b"manifest\n", 0o644),
+            (self.product / "runtime", b"selected runtime\n", 0o755),
+            (self.product / "lib/keep", b"selected alias target\n", 0o644),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(mode)
+        (self.product / "lib/ld-musl-x86_64.so.1").symlink_to("keep")
+        (self.product / "lib/keep-alias").symlink_to("keep")
+        self.execution.mkdir(parents=True)
+        shutil.copytree(self.product, self.execution, symlinks=True, dirs_exist_ok=True)
+        (self.execution / "wordexp-tmp").mkdir(mode=0o755)
+        (self.execution / "wordexp-tmp").chmod(0o755)
+        self.source = self.root / "source.c"
+        self.source.write_bytes(b"source before replay\n")
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def test_report_input_seal_rejects_source_or_product_mutation_after_replay(self) -> None:
+        def current_input_seal(root, work, sealed):
+            return (self.product, None, {},
+                    (self.work,
+                     {"source": self.module._checkout_identity(root, self.source, "wordexp source")},
+                     {"product": self.module._checkout_identity(root, self.product / "runtime", "dynamic product")}))
+
+        baseline = current_input_seal(ROOT, self.work, {})
+
+        for selected in (self.source, self.product / "runtime"):
+            with self.subTest(path=selected.name):
+                original = selected.read_bytes()
+                selected.write_bytes(original + b"mutation during report replay\n")
+                with unittest.mock.patch.object(self.module, "_validate_input_seal", side_effect=current_input_seal):
+                    with self.assertRaises(self.module.EvidenceError):
+                        self.module._require_input_seal_current(ROOT, self.work, {}, baseline)
+                selected.write_bytes(original)
+
+    def test_cell_copy_mutation_is_rejected_against_report_product_map(self) -> None:
+        runtime = self.execution / "runtime"
+        runtime.write_bytes(b"mutated cell copy\n")
+        source_files = {name: self.module._sha(self.product / name)
+                        for name in ("share/crabc/manifest.json", "runtime", "lib/keep")}
+        source_aliases = {name: os.readlink(self.product / name)
+                          for name in ("lib/ld-musl-x86_64.so.1", "lib/keep-alias")}
+        record = {
+            "root": self.module._mounted(ROOT, self.execution),
+            "product_files": {"manifest": {"path": "share/crabc/manifest.json",
+                                             "sha256": self.module._sha(self.execution / "share/crabc/manifest.json"),
+                                             "mode": self.module._mode(self.execution / "share/crabc/manifest.json")},
+                              "product:runtime": {"path": "runtime", "sha256": self.module._sha(runtime),
+                                                  "mode": self.module._mode(runtime)},
+                              "product:lib/keep": {"path": "lib/keep",
+                                                   "sha256": self.module._sha(self.execution / "lib/keep"),
+                                                   "mode": self.module._mode(self.execution / "lib/keep")}},
+            "product_aliases": {}, "consumers": {}, "fixtures": {}, "fixture_devices": {},
+        }
+        with self.assertRaisesRegex(self.module.EvidenceError, "product file binding differs"):
+            self.module._validate_execution_binding(
+                ROOT, self.work, "dynamic-pie-kernel-normal", "dynamic-pie-kernel", "normal", record,
+                self.product, self.work / "candidate", self.work / "oracle",
+                (self.work, {}, {"null": "dev/null"}), ["lib/ld-musl-x86_64.so.1"],
+                source_files, source_aliases,
+            )
 
 
 class OwnedWordexpEnvironmentTests(unittest.TestCase):

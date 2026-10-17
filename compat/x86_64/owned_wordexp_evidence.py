@@ -1474,19 +1474,21 @@ def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, P
 
 def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, str],
                              fixture_devices: Mapping[str, str], shell_case: str,
-                             overrides: object) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
+                             overrides: object, source_product_files: Mapping[str, str],
+                             source_product_aliases: Mapping[str, str]
+                             ) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     if shell_case not in SHELL_CASES:
         fail("wordexp shell case differs")
     fixture = {name: relative for name, relative in fixture_paths.items() if not (shell_case == "missing" and name == "shell")}
     product_files: dict[str, str] = {}
     product_aliases: dict[str, str] = {}
     if dynamic is not None:
-        try:
-            _, _, files, aliases = copies.dynamic_product(dynamic)
-        except copies.CryptRuntimeEvidenceError as error:
-            raise EvidenceError(str(error)) from error
-        product_files = {"manifest": "share/crabc/manifest.json", **{f"product:{name}": name for name in files}}
-        product_aliases = {f"product:{name}": name for name in aliases}
+        if "share/crabc/manifest.json" not in source_product_files:
+            fail("wordexp dynamic report seal omits its product manifest")
+        product_files = {"manifest": "share/crabc/manifest.json",
+                         **{f"product:{name}": name for name in source_product_files
+                            if name != "share/crabc/manifest.json"}}
+        product_aliases = {f"product:{name}": name for name in source_product_aliases}
         expected_override = ["lib/ld-musl-x86_64.so.1"]
         if overrides != expected_override:
             fail("wordexp dynamic external alias override differs")
@@ -1496,8 +1498,8 @@ def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, s
                 break
         else:
             fail("wordexp dynamic product has no expected shell-loader alias")
-    elif overrides != []:
-        fail("wordexp static execution has an external alias override")
+    elif overrides != [] or source_product_files or source_product_aliases:
+        fail("wordexp static execution has dynamic product inputs")
     if dict(fixture_devices) != {NULL_FIXTURE_NAME: NULL_FIXTURE_PATH}:
         fail("wordexp fixture device map differs")
     return product_files, product_aliases, fixture, dict(fixture_devices)
@@ -1505,7 +1507,9 @@ def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, s
 
 def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, shell_case: str, execution: object,
                                 dynamic_product: Path | None, candidate: Path, oracle: Path,
-                                fixture: tuple[Path, dict[str, str], dict[str, str]], overrides: object) -> Path:
+                                fixture: tuple[Path, dict[str, str], dict[str, str]], overrides: object,
+                                source_product_files: Mapping[str, str],
+                                source_product_aliases: Mapping[str, str]) -> Path:
     execution = _exact_dict(execution, {"root", "product_files", "product_aliases", "consumers", "fixtures", "fixture_devices"},
                             f"wordexp cell {label} execution")
     execution_root = _local_mounted(root, execution["root"], f"wordexp cell {label} execution root")
@@ -1515,13 +1519,14 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
     _validate_temporary_fixture(execution_root, retained=True)
     fixture_root, fixture_paths, fixture_devices = fixture
     product_files, product_aliases, fixture_expected, device_expected = _expected_execution_maps(
-        dynamic_product, fixture_paths, fixture_devices, shell_case, overrides)
+        dynamic_product, fixture_paths, fixture_devices, shell_case, overrides,
+        source_product_files, source_product_aliases)
     consumer = MODE_SPECS[mode][2]
-    if execution.get("product_files") != {name: {"path": relative, "sha256": _sha(dynamic_product / relative),
+    if execution.get("product_files") != {name: {"path": relative, "sha256": source_product_files[relative],
                                                         "mode": _mode(dynamic_product / relative)}
                                           for name, relative in product_files.items()}:
         fail("wordexp execution product file binding differs")
-    expected_aliases = {name: {"path": relative, "target": os.readlink(dynamic_product / relative)}
+    expected_aliases = {name: {"path": relative, "target": source_product_aliases[relative]}
                         for name, relative in product_aliases.items()} if dynamic_product is not None else {}
     if execution.get("product_aliases") != expected_aliases:
         fail("wordexp execution product alias binding differs")
@@ -1581,6 +1586,15 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
     if (dynamic, static, tools, fixture) != (after_dynamic, after_static, after_tools, after_fixture) or inputs["before"] != inputs["after"]:
         fail("wordexp inputs changed after collection")
     validate_expected_native_input(expected_native_inputs, tools, inputs["before"]["oracle"])
+    dynamic_product_record = inputs["before"]["products"]["dynamic"]
+    source_product_files = {
+        "share/crabc/manifest.json": dynamic_product_record["manifest"]["sha256"],
+        **dynamic_product_record["files"],
+    }
+    try:
+        source_product_aliases = copies.manifest_aliases(dynamic / "share/crabc/manifest.json")
+    except copies.CryptRuntimeEvidenceError as error:
+        raise EvidenceError(str(error)) from error
 
     workload = _identity_current(root, report["workload"], "wordexp workload")
     if workload != _physical(work / "workload.o", "wordexp canonical workload", directory=False):
@@ -1677,7 +1691,9 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
             if source_consumers["candidate"] != links[link_name]["executable"] or source_consumers["oracle"] != report["oracle"]:
                 fail("wordexp cell consumers are not bound to sealed links")
             execution_root = _validate_execution_binding(root, work, label, mode, shell_case, item["execution"], dynamic_product,
-                                                         candidate, oracle, fixture, item["external_alias_overrides"])
+                                                         candidate, oracle, fixture, item["external_alias_overrides"],
+                                                         source_product_files if dynamic_product is not None else {},
+                                                         source_product_aliases if dynamic_product is not None else {})
             suffix = list(arguments)
             environment = CELL_ENVIRONMENT
             mounted_execution = _mounted(root, execution_root)
@@ -1696,7 +1712,15 @@ def _validate_report(root: Path, report_path: Path, expected_native_inputs: obje
             if item["expected_stdout"] != expected_stdout.decode("ascii"):
                 fail("wordexp expected transcript differs")
             _assert_case_results(root, case, oracle_command, candidate_command, f"wordexp cell {label}")
+    _require_input_seal_current(root, work, inputs["after"], (dynamic, static, tools, fixture))
     return report
+
+
+def _require_input_seal_current(root: Path, work: Path, sealed: object,
+                                expected: tuple[Path, Path | None, dict[str, Any],
+                                                tuple[Path, dict[str, str], dict[str, str]]]) -> None:
+    if _validate_input_seal(root, work, sealed) != expected:
+        fail("wordexp inputs changed during report replay")
 
 
 def _load_expected_native_inputs(path: Path) -> dict[str, Any]:
