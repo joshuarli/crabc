@@ -1,14 +1,43 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: active 2026-10-17.** The owner resumed the campaign. The coordinator
-read this handoff and `docs/lanes.md`, then ran `campaign-status`. Five lanes
-are running: the existing source-closure bridge, M6 fixture and crash triage,
-the H0 text collector loop, source accounting, and dead-code cleanup.
-The accepted C allocator remains the default. Public x86 support remains false:
+**Status: blocked 2026-10-17.** The owner resumed the campaign. Seven agents
+completed bounded work across source accounting, M6 fixtures, promotion custody,
+runtime rehearsal, collector investigation, cleanup and independent review.
+All lanes and campaign commands have stopped. The accepted C allocator remains
+the default. Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families, zero of eight gates.
 
-The following 2026-10-14 handoff records the paused baseline. Current lane
-results follow in the campaign log.
+- **Blocker:** Docker lacks the pinned core image
+  `sha256:300e199a8ad490cdf950f051a94c64852b7f9d37faff1a1bf309594c73ba45dc`
+  and `crabc-allocator-evidence:x86_64`. No image was rebuilt or substituted.
+  Restore the exact images before native work. Rebuilding requires owner
+  direction under the charter and would invalidate prior image-bound evidence.
+- **Integrated:** `3d6a40fec` corrects stale scheduled-expiry arena EIO
+  accounting and links its existing 28-field producer. `8d6591a3c` restores
+  an unrelated JSON escape. All arena statuses stay partial. At the merged
+  correction, 95 host tests and ledger, inventory and structure checks pass.
+  The serialization follow-up preserves parsed data and its ratchet digest.
+- **Parked, not integrated:** `lane/m6-resume` at `0b447a3a8` fixes the two
+  offset-11 debug-client profiles, preserving option-0 controls. Its 29 host
+  tests pass; native compilation, execution and attached-worker crash triage
+  remain blocked. Its worktree was removed; the branch preserves the patch.
+- **Parked, not integrated:** `lane/source-closure` at `b7ca59c9b` adds
+  physical M10 installed-product source and payload replay to the rebased
+  bridge. Its 30 focused host tests pass, and independent review found no
+  P1/P2 in that slice. Remaining bridge defects are transitive performance
+  custody, cross-UID report readability, receipt-path normalization and the
+  correctness-only work-directory restriction. Host phase/mutation and direct
+  partial-readiness controls and actual native products remain unproved.
+  Keep `.work/wt/source-closure` as unqualified WIP.
+- **Other work:** H0 text replay and independent resolver, loader and consumer
+  steps need the core image. The historical text stack still only localizes
+  file hashing during pthread receipt replay; two existing host regressions
+  pass, and no speculative collector fix landed. Cleanup needs current pinned
+  warning discovery. The `pow` contract decision and earlier allocator
+  blockers remain open. No fresh performance or native qualification ran.
+
+The following 2026-10-14 handoff records the paused baseline. Its old branch
+tips and execution evidence are historical; the refs above supersede them.
 
 - **Resume:** "Read plan.md and docs/lanes.md, then resume the paused campaign
   as coordinator, unattended, launching every ready lane in the plan's priority
@@ -1009,6 +1038,41 @@ Append one line per merge batch, per parked item, and per contract change.
   worktrees were removed, retained branches were audited, and resume was
   rehearsed without relying on scratch authority. No default, support or
   qualification claim changed.
+
+- 2026-10-17: resumed from `9a9a23516` and ran `campaign-status` first after
+  reading the handoff and lane contract. Native preparation failed before
+  Cargo because the pinned core image is missing; the allocator image is also
+  absent. Its launcher would build a missing image, so no allocator launch
+  was attempted. The charter parks those commands without a rebuild.
+  Integrated the bounded arena accounting correction in `3d6a40fec`, followed
+  by serialization-only `8d6591a3c`. Frozen merged-tree verification passes
+  12 convergence, 38 M2 VM and 45 source-map tests, using the primary checkout's
+  cached pinned archive for the last group. Ledger, inventory and structure
+  checks pass. No capability or family state changed.
+- 2026-10-17: `lane/m6-resume`/`0b447a3a8` retains a test-first fix for
+  missing debug-1 valid-client arguments in deleted-heap remote exit and
+  delete-after-owner-exit. The generated receipt now passes read and replay
+  host controls; ten ownership and 19 adapter-profile tests pass. The separate
+  attached-worker pinned C crash was not retried. Native compilation and
+  execution are required before integration. The clean worktree was removed.
+- 2026-10-17: independent review of the rebased promotion bridge found four
+  P2 defects: installed source/payload custody, transitive runtime performance
+  custody, root-produced 0600 reports read by the invoking UID, and relative
+  receipt paths passed to `relative_to(ROOT)`. It also found a correctness-only
+  work-directory restriction outside terminal qualification scope. The
+  installed-product slice at `lane/source-closure`/`b7ca59c9b` fixes the first
+  defect through existing owning readers and physical mutation tests. Its
+  21 M10 and nine closure tests pass; independent review found no P1/P2 in
+  that slice. All other bridge findings and required native/host composition
+  controls remain open. The branch stays unqualified and unmerged.
+- 2026-10-17: H0 collector investigation passed the existing tree-cache/final
+  mutation and snapshot identity/order regressions. The earlier optimization
+  was already present in the stalled rehearsal; no cause or safe fix was
+  established without real replay. Independent H0 preparation and fresh C0
+  warning discovery stopped at the missing core image. No cleanup or collector
+  code changed. New empty rehearsal, collector and cleanup worktrees were
+  removed. The three original worktrees remain clean; no campaign process,
+  image rebuild, AArch64 run or push was made.
 
 ## For the owner afterwards
 
