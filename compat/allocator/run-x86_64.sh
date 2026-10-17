@@ -87,6 +87,9 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-reclaim-on-free
   allocator-subprocess-lifecycle
   allocator-heap-lifecycle | allocator-m6-adapter [--matrix]
+  allocator-m6-deleted-heap-remote-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--read|--replay] [--mode before|after|both]
+  allocator-m6-heap-delete-after-owner-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--read|--replay]
+  allocator-m6-heap-delete-with-attached-worker [--profile release|debug-1|stat-1|stat-2|--matrix] [--collect|--read|--replay]
   allocator-upstream-subprocess-stress
   allocator-upstream-heap-stress
   allocator-public-heap-alignment | allocator-public-theap [--debug]
@@ -457,6 +460,8 @@ case "$command" in
     allocator-public-theap)
         ;;
     allocator-dynamic-full-direct-small-unmapped-reabandon|image|allocator|allocator-m1|allocator-m2|allocator-m3|allocator-m5|allocator-m4|allocator-m7|allocator-m8|allocator-m9|allocator-m10|allocator-divergence-evidence|allocator-tls|allocator-lifecycle|allocator-startup-regular-arena|allocator-initialization-tld|allocator-fault|allocator-fault-seam-inventory|allocator-release-evidence|allocator-api-coverage|allocator-cmake-modes|allocator-header-modes|allocator-static-modes|allocator-remote-free|allocator-live-owner-full-medium-remote-release|allocator-live-owner-full-medium-one-remote-unfull-reuse|allocator-direct-remote|allocator-mapped-reclaim|allocator-mapped-adoption|allocator-regular-mapped-reclaim|allocator-direct-small-allocation-adoption|allocator-unmapped-reabandon|allocator-on-demand|allocator-direct-on-demand|allocator-aligned-overalloc-realloc|allocator-regular-small|allocator-direct-small-full-retire|allocator-medium-full-retire|allocator-full-non-direct-small-force-collect-post-exit|allocator-full-direct-small-force-collect-post-exit|allocator-dynamic-full-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-direct-small-unmapped-reabandon|allocator-dynamic-full-non-direct-small-one-remote-force-collect-to-mapped|allocator-dynamic-full-non-direct-small-unmapped-reabandon|allocator-dynamic-full-medium-one-remote-force-collect-to-mapped|allocator-dynamic-full-medium-unmapped-reabandon|allocator-dynamic-full-large-one-remote-force-collect-to-mapped|allocator-dynamic-full-large-unmapped-reabandon|allocator-dynamic-full-large-homogeneous-aggregate|allocator-dynamic-full-medium-homogeneous-aggregate|allocator-dynamic-full-singleton-homogeneous-aggregate|allocator-dynamic-full-non-direct-small-homogeneous-aggregate|allocator-later-thread-exit-full-direct-small-pages|allocator-dynamic-nonfull-regular-pages-distinct-bin-aggregate|allocator-automatic-pthread-destructor|allocator-cancellation-pthread-destructor|allocator-process-done-pthread-key|allocator-automatic-arena-reservation|allocator-dynamic-os-aligned-singleton|allocator-dynamic-arena-singleton-post-exit|allocator-mapped-post-exit|allocator-retired-prepass|allocator-deferred-free-callback|allocator-aggregate-post-exit|allocator-aggregate-still-live|allocator-aggregate-same-bin-still-live|allocator-perf|allocator-perf-engine|allocator-perf-integrated|allocator-codegen-audit|allocator-native-local-trace|allocator-huge-registry|allocator-huge-reservation|allocator-huge-numa-qualification|allocator-arena-destroy|allocator-m2-arena-lifecycle|allocator-m2-metadata-ownership|allocator-heap-destroy|allocator-reclaim-on-free|allocator-subprocess-lifecycle|allocator-heap-lifecycle|allocator-m6-adapter|allocator-public-heap-alignment|allocator-heap-convenience|allocator-upstream-subprocess-stress|allocator-upstream-heap-stress|allocator-m6|allocator-unit|allocator-native-integration|allocator-core-unit)
+        ;;
+    allocator-m6-deleted-heap-remote-exit|allocator-m6-heap-delete-after-owner-exit|allocator-m6-heap-delete-with-attached-worker)
         ;;
     allocator-init-recursion|allocator-concurrent-init)
         ;;
@@ -1149,6 +1154,48 @@ case "$command" in
         fi
         ensure_image
         run_in_container python3 compat/allocator/x86_64_m6_adapter.py "${m6_adapter_arguments[@]}"
+        ;;
+    allocator-m6-deleted-heap-remote-exit|allocator-m6-heap-delete-after-owner-exit|allocator-m6-heap-delete-with-attached-worker)
+        m6_fixture_arguments=("$@")
+        m6_fixture_selection=false
+        m6_fixture_action=false
+        m6_fixture_mode=false
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --profile)
+                    [ "$m6_fixture_selection" = false ] && [ "$#" -ge 2 ] || fail "select one M6 fixture profile or matrix"
+                    case "$2" in release|debug-1|stat-1|stat-2) ;; *) fail "unknown M6 fixture profile" ;; esac
+                    m6_fixture_selection=true
+                    shift 2
+                    ;;
+                --matrix)
+                    [ "$m6_fixture_selection" = false ] || fail "select one M6 fixture profile or matrix"
+                    m6_fixture_selection=true
+                    shift
+                    ;;
+                --source-only|--collect|--read|--replay)
+                    [ "$m6_fixture_action" = false ] || fail "select one M6 fixture action"
+                    if [ "$1" = --source-only ]; then
+                        [ "$command" != allocator-m6-heap-delete-with-attached-worker ] || fail "attached-worker fixture has no source-only action"
+                    elif [ "$1" = --collect ]; then
+                        [ "$command" = allocator-m6-heap-delete-with-attached-worker ] || fail "collect requires the attached-worker fixture"
+                    fi
+                    m6_fixture_action=true
+                    shift
+                    ;;
+                --mode)
+                    [ "$command" = allocator-m6-deleted-heap-remote-exit ] && [ "$m6_fixture_mode" = false ] && [ "$#" -ge 2 ] || fail "mode requires the remote-exit fixture"
+                    case "$2" in before|after|both) ;; *) fail "unknown remote-exit mode" ;; esac
+                    m6_fixture_mode=true
+                    shift 2
+                    ;;
+                *) fail "unknown M6 fixture argument: $1" ;;
+            esac
+        done
+        m6_fixture_name="${command#allocator-m6-}"
+        m6_fixture_name="${m6_fixture_name//-/_}"
+        ensure_image
+        run_in_container python3 "compat/allocator/x86_64_m6_${m6_fixture_name}.py" "${m6_fixture_arguments[@]}"
         ;;
     allocator-public-heap-alignment)
         [ "$#" -eq 0 ] || fail "allocator-public-heap-alignment takes no arguments"

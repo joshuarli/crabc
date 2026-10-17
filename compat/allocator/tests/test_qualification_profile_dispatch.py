@@ -189,6 +189,17 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
         self.assertIn("allocator-heap-lifecycle | allocator-m6-adapter [--matrix]", result.stdout)
         self.assertFalse(self.log.exists(), "help must not inspect or run Docker")
 
+    def test_focused_m6_ownership_routes_preserve_profile_and_reader_selection(self):
+        for name in ('deleted-heap-remote-exit', 'heap-delete-after-owner-exit', 'heap-delete-with-attached-worker'):
+            for arguments in ([], ['--profile', 'debug-1'], ['--matrix', '--read'], ['--profile', 'stat-2', '--replay']):
+                with self.subTest(name=name, arguments=arguments):
+                    self.assertEqual(self.runner_arguments('allocator-m6-' + name, *arguments),
+                                     ('compat/allocator/x86_64_m6_' + name.replace('-', '_') + '.py', arguments))
+            for arguments in (['--profile'], ['--profile', 'invalid'], ['--matrix', '--profile', 'release'],
+                              ['--read', '--replay'], ['--command', 'sh']):
+                with self.subTest(name=name, arguments=arguments):
+                    self.assert_rejected('allocator-m6-' + name, *arguments)
+
     def test_divergence_defaults_and_explicit_profiles_reach_reader(self) -> None:
         for operation in ([], ["--check"]):
             for profile in (None, "correctness", "full"):
