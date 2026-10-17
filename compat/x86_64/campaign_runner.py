@@ -190,44 +190,43 @@ def product_machine_gate_command(gate_name: str, gate: Mapping[str, Any]) -> lis
     return verified_command_tokens(expected)
 
 
+def promotion_work_path(value: str | Path) -> Path:
+    path = Path(value)
+    if str(path).startswith('/workspace/'):
+        path = ROOT / path.relative_to('/workspace')
+    elif not path.is_absolute():
+        path = ROOT / path
+    require('..' not in path.parts and path.is_relative_to(ROOT / '.work')
+            and path.resolve() == path and path.exists(), 'promotion input is not a physical checkout work path')
+    return path
+
+
 def promotion_input_snapshot(receipt: Path) -> dict:
     """Freeze concrete inputs across the two image-owned validation phases."""
     import campaign_promotion_closure as closure
 
-    def work_path(value):
-        path = Path(value)
-        if str(path).startswith('/workspace/'):
-            path = ROOT / path.relative_to('/workspace')
-        elif not path.is_absolute():
-            path = ROOT / path
-        require('..' not in path.parts and path.is_relative_to(ROOT / '.work')
-                and path.resolve() == path and path.exists(), 'promotion input is not a physical checkout work path')
-        return path
-
     allocator = ROOT / '.work/allocator-x86_64'
-    roots = {work_path(receipt).parent,
-             work_path(allocator / 'reports/allocator/x86_64'),
-             work_path(allocator / 'target/compat/allocator/x86_64'),
-             work_path(allocator / 'integrated'), work_path(allocator / 'm10-native'),
-             work_path(allocator / 'allocator-cache')}
+    roots = {promotion_work_path(receipt).parent,
+             promotion_work_path(allocator / 'reports/allocator/x86_64'),
+             promotion_work_path(allocator / 'target/compat/allocator/x86_64'),
+             promotion_work_path(allocator / 'integrated'), promotion_work_path(allocator / 'm10-native'),
+             promotion_work_path(allocator / 'allocator-cache')}
     for pointer in (ROOT / '.work/x86_64/owned-static-qualification.json',
                     ROOT / '.work/x86_64/owned-dynamic-qualification.json',
                     ROOT / '.work/x86_64/qualification-evidence/performance.release/performance-release.json'):
-        roots.add(work_path(pointer))
+        roots.add(promotion_work_path(pointer))
         selection = json.loads(pointer.read_text())
-        selected = work_path(selection['receipt'])
+        selected = promotion_work_path(selection['receipt'])
         roots.add(selected.parent)
         document = json.loads(selected.read_text())
         if 'work' in document:
-            roots.add(work_path(document['work']))
-        # Performance receipts identify the concrete upstream input files.
-        # Current owning readers still validate each record, not this traversal.
+            roots.add(promotion_work_path(document['work']))
         def inputs(value):
             if isinstance(value, dict):
                 for key, item in value.items():
                     if key == 'path' and isinstance(item, str) and (
                             item.startswith(('.work/', '/workspace/.work/', str(ROOT / '.work') + '/'))):
-                        roots.add(work_path(item))
+                        roots.add(promotion_work_path(item))
                     else:
                         inputs(item)
             elif isinstance(value, list):
@@ -258,6 +257,7 @@ def promotion_input_snapshot(receipt: Path) -> dict:
 
 def execute_native_promotion(core_command: list[str], receipt: Path) -> int:
     """Join image-owned readers only while their concrete inputs stay unchanged."""
+    receipt = promotion_work_path(receipt)
     before = promotion_input_snapshot(receipt)
     core = subprocess.run(core_command, cwd=ROOT, check=False, capture_output=True, text=True)
     if core.returncode != 3:
@@ -292,6 +292,14 @@ def execute_native_promotion(core_command: list[str], receipt: Path) -> int:
             and result['source'] == {'head': before['source']['revision'], 'clean': True, 'dirty_paths': []},
             'native allocator phase result lacks its current report and source binding')
     require(promotion_input_snapshot(receipt) == before, 'promotion source or inputs changed across image validation')
+    terminal = subprocess.run(core_command, cwd=ROOT, check=False, capture_output=True, text=True)
+    if terminal.returncode != 3:
+        print(terminal.stdout, end='')
+        print(terminal.stderr, end='', file=sys.stderr)
+    require(terminal.returncode == 3 and json.loads(terminal.stdout) == partial,
+            'terminal CORE owning readers refused current runtime evidence')
+    require(promotion_input_snapshot(receipt) == before,
+            'promotion source or inputs changed during terminal CORE validation')
     print('x86 campaign promotion closure: PASS (CORE runtime and ALLOC allocator readers)')
     return 0
 

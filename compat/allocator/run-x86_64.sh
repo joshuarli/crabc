@@ -707,14 +707,17 @@ case "$command" in
         else
             m10_command+=(--profile "$m10_profile")
         fi
-        ensure_image
+        configure_work_dir
         if [ "${1:-}" != --reader-tests ]; then
-            [ "$WORK_DIR" = "$WORK_BOUNDARY" ] \
-                || fail "M10 qualification requires the canonical allocator work directory"
+            if [ "$m10_profile" != correctness ]; then
+                [ "$WORK_DIR" = "$WORK_BOUNDARY" ] \
+                    || fail "M10 qualification requires the canonical allocator work directory"
+            fi
             mkdir -p "$WORK_DIR/target/compat/allocator/x86_64/m10-gate"
             [ -w "$WORK_DIR/target/compat/allocator/x86_64/m10-gate" ] \
                 || fail "canonical M10 output directory is not writable by the invoking user"
         fi
+        ensure_image
         if { [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; } \
             || { [ "$m10_profile" = correctness ] && [ "${1:-}" = --check ]; }; then
             run_in_container "${m10_command[@]}"

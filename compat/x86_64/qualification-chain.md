@@ -148,14 +148,23 @@ full chain. Allocator qualification retains its selected baseline or full
 profile; baseline keeps physical NUMA and 2-MiB/1-GiB pages explicitly
 unqualified. `allocator-m9 --validate-retained` rereads the canonical report
 without publishing or measuring, while ordinary M9 production remains writable.
-M10 qualification uses the canonical allocator work directory and the CORE
-tool environment; terminal qualification rejects custom work descendants.
+M10 baseline and full qualification use the canonical allocator work directory
+and the CORE tool environment. Correctness checks and audits accept physical
+work descendants. Allocator JSON producers atomically publish reports with
+mode `0644`, so the invoking UID can read root-produced reports without write
+access.
 Direct CORE native closure remains partial and exits 3. The host composition
-must join both readers while source and concrete inputs remain unchanged.
+runs CORE, ALLOC, then CORE again. The terminal CORE phase replays runtime
+owning readers, including transitive performance attempts, binaries,
+diagnostics and upstream source directories. Source and concrete input
+snapshots must match across every phase. Relative checkout paths, absolute
+checkout paths and `/workspace` paths select the same physical receipt.
 
-This native bridge is unqualified work in progress. Its host mutation and
-partial-readiness controls, installed native audit source/payload custody, and
-producer readability replay remain unfinished. It does not authorize changing
+This native bridge remains unqualified until actual current native products
+pass both owning readers. Host phase mutation and partial-readiness controls
+exercise the composition protocol. Installed-product tests exercise physical
+source and payload custody. The allocator image reader tests exercise report
+readability after changing UID and GID. These controls do not authorize changing
 the accepted-C default or claiming native promotion readiness.
 
 ## Running the chain

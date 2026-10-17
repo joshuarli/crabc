@@ -6,7 +6,9 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = importlib.util.spec_from_file_location("core_dispatch_fixture", ROOT / "compat/x86_64/tests/test_core_image_dispatch.py")
@@ -16,12 +18,20 @@ SPEC.loader.exec_module(fixture)
 
 
 class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
-    invoke = fixture.CoreImageDispatchTests.invoke
+    def invoke(self, script, *arguments):
+        if script == 'compat/allocator/run-x86_64.sh':
+            script = str(self.checkout / script)
+        return fixture.CoreImageDispatchTests.invoke(self, script, *arguments)
     calls = fixture.CoreImageDispatchTests.calls
 
     def setUp(self) -> None:
         fixture.CoreImageDispatchTests.setUp(self)
-        scratch = ROOT / ".work/allocator-x86_64/tmp"
+        self.checkout = self.work / 'checkout'
+        for name in ('compat/allocator/run-x86_64.sh', 'compat/x86_64/core_image.py', 'rust-toolchain.toml'):
+            target = self.checkout / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / name, target)
+        scratch = self.checkout / ".work/allocator-x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(temporary.cleanup)
@@ -79,11 +89,20 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
             for profile in ("full", "correctness"):
                 for arguments in ([flag, profile, *operation], [*operation, flag, profile]):
                     with self.subTest(command=command, arguments=arguments):
-                        _, dispatched = self.runner_arguments(command, *arguments)
+                        environment = ({"CRABC_ALLOCATOR_X86_64_WORK_DIR": str(self.checkout / '.work/allocator-x86_64')}
+                                   if command == 'allocator-m10' and profile == 'full' else {})
+                        with patch.dict(self.environment, environment):
+                            _, dispatched = self.runner_arguments(command, *arguments)
                         self.assertEqual(dispatched.count(flag), 1)
                         index = dispatched.index(flag)
                         self.assertEqual(dispatched[index + 1], profile)
                         self.assertEqual(dispatched[:index] + dispatched[index + 2:], operation)
+
+    def test_terminal_m10_requires_canonical_work_but_correctness_accepts_descendants(self):
+        for operation in ('--check', '--build-audit'):
+            self.runner_arguments('allocator-m10', '--profile', 'correctness', operation)
+            for profile in ('baseline', 'full'):
+                self.assert_rejected('allocator-m10', '--profile', profile, operation)
 
     def test_malformed_profiles_reject_before_docker(self) -> None:
         for command, flag in (("allocator-m5", "--qualification-profile"), ("allocator-m10", "--profile")):
@@ -105,7 +124,10 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
         ):
             for arguments in ([flag, "baseline", *operation], [*operation, flag, "baseline"]):
                 with self.subTest(command=command, arguments=arguments):
-                    dispatched_runner, dispatched = self.runner_arguments(command, *arguments)
+                    environment = ({"CRABC_ALLOCATOR_X86_64_WORK_DIR": str(self.checkout / '.work/allocator-x86_64')}
+                                   if command == 'allocator-m10' else {})
+                    with patch.dict(self.environment, environment):
+                        dispatched_runner, dispatched = self.runner_arguments(command, *arguments)
                     self.assertEqual(dispatched_runner, "compat/allocator/" + runner)
                     self.assertEqual(dispatched, [*operation, flag, "baseline"])
 
