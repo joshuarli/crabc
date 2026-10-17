@@ -1,6 +1,6 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: paused 2026-10-17.** Owner-requested winddown is complete.
+**Status: paused 2026-10-17.** Winddown and scratch closeout are complete.
 The C allocator remains selected. Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families, zero of eight gates.
 
@@ -9,7 +9,8 @@ The C allocator remains selected. Public x86 support remains false:
   change, and launch independent ready lanes in priority order."
   First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
-- **State:** `main`, integrated through `62ac56b8d` before this handoff.
+- **State:** `main`, implementation integrated through `62ac56b8d`.
+  `1b2b7818c` retires the frozen scratch evidence consumers.
   Missing images were rebuilt through their tracked launchers. The core pin is
   `sha256:693719a74f10f5d1da038f3dd33a6704bbe8b35a54e27ee484c5ed3f8d1bb742`;
   the allocator pin is
@@ -70,13 +71,19 @@ next steps above replace the need to retain raw diagnostic output. Image pins
 and source pins remain tracked. Pinned-input `.cache/` directories outside
 `.work/` remain available for fresh preparation.
 
-- **Cleanup:** closing the two remaining receipt consumers permits removing
-  their integrated, clean checkouts. The owner also authorized deleting the
-  scratch caches, logs, saved artifacts and earlier preservation directory.
-  No historical artifact is moved elsewhere to satisfy the empty-directory
-  objective. Verify the saved source patch before disposal and keep any unique
-  change in Git. The earlier winddown removed ten checkouts and 16.4 GiB of
-  compiled objects. Final removal and byte accounting are recorded below.
+- **Cleanup:** `.work/` is absent. Only the main checkout remains registered.
+  Removed the final two integrated rehearsal checkouts after retiring their
+  receipt consumers. A normal removal first left an unregistered residue when
+  it encountered root-owned sticky test fixtures. Cleared those generated
+  directory flags, completed normal removal of the remaining worktree, then
+  deleted the residue and remaining scratch. No forced worktree removal or
+  branch deletion was used. The reset removed an approximately 80-GiB scratch
+  footprint, including caches, raw failures, logs, receipts and the earlier
+  preservation directory. Nothing was relocated elsewhere.
+  The saved source-accounting patch was already incorporated into main,
+  including the fixed NUMA mapping and regular-arena reclaim/purge item.
+  No unique uncommitted source or handoff was found. All parked implementation
+  branches remain, including `lane/dynamic-owner-root` at `009f5642c`.
 - **Not started:** first diagnose the release Heap stress crash. Review the
   secure layout branch and finish matching C profile producers, then run the
   paired secure trace and merged production checks. Resolve the cold-arena
@@ -97,17 +104,18 @@ and source pins remain tracked. Pinned-input `.cache/` directories outside
   Ledger, structure and allocator architecture checks passed. No complete
   final-main cohort, native promotion or fresh performance qualification passed.
   Perf gate deferred: host busy.
-- **Reboot audit:** worktree registrations were pruned and both retained
-  checkouts were clean. Preserved data was inspected before removal. All
-  unmerged branches are named here or in the parked historical list below.
-  `.work/` is ignored by `.git/info/exclude` and is on ext4. No campaign
-  process, container, lane or scheduled wakeup remains. The clean-environment
-  resume command and all committed handoff paths/branches were checked.
-  Host scheduler enumeration is limited: `systemctl` and `atq` are absent,
-  and `crontab -l` reports no account. The campaign created no scheduled jobs.
-  Codex's configured Stop command and existing trusted hash were reviewed;
-  the `/hooks` UI is unavailable through this API. The closeout guard was
-  invoked directly for the final checkout audit.
+- **Reboot audit:** verified physical absence of `.work/`, pruned worktree
+  registrations, and confirmed only the main checkout remains. All 69 unmerged
+  branches remain named in this handoff. No process uses a scratch working
+  directory, and no campaign process or container remains. `.work/` stays
+  ignored by `.git/info/exclude` for future tracked-launcher preparation.
+  Pinned images and input caches outside `.work/` were left in place.
+  The resume command passed in a clean environment during winddown. Fresh
+  preparation must recreate Cargo state before native execution. No build,
+  qualification or performance gate was rerun during this artifact reset.
+  Winddown's scheduler and Codex hook UI audit limitations remain recorded:
+  `systemctl` and `atq` were unavailable, `crontab -l` reported no account,
+  and `/hooks` was unavailable through the API. No scheduled job was created.
 
 All following older branches are **parked under C0**, retained as history,
 not queued lanes. Inspect their diff against main before reusing anything.
@@ -1093,6 +1101,8 @@ Append one line per merge batch, per parked item, and per contract change.
   requires. Git confirms that local rule supplies the effective exclusion.
 
 - 2026-10-17: owner-requested winddown froze main, integrated the bounded Heap stress selector and secure free-list fixture, and parked atomic secure layout `009f5642c` pending matched C profiles and review. Both frozen three-product dynamic receipts published. M6 Rust stress SIGSEGV, pinned C owner-exit faults, cold-arena retry and clock source gaps remain open. Removed ten checkouts, preserved raw evidence and caches, reclaimed 16.4 GiB of compiled objects, and retained two clean checkouts for physical receipt readers. Reboot audit and clean-environment resume passed with scheduler/UI limitations recorded above. No push or promotion.
+
+- 2026-10-17: owner explicitly requested zero `.work/` state. Retired both frozen physical receipt consumers and committed the regeneration requirement before removing their checkouts. Verified the saved source patch was incorporated, preserved parked source branches and committed findings, then removed the entire approximately 80-GiB scratch footprint without relocation. Repaired root-owned sticky fixture directories after a normal worktree removal refusal. Final audit confirms only main is registered and `.work/` is absent. Qualification state is unchanged.
 
 ## For the owner afterwards
 
