@@ -208,7 +208,7 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 self.assert_rejected("allocator-m6-adapter", *arguments)
         result = self.invoke("compat/allocator/run-x86_64.sh", "--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("allocator-heap-lifecycle | allocator-m6-adapter [--matrix]", result.stdout)
+        self.assertIn("allocator-heap-lifecycle [--faults] | allocator-m6-adapter [--matrix]", result.stdout)
         self.assertFalse(self.log.exists(), "help must not inspect or run Docker")
 
     def test_focused_m6_ownership_routes_preserve_profile_and_reader_selection(self):
