@@ -76,6 +76,14 @@ class OwnershipProfileReceiptTests(unittest.TestCase):
             ownership.require_diagnostic_target({**raw, "stderr": ownership.stress.bytes_record(b"")},
                 "debug-1", "after")
 
+    def test_diagnosis_rejects_a_selected_mode_without_a_retained_crash(self):
+        output = Path("retained-run")
+        run = (output, {}, output / "debug-1-c-after.json", {})
+        with patch.object(ownership, "_retained_diagnostic_run", side_effect=[run,
+                ownership.harness.HarnessError("no retained debug-1 before pinned-C SIGSEGV")]):
+            with self.assertRaisesRegex(ownership.harness.HarnessError, "no retained debug-1 before"):
+                ownership.retained_diagnostic_runs(("after", "before"))
+
 
 class OwnershipProfileProducerTests(unittest.TestCase):
     def run_producer(self, root, profiles, expected, *, failure=None, native_change=False, diagnostic=b"",

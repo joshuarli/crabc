@@ -113,17 +113,12 @@ def _retained_diagnostic_run(mode):
     raise harness.HarnessError(f"no retained debug-1 {mode} pinned-C SIGSEGV matches this fixture")
 
 
+def retained_diagnostic_runs(modes):
+    return [(mode, *_retained_diagnostic_run(mode)) for mode in modes]
+
+
 def diagnose_retained_crashes(modes):
-    selected = []
-    for mode in modes:
-        try:
-            selected.append((mode, *_retained_diagnostic_run(mode)))
-        except harness.HarnessError as error:
-            if "no retained debug-1" in str(error):
-                continue
-            raise
-    if not selected:
-        raise harness.HarnessError("no retained debug-1 pinned-C SIGSEGV is eligible for diagnosis")
+    selected = retained_diagnostic_runs(modes)
     output, inputs = selected[0][1], selected[0][2]
     source = Path(inputs["source_directory"])
     if not (source / "src/static.c").is_file():
