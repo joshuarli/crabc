@@ -222,6 +222,21 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 with self.subTest(name=name, arguments=arguments):
                     self.assert_rejected('allocator-m6-' + name, *arguments)
 
+    def test_medium_pressure_fault_route_runs_the_offline_paired_producer(self):
+        command = 'allocator-medium-pressure-delayed-purge-fault'
+        self.assertEqual(self.runner_arguments(command),
+                         ('compat/allocator/medium_pressure_delayed_purge_fault.py', ['--offline']))
+        call = next(call for call in self.calls() if call[0] == 'run' and 'python3' in call)
+        self.assertIn('CRABC_ALLOCATOR_EVIDENCE_ARCH=x86_64', call)
+        self.assertIn('CRABC_EXECUTION_MODE=native', call)
+        self.assertIn('CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=' + fixture.STALE, call)
+        for arguments in (['--c-only'], ['--offline'], ['--profile', 'release'], ['sh']):
+            self.assert_rejected(command, *arguments)
+        result = self.invoke('compat/allocator/run-x86_64.sh', '--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(command, result.stdout)
+        self.assertFalse(self.log.exists(), 'help must not inspect or run Docker')
+
     def test_divergence_defaults_and_explicit_profiles_reach_reader(self) -> None:
         for operation in ([], ["--check"]):
             for profile in (None, "correctness", "full"):

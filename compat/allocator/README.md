@@ -166,6 +166,12 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   `allocator-public-heap-alignment`,
   `allocator-heap-convenience [--read|--replay]`,
   `allocator-upstream-heap-stress`, `allocator-upstream-subprocess-stress`.
+- Scheduled arena purge failure: `allocator-medium-pressure-delayed-purge-fault`
+  builds the pinned C oracle and runs the exact Rust delayed-purge receiver.
+  It compares 28 fields covering expiry, consumed decommit failure, warning
+  accounting, surviving claims and later slice reuse. The command takes no
+  arguments and uses the cached pinned source archive offline. Its retained
+  evidence does not close the full M2 gate.
 - Local trace: `allocator-native-local-trace [--profile initial|worker]`
   compares warmed owner-local allocation traces.
 - Process/thread lifecycle and startup: `allocator-tls`, `allocator-lifecycle
