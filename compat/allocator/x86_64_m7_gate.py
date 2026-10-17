@@ -2980,16 +2980,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.development_trace:
         previous_artifacts = ARTIFACTS
+        previous_c_profile = harness.CONFIGURATION_PROFILES['release']
         profile = {'CARGO_PROFILE_TEST_OPT_LEVEL': '0', 'CARGO_PROFILE_DEV_OPT_LEVEL': '0'}
         previous_environment = {name: os.environ.get(name) for name in profile}
         try:
             ARTIFACTS = ARTIFACTS / 'development'
+            harness.CONFIGURATION_PROFILES['release'] = tuple(
+                flag for flag in previous_c_profile if not flag.startswith('-O')) + ('-O0',)
             os.environ.update(profile)
             report = development_traces[arguments.development_trace](arguments.offline)
             report.update(qualification_eligible=False, compiler_profile={'opt_level': '0', 'test': True})
             harness.write_json(ARTIFACTS / (arguments.development_trace + '.json'), report)
         finally:
             ARTIFACTS = previous_artifacts
+            harness.CONFIGURATION_PROFILES['release'] = previous_c_profile
             for name, value in previous_environment.items():
                 if value is None:
                     os.environ.pop(name, None)

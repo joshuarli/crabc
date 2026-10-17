@@ -32,11 +32,19 @@ class M7DevelopmentTraceTests(unittest.TestCase):
             root = Path(temporary)
             canonical = root / 'options-environment.json'
             canonical.write_text('retained qualification input')
+            original_c_profile = harness.CONFIGURATION_PROFILES['release']
             def execute(offline):
                 self.assertTrue(offline)
                 self.assertEqual(os.environ['CARGO_PROFILE_TEST_OPT_LEVEL'], '0')
                 self.assertEqual(os.environ['CARGO_PROFILE_DEV_OPT_LEVEL'], '0')
                 self.assertEqual(gate.ARTIFACTS, root / 'development')
+                with mock.patch.object(harness, 'command_record', return_value={'stdout': ''}) as command, \
+                        mock.patch.object(harness, 'require_tool', side_effect=lambda name: name), \
+                        mock.patch.object(harness, 'require_success'), \
+                        mock.patch.object(harness, 'parse_elf_identity'):
+                    gate.c_oracle_trace(root / 'oracle.c', 'options', root, root)
+                flags = [flag for flag in command.call_args_list[0].args[0] if flag.startswith('-O')]
+                self.assertEqual(flags, ['-O0'])
                 return {'status': 'passed', 'compared_key_count': 660}
             with mock.patch.object(gate, 'ARTIFACTS', root), \
                     mock.patch.object(gate, 'run_options_differential', side_effect=execute), \
@@ -44,6 +52,7 @@ class M7DevelopmentTraceTests(unittest.TestCase):
                 self.assertEqual(gate.main(['--offline', '--development-trace', 'options-environment']), 0)
                 self.assertEqual(gate.ARTIFACTS, root)
                 self.assertEqual(os.environ['CARGO_PROFILE_TEST_OPT_LEVEL'], '2')
+                self.assertEqual(harness.CONFIGURATION_PROFILES['release'], original_c_profile)
             report = json.loads((root / 'development/options-environment.json').read_text())
             self.assertFalse(report['qualification_eligible'])
             self.assertEqual(report['compiler_profile'], {'opt_level': '0', 'test': True})
