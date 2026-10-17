@@ -99,16 +99,6 @@ unsafe fn literal_is_special(literal: *const TreLiteral) -> bool {
 }
 
 #[inline]
-unsafe fn literal_is_empty(literal: *const TreLiteral) -> bool {
-    unsafe { (*literal).code_min == EMPTY }
-}
-
-#[inline]
-unsafe fn literal_is_assertion(literal: *const TreLiteral) -> bool {
-    unsafe { (*literal).code_min == ASSERTION }
-}
-
-#[inline]
 unsafe fn literal_is_tag(literal: *const TreLiteral) -> bool {
     unsafe { (*literal).code_min == TAG }
 }
