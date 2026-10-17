@@ -1062,17 +1062,42 @@ mod tests {
         };
         let mut list = unsafe { LocalFreeList::from_page_at(page) }.unwrap();
         list.extend_count_with_random(4, || Some(0x1234_5678)).unwrap();
-        let remote = list.pop(false).unwrap().unwrap();
+        #[cfg(any(feature = "mi-debug-1", feature = "mi-secure-3"))]
+        {
+            let head = NonNull::new(list.free()).unwrap();
+            let next_link = unsafe { ptr::read(head.as_ptr().cast::<usize>()) };
+            let out_of_page = list.base.as_ptr().addr().wrapping_add(ARENA_SLICE_SIZE);
+            let corrupted = encode_page_link(page_address, keys, out_of_page);
+            unsafe { ptr::write(head.as_ptr().cast::<usize>(), corrupted) };
+            assert_eq!(list.pop(false), Err(FreeListError::CorruptFreeList));
+            assert_eq!(list.free(), head.as_ptr());
+            assert_eq!(list.used(), 0);
+            assert_eq!(list.capacity(), 4);
+            unsafe { ptr::write(head.as_ptr().cast::<usize>(), next_link) };
+        }
+        let initial = [
+            list.pop(false).unwrap().unwrap(),
+            list.pop(false).unwrap().unwrap(),
+            list.pop(false).unwrap().unwrap(),
+            list.pop(false).unwrap().unwrap(),
+        ];
+        let initial_order: std::vec::Vec<_> = initial.iter()
+            .map(|block| (block.addr().get() - list.base.as_ptr().addr()) / 32)
+            .collect();
+        assert_eq!(initial_order, if crate::config::SECURE_LEVEL >= 2 {
+            std::vec![0, 3, 1, 2]
+        } else {
+            std::vec![0, 1, 2, 3]
+        });
+        let remote = initial[0];
         initialize_client(remote, false);
         let published = std::sync::atomic::AtomicPtr::new(remote.as_ptr());
-        let mut clients = std::vec::Vec::new();
-        for _ in 0..3 {
-            let block = list.pop(false).unwrap().unwrap();
+        let clients = [initial[1], initial[2], initial[3]];
+        for block in clients {
             initialize_client(block, false);
             // SAFETY: pop transfers this distinct usable client extent;
             // selected source padding stays outside client access.
             unsafe { block.as_ptr().write_bytes(0xa5, usable); }
-            clients.push(block);
         }
         assert_eq!(list.capacity(), 4);
         assert!(list.pop(false).unwrap().is_none());
