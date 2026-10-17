@@ -1623,7 +1623,7 @@
         "crabc_mimalloc::diagnostic_output"
       ],
       "status": "partial",
-      "difference": "Rust retains private initial-exec evidence roots and selected stores, plus the private diagnostic owner consumes the selected `_mi_thread_id()` result through crabc-core’s direct x86-64 fs-zero read. It does not establish source-compatible symbols or complete lifecycle integration.",
+      "difference": "Rust retains private initial-exec evidence roots and selected stores, plus the private diagnostic owner consumes the selected `_mi_thread_id()` result through crabc-core\u2019s direct x86-64 fs-zero read. It does not establish source-compatible symbols or complete lifecycle integration.",
       "evidence": [
         "compat/allocator/tests/test_x86_64_diagnostic_output_owner_evidence.py",
         "compat/allocator/x86_64_diagnostic_output_owner_evidence.py",
