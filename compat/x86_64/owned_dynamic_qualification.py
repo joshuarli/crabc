@@ -221,13 +221,21 @@ def read(path: Path) -> dict:
 
 
 def product_identity(product: Path) -> str:
+    manifest, state, provenance = _materialization_product(product)
+    return _product_identity_from_state(product, manifest, state, provenance, source_digest())
+
+
+def _product_identity(product: Path, source_identity: str) -> str:
+    manifest, state, provenance = _materialization_product(product)
+    return _product_identity_from_state(product, manifest, state, provenance, source_identity)
+
+
+def _materialization_product(product: Path) -> tuple[dict, dict, dict]:
     import crabc_cc_owned_dynamic as driver
     try:
         manifest = driver.validate_installation(product)
     except driver.shared.DriverError as error:
         raise QualificationError(f"installed product invalid: {error}") from error
-    # A combined four-mode sysroot embeds the dynamic product manifest that
-    # the builder's state binds; the driver has checked it against the tree.
     if manifest.get("format") == driver.COMBINED_FORMAT:
         manifest = read(product / driver.COMBINED_PRODUCT_MANIFEST)
     state = read(product / "share/crabc/dynamic-product-state.json")
@@ -237,7 +245,12 @@ def product_identity(product: Path) -> str:
     require(state.get("payload_files") == {name: value for name, value in manifest["files"].items()
             if name != "share/crabc/dynamic-product-state.json"}, "materialization payload binding drifted")
     require(state.get("status") == "materialized-unqualified", "builder state must remain unqualified")
-    require(state.get("source_sha256") == source_digest(), "installed product source is stale")
+    return manifest, state, provenance
+
+
+def _product_identity_from_state(product: Path, manifest: dict, state: dict, provenance: dict,
+                                 source_identity: str) -> str:
+    require(state.get("source_sha256") == source_identity, "installed product source is stale")
     require(state.get("contracts") == contract_digests(), "installed product contracts are stale")
     allocator_backend = state.get("allocator_backend")
     require(
@@ -535,7 +548,7 @@ def run_case(work: Path, product: str, case: str) -> None:
     source = source_digest()
     oracle = read(work / "qualification-prepare.json")["oracle"]
     require_live_oracle(work, oracle)
-    manifest = product_identity(work / product)
+    manifest = _product_identity(work / product, source)
     script, mode = CASES[case]
     environment = {key: value for key, value in os.environ.items()
                    if not key.startswith(("CRABC_GENERAL_DYNAMIC_", "LD_"))}
@@ -557,7 +570,8 @@ def run_case(work: Path, product: str, case: str) -> None:
             make_retained_evidence_readable(directory)
     require(completed.returncode == 0, f"coverage case failed: {product}/{case}; {log}")
     require_live_oracle(work, oracle)
-    require(source_digest() == source and product_identity(work / product) == manifest,
+    source_after = source_digest()
+    require(source_after == source and _product_identity(work / product, source_after) == manifest,
             "source or installed product changed during coverage case")
     if case in LOADER_CORPUS_CASES:
         validate_loader_corpus_case(work, product, case, log, str(ROOT), manifest)
@@ -684,7 +698,7 @@ def validate_archive(path: Path, product: Path) -> None:
 def collect(work: Path) -> dict:
     work = evidence_path(work)
     source = source_digest()
-    manifests = {product: product_identity(work / product) for product in PRODUCTS}
+    manifests = {product: _product_identity(work / product, source) for product in PRODUCTS}
     require(len(set(manifests.values())) == 1, "three product manifests differ")
     records = {}
     for product in PRODUCTS:

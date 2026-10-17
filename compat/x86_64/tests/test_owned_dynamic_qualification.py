@@ -24,6 +24,8 @@ import owned_dynamic_qualification as qualification
 import crabc_cc_owned_dynamic as driver
 
 REAL_PRODUCT_IDENTITY = qualification.product_identity
+REAL_SOURCE_BOUND_PRODUCT_IDENTITY = qualification._product_identity
+REAL_SOURCE_DIGEST = qualification.source_digest
 REAL_VALIDATE_ELF_INSPECTION = qualification.elf_inspection.validate_record
 
 
@@ -50,7 +52,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             mock.patch.object(qualification, "PUBLICATION", self.root / ".work/publication.json"),
             mock.patch.object(qualification, "source_digest", return_value=self.source),
             mock.patch.object(qualification, "contract_digests", return_value={"contracts": "c" * 64}),
-            mock.patch.object(qualification, "product_identity", return_value=self.manifest),
+            mock.patch.object(qualification, "_product_identity", return_value=self.manifest),
             mock.patch.object(qualification, "require_clean_source", return_value="clean-revision"),
             # These tests exercise the catalog's transaction and publication
             # contract. Native component semantics have their own retained
@@ -161,6 +163,137 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(json.dumps(value, sort_keys=True).encode() if isinstance(value, dict) else value)
         return path
+
+    def materialized_product(self, name="source-sealed-product", source_identity=None):
+        product = self.work / name
+        product.mkdir(exist_ok=True)
+        self.put(f"{name}/payload", b"sealed product payload")
+        provenance = self.put(
+            f"{name}/share/crabc/libc-shared.provenance.json",
+            {"allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND},
+        )
+        payloads = {
+            "payload": qualification.digest(product / "payload"),
+            "share/crabc/libc-shared.provenance.json": qualification.digest(provenance),
+        }
+        state = {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified",
+            "source_sha256": self.source if source_identity is None else source_identity,
+            "contracts": {"contracts": "c" * 64}, "payload_files": payloads,
+            "allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND,
+            "allocator_lifecycle_test_audit": False, "allocator_promoted": False,
+            "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
+            "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+            "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+            "qualification": qualification.MATERIALIZATION_QUALIFICATION,
+        }
+        state_path = self.put(f"{name}/share/crabc/dynamic-product-state.json", state)
+        manifest = {"format": driver.FORMAT, "files": {
+            **payloads,
+            "share/crabc/dynamic-product-state.json": qualification.digest(state_path),
+        }}
+        manifest_path = self.put(f"{name}/share/crabc/manifest.json", manifest)
+
+        def validate_sealed_product(root):
+            if json.loads((root / "share/crabc/manifest.json").read_text()) != manifest:
+                raise driver.shared.DriverError("installed manifest changed")
+            for relative, expected in manifest["files"].items():
+                if qualification.digest(root / relative) != expected:
+                    raise driver.shared.DriverError("installed payload hash mismatch")
+            return manifest
+
+        return product, manifest_path, manifest, validate_sealed_product
+
+    def test_bracketed_product_identity_uses_the_supplied_source_seal(self):
+        product, manifest_path, manifest, validate = self.materialized_product()
+        with mock.patch.object(driver, "validate_installation", side_effect=validate):
+            self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
+                             qualification.digest(manifest_path))
+            with self.assertRaisesRegex(qualification.QualificationError, "installed product source is stale"):
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, "f" * 64)
+
+    def test_direct_product_identity_still_reads_the_current_source_seal(self):
+        product, manifest_path, _manifest, validate = self.materialized_product("direct-product-identity")
+        events = []
+
+        def validate_product(root):
+            events.append("product")
+            return validate(root)
+
+        with mock.patch.object(driver, "validate_installation", side_effect=validate_product), \
+             mock.patch.object(qualification, "source_digest", side_effect=lambda: events.append("source") or self.source) as source_digest:
+            self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(manifest_path))
+        source_digest.assert_called_once_with()
+        self.assertEqual(events, ["product", "source"])
+
+    def test_bracketed_product_identity_rejects_a_mutated_payload(self):
+        product, _manifest_path, _manifest, validate = self.materialized_product("mutated-product")
+        with mock.patch.object(driver, "validate_installation", side_effect=validate):
+            (product / "payload").write_bytes(b"changed after product seal")
+            with self.assertRaisesRegex(qualification.QualificationError,
+                                        "installed product invalid: installed payload hash mismatch"):
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
+
+    def test_run_case_rejects_source_mutation_during_the_leaf(self):
+        source = self.root / "tracked-source.c"
+        source.write_bytes(b"before leaf execution")
+        case_record = self.work / "qualification-cases/installed/cycle.json"
+        case_log = self.work / "qualification-cases/installed/cycle.log"
+        case_record.unlink()
+        case_log.unlink()
+        (self.work / "qualification-prepare.json").write_text(json.dumps({"oracle": {}}))
+
+        def mutate_source(*_arguments, **_options):
+            source.write_bytes(b"mutated during leaf execution")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        with mock.patch.object(qualification, "git", return_value=b"tracked-source.c\0"):
+            source_before = REAL_SOURCE_DIGEST()
+            _product, _manifest_path, _manifest, validate = self.materialized_product(
+                "installed", source_identity=source_before)
+            with mock.patch.object(qualification, "source_digest", wraps=REAL_SOURCE_DIGEST) as source_digest, \
+                 mock.patch.object(qualification, "require_live_oracle"), \
+                 mock.patch.object(driver, "validate_installation", side_effect=validate), \
+                 mock.patch.object(qualification, "_product_identity",
+                                   side_effect=REAL_SOURCE_BOUND_PRODUCT_IDENTITY), \
+                 mock.patch.object(qualification, "subprocess") as subprocess_module, \
+                 mock.patch.object(qualification, "leaf_evidence_directories", return_value=set()):
+                subprocess_module.run.side_effect = mutate_source
+                with self.assertRaisesRegex(qualification.QualificationError,
+                                            "source or installed product changed during coverage case"):
+                    qualification.run_case(self.work, "installed", "cycle")
+        self.assertEqual(source_digest.call_count, 2)
+
+    def test_run_case_rejects_product_mutation_during_the_leaf(self):
+        source = self.root / "tracked-source.c"
+        source.write_bytes(b"stable during leaf execution")
+        case_record = self.work / "qualification-cases/installed/cycle.json"
+        case_log = self.work / "qualification-cases/installed/cycle.log"
+        case_record.unlink()
+        case_log.unlink()
+        (self.work / "qualification-prepare.json").write_text(json.dumps({"oracle": {}}))
+
+        def mutate_product(*_arguments, **_options):
+            (product / "payload").write_bytes(b"mutated during leaf execution")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        with mock.patch.object(qualification, "git", return_value=b"tracked-source.c\0"):
+            source_before = REAL_SOURCE_DIGEST()
+            product, _manifest_path, _manifest, validate = self.materialized_product(
+                "installed", source_identity=source_before)
+            with mock.patch.object(qualification, "source_digest", wraps=REAL_SOURCE_DIGEST) as source_digest, \
+                 mock.patch.object(qualification, "require_live_oracle"), \
+                 mock.patch.object(driver, "validate_installation", side_effect=validate), \
+                 mock.patch.object(qualification, "_product_identity",
+                                   side_effect=REAL_SOURCE_BOUND_PRODUCT_IDENTITY), \
+                 mock.patch.object(qualification, "subprocess") as subprocess_module, \
+                 mock.patch.object(qualification, "leaf_evidence_directories", return_value=set()):
+                subprocess_module.run.side_effect = mutate_product
+                with self.assertRaisesRegex(qualification.QualificationError,
+                                            "installed product invalid: installed payload hash mismatch"):
+                    qualification.run_case(self.work, "installed", "cycle")
+        self.assertEqual(source_digest.call_count, 2)
 
     def test_classic_netdb_case_alone_has_explicit_user_and_network_namespace(self):
         command = qualification.case_command(self.work, "installed", "classic-netdb")
@@ -340,7 +473,8 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         path = self.put("installed/share/crabc/dynamic-product-state.json", state)
         manifest = {"files": {**payloads, "share/crabc/dynamic-product-state.json": qualification.digest(path)}}
         with mock.patch.object(driver, "validate", return_value=manifest):
-            self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(product / "share/crabc/manifest.json"))
+            self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
+                             qualification.digest(product / "share/crabc/manifest.json"))
             for key, value in (("status", "verified"), ("source_sha256", "0" * 64),
                                ("contracts", {}), ("payload_files", {}),
                                ("allocator_backend", "native-shadow"),
@@ -350,7 +484,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 with self.subTest(field=key):
                     path.write_text(json.dumps({**state, key: value}))
                     with self.assertRaises(qualification.QualificationError):
-                        REAL_PRODUCT_IDENTITY(product)
+                        REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
     def test_materialization_accepts_native_shadow_selected_by_sealed_product(self):
         product = self.work / "installed"
@@ -387,7 +521,8 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             return manifest
 
         with mock.patch.object(driver, "validate", side_effect=validate_sealed_product):
-            self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(manifest_path))
+            self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
+                             qualification.digest(manifest_path))
 
             # A rewritten state digest still cannot claim a backend different
             # from the separately sealed linker provenance.
@@ -397,7 +532,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaisesRegex(qualification.QualificationError,
                                         "materialization allocator provenance drifted"):
-                REAL_PRODUCT_IDENTITY(product)
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
             # Matching rehashed fields do not make an unconfigured backend
             # selection a materialized product.
@@ -420,7 +555,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest))
             with self.assertRaisesRegex(qualification.QualificationError,
                                         "materialization allocator provenance drifted"):
-                REAL_PRODUCT_IDENTITY(product)
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
     def test_combined_sysroot_binds_materialization_to_its_embedded_dynamic_manifest(self):
         """The state binds the dynamic product, not the combined roster around it."""
@@ -453,10 +588,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         combined = {"format": driver.COMBINED_FORMAT,
                     "files": {**embedded["files"], "usr/lib/libc.a": "a" * 64}}
         with mock.patch.object(driver, "validate_installation", return_value=combined):
-            self.assertEqual(REAL_PRODUCT_IDENTITY(product), qualification.digest(product / "share/crabc/manifest.json"))
+            self.assertEqual(REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source),
+                             qualification.digest(product / "share/crabc/manifest.json"))
             self.put("installed/" + driver.COMBINED_PRODUCT_MANIFEST, {"files": {"payload": "0" * 64}})
             with self.assertRaisesRegex(qualification.QualificationError, "payload binding"):
-                REAL_PRODUCT_IDENTITY(product)
+                REAL_SOURCE_BOUND_PRODUCT_IDENTITY(product, self.source)
 
     def test_complete_receipt_requires_explicit_clean_reviewed_publication(self):
         receipt = qualification.collect(self.work)
@@ -475,6 +611,16 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.assertEqual(qualification.load_publication(), receipt)
         with mock.patch.object(qualification, "require_clean_source", return_value="later-revision"):
             self.assertIsNone(qualification.load_publication())
+
+    def test_collection_reuses_its_opening_source_seal_for_each_product(self):
+        with mock.patch.object(qualification, "source_digest", side_effect=[self.source, self.source]) as source_digest, \
+             mock.patch.object(qualification, "_product_identity", return_value=self.manifest) as product_identity:
+            qualification.collect(self.work)
+        self.assertEqual(source_digest.call_count, 2)
+        self.assertEqual(
+            [call.args for call in product_identity.call_args_list],
+            [(self.work / product, self.source) for product in qualification.PRODUCTS],
+        )
 
     def publish(self, path):
         with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "publish", "--receipt", str(path)]), \
