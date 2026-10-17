@@ -1,6 +1,6 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: active 2026-10-17.** The owner authorized rebuilding the missing
+**Status: winding down 2026-10-17.** The owner authorized rebuilding the missing
 native images and made that recovery part of unattended operation. Both images
 are rebuilt; environment verification and native lanes are resuming.
 The accepted C allocator remains the default.
