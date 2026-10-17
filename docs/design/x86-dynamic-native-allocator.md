@@ -32,6 +32,29 @@ the attach is rejected, and a fatal mismatch terminates instead. A successful
 no-allocation worker attachment must already retain its owner in compiler TLS,
 before an allocation activates the page engine.
 
+First-class Heap attachments use `subproc_main_heaps.rs`, reached through
+`source_heap_api::heap_theap` and Heap allocation entries. Each attachment
+publishes a source-owned Theap in the calling thread's regular TLS slot,
+TLD list and Heap list. `finish_current_thread_native_after_user_destructors`
+calls `native_thread_done` before finishing the fixed main-Heap owner.
+That path releases the regular TLS array, clears the fast slot, traverses
+the auxiliary Theaps with `MI_ABANDON`, then resets roots and detaches the
+Theaps. `ProductionOwnerExitCallbacks` links an OS page to its own Heap's
+`os_abandoned_pages` before unown. A later `native_free_nonlocal` claims the
+singleton, removes that exact node, clears its clipped PageMap span and
+metadata, then releases the mapping.
+
+The `allocator-dynamic-os-aligned-singleton` differential compares this
+production path with pinned v3.5.0 C for one 7-byte, 128 KiB-aligned client.
+Its 21 observations cover the sole `BIN_HUGE` member, empty `BIN_FULL`,
+worker teardown, joined consumer free, OS-list removal and PageMap clearance.
+`native_dynamic_os_singleton_owner_exit` separately compiles the allocator
+without test or audit features and uses `mincore` to check that the returned
+client's page is unmapped.
+The old `dynamic_theap.rs` attachment remains an isolated test model.
+These checks establish this one production lifecycle slice. General lifecycle
+and promotion claims remain partial.
+
 The finalizer remains an entry in **libc's own `.fini_array`**. The accepted C
 oracle is `libmimalloc-sys` 0.1.49's bundled v3.3.2
 `c_src/mimalloc/v3/src/prim/prim.c`: its compiler destructor calls

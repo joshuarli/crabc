@@ -1427,6 +1427,97 @@ mod heap_membership_tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
+    fn dynamic_os_singleton_worker_exit_releases_exact_heap_list_and_page_map() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::dynamic_os_singleton_worker_exit_releases_exact_heap_list_and_page_map",
+            || {
+                initialize_test_owner();
+                let owner = std::thread::spawn(|| {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let heap = heap_new();
+                    assert!(!heap.is_null());
+                    let theap = NonNull::new(unsafe { heap_theap(heap) }.cast::<Theap>()).unwrap();
+                    let request = 7;
+                    let alignment = 128 * 1024;
+                    let allocation = unsafe { heap_malloc_aligned_at(heap, request, alignment, 0, false) };
+                    let block = allocation.value.expect("the dynamic aligned singleton");
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().unwrap();
+                    let page = unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }
+                        .unwrap().unwrap();
+                    let mut trace = unsafe {
+                        let page_ref = page.as_ref();
+                        assert_eq!(page_ref.heap(), heap.cast());
+                        assert_eq!(page_ref.capacity(), 1);
+                        let huge = Theap::local_queue_at(theap, crate::config::BIN_HUGE).unwrap();
+                        let full = Theap::local_queue_at(theap, crate::config::BIN_FULL).unwrap();
+                        let singleton = page_ref.reserved() == 1;
+                        let in_full = crate::types::page_queue::page_is_in_full(page_ref);
+                        std::vec![
+                            ("request_size", request),
+                            ("alignment", alignment),
+                            ("os_memory_kind", usize::from(page_ref.memid().kind() == crate::types::MemoryKind::Os)),
+                            ("singleton", usize::from(singleton)),
+                            ("reserved", usize::from(page_ref.reserved())),
+                            ("used", page_ref.used()),
+                            ("full_singleton_before_owner_exit", usize::from(singleton && page_ref.used() == 1)),
+                            ("huge_singleton_before_owner_exit", usize::from(singleton && page_ref.memid().os_memory()
+                                .is_some_and(|os| os.base.addr() < page.as_ptr().addr()))),
+                            ("full_transition_eligible_before_owner_exit", usize::from(page_ref.block_size() > crate::config::SMALL_MAX_OBJ_SIZE)),
+                            ("huge_queue_singleton_before_owner_exit", usize::from(huge.first() == page.as_ptr() && huge.last() == page.as_ptr() && huge.count() == 1 && !in_full)),
+                            ("full_queue_empty_before_owner_exit", usize::from(full.is_empty() && !in_full)),
+                            ("aligned", usize::from(block.as_ptr().addr() % alignment == 0)),
+                            ("page_map_published_before_owner_exit", usize::from(binding.page_map().lookup_registered_page(block.as_ptr()).unwrap() == Some(page))),
+                        ]
+                    };
+                    unsafe { block.as_ptr().write_bytes(0xa5, request) };
+                    trace.push(("owner_exit_transition_completed", usize::from(
+                        finish_current_thread_native_after_user_destructors() == ThreadFinishResult::Finished,
+                    )));
+                    (heap.addr(), block.as_ptr().addr(), page.as_ptr().addr(), trace)
+                });
+                let (heap, address, page, mut trace) = owner.join().unwrap();
+                let heap = NonNull::new(heap as *mut Heap).unwrap();
+                let block = NonNull::new(address as *mut u8).unwrap();
+                let page = NonNull::new(page as *mut Page).unwrap();
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                unsafe {
+                    trace.push(("os_abandoned_list_member_after_owner_exit", usize::from(
+                        heap.as_ref().test_os_abandoned_page_head() == page.as_ptr()
+                            && Page::queue_prev_at(page).is_null() && Page::queue_next_at(page).is_null(),
+                    )));
+                    trace.push(("source_owner_unowned_after_owner_exit", usize::from(
+                        page.as_ref().abandoned_test_thread_id() == crate::types::THREAD_ID_ABANDONED,
+                    )));
+                    trace.push(("page_map_published_after_owner_exit", usize::from(
+                        binding.page_map().lookup_registered_page(block.as_ptr()).unwrap() == Some(page),
+                    )));
+                    for index in 0..7 { assert_eq!(block.as_ptr().add(index).read(), 0xa5); }
+                    trace.push(("terminal_free_after_owner_exit", usize::from(native_free(block) == NativePageFreeResult::Freed)));
+                    trace.push(("os_abandoned_list_clear_after_final_free", usize::from(heap.as_ref().test_os_abandoned_page_head().is_null())));
+                    trace.push(("page_map_clear_after_final_free", usize::from(binding.page_map().lookup_registered_page(block.as_ptr()).unwrap().is_none())));
+                    assert!(heap_release(heap.as_ptr().cast(), true));
+                }
+                let valid = trace.iter().all(|&(name, value)| match name {
+                    "request_size" => value == 7,
+                    "alignment" => value == 128 * 1024,
+                    "full_transition_eligible_before_owner_exit" => value == 0,
+                    _ => value == 1,
+                });
+                trace.push(("valid", usize::from(valid)));
+                std::println!("CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_BEGIN");
+                for (name, value) in trace { std::println!("trace.dynamic_os_aligned_singleton.{name}={value}"); }
+                std::println!("CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_END");
+                assert!(valid);
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
     fn remote_final_free_after_deleted_heap_owner_exit_preserves_page_membership() {
         crate::test_process::run_in_fresh_process(
             "source_heap_api::heap_membership_tests::remote_final_free_after_deleted_heap_owner_exit_preserves_page_membership",

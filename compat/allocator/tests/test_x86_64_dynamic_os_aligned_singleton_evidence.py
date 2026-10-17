@@ -35,7 +35,7 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(
             schema["rust_test"],
             {
-                "path": "crabc-mimalloc/src/dynamic_theap.rs",
+                "path": "crabc-mimalloc/src/source_heap_api.rs",
                 "target_arch": "x86_64",
                 "test_filter": evidence.RUST_TEST_FILTER,
             },
@@ -43,7 +43,7 @@ class SchemaTests(unittest.TestCase):
         self.assertTrue(schema["scope"]["one_dynamic_os_aligned_singleton_owner_exit_only"])
         self.assertTrue(schema["scope"]["joined_consumer_free_only"])
         self.assertTrue(schema["scope"]["real_pinned_c_mi_thread_done"])
-        self.assertTrue(schema["scope"]["typed_rust_nonabandoning_fixture_only"])
+        self.assertTrue(schema["scope"]["real_rust_native_thread_done"])
         self.assertFalse(schema["scope"]["general_abandonment_or_adoption_claimed"])
         self.assertFalse(schema["scope"]["general_os_abandoned_list_claimed"])
 
@@ -196,6 +196,7 @@ class TraceAndReportTests(unittest.TestCase):
             (lambda value: value["c_probe"].update({"source_sha256": "0" * 64}), "C source hash"),
             (lambda value: value["rust_probe"]["cargo_command"].remove("--locked"), "Rust command drifted"),
             (lambda value: value["scope"].update({"joined_consumer_free_only": False}), "private boundary"),
+            (lambda value: value["scope"].update({"real_rust_native_thread_done": False}), "private boundary"),
             (lambda value: value["rust_probe"].update({"passed_test_count": True}), "Rust test selection"),
         )
         for mutate, message in mutations:

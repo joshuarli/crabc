@@ -28,11 +28,11 @@ _spec.loader.exec_module(_base)
 
 SCHEMA_PATH = ROOT / "compat/allocator/x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/dynamic-os-aligned-singleton.json"
-RUST_TEST_SOURCE = ROOT / "crabc-mimalloc/src/dynamic_theap.rs"
+RUST_TEST_SOURCE = ROOT / "crabc-mimalloc/src/source_heap_api.rs"
 EXPECTED_PROFILE = "linux-x86_64-private-dynamic-os-aligned-singleton-owner-exit"
 RUST_TEST_FILTER = (
-    "dynamic_theap::tests::"
-    "x86_64_dynamic_os_aligned_singleton_owner_exit_trace_matches_pinned_c"
+    "source_heap_api::heap_membership_tests::"
+    "dynamic_os_singleton_worker_exit_releases_exact_heap_list_and_page_map"
 )
 TRACE_BEGIN = "CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_END"
@@ -51,7 +51,7 @@ EXPECTED_SCOPE = {
     "public_mi_api_claimed": False,
     "public_x86_libc_or_ldso_support": False,
     "real_pinned_c_mi_thread_done": True,
-    "typed_rust_nonabandoning_fixture_only": True,
+    "real_rust_native_thread_done": True,
 }
 EXPECTED_SOURCE_ANCHORS = (
     ("src/alloc-aligned.c", 68, 100, "d7bdd0355ef0bbe827b9048b878566a90646c630e546801ba5eba3cabaa624fc"),
@@ -402,7 +402,7 @@ def _schema_template() -> dict:
     ]
     value["c_probe_sha256"] = sha256_bytes(C_TRACE_PROBE.encode("utf-8"))
     value["rust_test"] = {
-        "path": "crabc-mimalloc/src/dynamic_theap.rs",
+        "path": "crabc-mimalloc/src/source_heap_api.rs",
         "target_arch": "x86_64",
         "test_filter": RUST_TEST_FILTER,
     }
