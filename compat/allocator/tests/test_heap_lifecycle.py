@@ -1,5 +1,6 @@
 """Physical Heap fault replay preserves retained evidence and refusal traces."""
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -14,6 +15,27 @@ spec.loader.exec_module(producer)
 
 
 class HeapFaultReplayTests(unittest.TestCase):
+    def test_build_reuses_cargo_target_but_retains_an_independent_fixture_product(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work/tmp') as temporary:
+            root = Path(temporary)
+            executable = root / 'target/unit-program'
+            executable.parent.mkdir()
+            executable.write_bytes(b'current compiler product')
+            artifacts = root / 'retained'
+            artifacts.mkdir()
+            record = {'stdout': json.dumps({'reason': 'compiler-artifact', 'executable': str(executable)}),
+                      'stderr': '', 'status': 0}
+            with mock.patch.object(producer.harness, 'WORK_ROOT', root), \
+                    mock.patch.object(producer.harness, 'command_record', return_value=record) as build:
+                retained = producer.fault_product(artifacts, integration=False)
+            command = build.call_args.args[0]
+            self.assertEqual(command[command.index('--target-dir') + 1], str(root / 'target'))
+            self.assertEqual(command[command.index('--features') + 1], 'native-runtime-test-fault')
+            self.assertEqual(retained, artifacts / 'heap-fault-unit')
+            executable.write_bytes(b'later compiler product')
+            self.assertEqual(retained.read_bytes(), b'current compiler product')
+            self.assertIn(str(executable), (artifacts / 'unit-build.log').read_text())
+
     def test_replay_executes_controls_without_writing_retained_evidence(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as directory:
             root = Path(directory)

@@ -86,7 +86,8 @@ def compare(section: str, expected: list[int], observed: list[int]) -> None:
         )
 
 
-def fault_product(target: Path, artifacts: Path, *, integration: bool) -> Path:
+def fault_product(artifacts: Path, *, integration: bool) -> Path:
+    target = harness.WORK_ROOT / "target"
     command = ["cargo", "test", "--locked", "--offline", "--target",
                "x86_64-unknown-linux-musl", "--target-dir", str(target),
                "-p", "crabc-mimalloc", "--no-default-features"]
@@ -166,8 +167,8 @@ def run_faults(*, replay: bool = False) -> None:
             for branch in FAULT_BRANCHES:
                 initialization.build_c_branch(harness.require_tool("musl-gcc"), source, artifacts, branch)
         c_product = artifacts / "heap-fault-c"
-        native_product = fault_product(artifacts / "native-target", artifacts, integration=True)
-        unit_product = fault_product(artifacts / "unit-target", artifacts, integration=False)
+        native_product = fault_product(artifacts, integration=True)
+        unit_product = fault_product(artifacts, integration=False)
 
     def execute(product: Path, arguments: list[str], log: str, env: dict[str, str] | None = None) -> str:
         record = harness.command_record([str(product), *arguments], cwd=harness.ROOT, env=env, timeout_seconds=120)
