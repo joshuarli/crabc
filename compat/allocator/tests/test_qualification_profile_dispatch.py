@@ -237,6 +237,32 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
         self.assertIn(command, result.stdout)
         self.assertFalse(self.log.exists(), 'help must not inspect or run Docker')
 
+    def test_m6_diagnosis_is_limited_to_the_two_raw_failure_owners(self):
+        for name in ('deleted-heap-remote-exit', 'heap-delete-with-attached-worker'):
+            self.assertEqual(self.runner_arguments('allocator-m6-' + name, '--profile', 'debug-1', '--diagnose'),
+                             ('compat/allocator/x86_64_m6_' + name.replace('-', '_') + '.py',
+                              ['--profile', 'debug-1', '--diagnose']))
+            self.assert_rejected('allocator-m6-' + name, '--read', '--diagnose')
+        self.assert_rejected('allocator-m6-heap-delete-after-owner-exit', '--diagnose')
+
+    def test_m7_development_traces_are_bounded_and_unoptimized(self):
+        for name in ('options-environment', 'option-effects', 'statistics-level-one-output-merge',
+                     'statistics-level-two-requested', 'statistics-level-two-bins',
+                     'statistics-level-two-page-huge'):
+            with self.subTest(name=name):
+                self.assertEqual(self.runner_arguments('allocator-m7', '--differential', name),
+                                 ('compat/allocator/x86_64_m7_gate.py', ['--offline', '--development-trace', name]))
+                call = next(call for call in self.calls() if call[0] == 'run' and 'python3' in call)
+                self.assertIn('CRABC_EXECUTION_MODE=native', call)
+        for arguments in (['--differential'], ['--differential', 'unknown'],
+                          ['--differential', 'options-environment', '--check'],
+                          ['--qualification-profile', 'baseline', '--differential', 'options-environment']):
+            self.assert_rejected('allocator-m7', *arguments)
+        result = self.invoke('compat/allocator/run-x86_64.sh', '--help')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('--differential options-environment|option-effects|statistics-level-one-output-merge', result.stdout)
+        self.assertFalse(self.log.exists())
+
     def test_divergence_defaults_and_explicit_profiles_reach_reader(self) -> None:
         for operation in ([], ["--check"]):
             for profile in (None, "correctness", "full"):

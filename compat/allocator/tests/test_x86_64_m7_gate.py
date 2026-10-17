@@ -6,7 +6,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -20,6 +22,32 @@ gate = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 harness = gate.harness
+
+
+class M7DevelopmentTraceTests(unittest.TestCase):
+    def test_development_trace_keeps_unoptimized_output_outside_qualification(self):
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            canonical = root / 'options-environment.json'
+            canonical.write_text('retained qualification input')
+            def execute(offline):
+                self.assertTrue(offline)
+                self.assertEqual(os.environ['CARGO_PROFILE_TEST_OPT_LEVEL'], '0')
+                self.assertEqual(os.environ['CARGO_PROFILE_DEV_OPT_LEVEL'], '0')
+                self.assertEqual(gate.ARTIFACTS, root / 'development')
+                return {'status': 'passed', 'compared_key_count': 660}
+            with mock.patch.object(gate, 'ARTIFACTS', root), \
+                    mock.patch.object(gate, 'run_options_differential', side_effect=execute), \
+                    mock.patch.dict(os.environ, {'CARGO_PROFILE_TEST_OPT_LEVEL': '2'}):
+                self.assertEqual(gate.main(['--offline', '--development-trace', 'options-environment']), 0)
+                self.assertEqual(gate.ARTIFACTS, root)
+                self.assertEqual(os.environ['CARGO_PROFILE_TEST_OPT_LEVEL'], '2')
+            report = json.loads((root / 'development/options-environment.json').read_text())
+            self.assertFalse(report['qualification_eligible'])
+            self.assertEqual(report['compiler_profile'], {'opt_level': '0', 'test': True})
+            self.assertEqual(canonical.read_text(), 'retained qualification input')
 
 
 class M7GateContractTests(unittest.TestCase):

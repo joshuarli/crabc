@@ -35,6 +35,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m4 [--check|--gate ID|--reader-tests|--operations-matrix [--read|--replay]]
   allocator-m4 --differential SCENARIO [--build-profile debug --valid-clients-only --source-profile PROFILE]
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
+  allocator-m7 --differential options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge
   allocator-m7 [--qualification-profile baseline|full] [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--profile baseline|full] [--check|--reader-tests|--validate-retained|--report PATH...]
@@ -88,9 +89,9 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-reclaim-on-free
   allocator-subprocess-lifecycle
   allocator-heap-lifecycle | allocator-m6-adapter [--matrix]
-  allocator-m6-deleted-heap-remote-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--read|--replay] [--mode before|after|both]
+  allocator-m6-deleted-heap-remote-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--diagnose|--read|--replay] [--mode before|after|both]
   allocator-m6-heap-delete-after-owner-exit [--profile release|debug-1|stat-1|stat-2|--matrix] [--source-only|--read|--replay]
-  allocator-m6-heap-delete-with-attached-worker [--profile release|debug-1|stat-1|stat-2|--matrix] [--collect|--read|--replay]
+  allocator-m6-heap-delete-with-attached-worker [--profile release|debug-1|stat-1|stat-2|--matrix] [--collect|--diagnose|--read|--replay]
   allocator-upstream-subprocess-stress
   allocator-upstream-heap-stress
   allocator-public-heap-alignment | allocator-public-theap [--debug]
@@ -618,13 +619,20 @@ case "$command" in
             m7_command=(python3 compat/allocator/x86_64_m7_arena_print.py --offline)
         elif [ "$#" -eq 1 ] && [ "$1" = --private-context-arena-print ]; then
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --private-context-arena-print)
+        elif [ "$#" -eq 2 ] && [ "$1" = --differential ]; then
+            [ "$hardware_qualification_selected" = false ] || fail "development traces do not select a qualification profile"
+            case "$2" in
+                options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge) ;;
+                *) fail "unknown M7 development trace" ;;
+            esac
+            m7_command=(python3 compat/allocator/x86_64_m7_gate.py --offline --development-trace "$2")
         elif [ "$#" -eq 2 ] && [ "$1" = --gate ]; then
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --gate "$2")
         else
-            fail "allocator-m7 accepts only --check, --gate ID, --reader-tests, --arena-print, or --private-context-arena-print"
+            fail "allocator-m7 accepts only --check, --gate ID, --reader-tests, --arena-print, or --private-context-arena-print, or --differential TRACE"
         fi
         case "${1:-}" in
-            --reader-tests|--arena-print|--private-context-arena-print)
+            --reader-tests|--arena-print|--private-context-arena-print|--differential)
                 [ "$hardware_qualification_selected" = false ] || fail "this operation does not select a qualification profile"
                 ;;
             *) m7_command+=(--qualification-profile "$hardware_qualification_profile") ;;
@@ -1234,9 +1242,11 @@ case "$command" in
                     m6_fixture_selection=true
                     shift
                     ;;
-                --source-only|--collect|--read|--replay)
+                --source-only|--collect|--diagnose|--read|--replay)
                     [ "$m6_fixture_action" = false ] || fail "select one M6 fixture action"
-                    if [ "$1" = --source-only ]; then
+                    if [ "$1" = --diagnose ]; then
+                        [ "$command" != allocator-m6-heap-delete-after-owner-exit ] || fail "diagnose requires the remote-exit or attached-worker fixture"
+                    elif [ "$1" = --source-only ]; then
                         [ "$command" != allocator-m6-heap-delete-with-attached-worker ] || fail "attached-worker fixture has no source-only action"
                     elif [ "$1" = --collect ]; then
                         [ "$command" = allocator-m6-heap-delete-with-attached-worker ] || fail "collect requires the attached-worker fixture"

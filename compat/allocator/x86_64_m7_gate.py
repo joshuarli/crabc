@@ -2871,8 +2871,19 @@ def load_summary() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    global ARTIFACTS
+    development_traces = {
+        'options-environment': run_options_differential,
+        'option-effects': run_option_effects_differential,
+        'statistics-level-one-output-merge': run_statistics_level_one_output_merge_differential,
+        'statistics-level-two-requested': run_statistics_level_two_requested_differential,
+        'statistics-level-two-bins': run_statistics_level_two_bins_differential,
+        'statistics-level-two-page-huge': run_statistics_level_two_page_huge_differential,
+    }
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--development-trace', choices=development_traces,
+                      help='run one unoptimized C/Rust development trace outside qualification output')
     mode.add_argument("--check", action="store_true",
         help="validate the contract and inventory closure without executing evidence")
     mode.add_argument("--gate", choices=GATE_IDS, help="execute only this gate's runnable evidence")
@@ -2967,6 +2978,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     parser.add_argument("--qualification-profile", choices=("full", "baseline"), default="full")
     arguments = parser.parse_args(argv)
+    if arguments.development_trace:
+        previous_artifacts = ARTIFACTS
+        profile = {'CARGO_PROFILE_TEST_OPT_LEVEL': '0', 'CARGO_PROFILE_DEV_OPT_LEVEL': '0'}
+        previous_environment = {name: os.environ.get(name) for name in profile}
+        try:
+            ARTIFACTS = ARTIFACTS / 'development'
+            os.environ.update(profile)
+            report = development_traces[arguments.development_trace](arguments.offline)
+            report.update(qualification_eligible=False, compiler_profile={'opt_level': '0', 'test': True})
+            harness.write_json(ARTIFACTS / (arguments.development_trace + '.json'), report)
+        finally:
+            ARTIFACTS = previous_artifacts
+            for name, value in previous_environment.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+        print(f"M7 development {arguments.development_trace}: {report['compared_key_count']} keys passed; not qualification evidence")
+        return 0
     if arguments.configuration_replay:
         if arguments.configuration_profile is None:
             parser.error("configuration replay requires --configuration-profile")

@@ -166,6 +166,14 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
   `allocator-public-heap-alignment`,
   `allocator-heap-convenience [--read|--replay]`,
   `allocator-upstream-heap-stress`, `allocator-upstream-subprocess-stress`.
+- Options and output statistics development traces: `allocator-m7 --differential
+  TRACE` accepts `options-environment`, `option-effects`,
+  `statistics-level-one-output-merge`, `statistics-level-two-requested`,
+  `statistics-level-two-bins` and `statistics-level-two-page-huge`.
+  Each selection compares a pinned C oracle with one exact Rust test at
+  optimization level zero. Reports live under `m7-gate/development` and are
+  explicitly ineligible for qualification. These traces do not replace release
+  admission or the complete M7 gate.
 - Scheduled arena purge failure: `allocator-medium-pressure-delayed-purge-fault`
   builds the pinned C oracle and runs the exact Rust delayed-purge receiver.
   It compares 28 fields covering expiry, consumed decommit failure, warning
