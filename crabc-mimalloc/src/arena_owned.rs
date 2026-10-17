@@ -5220,7 +5220,7 @@ mod tests {
     }
 
     #[test]
-    fn clock_failure_uses_source_fallback_for_process_arena_purge() {
+    fn process_arena_purge_uses_process_cpu_clock_after_monotonic_fault() {
         let fault = fault::install(fault::Plan::disabled());
         let backing = backing();
         let process = purge_process(100_000, true);
