@@ -223,6 +223,7 @@ class M4GateContractTests(unittest.TestCase):
                                  [f"-DMI_SECURE={level}"])
                 self.assertIn("-DMI_DEBUG=0", command)
                 self.assertIn("-DMI_STAT=0", command)
+                self.assertIn("-DMI_FREE_IS_CHECKED=1", command)
 
     def test_private_valid_client_command_accepts_selected_source_modes(self) -> None:
         for profile in ("secure-4", "secure-5", "guarded-secure-5"):

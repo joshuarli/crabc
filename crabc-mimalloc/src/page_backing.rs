@@ -9,7 +9,7 @@
 //! when source policy chooses an OS page before any arena exists.
 
 use crate::arena::{ArenaId, ArenaSearch, ArenaSliceClaim, ArenaView, ProcessArenaBacking};
-use crate::config::{ARENA_MIN_OBJ_SIZE, ARENA_SLICE_SIZE, PAGE_META_ALIGNMENT, PAGE_META_ALIGNED_COUNT};
+use crate::config::{ARENA_MIN_OBJ_SIZE, ARENA_SLICE_SIZE};
 use crate::os::{MemoryConfig, VmProcess};
 use crate::types::{MemoryId, Page};
 
@@ -290,10 +290,8 @@ impl RuntimeFirstRegularPageBacking {
     // no process capability needs to travel through this scalar calculation.
     fn max_process_arena_object_slices(requested: usize) -> usize {
         let rounded = requested.wrapping_add(ARENA_SLICE_SIZE - 1) / ARENA_SLICE_SIZE;
-        let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
-            + ARENA_SLICE_SIZE - 1) / ARENA_SLICE_SIZE;
         rounded.clamp(ARENA_MIN_OBJ_SIZE / ARENA_SLICE_SIZE,
-            PAGE_META_ALIGNMENT / ARENA_SLICE_SIZE - metadata)
+            crate::arena::max_fixed_object_size() / ARENA_SLICE_SIZE)
     }
 }
 
@@ -530,9 +528,7 @@ impl<'child> ChildMetadataArenaBacking<'child> {
     fn max_object_size(&self) -> usize {
         let requested = self.process().policy().arena_max_object_size_bytes();
         let rounded = requested.wrapping_add(ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
-        let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
-            + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
-        rounded.clamp(ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNMENT - metadata)
+        rounded.clamp(ARENA_MIN_OBJ_SIZE, crate::arena::max_fixed_object_size())
     }
 }
 
@@ -691,9 +687,7 @@ impl ProcessMetadataPageBacking {
     fn max_object_size(&self) -> usize {
         let requested = self.process.policy().arena_max_object_size_bytes();
         let rounded = requested.wrapping_add(ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
-        let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
-            + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
-        rounded.clamp(ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNMENT - metadata)
+        rounded.clamp(ARENA_MIN_OBJ_SIZE, crate::arena::max_fixed_object_size())
     }
 }
 
@@ -756,9 +750,7 @@ mod tests {
 
     #[test]
     fn source_max_object_limit_projects_wrapped_aligned_endpoints_to_slices() {
-        let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<Page>()
-            + ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);
-        let maximum = PAGE_META_ALIGNMENT - metadata;
+        let maximum = crate::arena::max_fixed_object_size();
         assert_eq!(ARENA_MIN_OBJ_SIZE % ARENA_SLICE_SIZE, 0);
         assert_eq!(maximum % ARENA_SLICE_SIZE, 0);
         let requests = [0, 1, ARENA_MIN_OBJ_SIZE - 1, ARENA_MIN_OBJ_SIZE,

@@ -153,7 +153,7 @@ impl OsAlignedPageLayout {
     ) -> Option<Self> {
         if block_size == 0
             || alignment <= PAGE_MAX_OVERALLOC_ALIGN
-            || alignment >= PAGE_META_ALIGNMENT
+            || (crate::config::PAGE_META_IS_ALIGNED && alignment >= PAGE_META_ALIGNMENT)
             || !invariants::is_power_of_two(alignment)
         {
             return None;
@@ -171,10 +171,13 @@ impl OsAlignedPageLayout {
         block_alignment: usize,
     ) -> Option<Self> {
         if block_size == 0 || block_alignment == 0
-            || block_alignment >= PAGE_META_ALIGNMENT
+            || (crate::config::PAGE_META_IS_ALIGNED && block_alignment >= PAGE_META_ALIGNMENT)
             || !invariants::is_power_of_two(block_alignment)
         {
             return None;
+        }
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            return Self::inline(config, block_size, block_alignment);
         }
         let singleton = block_alignment > PAGE_MAX_OVERALLOC_ALIGN || block_size > LARGE_MAX_OBJ_SIZE;
         let slice_count = if singleton {
@@ -257,6 +260,30 @@ impl OsAlignedPageLayout {
             page_map_size,
             reserved,
         })
+    }
+
+    fn inline(config: MemoryConfig, block_size: usize, block_alignment: usize) -> Option<Self> {
+        let os_aligned = block_alignment > PAGE_MAX_OVERALLOC_ALIGN;
+        let singleton = os_aligned || block_size > LARGE_MAX_OBJ_SIZE;
+        let slice_count = if singleton {
+            page::singleton_page_slice_count_at_alignment(block_size, block_alignment, config.page_size())?
+        } else { page::regular_page_slice_count(crate::size_class::page_kind_for_block_size(block_size)?)? };
+        let allocation_size = invariants::size_of_slices(slice_count)?;
+        let alignment = if os_aligned { block_alignment.checked_sub(ARENA_SLICE_SIZE)? } else { 0 };
+        let requested_mapping_length = allocation_size.checked_add(alignment)?;
+        let mapping_length = config.good_alloc_size(requested_mapping_length);
+        if mapping_length < requested_mapping_length || mapping_length % config.page_size().bytes() != 0 { return None; }
+        let block_start_offset = page::inline_page_usable_start_offset(block_size, os_aligned, config.page_size().bytes())?;
+        let page_noguard_size = page::page_noguard_size(allocation_size, config.page_size())?;
+        let reserved = if singleton { 1 } else {
+            page::page_reserved_object_count(allocation_size, block_start_offset, block_size, config.page_size())?
+        };
+        if block_start_offset.checked_add(block_size)? > page_noguard_size { return None; }
+        let page_map_size = invariants::size_of_slices(page::page_map_slice_count(block_size, reserved, block_start_offset)?)?;
+        Some(Self { block_size, alignment, slice_count, allocation_size, page_noguard_size,
+            mapping_length, metadata_offset: alignment, metadata_commit_size: 0,
+            metadata_slot_count: 1, block_start_offset, page_offset: block_start_offset,
+            page_map_size, reserved })
     }
 
     #[inline]
@@ -359,7 +386,7 @@ mod ordinary_layout_tests {
                     std::println!("m2.arena.os_page.{ordinal}={value}");
                     ordinal += 1;
                 }
-                assert!(layout.metadata_commit_size() < layout.alignment());
+                assert!(layout.metadata_commit_size() < layout.alignment() || !crate::config::PAGE_META_IS_ALIGNED);
                 assert!(layout.page_map_size() <= layout.allocation_size());
                 if alignment > PAGE_MAX_OVERALLOC_ALIGN { assert_eq!(layout.reserved(), 1); }
             }
@@ -583,6 +610,52 @@ impl OsAlignedPageClaim {
         }
     }
 
+    fn allocate_inline_for_process(
+        process: VmProcess<'_>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+        random: crate::os::OsRandom<'_>, commit: bool,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        let failed = |error| OsAlignedPageAllocationFailure::released(
+            OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
+        if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
+            return Err(failed(Errno::NOMEM));
+        }
+        let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
+            .ok_or_else(|| failed(Errno::INVAL))?;
+        let os_aligned = alignment > PAGE_MAX_OVERALLOC_ALIGN;
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset_for_process(process, config,
+            layout.allocation_size(), if os_aligned { alignment } else { ARENA_SLICE_SIZE },
+            if os_aligned { ARENA_SLICE_SIZE } else { 0 },
+            if commit { MapAccess::Committed } else { MapAccess::Reserved },
+            crate::config::SECURE_LEVEL < 5, random);
+        let mapping = match allocation {
+            Ok(allocation) => {
+                let (mapping, offset) = allocation.into_mapping_with_offset();
+                assert_eq!(offset, layout.alignment());
+                mapping
+            }
+            Err(failure) => {
+                let error = OsAlignedPageError::new(OsAlignedPageFailureStage::Map, failure.error());
+                return match failure.into_mapping() {
+                    None => Err(OsAlignedPageAllocationFailure::released(error)),
+                    Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(error,
+                        Self { mapping, layout, process: None,
+                            process_identity: Some(NonNull::from(process.subprocess())),
+                            initially_committed: false, release_commit_size: 0,
+                            page_publication_started: Cell::new(false), tail_reset_recorded: false,
+                            release_state: OsPageReleaseState::Unaccounted, ready: false })),
+                };
+            }
+        };
+        let initially_committed = mapping.initially_committed();
+        Ok(Self { mapping, layout, process: None,
+            process_identity: Some(NonNull::from(process.subprocess())),
+            initially_committed,
+            release_commit_size: if initially_committed { layout.allocation_size() } else { 0 },
+            page_publication_started: Cell::new(false), tail_reset_recorded: false,
+            release_state: OsPageReleaseState::Unaccounted, ready: true })
+    }
+
     /// Allocates the fully committed source ordinary/aligned OS-page area using one process
     /// pair. The caller has already exhausted the eligible arena route.
     /// Requested-arena and disallow-OS refusal remain checked here before VM
@@ -602,6 +675,10 @@ impl OsAlignedPageClaim {
         alignment: usize, requested: crate::arena::ArenaId,
         random: crate::os::OsRandom<'_>,
     ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            return Self::allocate_inline_for_process(process, config, block_size, alignment, requested, random, true)
+                .map(|mut claim| { claim.process = Some(process); claim });
+        }
         let failed = |error| OsAlignedPageAllocationFailure::released(
             OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
@@ -722,6 +799,19 @@ impl OsAlignedPageClaim {
         commit: bool,
     ) -> OsAlignedPageClaimInitialization {
         use OsAlignedPageClaimInitialization::{Ready, Released, Retained};
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            return match Self::allocate_inline_for_process(process, config, block_size, alignment, requested, random, commit) {
+                Ok(claim) => {
+                    unsafe { destination.cast::<Self>().as_ptr().write(claim); }
+                    Ready
+                }
+                Err(OsAlignedPageAllocationFailure { error, claim: None }) => Released(error),
+                Err(OsAlignedPageAllocationFailure { error, claim: Some(claim) }) => {
+                    unsafe { destination.cast::<Self>().as_ptr().write(claim); }
+                    Retained(error)
+                }
+            };
+        }
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
             return Released(OsAlignedPageError::new(OsAlignedPageFailureStage::Map, Errno::NOMEM));
         }
@@ -1065,6 +1155,10 @@ impl OsAlignedPageClaim {
         alignment: usize, requested: crate::arena::ArenaId,
         random: crate::os::OsRandom<'_>,
     ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            return Self::allocate_inline_for_process(process, config, block_size, alignment, requested, random, false)
+                .map(|mut claim| { claim.process = Some(process); claim });
+        }
         let failed = |error| OsAlignedPageAllocationFailure::released(
             OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
         if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
@@ -1156,6 +1250,24 @@ impl OsAlignedPageClaim {
                     Errno::INVAL,
                 ))
             })?;
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            return match NormalOsAllocation::allocate_aligned_at_offset(
+                config, layout.allocation_size(), alignment, ARENA_SLICE_SIZE, MapAccess::Committed,
+            ) {
+                Ok(allocation) => {
+                    let (mapping, offset) = allocation.into_mapping_with_offset();
+                    assert_eq!(offset, layout.alignment());
+                    Ok(Self::legacy(mapping, layout, true))
+                }
+                Err(failure) => {
+                    let error = OsAlignedPageError::new(OsAlignedPageFailureStage::Map, failure.error());
+                    Err(match failure.into_mapping() {
+                        Some(mapping) => OsAlignedPageAllocationFailure::with_claim(error, Self::legacy(mapping, layout, false)),
+                        None => OsAlignedPageAllocationFailure::released(error),
+                    })
+                }
+            };
+        }
         let mut mapping = match Mapping::map_aligned_for_allocator(
             config,
             layout.mapping_length(),
@@ -1314,6 +1426,7 @@ impl OsAlignedPageClaim {
         // From this publication onward, rollback frees from the returned
         // slice start and excludes the metadata prefix from its charge.
         self.page_publication_started.set(true);
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         for index in 1..self.layout.metadata_slot_count() {
             let Some(slot) = self.metadata_slot(index) else {
                 return false;
@@ -1339,6 +1452,7 @@ impl OsAlignedPageClaim {
         if self.metadata() != Some(primary) {
             return false;
         }
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         for index in (1..self.layout.metadata_slot_count()).rev() {
             let Some(slot) = self.metadata_slot(index) else {
                 return false;
@@ -1366,7 +1480,7 @@ impl OsAlignedPageClaim {
             self.layout.mapping_length(),
             self.initially_committed,
             self.mapping.initially_zero(),
-            false,
+            self.mapping.is_large(),
         ))
     }
 
@@ -1631,11 +1745,9 @@ unsafe fn published_os_page_geometry(
 ) -> Option<PublishedOsPageGeometry> {
     // SAFETY: forwarded from this helper's stable-page contract.
     let page = unsafe { primary.as_ref() };
-    if page.aligned_alias_owner() != primary.as_ptr()
-        || (!process_backed && page.reserved() != 1)
-    {
-        return None;
-    }
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+    if page.aligned_alias_owner() != primary.as_ptr() { return None; }
+    if !process_backed && page.reserved() != 1 { return None; }
     let memory = page.memid();
     if memory.kind() != MemoryKind::Os {
         return None;
@@ -1643,6 +1755,14 @@ unsafe fn published_os_page_geometry(
     let os = memory.os_memory()?;
     let base = NonNull::new(os.base)?;
     let block_size = page.block_size();
+    if !crate::config::PAGE_META_IS_ALIGNED {
+        let offset = primary.as_ptr().addr().checked_sub(base.as_ptr().addr())?;
+        let alignment = if offset == 0 { 1 } else { offset.checked_add(ARENA_SLICE_SIZE)? };
+        let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)?;
+        if layout.mapping_length() != os.size || layout.reserved() != page.reserved()
+            || layout.page_offset() != page.page_offset() || layout.metadata_offset() != offset { return None; }
+        return Some(PublishedOsPageGeometry { memory, layout, base, slice_start: primary.cast() });
+    }
     let block_start_offset = page::page_usable_start_offset(block_size)?;
     let page_start_address = primary
         .as_ptr()
@@ -1893,6 +2013,7 @@ impl PublishedOsAlignedPage {
     /// must be quiescent, and the primary page must remain live until this
     /// operation completes.
     pub(crate) unsafe fn clear_secondary_metadata(&self) -> bool {
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         for index in (1..self.layout.metadata_slot_count()).rev() {
             let offset = match self.layout.metadata_offset().checked_add(
                 match index.checked_mul(size_of::<Page>()) {

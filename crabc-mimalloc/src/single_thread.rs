@@ -44274,6 +44274,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         } else {
             slice_count
         };
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         for index in 1..metadata_count {
             // SAFETY: the fresh claim exclusively owns these slices and
             // page_metadata committed their separate initialized metadata
@@ -53321,6 +53322,7 @@ mod tests {
                 assert_eq!(page.reserved(), 1);
                 assert_eq!(page.slice_pcommitted(), 0);
                 assert!(page.memid().is_os());
+                #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
                 assert_eq!(page.aligned_alias_owner(), primary.as_ptr());
                 assert_eq!(unsafe { page.start() }, block.as_ptr());
                 let enters_full_queue = expected_block_size > SMALL_MAX_OBJ_SIZE;
@@ -53371,6 +53373,7 @@ mod tests {
                     // source alias until terminal release clears it before
                     // reclaiming the containing OS mapping.
                     let alias = unsafe { &*base.wrapping_add(alias_offset).cast::<Page>() };
+                    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
                     assert_eq!(alias.aligned_alias_owner(), primary.as_ptr());
                 }
 
@@ -53781,6 +53784,7 @@ mod tests {
                 let OsAlignedPageOwner::Claim(claim) = allocator.pending_os_release.as_ref().unwrap()
                     else { panic!("unpublished fresh cleanup retains its original claim") };
                 for index in 0..layout.metadata_slot_count() {
+                    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
                     assert!(unsafe { claim.metadata_slot(index).unwrap().as_ref().aligned_alias_owner() }.is_null());
                 }
                 fault.set(fault::Plan::disabled());
@@ -53839,6 +53843,7 @@ mod tests {
                 else { panic!("fresh rollback retains its unpublished claim") };
             for index in 0..layout.metadata_slot_count() {
                 let slot = claim.metadata_slot(index).unwrap();
+                #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
                 assert!(unsafe { slot.as_ref().aligned_alias_owner() }.is_null());
             }
             fault.set(fault::Plan::disabled());
@@ -53850,6 +53855,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     fn os_claim_rollback_alias_refusal_retains_the_mapping_owner() {
         let fault = fault::install(fault::Plan::disabled());
         with_allocator(|allocator| {

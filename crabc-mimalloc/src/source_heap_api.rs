@@ -2427,7 +2427,7 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
     let child_member = crate::subproc::lifecycle::current_thread_is_child_member();
     let child_page_alignment_refusal = match request {
         Request::Aligned { alignment, offset: 0 }
-            if child_member && alignment >= crate::config::PAGE_META_ALIGNMENT => Some(alignment),
+            if child_member && crate::config::PAGE_META_IS_ALIGNED && alignment >= crate::config::PAGE_META_ALIGNMENT => Some(alignment),
         _ => None,
     };
     if child_page_alignment_refusal.is_some() {

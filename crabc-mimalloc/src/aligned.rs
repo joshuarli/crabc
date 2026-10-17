@@ -69,7 +69,7 @@ pub(crate) const fn allocation_plan(
     }
 
     if alignment > PAGE_MAX_OVERALLOC_ALIGN {
-        if offset != 0 || alignment >= PAGE_META_ALIGNMENT {
+        if offset != 0 || (crate::config::PAGE_META_IS_ALIGNED && alignment >= PAGE_META_ALIGNMENT) {
             return None;
         }
         let request = if size <= SMALL_SIZE_MAX {

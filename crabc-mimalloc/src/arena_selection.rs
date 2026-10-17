@@ -15,15 +15,11 @@ use crate::config::{
 use crate::invariants;
 use crate::os::{MapAccess, MemoryConfig, VmPolicy};
 
-/// Source `mi_arena_max_object_size` for the default aligned page-metadata
-/// layout (`MI_PAGE_META_IS_ALIGNED`): the slice-rounded
-/// `arena_max_object_size` option, clamped between one minimum object slice
-/// and `mi_arena_max_fixed_object_size`.
+/// Source `mi_arena_max_object_size`, including the selected metadata
+/// layout's fixed maximum and the slice-rounded public option.
 pub(crate) fn arena_max_object_size(policy: &VmPolicy) -> usize {
-    use crate::config::{ARENA_MIN_OBJ_SIZE, PAGE_META_ALIGNED_COUNT, PAGE_META_ALIGNMENT};
-    let metadata = (PAGE_META_ALIGNED_COUNT * core::mem::size_of::<crate::types::Page>())
-        .next_multiple_of(ARENA_SLICE_SIZE);
-    let fixed = PAGE_META_ALIGNMENT - metadata;
+    use crate::config::ARENA_MIN_OBJ_SIZE;
+    let fixed = super::max_fixed_object_size();
     // Source `_mi_align_up` wraps like this on an out-of-range option.
     let requested = policy.arena_max_object_size_bytes()
         .wrapping_add(ARENA_SLICE_SIZE - 1) & !(ARENA_SLICE_SIZE - 1);

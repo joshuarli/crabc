@@ -80,7 +80,7 @@ pub(crate) const STAT_LEVEL: usize = 2;
 pub(crate) const STAT_LEVEL: usize = 1;
 #[cfg(not(feature = "mi-stat-1"))]
 pub(crate) const STAT_LEVEL: usize = 0;
-pub(crate) const FREE_IS_CHECKED: bool = false;
+pub(crate) const FREE_IS_CHECKED: bool = SECURE_LEVEL != 0;
 pub(crate) const FREE_USE_PAGEMAP: bool = false;
 pub(crate) const OPT_FREE_SMALL: bool = false;
 pub(crate) const ENABLE_LARGE_PAGES: bool = true;
@@ -117,11 +117,11 @@ pub(crate) const MAX_ALLOC_SIZE: usize = isize::MAX as usize;
 pub(crate) const PAGE_MIN_COMMIT_SIZE: usize = 16 * KIB;
 
 pub(crate) const PAGE_META_IS_SEPARATED: bool = true;
-pub(crate) const PAGE_META_IS_ALIGNED: bool = true;
+pub(crate) const PAGE_META_IS_ALIGNED: bool = !FREE_IS_CHECKED && !FREE_USE_PAGEMAP && PAGE_META_IS_SEPARATED;
 pub(crate) const PAGE_META_ALIGNED_CHUNKS: usize = WORD_SIZE;
 pub(crate) const PAGE_META_ALIGNED_COUNT: usize = PAGE_META_ALIGNED_CHUNKS * BCHUNK_BITS;
 pub(crate) const PAGE_META_ALIGNMENT: usize = PAGE_META_ALIGNED_COUNT * ARENA_SLICE_SIZE;
-pub(crate) const ARENA_ALIGNMENT: usize = PAGE_META_ALIGNMENT;
+pub(crate) const ARENA_ALIGNMENT: usize = if PAGE_META_IS_ALIGNED { PAGE_META_ALIGNMENT } else { ARENA_SLICE_ALIGN };
 
 pub(crate) const PAGE_ALIGN: usize = ARENA_SLICE_ALIGN;
 pub(crate) const PAGE_MIN_START_BLOCK_ALIGN: usize = MAX_ALIGN_SIZE;
@@ -1108,7 +1108,7 @@ const _: [(); 1] = [(); (!OPT_SIMD) as usize];
 #[cfg(all(target_arch = "x86_64", feature = "mi-opt-simd"))]
 const _: [(); 1] = [(); OPT_SIMD as usize];
 const _: [(); 1] = [(); PAGE_META_IS_SEPARATED as usize];
-const _: [(); 1] = [(); PAGE_META_IS_ALIGNED as usize];
+const _: [(); 1] = [(); (PAGE_META_IS_ALIGNED == (SECURE_LEVEL == 0)) as usize];
 const _: [(); 75] = [(); BIN_COUNT];
 const _: [(); 256 * MIB] = [(); PAGE_META_ALIGNMENT];
 const _: [(); 16 * GIB] = [(); ARENA_MAX_SIZE];
@@ -1218,7 +1218,7 @@ mod tests {
             0
         };
         assert_eq!(STAT_LEVEL, expected_stat_level);
-        assert!(!FREE_IS_CHECKED);
+        assert_eq!(FREE_IS_CHECKED, SECURE_LEVEL != 0);
         assert!(!FREE_USE_PAGEMAP);
         assert!(!OPT_FREE_SMALL);
         let padded = cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")));
@@ -1230,7 +1230,7 @@ mod tests {
         assert_eq!(PAGE_KEY_COUNT, if padded { 2 } else { 1 });
         assert!(ENABLE_LARGE_PAGES);
         assert!(PAGE_META_IS_SEPARATED);
-        assert!(PAGE_META_IS_ALIGNED);
+        assert_eq!(PAGE_META_IS_ALIGNED, SECURE_LEVEL == 0);
         assert_eq!(PAGE_META_ALIGNED_CHUNKS, WORD_SIZE);
         assert_eq!(PAGE_META_ALIGNED_COUNT, WORD_SIZE * BCHUNK_BITS);
 
@@ -1243,7 +1243,7 @@ mod tests {
         assert_eq!(MEDIUM_PAGE_SIZE, 512 * KIB);
         assert_eq!(LARGE_PAGE_SIZE, 4 * MIB);
         assert_eq!(PAGE_META_ALIGNMENT, 256 * MIB);
-        assert_eq!(ARENA_ALIGNMENT, PAGE_META_ALIGNMENT);
+        assert_eq!(ARENA_ALIGNMENT, if PAGE_META_IS_ALIGNED { PAGE_META_ALIGNMENT } else { ARENA_SLICE_ALIGN });
 
         assert_eq!(BIN_HUGE, 73);
         assert_eq!(BIN_FULL, 74);

@@ -5369,6 +5369,13 @@ impl NormalOsAllocation {
         Ok(allocation)
     }
 
+    pub(crate) fn into_mapping_with_offset(self) -> (Mapping, usize) {
+        let base = self.memory.os_base().expect("a normal allocation retains OS provenance").value();
+        let offset = self.pointer.as_ptr().addr().checked_sub(base)
+            .expect("the source offset client belongs to its retained mapping");
+        (self.mapping, offset)
+    }
+
     /// Returns the source client pointer while this exact allocation is live.
     #[inline]
     pub(crate) fn pointer(&self) -> Result<NonNull<u8>> {

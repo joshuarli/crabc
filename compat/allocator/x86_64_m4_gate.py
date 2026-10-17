@@ -717,7 +717,8 @@ def api_profile_flags(profile: str) -> tuple[str, ...]:
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))
                   and not (profile.startswith("secure-") and flag.startswith("-DMI_SECURE=")))
-    return (*flags, *{
+    checked_flags = ("-DMI_FREE_IS_CHECKED=1",) if profile.startswith("secure-") else ()
+    return (*flags, *checked_flags, *{
         "release": ("-DMI_DEBUG=0", "-DMI_STAT=0"),
         "xmalloc": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_XMALLOC=1"),
         "secure-1": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=1"),

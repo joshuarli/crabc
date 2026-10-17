@@ -106,6 +106,23 @@ only in a final isolated promotion change.
   `mi-secure-1..5`, `mi-guarded`, and `mi-opt-simd` (AVX2 bitmap searches;
   `bitmap.rs` refuses to compile it unless the crate targets AVX2, and the
   default stays scalar).
+- On native x86-64, `mi-secure-1..5` use the pinned CMake default
+  `MI_FREE_IS_CHECKED=1`; the M4 operation and M7 configuration producers
+  select the same checked-free mode in their pinned C builds.
+  Their Page layout omits the aligned self pointer:
+  levels 1–2 use 120 bytes and levels 3–5 use 136 bytes, including two keys.
+  Arena Page metadata follows the bitmaps in the initial info reservation;
+  arena alignment is 64 KiB. OS-backed Pages instead place metadata before
+  their clients. High alignment uses the source offset allocation while the
+  owner retains the original mapping base and complete extent for release.
+  Pointer lookup projects fields from the actual Page type without borrowing
+  concurrently mutable owner fields. Default secure-0 retains its 128-byte
+  Page, 256 MiB arena alignment and aligned metadata aliases.
+  `native_secure_page_layout` exercises actual Heap creation, 6464-byte
+  allocation extent, arena and forced-OS clients, zeroing, local free, worker
+  exit and post-join aligned free without test or audit features. Its
+  `mincore` checks cover pages at the mapping base and client address;
+  they do not inspect every page in the mapping.
 - Test seams, absent from production builds: `test-adapter` (an
   allocation-backed, creating-thread-only context for the prefixed C evidence
   adapter), `loom`, `tls-codegen-probe`, `native-runtime-test-audit` (read-only
@@ -383,10 +400,11 @@ zero by intent, not as alternate counters.
   caller sequence is in [Process destruction](#process-destruction); default
   process-done retains backing.
 - Aligned requests: `aligned.rs` picks the plan. For offset 0, an alignment above
-  `PAGE_MAX_OVERALLOC_ALIGN` (64 KiB) and below `PAGE_META_ALIGNMENT` (256 MiB)
-  takes the `HugeSingleton` plan (a request of at least `SMALL_SIZE_MAX + 1`);
-  an alignment at or above 256 MiB, or any nonzero offset with an alignment
-  above 64 KiB, has no plan and fails.
+  `PAGE_MAX_OVERALLOC_ALIGN` (64 KiB) takes the `HugeSingleton` plan
+  (a request of at least `SMALL_SIZE_MAX + 1`). Aligned metadata profiles
+  reject alignments at or above `PAGE_META_ALIGNMENT` (256 MiB); checked
+  secure profiles use the source offset mapping there. Any nonzero offset
+  with an alignment above 64 KiB has no plan and fails.
 - Huge: `install_owned_huge_allocation` is the `arena.c:2167-2191` manage
   boundary; the registry retains one `ArenaBacking` per arena (`Regular` mapping, `Huge`
   allocation, published views, or external memory with only a callback lease and

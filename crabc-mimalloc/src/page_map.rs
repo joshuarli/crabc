@@ -664,6 +664,7 @@ impl PageMap {
                         audit.medium_retired_slices += 1;
                     }
                 }
+                #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
                 if page_ref.aligned_alias_owner() != page {
                     audit.nonprimary_slices += 1;
                 }
@@ -1104,6 +1105,7 @@ impl PageMap {
     #[cfg(target_arch = "x86_64")]
     #[inline]
     pub(crate) unsafe fn lookup_native_retained_live_page(&self, address: *const u8) -> *mut Page {
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         if crate::config::PAGE_META_IS_ALIGNED
             && crate::config::DEBUG_LEVEL == 0
             && crate::config::SECURE_LEVEL == 0
@@ -1119,8 +1121,9 @@ impl PageMap {
             // SAFETY: native publication initializes the source atomic slot
             // before a client escapes; its exact live allocation pins both
             // the alias backing and primary. Only that atomic is projected.
-            unsafe { Page::aligned_alias_owner_at(slot) }
-        } else {
+            return unsafe { Page::aligned_alias_owner_at(slot) };
+        }
+        {
             // SAFETY: the same native client retains its registered map
             // entry. This is the configured checked source policy.
             unsafe { self.checked_lookup_in_active_map(address) }

@@ -161,6 +161,11 @@ class M7GateContractTests(unittest.TestCase):
         for name, value in (("GUARDED", 1), ("SECURE", 5), ("DEBUG", 0), ("STAT", 0)):
             self.assertIn(f"-DMI_{name}={value}", flags)
             self.assertIn(f"-UMI_{name}", flags)
+        for prefix in ("", "guarded-"):
+            for level in range(1, 6):
+                with self.subTest(prefix=prefix, level=level):
+                    flags, _ = gate.configuration_profile(f"{prefix}secure-{level}")
+                    self.assertIn("-DMI_FREE_IS_CHECKED=1", flags)
         flags, features = gate.configuration_profile("debug-3")
         self.assertEqual(features, ("mi-debug-3",))
         self.assertIn("-DMI_DEBUG=3", flags)

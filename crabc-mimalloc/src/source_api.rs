@@ -334,7 +334,7 @@ pub unsafe fn theap_malloc_aligned_at(
         ) }
     };
     if block.is_some() { return Sourced::quiet(block); }
-    if child && offset == 0 && alignment >= PAGE_META_ALIGNMENT {
+    if child && offset == 0 && crate::config::PAGE_META_IS_ALIGNED && alignment >= PAGE_META_ALIGNMENT {
         for _ in 0..2 {
             crate::process_init::process_warning_message(
                 crate::diagnostic_output::SourceFormattedMessage::page_alignment_too_large(alignment),
@@ -350,7 +350,7 @@ pub unsafe fn theap_malloc_aligned_at(
             errno = errno.then(source_error_errno(crate::diagnostic_output::SourceErrorReport::AllocationTooLarge { size: request }));
         }
     }
-    if offset == 0 && alignment >= PAGE_META_ALIGNMENT && !naturally_aligned(size, alignment) {
+    if offset == 0 && crate::config::PAGE_META_IS_ALIGNED && alignment >= PAGE_META_ALIGNMENT && !naturally_aligned(size, alignment) {
         errno = SourceErrno::Store(Errno::INVAL).then(errno);
     }
     errno = errno.then(source_error_errno(crate::diagnostic_output::SourceErrorReport::OutOfMemory { size: request }));
@@ -1034,7 +1034,7 @@ fn aligned_failure_errno(size: usize, alignment: usize, offset: usize) -> Source
         if offset != 0 {
             return SourceErrno::error_message(Errno::OVERFLOW);
         }
-        if alignment >= PAGE_META_ALIGNMENT {
+        if crate::config::PAGE_META_IS_ALIGNED && alignment >= PAGE_META_ALIGNMENT {
             // `arena.c:824-832` assigns EINVAL before the generic fallback's
             // out-of-memory report, which then finds errno nonzero.
             return SourceErrno::Store(Errno::INVAL);

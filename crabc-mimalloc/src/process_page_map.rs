@@ -67,27 +67,6 @@ pub(crate) enum ProcessPageMapTerminalDestroyError {
     Unlock(Errno),
 }
 
-/// The `mi_page_t` prefix read by the pointer-only source boundary.
-///
-/// `Page` is `repr(C)` and its source-compatible definition owns these first
-/// fields in this order. This private prefix deliberately uses raw fields
-/// instead of forming `&Page`: a foreign free, usable-size query, or realloc
-/// lookup may run while the owning thread changes disjoint ordinary page
-/// fields. `block_size` and `page_offset` are immutable from page publication
-/// through final unregistration, while `xthread_id` is the source atomic flag
-/// word. If the source `Page` prefix changes, this projection must change in
-/// the same commit.
-#[repr(C)]
-struct PagePointerGeometry {
-    _self: AtomicPtr<Page>,
-    xthread_id: AtomicUsize,
-    _free: *mut (),
-    _used: usize,
-    _local_free: *mut (),
-    block_size: usize,
-    page_offset: usize,
-}
-
 /// Source ownership state captured from a `mi_page_t::xthread_id` snapshot.
 ///
 /// This is exactly the source identity after masking its two low flag bits:
@@ -313,10 +292,9 @@ impl LiveAllocationPointer {
     /// Marks the live page for source interior-client recovery, without
     /// borrowing its concurrently mutable ordinary metadata.
     pub(crate) fn mark_page_has_interior_pointers(&mut self) {
-        let geometry = self.page.as_ptr().cast::<PagePointerGeometry>();
         // SAFETY: this observation's exact live client retains the initialized
         // atomic prefix through publication of the source interior bit.
-        let word = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
+        let word = unsafe { Page::xthread_id_pointer_at(self.page).as_ref() };
         word.fetch_or(PAGE_HAS_INTERIOR_POINTERS, Ordering::Relaxed);
         self.xthread_id |= PAGE_HAS_INTERIOR_POINTERS;
     }
@@ -392,11 +370,10 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
     page: NonNull<Page>,
     client: NonNull<u8>,
 ) -> Option<LiveAllocationPointer> {
-    let geometry = page.as_ptr().cast::<PagePointerGeometry>();
     // SAFETY: the caller proves this initialized page remains stable. This is
     // a reference to the one atomic source field only; it never creates a
     // shared `Page` reference beside the owner's ordinary field mutation.
-    let xthread_id = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
+    let xthread_id = unsafe { Page::xthread_id_pointer_at(page).as_ref() };
     // Pinned `mi_free_nonnull` takes this same relaxed atomic word once before
     // it derives caller-relative dispatch. Keep the complete raw snapshot so
     // later source dispatch can use it without dereferencing `theap` or
@@ -407,14 +384,14 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
     // SAFETY: source page publication fixes these geometry fields before the
     // allocation becomes visible. The caller's live-client proof keeps the
     // page from reuse or final release, so raw reads do not overlap a write.
-    let block_size = unsafe { (*geometry).block_size };
+    let block_size = unsafe { Page::block_size_at(page) };
     if block_size == 0 {
         return None;
     }
     let client_adjustment = if has_interior_pointers {
         // Only adjusted clients need page-start geometry to recover their
         // canonical free-list block. A normal client is that block already.
-        let page_offset = unsafe { (*geometry).page_offset };
+        let page_offset = unsafe { Page::page_offset_at(page) };
         let page_start = page.as_ptr().addr().checked_add(page_offset)?;
         let client_address = client.as_ptr().addr();
         let block_address = crate::aligned::recover_block_start(
@@ -1509,7 +1486,7 @@ impl ProcessPageMapRoot {
         // SAFETY: publication fixes block_size through final unregistration.
         // The retained client pins this raw prefix without borrowing ordinary
         // Page fields that its owner may mutate concurrently.
-        let block_size = unsafe { (*page.as_ptr().cast::<PagePointerGeometry>()).block_size };
+        let block_size = unsafe { Page::block_size_at(page) };
         Ok((block_size != 0).then_some(block_size))
     }
 
@@ -1626,7 +1603,7 @@ impl ProcessPageMapRoot {
         };
         let Some(page) = NonNull::new(page) else { return Ok(None); };
         // SAFETY: only the immutable source stride is read beside owner fields.
-        let block_size = unsafe { (*page.as_ptr().cast::<PagePointerGeometry>()).block_size };
+        let block_size = unsafe { Page::block_size_at(page) };
         Ok((block_size != 0).then_some(block_size))
     }
 
@@ -2292,11 +2269,10 @@ mod tests {
     }
 
     fn store_source_xthread_id_for_pointer_test(page: NonNull<Page>, xthread_id: usize) {
-        let geometry = page.as_ptr().cast::<PagePointerGeometry>();
         // SAFETY: the fixture owns its initialized page metadata exclusively
         // through PageMap unregistration. This names only the source atomic
         // identity field and never accesses the potentially stale `theap`.
-        let field = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
+        let field = unsafe { Page::xthread_id_pointer_at(page).as_ref() };
         field.store(xthread_id, Ordering::Relaxed);
     }
 

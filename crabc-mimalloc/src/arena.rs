@@ -1050,7 +1050,8 @@ impl ArenaInfoLayout {
             .checked_add(free_bitmap.byte_size())?
             .checked_add(ordinary_bytes)?;
         let guard_size = if crate::config::SECURE_LEVEL > 0 { page_size } else { 0 };
-        let info_size = invariants::align_up(bitmaps_end, page_size)?.checked_add(guard_size)?;
+        let pages_size = if crate::config::PAGE_META_IS_ALIGNED { 0 } else { slice_count.checked_mul(size_of::<Page>())? };
+        let info_size = invariants::align_up(bitmaps_end.checked_add(pages_size)?, page_size)?.checked_add(guard_size)?;
         let info_slices = invariants::slice_count_of_size(info_size)?;
         Some(Self {
             slice_count,
@@ -1091,8 +1092,18 @@ impl ArenaInfoLayout {
     pub(crate) const fn info_size(self) -> usize { self.info_slices * ARENA_SLICE_SIZE }
 }
 
+pub(crate) fn max_fixed_object_size() -> usize {
+    if crate::config::PAGE_META_IS_ALIGNED {
+        crate::config::PAGE_META_ALIGNMENT -
+            (PAGE_META_ALIGNED_COUNT * size_of::<Page>()).next_multiple_of(ARENA_SLICE_SIZE)
+    } else {
+        crate::config::ARENA_MAX_SIZE - crate::config::ARENA_CHUNK_SIZE
+    }
+}
+
 #[inline]
 pub(crate) fn page_metadata_slice_count() -> Option<usize> {
+    if !crate::config::PAGE_META_IS_ALIGNED { return Some(0); }
     let bytes = PAGE_META_ALIGNED_COUNT.checked_mul(size_of::<Page>())?;
     invariants::slice_count_of_size(bytes)
 }
@@ -1696,6 +1707,13 @@ fn arena_page_metadata_projection(arena: &Arena, memory: MemoryId) -> Option<Are
     let memory = memory.arena_memory()?;
     if memory.arena != core::ptr::from_ref(arena).cast_mut() { return None; }
     let slice_index = memory.slice_index as usize;
+    if !crate::config::PAGE_META_IS_ALIGNED {
+        if slice_index >= arena.slice_count { return None; }
+        let start = NonNull::new(arena.pages_meta)?.cast::<u8>();
+        let metadata = NonNull::new(arena.pages_meta.wrapping_add(slice_index))?;
+        return Some(ArenaPageMetadataProjection { metadata, start, slice_index: 0,
+            slice_count: 0, size: 0, needs_commit: false });
+    }
     let metadata_index = invariants::align_down(slice_index, PAGE_META_ALIGNED_COUNT)?;
     let metadata_count = page_metadata_slice_count()?;
     if metadata_index.checked_add(metadata_count)? > arena.slice_count { return None; }
@@ -2202,6 +2220,7 @@ fn arena_slice_range_is_usable(arena: &Arena, slice_index: usize, slice_count: u
     if end > arena.slice_count {
         return false;
     }
+    if !crate::config::PAGE_META_IS_ALIGNED { return slice_index >= arena.info_slices; }
     let Some(metadata_slice_count) = page_metadata_slice_count() else {
         return false;
     };
@@ -2339,7 +2358,7 @@ where
             slices_committed,
             slices_dirty,
             slices_purge,
-            pages_meta: null_mut(),
+            pages_meta: if crate::config::PAGE_META_IS_ALIGNED { null_mut() } else { cursor.cast::<Page>() },
             pages_main: ArenaPages {
                 pages,
                 pages_abandoned,
@@ -2395,25 +2414,30 @@ where
         .ok_or(ManageArenaError::BitmapInitialization)?;
     }
 
-    let page_meta_slices = page_metadata_slice_count()
-        .ok_or(ManageArenaError::MetadataDoesNotFit)?;
-    let mut index = 0;
-    while index < slice_count {
-        let reserved = if index == 0 {
-            layout.info_slices()
-        } else {
-            page_meta_slices
-        };
-        let start_index = index + reserved;
-        let mut count = PAGE_META_ALIGNED_COUNT - reserved;
-        if start_index < slice_count {
-            if start_index + count > slice_count {
-                count = slice_count - start_index;
+    if !crate::config::PAGE_META_IS_ALIGNED {
+        unsafe { free.unsafe_set_range_local(layout.info_slices(), slice_count - layout.info_slices()) }
+            .ok_or(ManageArenaError::BitmapInitialization)?;
+    } else {
+        let page_meta_slices = page_metadata_slice_count()
+            .ok_or(ManageArenaError::MetadataDoesNotFit)?;
+        let mut index = 0;
+        while index < slice_count {
+            let reserved = if index == 0 {
+                layout.info_slices()
+            } else {
+                page_meta_slices
+            };
+            let start_index = index + reserved;
+            let mut count = PAGE_META_ALIGNED_COUNT - reserved;
+            if start_index < slice_count {
+                if start_index + count > slice_count {
+                    count = slice_count - start_index;
+                }
+                unsafe { free.unsafe_set_range_local(start_index, count) }
+                    .ok_or(ManageArenaError::BitmapInitialization)?;
             }
-            unsafe { free.unsafe_set_range_local(start_index, count) }
-                .ok_or(ManageArenaError::BitmapInitialization)?;
+            index += PAGE_META_ALIGNED_COUNT;
         }
-        index += PAGE_META_ALIGNED_COUNT;
     }
     if memory.initially_committed() {
         unsafe { committed.unsafe_set_range_local(0, slice_count) }
@@ -3595,9 +3619,19 @@ pub(crate) mod tests {
 
     #[test]
     fn metadata_sizing_reserves_exact_source_slices_and_bitmap_headers() {
-        // Encoded free lists and padding retain the two source Page keys;
-        // their larger image reserves one additional metadata slice.
         let keyed = crate::config::PAGE_KEY_COUNT == 2;
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            assert_eq!(size_of::<Page>(), if keyed { 136 } else { 120 });
+            assert_eq!(page_metadata_slice_count(), Some(0));
+            let info = ArenaInfoLayout::for_slice_count(BCHUNK_BITS, 4096).unwrap();
+            assert_eq!(info.arena_offset(), 0);
+            assert_eq!(info.bitmap_base(), 704);
+            assert_eq!(info.bitmaps_end(), 13_696);
+            assert_eq!(info.info_slices(), 2);
+            assert_eq!(info.info_size(), 131_072);
+            assert_eq!(max_fixed_object_size(), 17_146_314_752);
+            return;
+        }
         assert_eq!(size_of::<Page>(), if keyed { 144 } else { 128 });
         assert_eq!(size_of::<Arena>(), 648);
         assert_eq!(page_metadata_slice_count(), Some(if keyed { 9 } else { 8 }));
@@ -3624,9 +3658,15 @@ pub(crate) mod tests {
         let layout = ArenaInfoLayout::for_slice_count(13 * BCHUNK_BITS, 4096).unwrap();
         let keyed = crate::config::PAGE_KEY_COUNT == 2;
         let secure = crate::config::SECURE_LEVEL > 0;
-        // The source aligns the complete bitmap image to an OS page before
-        // adding its guard. Page keys shift that image by a metadata slice,
-        // so the same guard crosses the next slice boundary in both layouts.
+        if !crate::config::PAGE_META_IS_ALIGNED {
+            assert_eq!(size_of::<Page>(), if keyed { 136 } else { 120 });
+            assert_eq!(page_metadata_slice_count(), Some(0));
+            assert_eq!(layout.bitmap_base(), 704);
+            assert_eq!(layout.bitmaps_end(), 64_384);
+            assert_eq!(layout.guard_size(), 4096);
+            assert_eq!(layout.info_slices(), if keyed { 15 } else { 14 });
+            return;
+        }
         assert_eq!(size_of::<Page>(), if keyed { 144 } else { 128 });
         assert_eq!(page_metadata_slice_count(), Some(if keyed { 9 } else { 8 }));
         assert_eq!(layout.bitmap_base(), if keyed { 590_528 } else { 524_992 });

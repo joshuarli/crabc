@@ -1101,7 +1101,7 @@ def configuration_profile(profile: str) -> tuple[tuple[str, ...], tuple[str, ...
     secure = int(ordinary[-1]) if ordinary.startswith("secure-") else 0
     stat = 2 if debug else int(ordinary[-1]) if ordinary.startswith("stat-") else 0
     flags = ("-O0", "-UNDEBUG", "-UMI_BUILD_RELEASE", *tuple(flag for name, value in (("DEBUG", debug), ("SECURE", secure),
-                                           ("STAT", stat), ("GUARDED", int(guarded)))
+                                           ("STAT", stat), ("GUARDED", int(guarded)), ("FREE_IS_CHECKED", int(secure != 0)))
                   for flag in (f"-UMI_{name}", f"-DMI_{name}={value}")))
     features = (("mi-guarded",) if guarded else ())
     if ordinary != "release":

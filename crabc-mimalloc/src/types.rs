@@ -4534,6 +4534,7 @@ pub(crate) const EMPTY_PAGE_QUEUES: [PageQueue; BIN_COUNT] = empty_page_queues()
 // release image omits it; the debug image carries both keys after memid.
 #[repr(C)]
 pub(crate) struct Page {
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     self_: AtomicPtr<Page>,
     xthread_id: AtomicUsize,
     free: *mut Block,
@@ -4890,6 +4891,7 @@ impl Page {
 
     const fn empty() -> Self {
         Self {
+            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
             self_: AtomicPtr::new(null_mut()),
             xthread_id: AtomicUsize::new(THREAD_ID_ABANDONED),
             free: null_mut(),
@@ -4913,6 +4915,14 @@ impl Page {
         }
     }
 
+    /// # Safety
+    /// `page` retains initialized metadata and excludes retirement, reuse and
+    /// release through every access to the returned atomic field pointer.
+    #[inline]
+    pub(crate) unsafe fn xthread_id_pointer_at(page: NonNull<Self>) -> NonNull<AtomicUsize> {
+        unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page.as_ptr()).xthread_id)) }
+    }
+
     #[inline]
     pub(crate) fn owner_thread_id(&self) -> usize {
         self.xthread_id.load(core::sync::atomic::Ordering::Acquire)
@@ -4925,8 +4935,10 @@ impl Page {
     /// `self` atomic in these aliases. Every zero bit-pattern below is a valid
     /// Rust field value, including `MemoryKind::None`; spelling out the image
     /// avoids treating arbitrary bytes as an initialized `Page`.
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     const fn empty_aligned_alias() -> Self {
         Self {
+            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
             self_: AtomicPtr::new(null_mut()),
             xthread_id: AtomicUsize::new(0),
             free: null_mut(),
@@ -4961,6 +4973,7 @@ impl Page {
     /// while a current client can look up this slot. The caller computes the
     /// exact source alias span before publication; this grants no release right.
     #[inline]
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     pub(crate) unsafe fn publish_aligned_alias_owner_at(
         slot: NonNull<Page>, owner: NonNull<Page>,
     ) {
@@ -4978,6 +4991,7 @@ impl Page {
     /// owner operation separately keeps the returned primary Page live;
     /// the loaded pointer itself supplies no lifetime or release authority.
     #[inline]
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     pub(crate) unsafe fn aligned_alias_owner_at(slot: NonNull<Page>) -> *mut Page {
         // SAFETY: only the retained initialized atomic field is projected.
         unsafe { &*core::ptr::addr_of!((*slot.as_ptr()).self_) }
@@ -4997,6 +5011,7 @@ impl Page {
     /// value or be visible to a concurrent lookup until this call returns.
     /// `owner` must remain address-stable and live until this exact slot is
     /// cleared or its entire mapping is released after reader quiescence.
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     pub(crate) unsafe fn publish_aligned_alias_at(
         slot: NonNull<Page>,
         owner: NonNull<Page>,
@@ -5020,6 +5035,7 @@ impl Page {
     /// [`Self::publish_aligned_alias_at`]. The caller must serialize this
     /// transition with other writers and establish lookup quiescence before
     /// releasing the containing mapping.
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     pub(crate) unsafe fn clear_aligned_alias_at(
         slot: NonNull<Page>,
         owner: NonNull<Page>,
@@ -5037,6 +5053,7 @@ impl Page {
 
     /// Reads the aligned metadata owner published in this slot.
     #[inline]
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     pub(crate) fn aligned_alias_owner(&self) -> *mut Page {
         self.self_.load(core::sync::atomic::Ordering::Acquire)
     }
@@ -5253,9 +5270,7 @@ impl Page {
         { self.keys = [0; crate::config::PAGE_KEY_COUNT]; }
         // SAFETY: forwarded exact Heap identity/lifetime contract.
         unsafe { self.associate_exclusive_owner_with_heap_pointer(theap, heap, owner) };
-        // `MI_PAGE_META_IS_ALIGNED` is enabled in the frozen profile. As in
-        // `arena.c`, publish the self map only after every ordinary page field
-        // and exclusive owner record is ready.
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         self.self_
             .store(metadata.as_ptr(), core::sync::atomic::Ordering::Release);
         true
@@ -5386,8 +5401,9 @@ impl Page {
         // SAFETY: these bounded scalar projections use the retained original
         // capabilities; no whole Page, Heap or Theap reference is created.
         unsafe {
-            if (&*core::ptr::addr_of!((*raw).self_)).load(Ordering::Acquire) != raw
-                || core::ptr::addr_of!((*raw).theap).read() != theap.as_ptr()
+            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
+            if (&*core::ptr::addr_of!((*raw).self_)).load(Ordering::Acquire) != raw { return false; }
+            if core::ptr::addr_of!((*raw).theap).read() != theap.as_ptr()
                 || core::ptr::addr_of!((*raw).heap).read().is_null()
                 || core::ptr::addr_of!((*raw).heap).read()
                     != (&*core::ptr::addr_of!((*theap.as_ptr()).heap)).load(Ordering::Acquire)
@@ -5511,6 +5527,7 @@ impl Page {
         }
 
         let memid = self.memid;
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         self.self_
             .store(null_mut(), core::sync::atomic::Ordering::Release);
         self.xthread_id
@@ -9947,9 +9964,9 @@ const _: [(); 8] = [(); align_of::<Arena>()];
 const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
 #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
-const _: [(); 128] = [(); size_of::<Page>()];
+const _: [(); 120 + 8 * crate::config::PAGE_META_IS_ALIGNED as usize] = [(); size_of::<Page>()];
 #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
-const _: [(); 144] = [(); size_of::<Page>()];
+const _: [(); 136 + 8 * crate::config::PAGE_META_IS_ALIGNED as usize] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
 // `Heap` stops at the source `memid` field and uses allocator-private futex
 // locks in place of pthread ABI objects. Its size is intentionally not a C
@@ -11764,10 +11781,13 @@ mod tests {
         // boundary, not a byte-layout claim about `pthread_mutex_t`.
         let (empty_page_memid_base_is_null, empty_page_memid_size) =
             empty_page_memid.test_static_empty_info();
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         record!(
             "m1.bootstrap.empty_page.self_is_null",
             empty_page.self_.load(Ordering::Relaxed).is_null() as usize
         );
+        #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+        record!("m1.bootstrap.empty_page.self_is_null", 0);
         record!(
             "m1.bootstrap.empty_page.xthread_id",
             empty_page.xthread_id.load(Ordering::Relaxed)
@@ -12145,6 +12165,7 @@ mod tests {
         record!("offsetof.mi_block_t.next", offset_of!(Block, next));
         record!("sizeof.mi_page_t", size_of::<Page>());
         record!("alignof.mi_page_t", align_of::<Page>());
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         record!("offsetof.mi_page_t.self", offset_of!(Page, self_));
         record!("offsetof.mi_page_t.xthread_id", offset_of!(Page, xthread_id));
         record!("offsetof.mi_page_t.free", offset_of!(Page, free));
@@ -12367,15 +12388,15 @@ mod tests {
         );
         record!(
             "config.PAGE_META_ALIGNED_CHUNKS",
-            crate::config::PAGE_META_ALIGNED_CHUNKS
+            if crate::config::PAGE_META_IS_ALIGNED { crate::config::PAGE_META_ALIGNED_CHUNKS } else { 0 }
         );
         record!(
             "config.PAGE_META_ALIGNED_COUNT",
-            crate::config::PAGE_META_ALIGNED_COUNT
+            if crate::config::PAGE_META_IS_ALIGNED { crate::config::PAGE_META_ALIGNED_COUNT } else { 0 }
         );
         record!(
             "config.PAGE_META_ALIGNMENT",
-            crate::config::PAGE_META_ALIGNMENT
+            if crate::config::PAGE_META_IS_ALIGNED { crate::config::PAGE_META_ALIGNMENT } else { 0 }
         );
         record!("config.ARENA_ALIGNMENT", crate::config::ARENA_ALIGNMENT);
         record!("config.PAGE_ALIGN", crate::config::PAGE_ALIGN);
@@ -12909,6 +12930,7 @@ mod tests {
         }
 
         let empty_page = EMPTY_PAGE.as_ref();
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         assert!(empty_page.self_.load(Ordering::Relaxed).is_null());
         assert_eq!(empty_page.xthread_id.load(Ordering::Relaxed), 0);
         assert!(empty_page.free.is_null());
@@ -13090,6 +13112,24 @@ mod tests {
         assert!(tld.test_theap_head_is(core::ptr::null_mut()));
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+    #[test]
+    fn secure_checked_page_layout_matches_pinned_source() {
+        assert!(crate::config::FREE_IS_CHECKED);
+        assert!(!crate::config::PAGE_META_IS_ALIGNED);
+        let keyed = cfg!(any(feature = "mi-debug-1", feature = "mi-secure-3"));
+        assert_eq!(size_of::<Page>(), if keyed { 136 } else { 120 });
+        assert_eq!(align_of::<Page>(), 8);
+        assert_eq!(offset_of!(Page, xthread_id), 0);
+        assert_eq!(offset_of!(Page, free), 8);
+        assert_eq!(offset_of!(Page, used), 16);
+        assert_eq!(offset_of!(Page, block_size), 32);
+        assert_eq!(offset_of!(Page, page_offset), 40);
+        assert_eq!(offset_of!(Page, xthread_free), 56);
+        assert_eq!(offset_of!(Page, memid), 96);
+        assert_eq!(crate::config::ARENA_ALIGNMENT, crate::config::ARENA_SLICE_ALIGN);
+    }
+
     #[test]
     fn metadata_layout_matches_the_default_release_c_contract() {
         // The independently locked list head retains the source pointer ABI.
@@ -13155,30 +13195,32 @@ mod tests {
         assert_eq!(offset_of!(PageQueue, last), 8);
         assert_eq!(offset_of!(PageQueue, count), 16);
         assert_eq!(offset_of!(PageQueue, block_size), 24);
-        assert_eq!(size_of::<Page>(), if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 144 } else { 128 });
+        let metadata_shift = 8 * usize::from(!crate::config::PAGE_META_IS_ALIGNED);
+        assert_eq!(size_of::<Page>(), if cfg!(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))) { 144 } else { 128 } - metadata_shift);
         assert_eq!(align_of::<Page>(), 8);
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         assert_eq!(offset_of!(Page, self_), 0);
-        assert_eq!(offset_of!(Page, xthread_id), 8);
-        assert_eq!(offset_of!(Page, free), 16);
-        assert_eq!(offset_of!(Page, used), 24);
-        assert_eq!(offset_of!(Page, local_free), 32);
-        assert_eq!(offset_of!(Page, block_size), 40);
-        assert_eq!(offset_of!(Page, page_offset), 48);
-        assert_eq!(offset_of!(Page, capacity), 56);
-        assert_eq!(offset_of!(Page, reserved), 58);
-        assert_eq!(offset_of!(Page, slice_pcommitted), 60);
-        assert_eq!(offset_of!(Page, retire_expire), 62);
-        assert_eq!(offset_of!(Page, free_is_zero), 63);
-        assert_eq!(offset_of!(Page, xthread_free), 64);
-        assert_eq!(offset_of!(Page, theap), 72);
-        assert_eq!(offset_of!(Page, heap), 80);
-        assert_eq!(offset_of!(Page, next), 88);
-        assert_eq!(offset_of!(Page, prev), 96);
-        assert_eq!(offset_of!(Page, memid), 104);
+        assert_eq!(offset_of!(Page, xthread_id), 8 - metadata_shift);
+        assert_eq!(offset_of!(Page, free), 16 - metadata_shift);
+        assert_eq!(offset_of!(Page, used), 24 - metadata_shift);
+        assert_eq!(offset_of!(Page, local_free), 32 - metadata_shift);
+        assert_eq!(offset_of!(Page, block_size), 40 - metadata_shift);
+        assert_eq!(offset_of!(Page, page_offset), 48 - metadata_shift);
+        assert_eq!(offset_of!(Page, capacity), 56 - metadata_shift);
+        assert_eq!(offset_of!(Page, reserved), 58 - metadata_shift);
+        assert_eq!(offset_of!(Page, slice_pcommitted), 60 - metadata_shift);
+        assert_eq!(offset_of!(Page, retire_expire), 62 - metadata_shift);
+        assert_eq!(offset_of!(Page, free_is_zero), 63 - metadata_shift);
+        assert_eq!(offset_of!(Page, xthread_free), 64 - metadata_shift);
+        assert_eq!(offset_of!(Page, theap), 72 - metadata_shift);
+        assert_eq!(offset_of!(Page, heap), 80 - metadata_shift);
+        assert_eq!(offset_of!(Page, next), 88 - metadata_shift);
+        assert_eq!(offset_of!(Page, prev), 96 - metadata_shift);
+        assert_eq!(offset_of!(Page, memid), 104 - metadata_shift);
         #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
         {
             assert_eq!(crate::config::PAGE_KEY_COUNT, 2);
-            assert_eq!(offset_of!(Page, keys), 128);
+            assert_eq!(offset_of!(Page, keys), 128 - metadata_shift);
             assert_eq!(size_of::<[usize; 2]>(), 16);
         }
     }
@@ -13880,7 +13922,10 @@ mod tests {
             assert_eq!((*theap.as_ptr()).random.test_output_available(), available);
             // Loading and dereferencing the stored original self capability
             // after key writes must remain valid under strict provenance.
+            #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
             let primary = (*page.as_ptr()).self_.load(Ordering::Acquire);
+            #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+            let primary = page.as_ptr();
             assert_eq!((*primary).block_size, layout.block_size());
             page_map.unregister_range(slice_start.as_ptr(), layout.page_map_size()).unwrap();
             assert!((&*core::ptr::addr_of!((*theap.as_ptr()).statistics)).page_released(bin));
@@ -13925,6 +13970,7 @@ mod tests {
             memid,
         ));
 
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         assert_eq!(page.self_.load(core::sync::atomic::Ordering::Acquire), core::ptr::from_mut(&mut page));
         assert_eq!(page.theap(), core::ptr::from_mut(&mut theap));
         assert_eq!(page.heap(), core::ptr::from_mut(&mut heap));
@@ -14014,6 +14060,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
     fn aligned_metadata_alias_publishes_only_its_primary_owner() {
         let mut primary = Page::empty();
         let mut alias = Page::empty();
@@ -14090,6 +14137,7 @@ mod tests {
             .retire_exclusive()
             .expect("fresh page is free and queue-detached");
         assert_eq!(released.kind(), MemoryKind::External);
+        #[cfg(not(all(target_arch = "x86_64", feature = "mi-secure-1")))]
         assert!(page.self_.load(core::sync::atomic::Ordering::Acquire).is_null());
         assert_eq!(
             page.xthread_id.load(core::sync::atomic::Ordering::Acquire),
