@@ -26,7 +26,7 @@ class SchemaTests(unittest.TestCase):
         schema = evidence.load_schema()
         self.assertEqual(schema, evidence._schema_template())
         self.assertEqual(schema["profile"], evidence.EXPECTED_PROFILE)
-        self.assertEqual(len(schema["trace"]["expected_values"]), 21)
+        self.assertEqual(len(schema["trace"]["expected_values"]), 38)
         values = schema["trace"]["expected_values"]
         self.assertEqual(values["trace.dynamic_os_aligned_singleton.request_size"], 7)
         self.assertEqual(values["trace.dynamic_os_aligned_singleton.alignment"], 131072)
@@ -40,7 +40,7 @@ class SchemaTests(unittest.TestCase):
                 "test_filter": evidence.RUST_TEST_FILTER,
             },
         )
-        self.assertTrue(schema["scope"]["one_dynamic_os_aligned_singleton_owner_exit_only"])
+        self.assertTrue(schema["scope"]["one_or_three_dynamic_os_singleton_owner_exit_only"])
         self.assertTrue(schema["scope"]["joined_consumer_free_only"])
         self.assertTrue(schema["scope"]["real_pinned_c_mi_thread_done"])
         self.assertTrue(schema["scope"]["real_rust_native_thread_done"])
@@ -51,7 +51,7 @@ class SchemaTests(unittest.TestCase):
         mutations = (
             lambda value: value.update({"c_probe_sha256": "0" * 64}),
             lambda value: value["scope"].update(
-                {"one_dynamic_os_aligned_singleton_owner_exit_only": False}
+                {"one_or_three_dynamic_os_singleton_owner_exit_only": False}
             ),
             lambda value: value["source_anchors"][0].update({"sha256": "0" * 64}),
             lambda value: value["rust_test"].update(
@@ -188,7 +188,7 @@ class TraceAndReportTests(unittest.TestCase):
         report = self.complete_report()
         self.assertEqual(report["kind"], evidence.DYNAMIC_OS_ALIGNED_SINGLETON_KIND)
         self.assertEqual(
-            report["comparison"], {"compared_value_count": 21, "status": "matched"}
+            report["comparison"], {"compared_value_count": 38, "status": "matched"}
         )
         self.assertIn("--locked", report["rust_probe"]["cargo_command"])
         mutations = (

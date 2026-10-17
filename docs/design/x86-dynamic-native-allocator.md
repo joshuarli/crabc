@@ -45,12 +45,15 @@ singleton, removes that exact node, clears its clipped PageMap span and
 metadata, then releases the mapping.
 
 The `allocator-dynamic-os-aligned-singleton` differential compares this
-production path with pinned v3.5.0 C for one 7-byte, 128 KiB-aligned client.
-Its 21 observations cover the sole `BIN_HUGE` member, empty `BIN_FULL`,
-worker teardown, joined consumer free, OS-list removal and PageMap clearance.
+production path with pinned v3.5.0 C for one and three 7-byte clients.
+The single-page case uses 128 KiB alignment. The three-page case uses 128,
+256 and 512 KiB alignments on one Heap. Its `BIN_HUGE` traversal publishes
+OS-list order `[0, 1, 2]`; consumer frees remove the middle, tail and head.
+The 38 observations cover exact list repair, survivor contents and PageMap
+visibility through worker teardown and every consumer free.
 `native_dynamic_os_singleton_owner_exit` separately compiles the allocator
-without test or audit features and uses `mincore` to check that the returned
-client's page is unmapped.
+without test or audit features. After each free, `mincore` checks that released
+client pages are unmapped while the remaining clients stay mapped and readable.
 The old `dynamic_theap.rs` attachment remains an isolated test model.
 These checks establish this one production lifecycle slice. General lifecycle
 and promotion claims remain partial.

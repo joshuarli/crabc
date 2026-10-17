@@ -22,13 +22,13 @@
     "general_remote_free_routing_claimed": false,
     "joined_consumer_free_only": true,
     "native_linux_x86_64_required": true,
-    "one_dynamic_os_aligned_singleton_owner_exit_only": true,
+    "real_rust_native_thread_done": true,
     "private_engine_evidence_only": true,
     "public_crabc_support": false,
     "public_mi_api_claimed": false,
     "public_x86_libc_or_ldso_support": false,
     "real_pinned_c_mi_thread_done": true,
-    "real_rust_native_thread_done": true
+    "one_or_three_dynamic_os_singleton_owner_exit_only": true
   },
   "compile_definitions": [
     "-DMI_SHARED_LIB",
@@ -169,7 +169,7 @@
       "sha256": "8664954e79850c3e732e05e19f061edad9bcbf17b5ca2c91f8b8c86500160543"
     }
   ],
-  "c_probe_sha256": "19ea0bc3e0238835fd3cee48962349a0cc37c4a6b91efbd404ca871b80edd027",
+  "c_probe_sha256": "4dad2f206786888c69f98bd5df822dadee5a28db6df6eddd0e60a4a1f0c1475d",
   "rust_test": {
     "path": "crabc-mimalloc/src/source_heap_api.rs",
     "target_arch": "x86_64",
@@ -199,7 +199,24 @@
       "trace.dynamic_os_aligned_singleton.terminal_free_after_owner_exit": 1,
       "trace.dynamic_os_aligned_singleton.os_abandoned_list_clear_after_final_free": 1,
       "trace.dynamic_os_aligned_singleton.page_map_clear_after_final_free": 1,
-      "trace.dynamic_os_aligned_singleton.valid": 1
+      "trace.dynamic_os_aligned_singleton.valid": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_page_count": 3,
+      "trace.dynamic_os_aligned_singleton.multiple_geometry_before_owner_exit": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_huge_queue_before_owner_exit": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_owner_exit_completed": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_list_after_owner_exit": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_unowned_after_owner_exit": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_middle_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_list_after_middle_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_survivors_after_middle_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_middle_map_clear": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_tail_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_list_after_tail_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_survivor_after_tail_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_tail_map_clear": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_head_free": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_list_empty": 1,
+      "trace.dynamic_os_aligned_singleton.multiple_all_maps_clear": 1
     }
   },
   "harness_dependency": {

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Differentially prove one dynamic OS-aligned singleton owner-exit route.
+"""Compare one- and three-page dynamic OS-singleton owner exits.
 
-The native pinned-C fixture creates exactly one 128 KiB-aligned singleton on
-one worker heap, runs real ``mi_thread_done()``, joins that worker, and frees
-the sole client from the consumer. It records only address-independent OS
-page, PageMap, abandoned-list, ownership, and terminal-release facts.
+Both producers create real worker Heap attachments, complete thread teardown,
+join the worker, and free its clients from the consumer. The three-page case
+uses 128, 256 and 512 KiB alignments and frees the middle, tail and head of
+the OS-abandoned list. Observations cover list links, survivor contents,
+PageMap visibility and exact release without recording raw addresses.
 
 This is narrow private Linux/x86-64 allocator-engine evidence. It is not a
 public allocation API, public x86 crabc support, general thread teardown,
@@ -45,7 +46,7 @@ EXPECTED_SCOPE = {
     "general_remote_free_routing_claimed": False,
     "joined_consumer_free_only": True,
     "native_linux_x86_64_required": True,
-    "one_dynamic_os_aligned_singleton_owner_exit_only": True,
+    "one_or_three_dynamic_os_singleton_owner_exit_only": True,
     "private_engine_evidence_only": True,
     "public_crabc_support": False,
     "public_mi_api_claimed": False,
@@ -93,6 +94,23 @@ EXPECTED_TRACE_VALUES = {
     "trace.dynamic_os_aligned_singleton.terminal_free_after_owner_exit": 1,
     "trace.dynamic_os_aligned_singleton.os_abandoned_list_clear_after_final_free": 1,
     "trace.dynamic_os_aligned_singleton.page_map_clear_after_final_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_page_count": 3,
+    "trace.dynamic_os_aligned_singleton.multiple_geometry_before_owner_exit": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_huge_queue_before_owner_exit": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_owner_exit_completed": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_list_after_owner_exit": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_unowned_after_owner_exit": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_middle_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_list_after_middle_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_survivors_after_middle_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_middle_map_clear": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_tail_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_list_after_tail_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_survivor_after_tail_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_tail_map_clear": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_head_free": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_list_empty": 1,
+    "trace.dynamic_os_aligned_singleton.multiple_all_maps_clear": 1,
     "trace.dynamic_os_aligned_singleton.valid": 1,
 }
 
@@ -105,6 +123,7 @@ C_TRACE_PROBE = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #if !defined(__linux__) || !defined(__x86_64__)
 #error this private dynamic OS-aligned singleton fixture requires native Linux/x86_64
@@ -229,6 +248,142 @@ failed:
   return NULL;
 }
 
+typedef struct multiple_fixture_s {
+  mi_heap_t* heap;
+  void* blocks[3];
+  mi_page_t* pages[3];
+  bool geometry;
+  bool queue_order;
+  bool done;
+} multiple_fixture_t;
+
+typedef struct multiple_result_s {
+  size_t page_count;
+  bool geometry_before_owner_exit;
+  bool huge_queue_before_owner_exit;
+  bool owner_exit_completed;
+  bool list_after_owner_exit;
+  bool unowned_after_owner_exit;
+  bool middle_free;
+  bool list_after_middle_free;
+  bool survivors_after_middle_free;
+  bool middle_map_clear;
+  bool tail_free;
+  bool list_after_tail_free;
+  bool survivor_after_tail_free;
+  bool tail_map_clear;
+  bool head_free;
+  bool list_empty;
+  bool all_maps_clear;
+} multiple_result_t;
+
+static bool multiple_list_matches(multiple_fixture_t* fixture, const size_t* members, size_t count) {
+  bool matches = true;
+  mi_lock(&fixture->heap->os_abandoned_pages_lock) {
+    mi_page_t* current = fixture->heap->os_abandoned_pages;
+    mi_page_t* previous = NULL;
+    for (size_t index = 0; index < count; index++) {
+      if (current != fixture->pages[members[index]] || current->prev != previous) {
+        matches = false;
+        break;
+      }
+      previous = current;
+      current = current->next;
+    }
+    matches = matches && current == NULL;
+  }
+  return matches;
+}
+
+static bool multiple_survivor_matches(multiple_fixture_t* fixture, size_t index) {
+  if (_mi_safe_ptr_page(fixture->blocks[index]) != fixture->pages[index]) return false;
+  const unsigned char* block = (const unsigned char*)fixture->blocks[index];
+  for (size_t byte = 0; byte < 7; byte++) {
+    if (block[byte] != (unsigned char)(0xa0 + index)) return false;
+  }
+  return true;
+}
+
+static void* multiple_owner_main(void* argument) {
+  multiple_fixture_t* fixture = (multiple_fixture_t*)argument;
+  mi_thread_init();
+  fixture->heap = mi_heap_new();
+  if (fixture->heap == NULL) goto failed;
+  mi_theap_t* theap = _mi_heap_theap(fixture->heap);
+  if (theap == NULL) goto failed;
+  fixture->geometry = true;
+  for (size_t index = 0; index < 3; index++) {
+    const size_t alignment = (128 * 1024) << index;
+    fixture->blocks[index] = mi_heap_malloc_aligned(fixture->heap, 7, alignment);
+    if (fixture->blocks[index] == NULL) goto failed;
+    mi_page_t* page = _mi_ptr_page(fixture->blocks[index]);
+    if (page == NULL) goto failed;
+    fixture->pages[index] = page;
+    fixture->geometry = fixture->geometry && page->heap == fixture->heap
+        && page->memid.memkind == MI_MEM_OS && page->capacity == 1
+        && page->reserved == 1 && page->used == 1
+        && ((uintptr_t)fixture->blocks[index] % alignment) == 0;
+    for (size_t byte = 0; byte < 7; byte++) {
+      ((unsigned char*)fixture->blocks[index])[byte] = (unsigned char)(0xa0 + index);
+    }
+  }
+  mi_page_queue_t* huge = &theap->pages[MI_BIN_HUGE];
+  mi_page_queue_t* full = &theap->pages[MI_BIN_FULL];
+  fixture->queue_order = huge->count == 3 && huge->first == fixture->pages[2]
+      && huge->last == fixture->pages[0] && fixture->pages[2]->next == fixture->pages[1]
+      && fixture->pages[1]->next == fixture->pages[0]
+      && full->count == 0 && full->first == NULL && full->last == NULL;
+  mi_thread_done();
+  fixture->done = true;
+  return NULL;
+
+failed:
+  if (fixture->heap != NULL) mi_heap_destroy(fixture->heap);
+  fixture->heap = NULL;
+  mi_thread_done();
+  return NULL;
+}
+
+static multiple_result_t multiple_owner_exit(void) {
+  multiple_result_t result = {0};
+  multiple_fixture_t fixture = {0};
+  pthread_t owner;
+  if (pthread_create(&owner, NULL, multiple_owner_main, &fixture) != 0) return result;
+  if (pthread_join(owner, NULL) != 0) abort();
+  if (!fixture.done) return result;
+  const size_t all[] = {0, 1, 2};
+  const size_t after_middle[] = {0, 2};
+  const size_t after_tail[] = {0};
+  result.page_count = 3;
+  result.geometry_before_owner_exit = fixture.geometry;
+  result.huge_queue_before_owner_exit = fixture.queue_order;
+  result.owner_exit_completed = fixture.done;
+  result.list_after_owner_exit = multiple_list_matches(&fixture, all, 3);
+  result.unowned_after_owner_exit = true;
+  for (size_t index = 0; index < 3; index++) {
+    result.unowned_after_owner_exit = result.unowned_after_owner_exit
+        && mi_page_thread_id(fixture.pages[index]) == MI_THREADID_ABANDONED
+        && !mi_page_is_owned(fixture.pages[index]);
+  }
+  mi_free(fixture.blocks[1]);
+  result.middle_map_clear = _mi_safe_ptr_page(fixture.blocks[1]) == NULL;
+  result.middle_free = result.middle_map_clear;
+  result.list_after_middle_free = multiple_list_matches(&fixture, after_middle, 2);
+  result.survivors_after_middle_free = multiple_survivor_matches(&fixture, 0)
+      && multiple_survivor_matches(&fixture, 2);
+  mi_free(fixture.blocks[2]);
+  result.tail_map_clear = _mi_safe_ptr_page(fixture.blocks[2]) == NULL;
+  result.tail_free = result.tail_map_clear;
+  result.list_after_tail_free = multiple_list_matches(&fixture, after_tail, 1);
+  result.survivor_after_tail_free = multiple_survivor_matches(&fixture, 0);
+  mi_free(fixture.blocks[0]);
+  result.head_free = _mi_safe_ptr_page(fixture.blocks[0]) == NULL;
+  result.list_empty = multiple_list_matches(&fixture, NULL, 0);
+  result.all_maps_clear = result.head_free && result.middle_map_clear && result.tail_map_clear;
+  mi_heap_destroy(fixture.heap);
+  return result;
+}
+
 int main(void) {
   fixture_t fixture = {
       .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -244,6 +399,7 @@ int main(void) {
   const size_t request_size = 7;
   const size_t alignment = 128 * 1024;
   bool valid = false;
+  multiple_result_t multiple = {0};
   int stage = 0;
   int os_memory_kind = 0;
   int singleton = 0;
@@ -330,6 +486,7 @@ int main(void) {
       _mi_safe_ptr_page((const void*)saved_block_address) == NULL;
   terminal_free_after_owner_exit = os_abandoned_list_clear_after_final_free
       && page_map_clear_after_final_free;
+  multiple = multiple_owner_exit();
   valid = request_size == 7 && alignment == 128 * 1024 && os_memory_kind && singleton
       && reserved == 1 && used == 1 && full_singleton_before_owner_exit
       && huge_singleton_before_owner_exit && !full_transition_eligible_before_owner_exit
@@ -338,7 +495,24 @@ int main(void) {
       && owner_joined && os_abandoned_list_member_after_owner_exit
       && source_owner_unowned_after_owner_exit && page_map_published_after_owner_exit
       && terminal_free_after_owner_exit && os_abandoned_list_clear_after_final_free
-      && page_map_clear_after_final_free;
+      && page_map_clear_after_final_free
+      && multiple.page_count == 3
+      && multiple.geometry_before_owner_exit
+      && multiple.huge_queue_before_owner_exit
+      && multiple.owner_exit_completed
+      && multiple.list_after_owner_exit
+      && multiple.unowned_after_owner_exit
+      && multiple.middle_free
+      && multiple.list_after_middle_free
+      && multiple.survivors_after_middle_free
+      && multiple.middle_map_clear
+      && multiple.tail_free
+      && multiple.list_after_tail_free
+      && multiple.survivor_after_tail_free
+      && multiple.tail_map_clear
+      && multiple.head_free
+      && multiple.list_empty
+      && multiple.all_maps_clear;
 
 output:
   printf("CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_BEGIN\n");
@@ -364,6 +538,23 @@ output:
   OUT_B("terminal_free_after_owner_exit", terminal_free_after_owner_exit);
   OUT_B("os_abandoned_list_clear_after_final_free", os_abandoned_list_clear_after_final_free);
   OUT_B("page_map_clear_after_final_free", page_map_clear_after_final_free);
+  OUT_N("multiple_page_count", multiple.page_count);
+  OUT_B("multiple_geometry_before_owner_exit", multiple.geometry_before_owner_exit);
+  OUT_B("multiple_huge_queue_before_owner_exit", multiple.huge_queue_before_owner_exit);
+  OUT_B("multiple_owner_exit_completed", multiple.owner_exit_completed);
+  OUT_B("multiple_list_after_owner_exit", multiple.list_after_owner_exit);
+  OUT_B("multiple_unowned_after_owner_exit", multiple.unowned_after_owner_exit);
+  OUT_B("multiple_middle_free", multiple.middle_free);
+  OUT_B("multiple_list_after_middle_free", multiple.list_after_middle_free);
+  OUT_B("multiple_survivors_after_middle_free", multiple.survivors_after_middle_free);
+  OUT_B("multiple_middle_map_clear", multiple.middle_map_clear);
+  OUT_B("multiple_tail_free", multiple.tail_free);
+  OUT_B("multiple_list_after_tail_free", multiple.list_after_tail_free);
+  OUT_B("multiple_survivor_after_tail_free", multiple.survivor_after_tail_free);
+  OUT_B("multiple_tail_map_clear", multiple.tail_map_clear);
+  OUT_B("multiple_head_free", multiple.head_free);
+  OUT_B("multiple_list_empty", multiple.list_empty);
+  OUT_B("multiple_all_maps_clear", multiple.all_maps_clear);
   OUT_B("valid", valid);
   printf("CRABC_MI_DYNAMIC_OS_ALIGNED_SINGLETON_TRACE_END\n");
   if (owner_started) {

@@ -1426,6 +1426,97 @@ mod heap_membership_tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn dynamic_os_singleton_multiple_list_trace() -> Vec<(&'static str, usize)> {
+        let owner = std::thread::spawn(|| {
+            let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+            assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+            let heap = heap_new();
+            assert!(!heap.is_null());
+            let theap = NonNull::new(unsafe { heap_theap(heap) }.cast::<Theap>()).unwrap();
+            let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs().unwrap();
+            let clients: [(usize, usize); 3] = core::array::from_fn(|index| {
+                let block = unsafe { heap_malloc_aligned_at(heap, 7, (128 * 1024) << index, 0, false) }
+                    .value.unwrap();
+                let page = unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }.unwrap().unwrap();
+                unsafe { block.as_ptr().write_bytes(0xa0 + index as u8, 7) };
+                (block.as_ptr().addr(), page.as_ptr().addr())
+            });
+            let geometry = clients.iter().enumerate().all(|(index, &(address, page))| unsafe {
+                let page = &*(page as *mut Page);
+                page.heap() == heap.cast() && page.memid().kind() == crate::types::MemoryKind::Os
+                    && page.capacity() == 1 && page.reserved() == 1 && page.used() == 1
+                    && address % ((128 * 1024) << index) == 0
+            });
+            let queue_order = unsafe {
+                let queue = Theap::local_queue_at(theap, crate::config::BIN_HUGE).unwrap();
+                queue.count() == 3 && queue.first().addr() == clients[2].1
+                    && queue.last().addr() == clients[0].1
+                    && Page::queue_next_at(NonNull::new(clients[2].1 as *mut Page).unwrap()).addr() == clients[1].1
+                    && Page::queue_next_at(NonNull::new(clients[1].1 as *mut Page).unwrap()).addr() == clients[0].1
+                    && Theap::local_queue_at(theap, crate::config::BIN_FULL).unwrap().is_empty()
+            };
+            let done = finish_current_thread_native_after_user_destructors() == ThreadFinishResult::Finished;
+            (heap.addr(), clients, geometry, queue_order, done)
+        });
+        let (heap, clients, geometry, queue_order, done) = owner.join().unwrap();
+        let heap = NonNull::new(heap as *mut Heap).unwrap();
+        let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs().unwrap();
+        let list_matches = |members: &[usize]| unsafe {
+            let mut current = heap.as_ref().test_os_abandoned_page_head();
+            let mut previous = null_mut();
+            for &index in members {
+                let expected = clients[index].1 as *mut Page;
+                if current != expected { return false; }
+                let page = NonNull::new(current).unwrap();
+                if Page::queue_prev_at(page) != previous { return false; }
+                previous = current;
+                current = Page::queue_next_at(page);
+            }
+            current.is_null()
+        };
+        let map_matches = |index: usize, live: bool| unsafe {
+            binding.page_map().lookup_registered_page(clients[index].0 as *mut u8).unwrap()
+                == if live { NonNull::new(clients[index].1 as *mut Page) } else { None }
+        };
+        let survivor_matches = |index: usize| unsafe {
+            map_matches(index, true) && (0..7).all(|byte| {
+                (clients[index].0 as *mut u8).add(byte).read() == 0xa0 + index as u8
+            })
+        };
+        let free = |index: usize| unsafe {
+            native_free(NonNull::new(clients[index].0 as *mut u8).unwrap()) == NativePageFreeResult::Freed
+        };
+        let unowned = clients.iter().all(|&(_, page)| unsafe {
+            (*(page as *mut Page)).abandoned_test_thread_id() == crate::types::THREAD_ID_ABANDONED
+                && (*(page as *mut Page)).remote_free_test_head() & 1 == 0
+        });
+        let trace = std::vec![
+            ("multiple_page_count", clients.len()),
+            ("multiple_geometry_before_owner_exit", usize::from(geometry)),
+            ("multiple_huge_queue_before_owner_exit", usize::from(queue_order)),
+            ("multiple_owner_exit_completed", usize::from(done)),
+            ("multiple_list_after_owner_exit", usize::from(list_matches(&[0, 1, 2]))),
+            ("multiple_unowned_after_owner_exit", usize::from(unowned)),
+            ("multiple_middle_free", usize::from(free(1))),
+            ("multiple_list_after_middle_free", usize::from(list_matches(&[0, 2]))),
+            ("multiple_survivors_after_middle_free", usize::from(survivor_matches(0) && survivor_matches(2))),
+            ("multiple_middle_map_clear", usize::from(map_matches(1, false))),
+            ("multiple_tail_free", usize::from(free(2))),
+            ("multiple_list_after_tail_free", usize::from(list_matches(&[0]))),
+            ("multiple_survivor_after_tail_free", usize::from(survivor_matches(0))),
+            ("multiple_tail_map_clear", usize::from(map_matches(2, false))),
+            ("multiple_head_free", usize::from(free(0))),
+            ("multiple_list_empty", usize::from(list_matches(&[]))),
+            ("multiple_all_maps_clear", usize::from((0..3).all(|index| map_matches(index, false)))),
+        ];
+        assert!(unsafe { heap_release(heap.as_ptr().cast(), true) });
+        trace
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn dynamic_os_singleton_worker_exit_releases_exact_heap_list_and_page_map() {
         crate::test_process::run_in_fresh_process(
@@ -1490,7 +1581,8 @@ mod heap_membership_tests {
                             && Page::queue_prev_at(page).is_null() && Page::queue_next_at(page).is_null(),
                     )));
                     trace.push(("source_owner_unowned_after_owner_exit", usize::from(
-                        page.as_ref().abandoned_test_thread_id() == crate::types::THREAD_ID_ABANDONED,
+                        page.as_ref().abandoned_test_thread_id() == crate::types::THREAD_ID_ABANDONED
+                            && page.as_ref().remote_free_test_head() & 1 == 0,
                     )));
                     trace.push(("page_map_published_after_owner_exit", usize::from(
                         binding.page_map().lookup_registered_page(block.as_ptr()).unwrap() == Some(page),
@@ -1501,8 +1593,10 @@ mod heap_membership_tests {
                     trace.push(("page_map_clear_after_final_free", usize::from(binding.page_map().lookup_registered_page(block.as_ptr()).unwrap().is_none())));
                     assert!(heap_release(heap.as_ptr().cast(), true));
                 }
+                trace.extend(dynamic_os_singleton_multiple_list_trace());
                 let valid = trace.iter().all(|&(name, value)| match name {
                     "request_size" => value == 7,
+                    "multiple_page_count" => value == 3,
                     "alignment" => value == 128 * 1024,
                     "full_transition_eligible_before_owner_exit" => value == 0,
                     _ => value == 1,
