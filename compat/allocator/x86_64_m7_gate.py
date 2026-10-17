@@ -1829,7 +1829,8 @@ def require_statistics_aligned_debug(trace: Mapping[str, str], description: str)
                       for field in ("binned", "huge", "requested")}
     except (KeyError, ValueError, UnicodeDecodeError) as error:
         raise harness.HarnessError(f"{description} has malformed aligned statistics") from error
-    if (request != 8193 or alignment != 4096 or oversize_request != request + alignment - 1
+    if ((request, alignment) not in {(8193, 4096), (65537, 4096), (262145, 65536)}
+            or oversize_request != request + alignment - 1
             or padding_size != 8 or page_block_size < oversize_request + padding_size
             or usable < request
             or trace["allocation.aligned"] != "1" or trace["allocation.mapped"] != "1"
@@ -2478,12 +2479,15 @@ def run_public_statistics_differential(
     profile: str | None = None,
     comparison_excluded_keys: frozenset[str] = frozenset(),
     driver_defines: tuple[str, ...] = (),
-    retain_artifacts: bool = False,
+    retain_artifacts: bool = False, build_profile: str = 'release',
+    allocation_cases: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Run one public statistics driver with pinned C and the selected adapter profile."""
 
     import x86_64_m4_gate as m4
 
+    if build_profile not in {'release', 'debug'}:
+        raise harness.HarnessError('unknown statistics adapter build profile')
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
@@ -2510,11 +2514,15 @@ def run_public_statistics_differential(
         )
         harness.require_success(c_build, f"M7 {subject} C build")
         target = temporary / "cargo-target"
+        frontend, build_environment = [harness.require_tool('cargo')], dict(os.environ)
+        if build_profile == 'debug':
+            frontend, build_environment, runtime_provenance = m4.debug_adapter_environment(temporary)
+            harness.write_json(temporary / 'adapter-source-runtime.json', runtime_provenance)
         rust_build = harness.command_record(
-            [harness.require_tool("cargo"), "build", "--locked", "--release", "--target",
+            [*frontend, "build", "--locked", *(['--release'] if build_profile == 'release' else ['--offline']), "--target",
              RUST_TARGET, "-p", m4.ADAPTER_PACKAGE,
              *(("--features", ",".join(adapter_features)) if adapter_features else ()),
-             "--target-dir", str(target)], cwd=harness.ROOT, env=dict(os.environ),
+             "--target-dir", str(target)], cwd=harness.ROOT, env=build_environment,
              timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
         harness.require_success(rust_build, f"M7 {subject} Rust adapter build")
@@ -2522,32 +2530,37 @@ def run_public_statistics_differential(
         rust_link = harness.command_record(
             [compiler, "-std=c11", *profile_flags, *driver_defines, "-I", str(source / "include"),
              str(driver),
-             str(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB),
+             str(target / RUST_TARGET / build_profile / m4.ADAPTER_STATICLIB),
              "-pthread", "-o", str(rust_binary)], cwd=source,
         )
         harness.require_success(rust_link, f"M7 {subject} Rust driver link")
         traces = {}
         executions = {}
         artifacts = {}
+        cases = allocation_cases or {'': ()}
         for side, binary in (("c", c_binary), ("rust", rust_binary)):
-            execution = harness.command_record((str(binary),), cwd=temporary, env={}, timeout_seconds=60)
-            harness.require_success(execution, f"M7 {subject} {side} execution")
-            traces[side] = parse_options_trace(str(execution["stdout"]),
-                f"M7 {subject} {side}", begin, end)
-            if retain_artifacts:
-                retained = ARTIFACTS / subject
-                retained.mkdir(parents=True, exist_ok=True)
-                product = retained / binary.name
-                shutil.copy2(binary, product)
-                for stream in ("stdout", "stderr"):
-                    (retained / f"{side}.{stream}").write_text(execution[stream], encoding="utf-8")
-                artifacts[side] = engine.file_record(product)
-                executions[side] = execution
+            traces[side] = {}
+            for case, arguments in cases.items():
+                execution = harness.command_record((str(binary), *arguments), cwd=temporary, env={}, timeout_seconds=60)
+                harness.require_success(execution, f"M7 {subject} {side} {case} execution")
+                trace = parse_options_trace(str(execution["stdout"]), f"M7 {subject} {side} {case}", begin, end)
+                prefix = case + '.' if case else ''
+                traces[side].update({prefix + key: value for key, value in trace.items()})
+                if retain_artifacts:
+                    retained = ARTIFACTS / subject
+                    retained.mkdir(parents=True, exist_ok=True)
+                    product = retained / binary.name
+                    shutil.copy2(binary, product)
+                    label = f'{side}-{case}' if case else side
+                    for stream in ("stdout", "stderr"):
+                        (retained / f"{label}.{stream}").write_text(execution[stream], encoding="utf-8")
+                    artifacts[side] = engine.file_record(product)
+                    executions[label] = execution
         if retain_artifacts:
             shutil.copy2(driver, retained / driver.name)
             artifacts["driver"] = engine.file_record(retained / driver.name)
             archive_product = retained / m4.ADAPTER_STATICLIB
-            shutil.copy2(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB, archive_product)
+            shutil.copy2(target / RUST_TARGET / build_profile / m4.ADAPTER_STATICLIB, archive_product)
             artifacts["rust_archive"] = engine.file_record(archive_product)
     report = {"status": "failed", "c_trace": traces["c"], "rust_trace": traces["rust"],
               "c_build": c_build["command"], "rust_build": rust_build["command"],
@@ -2560,8 +2573,13 @@ def run_public_statistics_differential(
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
     if require_complete is not None:
-        require_complete(traces["c"], f"pinned C {subject}")
-        require_complete(traces["rust"], f"Rust {subject}")
+        for side in ('c', 'rust'):
+            for case, arguments in cases.items():
+                prefix = case + '.' if case else ''
+                trace = {key[len(prefix):]: value for key, value in traces[side].items() if key.startswith(prefix)}
+                if allocation_cases and (trace.get('allocation.request'), trace.get('allocation.alignment')) != tuple(arguments):
+                    raise harness.HarnessError(f'M7 {subject} {side} {case} changed its request or alignment')
+                require_complete(trace, f"{side} {subject} {case}")
     if any(not comparison_excluded_keys <= set(trace) for trace in traces.values()):
         raise harness.HarnessError(f"M7 {subject} omitted a raw comparison baseline")
     compared = {side: {key: value for key, value in trace.items()
@@ -2703,12 +2721,13 @@ def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
     )
 
 
-def run_statistics_aligned_debug_differential(offline: bool) -> dict[str, Any]:
+def run_statistics_aligned_debug_differential(offline: bool, *, build_profile: str = 'release') -> dict[str, Any]:
     return run_public_statistics_differential(
         offline, subject="aligned-debug", driver=STATISTICS_ALIGNED_DEBUG_DRIVER,
         begin=STATISTICS_ALIGNED_DEBUG_TRACE_BEGIN, end=STATISTICS_ALIGNED_DEBUG_TRACE_END,
         report_name="statistics-aligned-debug.json", stat_level=2, profile="debug-1",
-        require_complete=require_statistics_aligned_debug, retain_artifacts=True,
+        require_complete=require_statistics_aligned_debug, retain_artifacts=True, build_profile=build_profile,
+        allocation_cases={'small': ('8193', '4096'), 'medium': ('65537', '4096'), 'large': ('262145', '65536')},
     )
 
 
@@ -2879,6 +2898,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         'statistics-level-two-requested': run_statistics_level_two_requested_differential,
         'statistics-level-two-bins': run_statistics_level_two_bins_differential,
         'statistics-level-two-page-huge': run_statistics_level_two_page_huge_differential,
+        'statistics-aligned-debug': lambda offline: run_statistics_aligned_debug_differential(offline, build_profile='debug'),
     }
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group()

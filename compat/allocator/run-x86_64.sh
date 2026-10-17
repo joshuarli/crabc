@@ -35,7 +35,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m4 [--check|--gate ID|--reader-tests|--operations-matrix [--read|--replay]]
   allocator-m4 --differential SCENARIO [--build-profile debug --valid-clients-only --source-profile PROFILE]
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
-  allocator-m7 --differential options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge
+  allocator-m7 --differential options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge|statistics-aligned-debug
   allocator-m7 [--qualification-profile baseline|full] [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--profile baseline|full] [--check|--reader-tests|--validate-retained|--report PATH...]
@@ -622,7 +622,7 @@ case "$command" in
         elif [ "$#" -eq 2 ] && [ "$1" = --differential ]; then
             [ "$hardware_qualification_selected" = false ] || fail "development traces do not select a qualification profile"
             case "$2" in
-                options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge) ;;
+                options-environment|option-effects|statistics-level-one-output-merge|statistics-level-two-requested|statistics-level-two-bins|statistics-level-two-page-huge|statistics-aligned-debug) ;;
                 *) fail "unknown M7 development trace" ;;
             esac
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --offline --development-trace "$2")

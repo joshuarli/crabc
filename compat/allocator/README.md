@@ -169,9 +169,14 @@ contract. Lanes whose driver is a `.c` plus `.py` pair in this directory are:
 - Options and output statistics development traces: `allocator-m7 --differential
   TRACE` accepts `options-environment`, `option-effects`,
   `statistics-level-one-output-merge`, `statistics-level-two-requested`,
-  `statistics-level-two-bins` and `statistics-level-two-page-huge`.
-  Each selection compares a pinned C oracle with one exact Rust test at
-  optimization level zero. Reports live under `m7-gate/development` and are
+  `statistics-level-two-bins`, `statistics-level-two-page-huge` and
+  `statistics-aligned-debug`. The aligned-debug selection runs the existing
+  public allocation driver in three fresh processes per backend, with
+  request/alignment pairs 8193/4096, 65537/4096 and 262145/65536. It checks
+  client payloads and normal/requested/bin statistics through free and collection.
+  Output traces compare a pinned C oracle with one exact Rust test. The
+  aligned-debug trace links the public native adapter using the existing owned
+  source-runtime closure. Both compilers use optimization level zero. Reports live under `m7-gate/development` and are
   explicitly ineligible for qualification. These traces do not replace release
   admission or the complete M7 gate.
 - Scheduled arena purge failure: `allocator-medium-pressure-delayed-purge-fault`

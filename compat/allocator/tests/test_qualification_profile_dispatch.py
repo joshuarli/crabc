@@ -248,7 +248,7 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
     def test_m7_development_traces_are_bounded_and_unoptimized(self):
         for name in ('options-environment', 'option-effects', 'statistics-level-one-output-merge',
                      'statistics-level-two-requested', 'statistics-level-two-bins',
-                     'statistics-level-two-page-huge'):
+                     'statistics-level-two-page-huge', 'statistics-aligned-debug'):
             with self.subTest(name=name):
                 self.assertEqual(self.runner_arguments('allocator-m7', '--differential', name),
                                  ('compat/allocator/x86_64_m7_gate.py', ['--offline', '--development-trace', name]))

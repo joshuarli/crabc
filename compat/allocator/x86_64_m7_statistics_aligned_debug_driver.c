@@ -1,4 +1,3 @@
-/* Exercise a debug-profile aligned regular-page allocation and its statistics. */
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,23 +95,36 @@ static void show_rows(const char* stage, const output_buffer_t* output) {
   }
 }
 
-int main(void) {
+int main(int argc, char** argv) {
+  size_t request = 8193;
+  size_t alignment = 4096;
+  if (argc == 3) {
+    char* request_end = NULL;
+    char* alignment_end = NULL;
+    request = strtoull(argv[1], &request_end, 10);
+    alignment = strtoull(argv[2], &alignment_end, 10);
+    if (*request_end != 0 || *alignment_end != 0) abort();
+  }
+  else if (argc != 1) abort();
+  if (!((request == 8193 && alignment == 4096)
+      || (request == 65537 && alignment == 4096)
+      || (request == 262145 && alignment == 65536))) abort();
   mi_stats_init(&baseline);
   if (!mi_stats_get(&baseline)) abort();
 
-  void* block = mi_malloc_aligned(8193, 4096);
+  void* block = mi_malloc_aligned(request, alignment);
   if (block == NULL) return 2;
-  const size_t oversize_request = 8193 + 4096 - 1;
+  const size_t oversize_request = request + alignment - 1;
   const size_t page_block_size = mi_good_size(oversize_request);
   if (page_block_size < MI_PADDING_SIZE) abort();
   const size_t normal_bin = bin_for_usable_size(page_block_size - MI_PADDING_SIZE);
   if (mi_stats_get_bin_size(normal_bin) != page_block_size) abort();
-  const int aligned = (((uintptr_t)block & 4095U) == 0);
+  const int aligned = (((uintptr_t)block & (alignment - 1)) == 0);
   const int mapped = mi_is_in_heap_region(block);
   const size_t usable = mi_usable_size(block);
-  memset(block, 0x5a, 8193);
+  memset(block, 0x5a, request);
   int payload_intact = 1;
-  for (size_t index = 0; index < 8193; index++) {
+  for (size_t index = 0; index < request; index++) {
     if (((const unsigned char*)block)[index] != 0x5a) payload_intact = 0;
   }
   capture(ALLOCATED);
@@ -129,8 +141,8 @@ int main(void) {
   printf("CRABC_MI_M7_STATISTICS_ALIGNED_DEBUG_TRACE_BEGIN\n");
   printf("profile.level=%d\n", MI_STAT);
   printf("profile.debug=%d\n", MI_DEBUG);
-  printf("allocation.request=8193\n");
-  printf("allocation.alignment=4096\n");
+  printf("allocation.request=%zu\n", request);
+  printf("allocation.alignment=%zu\n", alignment);
   printf("allocation.oversize_request=%zu\n", oversize_request);
   printf("allocation.page_block_size=%zu\n", page_block_size);
   printf("allocation.padding_size=%zu\n", (size_t)MI_PADDING_SIZE);

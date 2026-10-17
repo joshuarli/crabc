@@ -826,6 +826,9 @@ class M7GateContractTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["profile"], "debug-1")
         self.assertEqual(run.call_args.kwargs["stat_level"], 2)
         self.assertEqual(run.call_args.kwargs["driver"], gate.STATISTICS_ALIGNED_DEBUG_DRIVER)
+        self.assertEqual(run.call_args.kwargs["allocation_cases"], {
+            'small': ('8193', '4096'), 'medium': ('65537', '4096'),
+            'large': ('262145', '65536')})
 
         trace = {
             "profile.level": "2", "profile.debug": "1", "allocation.request": "8193",
