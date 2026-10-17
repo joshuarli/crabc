@@ -183,6 +183,211 @@ class SelectedTests(unittest.TestCase):
         self.assertEqual(zero.returncode, 1, zero.stdout + zero.stderr)
         self.assertIn("ZERO-TESTS", zero.stdout)
 
+    def test_all_skipped_module_is_unverified_and_nonpassing(self) -> None:
+        module = self.write_module(
+            "test_all_skipped.py",
+            """\
+import unittest
+
+class SkippedTests(unittest.TestCase):
+    @unittest.skip("fixture unavailable")
+    def test_first(self): pass
+
+    @unittest.skip("fixture unavailable")
+    def test_second(self): pass
+""",
+        )
+
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("UNVERIFIED", result.stdout)
+        self.assertNotIn("passed 1 modules / 2 tests", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 2)
+        self.assertEqual(summary["tests_passed"], 0)
+        self.assertEqual(summary["tests_skipped"], 2)
+        self.assertEqual(summary["skip_events"], 2)
+        row = summary["modules"][0]
+        self.assertEqual(row["status"], "unverified")
+        self.assertEqual(row["tests_passed"], 0)
+        self.assertEqual(row["tests_skipped"], 2)
+
+    def test_all_skipped_module_makes_mixed_module_request_nonpassing(self) -> None:
+        skipped = self.write_module(
+            "test_unverified.py",
+            """\
+import unittest
+
+class SkippedTests(unittest.TestCase):
+    @unittest.skip("fixture unavailable")
+    def test_only(self): pass
+""",
+        )
+        passed = self.write_module(
+            "test_verified.py",
+            """\
+import unittest
+
+class PassingTests(unittest.TestCase):
+    def test_only(self): self.assertTrue(True)
+""",
+        )
+
+        result = self.invoke(
+            "--module", self.relative(skipped), "--module", self.relative(passed), "--jobs", "1"
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("1 of 2 modules failed", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 2)
+        self.assertEqual(summary["tests_passed"], 1)
+        self.assertEqual(summary["tests_skipped"], 1)
+        self.assertEqual(summary["skip_events"], 1)
+        self.assertEqual(
+            [row["status"] for row in summary["modules"]], ["unverified", "passed"]
+        )
+
+    def test_mixed_pass_and_skip_reports_both_without_failing(self) -> None:
+        module = self.write_module(
+            "test_mixed_skip_pass.py",
+            """\
+import unittest
+
+class MixedTests(unittest.TestCase):
+    def test_pass(self): self.assertTrue(True)
+
+    @unittest.skip("fixture unavailable")
+    def test_skip(self): pass
+""",
+        )
+
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 passed tests", result.stdout)
+        self.assertIn("1 skipped tests", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 2)
+        self.assertEqual(summary["tests_passed"], 1)
+        self.assertEqual(summary["tests_skipped"], 1)
+        self.assertEqual(summary["skip_events"], 1)
+        row = summary["modules"][0]
+        self.assertEqual(row["status"], "passed")
+        self.assertEqual(row["tests_passed"], 1)
+        self.assertEqual(row["tests_skipped"], 1)
+
+    def test_mixed_failure_and_skip_remains_failed_with_separate_counts(self) -> None:
+        module = self.write_module(
+            "test_mixed_skip_failure.py",
+            """\
+import unittest
+
+class MixedTests(unittest.TestCase):
+    def test_failure(self): self.fail("expected fixture failure")
+
+    @unittest.skip("fixture unavailable")
+    def test_skip(self): pass
+""",
+        )
+
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("FAILED", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 2)
+        self.assertEqual(summary["tests_passed"], 0)
+        self.assertEqual(summary["tests_skipped"], 1)
+        self.assertEqual(summary["skip_events"], 1)
+        row = summary["modules"][0]
+        self.assertEqual(row["status"], "failed")
+        self.assertEqual(row["tests_passed"], 0)
+        self.assertEqual(row["tests_skipped"], 1)
+
+    def test_subtest_skip_and_pass_outcomes_are_separate(self) -> None:
+        module = self.write_module(
+            "test_subtest_skip.py",
+            """\
+import unittest
+
+class SubtestTests(unittest.TestCase):
+    def test_skipped_and_passing_subtests(self):
+        for value in (1, 2):
+            with self.subTest(value=value):
+                self.skipTest("subtest fixture unavailable")
+        with self.subTest(value=3):
+            self.assertTrue(True)
+""",
+        )
+
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 tests run", result.stdout)
+        self.assertIn("0 passed tests", result.stdout)
+        self.assertIn("2 other skip events", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 1)
+        self.assertEqual(summary["tests_passed"], 0)
+        self.assertEqual(summary["tests_skipped"], 0)
+        self.assertEqual(summary["skip_events"], 2)
+        self.assertEqual(summary["modules"][0]["status"], "passed")
+
+    def test_class_setup_skip_is_unverified_without_test_runs(self) -> None:
+        module = self.write_module(
+            "test_class_setup_skip.py",
+            """\
+import unittest
+
+class ClassSetupSkippedTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        raise unittest.SkipTest("class fixture unavailable")
+
+    def test_first(self): pass
+    def test_second(self): pass
+""",
+        )
+
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("UNVERIFIED", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 0)
+        self.assertEqual(summary["tests_passed"], 0)
+        self.assertEqual(summary["tests_skipped"], 0)
+        self.assertEqual(summary["skip_events"], 1)
+        self.assertEqual(summary["modules"][0]["status"], "unverified")
+
+    def test_expected_failure_is_reported_as_run_not_passed(self) -> None:
+        module = self.write_module(
+            "test_expected_failure.py",
+            """\
+import unittest
+
+class ExpectedFailureTests(unittest.TestCase):
+    @unittest.expectedFailure
+    def test_expected_failure(self):
+        self.fail("expected failure")
+""",
+        )
+
+        result = self.invoke("--module", self.relative(module), "--jobs", "1")
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 tests run", result.stdout)
+        self.assertIn("1 expected failure", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 1)
+        self.assertEqual(summary["tests_passed"], 0)
+        self.assertEqual(summary["tests_skipped"], 0)
+        self.assertEqual(summary["skip_events"], 0)
+        self.assertEqual(summary["expected_failures"], 1)
+        self.assertEqual(summary["modules"][0]["status"], "passed")
+
     def test_selected_cases_run_in_private_bounded_shards(self) -> None:
         module = self.write_module(
             "test_sharded.py",
@@ -368,6 +573,10 @@ class StoppedSelectionTests(unittest.TestCase):
         checkpoint = {
             "tests_started": 3,
             "tests_completed": 2,
+            "tests_passed": 1,
+            "tests_skipped": 1,
+            "skip_events": 1,
+            "expected_failures": 0,
             "current_test_id": "synthetic.Cases.test_c",
             "current_started_at": 1.5,
             "last_test_id": "synthetic.Cases.test_b",
@@ -388,6 +597,10 @@ class StoppedSelectionTests(unittest.TestCase):
         assert progress is not None
         self.assertEqual(progress.tests_started, 3)
         self.assertEqual(progress.tests_completed, 2)
+        self.assertEqual(progress.tests_passed, 1)
+        self.assertEqual(progress.tests_skipped, 1)
+        self.assertEqual(progress.skip_events, 1)
+        self.assertEqual(progress.expected_failures, 0)
         self.assertEqual(progress.current_test_id, "synthetic.Cases.test_c")
         self.assertEqual(progress.last_test_id, "synthetic.Cases.test_b")
 
@@ -501,6 +714,10 @@ class ImmediateTests(unittest.TestCase):
         payload = json.loads(records[0][len(RUNNER_MODULE.RESULT_PREFIX):])
         self.assertEqual(payload, {
             "tests_run": 4,
+            "tests_passed": 1,
+            "tests_skipped": 0,
+            "skip_events": 0,
+            "expected_failures": 0,
             "failures": 2,
             "errors": 1,
             "discovery_errors": 0,

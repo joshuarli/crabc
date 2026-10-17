@@ -85,6 +85,10 @@ class WorkerProgress:
 
     tests_started: int
     tests_completed: int
+    tests_passed: int
+    tests_skipped: int
+    skip_events: int
+    expected_failures: int
     current_test_id: str | None
     current_started_at: float | None
     last_test_id: str | None
@@ -96,6 +100,10 @@ class WorkerPayload:
     """The typed final worker record, including selected-case completion proof."""
 
     tests_run: int
+    tests_passed: int
+    tests_skipped: int
+    skip_events: int
+    expected_failures: int
     failures: int
     errors: int
     discovery_errors: int
@@ -112,6 +120,10 @@ class ModuleResult:
     elapsed_seconds: float
     tests_run: int
     tests_completed: int
+    tests_passed: int
+    tests_skipped: int
+    skip_events: int
+    expected_failures: int
     exit_code: int | None
     paths: WorkerPaths
     case_ids: tuple[str, ...]
@@ -411,6 +423,10 @@ def worker_payload(path: Path) -> WorkerPayload | None:
             return None
         expected = {
             "tests_run",
+            "tests_passed",
+            "tests_skipped",
+            "skip_events",
+            "expected_failures",
             "failures",
             "errors",
             "discovery_errors",
@@ -418,10 +434,24 @@ def worker_payload(path: Path) -> WorkerPayload | None:
         }
         if set(decoded) != expected:
             return None
-        counts = (decoded["tests_run"], decoded["failures"], decoded["errors"], decoded["discovery_errors"])
+        counts = (
+            decoded["tests_run"],
+            decoded["tests_passed"],
+            decoded["tests_skipped"],
+            decoded["skip_events"],
+            decoded["expected_failures"],
+            decoded["failures"],
+            decoded["errors"],
+            decoded["discovery_errors"],
+        )
         completed_case_ids = decoded["completed_case_ids"]
         if (
             any(type(value) is not int or value < 0 for value in counts)
+            or decoded["tests_passed"]
+            + decoded["tests_skipped"]
+            + decoded["expected_failures"]
+            > decoded["tests_run"]
+            or decoded["tests_skipped"] > decoded["skip_events"]
             or not isinstance(completed_case_ids, list)
             or any(not isinstance(case_id, str) for case_id in completed_case_ids)
         ):
@@ -443,6 +473,10 @@ def worker_progress(path: Path) -> WorkerProgress | None:
         if not isinstance(decoded, dict) or set(decoded) != {
             "tests_started",
             "tests_completed",
+            "tests_passed",
+            "tests_skipped",
+            "skip_events",
+            "expected_failures",
             "current_test_id",
             "current_started_at",
             "last_test_id",
@@ -451,11 +485,24 @@ def worker_progress(path: Path) -> WorkerProgress | None:
             continue
         started = decoded["tests_started"]
         completed = decoded["tests_completed"]
+        passed = decoded["tests_passed"]
+        skipped = decoded["tests_skipped"]
+        skip_events = decoded["skip_events"]
+        expected_failures = decoded["expected_failures"]
         if (
             type(started) is not int
             or type(completed) is not int
+            or type(passed) is not int
+            or type(skipped) is not int
+            or type(skip_events) is not int
+            or type(expected_failures) is not int
             or started < completed
             or completed < 0
+            or passed < 0
+            or skipped < 0
+            or skip_events < skipped
+            or expected_failures < 0
+            or passed + skipped + expected_failures > completed
         ):
             continue
         current = decoded["current_test_id"]
@@ -480,6 +527,10 @@ def worker_progress(path: Path) -> WorkerProgress | None:
         return WorkerProgress(
             started,
             completed,
+            passed,
+            skipped,
+            skip_events,
+            expected_failures,
             current,
             current_started_at,
             last,
@@ -559,12 +610,21 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
     progress = worker_progress(worker.paths.stdout)
     tests_run = 0 if payload is None else payload.tests_run
     tests_completed = tests_run
+    tests_passed = 0 if payload is None else payload.tests_passed
+    tests_skipped = 0 if payload is None else payload.tests_skipped
+    skip_events = 0 if payload is None else payload.skip_events
+    expected_failures = 0 if payload is None else payload.expected_failures
     current_test_id = None
     current_test_elapsed_seconds = None
     if progress is not None:
         if payload is None:
             tests_run = progress.tests_started
         tests_completed = progress.tests_completed
+        if payload is None:
+            tests_passed = progress.tests_passed
+            tests_skipped = progress.tests_skipped
+            skip_events = progress.skip_events
+            expected_failures = progress.expected_failures
         current_test_id = progress.current_test_id
         if progress.current_started_at is not None:
             current_test_elapsed_seconds = max(
@@ -578,6 +638,10 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
             elapsed,
             tests_run,
             tests_completed,
+            tests_passed,
+            tests_skipped,
+            skip_events,
+            expected_failures,
             exit_code,
             worker.paths,
             worker.case_ids,
@@ -592,6 +656,10 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
             elapsed,
             tests_run,
             tests_completed,
+            tests_passed,
+            tests_skipped,
+            skip_events,
+            expected_failures,
             exit_code,
             worker.paths,
             worker.case_ids,
@@ -612,7 +680,9 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
     elif exit_code != 0 or payload.failures or payload.errors:
         state = "failed"
     elif payload.tests_run == 0:
-        state = "zero-tests"
+        state = "unverified" if payload.skip_events else "zero-tests"
+    elif payload.tests_skipped == payload.tests_run and payload.tests_passed == 0:
+        state = "unverified"
     else:
         state = "passed"
     return ModuleResult(
@@ -622,6 +692,10 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
         elapsed,
         tests_run,
         tests_completed,
+        tests_passed,
+        tests_skipped,
+        skip_events,
+        expected_failures,
         exit_code,
         worker.paths,
         worker.case_ids,
@@ -711,7 +785,9 @@ def describe_result(result: ModuleResult) -> str:
         progress_detail += f", current={result.current_test_id}{current_elapsed}"
     return (
         f"  {result.status.upper()} {relative_to_repository(result.module)} "
-        f"({result.elapsed_seconds:.1f}s, tests={result.tests_run}{progress_detail}"
+        f"({result.elapsed_seconds:.1f}s, tests={result.tests_run}, passed={result.tests_passed}, "
+        f"skipped={result.tests_skipped}, skip_events={result.skip_events}, "
+        f"expected_failures={result.expected_failures}{progress_detail}"
         f"{exit_detail}; logs: {logs})"
     )
 
@@ -723,6 +799,10 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
     failures = [result for result in ordered if result.status != "passed"]
     tests_run = sum(result.tests_run for result in ordered)
     tests_completed = sum(result.tests_completed for result in ordered)
+    tests_passed = sum(result.tests_passed for result in ordered)
+    tests_skipped = sum(result.tests_skipped for result in ordered)
+    skip_events = sum(result.skip_events for result in ordered)
+    expected_failures = sum(result.expected_failures for result in ordered)
     elapsed = time.monotonic() - started_at
     artifact_root = relative_to_repository(run_root)
     sharded = any(result.case_ids for result in ordered)
@@ -735,6 +815,10 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
         "jobs": jobs,
         "tests_run": tests_run,
         "tests_completed": tests_completed,
+        "tests_passed": tests_passed,
+        "tests_skipped": tests_skipped,
+        "skip_events": skip_events,
+        "expected_failures": expected_failures,
         "elapsed_seconds": elapsed,
         "modules": [
             {
@@ -742,6 +826,10 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
                 "status": result.status,
                 "tests_run": result.tests_run,
                 "tests_completed": result.tests_completed,
+                "tests_passed": result.tests_passed,
+                "tests_skipped": result.tests_skipped,
+                "skip_events": result.skip_events,
+                "expected_failures": result.expected_failures,
                 "exit_code": result.exit_code,
                 "elapsed_seconds": result.elapsed_seconds,
                 "selected_case_ids": list(result.case_ids),
@@ -755,15 +843,30 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
         json.dump(summary, stream, indent=2)
         stream.write("\n")
     if not failures:
+        if tests_run == tests_passed and not skip_events and not expected_failures:
+            outcome = f"{tests_run} tests"
+        else:
+            outcome_parts = [
+                f"{tests_passed} passed tests",
+                f"{tests_skipped} skipped tests",
+            ]
+            additional_skip_events = skip_events - tests_skipped
+            if additional_skip_events:
+                outcome_parts.append(f"{additional_skip_events} other skip events")
+            if expected_failures:
+                outcome_parts.append(f"{expected_failures} expected failures")
+            outcome = f"{tests_run} tests run ({', '.join(outcome_parts)})"
         print(
-            f"test-python: passed {len(ordered)} {unit} / {tests_run} tests "
+            f"test-python: passed {len(ordered)} {unit} / {outcome} "
             f"in {elapsed:.1f}s (jobs={jobs}); logs: {artifact_root}"
         )
         return 0
 
     print(
         f"test-python: {len(failures)} of {len(ordered)} {unit} failed "
-        f"after {elapsed:.1f}s (tests={tests_run}, completed={tests_completed}, jobs={jobs}); "
+        f"after {elapsed:.1f}s (tests={tests_run}, passed={tests_passed}, "
+        f"skipped={tests_skipped}, skip_events={skip_events}, "
+        f"expected_failures={expected_failures}, completed={tests_completed}, jobs={jobs}); "
         f"logs: {artifact_root}"
     )
     print("test-python: ordered failures:")
@@ -810,6 +913,10 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
     def __init__(self, *arguments, **keywords) -> None:
         super().__init__(*arguments, **keywords)
         self._tests_completed = 0
+        self._tests_passed = 0
+        self._tests_skipped = 0
+        self._skip_events = 0
+        self._expected_failures = 0
         self._current_test_id: str | None = None
         self._current_started_at: float | None = None
         self._last_test_id: str | None = None
@@ -823,6 +930,22 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
 
         return tuple(self._completed_case_ids)
 
+    @property
+    def tests_passed(self) -> int:
+        return self._tests_passed
+
+    @property
+    def tests_skipped(self) -> int:
+        return self._tests_skipped
+
+    @property
+    def skip_events(self) -> int:
+        return self._skip_events
+
+    @property
+    def expected_failures(self) -> int:
+        return self._expected_failures
+
     def emit_progress(self) -> None:
         """Flush a compact checkpoint so a killed worker retains its position."""
 
@@ -832,6 +955,10 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
                 {
                     "tests_started": self.testsRun,
                     "tests_completed": self._tests_completed,
+                    "tests_passed": self._tests_passed,
+                    "tests_skipped": self._tests_skipped,
+                    "skip_events": self._skip_events,
+                    "expected_failures": self._expected_failures,
                     "current_test_id": self._current_test_id,
                     "current_started_at": self._current_started_at,
                     "last_test_id": self._last_test_id,
@@ -860,6 +987,20 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
         self._current_test_id = None
         self._current_started_at = None
         self.emit_progress()
+
+    def addSuccess(self, test) -> None:
+        super().addSuccess(test)
+        self._tests_passed += 1
+
+    def addSkip(self, test, reason) -> None:
+        super().addSkip(test, reason)
+        self._skip_events += 1
+        if isinstance(test, unittest.TestCase) and not isinstance(test, unittest.case._SubTest):
+            self._tests_skipped += 1
+
+    def addExpectedFailure(self, test, err) -> None:
+        super().addExpectedFailure(test, err)
+        self._expected_failures += 1
 
     def emit_latest(self, label: str, records: list) -> None:
         self.stream.writeln()
@@ -914,6 +1055,10 @@ def worker_main(raw_module: str, case_ids: Sequence[str]) -> int:
         ).run(suite)
         payload = {
             "tests_run": result.testsRun,
+            "tests_passed": result.tests_passed,
+            "tests_skipped": result.tests_skipped,
+            "skip_events": result.skip_events,
+            "expected_failures": result.expected_failures,
             "failures": len(result.failures),
             "errors": len(result.errors),
             "discovery_errors": discovery_errors,
@@ -938,6 +1083,10 @@ def worker_main(raw_module: str, case_ids: Sequence[str]) -> int:
             + json.dumps(
                 {
                     "tests_run": 0,
+                    "tests_passed": 0,
+                    "tests_skipped": 0,
+                    "skip_events": 0,
+                    "expected_failures": 0,
                     "failures": 0,
                     "errors": 1,
                     "discovery_errors": 1,
