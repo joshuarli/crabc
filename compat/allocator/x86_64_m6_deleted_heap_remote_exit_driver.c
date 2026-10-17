@@ -9,6 +9,9 @@
 
 #include "mimalloc.h"
 #include "mimalloc-stats.h"
+#ifdef CRABC_MI_M6_POINTER_DIAGNOSTIC
+#include "x86_64_m6_heap_ownership_diagnostic.h"
+#endif
 
 typedef struct remote_exit_state_s {
   pthread_mutex_t lock;
@@ -66,6 +69,9 @@ static void* freeing_worker(void* argument) {
   unsigned char* block = state->block;
   state->remote_identity = block != NULL && mi_heap_of(block) == state->deleted_heap;
   puts("remote.event_free_start=1");
+#ifdef CRABC_MI_M6_POINTER_DIAGNOSTIC
+  m6_diagnostic_page("remote.before-free", block, state->deleted_heap);
+#endif
   errno = 37;
   if (block != NULL) mi_free(block);
   puts("remote.event_free_done=1");
@@ -84,6 +90,9 @@ static mi_stats_t stats_now(void) {
 
 int main(int argc, char** argv) {
   setvbuf(stdout, NULL, _IONBF, 0);
+#ifdef CRABC_MI_M6_POINTER_DIAGNOSTIC
+  if (m6_diagnostic_install() != 0) _exit(5);
+#endif
   const bool valid_domain = argc >= 3 && strcmp(argv[1], "--valid-domain") == 0
       && strcmp(argv[2], "debug-1") == 0;
   if ((valid_domain && argc > 4) || (!valid_domain && argc > 2)) return 2;

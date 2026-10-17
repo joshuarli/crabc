@@ -56,6 +56,26 @@ class OwnershipProfileReceiptTests(unittest.TestCase):
         with self.assertRaises(ownership.harness.HarnessError):
             self.admit(self.release_cases(), ownership.PROFILES)
 
+    def test_remote_diagnosis_requires_the_retained_debug1_free_crash(self):
+        stdout = (ownership.BEGIN + "\nremote.event_alloc=1\nremote.event_deleted=1\n"
+            "remote.event_owner_return=1\nremote.event_owner_exit=1\n"
+            "remote.event_free_start=1\n").encode()
+        stderr = b"m6-valid-domain profile=debug-1 backend=c guarded_precise=1\n"
+        raw = {"kind": "process", "status": -11,
+            "stdout": ownership.stress.bytes_record(stdout),
+            "stderr": ownership.stress.bytes_record(stderr)}
+        ownership.require_diagnostic_target(raw, "debug-1", "after")
+        with self.assertRaises(ownership.harness.HarnessError):
+            ownership.require_diagnostic_target(raw, "release", "after")
+        with self.assertRaises(ownership.harness.HarnessError):
+            ownership.require_diagnostic_target({**raw, "status": 0}, "debug-1", "after")
+        with self.assertRaises(ownership.harness.HarnessError):
+            ownership.require_diagnostic_target({**raw, "stdout": ownership.stress.bytes_record(
+                stdout + b"remote.event_free_done=1\n")}, "debug-1", "after")
+        with self.assertRaises(ownership.harness.HarnessError):
+            ownership.require_diagnostic_target({**raw, "stderr": ownership.stress.bytes_record(b"")},
+                "debug-1", "after")
+
 
 class OwnershipProfileProducerTests(unittest.TestCase):
     def run_producer(self, root, profiles, expected, *, failure=None, native_change=False, diagnostic=b"",

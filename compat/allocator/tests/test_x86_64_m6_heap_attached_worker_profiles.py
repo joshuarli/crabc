@@ -49,6 +49,19 @@ class AttachedWorkerProducerTests(unittest.TestCase):
         self.assertEqual(json.loads((self.output / 'c.json').read_text()), record)
         self.assertFalse((self.output / 'rust.json').exists())
 
+    def test_diagnosis_requires_the_retained_debug1_post_delete_crash(self):
+        raw = {"kind": "process", "status": -11, "stdout": "\n".join([attached.BEGIN,
+            "attached.owner=1,1", "attached.live=1,1,1,1", "attached.delete=37,1,1,1",
+            "attached.stats=2,0"]) + "\n", "stderr": ""}
+        attached.require_diagnostic_target(raw, "debug-1")
+        with self.assertRaises(attached.harness.HarnessError):
+            attached.require_diagnostic_target(raw, "release")
+        with self.assertRaises(attached.harness.HarnessError):
+            attached.require_diagnostic_target({**raw, "status": 0}, "debug-1")
+        with self.assertRaises(attached.harness.HarnessError):
+            attached.require_diagnostic_target({**raw, "stdout": raw["stdout"] +
+                "attached.joined=0,1,1\n"}, "debug-1")
+
     def test_matrix_stops_at_diagnostic_failure_without_publishing_receipt(self):
         def run(fixture, profile, cases):
             output = self.output / profile

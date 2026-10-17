@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import resource
 import shutil
 import sys
@@ -70,6 +71,103 @@ def check_event_order(stdout: str, mode: str, label: str) -> None:
     )
     if events != EVENT_ORDER[mode]:
         raise harness.HarnessError(f"{label} event order changed: {events}")
+
+
+def require_diagnostic_target(record, profile, mode):
+    if profile != "debug-1" or mode not in EVENT_ORDER:
+        raise harness.HarnessError("heap ownership diagnostics require one debug-1 remote-free mode")
+    if record.get("kind") != "process" or record.get("status") != -11:
+        raise harness.HarnessError("heap ownership diagnostics require the retained pinned-C SIGSEGV")
+    stdout = stress.byte_record_payload(record.get("stdout"), "remote-free crash stdout").decode()
+    stderr = stress.byte_record_payload(record.get("stderr"), "remote-free crash stderr").decode()
+    events = tuple(
+        line.removeprefix("remote.event_").split("=", 1)[0]
+        for line in stdout.splitlines()
+        if line.startswith("remote.event_")
+    )
+    free_start = EVENT_ORDER[mode].index("free_start")
+    if (events != EVENT_ORDER[mode][:free_start + 1]
+            or "CRABC_MI_M6_DELETED_HEAP_REMOTE_EXIT_END" in stdout):
+        raise harness.HarnessError("retained remote-free SIGSEGV did not occur at the expected free boundary")
+    if m6_adapter.strip_valid_client_profile_marker(profile, "c", stderr):
+        raise harness.HarnessError("retained remote-free SIGSEGV has unexpected pinned-C stderr")
+
+
+def _retained_diagnostic_run(mode):
+    runs = sorted(ARTIFACTS.glob("run-*"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    for output in runs:
+        inputs_path = output / "inputs.json"
+        raw_path = output / f"debug-1-c-{mode}.json"
+        retained_driver = output / DRIVER.name
+        if not inputs_path.is_file() or not raw_path.is_file() or not retained_driver.is_file():
+            continue
+        inputs = harness.read_json(inputs_path)
+        if ("debug-1" not in inputs.get("profiles", ())
+                or mode not in inputs.get("modes", ())
+                or inputs.get("fixture_sha256") != hashlib.sha256(retained_driver.read_bytes()).hexdigest()):
+            continue
+        raw = harness.read_json(raw_path)
+        if raw.get("status") == -11:
+            require_diagnostic_target(raw, "debug-1", mode)
+            return output, inputs, raw_path, raw
+    raise harness.HarnessError(f"no retained debug-1 {mode} pinned-C SIGSEGV matches this fixture")
+
+
+def diagnose_retained_crashes(modes):
+    selected = []
+    for mode in modes:
+        try:
+            selected.append((mode, *_retained_diagnostic_run(mode)))
+        except harness.HarnessError as error:
+            if "no retained debug-1" in str(error):
+                continue
+            raise
+    if not selected:
+        raise harness.HarnessError("no retained debug-1 pinned-C SIGSEGV is eligible for diagnosis")
+    output, inputs = selected[0][1], selected[0][2]
+    source = Path(inputs["source_directory"])
+    if not (source / "src/static.c").is_file():
+        raise harness.HarnessError("retained pinned-C source directory is missing")
+    diagnostic = output / "diagnostic"
+    diagnostic.mkdir(exist_ok=True)
+    driver = diagnostic / DRIVER.name
+    helper = diagnostic / "x86_64_m6_heap_ownership_diagnostic.h"
+    shutil.copy2(DRIVER, driver)
+    shutil.copy2(DRIVER.with_name(helper.name), helper)
+    binary = diagnostic / "deleted-heap-remote-exit-c"
+    compiler = inputs["compiler"]
+    flags = [compiler, "-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+        *m4.api_profile_flags("debug-1"), "-UNDEBUG", "-g", "-fno-omit-frame-pointer", "-no-pie",
+        "-DCRABC_MI_M6_POINTER_DIAGNOSTIC=1", "-I", str(source / "include"), "-I", str(source / "src")]
+    build, _ = record(diagnostic, "c-debug1-diagnostic-build",
+        [*flags, str(driver), str(source / "src/static.c"), "-pthread", "-o", str(binary)], source)
+    if build["kind"] != "process" or build["status"] != 0:
+        raise harness.HarnessError(f"diagnostic-only pinned-C build failed; raw {diagnostic}")
+    diagnostic_inputs = diagnostic / "inputs.json"
+    diagnostic_inputs.write_text(json.dumps({
+        "profile": "debug-1", "raw_failures": [str(raw_path) for _, _, _, raw_path, _ in selected],
+        "driver_sha256": hashlib.sha256(driver.read_bytes()).hexdigest(),
+        "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+        "compiler": compiler, "flags": flags[1:],
+    }, indent=2) + "\n")
+    for mode, _, _, raw_path, _ in selected:
+        case = f"c-debug1-diagnostic-{mode}"
+        result, _ = record(diagnostic, case, [str(binary), "--valid-domain", "debug-1", mode], source, True)
+        print(f"Retained pinned-C {mode} raw status: -11 ({raw_path})", flush=True)
+        print(f"Diagnostic-only pinned-C {mode} status: {result['status']}", flush=True)
+        stderr = stress.byte_record_payload(result.get("stderr"), f"{case} stderr").decode()
+        match = re.search(r"^m6-pointer-diagnostic signal=11 address=(0x[0-9a-f]+) instruction=(0x[0-9a-f]+) frame=(0x[0-9a-f]+)$",
+            stderr, re.MULTILINE)
+        if match is None:
+            print(f"Diagnostic-only pinned-C {mode} did not capture SIGSEGV; raw {diagnostic}", flush=True)
+            continue
+        symbolizer = harness.require_tool("addr2line")
+        symbol_result, _ = record(diagnostic, f"{case}-symbol", [symbolizer, "-f", "-C", "-e",
+            str(binary), match.group(2)], diagnostic)
+        print(f"Pinned-C {mode} signal address={match.group(1)} instruction={match.group(2)} frame={match.group(3)}",
+            flush=True)
+        print(stress.byte_record_payload(symbol_result["stdout"], f"{case} symbol").decode().strip(), flush=True)
+    return 0
 
 
 def check_ownership_observations(trace, expected, label):
@@ -303,10 +401,15 @@ def main():
     action.add_argument("--source-only", action="store_true")
     action.add_argument("--read", action="store_true")
     action.add_argument("--replay", action="store_true")
+    action.add_argument("--diagnose", action="store_true")
     parser.add_argument("--mode", choices=("before", "after", "both"), default="both")
     args = parser.parse_args()
     profiles = PROFILES if args.matrix else (args.profile,)
     modes = ("before", "after") if args.mode == "both" else (args.mode,)
+    if args.diagnose:
+        if profiles != ("debug-1",):
+            raise harness.HarnessError("--diagnose requires --profile debug-1")
+        return diagnose_retained_crashes(modes)
     ownership_matrix(DRIVER, ARTIFACTS, RUNNER, profiles, modes, BEGIN, END, EXPECTED,
                      check_event_order, args.source_only, args.read, args.replay)
 

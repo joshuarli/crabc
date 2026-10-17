@@ -8,6 +8,9 @@
 
 #include "mimalloc.h"
 #include "mimalloc-stats.h"
+#ifdef CRABC_MI_M6_POINTER_DIAGNOSTIC
+#include "x86_64_m6_heap_ownership_diagnostic.h"
+#endif
 
 typedef struct {
   pthread_mutex_t lock;
@@ -58,6 +61,9 @@ static mi_stats_t stats_now(void) {
 
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
+#ifdef CRABC_MI_M6_POINTER_DIAGNOSTIC
+  if (m6_diagnostic_install() != 0) _exit(11);
+#endif
   mi_option_set(mi_option_arena_reserve, 0);
   puts("CRABC_MI_M6_HEAP_DELETE_WITH_ATTACHED_WORKER_BEGIN");
   fixture_t fixture = { .lock = PTHREAD_MUTEX_INITIALIZER,
@@ -97,6 +103,11 @@ int main(void) {
   pthread_cond_signal(&fixture.condition);
   pthread_mutex_unlock(&fixture.lock);
   if (pthread_join(worker, NULL) != 0) _exit(10);
+#ifdef CRABC_MI_M6_POINTER_DIAGNOSTIC
+  m6_diagnostic_page("attached.before-owner-free", fixture.owner_block, fixture.heap);
+  m6_diagnostic_page("attached.before-worker-free", fixture.worker_block, fixture.heap);
+  m6_diagnostic_page("attached.before-aligned-free", fixture.worker_aligned, fixture.heap);
+#endif
   mi_free(fixture.owner_block);
   mi_free(fixture.worker_block);
   mi_free(fixture.worker_aligned);

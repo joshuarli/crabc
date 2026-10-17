@@ -2,7 +2,9 @@
 """Compare Heap destruction while an exited creator's second worker stays attached."""
 
 import argparse
+import hashlib
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -28,6 +30,18 @@ EXPECTED = {
 
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
 RUNNER = "allocator-heap-delete-attached-worker"
+
+
+def require_diagnostic_target(record, profile):
+    if profile != "debug-1":
+        raise harness.HarnessError("attached-worker diagnostics require debug-1")
+    if record.get("kind") != "process" or record.get("status") != -11:
+        raise harness.HarnessError("attached-worker diagnostics require the retained pinned-C SIGSEGV")
+    stdout = record.get("stdout")
+    expected = "\n".join((BEGIN, "attached.owner=1,1", "attached.live=1,1,1,1",
+        "attached.delete=37,1,1,1", "attached.stats=2,0")) + "\n"
+    if stdout != expected or record.get("stderr") != "":
+        raise harness.HarnessError("retained attached-worker SIGSEGV did not occur after Heap deletion")
 
 
 def observe(fixture, drivers, output, cases, profile):
@@ -167,6 +181,66 @@ def collect_existing(fixture, profiles):
     return complete
 
 
+def diagnose_retained_crash(fixture):
+    profile = "debug-1"
+    output = fixture.ARTIFACTS / profile
+    raw_path = output / "c.json"
+    retained_driver = output / fixture.DRIVER.name
+    if not raw_path.is_file() or not retained_driver.is_file():
+        raise harness.HarnessError("no retained debug-1 attached-worker pinned-C run")
+    raw = harness.read_json(raw_path)
+    require_diagnostic_target(raw, profile)
+    inputs = harness.read_json(output / "inputs.json")
+    if (inputs.get("profile") != profile
+            or inputs.get("driver_sha256") != harness.sha256_file(retained_driver)):
+        raise harness.HarnessError("retained attached-worker crash does not match its fixture inputs")
+    diagnostic = Path(tempfile.mkdtemp(prefix="diagnostic-", dir=output))
+    driver = diagnostic / fixture.DRIVER.name
+    helper = diagnostic / "x86_64_m6_heap_ownership_diagnostic.h"
+    shutil.copy2(fixture.DRIVER, driver)
+    shutil.copy2(fixture.DRIVER.with_name(helper.name), helper)
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, True)
+    retained_archive = diagnostic / "mimalloc-3.5.0.tar.gz"
+    shutil.copy2(archive, retained_archive)
+    source = harness.safe_extract(retained_archive, diagnostic / "source", pin["archive_root"])
+    compiler = harness.require_tool("musl-gcc")
+    binary = diagnostic / "attached-worker-heap-c"
+    flags = [compiler, "-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+        *m4.api_profile_flags(profile), "-UNDEBUG", "-g", "-fno-omit-frame-pointer", "-no-pie",
+        "-DCRABC_MI_M6_POINTER_DIAGNOSTIC=1", "-I", str(source / "include"), "-I", str(source / "src")]
+    build = harness.command_record([*flags, str(driver), str(source / "src/static.c"),
+        "-pthread", "-o", str(binary)], cwd=source)
+    harness.write_json(diagnostic / "c-diagnostic-build.json", build)
+    (diagnostic / "c-diagnostic-build.log").write_text(str(build["stdout"]) + str(build["stderr"]))
+    if build["kind"] != "process" or build["status"] != 0:
+        raise harness.HarnessError(f"attached-worker diagnostic-only pinned-C build failed; raw {diagnostic}")
+    diagnostic_inputs = {"profile": profile, "raw_failure": str(raw_path),
+        "upstream": pin, "archive_sha256": harness.sha256_file(retained_archive),
+        "driver_sha256": hashlib.sha256(driver.read_bytes()).hexdigest(),
+        "helper_sha256": hashlib.sha256(helper.read_bytes()).hexdigest(),
+        "compiler": compiler, "flags": flags[1:]}
+    harness.write_json(diagnostic / "inputs.json", diagnostic_inputs)
+    result = harness.command_record([str(binary)], cwd=source, env={}, timeout_seconds=60)
+    harness.write_json(diagnostic / "c-diagnostic-run.json", result)
+    (diagnostic / "c-diagnostic-run.log").write_text(str(result["stdout"]) + str(result["stderr"]))
+    print(f"Retained attached-worker raw status: -11 ({raw_path})", flush=True)
+    print(f"Diagnostic-only attached-worker status: {result['status']}", flush=True)
+    match = re.search(r"^m6-pointer-diagnostic signal=11 address=(0x[0-9a-f]+) instruction=(0x[0-9a-f]+) frame=(0x[0-9a-f]+)$",
+        str(result.get("stderr", "")), re.MULTILINE)
+    if match is None:
+        print(f"Diagnostic-only attached-worker run did not capture SIGSEGV; raw {diagnostic}", flush=True)
+        return 0
+    symbolizer = harness.require_tool("addr2line")
+    symbol = harness.command_record([symbolizer, "-f", "-C", "-e", str(binary), match.group(2)], cwd=diagnostic)
+    harness.write_json(diagnostic / "c-diagnostic-symbol.json", symbol)
+    (diagnostic / "c-diagnostic-symbol.log").write_text(str(symbol["stdout"]) + str(symbol["stderr"]))
+    print(f"Pinned-C attached-worker signal address={match.group(1)} instruction={match.group(2)} frame={match.group(3)}",
+        flush=True)
+    print(str(symbol.get("stdout", "")).strip(), flush=True)
+    return 0
+
+
 def main(fixture, argv=None):
     parser = argparse.ArgumentParser(description=fixture.__doc__)
     selection = parser.add_mutually_exclusive_group()
@@ -177,8 +251,15 @@ def main(fixture, argv=None):
     action.add_argument("--replay", action="store_true")
     action.add_argument("--collect", action="store_true",
                         help="inspect available raw observations without executing or publishing a receipt")
+    action.add_argument("--diagnose", action="store_true")
     args = parser.parse_args(argv)
     profiles = PROFILES if args.matrix else (args.profile,)
+    if args.diagnose:
+        if args.read or args.replay or args.collect:
+            raise harness.HarnessError("--diagnose cannot be combined with receipt or collection actions")
+        if profiles != ("debug-1",):
+            raise harness.HarnessError("--diagnose requires --profile debug-1")
+        return diagnose_retained_crash(sys.modules[__name__])
     if args.collect:
         return 0 if collect_existing(fixture, profiles) else 1
     if not (args.read or args.replay):
