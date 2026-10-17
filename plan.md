@@ -1,101 +1,125 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: winding down 2026-10-17.** The owner authorized rebuilding the missing
-native images and made that recovery part of unattended operation. Both images
-are rebuilt; environment verification and native lanes are resuming.
-The accepted C allocator remains the default.
-Public x86 support remains false:
+**Status: paused 2026-10-17.** Owner-requested winddown is complete.
+The C allocator remains selected. Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families, zero of eight gates.
 
-- **Image recovery:** the core image pin is now
-  `sha256:693719a74f10f5d1da038f3dd33a6704bbe8b35a54e27ee484c5ed3f8d1bb742`.
-  The allocator image is
-  `sha256:fc70049aacff79a3efe68d6d906f3a937705e3a7703d75bcf54ad44894b206c7`.
-  Both tracked launcher builds passed. Evidence tied to the old images must be
-  regenerated. The Rust nightly, source pins and AArch64 inputs stay fixed.
-- **Integrated through `284011169`:** the promotion bridge now retains physical
-  installed-product and selected M9 input custody, supports receipt path aliases,
-  and publishes reports readable across the producer's UID/GID change. Independent
-  review found no remaining P1/P2; native promotion remains unqualified. Fresh
-  worktree preparation seeds the allocator's offline registry. M6 owner-exit
-  profiles use the admitted aligned-client configuration. Pthread replay skips
-  nested evidence roots while retaining enclosing mutation checks. Two unused
-  private regex predicates were removed. Source accounting corrects scheduled
-  EIO and dynamic OS-singleton queue geometry without closing partial statuses.
-- **Verified:** all nine Rust feature profiles passed after the Rust cleanup.
-  Lane checks include 63 bridge host tests, 23 authenticated allocator reader
-  tests, four preparation tests and 145 native adapter observations. M6
-  delete-after-owner-exit collection/read/replay passed release, debug-1, stat-1
-  and stat-2; attached-worker release passed. Pthread and text readers passed
-  39 and 29 tests. The current-image dynamic OS-singleton differential matched
-  21 values. Merged-tree focused verification is running; lane receipts do not
-  qualify main.
-- **Accelerated unattended tranche:** seven lanes own disjoint workstreams:
-  native product/resolver/loader/consumer rehearsal (`cohort-native`), fresh
-  pthread/text evidence (`runtime-replay`), M6 failures (`m6-resume`), focused
-  allocator routes (`source-closure`), arena source parity (`source-current`),
-  production dynamic owner-exit integration (`dynamic-owner-root`), and the
-  focused verification loop (`verification-loop`). Worktrees are under
-  `.work/wt/`. The coordinator owns integration and image recovery. At launch,
-  the host had 53 GiB available, load 8.5 on 32 CPUs and no active swap-out;
-  preserve the 12-GiB free-memory margin and watch paging during cold builds.
-- **Current evidence:** rehearsal passed static products and the first installed
-  dynamic product, including resolver cancellation and the 59-archive corpus;
-  the remaining dynamic-product matrix is running. The focused 28-field EIO
-  C/Rust launcher route is being added; its Rust-only trace already passes.
-- **Named blockers:** H0 `pow` raw flags versus the documented identity correction
-  remains parked after three attempts. M6 pinned C debug/statistics crashes stay
-  failures pending concrete diagnosis. Dynamic OS-singleton evidence currently
-  exercises a test model; expert discovery found the existing production root in
-  `subproc_main_heaps.rs` and is tracing its post-join consumer release. The broad
-  claim that no production dynamic attachment exists needs narrowing against
-  that call graph.
-  Native promotion, H1 and performance qualification remain dependent on the
-  unmet correctness/source gates. No qualifying performance measurement ran.
-
-The following 2026-10-14 handoff records the paused baseline. Its old branch
-tips and execution evidence are historical; the refs above supersede them.
-
-- **Resume:** "Read plan.md and docs/lanes.md, then resume the paused campaign
-  as coordinator, unattended, launching every ready lane in the plan's priority
-  order." First command from the repository root:
+- **Resume:** "Read plan.md and docs/lanes.md, then resume the campaign as
+  coordinator, unattended. Start with the M6 crash and the parked secure layout
+  change, and launch independent ready lanes in priority order."
+  First command from the repository root:
   `./scripts/dev-x86_64.sh campaign-status`.
-- **State:** `main`. The latest integrated code is `d5e83b329`; later commits
-  record the review and this handoff. Ground tooling, pinned inputs and the
-  runtime's independent repairs are integrated. The latest allocator tranche
-  binds the M5 engine proof to actual current products, fixes receipt-reader
-  interruption, corrects secure-5 fresh arena selection, extends VM/statistics
-  evidence, and scopes unused dynamic, TLS and realloc models to their evidence
-  configurations. Source accounting keeps aggregate units partial and finite
-  source-foundation proofs separate from shipping lifecycle claims.
-- **Known red:** H0 POSIX-native's raw `pow` flags still conflict with the
-  existing valid-result correction. M6 at `e8d4deedb` has two passing groups,
-  six blocked groups and two failed groups; three delete differentials fail in
-  debug/statistics modes. The attached-worker pinned C crash is localized to
-  `src/free.c:751` in `mi_stat_free`, reading `page->heap->subproc` at
-  address zero after join and the owner block's free. Two offset-11 fixtures
-  omit the already-admitted, source-proved C valid-client profile; reuse the
-  existing M6 adapter profile and retain option-0 controls on resumption.
-  The native promotion closure still has C2 finding R1 in [REVIEW.md](REVIEW.md).
-  A closing process-cleanup test observed procfs ESRCH; its replay passed, but
-  the flake is not fixed.
-- **Open lanes:** all committed and stopped. The three retained worktrees
-  are clean under `.work/wt/`; they may be recreated from their branches.
-  No resume step depends on an ignored receipt or scratch file: regenerate
-  execution evidence from the tracked producers if it is gone.
+- **State:** `main`, integrated through `62ac56b8d` before this handoff.
+  Missing images were rebuilt through their tracked launchers. The core pin is
+  `sha256:693719a74f10f5d1da038f3dd33a6704bbe8b35a54e27ee484c5ed3f8d1bb742`;
+  the allocator pin is
+  `sha256:fc70049aacff79a3efe68d6d906f3a937705e3a7703d75bcf54ad44894b206c7`.
+  Rust nightly and upstream pins are unchanged. Image recovery is now authorized
+  unattended in the Charter. No AArch64 execution, formatter or push occurred.
+- **Merged:** physical M10 installed-product and M9 input custody, readable
+  cross-UID reports, receipt aliases and terminal replay; allocator offline-cache
+  preparation; focused M6/M7 routes and crash diagnostics; real production
+  dynamic-Heap singleton evidence; aligned debug statistics; secure free-list
+  tests; source-accounting corrections; removal of unused private regex/AIO
+  symbols; and bounded artifact/source-seal reuse. Final winddown commits add
+  the Heap stress selector (`535e57cde`) and free-list trace fixture
+  (`47e092e3b`). The selector accepts only existing matrix tuples and cannot
+  publish a full qualification receipt. Its launcher forwarding is unfinished.
+- **Contract changes:** the Python runner now reports all-skipped modules as
+  unverified with nonzero exit, and distinguishes skipped tests from fixture
+  and subtest skip events (`bdc8e45fb`). M7 development C and Rust builds both
+  use opt-0 and remain qualification-ineligible. Heap fault evidence reuses
+  checkout-local Cargo products while retaining physical copies and validating
+  source and product custody. Canonical source accounting keeps stress,
+  performance and aggregate gaps open. The secure Page layout change below
+  is parked and has not changed main's ABI.
+- **Known red:** the unmodified upstream rolling-Heap stress case with four
+  workers, scale 1 and eight iterations passed C but Rust exited with SIGSEGV.
+  RIP and fault address are not captured. Shared current-Heap traffic and
+  deletion of four-iteration-old Heaps are candidate paths, not a diagnosis.
+  Pinned C M6 debug owner-exit cases also still fail: remote before/after and
+  attached-worker frees retain a deleted Page Heap. Captured faults reach
+  `mi_stat_free` (`src/free.c:751`) or `mi_page_subproc`
+  (`include/mimalloc/internal.h:1063`), with null or unmapped Heap state.
+  Do not patch the oracle or convert these failures into passes.
 
-| Branch | Item and state | Next step |
-| --- | --- | --- |
-| `lane/source-closure` at `b59925281` | C2/T1/O4 WIP, explicitly unqualified; do not integrate | Prove host phase/source/input mutation and direct partial-readiness refusal, installed native audit source/payload custody, and producer readability after its UID/GID change. Review its proposed canonical-work-directory restriction before landing. A real CORE M10 baseline negative check reached the report with honest unmet prerequisites; no native qualification passed. |
-| `cohort/rehearsal` at `21e9a89cf` | H0 parked, never merge | POSIX-native `pow` is parked after its bounded investigation. Independent pthread products and all text leaf products/seals passed. Text-family aggregate was stopped after about 62 minutes without a final receipt; narrow its real collector loop before rerunning. Then run remaining independent resolver, loader, product and consumer steps on a fresh rehearsal of main. |
-| `lane/allocator-options` at `814ed8a2e` | A3 parked cold-arena experiment | The intended prefix-commit fault hit PageMap commitment instead. Three checks did not establish the required fault ordinal. Its landed M7 statistics work is already on main; do not reapply the reverted cold witness blindly. |
+**Open lanes:** every lane is stopped. Recreate removed checkouts under
+`.work/wt/` from their committed branches when needed.
 
-All following older branches are **parked under C0**, retained as history, not
-queued lanes. Inspect their diff against main before reusing anything.
-`lane/tooling` holds earlier M5 wiring superseded by the stricter integrated
-proof; it is not the current single-writer lane. The five historical branches
-with source work main lacks are named in Baseline; none is a prerequisite to
-resume the current campaign.
+| Branch or integrated scope | State and next step |
+| --- | --- |
+| `lane/dynamic-owner-root` at `009f5642c` | A5/C1 parked atomic secure layout fix. Secure 1–5 use source-default checked free, 120/136-byte Pages, 64-KiB arena alignment, inline OS metadata and retained offset mappings. Default-0 ABI stays unchanged. Lane production checks and pinned C probes passed levels 0–5; merged verification and adversarial review remain. Coordinate M4/M7 C flags (`MI_FREE_IS_CHECKED=1` for nonzero secure profiles) before landing, then regenerate paired receipts. Current producers still assume checked-free 0, so merging now would compare unlike configurations. |
+| `lane/m6-resume` at `7ee205b3f` | M6 parked stress diagnosis. Its selector patch is already integrated as `535e57cde`; do not apply twice. Add closed tracked-launcher forwarding for `--case 4 1 8`, reproduce the original crash, capture RIP and fault address, then route the product fix. No focused native run occurred after adding the selector. |
+| `lane/secure-pages` at `d4ff30997` | C1 helper fixture already integrated as `47e092e3b`. After the secure layout and C flags agree, wire its eight-key C/R trace into the existing M7 runner. Preserve the C corruption abort as a separate negative process. This helper is not full secure-profile qualification. |
+| A3 source gap on main | Parked after three bounded cold-arena attempts. An explicit uncommitted 32-MiB arena first commits 524288 bytes of Page metadata. Commit ordinal 2 selects its 114688-byte data prefix. After refusing that prefix, public Rust `malloc(100000)` still returned an in-arena block. Pinned C source takes the same-call OS fallback after a failed fresh arena claim; C execution and the exact Rust retry path remain unproved. No draft parity fixture survived. Investigate production `single_thread::allocate_fresh_page` and its callers before another producer. |
+| A3 clock source gap on main | Linux pinned C ignores the monotonic `clock_gettime` failure; its `clock()` branch is compile-time only. Rust's runtime CPU-clock fallback is not source-defined. `64e159039` corrects the accounting and Rust-only test name; existing 28-field EIO proof is unchanged. No fabricated failure oracle was added. |
+| `cohort/rehearsal-native` at `12db93c58` | Frozen R2/R3 rehearsal, never merge. Static preparation, installed/second/extracted dynamic products and publish passed. Resolver physical network, classic netdb (23 scenarios, seven arms), and cancellation (847 same-object cases) passed. Network cancellation was interrupted when the dispatcher auto-started it at winddown; it is incomplete. No later loader/CRT/sysroot/consumer item started. |
+| `lane/runtime-replay` at `284011169` | Frozen runtime prerequisite rehearsal, never merge. Static products, all three 65-leaf dynamic matrices, finish and publish passed. Pthread/text collection never started. Regenerate against final main before qualification. |
+| `cohort/rehearsal` at `21e9a89cf` | Historical H0 `pow` flags conflict and incomplete text aggregate, parked after the prescribed investigation. The owner still owes the raw-oracle versus documented valid-result correction decision. |
+| `lane/allocator-options` at `814ed8a2e` | Historical cold-arena fault attempts, parked. Newer A3 findings above supersede the earlier ordinal assumptions. |
+
+**Retained worktrees:** both are clean. Their concrete consumers are the
+owning receipt readers, which need the original physical product paths.
+Neither receipt qualifies current main. Regenerate if these disposable paths
+are lost; no next implementation step depends on them.
+
+- `.work/wt/cohort-native`, branch `cohort/rehearsal-native` at `12db93c58`:
+  resolver-family replay consumes the published dynamic receipt and partial
+  resolver outputs. The dynamic receipt is
+  `.work/x86_64/cohort/out/dynamic/qualification.json` beneath this checkout.
+- `.work/wt/runtime-replay`, branch `lane/runtime-replay` at `284011169`:
+  the dynamic reader consumes the three product trees and
+  `.work/x86_64/runtime-text-replay/out/dynamic/qualification.json` beneath
+  this checkout. Publish also wrote `.work/x86_64/owned-dynamic-qualification.json`.
+
+- **Cleanup:** removed ten checkouts during winddown, including the parked
+  secure layout checkout, and deleted four fully integrated lane branches.
+  Removed compiled objects account for 17618518016 bytes (16.4 GiB).
+  Preserved useful logs, caches, raw failures and retained products under
+  `.work/preserved/winddown-20261017/<former-checkout>/`, keeping relative
+  paths below each directory. They are diagnostic history, not relocated
+  qualification receipts. The original stress failure is beneath
+  `m6-resume/.work/allocator-x86_64/target/compat/allocator/x86_64/m6-upstream-heap-stress/run-dob6p5d3/`.
+  Cold-arena raw attempts are beneath `source-current/.work/tmp/`.
+  Secure layout probe and mutation logs are beneath `dynamic-owner-root/.work/tmp/`.
+  Main's pinned source caches and image build logs remain under its ignored
+  `.work/`. No durable source exists only in those caches or logs.
+- **Not started:** first diagnose the release Heap stress crash. Review the
+  secure layout branch and finish matching C profile producers, then run the
+  paired secure trace and merged production checks. Resolve the cold-arena
+  retry and clock gaps. Continue independent resolver, loader, CRT/sysroot,
+  pthread/text and consumer qualification on a frozen final-main cohort.
+  H0 `pow` and the older numeric child-metadata footprint decision remain open.
+  No performance gate or allocator promotion may bypass correctness/source
+  prerequisites. The C backend stays selected.
+- **Verified:** merged production singleton integration and 38-value C/R
+  differential, 162-value aligned debug C/R differential, 28-field EIO proof,
+  secure-5 live-Page corruption test and all nine Rust feature profiles passed
+  during integration. At winddown, the archive-backed source-map, convergence,
+  M2 VM and Heap lifecycle modules passed all 101 tests. Dispatch replay passed
+  20 tests after correcting a stale help assertion for the admitted `--faults`
+  action. The runner passed 24 tests with one intentional skip; the selector
+  passed five tests; the new secure-3 trace executed one passing Rust test.
+  Paired C free-list trace and raw C corruption status remain unrun.
+  Ledger, structure and allocator architecture checks passed. No complete
+  final-main cohort, native promotion or fresh performance qualification passed.
+  Perf gate deferred: host busy.
+- **Reboot audit:** worktree registrations were pruned and both retained
+  checkouts were clean. Preserved data was inspected before removal. All
+  unmerged branches are named here or in the parked historical list below.
+  `.work/` is ignored by `.git/info/exclude` and is on ext4. No campaign
+  process, container, lane or scheduled wakeup remains. The clean-environment
+  resume command and all committed handoff paths/branches were checked.
+  Host scheduler enumeration is limited: `systemctl` and `atq` are absent,
+  and `crontab -l` reports no account. The campaign created no scheduled jobs.
+  Codex's configured Stop command and existing trusted hash were reviewed;
+  the `/hooks` UI is unavailable through this API. The closeout guard was
+  invoked directly for the final checkout audit.
+
+All following older branches are **parked under C0**, retained as history,
+not queued lanes. Inspect their diff against main before reusing anything.
+`lane/tooling` is superseded by the integrated stricter proof. None is a
+prerequisite to resume the campaign.
 
 - `archive/source-accounting-pre-2811b`.
 - `integration/os82`.
@@ -104,36 +128,6 @@ resume the current campaign.
 - `recovery/work-20261007/scratch`, `recovery/work-20261007/snapshot-12bca3460148`, `recovery/work-20261007/snapshot-389213e5177b`, `recovery/work-20261007/snapshot-6956122ee74c`, `recovery/work-20261007/snapshot-a560d634628e`, `recovery/work-20261007/snapshot-b0073bd2ddda`.
 - `review/composedownership41-655-455`, `review/composedownership41-fbc-455`.
 
-- **Not started:** finish the unqualified C2 bridge before the future default
-  switch; resume the ready independent runtime rehearsal steps in the priority
-  table; correct the two M6 producer profiles and investigate the separate
-  pinned C ordinary-block crash; refresh the stale scheduled-expiry EIO arena
-  contract clause from the existing 28-field proof; continue A5 and C1 from
-  proven production roots. H1 and O1/O2 remain blocked by H0; A4 and O3/O4 remain
-  blocked by allocator parity/source completion. No performance optimization
-  starts before its correctness prerequisites. The owner still owes the
-  `pow` correction versus raw-oracle contract decision, and any decision to
-  redesign the parked numeric child-metadata footprint difference.
-- **Verified:** closing checks at frozen `45ff6332c` passed all nine Rust
-  profiles, structure, ledger, inventory and architecture ratchet. All 23 host
-  directories ran: 21 passed initially; the accounting runner and native
-  process reader modules failed. At `d5e83b329`, the corrected runner passes
-  198 tests and both mapping modules pass 57; the unchanged native reader's
-  24-test replay passes. Nine focused native TLS/realloc controls pass at
-  `330972ba6`. Earlier executed evidence at `6a92e5875` matches 160 VM
-  fields and 184391 arena fields, with secure-5 and ordinary fresh-page
-  controls passing. These are scoped checks, not qualification receipts.
-- **Reboot audit:** finished lane worktrees and integrated branches were
-  removed; each remaining checkout is clean and each unmerged branch is named
-  here as parked or WIP. `.work/` is ignored through `.git/info/exclude`
-  and lives on ext4. The resume command, committed paths and branch refs were
-  checked from a clean environment. No campaign process or scheduled job
-  remains. Host scheduler inventory is unavailable (`systemctl` absent,
-  no crontab account); the campaign created no scheduled jobs.
-- **Not verified:** no complete current correctness cohort, full current M5
-  or M6 pass, native promotion or fresh final memory/performance qualification.
-  **Perf gate deferred: host busy.** Pinned images were not rebuilt, AArch64
-  was not run or emulated, and nothing was pushed.
 
 ## Goal
 
@@ -1101,6 +1095,8 @@ Append one line per merge batch, per parked item, and per contract change.
 - 2026-10-17: removed the tracked `.work/` ignore duplicate so the existing
   `.git/info/exclude` rule owns local campaign files, as the working contract
   requires. Git confirms that local rule supplies the effective exclusion.
+
+- 2026-10-17: owner-requested winddown froze main, integrated the bounded Heap stress selector and secure free-list fixture, and parked atomic secure layout `009f5642c` pending matched C profiles and review. Both frozen three-product dynamic receipts published. M6 Rust stress SIGSEGV, pinned C owner-exit faults, cold-arena retry and clock source gaps remain open. Removed ten checkouts, preserved raw evidence and caches, reclaimed 16.4 GiB of compiled objects, and retained two clean checkouts for physical receipt readers. Reboot audit and clean-environment resume passed with scheduler/UI limitations recorded above. No push or promotion.
 
 ## For the owner afterwards
 
