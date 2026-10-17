@@ -1073,6 +1073,9 @@ Append one line per merge batch, per parked item, and per contract change.
   code changed. New empty rehearsal, collector and cleanup worktrees were
   removed. The three original worktrees remain clean; no campaign process,
   image rebuild, AArch64 run or push was made.
+- 2026-10-17: removed the tracked `.work/` ignore duplicate so the existing
+  `.git/info/exclude` rule owns local campaign files, as the working contract
+  requires. Git confirms that local rule supplies the effective exclusion.
 
 ## For the owner afterwards
 
