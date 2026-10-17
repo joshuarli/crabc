@@ -58,32 +58,25 @@ The C allocator remains selected. Public x86 support remains false:
 | `cohort/rehearsal` at `21e9a89cf` | Historical H0 `pow` flags conflict and incomplete text aggregate, parked after the prescribed investigation. The owner still owes the raw-oracle versus documented valid-result correction decision. |
 | `lane/allocator-options` at `814ed8a2e` | Historical cold-arena fault attempts, parked. Newer A3 findings above supersede the earlier ordinal assumptions. |
 
-**Retained worktrees:** both are clean. Their concrete consumers are the
-owning receipt readers, which need the original physical product paths.
-Neither receipt qualifies current main. Regenerate if these disposable paths
-are lost; no next implementation step depends on them.
+**Scratch closeout:** the owner explicitly requested an empty `.work/`.
+The two frozen rehearsal receipts are retired. Their owning readers have no
+remaining consumer, and neither receipt qualified current main. Future
+qualification starts from a fresh checkout of the selected main revision and
+regenerates products, receipts and partial resolver output through tracked
+producers. Historical passing observations above are not reusable gate evidence.
 
-- `.work/wt/cohort-native`, branch `cohort/rehearsal-native` at `12db93c58`:
-  resolver-family replay consumes the published dynamic receipt and partial
-  resolver outputs. The dynamic receipt is
-  `.work/x86_64/cohort/out/dynamic/qualification.json` beneath this checkout.
-- `.work/wt/runtime-replay`, branch `lane/runtime-replay` at `284011169`:
-  the dynamic reader consumes the three product trees and
-  `.work/x86_64/runtime-text-replay/out/dynamic/qualification.json` beneath
-  this checkout. Publish also wrote `.work/x86_64/owned-dynamic-qualification.json`.
+The committed branches retain every parked implementation. The findings and
+next steps above replace the need to retain raw diagnostic output. Image pins
+and source pins remain tracked. Pinned-input `.cache/` directories outside
+`.work/` remain available for fresh preparation.
 
-- **Cleanup:** removed ten checkouts during winddown, including the parked
-  secure layout checkout, and deleted four fully integrated lane branches.
-  Removed compiled objects account for 17618518016 bytes (16.4 GiB).
-  Preserved useful logs, caches, raw failures and retained products under
-  `.work/preserved/winddown-20261017/<former-checkout>/`, keeping relative
-  paths below each directory. They are diagnostic history, not relocated
-  qualification receipts. The original stress failure is beneath
-  `m6-resume/.work/allocator-x86_64/target/compat/allocator/x86_64/m6-upstream-heap-stress/run-dob6p5d3/`.
-  Cold-arena raw attempts are beneath `source-current/.work/tmp/`.
-  Secure layout probe and mutation logs are beneath `dynamic-owner-root/.work/tmp/`.
-  Main's pinned source caches and image build logs remain under its ignored
-  `.work/`. No durable source exists only in those caches or logs.
+- **Cleanup:** closing the two remaining receipt consumers permits removing
+  their integrated, clean checkouts. The owner also authorized deleting the
+  scratch caches, logs, saved artifacts and earlier preservation directory.
+  No historical artifact is moved elsewhere to satisfy the empty-directory
+  objective. Verify the saved source patch before disposal and keep any unique
+  change in Git. The earlier winddown removed ten checkouts and 16.4 GiB of
+  compiled objects. Final removal and byte accounting are recorded below.
 - **Not started:** first diagnose the release Heap stress crash. Review the
   secure layout branch and finish matching C profile producers, then run the
   paired secure trace and merged production checks. Resolve the cold-arena
@@ -170,10 +163,13 @@ Deliverables:
 - **Hard stops, each of which parks the item:** an action that changes
   anything outside the repository other than fetching a pinned input, or that
   cannot be undone from Git (pushing, renting resources, rebooting, changing
-  host huge-page pools or security policy); deleting `.work/` or a `.cache/`
-  directory; running or emulating AArch64; a
+  host huge-page pools or security policy); deleting a pinned-input `.cache/`
+  directory outside `.work/`; running or emulating AArch64; a
   boundary this document forbids; a harness denial of a tool call (do not
   retry it or route around it); a loop that can no longer check anything.
+- **Disposable scratch:** close owning readers before removing their `.work/`
+  artifacts. Commit necessary source and findings first. Regenerate discarded
+  qualification evidence from tracked producers before counting any gate.
 - **Fix on the way, in its own commit:** a loop command over 5 minutes (get
   it under 90 seconds or give the item a narrower check); a test that is red
   on `main` and blocks the item; a throughput or CPU regression worse than
