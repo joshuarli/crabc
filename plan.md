@@ -1,14 +1,17 @@
 # Qualify and promote crabc's native x86-64 runtime
 
 **Status: active 2026-10-17.** The owner authorized rebuilding the missing
-native images and made that recovery part of unattended operation. Both image
-builds are running. The accepted C allocator remains the default.
+native images and made that recovery part of unattended operation. Both images
+are rebuilt; environment verification and native lanes are resuming.
+The accepted C allocator remains the default.
 Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families, zero of eight gates.
 
-- **Image recovery:** rebuild through the tracked native launchers, update
-  the core image pin to the resulting immutable ID, and verify both images
-  before restarting native lanes. Evidence tied to the old images must be
+- **Image recovery:** the core image pin is now
+  `sha256:693719a74f10f5d1da038f3dd33a6704bbe8b35a54e27ee484c5ed3f8d1bb742`.
+  The allocator image is
+  `sha256:fc70049aacff79a3efe68d6d906f3a937705e3a7703d75bcf54ad44894b206c7`.
+  Both tracked launcher builds passed. Evidence tied to the old images must be
   regenerated. The Rust nightly, source pins and AArch64 inputs stay fixed.
 - **Integrated:** `3d6a40fec` corrects stale scheduled-expiry arena EIO
   accounting and links its existing 28-field producer. `8d6591a3c` restores
