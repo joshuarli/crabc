@@ -1829,14 +1829,16 @@ def require_statistics_aligned_debug(trace: Mapping[str, str], description: str)
                       for field in ("binned", "huge", "requested")}
     except (KeyError, ValueError, UnicodeDecodeError) as error:
         raise harness.HarnessError(f"{description} has malformed aligned statistics") from error
-    if ((request, alignment) not in {(8193, 4096), (65537, 4096), (262145, 65536)}
+    source_requested_sizes = {(8193, 4096): 12288, (65537, 4096): 65537, (262145, 65536): 327680}
+    if ((request, alignment) not in source_requested_sizes
             or oversize_request != request + alignment - 1
             or padding_size != 8 or page_block_size < oversize_request + padding_size
             or usable < request
             or trace["allocation.aligned"] != "1" or trace["allocation.mapped"] != "1"
             or trace["allocation.payload_intact"] != "1"):
         raise harness.HarnessError(f"{description} lost aligned allocation ownership or payload: {trace}")
-    if (counts["allocated"]["requested"] != (oversize_request,)*3
+    charged_request = source_requested_sizes[request, alignment]
+    if (counts["allocated"]["requested"] != (charged_request,)*3
             or counts["freed"]["requested"] != counts["allocated"]["requested"]
             or counts["collected"]["requested"] != counts["allocated"]["requested"]
             or counts["allocated"]["normal"] != (page_block_size - padding_size,)*3

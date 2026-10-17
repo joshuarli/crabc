@@ -854,6 +854,19 @@ class M7GateContractTests(unittest.TestCase):
             "final_output.huge.hex": "", "final_output.requested.hex": "  malloc req: 12.0 KiB".encode("ascii").hex(),
         })
         gate.require_statistics_aligned_debug(trace, "complete")
+        medium = dict(trace)
+        medium.update({'allocation.request': '65537', 'allocation.oversize_request': '69632',
+                       'allocation.page_block_size': '81920', 'allocation.normal_bin': '49',
+                       'allocation.usable': '65537'})
+        for stage in ('allocated', 'freed', 'collected'):
+            medium[f'{stage}.normal'] = '81912,81912,81912' if stage == 'allocated' else '81912,81912,0'
+            medium[f'{stage}.requested'] = '65537,65537,65537'
+            medium[f'{stage}.malloc_bins'] = '49:1:1:1;' if stage == 'allocated' else '49:1:1:0;'
+            medium[f'{stage}.page_bins'] = '49:1:1:1;'
+        gate.require_statistics_aligned_debug(medium, 'naturally aligned medium request')
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_aligned_debug({**medium, 'allocated.requested': '69632,69632,69632'},
+                                                  'natural alignment charged an over-allocation')
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_aligned_debug({**trace, "allocation.aligned": "0"}, "lost alignment")
         with self.assertRaises(harness.HarnessError):
