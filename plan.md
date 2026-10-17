@@ -1,17 +1,15 @@
 # Qualify and promote crabc's native x86-64 runtime
 
-**Status: blocked 2026-10-17.** The owner resumed the campaign. Seven agents
-completed bounded work across source accounting, M6 fixtures, promotion custody,
-runtime rehearsal, collector investigation, cleanup and independent review.
-All lanes and campaign commands have stopped. The accepted C allocator remains
-the default. Public x86 support remains false:
+**Status: active 2026-10-17.** The owner authorized rebuilding the missing
+native images and made that recovery part of unattended operation. Both image
+builds are running. The accepted C allocator remains the default.
+Public x86 support remains false:
 180 of 223 capabilities, nine of 26 families, zero of eight gates.
 
-- **Blocker:** Docker lacks the pinned core image
-  `sha256:300e199a8ad490cdf950f051a94c64852b7f9d37faff1a1bf309594c73ba45dc`
-  and `crabc-allocator-evidence:x86_64`. No image was rebuilt or substituted.
-  Restore the exact images before native work. Rebuilding requires owner
-  direction under the charter and would invalidate prior image-bound evidence.
+- **Image recovery:** rebuild through the tracked native launchers, update
+  the core image pin to the resulting immutable ID, and verify both images
+  before restarting native lanes. Evidence tied to the old images must be
+  regenerated. The Rust nightly, source pins and AArch64 inputs stay fixed.
 - **Integrated:** `3d6a40fec` corrects stale scheduled-expiry arena EIO
   accounting and links its existing 28-field producer. `8d6591a3c` restores
   an unrelated JSON escape. All arena statuses stay partial. At the merged
@@ -147,6 +145,11 @@ Deliverables:
 - Decide, log the call in the [decision log](#decision-log), and keep going.
   Never ask, never wait for approval, send no check-in. Run until every
   deliverable is met or every remaining item is parked.
+- **Recover native images unattended.** Rebuild a missing or unusable native
+  image through its tracked launcher and update the declared immutable image
+  identity. Verify the rebuilt environment, then regenerate affected evidence
+  before using it for qualification. Preserve the Rust nightly and upstream
+  source pins. Missing native images do not park the campaign.
 - **Parity before optimization.** No optimization item changes product code
   until every ground, parity and hardening item it depends on is done; a
   parked item does not unblock what depends on it. Before that, performance
@@ -155,7 +158,7 @@ Deliverables:
   anything outside the repository other than fetching a pinned input, or that
   cannot be undone from Git (pushing, renting resources, rebooting, changing
   host huge-page pools or security policy); deleting `.work/` or a `.cache/`
-  directory; rebuilding a pinned image; running or emulating AArch64; a
+  directory; running or emulating AArch64; a
   boundary this document forbids; a harness denial of a tool call (do not
   retry it or route around it); a loop that can no longer check anything.
 - **Fix on the way, in its own commit:** a loop command over 5 minutes (get
@@ -243,6 +246,9 @@ worktree with a fresh `--work` name each time.
    emulated on this host.
 6. **Pristine before resuming.** Fix or delete what is stale, dead, or
    unverified rather than listing it.
+7. **Unattended image recovery (2026-10-17).** Rebuild missing native images,
+   update their immutable identities and regenerate affected evidence without
+   asking for approval. This replaces the image-rebuild hard stop.
 
 Earlier owner decisions that still hold: default behavior matches pinned
 musl's defaults (2026-09-25, see [Reference](#fixed-contracts)); ordinary

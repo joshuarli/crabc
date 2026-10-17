@@ -124,8 +124,10 @@ Other narrow routes are in the harness guides:
   `compat/x86_64/aarch64_frozen_baseline.json` and the three files it
   digests (`compat/crabc-rs/coverage.toml` and the two files under
   `compat/abi/musl-1.2.6/aarch64/`).
-- Never rebuild a pinned image. A rebuild changes its ID, and every receipt
-  made in the old one stops counting.
+- Recover missing or unusable native images unattended through the tracked
+  launchers. The coordinator owns rebuilds and immutable image-pin updates.
+  Verify the rebuilt environment and regenerate affected evidence before
+  qualification. Keep the Rust nightly and upstream source pins unchanged.
 - Do not record qualifying performance numbers from a lane, and do not
   throttle builds; retry one killed by memory pressure and report it.
 - Every commit is a Conventional Commit with the workstream as scope.
