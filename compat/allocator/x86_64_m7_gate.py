@@ -3011,7 +3011,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flag for flag in previous_c_profile if not flag.startswith('-O')) + ('-O0',)
             os.environ.update(profile)
             report = development_traces[arguments.development_trace](arguments.offline)
-            report.update(qualification_eligible=False, compiler_profile={'opt_level': '0', 'test': True})
+            report.update(qualification_eligible=False, compiler_profile={
+                'opt_level': '0', 'test': arguments.development_trace != 'statistics-aligned-debug'})
             harness.write_json(ARTIFACTS / (arguments.development_trace + '.json'), report)
         finally:
             ARTIFACTS = previous_artifacts

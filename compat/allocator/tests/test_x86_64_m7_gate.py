@@ -25,6 +25,20 @@ harness = gate.harness
 
 
 class M7DevelopmentTraceTests(unittest.TestCase):
+    def test_public_aligned_statistics_records_the_adapter_build_profile(self):
+        scratch = ROOT / '.work/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            with mock.patch.object(gate, 'ARTIFACTS', root), \
+                    mock.patch.object(gate, 'run_statistics_aligned_debug_differential',
+                                      return_value={'status': 'passed', 'compared_key_count': 162}) as run:
+                self.assertEqual(gate.main(['--offline', '--development-trace', 'statistics-aligned-debug']), 0)
+                run.assert_called_once_with(True, build_profile='debug')
+            report = json.loads((root / 'development/statistics-aligned-debug.json').read_text())
+            self.assertEqual(report['compiler_profile'], {'opt_level': '0', 'test': False})
+            self.assertFalse(report['qualification_eligible'])
+
     def test_development_trace_keeps_unoptimized_output_outside_qualification(self):
         scratch = ROOT / '.work/tmp'
         scratch.mkdir(parents=True, exist_ok=True)
