@@ -853,6 +853,23 @@ class PthreadPhaseInputTests(unittest.TestCase):
             "family_execution": self.matrix_path.relative_to(self.root).as_posix(),
         }), encoding="utf-8")
 
+    def _add_dynamic_case_artifact(self, artifact_root: Path) -> Path:
+        artifact_root.mkdir(parents=True)
+        payload = artifact_root / "payload"
+        payload.write_text("retained nested dynamic leaf\n", encoding="utf-8")
+        case_path = self.dynamic_work / "qualification-cases/installed/fixture.json"
+        case = family.family.read(case_path)
+        case["artifacts"][artifact_root.relative_to(self.root).as_posix()] = {}
+        case_path.write_text(json.dumps(case), encoding="utf-8")
+        qualification = family.family.read(self.dynamic_qualification)
+        case_relative = case_path.relative_to(self.root).as_posix()
+        qualification["cases"][case_relative] = family.family.digest(case_path)
+        self.dynamic_qualification.write_text(json.dumps(qualification), encoding="utf-8")
+        self.matrix["inputs"]["dynamic_qualification"] = family.family.file_identity(
+            self.root, self.dynamic_qualification)
+        self.matrix_path.write_text(json.dumps(self.matrix), encoding="utf-8")
+        return payload
+
     @staticmethod
     def _matrix_roster() -> dict[str, object]:
         return {"required": [{
@@ -964,6 +981,34 @@ class PthreadPhaseInputTests(unittest.TestCase):
                 patch.object(family, "matrix_cells", side_effect=mutate_after_mapping):
             with self.assertRaisesRegex(family.PthreadFamilyError,
                                         "dynamic case artifact evidence.*changed"):
+                family.collect(self.root, self.work)
+        self.assertEqual(len(calls), 1)
+
+    def test_nested_dynamic_case_artifact_uses_its_enclosing_input_snapshot(self) -> None:
+        nested_root = self.dynamic_work / "qualification-scratch/nested-case-artifact"
+        payload = self._add_dynamic_case_artifact(nested_root)
+        qualification = family.family.read(self.dynamic_qualification)
+        artifacts = family._dynamic_case_artifacts(self.root, self.dynamic_work, qualification)
+
+        paths = family._input_tree_paths(
+            self.root, self.matrix_path, self.static_preparation, self.dynamic_work, artifacts)
+        snapshot_paths = {path for _, path in paths}
+        self.assertIn(self.dynamic_work, snapshot_paths)
+        self.assertIn(self.external_dynamic_artifact.parent, snapshot_paths)
+        self.assertNotIn(nested_root, snapshot_paths)
+
+        calls: list[Path] = []
+        original_matrix_cells = family.matrix_cells
+
+        def mutate_after_mapping(matrix: dict[str, object], required: dict[str, object]) -> dict[str, dict[str, object]]:
+            result = original_matrix_cells(matrix, required)
+            payload.write_text("mutated nested dynamic leaf\n", encoding="utf-8")
+            return result
+
+        with self._phase_patches(self._matrix_roster(), calls, forbid_input_products=True), \
+                patch.object(family, "matrix_cells", side_effect=mutate_after_mapping):
+            with self.assertRaisesRegex(family.PthreadFamilyError,
+                                        "pthread family dynamic qualification evidence changed"):
                 family.collect(self.root, self.work)
         self.assertEqual(len(calls), 1)
 

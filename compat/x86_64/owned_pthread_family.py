@@ -523,7 +523,7 @@ def _input_tree_paths(root: Path, matrix_path: Path, static_preparation: Path,
     for description, path in candidates:
         path = family.physical(root, path)
         require(path.is_dir(), f"pthread family {description} must be a directory")
-        if path in seen:
+        if any(path.is_relative_to(parent) for parent in seen):
             continue
         seen.add(path)
         result.append((description, path))
