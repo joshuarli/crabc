@@ -211,6 +211,28 @@ def promotion_input_snapshot(receipt: Path) -> dict:
              promotion_work_path(allocator / 'target/compat/allocator/x86_64'),
              promotion_work_path(allocator / 'integrated'), promotion_work_path(allocator / 'm10-native'),
              promotion_work_path(allocator / 'allocator-cache')}
+    def allocator_path(value):
+        path = Path(value)
+        if path.is_relative_to('/workspace'):
+            path = path.relative_to('/workspace')
+        elif path.is_relative_to(ROOT):
+            path = path.relative_to(ROOT)
+        for guest, host in ((Path('compat/reports'), allocator / 'reports'),
+                            (Path('compat/allocator/.cache'), allocator / 'allocator-cache'),
+                            (Path('target'), allocator / 'target')):
+            if path.is_relative_to(guest):
+                path = host / path.relative_to(guest)
+                break
+        return promotion_work_path(path)
+
+    try:
+        m9 = json.loads((allocator / 'target/compat/allocator/x86_64/m9-gate/report.json').read_text())
+        for row in m9['reports']:
+            roots.add(allocator_path(row['path']).parent)
+        if m9['codegen_report'] is not None:
+            roots.add(allocator_path(m9['codegen_report']).parent)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise CampaignRunnerError(f'cannot snapshot selected M9 inputs: {error}') from error
     for pointer in (ROOT / '.work/x86_64/owned-static-qualification.json',
                     ROOT / '.work/x86_64/owned-dynamic-qualification.json',
                     ROOT / '.work/x86_64/qualification-evidence/performance.release/performance-release.json'):

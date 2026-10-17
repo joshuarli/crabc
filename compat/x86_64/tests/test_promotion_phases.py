@@ -39,7 +39,8 @@ class PromotionPhaseTests(unittest.TestCase):
                         'qualification-evidence/performance.release/performance-release.json'):
             selected = self.write('.work/selected/' + pointer + '/receipt.json', '{}')
             self.write('.work/x86_64/' + pointer, json.dumps({'receipt': str(selected)}))
-        self.report = self.write('.work/allocator-x86_64/target/compat/allocator/x86_64/m9-gate/report.json', '{}')
+        self.report = self.write('.work/allocator-x86_64/target/compat/allocator/x86_64/m9-gate/report.json',
+                                 json.dumps({'reports': [], 'codegen_report': None}))
         self.dependencies = [self.write('.work/performance/' + name, name)
                              for name in ('attempt/report.json', 'binary', 'diagnostics', 'source/input.rs')]
         self.expected = {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in self.dependencies}
@@ -89,6 +90,39 @@ class PromotionPhaseTests(unittest.TestCase):
                     self.execute()
                 path.write_text(original)
 
+    def test_selected_m9_report_and_adjacent_codegen_artifacts_stay_frozen(self):
+        external = self.write('.work/external-codegen/audit.json', '{}')
+        binary = self.write('.work/external-codegen/audit.artifacts/executable', 'original')
+        attempt = self.write('.work/external-engine/attempt.json', '{}')
+        diagnostics = self.write('.work/external-engine/attempt.artifacts/diagnostics', 'original')
+        aliases = [('compat/reports/allocator/x86_64/control.json',
+                    '.work/allocator-x86_64/reports/allocator/x86_64/control.json'),
+                   ('target/compat/allocator/x86_64/control.json',
+                    '.work/allocator-x86_64/target/compat/allocator/x86_64/control.json'),
+                   ('compat/allocator/.cache/control.json',
+                    '.work/allocator-x86_64/allocator-cache/control.json')]
+        for alias, physical in aliases:
+            self.write(physical, '{}')
+        for spelling in ('relative', 'workspace', 'absolute'):
+            def recorded(path):
+                relative = path.relative_to(self.root)
+                return str(relative if spelling == 'relative' else Path('/workspace') / relative
+                           if spelling == 'workspace' else path)
+            selected = {'reports': [{'path': recorded(attempt)}, *({'path': alias} for alias, _ in aliases)],
+                        'codegen_report': recorded(external)}
+            self.report.write_text(json.dumps(selected))
+            self.calls.clear()
+            self.mutate = lambda phase: None
+            self.assertEqual(self.execute(), 0)
+            for target in (external, binary, attempt, diagnostics):
+                with self.subTest(spelling=spelling, target=target):
+                    original = target.read_text()
+                    self.calls.clear()
+                    self.mutate = lambda phase: target.write_text('changed') if phase == 'core' and self.calls.count('core') == 2 else None
+                    with self.assertRaises(runner.CampaignRunnerError):
+                        self.execute()
+                    target.write_text(original)
+
     def test_source_and_direct_input_mutation_stop_between_phases(self):
         for phase in ('core', 'allocator'):
             for path in (self.receipt, self.report):
@@ -96,7 +130,7 @@ class PromotionPhaseTests(unittest.TestCase):
                     self.mutate = lambda current: path.write_text('changed') if current == phase else None
                     with self.assertRaises(runner.CampaignRunnerError):
                         self.execute()
-                    path.write_text('{}')
+                    path.write_text(json.dumps({'reports': [], 'codegen_report': None}) if path == self.report else '{}')
             self.mutate = lambda current: self.source.update(content_sha256='changed') if current == phase else None
             with self.assertRaises(runner.CampaignRunnerError):
                 self.execute()

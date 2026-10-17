@@ -157,7 +157,10 @@ Direct CORE native closure remains partial and exits 3. The host composition
 runs CORE, ALLOC, then CORE again. The terminal CORE phase replays runtime
 owning readers, including transitive performance attempts, binaries,
 diagnostics and upstream source directories. Source and concrete input
-snapshots must match across every phase. Relative checkout paths, absolute
+snapshots must match across every phase. Snapshots include selected M9 report
+parents and adjacent codegen artifacts, including reports outside canonical
+directories. Allocator mount aliases resolve to their physical host inputs.
+Relative checkout paths, absolute
 checkout paths and `/workspace` paths select the same physical receipt.
 
 This native bridge remains unqualified until actual current native products
